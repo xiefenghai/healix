@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.revision.mapper.FieldRevisionItemMapper">
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO field_revision_item(
+            id, batch_id, field_path, old_value, new_value, old_display, new_display,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{batchId}, #{fieldPath}, #{oldValue}, #{newValue}, #{oldDisplay}, #{newDisplay},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="listByBatchId" resultType="com.healix.core.revision.domain.FieldRevisionItem">
+        SELECT pk_id, id, batch_id, field_path, old_value, new_value, old_display, new_display,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM field_revision_item
+        WHERE batch_id = #{batchId} AND is_deleted = 0
+        ORDER BY field_path
+    </select>
+</mapper>

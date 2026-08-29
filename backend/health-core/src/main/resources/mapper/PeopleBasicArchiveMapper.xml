@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.people.mapper.PeopleBasicArchiveMapper">
+
+    <select id="findByTenantAndPeople" resultType="com.healix.core.people.domain.PeopleBasicArchive">
+        SELECT pk_id, id, tenant_id, people_id, schema_version, content_json, version, source,
+               created_by_staff_id, updated_by_staff_id, remark,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM people_basic_archive
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_basic_archive(
+            id, tenant_id, people_id, schema_version, content_json, version, source,
+            created_by_staff_id, updated_by_staff_id, remark,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{schemaVersion}, #{contentJson}, #{version}, #{source},
+            #{createdByStaffId}, #{updatedByStaffId}, #{remark},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateContent">
+        UPDATE people_basic_archive
+        SET content_json = #{contentJson},
+            schema_version = #{schemaVersion},
+            version = #{version},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

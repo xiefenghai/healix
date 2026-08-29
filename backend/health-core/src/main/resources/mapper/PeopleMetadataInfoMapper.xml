@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.metadata.mapper.PeopleMetadataInfoMapper">
+
+    <select id="findByPeopleAndCode" resultType="com.healix.core.metadata.domain.PeopleMetadataInfo">
+        SELECT pk_id, id, tenant_id, people_id, metadata_code, metadata_value,
+               source_biz_code, source_client_code,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM people_metadata_info
+        WHERE people_id = #{peopleId} AND metadata_code = #{metadataCode} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listCodesByPrefix" resultType="string">
+        SELECT metadata_code
+        FROM people_metadata_info
+        WHERE people_id = #{peopleId}
+          AND tenant_id = #{tenantId}
+          AND metadata_code LIKE CONCAT(#{codePrefix}, '%')
+          AND is_deleted = 0
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_metadata_info(
+            id, tenant_id, people_id, metadata_code, metadata_value,
+            source_biz_code, source_client_code,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{metadataCode}, #{metadataValue},
+            #{sourceBizCode}, #{sourceClientCode},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateValue">
+        UPDATE people_metadata_info
+        SET metadata_value = #{metadataValue},
+            source_biz_code = #{sourceBizCode},
+            source_client_code = #{sourceClientCode},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="softDeleteById">
+        UPDATE people_metadata_info
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

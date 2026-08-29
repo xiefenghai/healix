@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.identity.mapper.StaffOrgBindingMapper">
+
+    <select id="listByStaff" resultType="com.healix.core.identity.domain.StaffOrgBinding">
+        SELECT pk_id, id, tenant_id, staff_id, org_id, is_default,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_org_binding
+        WHERE staff_id = #{staffId} AND is_deleted = 0
+    </select>
+
+    <select id="countBinding" resultType="int">
+        SELECT COUNT(1)
+        FROM staff_org_binding
+        WHERE staff_id = #{staffId} AND org_id = #{orgId} AND is_deleted = 0
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO staff_org_binding(
+            id, tenant_id, staff_id, org_id, is_default,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        )
+        VALUES (
+            #{id}, #{tenantId}, #{staffId}, #{orgId}, #{isDefault},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="listDefaultsByStaffIds" resultType="com.healix.core.identity.domain.StaffOrgBinding">
+        SELECT pk_id, id, tenant_id, staff_id, org_id, is_default,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_org_binding
+        WHERE is_deleted = 0
+          AND is_default = 1
+          AND staff_id IN
+        <foreach collection="staffIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <select id="listByStaffIds" resultType="com.healix.core.identity.domain.StaffOrgBinding">
+        SELECT pk_id, id, tenant_id, staff_id, org_id, is_default,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_org_binding
+        WHERE is_deleted = 0
+          AND staff_id IN
+        <foreach collection="staffIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <update id="softDeleteByStaff">
+        UPDATE staff_org_binding
+        SET is_deleted = 1, gmt_deleted = #{gmtDeleted}, gmt_modified = #{gmtModified}
+        WHERE staff_id = #{staffId} AND is_deleted = 0
+    </update>
+
+    <update id="softDeleteByStaffAndOrg">
+        UPDATE staff_org_binding
+        SET is_deleted = 1, gmt_deleted = #{gmtDeleted}, gmt_modified = #{gmtModified}
+        WHERE staff_id = #{staffId} AND org_id = #{orgId} AND is_deleted = 0
+    </update>
+
+    <select id="listByOrg" resultType="com.healix.core.identity.domain.StaffOrgBinding">
+        SELECT pk_id, id, tenant_id, staff_id, org_id, is_default,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_org_binding
+        WHERE org_id = #{orgId} AND is_deleted = 0
+        ORDER BY id
+    </select>
+</mapper>

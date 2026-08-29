@@ -1,0 +1,14 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+healix:
+  agent:
+    enabled: false
+  influx:
+    enabled: false
+
+logging:
+  level:
+    com.healix: DEBUG

@@ -1,0 +1,43 @@
+:root {
+  --hx-teal: #2b9e9e;
+  --hx-teal-soft: #5cb8b8;
+  --hx-teal-light: #e6f6f6;
+  --hx-orange: #f5a623;
+  --hx-orange-soft: #fff4e0;
+  --hx-bg: #f7f9fc;
+  --hx-card: #ffffff;
+  --hx-text: #2c3a47;
+  --hx-muted: #8a97a5;
+  --hx-radius: 18px;
+  --hx-shadow: 0 8px 24px rgba(43, 158, 158, 0.08);
+  --van-primary-color: #2b9e9e;
+  --van-success-color: #2b9e9e;
+  --van-warning-color: #f5a623;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+  background: var(--hx-bg);
+  color: var(--hx-text);
+  font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: var(--hx-teal);
+  text-decoration: none;
+}

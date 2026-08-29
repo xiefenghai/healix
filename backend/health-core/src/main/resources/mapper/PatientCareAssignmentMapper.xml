@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.patient.mapper.PatientCareAssignmentMapper">
+
+    <select id="find" resultType="com.healix.core.patient.domain.PatientCareAssignment">
+        SELECT pk_id, id, tenant_id, people_id, primary_org_id, primary_care_manager_staff_id,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM people_care_assignment
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND is_deleted = 0
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_care_assignment(
+            id, tenant_id, people_id, primary_org_id, primary_care_manager_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{primaryOrgId}, #{primaryCareManagerStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE people_care_assignment
+        SET primary_org_id = #{primaryOrgId},
+            primary_care_manager_staff_id = #{primaryCareManagerStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.org.mapper.OrganizationMapper">
+
+    <select id="findById" resultType="com.healix.core.org.domain.Organization">
+        SELECT pk_id, id, tenant_id, parent_org_id, name, org_code, org_type, status,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM organization
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="listByTenant" resultType="com.healix.core.org.domain.Organization">
+        SELECT pk_id, id, tenant_id, parent_org_id, name, org_code, org_type, status,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM organization
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        ORDER BY id
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO organization(
+            id, tenant_id, parent_org_id, name, org_code, org_type, status,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        )
+        VALUES (
+            #{id}, #{tenantId}, #{parentOrgId}, #{name}, #{orgCode}, #{orgType}, #{status},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE organization
+        SET name = #{name},
+            org_type = #{orgType},
+            status = #{status},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

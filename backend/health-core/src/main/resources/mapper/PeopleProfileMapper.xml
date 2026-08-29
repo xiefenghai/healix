@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.people.mapper.PeopleProfileMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, account_id, display_name, gender, birthday, name_pinyin,
+        allergens_json, chronic_tags_json, emergency_contact_json,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="findById" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByAccountId" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE account_id = #{accountId} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="searchByTenant" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND (display_name LIKE CONCAT('%', #{keyword}, '%')
+                 OR name_pinyin LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_profile(
+            id, tenant_id, account_id, display_name, gender, birthday, name_pinyin,
+            allergens_json, chronic_tags_json, emergency_contact_json,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{accountId}, #{displayName}, #{gender}, #{birthday}, #{namePinyin},
+            #{allergensJson}, #{chronicTagsJson}, #{emergencyContactJson},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateProfile">
+        UPDATE people_profile
+        SET display_name = #{displayName},
+            gender = #{gender},
+            birthday = #{birthday},
+            name_pinyin = #{namePinyin},
+            allergens_json = #{allergensJson},
+            chronic_tags_json = #{chronicTagsJson},
+            emergency_contact_json = #{emergencyContactJson},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

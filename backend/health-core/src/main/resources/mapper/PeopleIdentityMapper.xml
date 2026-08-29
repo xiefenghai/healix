@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.people.mapper.PeopleIdentityMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, identity_type,
+        identity_value_hash, identity_value_cipher, identity_value_mask,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="findByTenantTypeHash" resultType="com.healix.core.people.domain.PeopleIdentity">
+        SELECT <include refid="cols"/>
+        FROM people_identity
+        WHERE tenant_id = #{tenantId}
+          AND identity_type = #{identityType}
+          AND identity_value_hash = #{identityValueHash}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findByPeopleAndType" resultType="com.healix.core.people.domain.PeopleIdentity">
+        SELECT <include refid="cols"/>
+        FROM people_identity
+        WHERE people_id = #{peopleId} AND identity_type = #{identityType} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.people.domain.PeopleIdentity">
+        SELECT <include refid="cols"/>
+        FROM people_identity
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY id
+    </select>
+
+    <select id="findPrimaryMask" resultType="com.healix.core.people.domain.PeopleIdentity">
+        SELECT <include refid="cols"/>
+        FROM people_identity
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY CASE identity_type WHEN 'ID_CARD' THEN 0 ELSE 1 END, id
+        LIMIT 1
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_identity(
+            id, tenant_id, people_id, identity_type,
+            identity_value_hash, identity_value_cipher, identity_value_mask,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{identityType},
+            #{identityValueHash}, #{identityValueCipher}, #{identityValueMask},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+</mapper>

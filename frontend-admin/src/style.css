@@ -1,0 +1,135 @@
+:root {
+  /* 医疗管理端：青绿主色 + 深灰侧栏，避免 Element 默认亮蓝 */
+  --admin-primary: #0d9488;
+  --admin-primary-hover: #0f766e;
+  --admin-primary-light: #ccfbf1;
+  --admin-primary-muted: rgba(13, 148, 136, 0.12);
+
+  --admin-sidebar-bg: #1e293b;
+  --admin-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --admin-sidebar-active: rgba(13, 148, 136, 0.18);
+  --admin-sidebar-text: #94a3b8;
+  --admin-sidebar-text-active: #f8fafc;
+
+  --admin-topbar-bg: #ffffff;
+  --admin-topbar-border: #e2e8f0;
+
+  --admin-bg: #f1f5f9;
+  --admin-card: #ffffff;
+  --admin-text: #0f172a;
+  --admin-text-secondary: #475569;
+  --admin-muted: #64748b;
+  --admin-border: #e2e8f0;
+
+  --admin-warning: #d97706;
+  --admin-success: #059669;
+  --admin-danger: #dc2626;
+  --admin-radius: 10px;
+  --admin-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --admin-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+
+  --el-color-primary: #0d9488;
+  --el-color-primary-light-3: #5eead4;
+  --el-color-primary-light-5: #99f6e4;
+  --el-color-primary-light-7: #ccfbf1;
+  --el-color-primary-light-8: #e6fffa;
+  --el-color-primary-light-9: #f0fdfa;
+  --el-color-primary-dark-2: #0f766e;
+  --el-border-radius-base: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+  background: var(--admin-bg);
+  color: var(--admin-text);
+  font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--admin-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--admin-primary-hover);
+}
+
+/* 卡片：统一圆角与轻阴影 */
+.el-card {
+  border: 1px solid var(--admin-border) !important;
+  border-radius: var(--admin-radius) !important;
+  box-shadow: var(--admin-shadow) !important;
+}
+
+.el-card__header {
+  font-weight: 600;
+  color: var(--admin-text);
+  border-bottom-color: var(--admin-border) !important;
+}
+
+/* 表格：表头浅灰、行距舒适 */
+.el-table {
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-header-text-color: var(--admin-text-secondary);
+  --el-table-border-color: var(--admin-border);
+  border-radius: var(--admin-radius);
+}
+
+.el-table th.el-table__cell {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* 主按钮 */
+.el-button--primary {
+  --el-button-bg-color: var(--admin-primary);
+  --el-button-border-color: var(--admin-primary);
+  --el-button-hover-bg-color: var(--admin-primary-hover);
+  --el-button-hover-border-color: var(--admin-primary-hover);
+  --el-button-active-bg-color: var(--admin-primary-hover);
+  --el-button-active-border-color: var(--admin-primary-hover);
+}
+
+/* 分页、输入框聚焦色 */
+.el-pagination.is-background .el-pager li.is-active {
+  background-color: var(--admin-primary) !important;
+}
+
+.el-input__wrapper:focus-within,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--admin-primary) inset !important;
+}
+
+.el-tabs__item.is-active {
+  color: var(--admin-primary);
+}
+
+.el-tabs__active-bar {
+  background-color: var(--admin-primary);
+}
+
+/* 页面标题区（各 View 可复用 class） */
+.page-title h1 {
+  color: var(--admin-text);
+  font-weight: 600;
+}
+
+.page-title p {
+  color: var(--admin-muted);
+}
+
+/* 表格：32 位业务 ID / 编码列 */
+.el-table .col-biz-id .cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--admin-text-secondary);
+}

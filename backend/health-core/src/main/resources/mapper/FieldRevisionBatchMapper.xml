@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.revision.mapper.FieldRevisionBatchMapper">
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO field_revision_batch(
+            id, tenant_id, target_people_id, operator_type, operator_id, biz_type, biz_key,
+            version_before, version_after, org_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{targetPeopleId}, #{operatorType}, #{operatorId}, #{bizType}, #{bizKey},
+            #{versionBefore}, #{versionAfter}, #{orgId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="listByTarget" resultType="com.healix.core.revision.domain.FieldRevisionBatch">
+        SELECT pk_id, id, tenant_id, target_people_id, operator_type, operator_id, biz_type, biz_key,
+               version_before, version_after, org_id,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM field_revision_batch
+        WHERE tenant_id = #{tenantId}
+          AND target_people_id = #{targetPeopleId}
+          AND biz_type = #{bizType}
+          AND is_deleted = 0
+          <if test="bizKey != null and bizKey != ''">
+              AND biz_key = #{bizKey}
+          </if>
+        ORDER BY gmt_created DESC
+        LIMIT 100
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.revision.domain.FieldRevisionBatch">
+        SELECT pk_id, id, tenant_id, target_people_id, operator_type, operator_id, biz_type, biz_key,
+               version_before, version_after, org_id,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM field_revision_batch
+        WHERE tenant_id = #{tenantId}
+          AND target_people_id = #{targetPeopleId}
+          AND is_deleted = 0
+        ORDER BY gmt_created DESC
+        LIMIT 100
+    </select>
+</mapper>

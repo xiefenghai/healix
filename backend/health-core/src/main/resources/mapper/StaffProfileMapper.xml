@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.identity.mapper.StaffProfileMapper">
+
+    <select id="findByAccountId" resultType="com.healix.core.identity.domain.StaffProfile">
+        SELECT pk_id, id, tenant_id, account_id, display_name, mobile, title,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_profile
+        WHERE account_id = #{accountId} AND is_deleted = 0
+    </select>
+
+    <select id="findById" resultType="com.healix.core.identity.domain.StaffProfile">
+        SELECT pk_id, id, tenant_id, account_id, display_name, mobile, title,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_profile
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO staff_profile(
+            id, tenant_id, account_id, display_name, mobile, title,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        )
+        VALUES (
+            #{id}, #{tenantId}, #{accountId}, #{displayName}, #{mobile}, #{title},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateProfile">
+        UPDATE staff_profile
+        SET display_name = #{displayName},
+            mobile = #{mobile},
+            title = #{title},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <sql id="staffByTenantWhere">
+        FROM staff_profile p
+        INNER JOIN staff_account a ON a.id = p.account_id AND a.is_deleted = 0
+        WHERE p.tenant_id = #{tenantId} AND p.is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND (p.display_name LIKE CONCAT('%', #{keyword}, '%')
+                 OR a.username LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        <if test="status != null and status != ''">
+            AND a.status = #{status}
+        </if>
+        <if test="roleCode != null and roleCode != ''">
+            AND EXISTS (
+                SELECT 1 FROM staff_role_binding r
+                WHERE r.staff_id = p.id AND r.role_code = #{roleCode} AND r.is_deleted = 0
+            )
+        </if>
+        <if test="orgId != null">
+            AND EXISTS (
+                SELECT 1 FROM staff_org_binding o
+                WHERE o.staff_id = p.id AND o.org_id = #{orgId} AND o.is_deleted = 0
+            )
+        </if>
+    </sql>
+
+    <select id="listByTenant" resultType="com.healix.core.ops.dto.StaffProfileListRow">
+        SELECT p.id AS staffId,
+               p.account_id AS accountId,
+               a.username,
+               p.display_name AS displayName,
+               p.mobile,
+               p.title,
+               a.status,
+               p.gmt_created AS createdAt
+        <include refid="staffByTenantWhere"/>
+        ORDER BY p.id DESC
+        LIMIT #{offset}, #{pageSize}
+    </select>
+
+    <select id="countByTenant" resultType="long">
+        SELECT COUNT(1)
+        <include refid="staffByTenantWhere"/>
+    </select>
+</mapper>

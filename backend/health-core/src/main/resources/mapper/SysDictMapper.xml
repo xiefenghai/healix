@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.dict.mapper.SysDictMapper">
+
+    <select id="countByTenant" resultType="int">
+        SELECT COUNT(1) FROM sys_dict WHERE tenant_id = #{tenantId} AND is_deleted = 0
+    </select>
+
+    <select id="listByTypeAndParent" resultType="com.healix.core.dict.domain.SysDict">
+        SELECT pk_id, id, dict_type, parent_code, dict_code, dict_code_desc, content, sort_order, tenant_id,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM sys_dict
+        WHERE tenant_id = #{tenantId}
+          AND dict_type = #{dictType}
+          AND parent_code = #{parentCode}
+          AND is_deleted = 0
+        ORDER BY sort_order DESC, dict_code
+    </select>
+
+    <select id="listByType" resultType="com.healix.core.dict.domain.SysDict">
+        SELECT pk_id, id, dict_type, parent_code, dict_code, dict_code_desc, content, sort_order, tenant_id,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM sys_dict
+        WHERE tenant_id = #{tenantId}
+          AND dict_type = #{dictType}
+          AND is_deleted = 0
+        ORDER BY sort_order DESC, dict_code
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO sys_dict(
+            id, dict_type, parent_code, dict_code, dict_code_desc, content, sort_order, tenant_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{dictType}, #{parentCode}, #{dictCode}, #{dictCodeDesc}, #{content}, #{sortOrder}, #{tenantId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+</mapper>

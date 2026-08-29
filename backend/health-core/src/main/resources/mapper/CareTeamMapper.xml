@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.care.mapper.CareTeamMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, team_code, name,
+        primary_care_manager_staff_id, primary_doctor_staff_id, status,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="findById" resultType="com.healix.core.care.domain.CareTeam">
+        SELECT <include refid="cols"/>
+        FROM care_team
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="listByOrg" resultType="com.healix.core.care.domain.CareTeam">
+        SELECT <include refid="cols"/>
+        FROM care_team
+        WHERE org_id = #{orgId} AND is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND (name LIKE CONCAT('%', #{keyword}, '%') OR team_code LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        ORDER BY id DESC
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_team(
+            id, tenant_id, org_id, team_code, name,
+            primary_care_manager_staff_id, primary_doctor_staff_id, status,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{teamCode}, #{name},
+            #{primaryCareManagerStaffId}, #{primaryDoctorStaffId}, #{status},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE care_team
+        SET name = #{name},
+            primary_care_manager_staff_id = #{primaryCareManagerStaffId},
+            primary_doctor_staff_id = #{primaryDoctorStaffId},
+            status = #{status},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE care_team
+        SET is_deleted = 1, gmt_deleted = #{gmtDeleted}, gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

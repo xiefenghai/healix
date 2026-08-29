@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.audit.mapper.AuditLogMapper">
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO audit_log(
+            id, portal, actor_account_id, actor_type, tenant_id, action, resource_type, resource_id,
+            people_id, detail_json, ip, user_agent, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{portal}, #{actorAccountId}, #{actorType}, #{tenantId}, #{action}, #{resourceType}, #{resourceId},
+            #{peopleId}, #{detailJson}, #{ip}, #{userAgent}, #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+</mapper>

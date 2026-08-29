@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.tenant.mapper.TenantMapper">
+
+    <select id="findById" resultType="com.healix.core.tenant.domain.Tenant">
+        SELECT pk_id, id, code, name, status, plan_code, expire_at,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM tenant
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByCode" resultType="com.healix.core.tenant.domain.Tenant">
+        SELECT pk_id, id, code, name, status, plan_code, expire_at,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM tenant
+        WHERE code = #{code} AND is_deleted = 0
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO tenant(
+            id, code, name, status, plan_code, expire_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        )
+        VALUES (
+            #{id}, #{code}, #{name}, #{status}, #{planCode}, #{expireAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateStatus">
+        UPDATE tenant
+        SET status = #{status}, gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <sql id="tenantListWhere">
+        FROM tenant t
+        WHERE t.is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND (t.code LIKE CONCAT('%', #{keyword}, '%') OR t.name LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+    </sql>
+
+    <select id="list" resultType="com.healix.core.ops.dto.TenantListItem">
+        SELECT t.id AS tenantId,
+               t.code,
+               t.name,
+               t.status,
+               t.gmt_created AS createdAt,
+               EXISTS (
+                   SELECT 1
+                   FROM staff_role_binding srb
+                   INNER JOIN staff_profile sp ON sp.id = srb.staff_id AND sp.is_deleted = 0
+                   WHERE srb.tenant_id = t.id
+                     AND srb.role_code = 'TENANT_ADMIN'
+                     AND srb.is_deleted = 0
+               ) AS hasTenantAdmin
+        <include refid="tenantListWhere"/>
+        ORDER BY t.id DESC
+        LIMIT #{offset}, #{pageSize}
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(1)
+        <include refid="tenantListWhere"/>
+    </select>
+
+    <select id="hasTenantAdmin" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1
+            FROM staff_role_binding srb
+            INNER JOIN staff_profile sp ON sp.id = srb.staff_id AND sp.is_deleted = 0
+            WHERE srb.tenant_id = #{tenantId}
+              AND srb.role_code = 'TENANT_ADMIN'
+              AND srb.is_deleted = 0
+        )
+    </select>
+</mapper>

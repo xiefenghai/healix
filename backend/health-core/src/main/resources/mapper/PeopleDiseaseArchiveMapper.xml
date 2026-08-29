@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper">
+
+    <select id="findByTenantPeopleAndCode" resultType="com.healix.core.archive.domain.PeopleDiseaseArchive">
+        SELECT pk_id, id, tenant_id, people_id, disease_code, schema_version, content_json, version, source,
+               created_by_staff_id, updated_by_staff_id,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM people_disease_archive
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND disease_code = #{diseaseCode}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByTenantAndPeople" resultType="com.healix.core.archive.domain.PeopleDiseaseArchive">
+        SELECT pk_id, id, tenant_id, people_id, disease_code, schema_version, content_json, version, source,
+               created_by_staff_id, updated_by_staff_id,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM people_disease_archive
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY disease_code
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_disease_archive(
+            id, tenant_id, people_id, disease_code, schema_version, content_json, version, source,
+            created_by_staff_id, updated_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{diseaseCode}, #{schemaVersion}, #{contentJson}, #{version}, #{source},
+            #{createdByStaffId}, #{updatedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateContent">
+        UPDATE people_disease_archive
+        SET content_json = #{contentJson},
+            schema_version = #{schemaVersion},
+            version = #{version},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>
