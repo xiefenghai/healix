@@ -28,12 +28,25 @@ public class JwtTokenProvider {
         this.expirationSeconds = expirationSeconds;
     }
 
-    public String createPatientToken(String accountId, String patientId, String homeTenantId) {
-        var builder = base(accountId, PortalEnum.C.code()).claim("patientId", patientId);
+    public String createPatientToken(
+            String accountId, String patientId, String homeTenantId, String activePatientCardId) {
+        var builder = base(accountId, PortalEnum.C.code());
+        if (patientId != null) {
+            builder.claim("patientId", patientId);
+        }
+        if (activePatientCardId != null) {
+            builder.claim("activePatientCardId", activePatientCardId);
+        }
         if (homeTenantId != null) {
             builder.claim("homeTenantId", homeTenantId);
         }
         return builder.compact();
+    }
+
+    /** @deprecated use overload with activePatientCardId */
+    @Deprecated
+    public String createPatientToken(String accountId, String patientId, String homeTenantId) {
+        return createPatientToken(accountId, patientId, homeTenantId, null);
     }
 
     public String createStaffToken(

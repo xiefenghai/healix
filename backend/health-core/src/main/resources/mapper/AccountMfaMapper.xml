@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.identity.mapper.AccountMfaMapper">
+
+    <select id="find" resultType="com.healix.core.identity.domain.AccountMfa">
+        SELECT pk_id, id, account_type, account_id, secret, status, enabled_at,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM account_mfa
+        WHERE account_type = #{accountType}
+          AND account_id = #{accountId}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="upsert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO account_mfa(
+            id, account_type, account_id, secret, status, enabled_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{accountType}, #{accountId}, #{secret}, #{status}, #{enabledAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+        ON DUPLICATE KEY UPDATE
+            secret = VALUES(secret),
+            status = VALUES(status),
+            enabled_at = VALUES(enabled_at),
+            is_deleted = 0,
+            gmt_deleted = VALUES(gmt_deleted),
+            gmt_modified = VALUES(gmt_modified)
+    </insert>
+
+    <update id="enable">
+        UPDATE account_mfa
+        SET status = 'ENABLED',
+            enabled_at = #{enabledAt},
+            gmt_modified = #{enabledAt}
+        WHERE account_type = #{accountType}
+          AND account_id = #{accountId}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE account_mfa
+        SET is_deleted = 1,
+            gmt_deleted = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE account_type = #{accountType}
+          AND account_id = #{accountId}
+          AND is_deleted = 0
+    </update>
+</mapper>

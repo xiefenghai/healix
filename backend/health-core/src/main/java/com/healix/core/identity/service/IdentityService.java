@@ -50,6 +50,14 @@ public class IdentityService {
         return account;
     }
 
+    public OpsAccount requireOpsById(String accountId) {
+        OpsAccount account = opsAccountMapper.findById(accountId);
+        if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
+            throw new BusinessException(401, "账号不可用");
+        }
+        return account;
+    }
+
     public boolean matches(String raw, String hash) {
         return passwordEncoder.matches(raw, hash);
     }
@@ -94,13 +102,14 @@ public class IdentityService {
         }
     }
 
+    /** 仅创建 C 端登录账号（不创建 people / 就诊人）。 */
     @Transactional
-    public PeopleProfile registerPeople(String tenantId, String username, String password, String displayName) {
-        if (tenantId == null) {
+    public PeopleAccount registerAccount(String tenantId, String username, String password) {
+        if (tenantId == null || tenantId.isBlank()) {
             throw new BusinessException(400, "请指定租户");
         }
         if (peopleAccountMapper.findByTenantAndUsername(tenantId, username) != null) {
-            throw new BusinessException("用户名已存在");
+            throw new BusinessException(409, "用户名已存在");
         }
         PeopleAccount account = new PeopleAccount();
         account.setTenantId(tenantId);
@@ -109,16 +118,33 @@ public class IdentityService {
         account.setStatus(EnableStatusEnum.ACTIVE.name());
         EntityMeta.onCreate(account);
         peopleAccountMapper.insert(account);
+        return account;
+    }
 
+    /**
+     * @deprecated 家庭账号模型下注册不再创建 people；请用 {@link #registerAccount}。
+     */
+    @Deprecated
+    @Transactional
+    public PeopleProfile registerPeople(String tenantId, String username, String password, String displayName) {
+        PeopleAccount account = registerAccount(tenantId, username, password);
         PeopleProfile profile = new PeopleProfile();
         profile.setTenantId(tenantId);
-        profile.setAccountId(account.getId());
+        profile.setAccountId(null);
         profile.setDisplayName(displayName != null ? displayName : username);
         profile.setNamePinyin(toPinyinKey(profile.getDisplayName()));
         profile.setAllergensJson("[]");
         EntityMeta.onCreate(profile);
         peopleProfileMapper.insert(profile);
         return profile;
+    }
+
+    public PeopleAccount requirePeopleAccountById(String accountId) {
+        PeopleAccount account = peopleAccountMapper.findById(accountId);
+        if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
+            throw new BusinessException(401, "用户名或密码错误");
+        }
+        return account;
     }
 
     public PeopleAccount requirePeopleAccount(String tenantId, String username) {
@@ -155,11 +181,20 @@ public class IdentityService {
     public PeopleProfile updatePeopleProfile(
             String peopleId, String displayName, String gender, LocalDate birthday, String allergensJson) {
         PeopleProfile profile = requirePeople(peopleId);
-        profile.setDisplayName(displayName);
-        profile.setNamePinyin(toPinyinKey(displayName));
-        profile.setGender(gender);
-        profile.setBirthday(birthday);
-        profile.setAllergensJson(allergensJson != null ? allergensJson : profile.getAllergensJson());
+        // 部分更新：请求未传的字段保持原值（C 端改性别时常不带 birthday，不能写成 null）
+        if (displayName != null) {
+            profile.setDisplayName(displayName);
+            profile.setNamePinyin(toPinyinKey(displayName));
+        }
+        if (gender != null) {
+            profile.setGender(gender);
+        }
+        if (birthday != null) {
+            profile.setBirthday(birthday);
+        }
+        if (allergensJson != null) {
+            profile.setAllergensJson(allergensJson);
+        }
         EntityMeta.onUpdate(profile);
         peopleProfileMapper.updateProfile(profile);
         return profile;

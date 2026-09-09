@@ -10,6 +10,24 @@
         WHERE username = #{username} AND is_deleted = 0
     </select>
 
+    <select id="findById" resultType="com.healix.core.identity.domain.OpsAccount">
+        SELECT pk_id, id, username, password_hash, display_name, role_code, status,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM ops_account
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="listByIds" resultType="com.healix.core.identity.domain.OpsAccount">
+        SELECT pk_id, id, username, password_hash, display_name, role_code, status,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM ops_account
+        WHERE is_deleted = 0
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
     <select id="countAll" resultType="int">
         SELECT COUNT(1) FROM ops_account WHERE is_deleted = 0
     </select>

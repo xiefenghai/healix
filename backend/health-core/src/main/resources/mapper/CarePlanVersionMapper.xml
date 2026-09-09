@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.careplan.mapper.CarePlanVersionMapper">
+
+    <sql id="cols">
+        pk_id, id, plan_id, version_no, schema_version, source, title,
+        exercise_json, diet_json, execution_json, context_snapshot_json, safety_flags_json,
+        published_at, published_by_staff_id, signed_by_staff_id, signed_at, sign_status,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_plan_version(
+            id, plan_id, version_no, schema_version, source, title,
+            exercise_json, diet_json, execution_json, context_snapshot_json, safety_flags_json,
+            published_at, published_by_staff_id, signed_by_staff_id, signed_at, sign_status,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{planId}, #{versionNo}, #{schemaVersion}, #{source}, #{title},
+            #{exerciseJson}, #{dietJson}, #{executionJson}, #{contextSnapshotJson}, #{safetyFlagsJson},
+            #{publishedAt}, #{publishedByStaffId}, #{signedByStaffId}, #{signedAt}, #{signStatus},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="findById" resultType="com.healix.core.careplan.domain.CarePlanVersion">
+        SELECT <include refid="cols"/> FROM care_plan_version WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="listByPlanId" resultType="com.healix.core.careplan.domain.CarePlanVersion">
+        SELECT <include refid="cols"/>
+        FROM care_plan_version
+        WHERE plan_id = #{planId}
+          AND is_deleted = 0
+        ORDER BY version_no DESC
+    </select>
+
+    <select id="maxVersionNo" resultType="java.lang.Integer">
+        SELECT MAX(version_no) FROM care_plan_version
+        WHERE plan_id = #{planId}
+          AND is_deleted = 0
+    </select>
+
+    <select id="listByIds" resultType="com.healix.core.careplan.domain.CarePlanVersion">
+        SELECT <include refid="cols"/>
+        FROM care_plan_version
+        WHERE is_deleted = 0
+          AND id IN
+          <foreach collection="ids" item="vid" open="(" separator="," close=")">
+              #{vid}
+          </foreach>
+    </select>
+
+    <update id="sign">
+        UPDATE care_plan_version
+        SET sign_status = 'SIGNED',
+            signed_by_staff_id = #{signedByStaffId},
+            signed_at = #{signedAt},
+            gmt_modified = #{signedAt}
+        WHERE id = #{id}
+          AND sign_status = 'UNSIGNED'
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE care_plan_version
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+</mapper>

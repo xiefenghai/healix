@@ -1,0 +1,108 @@
+收尾计划（2026-09-09 起 · 不含外部通道）
+
+进度：W1–W4 完成；W6 大部分完成（配额/flag/白标/MFA/医生基础签署）；W5 未开始。
+患者合并：后端 API 已有，前端入口未做。详见表述以 `未闭环.md` 为准。
+已完成：① B 一键提醒 ② quarterAdvice→PLAN_CREATE ③ 报告 AI 摘要 ④ 报告 PDF 导出
+        ⑤ 随访三类专属表单 ⑥ 定期排期 Job ⑦ 入组基线指标 ⑧ C 端回访申请
+        ⑨ 用药按次（BID/TID）⑩ 依从日快照 + 机构趋势 ⑪ 检查单 OCR 预填（B/C 录入页）
+        ⑭ 配额 + feature flag + 白标（Ops 治理面板）⑮ MFA
+        ⑬ 医生基础（角色/主责/方案签署·PLAN_REVIEW，非完整独立临床流程）
+
+说明：检查单 OCR 的「拍照预填 → 人工确认」主路径已通（ExamOcrRecognitionService + ocr-exam SKILL）；
+Care Copilot 对话里的 OcrExamSkill 仍是占位跳转，不影响录入闭环。
+
+PDF 实现偏离原计划：原定 openhtmltopdf 服务端渲染，因中文必须内嵌 10MB+ CJK 字体
+（缺字体会渲染成方框），改为前端构造打印文档 + 浏览器打印引擎导出，零新增依赖，
+中文与分页由系统字体保证。B 端报告弹窗与 C 端报告详情各有入口。
+
+明确不做（依赖外部服务商，暂缺资质/账号）
+• SMS 短信、小程序订阅消息、公众号模板消息、企微
+• 短信 OTP 激活（依赖 SMS）
+• 微信小程序形态迁移（现 Web/H5）
+• 计费对接真实支付渠道（仅做配额与白标配置层）
+
+---
+
+W1 触达与联动（站内可做，最高性价比）
+
+1. B 一键提醒患者（STAFF_NUDGE → IN_APP）
+现状：NotifyEventType.STAFF_NUDGE 与 NotifyChannelRouter 已支持 IN_APP，但无任何调用点
+做法：
+• NotifyFacade 发 STAFF_NUDGE，dedupeKey = peopleId:staffId:yyyy-MM-dd（同日同员工同患者去重，UPSERT_BODY_KEEP_READ）
+• 深链：方案未完成 → /care-plan；仅用药未完成 → /medications；否则 /home
+• 入口：依从性看板催办下拉新增「提醒患者」；工作台 PLAN_NUDGE 详情内也可发
+• 未绑定 C 账号时返回明确提示（recipients 为空）
+
+2. 三月报 quarterAdvice → 自动开 PLAN_CREATE
+现状：quarterAdvice 仅写入 narrative，无联动
+做法：publish() 中 QUARTER 且有 quarterAdvice → workspaceTaskGenerator.ensurePlanCreateFromFollowup 同款逻辑
+（新增 ensurePlanCreateFromReport，摘要「三月报建议调整方案」，payload 带 reportId）
+
+---
+
+W2 管理报告收尾
+
+3. AI 摘要
+现状：health-agent 已有 LlmClient(DeepSeek) + skill 框架
+做法：新增 ReportSummarySkill，输入报告 content 的指标/依从/随访聚合，输出 staffComment 草稿
+• B 端报告页「AI 生成点评」按钮，结果填入可编辑框，不直接发布
+• LLM 不可用时降级为模板文案（现有 templateTier 逻辑）
+
+4. PDF 导出
+做法：服务端渲染（HTML → PDF，openhtmltopdf），复用 HealthReportBody 的字段结构
+• GET /api/b/v1/health-reports/{id}/pdf；C 端已发布报告亦可下载
+
+---
+
+W3 随访深化
+
+5. 专属表单 Schema
+现状：PLAN_ADHERENCE / MEDICATION / SYMPTOM_METRIC 共用 validateGenericSection（仅 content）
+做法：各自 section 字段 + 校验 + 摘要 + B 端表单组件
+• PLAN_ADHERENCE：执行率自评、未完成主因、拟调整项
+• MEDICATION：漏服频次、漏服原因、不良反应、是否需调药
+• SYMPTOM_METRIC：症状清单、指标复测值、是否需就诊
+
+6. 定期随访自动排期 Job
+做法：新增 FOLLOWUP_SCHEDULE_SCAN；按病种/入组时长规则生成 OPEN PERIODIC + FOLLOW_UP
+• 去重：同患者同周期只排一次；已有 OPEN 随访则跳过
+
+7. 入组随访基线指标录入
+做法：ONBOARDING section 增加基线指标（血压/血糖/身高体重等），办结时写入 vital_record（source=FOLLOWUP）
+
+8. C 端回访/预约请求
+做法：C 端提交「希望被回访」→ 生成工作台 FOLLOW_UP（source=PATIENT_REQUEST）
+
+---
+
+W4 观测与依从 — DONE
+
+9. 用药依从按 BID/TID 展开 — DONE
+   MedicationFrequencySupport.dosesPerDay；看板/患者依从/C 打卡按次；med_rate 按次达标率
+
+10. 依从性日快照 + 机构趋势 — DONE
+    adherence_daily_snapshot + ADHERENCE_SNAPSHOT Job；看板 /api/b/v1/adherence/trend 趋势图
+
+11. 检查单 OCR 增强 — DONE（录入预填主路径）
+    ExamOcrRecognitionService + skills/ocr-exam；B/C 检查录入页上传预填、人审后落库
+    仍弱：对话侧 OcrExamSkill 占位（引导去录入页），非主闭环
+
+---
+
+W5 C 端发现助手
+
+12. /discover 接业务工具
+现状：仅前端闲聊
+做法：新增 PatientAgentGateway + 工具（查档案/方案/用药/报告/随访），复用 StaffAgentGateway 模式与 SafetyValidator
+
+---
+
+W6 角色与 SaaS
+
+13. 医生角色流程（角色已预留，补权限与页面）
+14. 租户配额 + feature flag（Ops 可配，服务端拦截）
+15. MFA（B/Ops 登录二次校验，TOTP）— DONE
+   后端：account_mfa + MfaService；登录 assertLoginCode；/session/mfa setup·enable·disable
+   前端：登录页按需弹出动态码；顶栏「安全设置」扫码绑定 / 验证启用 / 验证关闭
+16. 患者合并 S2
+17. 白标配置（租户 logo/主色，不含计费）

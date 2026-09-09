@@ -28,6 +28,9 @@ import com.healix.core.identity.mapper.StaffRoleBindingMapper;
 import com.healix.core.org.domain.Organization;
 import com.healix.core.org.mapper.OrganizationMapper;
 import com.healix.core.archive.service.BasicArchiveService;
+import com.healix.core.govern.enums.QuotaKeyEnum;
+import com.healix.core.govern.service.QuotaService;
+import com.healix.core.patientcard.mapper.AccountPatientMapper;
 import com.healix.core.people.domain.PeopleIdentity;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.patient.domain.PatientCareAssignment;
@@ -45,6 +48,7 @@ import com.healix.core.portal.enums.PortalEnum;
 import com.healix.core.workspace.dto.CareTeamListItem;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.dto.OrgStaffItem;
+import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,6 +57,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,6 +82,9 @@ public class OrgWorkspaceService {
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
     private final IdCardCrypto idCardCrypto;
+    private final AccountPatientMapper accountPatientMapper;
+    private final ObjectProvider<WorkspaceTaskGenerator> workspaceTaskGenerator;
+    private final QuotaService quotaService;
 
     public void requireOrgWorkspaceAccess(String orgId) {
         String tenantId = requireTenantId();
@@ -175,6 +183,7 @@ public class OrgWorkspaceService {
         if (staffAccountMapper.findByUsername(username.trim()) != null) {
             throw new BusinessException(409, "员工用户名已存在");
         }
+        quotaService.assertAvailable(tenantId, QuotaKeyEnum.STAFF_TOTAL, 1);
         StaffAccount account = new StaffAccount();
         account.setUsername(username.trim());
         account.setPasswordHash(passwordEncoder.encode(password));
@@ -382,6 +391,7 @@ public class OrgWorkspaceService {
             assertOrgClinicalStaff(orgId, primaryDoctorStaffId, StaffRoleEnum.DOCTOR);
         }
         boolean cmChanged = !primaryCareManagerStaffId.equals(team.getPrimaryCareManagerStaffId());
+        String oldCm = team.getPrimaryCareManagerStaffId();
         team.setPrimaryCareManagerStaffId(primaryCareManagerStaffId);
         team.setPrimaryDoctorStaffId(primaryDoctorStaffId);
         EntityMeta.onUpdate(team);
@@ -392,6 +402,15 @@ public class OrgWorkspaceService {
         }
         if (cmChanged) {
             syncCareAssignmentForTeamPatients(team);
+            WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+            if (gen != null) {
+                for (CareTeamMember member : careTeamMemberMapper.listByTeam(team.getId())) {
+                    if (CareTeamMemberTypeEnum.PATIENT.matches(member.getMemberType())) {
+                        gen.onPrimaryCareManagerChanged(
+                                orgId, member.getPeopleId(), oldCm, primaryCareManagerStaffId);
+                    }
+                }
+            }
         }
         auditService.record(
                 PortalEnum.B.code(),
@@ -454,6 +473,16 @@ public class OrgWorkspaceService {
         careTeamMemberMapper.insert(member);
         upsertCareAssignment(team.getTenantId(), patientId, orgId, team.getPrimaryCareManagerStaffId());
         auditAddMember(actorAccountId, teamId, member);
+        WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+        if (gen != null) {
+            StaffProfile actor = staffProfileMapper.findByAccountId(actorAccountId);
+            gen.onPatientJoinedTeam(
+                    team.getTenantId(),
+                    orgId,
+                    patientId,
+                    team.getPrimaryCareManagerStaffId(),
+                    actor == null ? null : actor.getId());
+        }
         return member;
     }
 
@@ -478,6 +507,12 @@ public class OrgWorkspaceService {
         }
         EntityMeta.onSoftDelete(member);
         careTeamMemberMapper.softDelete(memberId, member.getGmtDeleted(), member.getGmtModified());
+        if (CareTeamMemberTypeEnum.PATIENT.matches(member.getMemberType())) {
+            WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+            if (gen != null) {
+                gen.onPatientLeftTeam(orgId, member.getPeopleId());
+            }
+        }
         auditService.record(
                 PortalEnum.B.code(),
                 actorAccountId,
@@ -493,6 +528,25 @@ public class OrgWorkspaceService {
     public List<OrgPatientListItem> listOrgPatients(
             String orgId, String keyword, String careTeamId, Boolean unassigned) {
         requireOrgWorkspaceAccess(orgId);
+        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned);
+    }
+
+    /**
+     * 系统 / Job 用：不依赖 {@link RequestContext}，只校验机构属于给定租户。
+     *
+     * <p>平台定时任务禁止挂登录态；依从日快照等需要同一套患者宇宙时走这里。
+     */
+    public List<OrgPatientListItem> listOrgPatientsSystem(
+            String tenantId, String orgId, String keyword, String careTeamId, Boolean unassigned) {
+        Organization org = organizationMapper.findById(orgId);
+        if (org == null || !tenantId.equals(org.getTenantId())) {
+            throw new BusinessException(404, "机构不存在");
+        }
+        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned);
+    }
+
+    private List<OrgPatientListItem> listOrgPatientsInternal(
+            String orgId, String keyword, String careTeamId, Boolean unassigned) {
         List<PatientOrgMembership> memberships = membershipMapper.listActiveByOrg(orgId);
         List<OrgPatientListItem> items = new ArrayList<>();
         for (PatientOrgMembership m : memberships) {
@@ -603,6 +657,20 @@ public class OrgWorkspaceService {
                 if (profile == null) {
                     throw new BusinessException(500, "证件数据异常，请联系管理员");
                 }
+                // 历史档案可能缺生日/性别：用本次证件解析结果回填
+                boolean touched = false;
+                if (!StringUtils.hasText(profile.getGender()) && payload.gender() != null) {
+                    profile.setGender(payload.gender());
+                    touched = true;
+                }
+                if (profile.getBirthday() == null && payload.birthday() != null) {
+                    profile.setBirthday(payload.birthday());
+                    touched = true;
+                }
+                if (touched) {
+                    EntityMeta.onUpdate(profile);
+                    peopleProfileMapper.updateProfile(profile);
+                }
                 resolvedType = existing.getIdentityType();
                 resolvedMask = existing.getIdentityValueMask();
             } else {
@@ -640,13 +708,14 @@ public class OrgWorkspaceService {
 
     private OrgPatientListItem toPatientItem(
             PeopleProfile p, PatientOrgMembership m, CareTeamMember teamMember) {
+        PeopleIdentity id = peopleIdentityMapper.findPrimaryMask(p.getId());
+        backfillDemographicsFromIdentity(p, id);
         OrgPatientListItem item = new OrgPatientListItem();
         item.setPeopleId(p.getId());
         item.setDisplayName(p.getDisplayName());
         item.setGender(p.getGender());
         item.setBirthday(p.getBirthday());
         item.setJoinedAt(m.getJoinedAt());
-        PeopleIdentity id = peopleIdentityMapper.findPrimaryMask(p.getId());
         if (id != null) {
             item.setIdentityMask(id.getIdentityValueMask());
             item.setIdentityType(id.getIdentityType());
@@ -658,10 +727,55 @@ public class OrgWorkspaceService {
                 item.setCareTeamName(team.getName());
             }
         }
+        int cardCount = accountPatientMapper.countByPeople(p.getId());
+        item.setClientCardCount(cardCount);
+        item.setClientLinked(cardCount > 0);
         return item;
     }
 
+    /**
+     * 身份证建档后若 profile 缺生日/性别（历史数据或证件复用路径），从密文回填并落库。
+     */
+    private void backfillDemographicsFromIdentity(PeopleProfile profile, PeopleIdentity identity) {
+        if (profile == null || identity == null) {
+            return;
+        }
+        if (!PeopleIdentityTypeEnum.ID_CARD.name().equals(identity.getIdentityType())) {
+            return;
+        }
+        boolean needGender = !StringUtils.hasText(profile.getGender());
+        boolean needBirthday = profile.getBirthday() == null;
+        if (!needGender && !needBirthday) {
+            return;
+        }
+        if (!StringUtils.hasText(identity.getIdentityValueCipher())) {
+            return;
+        }
+        try {
+            String plain = idCardCrypto.decrypt(identity.getIdentityValueCipher());
+            String idNo = plain;
+            int sep = plain.indexOf('|');
+            if (sep >= 0 && sep + 1 < plain.length()) {
+                idNo = plain.substring(sep + 1);
+            }
+            if (!IdCardUtil.isValid(idNo)) {
+                return;
+            }
+            if (needGender) {
+                profile.setGender(IdCardUtil.parseGenderCode(idNo));
+            }
+            if (needBirthday) {
+                profile.setBirthday(IdCardUtil.parseBirthday(idNo));
+            }
+            EntityMeta.onUpdate(profile);
+            peopleProfileMapper.updateProfile(profile);
+        } catch (Exception ignored) {
+            // 解密失败不阻断列表/详情；年龄仍显示为 -
+        }
+    }
+
     private PeopleProfile newPeople(String tenantId, String name, String gender, LocalDate birthday) {
+        quotaService.assertAvailable(tenantId, QuotaKeyEnum.PATIENT_TOTAL, 1);
         PeopleProfile profile = new PeopleProfile();
         profile.setTenantId(tenantId);
         profile.setAccountId(null);

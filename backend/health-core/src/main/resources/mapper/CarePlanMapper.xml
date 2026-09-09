@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.careplan.mapper.CarePlanMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, status, title, goal_summary, disease_tags_json,
+        current_version_id, version, created_by_staff_id, updated_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_plan(
+            id, tenant_id, people_id, status, title, goal_summary, disease_tags_json,
+            current_version_id, version, created_by_staff_id, updated_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{status}, #{title}, #{goalSummary}, #{diseaseTagsJson},
+            #{currentVersionId}, #{version}, #{createdByStaffId}, #{updatedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE care_plan
+        SET status = #{status},
+            title = #{title},
+            goal_summary = #{goalSummary},
+            disease_tags_json = #{diseaseTagsJson},
+            current_version_id = #{currentVersionId},
+            version = #{version},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.careplan.domain.CarePlan">
+        SELECT <include refid="cols"/> FROM care_plan WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByTenantAndPeople" resultType="com.healix.core.careplan.domain.CarePlan">
+        SELECT <include refid="cols"/>
+        FROM care_plan
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listActiveByTenantAndPeopleIds" resultType="com.healix.core.careplan.domain.CarePlan">
+        SELECT <include refid="cols"/>
+        FROM care_plan
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND status = 'ACTIVE'
+          AND current_version_id IS NOT NULL
+          AND current_version_id != ''
+          AND people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+    </select>
+</mapper>

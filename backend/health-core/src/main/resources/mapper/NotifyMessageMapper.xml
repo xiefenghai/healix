@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.notify.mapper.NotifyMessageMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, audience, recipient_id, people_id, org_id,
+        event_type, category, dedupe_key, title, body, link_path, payload_json,
+        priority, read_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO notify_message(
+            id, tenant_id, audience, recipient_id, people_id, org_id,
+            event_type, category, dedupe_key, title, body, link_path, payload_json,
+            priority, read_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{audience}, #{recipientId}, #{peopleId}, #{orgId},
+            #{eventType}, #{category}, #{dedupeKey}, #{title}, #{body}, #{linkPath}, #{payloadJson},
+            #{priority}, #{readAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateBodyKeepRead">
+        UPDATE notify_message
+        SET title = #{title},
+            body = #{body},
+            link_path = #{linkPath},
+            payload_json = #{payloadJson},
+            priority = #{priority},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.notify.domain.NotifyMessage">
+        SELECT <include refid="cols"/>
+        FROM notify_message
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <select id="findByDedupe" resultType="com.healix.core.notify.domain.NotifyMessage">
+        SELECT <include refid="cols"/>
+        FROM notify_message
+        WHERE tenant_id = #{tenantId}
+          AND audience = #{audience}
+          AND recipient_id = #{recipientId}
+          AND event_type = #{eventType}
+          AND dedupe_key = #{dedupeKey}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByRecipient" resultType="com.healix.core.notify.domain.NotifyMessage">
+        SELECT <include refid="cols"/>
+        FROM notify_message
+        WHERE tenant_id = #{tenantId}
+          AND audience = #{audience}
+          AND recipient_id = #{recipientId}
+          AND is_deleted = 0
+          <if test="peopleId != null and peopleId != ''">
+              AND people_id = #{peopleId}
+          </if>
+          <if test="unreadOnly">
+              AND read_at IS NULL
+          </if>
+        ORDER BY gmt_created DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countByRecipient" resultType="long">
+        SELECT COUNT(1)
+        FROM notify_message
+        WHERE tenant_id = #{tenantId}
+          AND audience = #{audience}
+          AND recipient_id = #{recipientId}
+          AND is_deleted = 0
+          <if test="peopleId != null and peopleId != ''">
+              AND people_id = #{peopleId}
+          </if>
+          <if test="unreadOnly">
+              AND read_at IS NULL
+          </if>
+    </select>
+
+    <update id="markRead">
+        UPDATE notify_message
+        SET read_at = #{readAt},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND recipient_id = #{recipientId}
+          AND is_deleted = 0
+          AND read_at IS NULL
+    </update>
+
+    <update id="markAllRead">
+        UPDATE notify_message
+        SET read_at = #{readAt},
+            gmt_modified = #{gmtModified}
+        WHERE tenant_id = #{tenantId}
+          AND audience = #{audience}
+          AND recipient_id = #{recipientId}
+          AND is_deleted = 0
+          AND read_at IS NULL
+    </update>
+</mapper>

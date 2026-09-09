@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.careplan.mapper.CarePlanTaskMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, plan_id, plan_version_id,
+        task_code, title, category, frequency, time_slot, related_ref,
+        enabled, sort_order, payload_json,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_plan_task(
+            id, tenant_id, people_id, plan_id, plan_version_id,
+            task_code, title, category, frequency, time_slot, related_ref,
+            enabled, sort_order, payload_json,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{planId}, #{planVersionId},
+            #{taskCode}, #{title}, #{category}, #{frequency}, #{timeSlot}, #{relatedRef},
+            #{enabled}, #{sortOrder}, #{payloadJson},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="listByVersionId" resultType="com.healix.core.careplan.domain.CarePlanTask">
+        SELECT <include refid="cols"/>
+        FROM care_plan_task
+        WHERE plan_version_id = #{planVersionId}
+          AND is_deleted = 0
+        ORDER BY sort_order ASC, gmt_created ASC
+    </select>
+
+    <select id="listActiveByPeople" resultType="com.healix.core.careplan.domain.CarePlanTask">
+        SELECT t.pk_id, t.id, t.tenant_id, t.people_id, t.plan_id, t.plan_version_id,
+               t.task_code, t.title, t.category, t.frequency, t.time_slot, t.related_ref,
+               t.enabled, t.sort_order, t.payload_json,
+               t.is_deleted, t.gmt_created, t.gmt_modified, t.gmt_deleted
+        FROM care_plan_task t
+        INNER JOIN care_plan p ON p.id = t.plan_id AND p.is_deleted = 0
+        WHERE t.tenant_id = #{tenantId}
+          AND t.people_id = #{peopleId}
+          AND t.is_deleted = 0
+          AND t.enabled = 1
+          AND p.status = 'ACTIVE'
+          AND p.current_version_id = t.plan_version_id
+        ORDER BY t.sort_order ASC, t.gmt_created ASC
+    </select>
+
+    <select id="listActiveByTenantAndPeopleIds" resultType="com.healix.core.careplan.domain.CarePlanTask">
+        SELECT t.pk_id, t.id, t.tenant_id, t.people_id, t.plan_id, t.plan_version_id,
+               t.task_code, t.title, t.category, t.frequency, t.time_slot, t.related_ref,
+               t.enabled, t.sort_order, t.payload_json,
+               t.is_deleted, t.gmt_created, t.gmt_modified, t.gmt_deleted
+        FROM care_plan_task t
+        INNER JOIN care_plan p ON p.id = t.plan_id AND p.is_deleted = 0
+        WHERE t.tenant_id = #{tenantId}
+          AND t.is_deleted = 0
+          AND t.enabled = 1
+          AND p.status = 'ACTIVE'
+          AND p.current_version_id = t.plan_version_id
+          AND t.people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+        ORDER BY t.people_id ASC, t.sort_order ASC, t.gmt_created ASC
+    </select>
+</mapper>

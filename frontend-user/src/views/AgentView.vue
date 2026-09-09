@@ -1,34 +1,54 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../api/http'
 
+interface QuickAction {
+  label: string
+  path: string
+}
+
+interface Turn {
+  role: 'user' | 'assistant'
+  text: string
+  actions?: QuickAction[]
+}
+
+const router = useRouter()
 const message = ref('')
 const loading = ref(false)
-const turns = ref<Array<{ role: 'user' | 'assistant'; text: string }>>([
+const turns = ref<Turn[]>([
   {
     role: 'assistant',
-    text: '你好，我是你的健康助手。想聊聊今日步数、血糖，或需要一点鼓励都可以告诉我～',
+    text: '你好，我是你的健康助手。我能看到你的方案打卡、用药和指标记录，问我「今天还有什么要做」试试～',
   },
 ])
 const listRef = ref<HTMLElement | null>(null)
 
-async function send() {
-  const text = message.value.trim()
-  if (!text) return
+const presets = ['今天还有什么要做', '我的药今天打卡了吗', '最近血压怎么样', '有待办随访吗', '看看我的管理报告']
+
+function scrollToBottom() {
+  listRef.value?.scrollTo({ top: listRef.value.scrollHeight, behavior: 'smooth' })
+}
+
+async function send(preset?: string) {
+  const text = (preset ?? message.value).trim()
+  if (!text || loading.value) return
   turns.value.push({ role: 'user', text })
   message.value = ''
   loading.value = true
   await nextTick()
-  listRef.value?.scrollTo({ top: listRef.value.scrollHeight, behavior: 'smooth' })
+  scrollToBottom()
   try {
-    const res = await api<{ data: { reply?: string } }>('/api/c/v1/agent/chat', {
+    const res = await api<{ data: { reply?: string; actions?: QuickAction[] } }>('/api/c/v1/agent/chat', {
       method: 'POST',
       body: JSON.stringify({ message: text }),
     })
     turns.value.push({
       role: 'assistant',
       text: res.data.reply || '我在呢，稍后再试试～',
+      actions: res.data.actions ?? [],
     })
   } catch (e) {
     showToast(e instanceof Error ? e.message : '对话失败')
@@ -39,8 +59,12 @@ async function send() {
   } finally {
     loading.value = false
     await nextTick()
-    listRef.value?.scrollTo({ top: listRef.value.scrollHeight, behavior: 'smooth' })
+    scrollToBottom()
   }
+}
+
+function go(action: QuickAction) {
+  router.push(action.path)
 }
 </script>
 
@@ -51,9 +75,35 @@ async function send() {
       <p>私密对话，机构不可见</p>
     </header>
     <div ref="listRef" class="chat">
-      <div v-for="(t, i) in turns" :key="i" class="bubble" :class="t.role">
-        {{ t.text }}
-      </div>
+      <template v-for="(t, i) in turns" :key="i">
+        <div class="bubble" :class="t.role">{{ t.text }}</div>
+        <div v-if="t.actions?.length" class="actions">
+          <van-button
+            v-for="a in t.actions"
+            :key="a.path"
+            round
+            size="mini"
+            type="primary"
+            plain
+            @click="go(a)"
+          >
+            {{ a.label }}
+          </van-button>
+        </div>
+      </template>
+    </div>
+    <div class="presets">
+      <van-button
+        v-for="p in presets"
+        :key="p"
+        round
+        size="mini"
+        plain
+        :disabled="loading"
+        @click="send(p)"
+      >
+        {{ p }}
+      </van-button>
     </div>
     <div class="composer">
       <van-field
@@ -62,9 +112,9 @@ async function send() {
         autosize
         type="textarea"
         placeholder="和助手说点什么…"
-        @keyup.enter.exact.prevent="send"
+        @keyup.enter.exact.prevent="send()"
       />
-      <van-button round type="primary" size="small" :loading="loading" @click="send">发送</van-button>
+      <van-button round type="primary" size="small" :loading="loading" @click="send()">发送</van-button>
     </div>
   </div>
 </template>
@@ -107,6 +157,22 @@ header p { margin: 6px 0 12px; color: var(--hx-muted); font-size: 13px; }
   color: #fff;
   border-bottom-right-radius: 6px;
 }
+.actions {
+  align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -4px;
+}
+.presets {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 2px 10px;
+  scrollbar-width: none;
+}
+.presets::-webkit-scrollbar { display: none; }
+.presets :deep(.van-button) { flex: 0 0 auto; }
 .composer {
   display: grid;
   grid-template-columns: 1fr auto;

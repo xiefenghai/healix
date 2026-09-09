@@ -40,6 +40,21 @@ export function hasRole(role: string): boolean {
   return getRoles().includes(role)
 }
 
+/** 从 JWT 解析当前员工 staffId（B 端机构工作台）。 */
+export function getStaffId(): string | null {
+  const token = getToken()
+  if (!token) return null
+  try {
+    const part = token.split('.')[1]
+    if (!part) return null
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+    const payload = JSON.parse(json) as { staffId?: unknown }
+    return typeof payload.staffId === 'string' && payload.staffId ? payload.staffId : null
+  } catch {
+    return null
+  }
+}
+
 export function getOpsRole(): string | null {
   return localStorage.getItem(OPS_ROLE_KEY)
 }
@@ -117,6 +132,22 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
 
   const res = await fetch(path, { ...options, headers })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || (typeof data.code === 'number' && data.code !== 0)) {
+    throw new Error(data.message || `HTTP ${res.status}`)
+  }
+  return data as T
+}
+
+export async function apiUpload<T>(path: string, file: File, fieldName = 'file'): Promise<T> {
+  const form = new FormData()
+  form.append(fieldName, file)
+  const headers = new Headers()
+  const token = getToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  const res = await fetch(path, { method: 'POST', body: form, headers })
   const data = await res.json().catch(() => ({}))
   if (!res.ok || (typeof data.code === 'number' && data.code !== 0)) {
     throw new Error(data.message || `HTTP ${res.status}`)

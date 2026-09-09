@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.govern.mapper.TenantQuotaUsageMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, quota_key, used_value, limit_value, period_key,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="find" resultType="com.healix.core.govern.domain.TenantQuotaUsage">
+        SELECT <include refid="cols"/>
+        FROM tenant_quota_usage
+        WHERE tenant_id = #{tenantId}
+          AND quota_key = #{quotaKey}
+          AND period_key = #{periodKey}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByTenant" resultType="com.healix.core.govern.domain.TenantQuotaUsage">
+        SELECT <include refid="cols"/>
+        FROM tenant_quota_usage
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+        ORDER BY quota_key ASC, period_key DESC
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO tenant_quota_usage(
+            id, tenant_id, quota_key, used_value, limit_value, period_key,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{quotaKey}, #{usedValue}, #{limitValue}, #{periodKey},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+        ON DUPLICATE KEY UPDATE
+            used_value = used_value + VALUES(used_value),
+            gmt_modified = VALUES(gmt_modified)
+    </insert>
+
+    <update id="addUsed">
+        UPDATE tenant_quota_usage
+        SET used_value = GREATEST(used_value + #{delta}, 0),
+            gmt_modified = #{gmtModified}
+        WHERE tenant_id = #{tenantId}
+          AND quota_key = #{quotaKey}
+          AND period_key = #{periodKey}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateUsed">
+        UPDATE tenant_quota_usage
+        SET used_value = #{usedValue},
+            gmt_modified = #{gmtModified}
+        WHERE tenant_id = #{tenantId}
+          AND quota_key = #{quotaKey}
+          AND period_key = #{periodKey}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateLimit">
+        UPDATE tenant_quota_usage
+        SET limit_value = #{limitValue},
+            gmt_modified = #{gmtModified}
+        WHERE tenant_id = #{tenantId}
+          AND quota_key = #{quotaKey}
+          AND period_key = #{periodKey}
+          AND is_deleted = 0
+    </update>
+</mapper>

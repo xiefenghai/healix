@@ -41,6 +41,7 @@ logs/
 
 # Spring
 spring-boot-devtools.properties
+backend/health-app/src/main/resources/application-local.yml
 
 # Test / coverage
 .jacoco/

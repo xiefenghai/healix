@@ -34,6 +34,7 @@ public class JacksonConfig {
         };
         return builder -> builder
                 .serializerByType(Long.class, serializer)
-                .serializerByType(Long.TYPE, serializer);
+                .serializerByType(Long.TYPE, serializer)
+                .featuresToDisable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 }

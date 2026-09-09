@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.careplan.mapper.CarePlanDraftMapper">
+
+    <sql id="cols">
+        pk_id, id, plan_id, tenant_id, people_id, version, schema_version, source,
+        exercise_json, diet_json, execution_json, safety_flags_json, context_snapshot_json,
+        base_version_id, generation_log_id, updated_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_plan_draft(
+            id, plan_id, tenant_id, people_id, version, schema_version, source,
+            exercise_json, diet_json, execution_json, safety_flags_json, context_snapshot_json,
+            base_version_id, generation_log_id, updated_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{planId}, #{tenantId}, #{peopleId}, #{version}, #{schemaVersion}, #{source},
+            #{exerciseJson}, #{dietJson}, #{executionJson}, #{safetyFlagsJson}, #{contextSnapshotJson},
+            #{baseVersionId}, #{generationLogId}, #{updatedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE care_plan_draft
+        SET version = #{version},
+            schema_version = #{schemaVersion},
+            source = #{source},
+            exercise_json = #{exerciseJson},
+            diet_json = #{dietJson},
+            execution_json = #{executionJson},
+            safety_flags_json = #{safetyFlagsJson},
+            context_snapshot_json = #{contextSnapshotJson},
+            base_version_id = #{baseVersionId},
+            generation_log_id = #{generationLogId},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE care_plan_draft
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.careplan.domain.CarePlanDraft">
+        SELECT <include refid="cols"/> FROM care_plan_draft WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByPlanId" resultType="com.healix.core.careplan.domain.CarePlanDraft">
+        SELECT <include refid="cols"/>
+        FROM care_plan_draft
+        WHERE plan_id = #{planId}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+</mapper>

@@ -5,9 +5,14 @@
 SET NAMES utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS sys_job_run;
+DROP TABLE IF EXISTS sys_job_def;
 DROP TABLE IF EXISTS feature_flag;
 DROP TABLE IF EXISTS tenant_quota_usage;
 DROP TABLE IF EXISTS intervention_record;
+DROP TABLE IF EXISTS follow_up_form;
+DROP TABLE IF EXISTS followup_record;
+DROP TABLE IF EXISTS workspace_task;
 DROP TABLE IF EXISTS follow_up_task;
 DROP TABLE IF EXISTS followup_task;
 DROP TABLE IF EXISTS alert_ticket;
@@ -27,6 +32,8 @@ DROP TABLE IF EXISTS sys_dict;
 DROP TABLE IF EXISTS people_basic_archive;
 DROP TABLE IF EXISTS people_care_assignment;
 DROP TABLE IF EXISTS people_org_membership;
+DROP TABLE IF EXISTS people_activation_invite;
+DROP TABLE IF EXISTS account_patient;
 DROP TABLE IF EXISTS people_identity;
 DROP TABLE IF EXISTS people_profile;
 DROP TABLE IF EXISTS people_account;

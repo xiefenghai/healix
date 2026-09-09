@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.medication.mapper.PeopleMedicationIntakeMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, medication_id, intake_date, time_slot, status, note,
+        recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_medication_intake(
+            id, tenant_id, people_id, medication_id, intake_date, time_slot, status, note,
+            recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{medicationId}, #{intakeDate}, #{timeSlot}, #{status}, #{note},
+            #{recordedByStaffId}, #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE people_medication_intake
+        SET status = #{status},
+            note = #{note},
+            recorded_by_staff_id = #{recordedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findByMedDateSlot" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
+        SELECT <include refid="cols"/>
+        FROM people_medication_intake
+        WHERE medication_id = #{medicationId}
+          AND intake_date = #{intakeDate}
+          AND time_slot = #{timeSlot}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByMedication" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
+        SELECT <include refid="cols"/>
+        FROM people_medication_intake
+        WHERE medication_id = #{medicationId}
+          AND is_deleted = 0
+        <if test="from != null">
+          AND intake_date &gt;= #{from}
+        </if>
+        <if test="to != null">
+          AND intake_date &lt;= #{to}
+        </if>
+        ORDER BY intake_date DESC, time_slot ASC
+    </select>
+
+    <select id="listByPeopleDate" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
+        SELECT <include refid="cols"/>
+        FROM people_medication_intake
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND intake_date = #{intakeDate}
+          AND is_deleted = 0
+        ORDER BY medication_id, time_slot
+    </select>
+
+    <select id="listByTenantPeopleIdsDate" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
+        SELECT <include refid="cols"/>
+        FROM people_medication_intake
+        WHERE tenant_id = #{tenantId}
+          AND intake_date = #{intakeDate}
+          AND is_deleted = 0
+          AND people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+        ORDER BY people_id, medication_id, time_slot
+    </select>
+
+    <select id="listByPeopleRange" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
+        SELECT <include refid="cols"/>
+        FROM people_medication_intake
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+          AND intake_date &gt;= #{from}
+          AND intake_date &lt;= #{to}
+        ORDER BY intake_date ASC, medication_id, time_slot
+    </select>
+</mapper>

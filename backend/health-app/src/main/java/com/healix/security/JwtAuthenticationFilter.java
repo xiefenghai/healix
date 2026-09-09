@@ -4,6 +4,8 @@ import com.healix.common.context.RequestContext;
 import com.healix.common.context.RequestContextHolder;
 import com.healix.core.portal.enums.PortalEnum;
 import io.jsonwebtoken.Claims;
+import jakarta.servlet.AsyncEvent;
+import jakarta.servlet.AsyncListener;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,7 +16,9 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.concurrent.DelegatingSecurityContextRunnable;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -44,6 +48,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Set<String> authorities = Set.of("ROLE_" + aud.toUpperCase());
                 if (PortalEnum.C.matchesCode(aud)) {
                     ctx.setPatientId(asString(claims.get("patientId")));
+                    ctx.setActivePatientCardId(asString(claims.get("activePatientCardId")));
                     ctx.setHomeTenantId(asString(claims.get("homeTenantId")));
                     ctx.setTenantId(ctx.getHomeTenantId());
                 } else if (PortalEnum.B.matchesCode(aud)) {
@@ -70,9 +75,59 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
             filterChain.doFilter(request, response);
         } finally {
-            RequestContextHolder.clear();
-            SecurityContextHolder.clearContext();
+            if (request.isAsyncStarted()) {
+                request.getAsyncContext().addListener(new AsyncListener() {
+                    @Override
+                    public void onComplete(AsyncEvent event) {
+                        clearContext();
+                    }
+
+                    @Override
+                    public void onTimeout(AsyncEvent event) {
+                        clearContext();
+                    }
+
+                    @Override
+                    public void onError(AsyncEvent event) {
+                        clearContext();
+                    }
+
+                    @Override
+                    public void onStartAsync(AsyncEvent event) {
+                        // no-op
+                    }
+                });
+            } else {
+                clearContext();
+            }
         }
+    }
+
+    private static void clearContext() {
+        RequestContextHolder.clear();
+        SecurityContextHolder.clearContext();
+    }
+
+    /** 在异步线程中延续当前请求的 Security / Request 上下文（SSE 流式任务使用）。 */
+    public static Runnable wrapAsync(Runnable task) {
+        SecurityContext securityContext = SecurityContextHolder.getContext();
+        RequestContext requestContext = RequestContextHolder.get();
+        Runnable wrapped = new DelegatingSecurityContextRunnable(task, securityContext);
+        return () -> {
+            RequestContext previous = RequestContextHolder.get();
+            try {
+                if (requestContext != null) {
+                    RequestContextHolder.set(requestContext);
+                }
+                wrapped.run();
+            } finally {
+                if (previous != null) {
+                    RequestContextHolder.set(previous);
+                } else {
+                    RequestContextHolder.clear();
+                }
+            }
+        };
     }
 
     private static String asString(Object value) {

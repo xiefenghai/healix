@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.notify.mapper.NotifyDeliveryMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, message_id, channel, status, attempt_count, next_retry_at,
+        provider, provider_msg_id, endpoint_snapshot, error_code, error_message, sent_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO notify_delivery(
+            id, tenant_id, message_id, channel, status, attempt_count, next_retry_at,
+            provider, provider_msg_id, endpoint_snapshot, error_code, error_message, sent_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{messageId}, #{channel}, #{status}, #{attemptCount}, #{nextRetryAt},
+            #{provider}, #{providerMsgId}, #{endpointSnapshot}, #{errorCode}, #{errorMessage}, #{sentAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="findByMessageAndChannel" resultType="com.healix.core.notify.domain.NotifyDelivery">
+        SELECT <include refid="cols"/>
+        FROM notify_delivery
+        WHERE message_id = #{messageId}
+          AND channel = #{channel}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+</mapper>

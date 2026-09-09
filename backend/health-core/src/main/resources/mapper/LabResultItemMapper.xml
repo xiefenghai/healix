@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.observation.mapper.LabResultItemMapper">
+
+    <sql id="cols">
+        pk_id, id, report_id, item_code, item_name, value_num, value_text, unit,
+        ref_low, ref_high, abnormal_flag,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO lab_result_item(
+            id, report_id, item_code, item_name, value_num, value_text, unit,
+            ref_low, ref_high, abnormal_flag,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{reportId}, #{itemCode}, #{itemName}, #{valueNum}, #{valueText}, #{unit},
+            #{refLow}, #{refHigh}, #{abnormalFlag},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="softDeleteByReportId">
+        UPDATE lab_result_item
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE report_id = #{reportId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listByReportId" resultType="com.healix.core.observation.domain.LabResultItem">
+        SELECT <include refid="cols"/>
+        FROM lab_result_item
+        WHERE report_id = #{reportId}
+          AND is_deleted = 0
+        ORDER BY gmt_created ASC
+    </select>
+</mapper>

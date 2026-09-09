@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.report.mapper.HealthReportMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, care_team_id,
+        period_type, period_start, period_end, title, status, schema_version,
+        content_json, staff_comment, workspace_task_id,
+        published_at, published_by_staff_id, generated_by,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO health_report(
+            id, tenant_id, org_id, people_id, care_team_id,
+            period_type, period_start, period_end, title, status, schema_version,
+            content_json, staff_comment, workspace_task_id,
+            published_at, published_by_staff_id, generated_by,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{careTeamId},
+            #{periodType}, #{periodStart}, #{periodEnd}, #{title}, #{status}, #{schemaVersion},
+            #{contentJson}, #{staffComment}, #{workspaceTaskId},
+            #{publishedAt}, #{publishedByStaffId}, #{generatedBy},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateContent">
+        UPDATE health_report
+        SET content_json = #{contentJson},
+            schema_version = #{schemaVersion},
+            title = #{title},
+            care_team_id = #{careTeamId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+          AND status = 'DRAFT'
+    </update>
+
+    <update id="updateStatus">
+        UPDATE health_report
+        SET status = #{status},
+            content_json = #{contentJson},
+            staff_comment = #{staffComment},
+            published_at = #{publishedAt},
+            published_by_staff_id = #{publishedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateWorkspaceTaskId">
+        UPDATE health_report
+        SET workspace_task_id = #{workspaceTaskId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE health_report
+        SET is_deleted = 1,
+            gmt_deleted = #{gmtDeleted},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.report.domain.HealthReport">
+        SELECT <include refid="cols"/>
+        FROM health_report
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <select id="findByPeriod" resultType="com.healix.core.report.domain.HealthReport">
+        SELECT <include refid="cols"/>
+        FROM health_report
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND period_type = #{periodType}
+          AND period_start = #{periodStart}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.report.domain.HealthReport">
+        SELECT <include refid="cols"/>
+        FROM health_report
+        WHERE people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="status != null and status != ''">
+          AND status = #{status}
+        </if>
+        ORDER BY period_start DESC, gmt_created DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listPeopleIdsByPrimaryOrg" resultType="java.lang.String">
+        SELECT people_id
+        FROM people_care_assignment
+        WHERE tenant_id = #{tenantId}
+          AND primary_org_id = #{orgId}
+          AND is_deleted = 0
+        ORDER BY gmt_modified DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

@@ -19,7 +19,9 @@ const router = createRouter({
         { path: '', redirect: '/ops/tenants' },
         { path: 'tenants', component: () => import('../portals/ops/TenantsView.vue') },
         { path: 'tenants/:id', component: () => import('../portals/ops/TenantDetailView.vue') },
+        { path: 'jobs', component: () => import('../portals/ops/PlatformJobsView.vue') },
         { path: 'patients', component: () => import('../portals/ops/PatientSearchView.vue') },
+        { path: 'security', component: () => import('../shared/SecuritySettingsView.vue') },
       ],
     },
     {
@@ -30,6 +32,7 @@ const router = createRouter({
         { path: '', redirect: '/tenant/orgs' },
         { path: 'orgs', component: () => import('../portals/tenant/TenantOrgsView.vue') },
         { path: 'staff', component: () => import('../portals/tenant/TenantStaffView.vue') },
+        { path: 'security', component: () => import('../shared/SecuritySettingsView.vue') },
       ],
     },
     {
@@ -39,6 +42,12 @@ const router = createRouter({
       children: [
         { path: '', redirect: '/workspace/orgs' },
         { path: 'orgs', component: () => import('../portals/workspace/OrgPickerView.vue') },
+        { path: 'security', component: () => import('../shared/SecuritySettingsView.vue') },
+        {
+          path: 'tasks',
+          component: () => import('../portals/workspace/WorkspaceTasksView.vue'),
+          meta: { requireOrg: true },
+        },
         {
           path: 'staff',
           component: () => import('../portals/workspace/OrgStaffView.vue'),
@@ -60,9 +69,68 @@ const router = createRouter({
           meta: { requireOrg: true },
         },
         {
-          path: 'patients/:peopleId/archive',
-          component: () => import('../portals/workspace/PatientArchiveView.vue'),
+          path: 'adherence',
+          component: () => import('../portals/workspace/AdherenceBoardView.vue'),
           meta: { requireOrg: true },
+        },
+        {
+          path: 'patients/:peopleId',
+          component: () => import('../portals/workspace/PatientDetailLayout.vue'),
+          meta: { requireOrg: true },
+          redirect: (to) => `/workspace/patients/${to.params.peopleId}/archive`,
+          children: [
+            {
+              path: 'archive',
+              component: () => import('../portals/workspace/PatientArchiveView.vue'),
+            },
+            {
+              path: 'medications',
+              component: () => import('../portals/workspace/PatientMedicationView.vue'),
+            },
+            {
+              path: 'care-plan',
+              component: () => import('../portals/workspace/PatientCarePlanView.vue'),
+            },
+            {
+              path: 'adherence',
+              component: () => import('../portals/workspace/PatientAdherenceView.vue'),
+            },
+            {
+              path: 'followups',
+              component: () => import('../portals/workspace/PatientFollowupView.vue'),
+            },
+            {
+              path: 'health-reports',
+              component: () => import('../portals/workspace/PatientHealthReportView.vue'),
+            },
+            {
+              path: 'observations',
+              component: () => import('../portals/workspace/PatientObservationLayout.vue'),
+              redirect: (to) => `/workspace/patients/${to.params.peopleId}/observations/metrics`,
+              children: [
+                {
+                  path: 'metrics',
+                  component: () => import('../portals/workspace/PatientMetricView.vue'),
+                },
+                {
+                  path: 'trends',
+                  component: () => import('../portals/workspace/PatientMetricTrendView.vue'),
+                },
+                {
+                  path: 'labs',
+                  component: () => import('../portals/workspace/PatientLabView.vue'),
+                },
+                {
+                  path: 'exams',
+                  component: () => import('../portals/workspace/PatientExamView.vue'),
+                },
+              ],
+            },
+            {
+              path: 'revisions',
+              component: () => import('../portals/workspace/PatientRevisionView.vue'),
+            },
+          ],
         },
       ],
     },

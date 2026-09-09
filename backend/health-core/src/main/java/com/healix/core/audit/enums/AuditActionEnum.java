@@ -39,7 +39,34 @@ public enum AuditActionEnum {
     /** 机构解绑医护 */
     ORG_STAFF_UNBIND,
     /** B 端患者建档 */
-    PATIENT_ARCHIVE_CREATE;
+    PATIENT_ARCHIVE_CREATE,
+    /** C 端激活码绑定就诊人卡片 */
+    PATIENT_CARD_ACTIVATE,
+    WORKSPACE_TASK_CLAIM,
+    WORKSPACE_TASK_ASSIGN,
+    WORKSPACE_TASK_RELEASE,
+    WORKSPACE_TASK_DONE,
+    /** @deprecated 已迁至 FOLLOWUP_RECORD_COMPLETE */
+    FOLLOW_UP_FORM_SUBMIT,
+    FOLLOWUP_RECORD_CREATE,
+    FOLLOWUP_RECORD_COMPLETE,
+    FOLLOWUP_RECORD_CANCEL,
+    /** 依从性看板一键开随访 / 打卡跟进 */
+    ADHERENCE_BOARD_ESCALATE,
+    /** B 一键提醒患者（站内信 STAFF_NUDGE） */
+    STAFF_NUDGE_SEND,
+    /** Ops 调整租户配额上限 */
+    TENANT_QUOTA_UPDATE,
+    /** Ops 切换租户功能开关 */
+    TENANT_FEATURE_FLAG_UPDATE,
+    /** Ops 保存租户白标配置 */
+    TENANT_CONFIG_UPDATE,
+    /** B/Ops 账号启用 MFA */
+    MFA_ENABLE,
+    /** B/Ops 账号关闭 MFA */
+    MFA_DISABLE,
+    /** 患者档案合并 */
+    PATIENT_MERGE;
 
     public boolean matches(String value) {
         return name().equals(value);

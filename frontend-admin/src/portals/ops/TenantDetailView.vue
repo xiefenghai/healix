@@ -14,6 +14,7 @@ import {
   StaffRole,
 } from './labels'
 import { TABLE_COL } from '../../shared/table-columns'
+import TenantGovernancePanel from './TenantGovernancePanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -313,6 +314,10 @@ onMounted(async () => {
             </div>
           </div>
         </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="配额与开关" name="governance">
+        <TenantGovernancePanel :tenant-id="tenantId" :can-write="canWrite" />
       </el-tab-pane>
 
       <el-tab-pane label="账号管理" name="accounts">

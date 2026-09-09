@@ -1,6 +1,8 @@
 spring:
   application:
     name: healix
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   threads:
     virtual:
       enabled: true
@@ -22,11 +24,12 @@ spring:
       password: ${REDIS_PASSWORD:}
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY:sk-placeholder}
-      base-url: ${ONE_API_BASE_URL:http://localhost:3000/v1}
+      api-key: ${DEEPSEEK_API_KEY:${OPENAI_API_KEY:sk-placeholder}}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       chat:
         options:
-          model: ${LLM_MODEL:gpt-4o-mini}
+          model: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
+          temperature: 0.3
       embedding:
         options:
           model: ${EMBEDDING_MODEL:text-embedding-3-small}
@@ -64,19 +67,36 @@ healix:
     ops-password: ${OPS_BOOTSTRAP_PASSWORD:OpsAdmin123!}
   agent:
     enabled: ${AGENT_LLM_ENABLED:false}
+    provider: deepseek
+    models:
+      chat: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
+      vision: ${VISION_MODEL:deepseek-v4-flash-vision-exp}
+    vision:
+      api-key: ${VISION_API_KEY:${DEEPSEEK_API_KEY:${spring.ai.openai.api-key:}}}
+      base-url: ${VISION_BASE_URL:${DEEPSEEK_BASE_URL:${spring.ai.openai.base-url:https://api.deepseek.com}}}
+      model: ${VISION_MODEL:deepseek-v4-flash-vision-exp}
+    max-tokens: 8192
+    timeout-seconds: 60
+    ocr:
+      mode: ${AGENT_OCR_MODE:TEXT_LLM}
   influx:
     enabled: ${INFLUX_ENABLED:false}
     url: ${INFLUX_URL:http://localhost:8086}
     token: ${INFLUX_TOKEN:healix-influx-token}
     org: ${INFLUX_ORG:healix}
     bucket: ${INFLUX_BUCKET:vitals}
+  job:
+    tick-ms: ${JOB_TICK_MS:60000}
+    timeout-minutes: ${JOB_TIMEOUT_MINUTES:8}
 
 logging:
   level:
     root: INFO
-    com.healix: DEBUG
-    org.springframework.ai: INFO
-    dev.langchain4j: INFO
+    com.healix: INFO
+    com.healix.agent.llm: INFO
+    com.healix.agent.ocr: INFO
+    org.springframework.ai: WARN
+    dev.langchain4j: WARN
 
 springdoc:
   api-docs:

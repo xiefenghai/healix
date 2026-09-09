@@ -38,6 +38,8 @@ const teams = ref<CareTeamListItem[]>([])
 const keyword = ref('')
 const careTeamId = ref<string | ''>('')
 const unassignedOnly = ref(false)
+const adherenceFilter = ref<'' | 'PLAN_INCOMPLETE' | 'MED_INCOMPLETE' | 'STREAK_GE_3'>('')
+const adherenceMode = computed(() => !!adherenceFilter.value)
 
 const archiveVisible = ref(false)
 const archiving = ref(false)
@@ -96,9 +98,14 @@ function formatTime(iso?: string) {
   return new Date(iso).toLocaleString('zh-CN')
 }
 
-function ageFromBirthday(birthday?: string) {
-  if (!birthday) return '-'
-  const b = new Date(birthday)
+function ageFromBirthday(birthday?: string | number[]) {
+  if (birthday == null || birthday === '') return '-'
+  let b: Date
+  if (Array.isArray(birthday) && birthday.length >= 3) {
+    b = new Date(Number(birthday[0]), Number(birthday[1]) - 1, Number(birthday[2]))
+  } else {
+    b = new Date(birthday as string)
+  }
   if (Number.isNaN(b.getTime())) return '-'
   const now = new Date()
   let age = now.getFullYear() - b.getFullYear()
@@ -124,13 +131,38 @@ async function load() {
   if (!(await ensureOrg())) return
   loading.value = true
   try {
-    const q = new URLSearchParams()
-    if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
-    if (unassignedOnly.value) q.set('unassigned', 'true')
-    else if (careTeamId.value !== '') q.set('careTeamId', String(careTeamId.value))
-    const qs = q.toString()
-    const res = await api<{ data: OrgPatientListItem[] }>(`/api/b/v1/org-patients${qs ? `?${qs}` : ''}`)
-    list.value = res.data ?? []
+    if (adherenceFilter.value) {
+      const q = new URLSearchParams()
+      q.set('filter', adherenceFilter.value)
+      q.set('page', '1')
+      q.set('size', '200')
+      if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
+      if (careTeamId.value !== '') q.set('careTeamId', String(careTeamId.value))
+      const res = await api<{
+        data: {
+          items: Array<{
+            peopleId: string
+            displayName: string
+            careTeamId?: string | null
+            careTeamName?: string | null
+          }>
+        }
+      }>(`/api/b/v1/adherence/patients?${q}`)
+      list.value = (res.data?.items ?? []).map((row) => ({
+        peopleId: row.peopleId,
+        displayName: row.displayName,
+        careTeamId: row.careTeamId,
+        careTeamName: row.careTeamName,
+      }))
+    } else {
+      const q = new URLSearchParams()
+      if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
+      if (unassignedOnly.value) q.set('unassigned', 'true')
+      else if (careTeamId.value !== '') q.set('careTeamId', String(careTeamId.value))
+      const qs = q.toString()
+      const res = await api<{ data: OrgPatientListItem[] }>(`/api/b/v1/org-patients${qs ? `?${qs}` : ''}`)
+      list.value = res.data ?? []
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -139,7 +171,14 @@ async function load() {
 }
 
 watch(unassignedOnly, (v) => {
-  if (v) careTeamId.value = ''
+  if (v) {
+    careTeamId.value = ''
+    adherenceFilter.value = ''
+  }
+})
+
+watch(adherenceFilter, (v) => {
+  if (v) unassignedOnly.value = false
 })
 
 function openArchive() {
@@ -270,7 +309,18 @@ onMounted(async () => {
         >
           <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
-        <el-checkbox v-model="unassignedOnly">仅未入组</el-checkbox>
+        <el-checkbox v-model="unassignedOnly" :disabled="adherenceMode">仅未入组</el-checkbox>
+        <el-select
+          v-model="adherenceFilter"
+          clearable
+          placeholder="依从性"
+          style="width: 180px"
+          :disabled="unassignedOnly"
+        >
+          <el-option label="当日方案未完成" value="PLAN_INCOMPLETE" />
+          <el-option label="当日用药未完成" value="MED_INCOMPLETE" />
+          <el-option label="连续未执行≥3天" value="STREAK_GE_3" />
+        </el-select>
         <el-button @click="load">查询</el-button>
         <div class="spacer" />
         <el-button type="primary" @click="openArchive">患者建档</el-button>
@@ -304,7 +354,7 @@ onMounted(async () => {
               type="primary"
               @click="router.push({ path: `/workspace/patients/${row.peopleId}/archive`, query: { name: row.displayName } })"
             >
-              档案
+              详情
             </el-button>
             <el-button
               link

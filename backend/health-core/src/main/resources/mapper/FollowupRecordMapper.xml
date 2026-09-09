@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.followup.mapper.FollowupRecordMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, workspace_task_id, record_type, source, status,
+        title, summary, planned_at, due_at, assignee_staff_id, contact_channel, contact_result,
+        content_json, cancel_reason, completed_at, completed_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO followup_record(
+            id, tenant_id, org_id, people_id, workspace_task_id, record_type, source, status,
+            title, summary, planned_at, due_at, assignee_staff_id, contact_channel, contact_result,
+            content_json, cancel_reason, completed_at, completed_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{workspaceTaskId}, #{recordType}, #{source}, #{status},
+            #{title}, #{summary}, #{plannedAt}, #{dueAt}, #{assigneeStaffId}, #{contactChannel}, #{contactResult},
+            #{contentJson}, #{cancelReason}, #{completedAt}, #{completedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateOnComplete">
+        UPDATE followup_record
+        SET status = #{status},
+            title = #{title},
+            summary = #{summary},
+            contact_channel = #{contactChannel},
+            contact_result = #{contactResult},
+            content_json = #{contentJson},
+            completed_at = #{completedAt},
+            completed_by_staff_id = #{completedByStaffId},
+            assignee_staff_id = COALESCE(assignee_staff_id, #{assigneeStaffId}),
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateCancel">
+        UPDATE followup_record
+        SET status = #{status},
+            cancel_reason = #{cancelReason},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateWorkspaceTaskId">
+        UPDATE followup_record
+        SET workspace_task_id = #{workspaceTaskId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE id = #{id}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByTaskId" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE workspace_task_id = #{workspaceTaskId}
+          AND is_deleted = 0
+        ORDER BY COALESCE(completed_at, gmt_created) DESC, id DESC
+    </select>
+
+    <select id="findOpenPeriodicByPeople" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+          AND status = 'OPEN'
+          AND record_type = 'PERIODIC'
+        ORDER BY gmt_created DESC, id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findOpenByTaskId" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE workspace_task_id = #{workspaceTaskId}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+        ORDER BY gmt_created DESC, id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findLatestByTaskAndType" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE workspace_task_id = #{workspaceTaskId}
+          AND record_type = #{recordType}
+          AND is_deleted = 0
+        ORDER BY COALESCE(completed_at, gmt_created) DESC, id DESC
+        LIMIT 1
+    </select>
+
+    <sql id="orgFilter">
+        WHERE f.org_id = #{orgId}
+          AND f.is_deleted = 0
+        <if test="status != null and status != ''">
+            AND f.status = #{status}
+        </if>
+        <if test="recordType != null and recordType != ''">
+            AND f.record_type = #{recordType}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND EXISTS (
+                SELECT 1 FROM people_profile p
+                WHERE p.id = f.people_id
+                  AND p.is_deleted = 0
+                  AND p.display_name LIKE CONCAT('%', #{keyword}, '%')
+            )
+        </if>
+    </sql>
+
+    <select id="countByOrg" resultType="long">
+        SELECT COUNT(1)
+        FROM followup_record f
+        <include refid="orgFilter"/>
+    </select>
+
+    <select id="listByOrg" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT f.pk_id, f.id, f.tenant_id, f.org_id, f.people_id, f.workspace_task_id, f.record_type, f.source, f.status,
+               f.title, f.summary, f.planned_at, f.due_at, f.assignee_staff_id, f.contact_channel, f.contact_result,
+               f.content_json, f.cancel_reason, f.completed_at, f.completed_by_staff_id,
+               f.is_deleted, f.gmt_created, f.gmt_modified, f.gmt_deleted
+        FROM followup_record f
+        <include refid="orgFilter"/>
+        ORDER BY COALESCE(f.completed_at, f.planned_at, f.gmt_created) DESC, f.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="recordType != null and recordType != ''">
+            AND record_type = #{recordType}
+        </if>
+        ORDER BY COALESCE(completed_at, planned_at, gmt_created) DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listVisibleForPatient" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+          AND status IN ('OPEN', 'DONE')
+        ORDER BY COALESCE(completed_at, planned_at, gmt_created) DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listCompletedByPeopleRange" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+          AND status = 'DONE'
+          AND completed_at &gt;= #{from}
+          AND completed_at &lt; #{to}
+        ORDER BY completed_at DESC, id DESC
+    </select>
+</mapper>

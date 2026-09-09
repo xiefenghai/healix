@@ -3,19 +3,89 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.healix.core.vitals.mapper.VitalRecordMapper">
 
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, org_id, metric_type, value, unit, recorded_at, source,
+        group_id, note, recorded_by_staff_id, extra_json,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO vital_record(
-            id, tenant_id, people_id, metric_type, value, unit, recorded_at, source, extra_json,
+            id, tenant_id, people_id, org_id, metric_type, value, unit, recorded_at, source,
+            group_id, note, recorded_by_staff_id, extra_json,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
-            #{id}, #{tenantId}, #{peopleId}, #{metricType}, #{value}, #{unit}, #{recordedAt}, #{source}, #{extraJson},
+            #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{metricType}, #{value}, #{unit}, #{recordedAt}, #{source},
+            #{groupId}, #{note}, #{recordedByStaffId}, #{extraJson},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
     </insert>
 
+    <update id="update">
+        UPDATE vital_record
+        SET org_id = #{orgId},
+            metric_type = #{metricType},
+            value = #{value},
+            unit = #{unit},
+            recorded_at = #{recordedAt},
+            source = #{source},
+            group_id = #{groupId},
+            note = #{note},
+            recorded_by_staff_id = #{recordedByStaffId},
+            extra_json = #{extraJson},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE vital_record
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDeleteByGroupId">
+        UPDATE vital_record
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE group_id = #{groupId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.vitals.domain.VitalRecord">
+        SELECT <include refid="cols"/>
+        FROM vital_record
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.vitals.domain.VitalRecord">
+        SELECT <include refid="cols"/>
+        FROM vital_record
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="metricType != null and metricType != ''">
+          AND metric_type = #{metricType}
+        </if>
+        <if test="from != null">
+          AND recorded_at &gt;= #{from}
+        </if>
+        <if test="to != null">
+          AND recorded_at &lt;= #{to}
+        </if>
+        ORDER BY recorded_at DESC
+        <if test="limit != null">
+          LIMIT #{limit}
+        </if>
+    </select>
+
     <select id="listByRange" resultType="com.healix.core.vitals.domain.VitalRecord">
-        SELECT pk_id, id, tenant_id, people_id, metric_type, value, unit, recorded_at, source, extra_json,
-               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        SELECT <include refid="cols"/>
         FROM vital_record
         WHERE tenant_id = #{tenantId}
           AND people_id = #{peopleId}
@@ -24,6 +94,24 @@
           AND recorded_at &lt;= #{to}
           AND is_deleted = 0
         ORDER BY recorded_at DESC
+    </select>
+
+    <select id="listByGroupId" resultType="com.healix.core.vitals.domain.VitalRecord">
+        SELECT <include refid="cols"/>
+        FROM vital_record
+        WHERE group_id = #{groupId}
+          AND is_deleted = 0
+        ORDER BY metric_type ASC
+    </select>
+
+    <select id="listRecentForLatest" resultType="com.healix.core.vitals.domain.VitalRecord">
+        SELECT <include refid="cols"/>
+        FROM vital_record
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        ORDER BY recorded_at DESC
+        LIMIT #{limit}
     </select>
 
     <select id="averageValue" resultType="java.lang.Double">

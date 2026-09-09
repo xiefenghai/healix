@@ -22,6 +22,8 @@ public interface TenantMapper {
     List<TenantListItem> list(
             @Param("keyword") String keyword, @Param("offset") int offset, @Param("pageSize") int pageSize);
 
+    List<Tenant> listByStatus(@Param("status") String status);
+
     long count(@Param("keyword") String keyword);
 
     boolean hasTenantAdmin(@Param("tenantId") String tenantId);

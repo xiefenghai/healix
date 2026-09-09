@@ -10,13 +10,24 @@ const gender = ref('')
 const homeTenantId = ref<number | null>(null)
 const saving = ref(false)
 
+const genderOptions = [
+  { text: '男', value: 'MALE' },
+  { text: '女', value: 'FEMALE' },
+  { text: '其他', value: 'OTHER' },
+]
+
 onMounted(async () => {
   try {
     const res = await api<{ data: any }>('/api/c/v1/profile')
     displayName.value = res.data.displayName ?? ''
     gender.value = res.data.gender ?? ''
-    homeTenantId.value = res.data.homeTenantId ?? null
+    homeTenantId.value = res.data.tenantId ? 1 : null
   } catch (e) {
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('就诊人')) {
+      await router.replace('/patient-cards')
+      return
+    }
     showToast(e instanceof Error ? e.message : '加载失败')
   }
 })
@@ -57,15 +68,28 @@ function logout() {
 
     <section class="card">
       <van-field v-model="displayName" label="显示姓名" placeholder="怎么称呼你" />
-      <van-field v-model="gender" label="性别" placeholder="如 MALE / FEMALE" />
+      <div class="gender">
+        <div class="gender-label">性别</div>
+        <van-radio-group v-model="gender" direction="horizontal">
+          <van-radio v-for="o in genderOptions" :key="o.value" :name="o.value">{{ o.text }}</van-radio>
+        </van-radio-group>
+      </div>
       <div class="pad">
         <van-button round block type="primary" :loading="saving" @click="save">保存资料</van-button>
       </div>
     </section>
 
     <section class="card menu">
+      <van-cell title="就诊人管理" is-link to="/patient-cards" />
+      <van-cell title="健康档案" is-link to="/archive" />
+      <van-cell title="健康数据" is-link to="/health-data?tab=vitals" />
+      <van-cell title="管理方案" is-link to="/care-plan" />
+      <van-cell title="用药管理" is-link to="/medications" />
+      <van-cell title="随访记录" is-link to="/followups" />
+      <van-cell title="管理报告" is-link to="/management-reports" />
+      <van-cell title="消息中心" is-link to="/notifications" />
+      <van-cell title="激活码添加档案" is-link to="/activate" />
       <van-cell title="邀请码入组" is-link to="/join" />
-      <van-cell title="健康数据" is-link to="/health" />
       <van-cell title="健康助手" is-link to="/discover" />
       <van-cell title="退出登录" is-link @click="logout" />
     </section>
@@ -99,6 +123,18 @@ h1 { margin: 0; font-size: 20px; }
   margin-bottom: 14px;
   overflow: hidden;
   box-shadow: var(--hx-shadow);
+}
+.gender {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.gender-label {
+  width: 6.2em;
+  flex-shrink: 0;
+  color: var(--van-field-label-color, #646566);
+  font-size: 14px;
 }
 .pad { padding: 8px 12px 14px; }
 .menu :deep(.van-cell) { font-size: 15px; }

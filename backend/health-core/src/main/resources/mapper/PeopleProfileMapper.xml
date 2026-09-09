@@ -5,7 +5,7 @@
 
     <sql id="cols">
         pk_id, id, tenant_id, account_id, display_name, gender, birthday, name_pinyin,
-        allergens_json, chronic_tags_json, emergency_contact_json,
+        allergens_json, chronic_tags_json, emergency_contact_json, merged_into_people_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
 
@@ -13,6 +13,12 @@
         SELECT <include refid="cols"/>
         FROM people_profile
         WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findAnyById" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE id = #{id}
     </select>
 
     <select id="findByAccountId" resultType="com.healix.core.people.domain.PeopleProfile">

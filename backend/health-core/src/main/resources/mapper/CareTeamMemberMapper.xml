@@ -37,6 +37,15 @@
         LIMIT 1
     </select>
 
+    <select id="listPatientsByOrg" resultType="com.healix.core.care.domain.CareTeamMember">
+        SELECT <include refid="cols"/>
+        FROM care_team_member
+        WHERE org_id = #{orgId}
+          AND member_type = 'PATIENT'
+          AND is_deleted = 0
+        ORDER BY joined_at ASC, id ASC
+    </select>
+
     <select id="countActiveByTeam" resultType="int">
         SELECT COUNT(1)
         FROM care_team_member

@@ -2,6 +2,7 @@ package com.healix.security;
 
 import com.healix.common.context.RequestContext;
 import com.healix.common.context.RequestContextHolder;
+import com.healix.common.exception.BusinessException;
 import com.healix.common.exception.UnauthorizedException;
 
 public final class SecurityUtils {
@@ -20,9 +21,17 @@ public final class SecurityUtils {
     public static String requirePatientId() {
         String patientId = requireContext().getPatientId();
         if (patientId == null) {
-            throw new UnauthorizedException("缺少患者上下文");
+            throw new BusinessException(400, "请先添加或选择就诊人");
         }
         return patientId;
+    }
+
+    public static String requireActivePatientCardId() {
+        String cardId = requireContext().getActivePatientCardId();
+        if (cardId == null) {
+            throw new BusinessException(400, "请先添加或选择就诊人");
+        }
+        return cardId;
     }
 
     public static String requireStaffId() {

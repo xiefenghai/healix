@@ -19,4 +19,6 @@ public class PeopleProfile extends BaseEntity {
     private String allergensJson;
     private String chronicTagsJson;
     private String emergencyContactJson;
+    /** 已合并到的目标 people_id；非空表示该档案是合并留痕，不再对外使用 */
+    private String mergedIntoPeopleId;
 }

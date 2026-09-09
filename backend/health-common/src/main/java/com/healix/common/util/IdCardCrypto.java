@@ -53,6 +53,25 @@ public final class IdCardCrypto {
         }
     }
 
+    /** 解密 {@link #encrypt(String)} 产出的 Base64 密文。 */
+    public String decrypt(String packedBase64) {
+        try {
+            byte[] packed = Base64.getDecoder().decode(packedBase64);
+            if (packed.length <= IV_LEN) {
+                throw new IllegalArgumentException("ciphertext too short");
+            }
+            byte[] iv = new byte[IV_LEN];
+            System.arraycopy(packed, 0, iv, 0, IV_LEN);
+            byte[] encrypted = new byte[packed.length - IV_LEN];
+            System.arraycopy(packed, IV_LEN, encrypted, 0, encrypted.length);
+            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(aesKey, "AES"), new GCMParameterSpec(GCM_TAG_BITS, iv));
+            return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalStateException("id card decrypt failed", e);
+        }
+    }
+
     private static byte[] normalizeKey(String material) {
         String m = material == null ? "healix-dev-idcard-aes-key!!" : material;
         byte[] raw = m.getBytes(StandardCharsets.UTF_8);

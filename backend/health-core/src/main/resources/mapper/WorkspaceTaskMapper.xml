@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.worktask.mapper.WorkspaceTaskMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, task_type, biz_key, open_dedup_key,
+        status, priority, assignee_staff_id, title, summary, payload_json, source, close_reason,
+        due_at, opened_at, done_at, done_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO workspace_task(
+            id, tenant_id, org_id, people_id, task_type, biz_key,
+            status, priority, assignee_staff_id, title, summary, payload_json, source, close_reason,
+            due_at, opened_at, done_at, done_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{taskType}, #{bizKey},
+            #{status}, #{priority}, #{assigneeStaffId}, #{title}, #{summary}, #{payloadJson}, #{source}, #{closeReason},
+            #{dueAt}, #{openedAt}, #{doneAt}, #{doneByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updatePayload">
+        UPDATE workspace_task
+        SET summary = #{summary},
+            payload_json = #{payloadJson},
+            gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="claim">
+        UPDATE workspace_task
+        SET assignee_staff_id = #{staffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND status = 'OPEN'
+          AND assignee_staff_id IS NULL
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateAssignee">
+        UPDATE workspace_task
+        SET assignee_staff_id = #{assigneeStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+    </update>
+
+    <update id="close">
+        UPDATE workspace_task
+        SET status = #{status},
+            close_reason = #{closeReason},
+            done_at = #{doneAt},
+            done_by_staff_id = #{doneByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="expireOrphans">
+        UPDATE workspace_task t
+        LEFT JOIN people_org_membership m
+          ON m.org_id = t.org_id
+         AND m.people_id = t.people_id
+         AND m.is_deleted = 0
+         AND m.status = 'ACTIVE'
+        SET t.status = 'EXPIRED',
+            t.close_reason = 'EXPIRED',
+            t.done_at = #{now},
+            t.gmt_modified = #{now}
+        WHERE t.org_id = #{orgId}
+          AND t.status = 'OPEN'
+          AND t.is_deleted = 0
+          AND m.pk_id IS NULL
+    </update>
+
+    <update id="reassignPublicToStaff">
+        UPDATE workspace_task
+        SET assignee_staff_id = #{staffId},
+            gmt_modified = #{gmtModified}
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND status = 'OPEN'
+          AND assignee_staff_id IS NULL
+          AND is_deleted = 0
+    </update>
+
+    <update id="reassignFromStaff">
+        UPDATE workspace_task
+        SET assignee_staff_id = #{toStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND status = 'OPEN'
+          AND assignee_staff_id = #{fromStaffId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findOpen" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND task_type = #{taskType}
+          AND biz_key = #{bizKey}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findByBizKey" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND task_type = #{taskType}
+          AND biz_key = #{bizKey}
+          AND is_deleted = 0
+        ORDER BY opened_at DESC
+        LIMIT 1
+    </select>
+
+    <select id="findLatestClosedNudge" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND task_type = 'PLAN_NUDGE'
+          AND status IN ('DONE', 'CANCELLED')
+          AND is_deleted = 0
+        ORDER BY done_at DESC, id DESC
+        LIMIT 1
+    </select>
+
+    <select id="listOpenByPeople" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+    </select>
+
+    <select id="listMetricAlertsByPeople" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND task_type = 'METRIC_ALERT'
+          AND is_deleted = 0
+    </select>
+
+    <select id="listMetricFamily" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND task_type = 'METRIC_ALERT'
+          AND biz_key LIKE CONCAT(#{bizKeyPrefix}, '%')
+          AND is_deleted = 0
+    </select>
+
+    <select id="listMetricFamilyOpenedBetween" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT <include refid="cols"/>
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND task_type = 'METRIC_ALERT'
+          AND biz_key LIKE CONCAT(#{bizKeyPrefix}, '%')
+          AND opened_at &gt;= #{from}
+          AND opened_at &lt; #{to}
+          AND is_deleted = 0
+        ORDER BY opened_at DESC, id DESC
+    </select>
+
+    <sql id="queryWhere">
+        FROM workspace_task t
+        WHERE t.org_id = #{orgId}
+          AND t.is_deleted = 0
+        <if test="tenantId != null and tenantId != ''">
+          AND t.tenant_id = #{tenantId}
+        </if>
+        <choose>
+            <when test="pool != null and pool.equals('PUBLIC')">
+                AND t.status = 'OPEN'
+                AND t.assignee_staff_id IS NULL
+            </when>
+            <when test="pool != null and pool.equals('MINE')">
+                AND t.status = 'OPEN'
+                AND t.assignee_staff_id = #{assigneeStaffId}
+            </when>
+            <when test="pool != null and pool.equals('DONE')">
+                AND t.status = 'DONE'
+                AND (t.done_by_staff_id = #{assigneeStaffId} OR t.assignee_staff_id = #{assigneeStaffId})
+                <if test="doneFrom != null">
+                    AND t.done_at &gt;= #{doneFrom}
+                </if>
+                <if test="doneTo != null">
+                    AND t.done_at &lt; #{doneTo}
+                </if>
+            </when>
+            <otherwise>
+                <if test="status != null and status != ''">
+                    AND t.status = #{status}
+                </if>
+            </otherwise>
+        </choose>
+        <if test="taskType != null and taskType != ''">
+            AND t.task_type = #{taskType}
+        </if>
+        <if test="excludeTaskTypes != null and excludeTaskTypes.size() &gt; 0">
+            AND t.task_type NOT IN
+            <foreach collection="excludeTaskTypes" item="tp" open="(" separator="," close=")">
+                #{tp}
+            </foreach>
+        </if>
+        <if test="careTeamId != null and careTeamId != ''">
+            AND EXISTS (
+                SELECT 1 FROM care_team_member ctm
+                WHERE ctm.org_id = t.org_id
+                  AND ctm.people_id = t.people_id
+                  AND ctm.member_type = 'PATIENT'
+                  AND ctm.team_id = #{careTeamId}
+                  AND ctm.is_deleted = 0
+            )
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND EXISTS (
+                SELECT 1 FROM people_profile p
+                WHERE p.id = t.people_id
+                  AND p.is_deleted = 0
+                  AND p.display_name LIKE CONCAT('%', #{keyword}, '%')
+            )
+        </if>
+    </sql>
+
+    <select id="countByQuery" resultType="long">
+        SELECT COUNT(1)
+        <include refid="queryWhere"/>
+    </select>
+
+    <select id="listByQuery" resultType="com.healix.core.worktask.domain.WorkspaceTask">
+        SELECT t.pk_id, t.id, t.tenant_id, t.org_id, t.people_id, t.task_type, t.biz_key, t.open_dedup_key,
+               t.status, t.priority, t.assignee_staff_id, t.title, t.summary, t.payload_json, t.source, t.close_reason,
+               t.due_at, t.opened_at, t.done_at, t.done_by_staff_id,
+               t.is_deleted, t.gmt_created, t.gmt_modified, t.gmt_deleted
+        <include refid="queryWhere"/>
+        <choose>
+            <when test="pool != null and pool.equals('DONE')">
+                ORDER BY t.done_at DESC, t.id DESC
+            </when>
+            <otherwise>
+                ORDER BY t.opened_at DESC, t.id DESC
+            </otherwise>
+        </choose>
+        LIMIT #{offset}, #{pageSize}
+    </select>
+
+    <select id="countOpenPublic" resultType="long">
+        SELECT COUNT(1)
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND status = 'OPEN'
+          AND assignee_staff_id IS NULL
+          AND is_deleted = 0
+        <if test="excludeTaskTypes != null and excludeTaskTypes.size() &gt; 0">
+          AND task_type NOT IN
+          <foreach collection="excludeTaskTypes" item="tp" open="(" separator="," close=")">
+              #{tp}
+          </foreach>
+        </if>
+    </select>
+
+    <select id="countOpenMine" resultType="long">
+        SELECT COUNT(1)
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND status = 'OPEN'
+          AND assignee_staff_id = #{staffId}
+          AND is_deleted = 0
+    </select>
+
+    <select id="countDoneToday" resultType="long">
+        SELECT COUNT(1)
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND tenant_id = #{tenantId}
+          AND status = 'DONE'
+          AND is_deleted = 0
+          AND done_at &gt;= #{from}
+          AND done_at &lt; #{to}
+          AND (done_by_staff_id = #{staffId} OR assignee_staff_id = #{staffId})
+    </select>
+</mapper>

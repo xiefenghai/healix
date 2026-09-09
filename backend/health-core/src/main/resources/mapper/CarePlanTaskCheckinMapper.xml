@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.careplan.mapper.CarePlanTaskCheckinMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, plan_id, plan_version_id, task_id,
+        checkin_date, time_slot, status, note,
+        recorded_by_people_id, recorded_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_plan_task_checkin(
+            id, tenant_id, people_id, plan_id, plan_version_id, task_id,
+            checkin_date, time_slot, status, note,
+            recorded_by_people_id, recorded_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{planId}, #{planVersionId}, #{taskId},
+            #{checkinDate}, #{timeSlot}, #{status}, #{note},
+            #{recordedByPeopleId}, #{recordedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE care_plan_task_checkin
+        SET status = #{status},
+            note = #{note},
+            recorded_by_people_id = #{recordedByPeopleId},
+            recorded_by_staff_id = #{recordedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findByTaskDateSlot" resultType="com.healix.core.careplan.domain.CarePlanTaskCheckin">
+        SELECT <include refid="cols"/>
+        FROM care_plan_task_checkin
+        WHERE task_id = #{taskId}
+          AND checkin_date = #{checkinDate}
+          AND time_slot = #{timeSlot}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleDate" resultType="com.healix.core.careplan.domain.CarePlanTaskCheckin">
+        SELECT <include refid="cols"/>
+        FROM care_plan_task_checkin
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND checkin_date = #{checkinDate}
+          AND is_deleted = 0
+        ORDER BY task_id, time_slot
+    </select>
+
+    <select id="listByPeopleRange" resultType="com.healix.core.careplan.domain.CarePlanTaskCheckin">
+        SELECT <include refid="cols"/>
+        FROM care_plan_task_checkin
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="from != null">
+          AND checkin_date &gt;= #{from}
+        </if>
+        <if test="to != null">
+          AND checkin_date &lt;= #{to}
+        </if>
+        ORDER BY checkin_date DESC, task_id, time_slot
+    </select>
+
+    <select id="listByPeopleVersionRange" resultType="com.healix.core.careplan.domain.CarePlanTaskCheckin">
+        SELECT <include refid="cols"/>
+        FROM care_plan_task_checkin
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND plan_version_id = #{planVersionId}
+          AND is_deleted = 0
+        <if test="from != null">
+          AND checkin_date &gt;= #{from}
+        </if>
+        <if test="to != null">
+          AND checkin_date &lt;= #{to}
+        </if>
+        ORDER BY checkin_date DESC, task_id, time_slot
+    </select>
+
+    <select id="listByTenantPeopleIdsRange" resultType="com.healix.core.careplan.domain.CarePlanTaskCheckin">
+        SELECT <include refid="cols"/>
+        FROM care_plan_task_checkin
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+        <if test="from != null">
+          AND checkin_date &gt;= #{from}
+        </if>
+        <if test="to != null">
+          AND checkin_date &lt;= #{to}
+        </if>
+        ORDER BY people_id, checkin_date, task_id, time_slot
+    </select>
+</mapper>

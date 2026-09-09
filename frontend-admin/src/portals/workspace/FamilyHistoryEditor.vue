@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   FAMILY_HISTORY_DISEASE_GROUPS,
@@ -15,14 +15,11 @@ import {
   type KinshipLevel,
 } from '../../shared/family-history-options'
 
-const entries = defineModel<FamilyHistoryEntry[]>('entries', { default: [] })
+const entries = defineModel<FamilyHistoryEntry[]>('entries', { default: () => [] })
 const hasHistory = defineModel<'none' | 'has'>('hasHistory', { default: 'none' })
 
 const dialogVisible = ref(false)
-/** 手风琴当前展开的亲属级别，默认全部折叠 */
-const expandedKinship = ref<string>('')
-/** 手风琴当前展开的疾病分类，默认全部折叠 */
-const expandedDiseaseGroup = ref<string>('')
+const activeKinshipLevel = ref<KinshipLevel>('1')
 const draft = reactive({
   memberPick: '',
   diseases: [] as string[],
@@ -40,28 +37,15 @@ const selectedDiseasesText = computed(() => {
   return draft.diseases.map(familyDiseaseLabel).join('，')
 })
 
-watch(hasHistory, (val) => {
-  if (val === 'none') {
-    entries.value = []
-  }
-})
-
-watch(
-  entries,
-  (list) => {
-    if (list.length > 0) {
-      hasHistory.value = 'has'
-    }
-  },
-  { deep: true },
+const activeLevelMeta = computed(
+  () => KINSHIP_LEVELS.find((l) => l.value === activeKinshipLevel.value) ?? KINSHIP_LEVELS[0],
 )
 
 function openDialog() {
   draft.memberPick = ''
   draft.diseases = []
   draft.note = ''
-  expandedKinship.value = ''
-  expandedDiseaseGroup.value = ''
+  activeKinshipLevel.value = '1'
   dialogVisible.value = true
 }
 
@@ -80,9 +64,6 @@ function toggleDisease(code: string) {
 
 function removeEntry(index: number) {
   entries.value = entries.value.filter((_, i) => i !== index)
-  if (entries.value.length === 0 && hasHistory.value === 'has') {
-    // 保持「有家族史」状态，允许继续添加
-  }
 }
 
 function confirmDialog() {
@@ -116,6 +97,10 @@ function confirmDialog() {
       <el-radio value="has">有家族史</el-radio>
     </el-radio-group>
 
+    <p v-if="hasHistory === 'none' && entries.length" class="fh-unsaved-hint">
+      已选「无家族史」，尚未保存；切换回「有家族史」可恢复下方 {{ entries.length }} 条记录
+    </p>
+
     <div v-if="hasHistory === 'has'" class="fh-body">
       <div class="fh-tags">
         <el-tag
@@ -133,66 +118,65 @@ function confirmDialog() {
       <p v-if="!entries.length" class="fh-hint">点击 + 添加家族史条目</p>
     </div>
 
-    <el-dialog v-model="dialogVisible" title="家族史" width="520px" destroy-on-close append-to-body>
-      <el-form label-width="0" class="fh-form">
-        <el-form-item>
-          <div class="fh-member-panel">
-            <div v-if="selectedMemberText" class="fh-picker-current">已选：{{ selectedMemberText }}</div>
-            <div v-else class="fh-picker-placeholder">请选择家庭成员</div>
-            <el-collapse v-model="expandedKinship" accordion class="fh-picker-collapse">
-              <el-collapse-item v-for="level in KINSHIP_LEVELS" :key="level.value" :name="level.value">
-                <template #title>
-                  <span class="fh-picker-title">{{ level.label }}</span>
-                </template>
-                <div class="fh-option-grid">
-                  <button
-                    v-for="m in KINSHIP_MEMBERS[level.value]"
-                    :key="m.value"
-                    type="button"
-                    class="fh-option-btn"
-                    :class="{ active: draft.memberPick === toMemberPick(level.value, m.value) }"
-                    @click="selectMember(level.value, m.value)"
-                  >
-                    {{ m.label }}
-                  </button>
-                </div>
-              </el-collapse-item>
-            </el-collapse>
+    <el-dialog v-model="dialogVisible" title="添加家族史" width="760px" destroy-on-close append-to-body>
+      <div class="fh-dialog-split">
+        <div class="fh-dialog-col">
+          <div class="fh-col-title">选择家庭成员</div>
+          <el-segmented
+            v-model="activeKinshipLevel"
+            :options="KINSHIP_LEVELS.map((l) => ({ label: l.label, value: l.value }))"
+            block
+            class="fh-level-segment"
+          />
+          <p class="fh-level-hint">{{ activeLevelMeta.hint }}</p>
+          <div class="fh-option-grid">
+            <button
+              v-for="m in KINSHIP_MEMBERS[activeKinshipLevel]"
+              :key="m.value"
+              type="button"
+              class="fh-option-btn"
+              :class="{ active: draft.memberPick === toMemberPick(activeKinshipLevel, m.value) }"
+              @click="selectMember(activeKinshipLevel, m.value)"
+            >
+              {{ m.label }}
+            </button>
           </div>
-        </el-form-item>
-        <el-form-item>
-          <div class="fh-disease-panel">
-            <div v-if="selectedDiseasesText" class="fh-picker-current">已选：{{ selectedDiseasesText }}</div>
-            <div v-else class="fh-picker-placeholder">请选择家族病史</div>
-            <el-collapse v-model="expandedDiseaseGroup" accordion class="fh-picker-collapse">
-              <el-collapse-item
-                v-for="g in FAMILY_HISTORY_DISEASE_GROUPS"
-                :key="g.label"
-                :name="g.label"
-              >
-                <template #title>
-                  <span class="fh-picker-title">{{ g.label }}</span>
-                </template>
-                <div class="fh-option-grid">
-                  <button
-                    v-for="d in g.options"
-                    :key="d.value"
-                    type="button"
-                    class="fh-option-btn"
-                    :class="{ active: draft.diseases.includes(d.value) }"
-                    @click="toggleDisease(d.value)"
-                  >
-                    {{ d.label }}
-                  </button>
-                </div>
-              </el-collapse-item>
-            </el-collapse>
+          <div v-if="selectedMemberText" class="fh-selected">已选：{{ selectedMemberText }}</div>
+        </div>
+
+        <div class="fh-dialog-col fh-dialog-col-disease">
+          <div class="fh-col-title">家族病史</div>
+          <div v-if="selectedDiseasesText" class="fh-selected fh-selected-top">已选：{{ selectedDiseasesText }}</div>
+          <div class="fh-disease-scroll">
+            <div v-for="g in FAMILY_HISTORY_DISEASE_GROUPS" :key="g.label" class="fh-disease-group">
+              <div class="fh-group-label">{{ g.label }}</div>
+              <div class="fh-option-grid">
+                <button
+                  v-for="d in g.options"
+                  :key="d.value"
+                  type="button"
+                  class="fh-option-btn"
+                  :class="{ active: draft.diseases.includes(d.value) }"
+                  @click="toggleDisease(d.value)"
+                >
+                  {{ d.label }}
+                </button>
+              </div>
+            </div>
           </div>
-        </el-form-item>
-        <el-form-item>
-          <el-input v-model="draft.note" type="textarea" :rows="2" placeholder="备注" maxlength="200" show-word-limit />
-        </el-form-item>
-      </el-form>
+        </div>
+      </div>
+
+      <el-input
+        v-model="draft.note"
+        type="textarea"
+        :rows="2"
+        placeholder="备注（选填）"
+        maxlength="200"
+        show-word-limit
+        class="fh-note"
+      />
+
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="confirmDialog">确定</el-button>
@@ -244,63 +228,92 @@ function confirmDialog() {
   color: var(--admin-muted);
 }
 
-.fh-form :deep(.el-form-item) {
-  margin-bottom: 16px;
+.fh-unsaved-hint {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
 }
 
-.fh-member-panel,
-.fh-disease-panel {
-  width: 100%;
+.fh-dialog-split {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 16px;
+  min-height: 360px;
+}
+
+.fh-dialog-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 12px;
   border: 1px solid var(--admin-border);
   border-radius: 8px;
-  overflow: hidden;
   background: #fff;
 }
 
-.fh-picker-current {
-  padding: 10px 14px;
+.fh-col-title {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--admin-text);
+}
+
+.fh-level-segment {
+  margin-bottom: 8px;
+}
+
+.fh-level-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--admin-muted);
+}
+
+.fh-disease-scroll {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 300px;
+  padding-right: 4px;
+}
+
+.fh-disease-group {
+  margin-bottom: 14px;
+}
+
+.fh-disease-group:last-child {
+  margin-bottom: 0;
+}
+
+.fh-group-label {
+  margin-bottom: 8px;
   font-size: 13px;
+  font-weight: 600;
+  color: var(--admin-text-secondary);
+}
+
+.fh-selected {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
   color: var(--admin-primary-hover);
   background: var(--admin-primary-muted);
-  border-bottom: 1px solid var(--admin-border);
-  font-weight: 500;
-  line-height: 1.5;
+  border-radius: 6px;
   word-break: break-word;
 }
 
-.fh-picker-placeholder {
-  padding: 10px 14px;
-  font-size: 13px;
-  color: var(--admin-muted);
-  border-bottom: 1px solid var(--admin-border);
+.fh-selected-top {
+  margin-top: 0;
+  margin-bottom: 10px;
 }
 
-.fh-picker-collapse {
-  border: none;
-}
-
-.fh-picker-collapse :deep(.el-collapse-item__header) {
-  padding: 0 14px;
-  height: 44px;
-  font-size: 14px;
-  border-bottom: 1px solid var(--admin-border);
-}
-
-.fh-picker-collapse :deep(.el-collapse-item:last-child .el-collapse-item__header) {
-  border-bottom: none;
-}
-
-.fh-picker-collapse :deep(.el-collapse-item__wrap) {
-  border-bottom: 1px solid var(--admin-border);
-}
-
-.fh-picker-collapse :deep(.el-collapse-item__content) {
-  padding: 12px 14px 14px;
-}
-
-.fh-picker-title {
-  font-weight: 600;
-  color: var(--admin-text);
+.fh-note {
+  margin-top: 14px;
 }
 
 .fh-option-grid {

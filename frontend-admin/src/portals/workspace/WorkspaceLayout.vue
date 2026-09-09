@@ -2,13 +2,16 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AdminShell from '../../shared/AdminShell.vue'
+import AgentFloatingRobot from '../../shared/AgentFloatingRobot.vue'
 import { getCurrentOrgId, orgSessionTick } from '../../shared/http'
 
 const route = useRoute()
 const router = useRouter()
 
 const BIZ_MENUS = [
+  { path: '/workspace/tasks', label: '工作台', icon: 'ticket' },
   { path: '/workspace/patients', label: '患者管理', icon: 'user' },
+  { path: '/workspace/adherence', label: '依从性看板', icon: 'data' },
   { path: '/workspace/care-teams', label: '健管组', icon: 'data' },
   { path: '/workspace/staff', label: '成员管理', icon: 'user' },
 ]
@@ -40,5 +43,6 @@ function switchOrg() {
     @switch-org="switchOrg"
   >
     <RouterView />
+    <AgentFloatingRobot />
   </AdminShell>
 </template>

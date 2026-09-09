@@ -18,4 +18,6 @@ public interface SysDictMapper {
     List<SysDict> listByType(@Param("tenantId") String tenantId, @Param("dictType") String dictType);
 
     int insert(SysDict row);
+
+    int updateDescAndSort(SysDict row);
 }

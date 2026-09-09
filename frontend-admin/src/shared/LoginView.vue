@@ -16,16 +16,28 @@ const title = computed(() => {
 
 const username = ref('')
 const password = ref('')
+const mfaCode = ref('')
+const mfaRequired = ref(false)
 const loading = ref(false)
+
+function isMfaPrompt(message: string) {
+  return message.includes('动态验证码')
+}
 
 async function submit() {
   loading.value = true
   clearSession()
   try {
+    const body = {
+      username: username.value,
+      password: password.value,
+      ...(mfaCode.value.trim() ? { mfaCode: mfaCode.value.trim() } : {}),
+    }
+
     if (entry.value === 'ops') {
       const res = await api<{ data: { accessToken: string; roleCode: string } }>('/api/ops/v1/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ username: username.value, password: password.value }),
+        body: JSON.stringify(body),
       })
       setSession({
         token: res.data.accessToken,
@@ -41,7 +53,7 @@ async function submit() {
       data: { accessToken: string; roles: string[]; currentOrgId: string | null }
     }>('/api/b/v1/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username: username.value, password: password.value }),
+      body: JSON.stringify(body),
     })
 
     const roles = res.data.roles ?? []
@@ -60,7 +72,13 @@ async function submit() {
     await router.replace(entry.value === 'tenant' ? '/tenant/orgs' : '/workspace/orgs')
   } catch (e) {
     clearSession()
-    ElMessage.error(e instanceof Error ? e.message : '登录失败')
+    const message = e instanceof Error ? e.message : '登录失败'
+    if (isMfaPrompt(message)) {
+      mfaRequired.value = true
+      ElMessage.warning(message)
+    } else {
+      ElMessage.error(message)
+    }
   } finally {
     loading.value = false
   }
@@ -98,6 +116,15 @@ async function submit() {
             type="password"
             show-password
             autocomplete="current-password"
+            size="large"
+          />
+        </el-form-item>
+        <el-form-item v-if="mfaRequired" label="动态验证码">
+          <el-input
+            v-model="mfaCode"
+            maxlength="6"
+            placeholder="验证器中的 6 位数字"
+            autocomplete="one-time-code"
             size="large"
           />
         </el-form-item>

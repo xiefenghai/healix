@@ -37,4 +37,16 @@
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
     </insert>
+
+    <update id="updateDescAndSort">
+        UPDATE sys_dict
+        SET dict_code_desc = #{dictCodeDesc},
+            sort_order = #{sortOrder},
+            gmt_modified = #{gmtModified}
+        WHERE tenant_id = #{tenantId}
+          AND dict_type = #{dictType}
+          AND parent_code = #{parentCode}
+          AND dict_code = #{dictCode}
+          AND is_deleted = 0
+    </update>
 </mapper>

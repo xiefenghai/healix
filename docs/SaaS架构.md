@@ -287,7 +287,8 @@ CareTeam / CareTeamMember
 VitalRecord                   # tenant_id, people_id, ...
 
 # 协作（机构隔离）— P2
-FollowUpTask, AlertTicket, InterventionRecord, HealthReport
+FollowupRecord, HealthReport
+（已废弃空壳：FollowUpTask / AlertTicket / InterventionRecord）
 
 # Agent
 AgentSession / AgentMessage   # agent_type: PATIENT | CARE_COPILOT；people_id

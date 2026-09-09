@@ -74,7 +74,7 @@ const staffNameMap = computed(() => {
 })
 
 const patientNameMap = computed(() => {
-  const map = new Map<number, string>()
+  const map = new Map<string, string>()
   for (const p of allPatients.value) map.set(p.peopleId, p.displayName)
   return map
 })

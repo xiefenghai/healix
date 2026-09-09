@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Healix 数据库 ER</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --ink: #1a2332;
+    --muted: #5b6b7c;
+    --line: #d7dee7;
+    --accent: #0f7a6c;
+    --accent-soft: #e6f4f1;
+    --warn: #9a3412;
+    --chip: #eef2f6;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #dff3ef 0%, transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, #e8eef8 0%, transparent 50%),
+      var(--bg);
+  }
+  .app {
+    display: grid;
+    grid-template-columns: 240px 1fr 380px;
+    grid-template-rows: 64px 1fr;
+    height: 100%;
+  }
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    background: rgba(255,255,255,.82);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    letter-spacing: .02em;
+  }
+  header .meta { color: var(--muted); font-size: 13px; }
+  header input {
+    margin-left: auto;
+    width: min(360px, 40vw);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font: inherit;
+    background: #fff;
+  }
+  nav {
+    overflow: auto;
+    padding: 14px 12px;
+    border-right: 1px solid var(--line);
+    background: rgba(255,255,255,.55);
+  }
+  nav button {
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    font: inherit;
+    color: var(--ink);
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  nav button:hover { background: #edf2f6; }
+  nav button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  nav .count { color: var(--muted); font-size: 12px; }
+  main {
+    overflow: auto;
+    padding: 18px;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 14px;
+  }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    overflow: hidden;
+    transition: border-color .15s, transform .15s;
+  }
+  .card:hover { border-color: #9ec9c1; transform: translateY(-1px); }
+  .card.selected { border-color: var(--accent); outline: 2px solid rgba(15,122,108,.18); }
+  .card-h {
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #fbfcfd, #f7faf9);
+  }
+  .card-h .name { font-weight: 700; font-size: 14px; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .card-h .desc { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+  .card-b { padding: 8px 10px 10px; }
+  .cols { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; }
+  .cols li {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .cols li:nth-child(odd) { background: #f8fafb; }
+  .cols .t { color: var(--muted); }
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--chip);
+    color: var(--muted);
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .badge.pk { background: #e8f0ff; color: #274690; }
+  .badge.fk { background: #fff1e6; color: var(--warn); }
+  aside {
+    overflow: auto;
+    border-left: 1px solid var(--line);
+    background: rgba(255,255,255,.72);
+    padding: 16px;
+  }
+  aside h2 { margin: 0 0 6px; font-size: 16px; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  aside .desc { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .rels {
+    margin: 0 0 16px;
+    padding: 0;
+    list-style: none;
+  }
+  .rels li {
+    font-size: 13px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-bottom: 8px;
+    background: #fff;
+  }
+  .rels code { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--accent); }
+  table.fields {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  table.fields th, table.fields td {
+    text-align: left;
+    padding: 8px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.fields th { color: var(--muted); font-weight: 600; font-size: 11px; }
+  table.fields code { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .empty {
+    color: var(--muted);
+    font-size: 14px;
+    padding: 24px 8px;
+  }
+  .map {
+    margin-bottom: 16px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px;
+    box-shadow: var(--shadow);
+  }
+  .map h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .map-lines {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .edge {
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: #0b5c52;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    cursor: pointer;
+    border: 1px solid #c9e6e0;
+  }
+  .edge:hover { background: #d5efe9; }
+
+  .overview-wrap {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    padding: 16px 16px 8px;
+    margin-bottom: 14px;
+    overflow: auto;
+  }
+  .overview-wrap h3 {
+    margin: 0 0 4px;
+    font-size: 15px;
+  }
+  .overview-wrap .sub {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .overview-svg {
+    width: 100%;
+    min-width: 860px;
+    height: auto;
+    display: block;
+  }
+  .overview-svg .lane {
+    fill: #f7faf9;
+    stroke: var(--line);
+    stroke-width: 1;
+  }
+  .overview-svg .lane-title {
+    fill: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+  }
+  .overview-svg .node {
+    cursor: pointer;
+  }
+  .overview-svg .node rect {
+    fill: #fff;
+    stroke: #9ec9c1;
+    stroke-width: 1.4;
+    rx: 8;
+  }
+  .overview-svg .node.hub rect {
+    fill: var(--accent-soft);
+    stroke: var(--accent);
+    stroke-width: 1.8;
+  }
+  .overview-svg .node:hover rect {
+    fill: #dff3ef;
+    stroke: var(--accent);
+  }
+  .overview-svg .node text {
+    fill: var(--ink);
+    font-size: 11px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    pointer-events: none;
+  }
+  .overview-svg .node.hub text {
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .overview-svg .edge {
+    fill: none;
+    stroke: #8aa8a2;
+    stroke-width: 1.3;
+    marker-end: url(#arrow);
+  }
+  .overview-svg .edge-label {
+    fill: #5b6b7c;
+    font-size: 10px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin: 8px 0 4px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .legend i {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    margin-right: 5px;
+    vertical-align: -1px;
+    border: 1px solid #9ec9c1;
+    background: #fff;
+  }
+  .legend i.hub { background: var(--accent-soft); border-color: var(--accent); }
+  @media (max-width: 1100px) {
+    .app { grid-template-columns: 200px 1fr; grid-template-rows: 64px 1fr auto; }
+    aside { grid-column: 1 / -1; max-height: 40vh; border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Healix 数据库 ER</h1>
+    <div class="meta">44 表 · 逻辑关联（无物理 FK）· 点击表看字段</div>
+    <input id="q" placeholder="搜索表名 / 字段 / 说明…" />
+  </header>
+  <nav id="domains"></nav>
+  <main>
+    <p class="hint">约定：业务主键 <code>id</code>；关联用业务 id。图中省略全表共有的 <code>pk_id / is_deleted / gmt_*</code>。</p>
+    <div class="map" id="map"></div>
+    <div class="board" id="board"></div>
+  </main>
+  <aside id="detail"><div class="empty">选择左侧域或中间某张表，查看完整字段与关系。</div></aside>
+</div>
+<script>
+const DATA = {"tables": {"tenant": {"comment": "租户（PHI 共享边界）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "code", "type": "VARCHAR(64)", "required": true, "comment": "租户编码（唯一）"}, {"name": "name", "type": "VARCHAR(128)", "required": true, "comment": "租户名称"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/SUSPENDED/CLOSED"}, {"name": "plan_code", "type": "VARCHAR(64)", "required": false, "comment": "套餐编码"}, {"name": "expire_at", "type": "DATETIME", "required": false, "comment": "套餐/租约到期时间"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "organization": {"comment": "机构（协作任务/统计边界）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "parent_org_id", "type": "VARCHAR(32)", "required": false, "comment": "上级机构业务ID（预留树形）"}, {"name": "name", "type": "VARCHAR(128)", "required": true, "comment": "机构名称"}, {"name": "org_code", "type": "VARCHAR(32)", "required": true, "comment": "机构编码（01 开头 32 位）"}, {"name": "org_type", "type": "VARCHAR(32)", "required": false, "comment": "机构类型"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/DISABLED"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "org_invite_code": {"comment": "机构患者邀请码", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "所属机构业务ID"}, {"name": "code", "type": "VARCHAR(32)", "required": true, "comment": "邀请码"}, {"name": "enabled", "type": "TINYINT", "required": true, "comment": "是否启用：1启用 0停用"}, {"name": "expire_at", "type": "DATETIME", "required": true, "comment": "过期时间"}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "创建人 staff_profile.id"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "ops_account": {"comment": "Ops 平台运维账号", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "username", "type": "VARCHAR(64)", "required": true, "comment": "登录用户名"}, {"name": "password_hash", "type": "VARCHAR(128)", "required": true, "comment": "密码哈希"}, {"name": "display_name", "type": "VARCHAR(64)", "required": false, "comment": "显示名称"}, {"name": "role_code", "type": "VARCHAR(32)", "required": true, "comment": "平台角色：SUPER_ADMIN/OPERATOR/AUDITOR"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/DISABLED"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "staff_account": {"comment": "B 端登录账号", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "username", "type": "VARCHAR(64)", "required": true, "comment": "登录用户名"}, {"name": "password_hash", "type": "VARCHAR(128)", "required": true, "comment": "密码哈希"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/DISABLED"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "staff_profile": {"comment": "B 端人员档案（归属租户）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花，staffId）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "account_id", "type": "VARCHAR(32)", "required": true, "comment": "关联 staff_account.id"}, {"name": "display_name", "type": "VARCHAR(64)", "required": false, "comment": "显示名称"}, {"name": "mobile", "type": "VARCHAR(32)", "required": false, "comment": "手机号"}, {"name": "title", "type": "VARCHAR(64)", "required": false, "comment": "职称/头衔"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "staff_org_binding": {"comment": "人员-机构绑定", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "staff_id", "type": "VARCHAR(32)", "required": true, "comment": "人员业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "机构业务ID"}, {"name": "is_default", "type": "TINYINT", "required": true, "comment": "是否默认工作机构：1是 0否"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "staff_role_binding": {"comment": "人员-角色绑定", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "staff_id", "type": "VARCHAR(32)", "required": true, "comment": "人员业务ID"}, {"name": "role_code", "type": "VARCHAR(32)", "required": true, "comment": "角色编码"}, {"name": "org_id", "type": "VARCHAR(32)", "required": false, "comment": "角色作用机构；功能角色恒空"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_account": {"comment": "C 端登录账号（租户隔离）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "username", "type": "VARCHAR(64)", "required": true, "comment": "登录用户名（租户内唯一）"}, {"name": "password_hash", "type": "VARCHAR(128)", "required": true, "comment": "密码哈希"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/DISABLED"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_profile": {"comment": "患者基础信息（租户隔离）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花，people_id）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "account_id", "type": "VARCHAR(32)", "required": false, "comment": "关联 people_account.id；可空"}, {"name": "display_name", "type": "VARCHAR(64)", "required": true, "comment": "姓名"}, {"name": "gender", "type": "VARCHAR(16)", "required": false, "comment": "性别：MALE/FEMALE/UNKNOWN"}, {"name": "birthday", "type": "DATE", "required": false, "comment": "出生日期"}, {"name": "name_pinyin", "type": "VARCHAR(128)", "required": false, "comment": "姓名拼音"}, {"name": "allergens_json", "type": "JSON", "required": false, "comment": "过敏原 JSON"}, {"name": "chronic_tags_json", "type": "JSON", "required": false, "comment": "慢性病标签 JSON"}, {"name": "emergency_contact_json", "type": "JSON", "required": false, "comment": "紧急联系人 JSON"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_identity": {"comment": "患者身份证件", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "identity_type", "type": "VARCHAR(32)", "required": true, "comment": "证件类型"}, {"name": "identity_value_hash", "type": "VARCHAR(64)", "required": true, "comment": "证件号哈希"}, {"name": "identity_value_cipher", "type": "VARCHAR(256)", "required": true, "comment": "证件号密文"}, {"name": "identity_value_mask", "type": "VARCHAR(64)", "required": true, "comment": "证件号脱敏"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "account_patient": {"comment": "C 端账号就诊人卡片", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "account_id", "type": "VARCHAR(32)", "required": true, "comment": "C 端账号业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "自然人 people_id"}, {"name": "display_name", "type": "VARCHAR(64)", "required": true, "comment": "卡片展示姓名"}, {"name": "relation", "type": "VARCHAR(32)", "required": false, "comment": "关系：SELF/PARENT/CHILD/SPOUSE/OTHER"}, {"name": "identity_type", "type": "VARCHAR(32)", "required": false, "comment": "证件类型"}, {"name": "identity_value_hash", "type": "VARCHAR(64)", "required": false, "comment": "证件号哈希（账号内唯一）"}, {"name": "identity_value_mask", "type": "VARCHAR(64)", "required": false, "comment": "证件号脱敏"}, {"name": "mobile", "type": "VARCHAR(32)", "required": false, "comment": "手机（Phase1 只存不验）"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_activation_invite": {"comment": "患者专属激活码", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "目标机构"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "待激活自然人"}, {"name": "code", "type": "VARCHAR(32)", "required": true, "comment": "激活码"}, {"name": "enabled", "type": "TINYINT", "required": true, "comment": "1启用 0停用"}, {"name": "expire_at", "type": "DATETIME", "required": false, "comment": "过期时间"}, {"name": "used_at", "type": "DATETIME", "required": false, "comment": "使用时间"}, {"name": "used_by_account_id", "type": "VARCHAR(32)", "required": false, "comment": "消费账号"}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "发码人"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_org_membership": {"comment": "患者-机构会员关系", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "机构业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/LEFT"}, {"name": "joined_at", "type": "DATETIME", "required": true, "comment": "入组时间"}, {"name": "left_at", "type": "DATETIME", "required": false, "comment": "退出时间"}, {"name": "invited_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "邀请人 staff_profile.id"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_care_assignment": {"comment": "患者主管机构/主管健管师", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "primary_org_id", "type": "VARCHAR(32)", "required": true, "comment": "主管机构业务ID"}, {"name": "primary_care_manager_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "主管健管师业务ID"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_basic_archive": {"comment": "患者基础档案（租户级）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "schema_version", "type": "VARCHAR(16)", "required": true, "comment": "档案 schema 版本"}, {"name": "content_json", "type": "JSON", "required": false, "comment": "基础档案全文"}, {"name": "version", "type": "INT", "required": true, "comment": "乐观锁"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": "来源：B_SIDE/C_JOIN"}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "建档人业务ID"}, {"name": "updated_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "最后修改人"}, {"name": "remark", "type": "VARCHAR(256)", "required": false, "comment": "备注"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_disease_archive": {"comment": "患者病种档案（租户级）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "disease_code", "type": "VARCHAR(64)", "required": true, "comment": "病种编码"}, {"name": "schema_version", "type": "VARCHAR(16)", "required": true, "comment": ""}, {"name": "content_json", "type": "JSON", "required": false, "comment": "病种档案全文"}, {"name": "version", "type": "INT", "required": true, "comment": "乐观锁"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "updated_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "sys_dict": {"comment": "系统通用字典", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "dict_type", "type": "VARCHAR(32)", "required": true, "comment": "OPTION/FIELD/DISEASE/DISEASE_FIELD"}, {"name": "parent_code", "type": "VARCHAR(64)", "required": true, "comment": "父级 code，0=顶级"}, {"name": "dict_code", "type": "VARCHAR(64)", "required": true, "comment": "字典编码"}, {"name": "dict_code_desc", "type": "VARCHAR(128)", "required": true, "comment": "中文描述"}, {"name": "content", "type": "JSON", "required": false, "comment": "扩展配置"}, {"name": "sort_order", "type": "INT", "required": true, "comment": ""}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "0=平台通用"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "people_metadata_info": {"comment": "患者元数据（租户级）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": ""}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "metadata_code", "type": "VARCHAR(100)", "required": true, "comment": ""}, {"name": "metadata_value", "type": "JSON", "required": true, "comment": ""}, {"name": "source_biz_code", "type": "VARCHAR(64)", "required": false, "comment": ""}, {"name": "source_client_code", "type": "VARCHAR(64)", "required": false, "comment": ""}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "field_revision_batch": {"comment": "字段修订批次", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": ""}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "target_people_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "operator_type", "type": "VARCHAR(32)", "required": true, "comment": "STAFF/PEOPLE/SYSTEM"}, {"name": "operator_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "biz_type", "type": "VARCHAR(64)", "required": true, "comment": ""}, {"name": "biz_key", "type": "VARCHAR(64)", "required": false, "comment": ""}, {"name": "version_before", "type": "INT", "required": true, "comment": ""}, {"name": "version_after", "type": "INT", "required": true, "comment": ""}, {"name": "org_id", "type": "VARCHAR(32)", "required": false, "comment": "操作上下文机构"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "field_revision_item": {"comment": "字段修订明细", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": ""}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "batch_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "field_path", "type": "VARCHAR(128)", "required": true, "comment": ""}, {"name": "old_value", "type": "JSON", "required": false, "comment": ""}, {"name": "new_value", "type": "JSON", "required": false, "comment": ""}, {"name": "old_display", "type": "VARCHAR(512)", "required": false, "comment": ""}, {"name": "new_display", "type": "VARCHAR(512)", "required": false, "comment": ""}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "care_team": {"comment": "健管组（机构网格）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "所属机构业务ID"}, {"name": "team_code", "type": "VARCHAR(32)", "required": true, "comment": "健管组编码（02 开头 32 位）"}, {"name": "name", "type": "VARCHAR(128)", "required": true, "comment": "健管组名称"}, {"name": "primary_care_manager_staff_id", "type": "VARCHAR(32)", "required": true, "comment": "主责健管师业务ID"}, {"name": "primary_doctor_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "主责医生业务ID"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/DISABLED"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "care_team_member": {"comment": "健管组成员", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "所属机构业务ID"}, {"name": "team_id", "type": "VARCHAR(32)", "required": true, "comment": "健管组业务ID"}, {"name": "member_type", "type": "VARCHAR(16)", "required": true, "comment": "成员类型：STAFF/PATIENT"}, {"name": "staff_id", "type": "VARCHAR(32)", "required": false, "comment": "员工业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": false, "comment": "患者业务ID"}, {"name": "joined_at", "type": "DATETIME", "required": true, "comment": "加入时间"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "vital_record": {"comment": "指标/体征记录（租户内共享）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": false, "comment": "录入时工作机构业务ID"}, {"name": "metric_type", "type": "VARCHAR(32)", "required": true, "comment": "指标类型"}, {"name": "value", "type": "DECIMAL(12,", "required": true, "comment": "指标数值"}, {"name": "unit", "type": "VARCHAR(16)", "required": false, "comment": "单位"}, {"name": "recorded_at", "type": "DATETIME", "required": true, "comment": "测量/记录时间"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": "来源：SELF/DEVICE/STAFF"}, {"name": "group_id", "type": "VARCHAR(32)", "required": false, "comment": "同一次测量分组ID（血压成对等）"}, {"name": "note", "type": "VARCHAR(200)", "required": false, "comment": "备注"}, {"name": "recorded_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "B端代录人员工业务ID"}, {"name": "extra_json", "type": "JSON", "required": false, "comment": "扩展信息 JSON（bpContext/mealContext等）"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "lab_report": {"comment": "检验报告头", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": false, "comment": "录入时工作机构业务ID"}, {"name": "specimen_type", "type": "VARCHAR(32)", "required": true, "comment": "标本：BLOOD/URINE"}, {"name": "sampled_at", "type": "DATETIME", "required": false, "comment": "采样时间"}, {"name": "reported_at", "type": "DATETIME", "required": false, "comment": "报告时间"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": "来源：STAFF/STAFF_OCR/PATIENT/PATIENT_OCR（兼容 MANUAL/OCR）"}, {"name": "note", "type": "VARCHAR(200)", "required": false, "comment": "备注"}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "创建人员工业务ID"}, {"name": "updated_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "更新人员工业务ID"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "lab_result_item": {"comment": "检验明细项", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "report_id", "type": "VARCHAR(32)", "required": true, "comment": "检验报告业务ID"}, {"name": "item_code", "type": "VARCHAR(32)", "required": true, "comment": "项目编码"}, {"name": "item_name", "type": "VARCHAR(64)", "required": true, "comment": "项目名称"}, {"name": "value_num", "type": "DECIMAL(16,", "required": false, "comment": "数值结果"}, {"name": "value_text", "type": "VARCHAR(64)", "required": false, "comment": "定性/文本结果"}, {"name": "unit", "type": "VARCHAR(32)", "required": false, "comment": "单位"}, {"name": "ref_low", "type": "DECIMAL(16,", "required": false, "comment": "参考下限"}, {"name": "ref_high", "type": "DECIMAL(16,", "required": false, "comment": "参考上限"}, {"name": "abnormal_flag", "type": "VARCHAR(8)", "required": false, "comment": "异常标记：H/L/N"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "exam_report": {"comment": "检查报告", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": false, "comment": "录入时工作机构业务ID"}, {"name": "exam_type", "type": "VARCHAR(32)", "required": true, "comment": "检查类型：ECG/UCG/CAROTID_US/FUNDUS/PFT/CHEST_IMAGING"}, {"name": "examined_at", "type": "DATETIME", "required": true, "comment": "检查时间"}, {"name": "conclusion", "type": "VARCHAR(1000)", "required": false, "comment": "结论摘要"}, {"name": "findings_json", "type": "JSON", "required": false, "comment": "结构化关键测量"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": "来源：STAFF/PATIENT（兼容 MANUAL）"}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "创建人员工业务ID"}, {"name": "updated_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "更新人员工业务ID"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "agent_session": {"comment": "Agent 会话", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "agent_type", "type": "VARCHAR(32)", "required": true, "comment": "Agent 类型：PATIENT/CARE_COPILOT"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": false, "comment": "租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": false, "comment": "患者业务ID"}, {"name": "staff_id", "type": "VARCHAR(32)", "required": false, "comment": "员工业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": false, "comment": "工作机构业务ID"}, {"name": "title", "type": "VARCHAR(128)", "required": false, "comment": "会话标题"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态：ACTIVE/CLOSED"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "agent_message": {"comment": "Agent 会话消息", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "session_id", "type": "VARCHAR(32)", "required": true, "comment": "会话业务ID"}, {"name": "role", "type": "VARCHAR(16)", "required": true, "comment": "角色：USER/ASSISTANT/SYSTEM/TOOL"}, {"name": "content", "type": "LONGTEXT", "required": true, "comment": "消息内容"}, {"name": "tool_name", "type": "VARCHAR(64)", "required": false, "comment": "工具名称"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "agent_interaction_log": {"comment": "Agent 交互日志", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "session_id", "type": "VARCHAR(32)", "required": false, "comment": "会话业务ID"}, {"name": "agent_type", "type": "VARCHAR(32)", "required": true, "comment": "Agent 类型"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": false, "comment": "租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": false, "comment": "患者业务ID"}, {"name": "staff_id", "type": "VARCHAR(32)", "required": false, "comment": "员工业务ID"}, {"name": "intent", "type": "VARCHAR(64)", "required": false, "comment": "识别意图"}, {"name": "user_message", "type": "LONGTEXT", "required": true, "comment": "用户原话"}, {"name": "prompt_snapshot", "type": "LONGTEXT", "required": false, "comment": "Prompt 快照"}, {"name": "tool_calls_json", "type": "LONGTEXT", "required": false, "comment": "工具调用 JSON"}, {"name": "draft_reply", "type": "LONGTEXT", "required": false, "comment": "草稿回复"}, {"name": "final_reply", "type": "LONGTEXT", "required": false, "comment": "最终回复"}, {"name": "prompt_tokens", "type": "INT", "required": false, "comment": "Prompt Token 数"}, {"name": "completion_tokens", "type": "INT", "required": false, "comment": "补全 Token 数"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "audit_log": {"comment": "系统审计日志", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "portal", "type": "VARCHAR(8)", "required": true, "comment": "入口：C/B/OPS"}, {"name": "actor_account_id", "type": "VARCHAR(32)", "required": true, "comment": "操作者账号业务ID"}, {"name": "actor_type", "type": "VARCHAR(16)", "required": true, "comment": "操作者类型：OPS/STAFF/PATIENT"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": false, "comment": "相关租户业务ID"}, {"name": "action", "type": "VARCHAR(64)", "required": true, "comment": "动作编码"}, {"name": "resource_type", "type": "VARCHAR(64)", "required": false, "comment": "资源类型"}, {"name": "resource_id", "type": "VARCHAR(64)", "required": false, "comment": "资源业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": false, "comment": "相关患者业务ID"}, {"name": "detail_json", "type": "JSON", "required": false, "comment": "详情 JSON"}, {"name": "ip", "type": "VARCHAR(64)", "required": false, "comment": "客户端 IP"}, {"name": "user_agent", "type": "VARCHAR(256)", "required": false, "comment": "User-Agent"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "health_report": {"comment": "健康报告元数据（P2）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "title", "type": "VARCHAR(128)", "required": true, "comment": "报告标题"}, {"name": "report_type", "type": "VARCHAR(32)", "required": false, "comment": "报告类型"}, {"name": "storage_key", "type": "VARCHAR(512)", "required": false, "comment": "对象存储 Key/URL"}, {"name": "parsed_summary_json", "type": "JSON", "required": false, "comment": "解析摘要 JSON"}, {"name": "report_date", "type": "DATETIME", "required": true, "comment": "报告日期"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "alert_ticket": {"comment": "预警工单（P2）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "所属机构业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "rule_code", "type": "VARCHAR(64)", "required": true, "comment": "规则编码"}, {"name": "severity", "type": "VARCHAR(16)", "required": true, "comment": "严重级别"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态"}, {"name": "message", "type": "VARCHAR(512)", "required": true, "comment": "告警说明"}, {"name": "assignee_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "处理人业务ID"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "follow_up_task": {"comment": "随访任务（P2）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "所属机构业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "assignee_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "负责人业务ID"}, {"name": "title", "type": "VARCHAR(128)", "required": true, "comment": "任务标题"}, {"name": "status", "type": "VARCHAR(32)", "required": true, "comment": "状态"}, {"name": "due_at", "type": "DATETIME", "required": false, "comment": "截止时间"}, {"name": "completed_at", "type": "DATETIME", "required": false, "comment": "完成时间"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "intervention_record": {"comment": "干预记录（P2）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": true, "comment": "所属机构业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "staff_id", "type": "VARCHAR(32)", "required": true, "comment": "记录人业务ID"}, {"name": "content", "type": "TEXT", "required": true, "comment": "干预内容"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "tenant_quota_usage": {"comment": "租户配额用量（P2）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "quota_key", "type": "VARCHAR(64)", "required": true, "comment": "配额项"}, {"name": "used_value", "type": "BIGINT", "required": true, "comment": "已用量"}, {"name": "limit_value", "type": "BIGINT", "required": false, "comment": "上限"}, {"name": "period_key", "type": "VARCHAR(32)", "required": true, "comment": "周期键"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "feature_flag": {"comment": "功能开关（P2）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": false, "comment": "租户业务ID；空表示平台级"}, {"name": "flag_key", "type": "VARCHAR(64)", "required": true, "comment": "开关键"}, {"name": "enabled", "type": "TINYINT", "required": true, "comment": "是否开启"}, {"name": "config_json", "type": "JSON", "required": false, "comment": "扩展配置 JSON"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_medication": {"comment": "患者用药清单（患者级）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "org_id", "type": "VARCHAR(32)", "required": false, "comment": "录入时工作机构业务ID"}, {"name": "prescription_group_id", "type": "VARCHAR(32)", "required": false, "comment": "同一次处方分组ID；手工录入可空"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": "来源：MANUAL/PRESCRIPTION"}, {"name": "drug_name", "type": "VARCHAR(128)", "required": true, "comment": "药品名称"}, {"name": "usage_method", "type": "VARCHAR(64)", "required": true, "comment": "药品用法，如口服"}, {"name": "frequency", "type": "VARCHAR(128)", "required": false, "comment": "用药频率"}, {"name": "dose_amount", "type": "VARCHAR(32)", "required": false, "comment": "单次剂量数值"}, {"name": "dose_unit", "type": "VARCHAR(32)", "required": false, "comment": "单次剂量单位"}, {"name": "start_date", "type": "DATE", "required": false, "comment": "开始服药时间"}, {"name": "stop_date", "type": "DATE", "required": false, "comment": "停药时间"}, {"name": "timing_note", "type": "VARCHAR(128)", "required": false, "comment": "用药时机：晨起/饭后/痛时服等"}, {"name": "course_days", "type": "INT", "required": false, "comment": "疗程天数；空且无停药日可表示长期"}, {"name": "time_morning", "type": "VARCHAR(32)", "required": false, "comment": "用药时间-早（兼容旧字段，新录入不再使用）"}, {"name": "time_noon", "type": "VARCHAR(32)", "required": false, "comment": "用药时间-午（兼容旧字段，新录入不再使用）"}, {"name": "time_evening", "type": "VARCHAR(32)", "required": false, "comment": "用药时间-晚（兼容旧字段，新录入不再使用）"}, {"name": "time_bedtime", "type": "VARCHAR(32)", "required": false, "comment": "用药时间-睡前（兼容旧字段，新录入不再使用）"}, {"name": "has_adverse_reaction", "type": "TINYINT", "required": true, "comment": "是否存在不良反应：0否 1是"}, {"name": "remark", "type": "VARCHAR(150)", "required": false, "comment": "备注"}, {"name": "status", "type": "VARCHAR(16)", "required": true, "comment": "状态：ACTIVE在用/STOPPED停用"}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "创建人员工业务ID"}, {"name": "updated_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "最后更新人员工业务ID"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "people_medication_intake": {"comment": "用药依从性打卡记录", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "medication_id", "type": "VARCHAR(32)", "required": true, "comment": "用药清单业务ID"}, {"name": "intake_date", "type": "DATE", "required": true, "comment": "服药日期"}, {"name": "time_slot", "type": "VARCHAR(16)", "required": true, "comment": "时段：MORNING/NOON/EVENING/BEDTIME/OTHER"}, {"name": "status", "type": "VARCHAR(16)", "required": true, "comment": "状态：TAKEN已服/MISSED漏服/SKIPPED跳过"}, {"name": "note", "type": "VARCHAR(200)", "required": false, "comment": "备注"}, {"name": "recorded_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "记录人员工业务ID"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": "是否删除：0未删除 1已删除"}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": "记录创建时间"}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": "记录修改时间"}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": "记录删除时间"}]}, "care_plan": {"comment": "健康管理方案头（租户+患者）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": "物理主键自增"}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": "业务主键（雪花）"}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": "所属租户业务ID"}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": "患者业务ID"}, {"name": "status", "type": "VARCHAR(16)", "required": true, "comment": "DRAFT/ACTIVE/SUPERSEDED/ARCHIVED"}, {"name": "title", "type": "VARCHAR(128)", "required": false, "comment": "方案标题"}, {"name": "goal_summary", "type": "VARCHAR(512)", "required": false, "comment": "一句话目标"}, {"name": "disease_tags_json", "type": "JSON", "required": false, "comment": "关联病种 code 列表"}, {"name": "current_version_id", "type": "VARCHAR(32)", "required": false, "comment": "当前生效版本业务ID"}, {"name": "version", "type": "INT", "required": true, "comment": "头乐观锁"}, {"name": "created_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "updated_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "care_plan_draft": {"comment": "健康管理方案草稿工作区", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": ""}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "plan_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "version", "type": "INT", "required": true, "comment": "草稿乐观锁"}, {"name": "schema_version", "type": "INT", "required": true, "comment": "产品规则版本（CarePlanSchemaVersions）"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": "TEMPLATE/MANUAL/TEMPLATE_THEN_EDIT/LLM/..."}, {"name": "exercise_json", "type": "JSON", "required": false, "comment": ""}, {"name": "diet_json", "type": "JSON", "required": false, "comment": ""}, {"name": "execution_json", "type": "JSON", "required": false, "comment": ""}, {"name": "safety_flags_json", "type": "JSON", "required": false, "comment": ""}, {"name": "context_snapshot_json", "type": "JSON", "required": false, "comment": ""}, {"name": "base_version_id", "type": "VARCHAR(32)", "required": false, "comment": "从哪一版 clone"}, {"name": "generation_log_id", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "updated_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "care_plan_version": {"comment": "健康管理方案已发布版本（不可变）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": ""}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "plan_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "version_no", "type": "INT", "required": true, "comment": "同患者发布序号（递增，非规则版本）"}, {"name": "schema_version", "type": "INT", "required": true, "comment": "产品规则版本（CarePlanSchemaVersions）"}, {"name": "source", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "title", "type": "VARCHAR(128)", "required": false, "comment": "发布时标题快照"}, {"name": "exercise_json", "type": "JSON", "required": false, "comment": ""}, {"name": "diet_json", "type": "JSON", "required": false, "comment": ""}, {"name": "execution_json", "type": "JSON", "required": false, "comment": ""}, {"name": "context_snapshot_json", "type": "JSON", "required": false, "comment": ""}, {"name": "safety_flags_json", "type": "JSON", "required": false, "comment": ""}, {"name": "published_at", "type": "DATETIME", "required": true, "comment": ""}, {"name": "published_by_staff_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "signed_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "signed_at", "type": "DATETIME", "required": false, "comment": ""}, {"name": "sign_status", "type": "VARCHAR(16)", "required": true, "comment": "UNSIGNED/SIGNED"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "care_plan_task": {"comment": "健康管理方案执行任务投影（发布时写入）", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": ""}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "plan_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "plan_version_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "task_code", "type": "VARCHAR(64)", "required": true, "comment": ""}, {"name": "title", "type": "VARCHAR(128)", "required": true, "comment": ""}, {"name": "category", "type": "VARCHAR(32)", "required": true, "comment": "EXERCISE/DIET/OTHER"}, {"name": "frequency", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "time_slot", "type": "VARCHAR(32)", "required": false, "comment": ""}, {"name": "related_ref", "type": "VARCHAR(64)", "required": false, "comment": ""}, {"name": "enabled", "type": "TINYINT", "required": true, "comment": ""}, {"name": "sort_order", "type": "INT", "required": true, "comment": ""}, {"name": "payload_json", "type": "JSON", "required": false, "comment": ""}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}, "care_plan_task_checkin": {"comment": "管理方案执行任务打卡记录", "cols": [{"name": "pk_id", "type": "BIGINT", "required": true, "comment": ""}, {"name": "id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "tenant_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "people_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "plan_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "plan_version_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "task_id", "type": "VARCHAR(32)", "required": true, "comment": ""}, {"name": "checkin_date", "type": "DATE", "required": true, "comment": "打卡日期"}, {"name": "time_slot", "type": "VARCHAR(32)", "required": true, "comment": "时段（与任务一致或 ALL）"}, {"name": "status", "type": "VARCHAR(16)", "required": true, "comment": "DONE/SKIPPED/MISSED"}, {"name": "note", "type": "VARCHAR(200)", "required": false, "comment": ""}, {"name": "recorded_by_people_id", "type": "VARCHAR(32)", "required": false, "comment": "C 端患者自录"}, {"name": "recorded_by_staff_id", "type": "VARCHAR(32)", "required": false, "comment": "B 端员工代录"}, {"name": "is_deleted", "type": "TINYINT", "required": true, "comment": ""}, {"name": "gmt_created", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_modified", "type": "DATETIME", "required": true, "comment": ""}, {"name": "gmt_deleted", "type": "DATETIME", "required": true, "comment": ""}]}}, "domains": [{"id": "platform", "title": "平台与机构", "tables": ["tenant", "organization", "org_invite_code", "ops_account", "sys_dict", "tenant_quota_usage", "feature_flag"]}, {"id": "staff", "title": "B 端人员", "tables": ["staff_account", "staff_profile", "staff_org_binding", "staff_role_binding"]}, {"id": "people", "title": "患者与入组", "tables": ["people_account", "people_profile", "people_identity", "account_patient", "people_activation_invite", "people_org_membership", "people_care_assignment", "people_basic_archive", "people_disease_archive", "people_metadata_info"]}, {"id": "team", "title": "健管组", "tables": ["care_team", "care_team_member"]}, {"id": "obs", "title": "健康数据", "tables": ["vital_record", "lab_report", "lab_result_item", "exam_report", "people_medication", "people_medication_intake"]}, {"id": "careplan", "title": "管理方案", "tables": ["care_plan", "care_plan_draft", "care_plan_version", "care_plan_task", "care_plan_task_checkin"]}, {"id": "revision", "title": "修订与审计", "tables": ["field_revision_batch", "field_revision_item", "audit_log"]}, {"id": "agent", "title": "Agent", "tables": ["agent_session", "agent_message", "agent_interaction_log"]}, {"id": "p2", "title": "P2 预留", "tables": ["health_report", "alert_ticket", "follow_up_task", "intervention_record"]}], "rels": [{"from": "organization", "to": "tenant", "fk": "tenant_id", "card": "N:1"}, {"from": "organization", "to": "organization", "fk": "parent_org_id", "card": "N:1"}, {"from": "org_invite_code", "to": "organization", "fk": "org_id", "card": "N:1"}, {"from": "org_invite_code", "to": "tenant", "fk": "tenant_id", "card": "N:1"}, {"from": "staff_profile", "to": "staff_account", "fk": "account_id", "card": "1:1"}, {"from": "staff_profile", "to": "tenant", "fk": "tenant_id", "card": "N:1"}, {"from": "staff_org_binding", "to": "staff_profile", "fk": "staff_id", "card": "N:1"}, {"from": "staff_org_binding", "to": "organization", "fk": "org_id", "card": "N:1"}, {"from": "staff_role_binding", "to": "staff_profile", "fk": "staff_id", "card": "N:1"}, {"from": "people_account", "to": "tenant", "fk": "tenant_id", "card": "N:1"}, {"from": "people_profile", "to": "tenant", "fk": "tenant_id", "card": "N:1"}, {"from": "people_profile", "to": "people_account", "fk": "account_id", "card": "N:1"}, {"from": "people_identity", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "account_patient", "to": "people_account", "fk": "account_id", "card": "N:1"}, {"from": "account_patient", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "people_activation_invite", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "people_activation_invite", "to": "organization", "fk": "org_id", "card": "N:1"}, {"from": "people_org_membership", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "people_org_membership", "to": "organization", "fk": "org_id", "card": "N:1"}, {"from": "people_care_assignment", "to": "people_profile", "fk": "people_id", "card": "1:1"}, {"from": "people_basic_archive", "to": "people_profile", "fk": "people_id", "card": "1:1"}, {"from": "people_disease_archive", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "people_metadata_info", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "care_team", "to": "organization", "fk": "org_id", "card": "N:1"}, {"from": "care_team_member", "to": "care_team", "fk": "team_id", "card": "N:1"}, {"from": "care_team_member", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "care_team_member", "to": "staff_profile", "fk": "staff_id", "card": "N:1"}, {"from": "vital_record", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "lab_report", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "lab_result_item", "to": "lab_report", "fk": "report_id", "card": "N:1"}, {"from": "exam_report", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "people_medication", "to": "people_profile", "fk": "people_id", "card": "N:1"}, {"from": "people_medication_intake", "to": "people_medication", "fk": "medication_id", "card": "N:1"}, {"from": "care_plan", "to": "people_profile", "fk": "people_id", "card": "1:1"}, {"from": "care_plan", "to": "care_plan_version", "fk": "current_version_id", "card": "N:1"}, {"from": "care_plan_draft", "to": "care_plan", "fk": "plan_id", "card": "1:1"}, {"from": "care_plan_version", "to": "care_plan", "fk": "plan_id", "card": "N:1"}, {"from": "care_plan_task", "to": "care_plan_version", "fk": "plan_version_id", "card": "N:1"}, {"from": "care_plan_task_checkin", "to": "care_plan_task", "fk": "task_id", "card": "N:1"}, {"from": "field_revision_batch", "to": "people_profile", "fk": "target_people_id", "card": "N:1"}, {"from": "field_revision_item", "to": "field_revision_batch", "fk": "batch_id", "card": "N:1"}, {"from": "agent_message", "to": "agent_session", "fk": "session_id", "card": "N:1"}, {"from": "agent_interaction_log", "to": "agent_session", "fk": "session_id", "card": "N:1"}], "auditCols": ["gmt_created", "gmt_deleted", "gmt_modified", "is_deleted"]};
+const AUDIT = new Set(DATA.auditCols);
+
+let activeDomain = 'overview';
+let selected = null;
+
+const domainsEl = document.getElementById('domains');
+const boardEl = document.getElementById('board');
+const detailEl = document.getElementById('detail');
+const mapEl = document.getElementById('map');
+const qEl = document.getElementById('q');
+
+function isFk(col) {
+  return /(_id)$/.test(col) || ['tenant_id','people_id','org_id','staff_id','account_id','plan_id','task_id','batch_id','session_id','report_id','medication_id'].includes(col);
+}
+
+function domainOf(table) {
+  return DATA.domains.find(d => d.tables.includes(table));
+}
+
+function goTable(name) {
+  const dom = domainOf(name);
+  if (dom) activeDomain = dom.id;
+  selected = name;
+  qEl.value = '';
+  render();
+  requestAnimationFrame(() => {
+    document.querySelector(`.card[data-name="${name}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
+function goDomain(id) {
+  activeDomain = id;
+  selected = null;
+  qEl.value = '';
+  render();
+}
+
+function renderNav() {
+  const overviewBtn = `<button data-id="overview" class="${activeDomain==='overview'?'active':''}">
+      <span>整体总览</span><span class="count">图</span>
+    </button>`;
+  domainsEl.innerHTML = overviewBtn + DATA.domains.map(d => `
+    <button data-id="${d.id}" class="${d.id===activeDomain?'active':''}">
+      <span>${d.title}</span><span class="count">${d.tables.length}</span>
+    </button>`).join('');
+  domainsEl.querySelectorAll('button').forEach(btn => {
+    btn.onclick = () => { activeDomain = btn.dataset.id; selected = null; qEl.value=''; render(); };
+  });
+}
+
+function visibleTables() {
+  const q = qEl.value.trim().toLowerCase();
+  if (q) {
+    return Object.keys(DATA.tables).filter(n => {
+      const t = DATA.tables[n];
+      if (n.toLowerCase().includes(q) || (t.comment||'').toLowerCase().includes(q)) return true;
+      return t.cols.some(c => c.name.toLowerCase().includes(q) || (c.comment||'').toLowerCase().includes(q));
+    });
+  }
+  if (activeDomain === 'overview') return [];
+  return DATA.domains.find(d => d.id === activeDomain)?.tables || [];
+}
+
+function nodeBox(id, x, y, w, h, label, hub) {
+  return `<g class="node ${hub?'hub':''}" data-table="${id}" transform="translate(${x},${y})">
+    <rect width="${w}" height="${h}"></rect>
+    <text x="${w/2}" y="${h/2+4}" text-anchor="middle">${label}</text>
+  </g>`;
+}
+
+function renderOverview() {
+  // Layout: left tenant/org/staff, center people hub, right clinical + careplan
+  const W = 980, H = 620;
+  const parts = [];
+  parts.push(`<svg class="overview-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#8aa8a2"></path>
+      </marker>
+    </defs>
+    <rect class="lane" x="16" y="16" width="220" height="588" rx="12"></rect>
+    <text class="lane-title" x="32" y="40">平台 / 机构 / B端</text>
+    <rect class="lane" x="260" y="16" width="300" height="588" rx="12"></rect>
+    <text class="lane-title" x="276" y="40">患者中枢</text>
+    <rect class="lane" x="584" y="16" width="380" height="280" rx="12"></rect>
+    <text class="lane-title" x="600" y="40">健康数据</text>
+    <rect class="lane" x="584" y="312" width="380" height="292" rx="12"></rect>
+    <text class="lane-title" x="600" y="336">管理方案 · 今日待办</text>
+  `);
+
+  // left column
+  parts.push(nodeBox('tenant', 42, 60, 168, 36, 'tenant', true));
+  parts.push(nodeBox('organization', 42, 120, 168, 36, 'organization', false));
+  parts.push(nodeBox('staff_account', 42, 200, 168, 36, 'staff_account', false));
+  parts.push(nodeBox('staff_profile', 42, 256, 168, 36, 'staff_profile', true));
+  parts.push(nodeBox('staff_org_binding', 42, 320, 168, 36, 'staff_org_binding', false));
+  parts.push(nodeBox('care_team', 42, 400, 168, 36, 'care_team', false));
+  parts.push(nodeBox('care_team_member', 42, 456, 168, 36, 'care_team_member', false));
+  parts.push(nodeBox('ops_account', 42, 540, 168, 36, 'ops_account', false));
+
+  // center people
+  parts.push(nodeBox('people_account', 300, 60, 220, 36, 'people_account', false));
+  parts.push(nodeBox('account_patient', 300, 116, 220, 36, 'account_patient', false));
+  parts.push(nodeBox('people_profile', 290, 200, 240, 44, 'people_profile', true));
+  parts.push(nodeBox('people_identity', 300, 270, 220, 34, 'people_identity', false));
+  parts.push(nodeBox('people_org_membership', 300, 320, 220, 34, 'people_org_membership', false));
+  parts.push(nodeBox('people_activation_invite', 300, 370, 220, 34, 'people_activation_invite', false));
+  parts.push(nodeBox('people_basic_archive', 300, 430, 220, 34, 'people_basic_archive', false));
+  parts.push(nodeBox('people_disease_archive', 300, 480, 220, 34, 'people_disease_archive', false));
+  parts.push(nodeBox('field_revision_batch', 300, 540, 220, 34, 'field_revision_*', false));
+
+  // right health
+  parts.push(nodeBox('vital_record', 620, 60, 150, 34, 'vital_record', false));
+  parts.push(nodeBox('lab_report', 790, 60, 150, 34, 'lab_report', false));
+  parts.push(nodeBox('lab_result_item', 790, 110, 150, 34, 'lab_result_item', false));
+  parts.push(nodeBox('exam_report', 620, 140, 150, 34, 'exam_report', false));
+  parts.push(nodeBox('people_medication', 620, 200, 170, 34, 'people_medication', false));
+  parts.push(nodeBox('people_medication_intake', 810, 200, 130, 34, '…_intake', false));
+
+  // care plan
+  parts.push(nodeBox('care_plan', 620, 360, 150, 36, 'care_plan', true));
+  parts.push(nodeBox('care_plan_draft', 790, 360, 150, 36, 'care_plan_draft', false));
+  parts.push(nodeBox('care_plan_version', 620, 420, 150, 34, 'care_plan_version', false));
+  parts.push(nodeBox('care_plan_task', 790, 420, 150, 34, 'care_plan_task', false));
+  parts.push(nodeBox('care_plan_task_checkin', 700, 490, 200, 36, 'care_plan_task_checkin', true));
+  parts.push(`<text class="edge-label" x="700" y="545">↑ C端「今日待办」打卡</text>`);
+
+  // edges (paths)
+  const edges = [
+    // left chain
+    [126,96, 126,120],
+    [126,156, 126,200],
+    [126,236, 126,256],
+    [126,292, 126,320],
+    [126,356, 126,400],
+    [126,436, 126,456],
+    // tenant to people
+    [210,78, 300,78],
+    // org to membership
+    [210,138, 300,337],
+    // staff to care_team / binding already vertical
+    // people account -> card -> profile
+    [410,96, 410,116],
+    [410,152, 410,200],
+    [410,244, 410,270],
+    [410,304, 410,320],
+    [410,354, 410,370],
+    [410,404, 410,430],
+    [410,464, 410,480],
+    [410,514, 410,540],
+    // people to clinical
+    [530,222, 620,77],
+    [530,222, 790,77],
+    [530,222, 695,157],
+    [530,222, 620,217],
+    // lab report to item
+    [865,94, 865,110],
+    // med to intake
+    [790,217, 810,217],
+    // people to care plan
+    [530,222, 620,378],
+    // care plan internals
+    [770,378, 790,378],
+    [695,396, 695,420],
+    [865,396, 865,420],
+    [865,454, 800,490],
+    [695,454, 750,490],
+    // care team member to people
+    [210,474, 300,337],
+  ];
+  for (const [x1,y1,x2,y2] of edges) {
+    parts.push(`<path class="edge" d="M${x1} ${y1} C ${(x1+x2)/2} ${y1}, ${(x1+x2)/2} ${y2}, ${x2} ${y2}" />`);
+  }
+
+  // labels
+  parts.push(`<text class="edge-label" x="230" y="70">tenant_id</text>`);
+  parts.push(`<text class="edge-label" x="540" y="200">people_id</text>`);
+  parts.push(`<text class="edge-label" x="760" y="100">report_id</text>`);
+  parts.push(`<text class="edge-label" x="720" y="475">task_id</text>`);
+
+  parts.push('</svg>');
+
+  mapEl.style.display = 'none';
+  boardEl.innerHTML = `
+    <div class="overview-wrap" style="grid-column:1/-1">
+      <h3>整体关系总览</h3>
+      <p class="sub">以 <b>people_profile</b> 为患者中枢；点击节点跳到对应表详情。左侧域切换可继续看字段。</p>
+      <div class="legend">
+        <span><i class="hub"></i>枢纽表</span>
+        <span><i></i>普通表</span>
+        <span>箭头 = 逻辑外键（业务 id）</span>
+      </div>
+      ${parts.join('')}
+    </div>`;
+  boardEl.querySelectorAll('.node').forEach(g => {
+    g.addEventListener('click', () => {
+      const name = g.getAttribute('data-table');
+      if (name === 'field_revision_*') goTable('field_revision_batch');
+      else if (name === '…_intake' || name.includes('intake')) goTable('people_medication_intake');
+      else goTable(name);
+    });
+  });
+  detailEl.innerHTML = `<div class="empty">
+    <p style="margin:0 0 10px"><b>怎么读这张图</b></p>
+    <ol style="margin:0;padding-left:18px;line-height:1.7">
+      <li><code>tenant</code> → <code>organization</code> → B 端人员 / 健管组</li>
+      <li><code>people_profile</code> 是患者主档，几乎所有业务数据挂在它上面</li>
+      <li>C 端：<code>people_account</code> ↔ <code>account_patient</code> ↔ 档案</li>
+      <li>健康数据：指标 / 检验 / 检查 / 用药</li>
+      <li>管理方案：发布任务 → <code>care_plan_task_checkin</code> = 今日待办</li>
+    </ol>
+    <p style="margin:14px 0 0;color:var(--muted);font-size:13px">点击图中节点，右侧会显示完整字段。</p>
+  </div>`;
+}
+
+function renderMap(names) {
+  if (activeDomain === 'overview' && !qEl.value.trim()) return;
+  const set = new Set(names);
+  const edges = DATA.rels.filter(r => set.has(r.from) && set.has(r.to));
+  if (!edges.length) { mapEl.style.display = 'none'; return; }
+  mapEl.style.display = 'block';
+  mapEl.innerHTML = `<h3>本域关系</h3><div class="map-lines">${
+    edges.map(e => `<span class="edge" data-from="${e.from}">${e.from} → ${e.to} <small>(${e.fk})</small></span>`).join('')
+  }</div>`;
+  mapEl.querySelectorAll('.edge').forEach(el => {
+    el.onclick = () => goTable(el.dataset.from);
+  });
+}
+
+function previewCols(t) {
+  return t.cols.filter(c => c.name !== 'pk_id' && !AUDIT.has(c.name)).slice(0, 12);
+}
+
+function renderBoard(names) {
+  if (activeDomain === 'overview' && !qEl.value.trim()) return;
+  boardEl.innerHTML = names.map(n => {
+    const t = DATA.tables[n];
+    if (!t) return '';
+    const cols = previewCols(t);
+    return `<article class="card ${selected===n?'selected':''}" data-name="${n}">
+      <div class="card-h">
+        <div class="name">${n}</div>
+        <div class="desc">${t.comment || ''}</div>
+      </div>
+      <div class="card-b"><ul class="cols">${cols.map(c => {
+        let badge = '';
+        if (c.name === 'id') badge = '<span class="badge pk">PK</span>';
+        else if (isFk(c.name)) badge = '<span class="badge fk">FK</span>';
+        return `<li><span>${c.name}${badge}</span><span class="t">${c.type}</span></li>`;
+      }).join('')}${t.cols.length>cols.length+5?`<li><span>…共 ${t.cols.length} 字段</span><span></span></li>`:''}</ul></div>
+    </article>`;
+  }).join('');
+  boardEl.querySelectorAll('.card').forEach(card => {
+    card.onclick = () => { selected = card.dataset.name; renderBoard(names); renderDetail(); };
+  });
+}
+
+function related(name) {
+  const out = [];
+  for (const r of DATA.rels) {
+    if (r.from === name) out.push({dir:'→', other:r.to, fk:r.fk, card:r.card});
+    if (r.to === name) out.push({dir:'←', other:r.from, fk:r.fk, card:r.card});
+  }
+  return out;
+}
+
+function renderDetail() {
+  if (activeDomain === 'overview' && !selected && !qEl.value.trim()) return;
+  if (!selected || !DATA.tables[selected]) {
+    detailEl.innerHTML = '<div class="empty">选择左侧域或中间某张表，查看完整字段与关系。</div>';
+    return;
+  }
+  const t = DATA.tables[selected];
+  const rels = related(selected);
+  const d = domainOf(selected);
+  detailEl.innerHTML = `
+    <h2>${selected}</h2>
+    <div class="desc">${t.comment || ''}${d ? ` · ${d.title}` : ''}</div>
+    <h3 style="font-size:13px;margin:0 0 8px;color:var(--muted)">关系</h3>
+    ${rels.length ? `<ul class="rels">${rels.map(r => `<li>${r.dir} <code>${r.other}</code><br/><span style="color:var(--muted);font-size:12px">${r.fk} · ${r.card}</span></li>`).join('')}</ul>` : '<div class="empty" style="padding:8px 0">本表无登记的核心关系（或仅被 tenant_id 弱关联）</div>'}
+    <h3 style="font-size:13px;margin:0 0 8px;color:var(--muted)">字段</h3>
+    <table class="fields">
+      <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+      <tbody>
+        ${t.cols.map(c => {
+          let tag = '';
+          if (c.name === 'id') tag = ' <span class="badge pk">PK</span>';
+          else if (isFk(c.name)) tag = ' <span class="badge fk">FK</span>';
+          return `<tr><td><code>${c.name}</code>${tag}</td><td>${c.type}${c.required?' *':''}</td><td>${c.comment||''}</td></tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+  detailEl.querySelectorAll('.rels code').forEach(code => {
+    code.style.cursor = 'pointer';
+    code.onclick = () => goTable(code.textContent);
+  });
+}
+
+function render() {
+  renderNav();
+  if (activeDomain === 'overview' && !qEl.value.trim()) {
+    renderOverview();
+    return;
+  }
+  const names = visibleTables();
+  renderMap(names);
+  renderBoard(names);
+  renderDetail();
+}
+
+qEl.addEventListener('input', () => render());
+render();
+</script>
+</body>
+</html>

@@ -66,6 +66,14 @@
         <include refid="tenantListWhere"/>
     </select>
 
+    <select id="listByStatus" resultType="com.healix.core.tenant.domain.Tenant">
+        SELECT pk_id, id, code, name, status, plan_code, expire_at,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM tenant
+        WHERE is_deleted = 0 AND status = #{status}
+        ORDER BY id
+    </select>
+
     <select id="hasTenantAdmin" resultType="boolean">
         SELECT EXISTS (
             SELECT 1

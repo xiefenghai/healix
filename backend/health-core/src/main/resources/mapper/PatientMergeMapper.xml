@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.people.mapper.PatientMergeMapper">
+
+    <!-- table / codeColumn 只接受服务层白名单里的常量，不来自请求参数 -->
+    <update id="repointAppendOnly">
+        UPDATE ${table}
+        SET people_id = #{targetPeopleId},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listIdentityTypes" resultType="string">
+        SELECT identity_type FROM people_identity
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+    </select>
+
+    <update id="moveIdentity">
+        UPDATE people_identity
+        SET people_id = #{targetPeopleId},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+        <if test="skipTypes != null and skipTypes.size() > 0">
+            AND identity_type NOT IN
+            <foreach collection="skipTypes" item="t" open="(" separator="," close=")">#{t}</foreach>
+        </if>
+    </update>
+
+    <update id="softDeleteIdentityRest">
+        UPDATE people_identity
+        SET is_deleted = 1,
+            gmt_deleted = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listMembershipOrgIds" resultType="string">
+        SELECT org_id FROM people_org_membership
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+    </select>
+
+    <update id="moveMembership">
+        UPDATE people_org_membership
+        SET people_id = #{targetPeopleId},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+        <if test="skipOrgIds != null and skipOrgIds.size() > 0">
+            AND org_id NOT IN
+            <foreach collection="skipOrgIds" item="o" open="(" separator="," close=")">#{o}</foreach>
+        </if>
+    </update>
+
+    <update id="softDeleteMembershipRest">
+        UPDATE people_org_membership
+        SET is_deleted = 1,
+            gmt_deleted = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listCareTeamIds" resultType="string">
+        SELECT team_id FROM care_team_member
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+    </select>
+
+    <update id="moveCareTeamMember">
+        UPDATE care_team_member
+        SET people_id = #{targetPeopleId},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+        <if test="skipTeamIds != null and skipTeamIds.size() > 0">
+            AND team_id NOT IN
+            <foreach collection="skipTeamIds" item="t" open="(" separator="," close=")">#{t}</foreach>
+        </if>
+    </update>
+
+    <update id="softDeleteCareTeamMemberRest">
+        UPDATE care_team_member
+        SET is_deleted = 1,
+            gmt_deleted = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="existsSingleton" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM ${table} WHERE people_id = #{peopleId} AND is_deleted = 0)
+    </select>
+
+    <update id="moveSingleton">
+        UPDATE ${table}
+        SET people_id = #{targetPeopleId},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDeleteSingleton">
+        UPDATE ${table}
+        SET is_deleted = 1,
+            gmt_deleted = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{peopleId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listCodes" resultType="string">
+        SELECT ${codeColumn} FROM ${table}
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+    </select>
+
+    <update id="moveByCode">
+        UPDATE ${table}
+        SET people_id = #{targetPeopleId},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+        <if test="skipCodes != null and skipCodes.size() > 0">
+            AND ${codeColumn} NOT IN
+            <foreach collection="skipCodes" item="c" open="(" separator="," close=")">#{c}</foreach>
+        </if>
+    </update>
+
+    <update id="softDeleteByCodeRest">
+        UPDATE ${table}
+        SET is_deleted = 1,
+            gmt_deleted = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{sourcePeopleId}
+          AND is_deleted = 0
+    </update>
+
+    <update id="cancelOpenTasks">
+        UPDATE workspace_task
+        SET status = 'CANCELLED',
+            close_reason = 'CANCEL',
+            done_at = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE people_id = #{peopleId}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+    </update>
+
+    <update id="markMerged">
+        UPDATE people_profile
+        SET merged_into_people_id = #{targetPeopleId},
+            is_deleted = 1,
+            gmt_deleted = #{gmtModified},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{sourcePeopleId}
+          AND is_deleted = 0
+    </update>
+</mapper>

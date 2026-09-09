@@ -15,4 +15,12 @@ public class OrgPatientListItem {
     private String careTeamId;
     private String careTeamName;
     private LocalDateTime joinedAt;
+    /**
+     * 是否已有 C 端就诊人卡片关联。
+     * <p>勿使用 {@code cLinked} 命名：Jackson 会把 {@code getCLinked} 序列化成 {@code clinked}，
+     * 导致前端读不到、界面一直显示「未关联」。
+     */
+    private Boolean clientLinked;
+    /** 关联的 C 端就诊人卡片数量（跨账号合计） */
+    private Integer clientCardCount;
 }

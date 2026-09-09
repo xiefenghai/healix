@@ -2,13 +2,17 @@ spring:
   config:
     activate:
       on-profile: dev
-
-healix:
-  agent:
-    enabled: false
+    import: optional:classpath:application-local.yml
   influx:
     enabled: false
 
-logging:
-  level:
-    com.healix: DEBUG
+management:
+  tracing:
+    enabled: false
+
+healix:
+  agent:
+    enabled: true
+    ocr:
+      # 验证 OCR 时用 VISION（图→JSON 一步）；生产可改回 TEXT_LLM
+      mode: ${AGENT_OCR_MODE:VISION}

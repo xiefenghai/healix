@@ -31,6 +31,13 @@ function logout() {
   router.replace('/entry')
 }
 
+function goSecurity() {
+  const e = entry.value
+  if (e === 'ops') router.push('/ops/security')
+  else if (e === 'tenant') router.push('/tenant/security')
+  else router.push('/workspace/security')
+}
+
 function onSearch() {
   /* placeholder global search */
 }
@@ -84,7 +91,8 @@ function onSwitchOrg() {
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="logout">退出登录</el-dropdown-item>
+              <el-dropdown-item @click="goSecurity">安全设置</el-dropdown-item>
+              <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -103,6 +111,7 @@ function onSwitchOrg() {
               <el-icon v-else-if="m.icon === 'setting'"><Setting /></el-icon>
               <el-icon v-else-if="m.icon === 'office'"><OfficeBuilding /></el-icon>
               <el-icon v-else-if="m.icon === 'ticket'"><Ticket /></el-icon>
+              <el-icon v-else-if="m.icon === 'timer'"><Timer /></el-icon>
               <el-icon v-else><Menu /></el-icon>
               <span>{{ m.label }}</span>
             </el-menu-item>

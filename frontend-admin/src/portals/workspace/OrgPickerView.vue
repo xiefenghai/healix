@@ -34,7 +34,7 @@ async function enterOrg(org: { id: string; name: string }) {
     updateOrgSession(res.data.accessToken, org.id, org.name)
     currentOrgId.value = String(org.id)
     ElMessage.success(`已进入 ${org.name}`)
-    await router.push('/workspace/patients')
+    await router.push('/workspace/tasks')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '进入失败')
   }
@@ -47,7 +47,7 @@ onMounted(load)
   <div>
     <div class="page-title">
       <h1>选择工作机构</h1>
-      <p>选择机构后进入工作台，默认从患者管理开始</p>
+      <p>选择机构后进入工作台待办</p>
     </div>
     <el-row :gutter="16" v-loading="loading">
       <el-col v-for="org in orgs" :key="org.id" :xs="24" :sm="12" :md="8" :lg="6">
