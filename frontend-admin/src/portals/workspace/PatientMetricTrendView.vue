@@ -114,13 +114,16 @@ function buildBmiSeries(): Array<{ time: string; value: number }> {
 
 function baseOption(unit: string) {
   return {
-    color: ['#3b82f6', '#f97316', '#10b981', '#8b5cf6'],
+    color: ['#ef4444', '#2c7ef8', '#00b8a9', '#8b5cf6'],
     tooltip: {
       trigger: 'axis' as const,
+      backgroundColor: '#0F172A',
+      borderColor: '#0F172A',
+      textStyle: { color: '#fff', fontSize: 11 },
       valueFormatter: (v: unknown) => (v == null || v === '' ? '-' : `${v} ${unit}`),
     },
-    legend: { top: 0, right: 0 },
-    grid: { left: 48, right: 24, top: 36, bottom: 48 },
+    legend: { top: 0, right: 0, textStyle: { color: '#64748b', fontSize: 11 } },
+    grid: { left: 40, right: 16, top: 36, bottom: 48 },
     dataZoom: [
       { type: 'inside' as const, start: 0, end: 100 },
       { type: 'slider' as const, height: 18, bottom: 8 },
@@ -128,14 +131,17 @@ function baseOption(unit: string) {
     xAxis: {
       type: 'category' as const,
       boundaryGap: false,
-      axisLabel: { hideOverlap: true },
+      axisLine: { lineStyle: { color: '#E2E8F0' } },
+      axisLabel: { hideOverlap: true, color: '#94A3B8', fontSize: 10 },
+      axisTick: { show: false },
     },
     yAxis: {
       type: 'value' as const,
       scale: true,
       name: unit,
-      nameTextStyle: { padding: [0, 0, 0, 8] },
-      splitLine: { lineStyle: { type: 'dashed' as const, color: '#e5e7eb' } },
+      nameTextStyle: { padding: [0, 0, 0, 8], color: '#94A3B8', fontSize: 10 },
+      axisLabel: { color: '#94A3B8', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#F1F5F9' } },
     },
   }
 }
@@ -276,63 +282,83 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-loading="loading" class="trend-page">
-    <el-card shadow="never" class="section-card">
-      <template #header>
-        <div class="card-head">
-          <span class="section-title">指标趋势</span>
-          <el-radio-group v-model="rangeDays" size="small" @change="onRangeChange">
-            <el-radio-button label="30">近30天</el-radio-button>
-            <el-radio-button label="90">近90天</el-radio-button>
-            <el-radio-button label="180">近半年</el-radio-button>
-            <el-radio-button label="365">近一年</el-radio-button>
-          </el-radio-group>
-        </div>
-      </template>
+    <div class="chart-toolbar section-card">
+      <span class="section-title">指标趋势</span>
+      <el-radio-group v-model="rangeDays" size="small" @change="onRangeChange">
+        <el-radio-button label="30">近30天</el-radio-button>
+        <el-radio-button label="90">近90天</el-radio-button>
+        <el-radio-button label="180">近半年</el-radio-button>
+        <el-radio-button label="365">近一年</el-radio-button>
+      </el-radio-group>
+    </div>
 
-      <div class="chart-grid">
-        <div class="chart-card">
-          <div class="chart-title">血压（收缩压 / 舒张压）</div>
+    <div class="chart-grid">
+      <div class="chart-card section-card">
+        <div class="panel-head">
+          <h3 class="chart-title">血压趋势 · 收缩压 / 舒张压</h3>
+        </div>
+        <div class="chart-body">
           <div ref="bpRef" class="chart-el" />
         </div>
-        <div class="chart-card">
-          <div class="chart-title">指尖血糖</div>
+      </div>
+      <div class="chart-card section-card">
+        <div class="panel-head">
+          <h3 class="chart-title">血糖趋势 · 指尖血糖</h3>
+        </div>
+        <div class="chart-body">
           <div ref="glucoseRef" class="chart-el" />
         </div>
-        <div class="chart-card">
-          <div class="chart-title">心率</div>
+      </div>
+      <div class="chart-card section-card">
+        <div class="panel-head">
+          <h3 class="chart-title">心率趋势</h3>
+        </div>
+        <div class="chart-body">
           <div ref="hrRef" class="chart-el" />
         </div>
-        <div class="chart-card">
-          <div class="chart-title">BMI（由身高+体重推算）</div>
+      </div>
+      <div class="chart-card section-card">
+        <div class="panel-head">
+          <h3 class="chart-title">BMI · 由身高+体重推算</h3>
+        </div>
+        <div class="chart-body">
           <div ref="bmiRef" class="chart-el" />
         </div>
       </div>
-    </el-card>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .trend-page {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.section-card :deep(.el-card__header) {
-  padding: 14px 20px;
-  background: #f8fafc;
+.section-card {
+  background: #fff;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: var(--admin-radius, 12px);
+  box-shadow: var(--admin-shadow);
+  overflow: hidden;
 }
 
-.card-head {
+.chart-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  padding: 14px 18px;
 }
 
 .section-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--admin-text);
+  color: var(--ink-800, #1e293b);
+  letter-spacing: -0.01em;
 }
 
 .chart-grid {
@@ -341,24 +367,25 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
-.chart-card {
-  border: 1px solid var(--admin-border, #e5e7eb);
-  border-radius: 8px;
-  padding: 12px 12px 4px;
-  background: #fff;
+.panel-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
 }
 
 .chart-title {
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--admin-text-secondary, #64748b);
-  margin-bottom: 4px;
-  padding-left: 4px;
+  color: var(--ink-800, #1e293b);
+}
+
+.chart-body {
+  padding: 12px 14px 16px;
 }
 
 .chart-el {
   width: 100%;
-  height: 280px;
+  height: 240px;
 }
 
 @media (max-width: 960px) {

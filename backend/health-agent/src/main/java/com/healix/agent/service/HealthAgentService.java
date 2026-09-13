@@ -6,7 +6,6 @@ import com.healix.agent.log.AgentInteractionLog;
 import com.healix.agent.log.AgentInteractionLogMapper;
 import com.healix.agent.memory.ChatMemoryStore;
 import com.healix.agent.planner.IntentRouter;
-import com.healix.agent.rag.KnowledgeRetriever;
 import com.healix.agent.safety.SafetyValidator;
 import com.healix.agent.support.AiUsageGuard;
 import com.healix.agent.tool.AgentQuickAction;
@@ -32,13 +31,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+/**
+ * C 端患者助手：意图路由 → 工具 → LLM/启发式回复 → 安全校验。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class HealthAgentService {
 
     private final ChatMemoryStore chatMemoryStore;
-    private final KnowledgeRetriever knowledgeRetriever;
     private final IntentRouter intentRouter;
     private final HealthTools healthTools;
     private final PatientBizTools patientBizTools;
@@ -68,7 +69,8 @@ public class HealthAgentService {
 
         IntentType intent = intentRouter.route(userMessage);
         List<String> memory = chatMemoryStore.asContextBlock(patientId);
-        List<String> knowledge = knowledgeRetriever.retrieve(userMessage, 5);
+        // RAG 未接入：知识块预留空列表
+        List<String> knowledge = List.of();
         PatientBizTools.ToolOutput tools = invokeToolsIfNeeded(tenantId, patientId, intent);
         String toolResult = tools.text();
         String promptSnapshot = buildPromptSnapshot(userMessage, memory, knowledge, toolResult, intent);

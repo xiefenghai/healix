@@ -26,6 +26,7 @@ import {
   setBasicArchiveDirty,
   setBasicArchiveLeaveConfirm,
 } from '../../shared/basic-archive-dirty'
+import { requestArchiveCompletenessRefresh } from '../../shared/archive-completeness-refresh'
 import {
   emptyDiet,
   emptyExercise,
@@ -152,7 +153,8 @@ const form = reactive({
 
 /** 既往史：标签编辑，持久化为顿号分隔文本 */
 const familyHistoryEntries = ref<FamilyHistoryEntry[]>([])
-const familyHistoryStatus = ref<'none' | 'has'>('none')
+/** '' = 未选择；none/has = 已确认 */
+const familyHistoryStatus = ref<'none' | 'has' | ''>('')
 const pastHistoryStructured = ref<PastHistoryStructured>(emptyPastHistory())
 const basicSavedFingerprint = ref('')
 const basicSnapshotReady = ref(false)
@@ -467,15 +469,24 @@ function assignForm(content: Record<string, unknown>) {
   }
   form.familyHistory = String(content.familyHistory ?? '')
   const rawItems = content.familyHistoryItems
-  if (Array.isArray(rawItems) && rawItems.length) {
+  const statusRaw = String(content.familyHistoryStatus ?? '')
+  if (statusRaw === 'none' || statusRaw === 'has') {
+    familyHistoryStatus.value = statusRaw
+    familyHistoryEntries.value = Array.isArray(rawItems) ? (rawItems as FamilyHistoryEntry[]) : []
+  } else if (Array.isArray(rawItems) && rawItems.length) {
     familyHistoryEntries.value = rawItems as FamilyHistoryEntry[]
     familyHistoryStatus.value = 'has'
+  } else if (Array.isArray(rawItems) && rawItems.length === 0) {
+    // 兼容：曾落库空数组且无 status = 已确认无家族史
+    familyHistoryEntries.value = []
+    familyHistoryStatus.value = 'none'
   } else if (form.familyHistory.trim()) {
     familyHistoryEntries.value = []
     familyHistoryStatus.value = 'has'
   } else {
+    // 新建/未采集：不预选「无家族史」
     familyHistoryEntries.value = []
-    familyHistoryStatus.value = 'none'
+    familyHistoryStatus.value = ''
   }
   form.pastHistory = String(content.pastHistory ?? '')
   pastHistoryStructured.value = resolvePastHistoryFromContent(content)
@@ -500,15 +511,25 @@ function buildBasicContentObject() {
       ? serializePastHistory({ ...pastSnapshot, status: 'has' })
       : ''
   const pastHasContent = pastActive && pastHistoryHasContent(pastSnapshot)
+  const familyChosen = familyHistoryStatus.value === 'none' || familyHistoryStatus.value === 'has'
+  const pastChosen = pastSnapshot.status === 'none' || pastSnapshot.status === 'has'
   return {
     schemaVersion: '1.0',
     presentIllness,
     presentIllnessOther: presentIllness.includes(PRESENT_ILLNESS_NONE)
       ? undefined
       : form.presentIllnessOther.trim() || undefined,
-    familyHistoryItems: familyItems.length ? familyItems : undefined,
+    /** none/has：已确认；未选择时不写字段，评估视为未采集 */
+    familyHistoryStatus: familyChosen ? familyHistoryStatus.value : undefined,
+    familyHistoryItems: familyHistoryStatus.value === 'has' ? familyItems : familyHistoryStatus.value === 'none' ? [] : undefined,
     familyHistory,
-    pastHistoryItems: pastHasContent ? { ...pastSnapshot, status: 'has' as const } : undefined,
+    pastHistoryStatus: pastChosen ? pastSnapshot.status : undefined,
+    pastHistoryItems:
+      pastSnapshot.status === 'has' && pastHasContent
+        ? { ...pastSnapshot, status: 'has' as const }
+        : pastSnapshot.status === 'none'
+          ? { status: 'none' as const, diseases: [], surgeries: [], allergies: [], transfusions: [], vaccinations: [] }
+          : undefined,
     pastHistory,
     diet: serializeDiet(form.diet),
     exercise: serializeExercise(form.exercise),
@@ -716,6 +737,7 @@ async function confirmAddDisease() {
   activeDiseaseTab.value = code
   const name = diseases.value.find((d) => d.dictCode === code)?.dictCodeDesc ?? code
   ElMessage.success(`已添加${name}档案`)
+  if (!isEmbedded.value) requestArchiveCompletenessRefresh()
 }
 
 async function loadBasic() {
@@ -1243,7 +1265,10 @@ async function saveBasic() {
   try {
     await persistBasic()
     ElMessage.success('基础档案已保存')
-    if (!isEmbedded.value) await loadRevisions()
+    if (!isEmbedded.value) {
+      await loadRevisions()
+      requestArchiveCompletenessRefresh()
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
     await loadBasic()
@@ -1257,7 +1282,10 @@ async function saveDisease(code: string) {
   try {
     await persistDisease(code)
     ElMessage.success('病种档案已保存')
-    if (!isEmbedded.value) await loadRevisions()
+    if (!isEmbedded.value) {
+      await loadRevisions()
+      requestArchiveCompletenessRefresh()
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
     await loadDisease(code)

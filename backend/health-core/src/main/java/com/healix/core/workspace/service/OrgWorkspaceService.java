@@ -36,6 +36,8 @@ import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.patient.domain.PatientCareAssignment;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.enums.MembershipStatusEnum;
+import com.healix.core.people.enums.EducationLevelEnum;
+import com.healix.core.people.enums.MaritalStatusEnum;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
@@ -730,7 +732,111 @@ public class OrgWorkspaceService {
         int cardCount = accountPatientMapper.countByPeople(p.getId());
         item.setClientCardCount(cardCount);
         item.setClientLinked(cardCount > 0);
+        item.setMobile(p.getMobile());
+        item.setAddress(p.getAddress());
+        item.setEducationLevel(p.getEducationLevel());
+        item.setMaritalStatus(p.getMaritalStatus());
+        item.setOccupation(p.getOccupation());
         return item;
+    }
+
+    /**
+     * 更新患者人口学基础信息（姓名、联系方式、住址、文化程度、婚姻、职业）。
+     */
+    @Transactional
+    public OrgPatientListItem updatePatientBasicInfo(
+            String orgId,
+            String peopleId,
+            String displayName,
+            String mobile,
+            String address,
+            String educationLevel,
+            String maritalStatus,
+            String occupation,
+            String actorAccountId) {
+        requireOrgWorkspaceAccess(orgId);
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile == null) {
+            throw new BusinessException(404, "患者不存在");
+        }
+        if (!requireTenantId().equals(profile.getTenantId())) {
+            throw new BusinessException(403, "患者不属于当前租户");
+        }
+        PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
+        if (membership == null || !MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
+            throw new BusinessException(403, "患者未在本机构有效入组");
+        }
+        if (!StringUtils.hasText(displayName)) {
+            throw new BusinessException(400, "请填写姓名");
+        }
+        String name = displayName.trim();
+        if (name.length() > 64) {
+            throw new BusinessException(400, "姓名过长");
+        }
+        String mobileNorm = normalizeBlank(mobile);
+        if (mobileNorm != null) {
+            if (mobileNorm.length() > 32) {
+                throw new BusinessException(400, "联系方式过长");
+            }
+            if (!mobileNorm.matches("^[0-9+\\-\\s]{6,20}$")) {
+                throw new BusinessException(400, "联系方式格式不正确");
+            }
+        }
+        String addressNorm = normalizeBlank(address);
+        if (addressNorm != null && addressNorm.length() > 256) {
+            throw new BusinessException(400, "家庭住址过长");
+        }
+        String occupationNorm = normalizeBlank(occupation);
+        if (occupationNorm != null && occupationNorm.length() > 64) {
+            throw new BusinessException(400, "职业过长");
+        }
+        String educationNorm = normalizeBlank(educationLevel);
+        if (educationNorm != null) {
+            try {
+                EducationLevelEnum.fromStored(educationNorm);
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException(400, e.getMessage());
+            }
+        }
+        String maritalNorm = normalizeBlank(maritalStatus);
+        if (maritalNorm != null) {
+            try {
+                MaritalStatusEnum.fromStored(maritalNorm);
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException(400, e.getMessage());
+            }
+        }
+
+        profile.setDisplayName(name);
+        profile.setNamePinyin(IdentityService.toPinyinKey(name));
+        profile.setMobile(mobileNorm);
+        profile.setAddress(addressNorm);
+        profile.setEducationLevel(educationNorm);
+        profile.setMaritalStatus(maritalNorm);
+        profile.setOccupation(occupationNorm);
+        EntityMeta.onUpdate(profile);
+        peopleProfileMapper.updateProfile(profile);
+
+        auditService.record(
+                PortalEnum.B.code(),
+                actorAccountId,
+                "STAFF",
+                profile.getTenantId(),
+                AuditActionEnum.PATIENT_BASIC_INFO_UPDATE.name(),
+                "people_profile",
+                profile.getId(),
+                profile.getId(),
+                AuditDetails.of("orgId", orgId, "displayName", name));
+
+        CareTeamMember tm = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
+        return toPatientItem(profile, membership, tm);
+    }
+
+    private static String normalizeBlank(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return value.trim();
     }
 
     /**

@@ -20,7 +20,7 @@ public class AllergenSafetyHandler extends SafetyHandler {
         if (reply == null || context.getPatientId() == null) {
             return;
         }
-        List<String> allergens = identityService.patientAllergens(context.getPatientId());
+        List<String> allergens = identityService.peopleAllergens(context.getPatientId());
         if (allergens.isEmpty()) {
             return;
         }

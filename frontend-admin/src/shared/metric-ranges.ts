@@ -108,21 +108,6 @@ export function resolveWaistRange(
   return { refHigh: fallback.refHighMale ?? 90 }
 }
 
-export function evaluateBloodPressureAbnormal(
-  sys: number | null | undefined,
-  dia: number | null | undefined,
-  sysMeta: MetricDictMeta,
-  diaMeta: MetricDictMeta,
-): AbnormalFlag | null {
-  const sysFlag = evaluateAbnormal(sys, sysMeta)
-  const diaFlag = evaluateAbnormal(dia, diaMeta)
-  if (sysFlag === 'H' || diaFlag === 'H') return 'H'
-  if (sysFlag === 'L' || diaFlag === 'L') return 'L'
-  if (sysFlag === 'N' && diaFlag === 'N') return 'N'
-  if (sysFlag === 'N' || diaFlag === 'N') return 'N'
-  return null
-}
-
 /** 收缩压 / 舒张压分别判定（N 视为正常，不标红） */
 export function evaluateBloodPressureFlags(
   sys: number | null | undefined,

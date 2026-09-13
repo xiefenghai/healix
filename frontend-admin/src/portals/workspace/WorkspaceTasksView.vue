@@ -3,7 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName, getStaffId, hasRole } from '../../shared/http'
-import { TABLE_COL } from '../../shared/table-columns'
 import HealthReportReviewDialog from './HealthReportReviewDialog.vue'
 import FollowupRecordDetailDialog from './FollowupRecordDetailDialog.vue'
 import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
@@ -159,6 +158,13 @@ function formatTime(v?: string) {
   return v.replace('T', ' ').slice(0, 16)
 }
 
+/** 到期列紧凑展示：MM-DD HH:mm */
+function formatDueShort(v?: string) {
+  if (!v) return '-'
+  const s = v.replace('T', ' ')
+  return s.length >= 16 ? s.slice(5, 16) : s.slice(0, 16)
+}
+
 /** OPEN 且已到期，或距到期不足 1 天 → 到期时间标红。 */
 function isDueUrgent(row: WorkspaceTaskItem) {
   if (row.status !== 'OPEN' || !row.dueAt) return false
@@ -209,24 +215,46 @@ function taskTypeTagType(taskType?: string): 'danger' | 'warning' | 'primary' | 
   }
 }
 
+const poolTitle = computed(() => {
+  switch (pool.value) {
+    case 'PUBLIC':
+      return '公共任务池'
+    case 'MINE':
+      return '我的待办'
+    case 'DONE':
+      return '今日已办'
+    case 'ALL':
+      return '全部任务'
+    default:
+      return '任务列表'
+  }
+})
+
+const overdueInList = computed(
+  () => items.value.filter((r) => isDueOverdue(r)).length,
+)
+
 const summaryCards = computed(() => [
   {
     key: 'PUBLIC' as const,
-    label: '公共池',
+    label: '公共任务池',
     value: summary.value?.publicOpenCount ?? 0,
     hint: '待领取',
+    tone: 'muted' as const,
   },
   {
     key: 'MINE' as const,
     label: '我的待办',
     value: summary.value?.mineOpenCount ?? 0,
     hint: '已领取未办结',
+    tone: 'brand' as const,
   },
   {
     key: 'DONE' as const,
     label: '今日已办',
     value: summary.value?.doneTodayCount ?? 0,
     hint: '本人今日办结',
+    tone: 'teal' as const,
   },
 ])
 
@@ -542,12 +570,42 @@ onMounted(async () => {
   <div class="workspace-tasks">
     <div class="page-title">
       <div>
-        <h1>工作台</h1>
+        <h1>工作台任务</h1>
         <p>
-          当前机构：{{ getCurrentOrgName() || '-' }} · 需人工推进的患者待办
+          点击上方卡片可快速切换任务池
+          · 公共 {{ summary?.publicOpenCount ?? 0 }} · 我的 {{ summary?.mineOpenCount ?? 0 }}
+          · {{ getCurrentOrgName() || '-' }}
         </p>
       </div>
-      <el-button @click="load">刷新</el-button>
+      <div class="actions">
+        <el-button @click="load">刷新</el-button>
+      </div>
+    </div>
+
+    <div v-loading="loading" class="summary-row">
+      <button
+        v-for="card in summaryCards"
+        :key="card.key"
+        type="button"
+        class="summary-card"
+        :class="[`tone-${card.tone}`, { 'is-active': pool === card.key }]"
+        @click="switchPool(card.key)"
+      >
+        <div class="summary-label">{{ card.label }}</div>
+        <div class="summary-value">{{ card.value }}</div>
+        <div class="summary-hint">{{ card.hint }}</div>
+      </button>
+      <button
+        v-if="isAdmin"
+        type="button"
+        class="summary-card tone-violet"
+        :class="{ 'is-active': pool === 'ALL' }"
+        @click="switchPool('ALL')"
+      >
+        <div class="summary-label">全部任务</div>
+        <div class="summary-value">{{ pool === 'ALL' ? total : '—' }}</div>
+        <div class="summary-hint">管理员视角 · 可筛状态</div>
+      </button>
     </div>
 
     <el-card shadow="never" class="filter-card">
@@ -558,57 +616,84 @@ onMounted(async () => {
           <el-radio-button value="DONE">今日已办</el-radio-button>
           <el-radio-button v-if="isAdmin" value="ALL">全部</el-radio-button>
         </el-radio-group>
-        <el-select v-model="taskType" clearable placeholder="类型" style="width: 160px">
+        <el-select v-model="taskType" clearable placeholder="类型: 全部" style="width: 160px">
           <el-option v-for="t in TASK_TYPES" :key="t.value" :label="t.label" :value="t.value" />
         </el-select>
         <el-select
           v-if="pool === 'ALL'"
           v-model="status"
           clearable
-          placeholder="状态"
-          style="width: 120px"
+          placeholder="状态: 全部"
+          style="width: 130px"
         >
           <el-option label="待处理" value="OPEN" />
           <el-option label="已完成" value="DONE" />
           <el-option label="已取消" value="CANCELLED" />
           <el-option label="已过期" value="EXPIRED" />
         </el-select>
-        <el-select v-model="careTeamId" clearable placeholder="健管组" style="width: 180px">
+        <el-select v-model="careTeamId" clearable placeholder="健管组: 全部" style="width: 180px">
           <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
         <el-input
           v-model="keyword"
-          placeholder="患者姓名"
+          placeholder="搜索患者姓名"
           clearable
-          style="width: 160px"
+          class="toolbar-search"
           @keyup.enter="onSearch"
         />
         <el-button type="primary" @click="onSearch">查询</el-button>
       </div>
     </el-card>
 
-    <div v-loading="loading" class="summary-row">
-      <button
-        v-for="card in summaryCards"
-        :key="card.key"
-        type="button"
-        class="summary-card"
-        :class="{ 'is-active': pool === card.key }"
-        @click="switchPool(card.key)"
-      >
-        <div class="summary-value">{{ card.value }}</div>
-        <div class="summary-label">{{ card.label }}</div>
-        <div class="summary-hint">{{ card.hint }}</div>
-      </button>
-    </div>
+    <el-card shadow="never" class="list-card">
+      <template #header>
+        <div class="table-head-bar">
+          <div class="table-title">
+            {{ poolTitle }}
+            <span class="count">
+              · {{ total }} 项
+              <template v-if="overdueInList > 0 && (pool === 'PUBLIC' || pool === 'MINE')">
+                · {{ overdueInList }} 项逾期（本页）
+              </template>
+            </span>
+          </div>
+        </div>
+      </template>
 
-    <el-card shadow="never">
-      <el-table :data="items" stripe border>
-        <el-table-column prop="peopleName" label="患者" min-width="110" />
-        <el-table-column label="健管组" min-width="120">
-          <template #default="{ row }">{{ row.careTeamName || '未入组' }}</template>
+      <el-table :data="items" stripe class="tasks-table" style="width: 100%">
+        <el-table-column label="任务" min-width="260">
+          <template #default="{ row }">
+            <div class="task-cell">
+              <div class="task-type-icon" :class="`tt-${taskTypeTagType(row.taskType)}`">
+                {{ (row.taskTypeLabel || '?').slice(0, 1) }}
+              </div>
+              <div class="task-text">
+                <div class="task-title">
+                  <span
+                    v-if="row.taskType === 'METRIC_ALERT'"
+                    class="summary-text"
+                    v-html="highlightMetricSummary(row.summary)"
+                  />
+                  <span v-else>{{ row.summary || row.taskTypeLabel || '-' }}</span>
+                  <el-tag
+                    v-if="row.taskType === 'METRIC_ALERT' && (row.hitCount || 0) > 1"
+                    size="small"
+                    type="warning"
+                    effect="plain"
+                    class="hit-tag"
+                  >
+                    {{ row.hitCount }} 项异常
+                  </el-tag>
+                </div>
+                <div class="task-meta">
+                  {{ row.peopleName || '-' }}
+                  <template v-if="row.careTeamName"> · {{ row.careTeamName }}</template>
+                </div>
+              </div>
+            </div>
+          </template>
         </el-table-column>
-        <el-table-column label="类型" width="132">
+        <el-table-column label="类型" width="108">
           <template #default="{ row }">
             <el-tag size="small" effect="light" :type="taskTypeTagType(row.taskType)">
               {{ row.taskTypeLabel }}
@@ -622,28 +707,7 @@ onMounted(async () => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="摘要" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">
-            <div class="summary-cell">
-              <span
-                v-if="row.taskType === 'METRIC_ALERT'"
-                class="summary-text"
-                v-html="highlightMetricSummary(row.summary)"
-              />
-              <span v-else>{{ row.summary || '-' }}</span>
-              <el-tag
-                v-if="row.taskType === 'METRIC_ALERT' && (row.hitCount || 0) > 1"
-                size="small"
-                type="warning"
-                effect="plain"
-                class="hit-tag"
-              >
-                {{ row.hitCount }} 项异常
-              </el-tag>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" width="100">
+        <el-table-column v-if="pool === 'ALL'" width="80">
           <template #header>
             <el-tooltip :content="POOL_COLUMN_HINT" placement="top">
               <span class="col-hint">归属</span>
@@ -655,16 +719,18 @@ onMounted(async () => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="处理人" min-width="110">
+        <el-table-column v-if="pool === 'DONE'" label="处理人" min-width="100" show-overflow-tooltip>
           <template #default="{ row }">{{ row.doneByName || '-' }}</template>
         </el-table-column>
-        <el-table-column v-if="pool === 'PUBLIC' || pool === 'MINE'" label="归属人" min-width="100">
+        <el-table-column
+          v-if="pool === 'PUBLIC' || pool === 'MINE' || pool === 'ALL'"
+          label="归属人"
+          min-width="100"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">{{ row.assigneeName || '-' }}</template>
         </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" label="归属人" min-width="100">
-          <template #default="{ row }">{{ row.assigneeName || '-' }}</template>
-        </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" label="处理人" min-width="100">
+        <el-table-column v-if="pool === 'ALL'" label="处理人" min-width="100" show-overflow-tooltip>
           <template #default="{ row }">
             {{
               row.status === 'DONE' || row.status === 'CANCELLED' || row.status === 'EXPIRED'
@@ -673,7 +739,7 @@ onMounted(async () => {
             }}
           </template>
         </el-table-column>
-        <el-table-column label="到期时间" v-bind="TABLE_COL.datetime">
+        <el-table-column label="到期" width="148" class-name="col-due">
           <template #default="{ row }">
             <div
               class="due-cell"
@@ -682,33 +748,53 @@ onMounted(async () => {
                 'is-urgent': !isDueOverdue(row) && isDueUrgent(row),
               }"
             >
-              <span>{{ formatTime(row.dueAt) }}</span>
+              <span class="due-time">{{ formatDueShort(row.dueAt) }}</span>
               <span v-if="dueHint(row)" class="due-hint">{{ dueHint(row) }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="完成时间" v-bind="TABLE_COL.datetime">
+        <el-table-column v-if="pool === 'DONE'" label="完成时间" width="148" show-overflow-tooltip>
           <template #default="{ row }">{{ formatTime(row.doneAt) }}</template>
         </el-table-column>
-        <el-table-column v-else label="开单时间" v-bind="TABLE_COL.datetime">
-          <template #default="{ row }">{{ formatTime(row.openedAt) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" v-bind="TABLE_COL.actionsLg">
+        <el-table-column label="操作" width="200" align="right" class-name="col-actions">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button v-if="canClaim(row)" link type="primary" @click="claim(row)">领取</el-button>
-            <el-button v-if="canForm(row)" link type="primary" @click="formTaskId = row.id">
-              {{ formActionLabel(row) }}
-            </el-button>
-            <el-button v-if="canAssignOrRelease(row)" link type="primary" @click="openAssign(row)">
-              分派
-            </el-button>
-            <el-button v-if="canAssignOrRelease(row) && row.assigneeStaffId" link @click="release(row)">
-              退回
-            </el-button>
-            <el-button v-if="isAdmin && row.status === 'OPEN'" link type="danger" @click="cancelTask(row)">
-              取消
-            </el-button>
+            <div class="row-actions">
+              <el-button
+                v-if="canClaim(row)"
+                type="primary"
+                size="small"
+                @click="claim(row)"
+              >
+                领取
+              </el-button>
+              <el-button
+                v-if="canForm(row)"
+                type="primary"
+                size="small"
+                @click="formTaskId = row.id"
+              >
+                {{ formActionLabel(row) }}
+              </el-button>
+              <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+              <el-button v-if="canAssignOrRelease(row)" link type="primary" @click="openAssign(row)">
+                分派
+              </el-button>
+              <el-button
+                v-if="canAssignOrRelease(row) && row.assigneeStaffId"
+                link
+                @click="release(row)"
+              >
+                退回
+              </el-button>
+              <el-button
+                v-if="isAdmin && row.status === 'OPEN'"
+                link
+                type="danger"
+                @click="cancelTask(row)"
+              >
+                取消
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -775,93 +861,134 @@ onMounted(async () => {
   width: 100%;
 }
 
-.page-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.page-title h1 {
-  margin: 0 0 6px;
-  font-size: 22px;
-}
-
-.page-title p {
-  margin: 0;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.filter-card {
-  margin-bottom: 12px;
-}
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-}
-
 .summary-row {
-  display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
 }
 
-.summary-card {
-  margin: 0;
-  padding: 14px 16px;
-  text-align: left;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 10px;
-  background: var(--el-bg-color);
-  cursor: pointer;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+.workspace-tasks:has(.tone-violet) .summary-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.summary-card:hover {
-  border-color: var(--el-color-primary-light-5);
+.summary-card .summary-label {
+  margin-top: 0;
+  margin-bottom: 10px;
 }
 
-.summary-card.is-active {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 0 0 1px var(--el-color-primary-light-7);
+.summary-card .summary-value {
+  margin-top: 0;
 }
 
-.summary-value {
-  font-size: 28px;
-  font-weight: 650;
-  line-height: 1.2;
-  color: var(--el-text-color-primary);
+.tone-teal .summary-value {
+  color: var(--teal-500, #00b8a9);
 }
 
-.summary-label {
-  margin-top: 4px;
+.tone-brand.is-active .summary-value {
+  color: var(--brand-600);
+}
+
+.tone-violet .summary-value {
+  color: var(--violet-500, #8b5cf6);
+}
+
+.toolbar-search {
+  flex: 1;
+  min-width: 160px;
+  max-width: 240px;
+}
+
+.table-head-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.table-title {
   font-size: 14px;
-  color: var(--el-text-color-regular);
+  font-weight: 600;
+  color: var(--ink-800);
 }
 
-.summary-hint {
-  margin-top: 2px;
+.table-title .count {
+  color: var(--ink-400);
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+.list-card :deep(.el-card__header) {
+  padding: 14px 18px !important;
+}
+
+.list-card :deep(.el-card__body) {
+  padding-top: 0 !important;
+}
+
+.task-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.task-type-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-weight: 700;
 }
 
-.summary-cell {
+.tt-danger {
+  background: #fee9e7;
+  color: #ef4444;
+}
+
+.tt-warning {
+  background: #fef6e2;
+  color: #b45309;
+}
+
+.tt-primary {
+  background: #eaf2ff;
+  color: #1e63d9;
+}
+
+.tt-info {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.task-text {
+  min-width: 0;
+}
+
+.task-title {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  font-weight: 600;
+  color: var(--ink-800);
+  line-height: 1.3;
+}
+
+.task-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ink-400);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hit-tag {
   flex-shrink: 0;
+}
+
+.muted {
+  color: var(--ink-400);
 }
 
 .summary-text :deep(.metric-abnormal) {
@@ -872,24 +999,65 @@ onMounted(async () => {
 .due-cell {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  max-width: 100%;
+  overflow: hidden;
   font-variant-numeric: tabular-nums;
-  line-height: 1.25;
+  line-height: 1.3;
+}
+
+.due-time {
+  font-weight: 600;
+  color: var(--ink-800);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .due-hint {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .due-cell.is-overdue,
+.due-cell.is-overdue .due-time,
 .due-cell.is-overdue .due-hint {
-  color: var(--el-color-danger);
+  color: var(--rose-500, #ef4444);
 }
 
 .due-cell.is-urgent,
+.due-cell.is-urgent .due-time,
 .due-cell.is-urgent .due-hint {
-  color: var(--el-color-warning-dark-2, var(--el-color-warning));
+  color: var(--amber-500, #f59e0b);
+}
+
+.row-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0;
+  white-space: nowrap;
+}
+
+.row-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.row-actions :deep(.el-button.is-link) {
+  padding: 4px 6px;
+}
+
+:deep(.tasks-table .cell) {
+  overflow: hidden;
+}
+
+:deep(.col-due .cell),
+:deep(.col-actions .cell) {
+  overflow: hidden;
 }
 
 .col-hint {
@@ -901,10 +1069,23 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+  padding: 0 4px 4px;
+}
+
+.list-card :deep(.tasks-table) {
+  width: 100%;
+}
+
+@media (max-width: 1280px) {
+  .summary-row,
+  .workspace-tasks:has(.tone-violet) .summary-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 960px) {
-  .summary-row {
+  .summary-row,
+  .workspace-tasks:has(.tone-violet) .summary-row {
     grid-template-columns: 1fr;
   }
 }

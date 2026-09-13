@@ -3,7 +3,6 @@ package com.healix.core.notify.service;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
-import com.healix.core.notify.catalog.NotifyEventType;
 import com.healix.core.notify.domain.NotifyDelivery;
 import com.healix.core.notify.domain.NotifyMessage;
 import com.healix.core.notify.dto.NotifyMessageViewDto;
@@ -26,6 +25,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+/**
+ * 站内消息发布门面：落库消息 + 按受众解析收件人与投递。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

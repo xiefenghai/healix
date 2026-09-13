@@ -188,6 +188,8 @@ function formatPastHistorySubValue(subKey: string, value: unknown): string {
   if (subKey === 'status') {
     if (value === 'has') return '有既往史'
     if (value === 'none') return '无既往史'
+    if (value === 'has') return '有既往史'
+    if (value === '' || value == null) return '未选择'
     return String(value)
   }
   if (subKey === 'medicationNote') {
@@ -371,18 +373,6 @@ export function summarizeRevisionChanges(
   if (labels.length === 1) return `更新 ${labels[0]}`
   if (labels.length === 2) return `更新 ${labels.join('、')}`
   return `更新 ${labels.slice(0, 2).join('、')} 等 ${labels.length} 项`
-}
-
-export function formatRevisionOperator(
-  operatorType: string,
-  operatorId: string,
-  operatorName?: string | null,
-): string {
-  const typeLabel = OPERATOR_TYPE_LABELS[operatorType] ?? operatorType
-  const name = operatorName?.trim()
-  if (name) return `${typeLabel} · ${name}`
-  if (operatorId) return typeLabel
-  return typeLabel
 }
 
 function parseRevisionRaw(raw?: string | null): unknown {

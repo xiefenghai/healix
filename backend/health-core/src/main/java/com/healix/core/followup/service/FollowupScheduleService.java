@@ -23,6 +23,7 @@ import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.tenant.domain.Tenant;
 import com.healix.core.tenant.mapper.TenantMapper;
+import com.healix.core.worktask.catalog.WorkspaceTaskPriority;
 import com.healix.core.worktask.catalog.WorkspaceTaskStatus;
 import com.healix.core.worktask.catalog.WorkspaceTaskType;
 import com.healix.core.worktask.domain.WorkspaceTask;
@@ -223,8 +224,8 @@ public class FollowupScheduleService {
         row.setTaskType(type.name());
         row.setBizKey(bizKey);
         row.setStatus(WorkspaceTaskStatus.OPEN.name());
-        // 患者主动开口，优先级高于系统排期
-        row.setPriority("HIGH");
+        // 患者主动开口，抬到 HIGH（高于类型默认 MEDIUM）
+        row.setPriority(WorkspaceTaskPriority.HIGH.name());
         row.setAssigneeStaffId(resolveAssignee(tenantId, peopleId));
         row.setTitle(type.label());
         row.setSummary(reason != null ? "患者申请回访：" + reason : "患者申请回访");
@@ -322,7 +323,7 @@ public class FollowupScheduleService {
         row.setTaskType(type.name());
         row.setBizKey(bizKey);
         row.setStatus(WorkspaceTaskStatus.OPEN.name());
-        row.setPriority("NORMAL");
+        row.setPriority(type.defaultPriority().name());
         row.setAssigneeStaffId(resolveAssignee(tenantId, peopleId));
         row.setTitle(type.label());
         row.setSummary(followupType.label() + "（定期排期）");

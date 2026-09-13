@@ -119,8 +119,6 @@ export const EXAM_FINDING_FIELDS: Record<string, ExamFindingField[]> = {
   ABDOMINAL_CT: [{ key: 'lesionPresent', label: '占位', type: 'bool' }],
 }
 
-export const ALL_EXAM_TYPES = [...new Set(EXAM_PANELS.flatMap((p) => p.examTypes))]
-
 export function examTypeLabel(code: string, dictDesc?: string) {
   return dictDesc || EXAM_TYPE_LABELS[code] || code
 }

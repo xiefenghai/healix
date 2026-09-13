@@ -16,6 +16,16 @@ public class PeopleProfile extends BaseEntity {
     private String gender;
     private LocalDate birthday;
     private String namePinyin;
+    /** 联系手机号 */
+    private String mobile;
+    /** 家庭住址 */
+    private String address;
+    /** 文化程度 code，见 EducationLevelEnum */
+    private String educationLevel;
+    /** 婚姻状况 code，见 MaritalStatusEnum */
+    private String maritalStatus;
+    /** 职业（自由文本） */
+    private String occupation;
     private String allergensJson;
     private String chronicTagsJson;
     private String emergencyContactJson;

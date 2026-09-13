@@ -33,11 +33,6 @@ export function bloodPressureRefLines(): string[] {
   )
 }
 
-export function bloodPressureRefText(): string {
-  const lines = bloodPressureRefLines()
-  return lines.join(' / ')
-}
-
 export function glucoseMealLabel(mealContext?: string | null): string {
   const meal = (mealContext || 'FASTING').toUpperCase()
   if (meal === 'POSTPRANDIAL') return '餐后'

@@ -9,10 +9,13 @@ export function getToken(): string | null {
 
 export function setToken(token: string) {
   localStorage.setItem(TOKEN_KEY, token)
+  // 动态导入避免循环依赖（http ↔ care-chat-realtime）
+  void import('../shared/care-chat-realtime').then((m) => m.startCareChatRealtime())
 }
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY)
+  void import('../shared/care-chat-realtime').then((m) => m.stopCareChatRealtime())
 }
 
 let authRedirecting = false

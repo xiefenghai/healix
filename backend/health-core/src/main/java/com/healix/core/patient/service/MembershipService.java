@@ -21,6 +21,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 患者机构入组（邀请码）与照护分配钩子。
+ */
 @Service
 @RequiredArgsConstructor
 public class MembershipService {

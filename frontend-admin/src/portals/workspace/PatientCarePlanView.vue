@@ -968,135 +968,146 @@ watch(
       <el-tab-pane label="患者打卡" name="checkins" />
     </el-tabs>
 
-    <div v-show="mainTab === 'checkins'" v-loading="checkinLoading" class="checkin-panel">
-      <div class="checkin-toolbar">
-        <el-date-picker
-          v-model="checkinDate"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="选择日期"
-          @change="onCheckinDateChange"
-        />
-        <div v-if="dailyCheckin" class="checkin-stats">
-          <el-tag type="success">已完成 {{ dailyCheckin.doneTasks }}</el-tag>
-          <el-tag type="info">已跳过 {{ dailyCheckin.skippedTasks }}</el-tag>
-          <el-tag type="warning">待完成 {{ dailyCheckin.pendingTasks }}</el-tag>
-          <span class="checkin-total">当日任务 {{ dailyCheckin.totalTasks }} 项</span>
+    <div v-show="mainTab === 'checkins'" v-loading="checkinLoading" class="checkin-panel section-card">
+      <div class="panel-head">
+        <h3 class="section-title">患者打卡</h3>
+        <div class="checkin-toolbar">
+          <el-date-picker
+            v-model="checkinDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="选择日期"
+            @change="onCheckinDateChange"
+          />
+          <div v-if="dailyCheckin" class="checkin-stats">
+            <el-tag type="success">已完成 {{ dailyCheckin.doneTasks }}</el-tag>
+            <el-tag type="info">已跳过 {{ dailyCheckin.skippedTasks }}</el-tag>
+            <el-tag type="warning">待完成 {{ dailyCheckin.pendingTasks }}</el-tag>
+            <span class="checkin-total">当日任务 {{ dailyCheckin.totalTasks }} 项</span>
+          </div>
         </div>
       </div>
-      <el-empty
-        v-if="!checkinLoading && dailyCheckin && !dailyCheckin.tasks?.length"
-        description="该日无执行任务或尚未发布生效方案"
-      />
-      <el-table v-else :data="dailyCheckin?.tasks || []" border stripe size="small">
-        <el-table-column prop="title" label="任务" min-width="160" show-overflow-tooltip />
-        <el-table-column label="类别" width="88">
-          <template #default="{ row }">{{ formatCarePlanTaskCategory(row.category) }}</template>
-        </el-table-column>
-        <el-table-column label="频次" width="100">
-          <template #default="{ row }">{{ formatCarePlanFrequency(row.frequency) }}</template>
-        </el-table-column>
-        <el-table-column label="时段" width="100">
-          <template #default="{ row }">{{ formatCarePlanTimeSlot(row.timeSlot) }}</template>
-        </el-table-column>
-        <el-table-column label="打卡状态" width="100">
-          <template #default="{ row }">
-            <el-tag
-              v-if="row.checkinStatus"
-              size="small"
-              :type="checkinStatusTagType(row.checkinStatus)"
-            >
-              {{ checkinStatusLabel(row.checkinStatus) }}
-            </el-tag>
-            <el-tag v-else size="small" type="warning">待完成</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
-      </el-table>
-
-      <div class="checkin-history-head">
-        <h4>历史打卡</h4>
-        <el-date-picker
-          v-model="checkinHistoryRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          range-separator="至"
-          start-placeholder="开始"
-          end-placeholder="结束"
-          @change="onCheckinHistoryRangeChange"
+      <div class="panel-body">
+        <el-empty
+          v-if="!checkinLoading && dailyCheckin && !dailyCheckin.tasks?.length"
+          class="page-empty"
+          description="该日无执行任务或尚未发布生效方案"
         />
+        <el-table v-else :data="dailyCheckin?.tasks || []" stripe size="small">
+          <el-table-column prop="title" label="任务" min-width="160" show-overflow-tooltip />
+          <el-table-column label="类别" width="88">
+            <template #default="{ row }">{{ formatCarePlanTaskCategory(row.category) }}</template>
+          </el-table-column>
+          <el-table-column label="频次" width="100">
+            <template #default="{ row }">{{ formatCarePlanFrequency(row.frequency) }}</template>
+          </el-table-column>
+          <el-table-column label="时段" width="100">
+            <template #default="{ row }">{{ formatCarePlanTimeSlot(row.timeSlot) }}</template>
+          </el-table-column>
+          <el-table-column label="打卡状态" width="100">
+            <template #default="{ row }">
+              <el-tag
+                v-if="row.checkinStatus"
+                size="small"
+                :type="checkinStatusTagType(row.checkinStatus)"
+              >
+                {{ checkinStatusLabel(row.checkinStatus) }}
+              </el-tag>
+              <el-tag v-else size="small" type="warning">待完成</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
+        </el-table>
+
+        <div class="checkin-history-head">
+          <h4 class="section-title">历史打卡</h4>
+          <el-date-picker
+            v-model="checkinHistoryRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="至"
+            start-placeholder="开始"
+            end-placeholder="结束"
+            @change="onCheckinHistoryRangeChange"
+          />
+        </div>
+        <el-table v-loading="checkinHistoryLoading" :data="checkinHistory" stripe size="small">
+          <el-table-column prop="checkinDate" label="日期" width="120" />
+          <el-table-column prop="taskTitle" label="任务" min-width="160" show-overflow-tooltip />
+          <el-table-column label="类别" width="88">
+            <template #default="{ row }">{{ formatCarePlanTaskCategory(row.taskCategory) }}</template>
+          </el-table-column>
+          <el-table-column label="时段" width="100">
+            <template #default="{ row }">{{ formatCarePlanTimeSlot(row.timeSlot) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="checkinStatusTagType(row.status)">
+                {{ checkinStatusLabel(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
+        </el-table>
       </div>
-      <el-table v-loading="checkinHistoryLoading" :data="checkinHistory" border stripe size="small">
-        <el-table-column prop="checkinDate" label="日期" width="120" />
-        <el-table-column prop="taskTitle" label="任务" min-width="160" show-overflow-tooltip />
-        <el-table-column label="类别" width="88">
-          <template #default="{ row }">{{ formatCarePlanTaskCategory(row.taskCategory) }}</template>
-        </el-table-column>
-        <el-table-column label="时段" width="100">
-          <template #default="{ row }">{{ formatCarePlanTimeSlot(row.timeSlot) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag size="small" :type="checkinStatusTagType(row.status)">
-              {{ checkinStatusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
-      </el-table>
     </div>
 
-    <div v-show="mainTab === 'list'" v-loading="listLoading" class="list-panel">
-      <el-table :data="listItems" border stripe>
-        <el-table-column prop="title" label="方案标题" min-width="140" show-overflow-tooltip />
-        <el-table-column
-          prop="goalSummary"
-          label="方案摘要"
-          min-width="220"
-          show-overflow-tooltip
-        >
-          <template #default="{ row }">
-            <span :class="['list-goal-summary', { 'is-empty': !row.goalSummary }]">
-              {{ row.goalSummary || '-' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="制定方式" width="100">
-          <template #default="{ row }">{{ sourceModeLabel(row.sourceMode) }}</template>
-        </el-table-column>
-        <el-table-column prop="versionLabel" label="规则版本" width="110" />
-        <el-table-column prop="staffName" label="制定人" width="120" show-overflow-tooltip />
-        <el-table-column label="制定时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : row.status === 'DRAFT' ? 'warning' : 'info'">
-              {{ listStatusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openListDetail(row)">详情</el-button>
-            <el-button v-if="row.deletable" link type="danger" @click="deleteListItem(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="!listLoading && listItems.length === 0" description="暂无管理方案记录" />
-      <div v-if="listTotal > 0" class="list-pagination">
-        <el-pagination
-          v-model:current-page="listPage"
-          :page-size="listPageSize"
-          :total="listTotal"
-          layout="total, prev, pager, next"
-          @current-change="onListPageChange"
-        />
+    <div v-show="mainTab === 'list'" v-loading="listLoading" class="list-panel section-card">
+      <div class="panel-head">
+        <h3 class="section-title">管理方案列表</h3>
+      </div>
+      <div class="panel-body">
+        <el-table v-if="listItems.length || listLoading" :data="listItems" stripe>
+          <el-table-column prop="title" label="方案标题" min-width="140" show-overflow-tooltip />
+          <el-table-column
+            prop="goalSummary"
+            label="方案摘要"
+            min-width="220"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <span :class="['list-goal-summary', { 'is-empty': !row.goalSummary }]">
+                {{ row.goalSummary || '-' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="制定方式" width="100">
+            <template #default="{ row }">{{ sourceModeLabel(row.sourceMode) }}</template>
+          </el-table-column>
+          <el-table-column prop="versionLabel" label="规则版本" width="110" />
+          <el-table-column prop="staffName" label="制定人" width="120" show-overflow-tooltip />
+          <el-table-column label="制定时间" width="180">
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : row.status === 'DRAFT' ? 'warning' : 'info'">
+                {{ listStatusLabel(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="140" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openListDetail(row)">详情</el-button>
+              <el-button v-if="row.deletable" link type="danger" @click="deleteListItem(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!listLoading && listItems.length === 0" class="page-empty" description="暂无管理方案记录" />
+        <div v-if="listTotal > 0" class="list-pagination">
+          <el-pagination
+            v-model:current-page="listPage"
+            :page-size="listPageSize"
+            :total="listTotal"
+            layout="total, prev, pager, next"
+            @current-change="onListPageChange"
+          />
+        </div>
       </div>
     </div>
 
     <div v-show="mainTab === 'compose'" v-loading="loading" class="compose-panel">
-    <div class="toolbar">
+    <div class="toolbar section-card cp-meta">
       <div class="meta">
         <el-tag size="small" effect="plain">{{ statusLabel(bundle?.plan?.status) }}</el-tag>
         <span v-if="bundle?.activeVersion" class="meta-text">
@@ -1144,7 +1155,7 @@ watch(
     />
     <CarePlanAiDisclaimer v-if="showAiDisclaimer && bundle?.plan" class="flag" />
 
-    <el-empty v-if="!bundle?.plan && !loading" description="尚未创建管理方案">
+    <el-empty v-if="!bundle?.plan && !loading" class="page-empty section-card" description="尚未创建管理方案">
       <el-button type="primary" @click="openGenerateDialog">AI 生成方案</el-button>
     </el-empty>
 
@@ -1156,7 +1167,11 @@ watch(
         <el-tab-pane label="执行计划" name="execution" />
       </el-tabs>
 
-      <div v-show="subTab === 'overview'" class="panel">
+      <div v-show="subTab === 'overview'" class="panel section-card">
+        <div class="panel-head">
+          <h3 class="section-title">方案总览</h3>
+        </div>
+        <div class="panel-body">
         <el-form label-width="96px">
           <el-form-item label="标题">
             <el-input v-model="editForm.title" :disabled="!isDraftMode" maxlength="64" />
@@ -1180,9 +1195,17 @@ watch(
             <span class="hint">当前为已发布只读内容。修改请点「编辑」开新草稿。</span>
           </el-form-item>
         </el-form>
+        </div>
       </div>
 
-      <div v-show="subTab === 'exercise'" class="panel wide">
+      <div v-show="subTab === 'exercise'" class="panel wide section-card">
+        <div class="panel-head">
+          <h3 class="section-title">
+            <span class="section-ic section-ic--brand">运</span>
+            运动方案
+          </h3>
+        </div>
+        <div class="panel-body">
         <el-form label-width="96px">
           <el-form-item label="运动目标">
             <el-input
@@ -1317,9 +1340,17 @@ watch(
             </div>
           </el-form-item>
         </el-form>
+        </div>
       </div>
 
-      <div v-show="subTab === 'diet'" class="panel wide">
+      <div v-show="subTab === 'diet'" class="panel wide section-card">
+        <div class="panel-head">
+          <h3 class="section-title">
+            <span class="section-ic section-ic--teal">食</span>
+            饮食方案
+          </h3>
+        </div>
+        <div class="panel-body">
         <el-form label-width="96px">
           <el-form-item label="原则">
             <el-input
@@ -1400,9 +1431,17 @@ watch(
             />
           </el-form-item>
         </el-form>
+        </div>
       </div>
 
-      <div v-show="subTab === 'execution'" class="panel wide">
+      <div v-show="subTab === 'execution'" class="panel wide section-card">
+        <div class="panel-head">
+          <h3 class="section-title">
+            <span class="section-ic section-ic--violet">执</span>
+            执行计划
+          </h3>
+        </div>
+        <div class="panel-body">
         <el-form label-width="96px">
           <el-form-item label="周期(天)">
             <el-input-number v-model="editForm.horizonDays" :disabled="!isDraftMode" :min="1" :max="90" />
@@ -1486,6 +1525,7 @@ watch(
             </el-table>
           </el-form-item>
         </el-form>
+        </div>
       </div>
     </template>
 
@@ -1599,10 +1639,97 @@ watch(
 
 .adjust-hint {
   margin-bottom: 12px;
+  border-radius: var(--admin-radius, 12px);
+  overflow: hidden;
+}
+
+.adjust-hint :deep(.el-alert) {
+  border-radius: var(--admin-radius, 12px);
 }
 
 .main-tabs {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+}
+
+.main-tabs :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+
+.main-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--brand-500);
+  font-weight: 600;
+}
+
+.main-tabs :deep(.el-tabs__active-bar) {
+  background: var(--brand-500);
+}
+
+.section-card {
+  background: #fff;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: var(--admin-radius, 12px);
+  box-shadow: var(--admin-shadow);
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  background: #fff;
+}
+
+.panel-body {
+  padding: 16px 18px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-800, #1e293b);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: -0.01em;
+}
+
+.section-ic {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.section-ic--brand {
+  background: var(--brand-50);
+  color: var(--brand-600);
+}
+
+.section-ic--teal {
+  background: var(--teal-50);
+  color: #0f766e;
+}
+
+.section-ic--violet {
+  background: var(--violet-50);
+  color: var(--violet-500);
+}
+
+.page-empty {
+  padding: 32px 16px;
+}
+
+.page-empty.section-card {
+  margin-top: 12px;
 }
 
 .list-panel,
@@ -1616,7 +1743,6 @@ watch(
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
 }
 
 .checkin-stats {
@@ -1638,11 +1764,6 @@ watch(
   justify-content: space-between;
   gap: 12px;
   margin: 24px 0 12px;
-}
-
-.checkin-history-head h4 {
-  margin: 0;
-  font-size: 15px;
 }
 
 .list-pagination {
@@ -1695,8 +1816,9 @@ watch(
 .instruction-chip-panel {
   margin-top: 10px;
   padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--el-fill-color-lighter, #f5f7fa);
+  border-radius: var(--admin-radius-sm, 8px);
+  background: linear-gradient(135deg, var(--brand-50), var(--violet-50));
+  border: 1px solid #bfdbfe;
 }
 
 .instruction-chip-label {
@@ -1729,14 +1851,15 @@ watch(
 }
 
 .instruction-chip:hover:not(:disabled) {
-  border-color: var(--el-color-primary-light-5, #a0cfff);
-  color: var(--el-color-primary);
+  border-color: var(--brand-300);
+  color: var(--brand-500);
+  background: var(--brand-50);
 }
 
 .instruction-chip.is-active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9, #ecf5ff);
-  color: var(--el-color-primary);
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  color: var(--brand-600);
 }
 
 .instruction-chip:disabled {
@@ -1746,6 +1869,7 @@ watch(
 
 .generate-progress-alert {
   margin-top: 4px;
+  border-radius: var(--admin-radius-sm, 8px);
 }
 
 .toolbar {
@@ -1757,10 +1881,17 @@ watch(
   flex-wrap: wrap;
 }
 
+.cp-meta {
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #eff6ff, #f0fdfa);
+  border-color: var(--admin-border, #e2e8f0);
+}
+
 .meta {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .meta-text {
@@ -1769,7 +1900,8 @@ watch(
 }
 
 .meta-text.draft {
-  color: var(--el-color-warning);
+  color: var(--amber-500);
+  font-weight: 500;
 }
 
 .actions {
@@ -1779,15 +1911,21 @@ watch(
 }
 
 .flag {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  border-radius: var(--admin-radius, 12px);
+  overflow: hidden;
 }
 
 .sub-tabs {
-  margin-top: 8px;
+  margin: 4px 0 12px;
+}
+
+.sub-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--brand-500);
 }
 
 .panel {
-  margin-top: 12px;
+  margin-top: 0;
   max-width: 820px;
 }
 
@@ -1822,9 +1960,10 @@ watch(
 
 .week-card {
   margin-bottom: 12px;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--admin-border);
-  border-radius: 8px;
+  border-radius: 10px;
+  background: var(--ink-50, #f8fafc);
 }
 
 .week-head {

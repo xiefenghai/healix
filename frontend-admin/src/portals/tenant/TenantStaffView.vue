@@ -2,8 +2,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
-import { formatRole, formatStaffStatus, staffStatusTagType } from '../ops/labels'
-import { ASSIGNABLE_STAFF_ROLE_OPTIONS, ENABLE_STATUS_OPTIONS, StaffRole, STAFF_ROLE_FILTER_OPTIONS } from '../../shared/enums'
+import {
+  ASSIGNABLE_STAFF_ROLE_OPTIONS,
+  ENABLE_STATUS_OPTIONS,
+  formatRole,
+  formatStaffStatus,
+  StaffRole,
+  STAFF_ROLE_FILTER_OPTIONS,
+  staffStatusTagType,
+} from '../../shared/enums'
 import { TABLE_COL } from '../../shared/table-columns'
 import type { PageResult, StaffAccountListItem } from '../ops/types'
 
@@ -265,11 +272,13 @@ onMounted(async () => {
 <template>
   <div>
     <div class="page-title">
-      <h1>账号与权限</h1>
-      <p>注册本租户员工，分配健管师/医生/运营角色，并设置可访问机构</p>
+      <div>
+        <h1>账号与权限</h1>
+        <p>注册本租户员工，分配健管师/医生/运营角色，并设置可访问机构</p>
+      </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-input
           v-model="keyword"
@@ -290,8 +299,10 @@ onMounted(async () => {
         <div class="spacer" />
         <el-button type="primary" @click="openRegister">注册账号</el-button>
       </div>
+    </el-card>
 
-      <el-table v-loading="loading" :data="list" stripe border>
+    <el-card shadow="never">
+      <el-table v-loading="loading" :data="list" stripe>
         <el-table-column prop="username" label="用户名" min-width="130" />
         <el-table-column prop="displayName" label="姓名" min-width="110" />
         <el-table-column label="角色" min-width="140">
@@ -467,10 +478,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.page-title { margin-bottom: 16px; }
-.page-title h1 { margin: 0; font-size: 16px; }
-.page-title p { margin: 6px 0 0; color: var(--admin-muted); font-size: 12px; }
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .spacer { flex: 1; }
 .pager { margin-top: 12px; display: flex; justify-content: flex-end; }
 .role-tag { margin-right: 4px; }

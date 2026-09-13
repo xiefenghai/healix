@@ -5,6 +5,7 @@
 
     <sql id="cols">
         pk_id, id, tenant_id, account_id, display_name, gender, birthday, name_pinyin,
+        mobile, address, education_level, marital_status, occupation,
         allergens_json, chronic_tags_json, emergency_contact_json, merged_into_people_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
@@ -34,7 +35,8 @@
         WHERE tenant_id = #{tenantId} AND is_deleted = 0
         <if test="keyword != null and keyword != ''">
             AND (display_name LIKE CONCAT('%', #{keyword}, '%')
-                 OR name_pinyin LIKE CONCAT('%', #{keyword}, '%'))
+                 OR name_pinyin LIKE CONCAT('%', #{keyword}, '%')
+                 OR mobile LIKE CONCAT('%', #{keyword}, '%'))
         </if>
         ORDER BY id DESC
         LIMIT #{limit}
@@ -43,10 +45,12 @@
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO people_profile(
             id, tenant_id, account_id, display_name, gender, birthday, name_pinyin,
+            mobile, address, education_level, marital_status, occupation,
             allergens_json, chronic_tags_json, emergency_contact_json,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{accountId}, #{displayName}, #{gender}, #{birthday}, #{namePinyin},
+            #{mobile}, #{address}, #{educationLevel}, #{maritalStatus}, #{occupation},
             #{allergensJson}, #{chronicTagsJson}, #{emergencyContactJson},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
@@ -58,6 +62,11 @@
             gender = #{gender},
             birthday = #{birthday},
             name_pinyin = #{namePinyin},
+            mobile = #{mobile},
+            address = #{address},
+            education_level = #{educationLevel},
+            marital_status = #{maritalStatus},
+            occupation = #{occupation},
             allergens_json = #{allergensJson},
             chronic_tags_json = #{chronicTagsJson},
             emergency_contact_json = #{emergencyContactJson},

@@ -1,9 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { getToken } from './api/http'
+import { startCareChatRealtime, stopCareChatRealtime } from './shared/care-chat-realtime'
 
 const route = useRoute()
 const showTab = computed(() => !route.meta.hideTab && !route.meta.public)
+
+function syncCareChatRealtime() {
+  if (route.meta.public || !getToken()) {
+    stopCareChatRealtime()
+    return
+  }
+  startCareChatRealtime()
+}
+
+onMounted(() => syncCareChatRealtime())
+watch(
+  () => [route.path, !!route.meta.public] as const,
+  () => syncCareChatRealtime(),
+)
 </script>
 
 <template>

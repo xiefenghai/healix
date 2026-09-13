@@ -388,7 +388,7 @@ public class FollowupService {
         row.setTaskType(type.name());
         row.setBizKey(bizKey);
         row.setStatus(WorkspaceTaskStatus.OPEN.name());
-        row.setPriority("HIGH");
+        row.setPriority(type.defaultPriority().name());
         String assignee = staffId;
         PatientCareAssignment a = careAssignmentMapper.find(tenantId, peopleId);
         if (a != null && StringUtils.hasText(a.getPrimaryCareManagerStaffId())) {

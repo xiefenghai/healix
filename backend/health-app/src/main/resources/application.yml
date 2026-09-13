@@ -98,6 +98,9 @@ logging:
     org.springframework.ai: WARN
     dev.langchain4j: WARN
 
+# CareChat SSE 为进程内广播；多实例部署须对 /api/*/care-chat/events 做 sticky
+# （参考仓库 deploy/nginx-care-chat-sse.example.conf），否则推送可能丢失、仅靠轮询兜底。
+
 springdoc:
   api-docs:
     path: /v3/api-docs

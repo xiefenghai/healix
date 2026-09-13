@@ -22,6 +22,7 @@ import com.healix.core.followup.catalog.FollowupRecordType;
 import com.healix.core.followup.domain.FollowupRecord;
 import com.healix.core.followup.mapper.FollowupRecordMapper;
 import com.healix.core.worktask.catalog.WorkspaceTaskCloseReason;
+import com.healix.core.worktask.catalog.WorkspaceTaskPriority;
 import com.healix.core.worktask.catalog.WorkspaceTaskStatus;
 import com.healix.core.worktask.catalog.WorkspaceTaskType;
 import com.healix.core.worktask.domain.WorkspaceTask;
@@ -816,7 +817,7 @@ public class WorkspaceTaskGenerator {
         row.setTaskType(type.name());
         row.setBizKey(bizKey);
         row.setStatus(WorkspaceTaskStatus.OPEN.name());
-        row.setPriority("HIGH");
+        row.setPriority(type.defaultPriority().name());
         row.setAssigneeStaffId(forcePublic ? null : resolveAssignee(tenantId, peopleId));
         row.setTitle(type.label());
         row.setSummary(summary);

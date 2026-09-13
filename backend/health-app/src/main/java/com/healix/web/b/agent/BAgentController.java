@@ -23,6 +23,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+/**
+ * B 端员工智能体 HTTP：能力列表 + 同步/SSE 对话（经 StaffAgentGateway）。
+ */
 @Validated
 @RestController
 @RequestMapping("/api/b/v1/agent")
@@ -83,8 +86,5 @@ public class BAgentController {
     }
 
     public record ChatRequest(
-            @NotBlank String peopleId,
-            String sessionId,
-            @NotBlank String message,
-            String capabilityHint) {}
+            String peopleId, String sessionId, @NotBlank String message, String capabilityHint) {}
 }

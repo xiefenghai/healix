@@ -16,7 +16,8 @@ import {
 } from '../../shared/family-history-options'
 
 const entries = defineModel<FamilyHistoryEntry[]>('entries', { default: () => [] })
-const hasHistory = defineModel<'none' | 'has'>('hasHistory', { default: 'none' })
+/** 空字符串 = 未选择（新建档案不默认勾选「无家族史」） */
+const hasHistory = defineModel<'none' | 'has' | ''>('hasHistory', { default: '' })
 
 const dialogVisible = ref(false)
 const activeKinshipLevel = ref<KinshipLevel>('1')

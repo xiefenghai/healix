@@ -26,13 +26,6 @@ public final class SecurityUtils {
         return patientId;
     }
 
-    public static String requireActivePatientCardId() {
-        String cardId = requireContext().getActivePatientCardId();
-        if (cardId == null) {
-            throw new BusinessException(400, "请先添加或选择就诊人");
-        }
-        return cardId;
-    }
 
     public static String requireStaffId() {
         String staffId = requireContext().getStaffId();

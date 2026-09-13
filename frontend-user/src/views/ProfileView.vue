@@ -88,6 +88,7 @@ function logout() {
       <van-cell title="随访记录" is-link to="/followups" />
       <van-cell title="管理报告" is-link to="/management-reports" />
       <van-cell title="消息中心" is-link to="/notifications" />
+      <van-cell title="联系健管师团队" is-link to="/care-chat?contact=1" />
       <van-cell title="激活码添加档案" is-link to="/activate" />
       <van-cell title="邀请码入组" is-link to="/join" />
       <van-cell title="健康助手" is-link to="/discover" />

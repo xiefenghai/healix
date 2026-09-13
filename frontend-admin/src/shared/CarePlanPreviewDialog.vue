@@ -459,8 +459,8 @@ function formatDateTime(iso?: string) {
 }
 
 .section-head--checkins .section-icon {
-  background: #ecfdf5;
-  color: #0f766e;
+  background: var(--brand-50);
+  color: var(--brand-600);
 }
 
 .section-name {

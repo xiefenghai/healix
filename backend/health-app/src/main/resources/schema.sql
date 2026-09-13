@@ -205,6 +205,11 @@ CREATE TABLE IF NOT EXISTS people_profile (
     gender                 VARCHAR(16)  NULL COMMENT '性别：MALE/FEMALE/UNKNOWN',
     birthday               DATE         NULL COMMENT '出生日期',
     name_pinyin            VARCHAR(128) NULL COMMENT '姓名拼音',
+    mobile                 VARCHAR(32)  NULL COMMENT '联系手机号',
+    address                VARCHAR(256) NULL COMMENT '家庭住址',
+    education_level        VARCHAR(32)  NULL COMMENT '文化程度',
+    marital_status         VARCHAR(32)  NULL COMMENT '婚姻状况',
+    occupation             VARCHAR(64)  NULL COMMENT '职业',
     allergens_json         JSON         NULL COMMENT '过敏原 JSON',
     chronic_tags_json      JSON         NULL COMMENT '慢性病标签 JSON',
     emergency_contact_json JSON         NULL COMMENT '紧急联系人 JSON',
@@ -1166,3 +1171,84 @@ CREATE TABLE IF NOT EXISTS followup_record (
     KEY idx_followup_assignee (assignee_staff_id, status),
     KEY idx_followup_type (org_id, record_type, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='随访记录（打卡跟进/指标异常处理/定期随访）';
+
+-- =============================================================================
+-- 患病风险评估快照（跟人；无机构字段）
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS people_assessment_snapshot (
+    pk_id                   BIGINT         NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                      VARCHAR(32)    NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id               VARCHAR(32)    NOT NULL COMMENT '所属租户业务ID',
+    people_id               VARCHAR(32)    NOT NULL COMMENT '患者业务ID',
+    kind                    VARCHAR(32)    NOT NULL COMMENT 'INCIDENT_RISK/SEVERITY',
+    engine_code             VARCHAR(64)    NOT NULL COMMENT 'CDRS/OBESITY_SCREEN/...',
+    disease_code            VARCHAR(64)    NULL COMMENT '关联病种，可空',
+    rule_pack_version       VARCHAR(64)    NOT NULL COMMENT '规则包版本',
+    status                  VARCHAR(16)    NOT NULL COMMENT 'COMPLETE/INCOMPLETE',
+    level                   VARCHAR(32)    NULL COMMENT '风险/分级等级',
+    score                   DECIMAL(10,2)  NULL COMMENT '总分，可空',
+    probability             DECIMAL(8,4)   NULL COMMENT '概率，可空',
+    result_json             JSON           NULL COMMENT '分项+advice+guideline',
+    input_snapshot_json     JSON           NULL COMMENT '计算输入快照',
+    trigger_source          VARCHAR(16)    NOT NULL COMMENT 'MANUAL/JOB',
+    assessed_at             DATETIME       NOT NULL COMMENT '评估时间',
+    assessed_by_staff_id    VARCHAR(32)    NULL COMMENT '人工评估人；Job 可空',
+    is_deleted              TINYINT        NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created             DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified            DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted             DATETIME       NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_assessment_snapshot_id (id),
+    KEY idx_assessment_people_engine (tenant_id, people_id, engine_code, assessed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患病风险/严重度评估快照';
+
+-- =============================================================================
+-- 沟通域 CareChat（健管师 ↔ 患者，与 notify 并列）
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS care_chat_thread (
+    pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id               VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    org_id                  VARCHAR(32)  NOT NULL COMMENT '所属机构业务ID',
+    people_id               VARCHAR(32)  NOT NULL COMMENT '就诊人业务ID',
+    last_message_at         DATETIME     NULL COMMENT '最近消息时间',
+    last_message_preview    VARCHAR(120) NULL COMMENT '最近消息摘要',
+    last_sender_type        VARCHAR(16)  NULL COMMENT 'STAFF/PATIENT',
+    staff_unread_count      INT          NOT NULL DEFAULT 0 COMMENT '健管侧未读',
+    patient_unread_count    INT          NOT NULL DEFAULT 0 COMMENT '患者侧未读',
+    closed_at               DATETIME     NULL COMMENT '关闭时间；空=开放',
+    is_deleted              TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted             DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_care_chat_thread_id (id),
+    UNIQUE KEY uk_care_chat_thread_org_people (tenant_id, org_id, people_id, gmt_deleted),
+    KEY idx_care_chat_thread_people (tenant_id, people_id, last_message_at),
+    KEY idx_care_chat_thread_org_unread (tenant_id, org_id, staff_unread_count)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管沟通会话线程';
+
+CREATE TABLE IF NOT EXISTS care_chat_message (
+    pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id               VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    thread_id               VARCHAR(32)  NOT NULL COMMENT '会话线程业务ID',
+    sender_type             VARCHAR(16)  NOT NULL COMMENT 'STAFF/PATIENT',
+    sender_staff_id         VARCHAR(32)  NULL COMMENT '健管侧 staff_profile.id',
+    sender_account_id       VARCHAR(32)  NULL COMMENT '患者侧 people_account.id',
+    content_type            VARCHAR(16)  NOT NULL DEFAULT 'TEXT' COMMENT 'TEXT/IMAGE',
+    content                 VARCHAR(2000) NOT NULL COMMENT '正文',
+    client_msg_id           VARCHAR(64)  NULL COMMENT '客户端防重 ID',
+    recalled_at             DATETIME     NULL COMMENT '撤回时间（P1）',
+    is_deleted              TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted             DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_care_chat_message_id (id),
+    UNIQUE KEY uk_care_chat_message_client (thread_id, client_msg_id, gmt_deleted),
+    KEY idx_care_chat_message_thread (thread_id, gmt_created),
+    KEY idx_care_chat_message_staff (tenant_id, sender_staff_id, gmt_created)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管沟通消息气泡';

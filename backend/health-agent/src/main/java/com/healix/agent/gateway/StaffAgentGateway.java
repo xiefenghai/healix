@@ -22,13 +22,15 @@ import com.healix.core.govern.enums.QuotaKeyEnum;
 import com.healix.core.people.domain.PeopleProfile;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+/**
+ * B 端员工智能体网关：支持有 peopleId 的患者会话，以及驾驶舱无 peopleId 的机构级会话。
+ */
 @Service
 @RequiredArgsConstructor
 public class StaffAgentGateway {
@@ -66,14 +68,28 @@ public class StaffAgentGateway {
     }
 
     private AgentResponse doChat(AgentChatCommand cmd, Consumer<AgentStreamEvent> sink) {
-        archiveAccessService.assertStaffCanAccessPeople(cmd.tenantId(), cmd.orgId(), cmd.peopleId());
+        boolean orgSession = !StringUtils.hasText(cmd.peopleId());
+        if (!orgSession) {
+            archiveAccessService.assertStaffCanAccessPeople(cmd.tenantId(), cmd.orgId(), cmd.peopleId());
+        }
         aiUsageGuard.check(cmd.tenantId(), FeatureFlagKeyEnum.AI_STAFF_COPILOT, QuotaKeyEnum.AI_CALL_MONTHLY);
-        PeopleProfile profile = archiveAccessService.requirePeopleInTenant(cmd.tenantId(), cmd.peopleId());
+
+        String displayName;
+        if (orgSession) {
+            displayName = "机构今日";
+        } else {
+            PeopleProfile profile = archiveAccessService.requirePeopleInTenant(cmd.tenantId(), cmd.peopleId());
+            displayName = profile.getDisplayName() == null ? "患者" : profile.getDisplayName();
+        }
+
         String sessionId = AgentSessionIds.normalize(cmd.sessionId());
         var history = sessionStore.loadTurns(sessionId);
         AgentCapability routed = route(cmd);
-        AgentSkillContext ctx = new AgentSkillContext(
-                cmd, sessionId, history, profile.getDisplayName() == null ? "患者" : profile.getDisplayName());
+        if (orgSession && routed != AgentCapability.GENERAL_CHAT) {
+            // 机构首页会话禁止需患者的能力（方案 / OCR 等）
+            routed = AgentCapability.GENERAL_CHAT;
+        }
+        AgentSkillContext ctx = new AgentSkillContext(cmd, sessionId, history, displayName);
 
         AgentResponse response;
         if (routed == AgentCapability.CARE_PLAN) {
@@ -145,6 +161,9 @@ public class StaffAgentGateway {
     }
 
     private AgentCapability route(AgentChatCommand cmd) {
+        if (!StringUtils.hasText(cmd.peopleId())) {
+            return AgentCapability.GENERAL_CHAT;
+        }
         AgentCapability hinted = AgentCapability.fromHint(cmd.capabilityHint());
         if (hinted != null && hinted.enabled()) {
             return hinted;

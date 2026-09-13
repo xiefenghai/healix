@@ -639,7 +639,7 @@ onMounted(async () => {
         @change="onOcrFileChange"
       />
 
-      <el-alert v-if="ocrHint" type="warning" :closable="false" show-icon class="ocr-alert">
+      <el-alert v-if="ocrHint" type="info" :closable="false" show-icon class="ocr-alert ai-tip">
         {{ ocrHint }}
       </el-alert>
 
@@ -772,9 +772,15 @@ onMounted(async () => {
   width: 100%;
 }
 
+.section-card {
+  border-radius: var(--admin-radius, 12px);
+  overflow: hidden;
+}
+
 .section-card :deep(.el-card__header) {
-  padding: 14px 20px;
-  background: #f8fafc;
+  padding: 14px 18px;
+  background: #fff;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
 }
 
 .card-head,
@@ -796,10 +802,19 @@ onMounted(async () => {
 
 .browse-toolbar {
   margin-bottom: 12px;
-  padding: 4px 0;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: var(--admin-radius, 12px);
+  box-shadow: var(--admin-shadow);
 }
 
 .browse-meta,
+.meta-card {
+  border-radius: var(--admin-radius, 12px);
+}
+
+.browse-meta :deep(.el-card__body),
 .meta-card :deep(.el-card__body) {
   padding: 12px 16px 4px;
 }
@@ -808,8 +823,20 @@ onMounted(async () => {
   display: none;
 }
 
-.ocr-alert {
+.ocr-alert.ai-tip {
   margin-bottom: 12px;
+  border-radius: var(--admin-radius, 12px);
+  border: 1px solid #bfdbfe;
+  background: linear-gradient(135deg, #eff6ff, #f0fdfa);
+}
+
+.ocr-alert.ai-tip :deep(.el-alert__content) {
+  color: var(--ink-700, #334155);
+  font-size: 13px;
+}
+
+.ocr-alert.ai-tip :deep(.el-alert__icon) {
+  color: var(--violet-500);
 }
 
 .meta-form {
@@ -817,8 +844,10 @@ onMounted(async () => {
 }
 
 .section-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
+  color: var(--ink-800, #1e293b);
+  letter-spacing: -0.01em;
 }
 
 .card-head-actions {
@@ -832,10 +861,11 @@ onMounted(async () => {
   grid-template-columns: 200px 1fr;
   gap: 0;
   min-height: 420px;
-  border: 1px solid var(--admin-border, #e5e7eb);
-  border-radius: 8px;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: var(--admin-radius, 12px);
   overflow: hidden;
   background: #fff;
+  box-shadow: var(--admin-shadow);
 }
 
 .browse-body {
@@ -843,8 +873,8 @@ onMounted(async () => {
 }
 
 .panel-side {
-  background: #f8fafc;
-  border-right: 1px solid var(--admin-border, #e5e7eb);
+  background: var(--ink-50, #f8fafc);
+  border-right: 1px solid var(--admin-border, #e2e8f0);
   padding: 12px 0;
   overflow-y: auto;
   max-height: calc(100vh - 280px);
@@ -852,9 +882,11 @@ onMounted(async () => {
 
 .panel-side-title {
   padding: 4px 16px 12px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--admin-text-secondary, #64748b);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-400, #94a3b8);
 }
 
 .panel-item {
@@ -869,17 +901,18 @@ onMounted(async () => {
   text-align: left;
   font-size: 14px;
   color: var(--admin-text, #1f2937);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .panel-item:hover {
-  background: #eef2ff;
+  background: var(--brand-50);
 }
 
 .panel-item.active {
   background: #fff;
-  color: var(--el-color-primary);
+  color: var(--brand-500);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--el-color-primary);
+  box-shadow: inset 3px 0 0 var(--brand-500);
 }
 
 .panel-badge {
@@ -887,7 +920,7 @@ onMounted(async () => {
   height: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  background: #ef4444;
+  background: var(--rose-500);
   color: #fff;
   font-size: 11px;
   line-height: 18px;
@@ -910,8 +943,9 @@ onMounted(async () => {
 
 .panel-main-head h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
+  color: var(--ink-800);
 }
 
 .panel-hint {
@@ -971,12 +1005,17 @@ onMounted(async () => {
 
 .conclusion-block {
   margin-top: 16px;
+  padding: 14px;
+  background: var(--ink-50, #f8fafc);
+  border: 1px solid var(--ink-100, #f1f5f9);
+  border-radius: 10px;
 }
 
 .conclusion-label {
   margin-bottom: 8px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--ink-700);
 }
 
 .exam-editor {
@@ -991,6 +1030,11 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: var(--admin-radius, 12px);
+  box-shadow: var(--admin-shadow);
 }
 
 .toolbar-left,
@@ -1008,6 +1052,10 @@ onMounted(async () => {
 
 .detail-actions {
   margin-top: 20px;
+}
+
+.exam-page :deep(.el-empty) {
+  padding: 24px 12px;
 }
 
 @media (max-width: 900px) {
@@ -1038,7 +1086,7 @@ onMounted(async () => {
 
   .panel-item.active {
     box-shadow: none;
-    background: var(--el-color-primary-light-9);
+    background: var(--brand-50);
   }
 }
 </style>

@@ -328,7 +328,7 @@ onMounted(async () => {
 
       <el-card shadow="never" class="block">
         <h3>成员（{{ members.length }}）</h3>
-        <el-table v-loading="membersLoading" :data="members" stripe border>
+        <el-table v-loading="membersLoading" :data="members" stripe>
           <el-table-column label="类型" width="90">
             <template #default="{ row }">{{ row.memberType === 'STAFF' ? '医护' : '患者' }}</template>
           </el-table-column>
@@ -373,15 +373,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.page-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-  gap: 12px;
-}
-.page-title h1 { margin: 8px 0 0; font-size: 16px; }
-.page-title p { margin: 6px 0 0; color: var(--admin-muted); font-size: 12px; }
 .crumb { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--admin-muted); }
 .sep { margin: 0 2px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }

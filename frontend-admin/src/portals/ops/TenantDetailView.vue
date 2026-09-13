@@ -12,7 +12,7 @@ import {
   tenantStatusTagType,
   ENABLE_STATUS_OPTIONS,
   StaffRole,
-} from './labels'
+} from '../../shared/enums'
 import { TABLE_COL } from '../../shared/table-columns'
 import TenantGovernancePanel from './TenantGovernancePanel.vue'
 
@@ -346,7 +346,7 @@ onMounted(async () => {
             <el-button v-if="canWrite" type="primary" @click="openRegister">注册账号</el-button>
           </div>
 
-          <el-table v-loading="staffLoading" :data="staffList" stripe border>
+          <el-table v-loading="staffLoading" :data="staffList" stripe>
             <el-table-column prop="username" label="用户名" min-width="140" />
             <el-table-column prop="displayName" label="姓名" min-width="120" />
             <el-table-column prop="mobile" label="手机" width="130" />
@@ -449,7 +449,7 @@ onMounted(async () => {
   width: 52px;
   height: 52px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #0f766e 0%, #0891b2 100%);
+  background: linear-gradient(135deg, #2c7ef8 0%, #00b8a9 100%);
   color: #fff;
   font-size: 22px;
   font-weight: 600;

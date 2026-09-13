@@ -42,9 +42,6 @@ public class DictService {
         return listMerged(tenantId, DictTypeEnum.DISEASE_FIELD.name(), diseaseCode);
     }
 
-    public List<DictItemDto> listDiseases(String tenantId) {
-        return listMerged(tenantId, DictTypeEnum.DISEASE.name(), "0");
-    }
 
     private static DictItemDto toDto(SysDict row) {
         DictItemDto dto = new DictItemDto();

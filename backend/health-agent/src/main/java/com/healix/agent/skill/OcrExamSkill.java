@@ -8,6 +8,9 @@ import java.util.Locale;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+/**
+ * 检查单 OCR 占位（能力未启用）：引导跳转录入页。
+ */
 @Component
 public class OcrExamSkill implements AgentSkill {
 

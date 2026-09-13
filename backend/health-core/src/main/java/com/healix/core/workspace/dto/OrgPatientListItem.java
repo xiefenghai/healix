@@ -23,4 +23,14 @@ public class OrgPatientListItem {
     private Boolean clientLinked;
     /** 关联的 C 端就诊人卡片数量（跨账号合计） */
     private Integer clientCardCount;
+    /** 联系手机号 */
+    private String mobile;
+    /** 家庭住址 */
+    private String address;
+    /** 文化程度 code */
+    private String educationLevel;
+    /** 婚姻状况 code */
+    private String maritalStatus;
+    /** 职业 */
+    private String occupation;
 }

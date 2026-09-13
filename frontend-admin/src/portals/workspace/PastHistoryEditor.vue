@@ -138,8 +138,9 @@ function replaceModel(next: PastHistoryStructured) {
   model.value = next
 }
 
-function onStatusChange(val: PastHistoryStatus) {
-  replaceModel({ ...clonePastHistory(model.value), status: val })
+function onStatusChange(val: string | number | boolean | undefined) {
+  const status: PastHistoryStatus = val === 'none' || val === 'has' ? val : ''
+  replaceModel({ ...clonePastHistory(model.value), status })
 }
 
 function resetDrafts() {

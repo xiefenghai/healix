@@ -51,6 +51,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+/**
+ * 机构工作台任务：列表 / 领取 / 办结，以及随访类任务联动。
+ */
 @Service
 @RequiredArgsConstructor
 public class WorkspaceTaskService {

@@ -62,10 +62,6 @@ export const CARE_PLAN_TASK_CATEGORY_OPTIONS = [
   { value: 'OTHER', label: '其他' },
 ]
 
-const EXERCISE_TYPE_LABELS = Object.fromEntries(
-  CARE_PLAN_EXERCISE_TYPE_OPTIONS.map((o) => [o.value, o.label]),
-)
-const INTENSITY_LABELS = Object.fromEntries(CARE_PLAN_INTENSITY_OPTIONS.map((o) => [o.value, o.label]))
 const FREQUENCY_LABELS = Object.fromEntries(CARE_PLAN_FREQUENCY_OPTIONS.map((o) => [o.value, o.label]))
 const TIME_SLOT_LABELS = Object.fromEntries(CARE_PLAN_TIME_SLOT_OPTIONS.map((o) => [o.value, o.label]))
 const TASK_CATEGORY_LABELS = Object.fromEntries(
@@ -89,14 +85,6 @@ export function formatCarePlanFoodItem(item?: { code?: string; label?: string } 
   const label = (item.label || '').trim()
   if (label && label !== code && !/^[A-Z][A-Z0-9_]*$/.test(label)) return label
   return formatCarePlanFoodCode(code) || label || code
-}
-
-export function formatCarePlanExerciseType(code?: string | null): string {
-  return lookup(EXERCISE_TYPE_LABELS, code)
-}
-
-export function formatCarePlanIntensity(code?: string | null): string {
-  return lookup(INTENSITY_LABELS, code)
 }
 
 export function formatCarePlanFrequency(code?: string | null): string {

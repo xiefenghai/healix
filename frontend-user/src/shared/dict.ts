@@ -34,11 +34,6 @@ export function dictLabel(items: DictItem[], code?: string | null, fallback = '�
   return items.find((i) => i.dictCode === code)?.dictCodeDesc ?? code
 }
 
-export function dictLabels(items: DictItem[], codes?: string[] | null): string {
-  if (!codes?.length) return '—'
-  return codes.map((c) => dictLabel(items, c, c)).join('、')
-}
-
 export function toLabelMap(items: DictItem[]): Record<string, string> {
   const out: Record<string, string> = {}
   for (const i of items) out[i.dictCode] = i.dictCodeDesc

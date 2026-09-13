@@ -1,19 +1,26 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, useSlots } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { clearSession, getCurrentOrgName, getEntry } from '../shared/http'
 
-const props = defineProps<{
-  title: string
-  menus: Array<{ path: string; label: string; icon?: string }>
-  hideSider?: boolean
-  orgSwitchable?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    title: string
+    menus: Array<{ path: string; label: string; icon?: string; badge?: boolean | number }>
+    hideSider?: boolean
+    orgSwitchable?: boolean
+    flushContent?: boolean
+  }>(),
+  {
+    flushContent: false,
+  },
+)
 
 const emit = defineEmits<{
   switchOrg: []
 }>()
 
+const slots = useSlots()
 const router = useRouter()
 const route = useRoute()
 const keyword = ref('')
@@ -25,6 +32,7 @@ const active = computed(() => {
   const matched = props.menus.find((m) => path === m.path || path.startsWith(`${m.path}/`))
   return matched?.path ?? path
 })
+const orgInitial = computed(() => (orgName.value || '机').slice(0, 1))
 
 function logout() {
   clearSession()
@@ -51,31 +59,19 @@ function onSwitchOrg() {
   <div class="shell">
     <header class="topbar">
       <div class="left">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true" />
-          <span class="brand-text">Healix</span>
+        <div class="crumbs">
+          <span class="crumb-muted">机构工作台</span>
+          <span class="crumb-sep">/</span>
+          <strong>{{ title }}</strong>
         </div>
-        <el-divider direction="vertical" class="divider" />
-        <span class="portal">{{ title }}</span>
-        <template v-if="orgName && entry === 'workspace'">
-          <el-dropdown v-if="orgSwitchable" trigger="click">
-            <el-tag size="small" type="success" effect="plain" class="org-tag">
-              {{ orgName }}
-              <el-icon class="org-caret"><ArrowDown /></el-icon>
-            </el-tag>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="onSwitchOrg">切换机构</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <el-tag v-else size="small" type="success" effect="plain">{{ orgName }}</el-tag>
-        </template>
+        <div v-if="slots.chips" class="chip-slot">
+          <slot name="chips" />
+        </div>
       </div>
-      <div class="right">
+      <div class="search-wrap">
         <el-input
           v-model="keyword"
-          placeholder="搜索用户 / 机构"
+          placeholder="搜索用户 / 机构 / 患者…"
           clearable
           class="search-input"
           @keyup.enter="onSearch"
@@ -84,10 +80,33 @@ function onSwitchOrg() {
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
+      </div>
+      <div class="right">
+        <template v-if="orgName && entry === 'workspace'">
+          <el-dropdown v-if="orgSwitchable" trigger="click">
+            <button type="button" class="org-switch">
+              <span class="org-avatar">{{ orgInitial }}</span>
+              <span class="org-meta">
+                <span class="org-name">{{ orgName }}</span>
+                <span class="org-role">点击切换机构</span>
+              </span>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="onSwitchOrg">切换机构</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <div v-else class="org-switch static">
+            <span class="org-avatar">{{ orgInitial }}</span>
+            <span class="org-meta">
+              <span class="org-name">{{ orgName }}</span>
+            </span>
+          </div>
+        </template>
         <el-dropdown>
           <span class="admin">
-            <el-avatar :size="32" class="admin-avatar">管</el-avatar>
-            <span class="admin-name">管理员</span>
+            <span class="user-avatar">管</span>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
@@ -101,7 +120,15 @@ function onSwitchOrg() {
 
     <div class="body" :class="{ 'no-sider': hideSider }">
       <aside v-if="!hideSider" class="sider" :class="{ collapsed }">
+        <div class="brand">
+          <span class="brand-logo" aria-hidden="true" />
+          <div v-if="!collapsed" class="brand-copy">
+            <span class="brand-name">Healix</span>
+            <small>机构工作台</small>
+          </div>
+        </div>
         <div class="sider-inner">
+          <div v-if="!collapsed" class="nav-title">主导航</div>
           <el-menu :default-active="active" router :collapse="collapsed" class="side-menu">
             <el-menu-item v-for="m in menus" :key="m.path" :index="m.path">
               <el-icon v-if="m.icon === 'dashboard'"><Odometer /></el-icon>
@@ -113,7 +140,17 @@ function onSwitchOrg() {
               <el-icon v-else-if="m.icon === 'ticket'"><Ticket /></el-icon>
               <el-icon v-else-if="m.icon === 'timer'"><Timer /></el-icon>
               <el-icon v-else><Menu /></el-icon>
-              <span>{{ m.label }}</span>
+              <template v-if="!collapsed">
+                <span>{{ m.label }}</span>
+                <i v-if="m.badge === true || (typeof m.badge === 'number' && m.badge > 0)" class="menu-dot" />
+                <span
+                  v-if="typeof m.badge === 'number' && m.badge > 0"
+                  class="menu-badge"
+                >{{ m.badge > 99 ? '99+' : m.badge }}</span>
+              </template>
+              <template v-else>
+                <i v-if="m.badge === true || (typeof m.badge === 'number' && m.badge > 0)" class="menu-dot collapsed-dot" />
+              </template>
             </el-menu-item>
           </el-menu>
         </div>
@@ -121,7 +158,7 @@ function onSwitchOrg() {
           {{ collapsed ? '展开' : '收起侧栏' }}
         </el-button>
       </aside>
-      <main class="content">
+      <main class="content" :class="{ flush: flushContent }">
         <slot />
       </main>
     </div>
@@ -135,105 +172,154 @@ function onSwitchOrg() {
 }
 
 .topbar {
-  height: 56px;
+  height: 60px;
   padding: 0 24px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 16px;
   background: var(--admin-topbar-bg);
   border-bottom: 1px solid var(--admin-topbar-border);
-  box-shadow: var(--admin-shadow);
   position: sticky;
   top: 0;
   z-index: 20;
 }
 
 .left,
-.right,
-.admin {
+.right {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.brand {
+.crumbs {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-500);
+  white-space: nowrap;
 }
 
-.brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--admin-primary) 0%, #0891b2 100%);
-  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.35);
+.crumb-muted {
+  color: var(--ink-500);
 }
 
-.brand-text {
-  font-weight: 700;
-  color: var(--admin-text);
-  font-size: 17px;
-  letter-spacing: -0.02em;
+.crumb-sep {
+  opacity: 0.45;
 }
 
-.divider {
-  border-color: var(--admin-border) !important;
-  height: 20px;
+.crumbs strong {
+  color: var(--ink-800);
+  font-weight: 600;
 }
 
-.portal {
-  font-size: 14px;
-  color: var(--admin-text-secondary);
-  font-weight: 500;
-}
-
-.org-tag {
-  cursor: pointer;
-  display: inline-flex;
+.chip-slot {
+  display: flex;
   align-items: center;
-  gap: 2px;
-  border-color: #a7f3d0 !important;
-  background: #ecfdf5 !important;
-  color: #047857 !important;
+  gap: 8px;
+  margin-left: 8px;
+  flex-wrap: wrap;
 }
 
-.org-caret {
-  margin-left: 2px;
-  font-size: 12px;
+.search-wrap {
+  flex: 1;
+  max-width: 380px;
+  min-width: 180px;
 }
 
 .search-input {
-  width: 240px;
+  width: 100%;
+}
+
+.search-input :deep(.el-input__wrapper) {
+  background: var(--ink-50);
+  box-shadow: 0 0 0 1px var(--ink-200) inset;
+  border-radius: 8px;
+  transition: box-shadow var(--admin-transition), background var(--admin-transition);
+}
+
+.search-input :deep(.el-input__wrapper:hover) {
+  background: #fff;
+}
+
+.search-input :deep(.el-input__wrapper.is-focus) {
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--brand-500), 0 0 0 3px rgba(44, 126, 248, 0.12) !important;
+}
+
+.right {
+  margin-left: auto;
+}
+
+.org-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px 3px 3px;
+  border-radius: 999px;
+  background: var(--ink-50);
+  border: 1px solid var(--ink-200);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.org-switch.static {
+  cursor: default;
+}
+
+.org-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.org-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.org-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-800);
+}
+
+.org-role {
+  font-size: 11px;
+  color: var(--ink-500);
 }
 
 .admin {
   cursor: pointer;
-  font-size: 13px;
-  padding: 4px 8px;
-  border-radius: 8px;
-  transition: background 0.15s;
+  display: inline-flex;
 }
 
-.admin:hover {
-  background: var(--admin-bg);
-}
-
-.admin-avatar {
-  background: linear-gradient(135deg, var(--admin-primary), #0891b2) !important;
-  font-size: 13px;
+.user-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #8b5cf6, #2c7ef8);
+  display: grid;
+  place-items: center;
+  color: #fff;
   font-weight: 600;
-}
-
-.admin-name {
-  color: var(--admin-text-secondary);
-  font-weight: 500;
+  font-size: 12px;
 }
 
 .body {
   display: grid;
   grid-template-columns: auto 1fr;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - 60px);
 }
 
 .body.no-sider {
@@ -241,37 +327,90 @@ function onSwitchOrg() {
 }
 
 .sider {
-  width: 220px;
-  background: var(--admin-sidebar-bg);
+  width: 248px;
+  background: linear-gradient(180deg, #0f172a 0%, #131c30 100%);
+  border-right: 1px solid var(--admin-sidebar-border);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
 }
 
 .sider.collapsed {
-  width: 64px;
+  width: 72px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 14px 8px;
+  color: #fff;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #2c7ef8, #00b8a9);
+  box-shadow: 0 6px 16px -4px rgba(44, 126, 248, 0.6);
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.brand-name {
+  display: block;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.brand-copy small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-400);
+  letter-spacing: 0.04em;
 }
 
 .sider-inner {
   flex: 1;
-  padding: 12px 0;
+  padding: 4px 0 12px;
   overflow-y: auto;
 }
 
+.nav-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  padding: 12px 22px 8px;
+}
+
 .content {
-  padding: 20px 24px 32px;
+  padding: 24px 32px 40px;
   min-width: 0;
 }
 
+.content.flush {
+  padding: 0;
+  overflow: hidden;
+  height: calc(100vh - 60px);
+}
+
 .collapse-btn {
-  margin: 8px 12px 12px;
+  margin: 8px 12px 16px;
   color: var(--admin-sidebar-text) !important;
   font-size: 12px;
   justify-content: flex-start;
 }
 
 .collapse-btn:hover {
-  color: var(--admin-sidebar-text-active) !important;
+  color: #fff !important;
   background: var(--admin-sidebar-hover) !important;
 }
 
@@ -281,36 +420,86 @@ function onSwitchOrg() {
 }
 
 :deep(.side-menu.el-menu--collapse) {
-  width: 64px;
+  width: 72px;
 }
 
 :deep(.side-menu .el-menu-item) {
-  height: 44px;
-  line-height: 44px;
+  height: 40px;
+  line-height: 40px;
   margin: 2px 10px;
   border-radius: 8px;
   color: var(--admin-sidebar-text);
-  font-size: 14px;
+  font-size: 13.5px;
+  font-weight: 500;
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
 :deep(.side-menu .el-menu-item .el-icon) {
   color: inherit;
+  opacity: 0.85;
 }
 
 :deep(.side-menu .el-menu-item:hover) {
   background: var(--admin-sidebar-hover) !important;
-  color: var(--admin-sidebar-text-active);
+  color: #fff;
 }
 
 :deep(.side-menu .el-menu-item.is-active) {
-  background: var(--admin-sidebar-active) !important;
-  color: var(--admin-sidebar-text-active) !important;
+  background: linear-gradient(90deg, rgba(44, 126, 248, 0.18), rgba(44, 126, 248, 0.04)) !important;
+  color: #fff !important;
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--admin-primary);
+  box-shadow: none;
 }
 
-:deep(.side-menu.el-menu--collapse .el-menu-item.is-active) {
-  box-shadow: none;
-  border-left: 3px solid var(--admin-primary);
+:deep(.side-menu .el-menu-item.is-active .el-icon) {
+  opacity: 1;
+}
+
+:deep(.side-menu .el-menu-item.is-active::before) {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: var(--brand-500);
+  border-radius: 0 3px 3px 0;
+}
+
+:deep(.side-menu.el-menu--collapse .el-menu-item.is-active::before) {
+  display: none;
+}
+
+.menu-dot {
+  width: 8px;
+  height: 8px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+  flex-shrink: 0;
+}
+
+.menu-dot.collapsed-dot {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  margin: 0;
+}
+
+.menu-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 </style>

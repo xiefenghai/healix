@@ -34,7 +34,7 @@ async function enterOrg(org: { id: string; name: string }) {
     updateOrgSession(res.data.accessToken, org.id, org.name)
     currentOrgId.value = String(org.id)
     ElMessage.success(`已进入 ${org.name}`)
-    await router.push('/workspace/tasks')
+    await router.push('/workspace/cockpit')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '进入失败')
   }
@@ -46,8 +46,10 @@ onMounted(load)
 <template>
   <div>
     <div class="page-title">
-      <h1>选择工作机构</h1>
-      <p>选择机构后进入工作台待办</p>
+      <div>
+        <h1>选择工作机构</h1>
+        <p>选择机构后进入智能驾驶舱</p>
+      </div>
     </div>
     <el-row :gutter="16" v-loading="loading">
       <el-col v-for="org in orgs" :key="org.id" :xs="24" :sm="12" :md="8" :lg="6">
@@ -60,7 +62,7 @@ onMounted(load)
           <div class="name">{{ org.name }}</div>
           <div class="meta">{{ formatOrgType(org.orgType) }} · {{ formatEnableStatus(org.status) }}</div>
           <el-button type="primary" link>
-            {{ currentOrgId === org.id ? '当前机构，点击进入' : '进入工作台' }}
+            {{ currentOrgId === org.id ? '当前机构，点击进入' : '进入驾驶舱' }}
           </el-button>
         </el-card>
       </el-col>
@@ -70,27 +72,14 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page-title {
-  margin-bottom: 16px;
-}
-.page-title h1 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-}
-.page-title p {
-  margin: 6px 0 0;
-  color: var(--admin-muted);
-  font-size: 12px;
-}
 .org-card {
   margin-bottom: 16px;
   cursor: pointer;
-  border-radius: 8px;
-  transition: transform 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .org-card:hover {
   transform: translateY(-2px);
+  box-shadow: var(--admin-shadow-md) !important;
 }
 .name {
   font-size: 15px;

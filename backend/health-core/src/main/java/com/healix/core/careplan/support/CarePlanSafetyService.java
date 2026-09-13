@@ -178,16 +178,4 @@ public class CarePlanSafetyService {
         return JsonUtils.toJson(arr);
     }
 
-    public List<SafetyFlagDto> fromFlagsJson(String json) {
-        JsonNode arr = JsonUtils.readTree(json == null ? "[]" : json);
-        List<SafetyFlagDto> out = new ArrayList<>();
-        if (!arr.isArray()) {
-            return out;
-        }
-        for (JsonNode n : arr) {
-            out.add(new SafetyFlagDto(
-                    n.path("level").asText(), n.path("code").asText(), n.path("message").asText()));
-        }
-        return out;
-    }
 }

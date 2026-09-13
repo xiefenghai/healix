@@ -1,5 +1,6 @@
 package com.healix.common.constant;
 
+/** C 端助手启发式意图（IntentRouter 输入）。 */
 public enum IntentType {
     QUERY_VITALS,
     SET_REMINDER,

@@ -1,6 +1,6 @@
 /** 既往史结构化条目（对齐临床 EMR 六大类，MVP 不含 ICD-10 编码） */
 
-export type PastHistoryStatus = 'none' | 'has'
+export type PastHistoryStatus = '' | 'none' | 'has'
 
 export type SurgeryType = 'SURGERY' | 'TRAUMA' | 'ACCIDENT'
 
@@ -82,7 +82,7 @@ const allergyCategoryLabel = new Map(ALLERGY_CATEGORY_OPTIONS.map((o) => [o.valu
 
 export function emptyPastHistory(): PastHistoryStructured {
   return {
-    status: 'none',
+    status: '',
     diseases: [],
     surgeries: [],
     allergies: [],
@@ -119,27 +119,19 @@ export function normalizePastHistory(raw: unknown): PastHistoryStructured {
   const base = emptyPastHistory()
   if (!raw || typeof raw !== 'object') return base
   const o = raw as Record<string, unknown>
-  base.status =
-    o.status === 'has'
-      ? 'has'
-      : pastHistoryHasContent({
-          status: 'none',
-          diseases: Array.isArray(o.diseases) ? o.diseases : [],
-          surgeries: Array.isArray(o.surgeries) ? o.surgeries : [],
-          allergies: Array.isArray(o.allergies) ? o.allergies : [],
-          transfusions: Array.isArray(o.transfusions) ? o.transfusions : [],
-          vaccinations: Array.isArray(o.vaccinations) ? o.vaccinations : [],
-          medicationNote: String(o.medicationNote ?? ''),
-        })
-        ? 'has'
-        : 'none'
   base.diseases = Array.isArray(o.diseases) ? (o.diseases as PastHistoryDiseaseEntry[]) : []
   base.surgeries = Array.isArray(o.surgeries) ? (o.surgeries as PastHistorySurgeryEntry[]) : []
   base.allergies = Array.isArray(o.allergies) ? (o.allergies as PastHistoryAllergyEntry[]) : []
   base.transfusions = Array.isArray(o.transfusions) ? (o.transfusions as PastHistoryTransfusionEntry[]) : []
   base.vaccinations = Array.isArray(o.vaccinations) ? (o.vaccinations as PastHistoryVaccinationEntry[]) : []
   base.medicationNote = String(o.medicationNote ?? '')
-  if (pastHistoryHasContent(base)) base.status = 'has'
+  if (pastHistoryHasContent(base) || o.status === 'has') {
+    base.status = 'has'
+  } else if (o.status === 'none') {
+    base.status = 'none'
+  } else {
+    base.status = ''
+  }
   return base
 }
 
@@ -245,6 +237,7 @@ export function mergePastHistoryFromSummary(
 /** 从 content_json 加载既往史（兼容旧文本、摘要补全） */
 export function resolvePastHistoryFromContent(content: Record<string, unknown>): PastHistoryStructured {
   const summary = String(content.pastHistory ?? '')
+  const topStatus = String(content.pastHistoryStatus ?? '')
   let raw: unknown = content.pastHistoryItems
   if (typeof raw === 'string' && raw.trim()) {
     try {
@@ -259,6 +252,9 @@ export function resolvePastHistoryFromContent(content: Record<string, unknown>):
     data = normalizePastHistory(raw)
   } else if (summary.trim()) {
     data = migratePastHistoryFromTags(splitLegacyTags(summary))
+  } else if (topStatus === 'none' || topStatus === 'has') {
+    data = emptyPastHistory()
+    data.status = topStatus
   } else {
     data = emptyPastHistory()
   }
@@ -332,12 +328,3 @@ export function serializePastHistory(data: PastHistoryStructured): string {
   }
   return sections.join('；')
 }
-
-export const PAST_HISTORY_SECTIONS = [
-  { key: 'diseases', label: '疾病史' },
-  { key: 'surgeries', label: '手术及外伤' },
-  { key: 'allergies', label: '过敏史' },
-  { key: 'transfusions', label: '输血史' },
-  { key: 'vaccinations', label: '预防接种' },
-  { key: 'medication', label: '用药史' },
-] as const

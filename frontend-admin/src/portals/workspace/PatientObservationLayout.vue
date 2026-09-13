@@ -20,7 +20,14 @@ const activeSub = computed(() => {
 const ocrLoading = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
-function switchSub(name: string | number) {
+const SUB_TABS = [
+  { name: 'metrics', label: '指标录入' },
+  { name: 'trends', label: '趋势分析' },
+  { name: 'labs', label: '化验报告' },
+  { name: 'exams', label: '检查记录' },
+] as const
+
+function switchSub(name: string) {
   const base = `/workspace/patients/${peopleId.value}/observations`
   router.push({ path: `${base}/${name}`, query: route.query })
 }
@@ -71,12 +78,20 @@ async function onOcrFileChange(e: Event) {
 <template>
   <div class="obs-layout">
     <div class="obs-toolbar">
-      <el-tabs :model-value="activeSub" class="obs-tabs" @tab-change="switchSub">
-        <el-tab-pane label="指标数据" name="metrics" />
-        <el-tab-pane label="指标趋势" name="trends" />
-        <el-tab-pane label="检验记录" name="labs" />
-        <el-tab-pane label="检查记录" name="exams" />
-      </el-tabs>
+      <div class="sub-tabs" role="tablist">
+        <button
+          v-for="tab in SUB_TABS"
+          :key="tab.name"
+          type="button"
+          class="sub-tab"
+          :class="{ active: activeSub === tab.name }"
+          role="tab"
+          :aria-selected="activeSub === tab.name"
+          @click="switchSub(tab.name)"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
       <el-button type="primary" :loading="ocrLoading" @click="openOcrPicker">OCR 识别</el-button>
       <input
         ref="fileInputRef"
@@ -100,17 +115,48 @@ async function onOcrFileChange(e: Event) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 
-.obs-tabs {
-  flex: 1;
-  min-width: 280px;
+.sub-tabs {
+  display: flex;
+  gap: 6px;
+  background: #fff;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  box-shadow: var(--admin-shadow);
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
-.obs-tabs :deep(.el-tabs__header) {
-  margin-bottom: 0;
+.sub-tab {
+  margin: 0;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-600, #475569);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.sub-tab:hover {
+  color: var(--ink-800, #1e293b);
+}
+
+.sub-tab.active {
+  background: var(--brand-500);
+  color: #fff;
+  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
 }
 
 .hidden-input {

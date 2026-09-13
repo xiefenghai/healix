@@ -28,6 +28,23 @@ public enum WorkspaceTaskType {
     }
 
     /**
+     * 类型默认优先级（开单写入；驾驶舱排序以类型优先级为准，患者申请等可再抬升）。
+     *
+     * <ul>
+     *   <li>HIGH — 指标异常、入组分配（短时限 / 阻塞）
+     *   <li>MEDIUM — 随访、打卡跟进、方案制定/复核
+     *   <li>LOW — 报告审阅
+     * </ul>
+     */
+    public WorkspaceTaskPriority defaultPriority() {
+        return switch (this) {
+            case METRIC_ALERT, TEAM_ASSIGN -> WorkspaceTaskPriority.HIGH;
+            case FOLLOW_UP, PLAN_NUDGE, PLAN_CREATE, PLAN_REVIEW -> WorkspaceTaskPriority.MEDIUM;
+            case REPORT_REVIEW -> WorkspaceTaskPriority.LOW;
+        };
+    }
+
+    /**
      * 处理时限（含开单日）：到期日 = 开单日 + (dueDaysInclusive - 1) 的 23:59:59。
      * 入组 1 天；方案 / 督促 / 异常 3 天。
      */

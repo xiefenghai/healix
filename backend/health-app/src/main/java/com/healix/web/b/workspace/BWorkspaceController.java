@@ -42,6 +42,24 @@ public class BWorkspaceController {
         return ApiResult.ok(orgWorkspaceService.getOrgPatient(orgId, peopleId));
     }
 
+    /** 更新患者人口学基础信息（姓名、联系方式、住址、文化程度、婚姻、职业）。 */
+    @PutMapping("/patients/{peopleId}/basic-info")
+    public ApiResult<OrgPatientListItem> updatePatientBasicInfo(
+            @PathVariable String peopleId, @RequestBody @Validated UpdatePatientBasicInfoRequest request) {
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        String accountId = SecurityUtils.requireContext().getAccountId();
+        return ApiResult.ok(orgWorkspaceService.updatePatientBasicInfo(
+                orgId,
+                peopleId,
+                request.displayName(),
+                request.mobile(),
+                request.address(),
+                request.educationLevel(),
+                request.maritalStatus(),
+                request.occupation(),
+                accountId));
+    }
+
     /** 列出当前机构可管员工（可按角色、关键字筛选；用于组队选人等）。 */
     @GetMapping("/org-staff")
     public ApiResult<List<OrgStaffItem>> listOrgStaff(
@@ -226,5 +244,14 @@ public class BWorkspaceController {
             String identityValue,
             String gender,
             java.time.LocalDate birthday) {
+    }
+
+    public record UpdatePatientBasicInfoRequest(
+            @NotBlank @Size(max = 64) String displayName,
+            @Size(max = 32) String mobile,
+            @Size(max = 256) String address,
+            @Size(max = 32) String educationLevel,
+            @Size(max = 32) String maritalStatus,
+            @Size(max = 64) String occupation) {
     }
 }

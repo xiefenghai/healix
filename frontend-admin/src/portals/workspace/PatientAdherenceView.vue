@@ -431,7 +431,7 @@ onBeforeUnmount(() => {
           <span class="muted">方案应打/完成 · 用药应打/已服</span>
         </div>
       </template>
-      <el-table :data="[...(detail?.days || [])].reverse()" size="small" stripe border>
+      <el-table :data="[...(detail?.days || [])].reverse()" size="small" stripe>
         <el-table-column label="日期" width="110" prop="date" />
         <el-table-column label="方案" min-width="140">
           <template #default="{ row }">

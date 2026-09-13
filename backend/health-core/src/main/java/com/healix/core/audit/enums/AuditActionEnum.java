@@ -40,6 +40,8 @@ public enum AuditActionEnum {
     ORG_STAFF_UNBIND,
     /** B 端患者建档 */
     PATIENT_ARCHIVE_CREATE,
+    /** B 端编辑患者人口学基础信息 */
+    PATIENT_BASIC_INFO_UPDATE,
     /** C 端激活码绑定就诊人卡片 */
     PATIENT_CARD_ACTIVATE,
     WORKSPACE_TASK_CLAIM,
@@ -66,7 +68,11 @@ public enum AuditActionEnum {
     /** B/Ops 账号关闭 MFA */
     MFA_DISABLE,
     /** 患者档案合并 */
-    PATIENT_MERGE;
+    PATIENT_MERGE,
+    /** B 端患者风险评估（手动/预留 Job） */
+    PATIENT_ASSESSMENT_RUN,
+    /** 健管师↔患者沟通消息发送 */
+    CARE_CHAT_SEND;
 
     public boolean matches(String value) {
         return name().equals(value);

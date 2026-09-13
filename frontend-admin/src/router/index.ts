@@ -1,6 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getAud, getCurrentOrgId, getEntry, getToken, hasRole } from '../shared/http'
 
+/**
+ * B/Ops 路由。
+ * - meta.aud：JWT 受众（ops | b），鉴权用
+ * - meta.entry：门户会话（ops | tenant | workspace），决定壳与菜单
+ */
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -40,12 +45,25 @@ const router = createRouter({
       component: () => import('../portals/workspace/WorkspaceLayout.vue'),
       meta: { aud: 'b', entry: 'workspace' },
       children: [
-        { path: '', redirect: '/workspace/orgs' },
+        {
+          path: '',
+          redirect: () => (getCurrentOrgId() ? '/workspace/cockpit' : '/workspace/orgs'),
+        },
         { path: 'orgs', component: () => import('../portals/workspace/OrgPickerView.vue') },
         { path: 'security', component: () => import('../shared/SecuritySettingsView.vue') },
         {
+          path: 'cockpit',
+          component: () => import('../portals/workspace/CockpitView.vue'),
+          meta: { requireOrg: true },
+        },
+        {
           path: 'tasks',
           component: () => import('../portals/workspace/WorkspaceTasksView.vue'),
+          meta: { requireOrg: true },
+        },
+        {
+          path: 'care-chat/:peopleId?',
+          component: () => import('../portals/workspace/WorkspaceCareChatView.vue'),
           meta: { requireOrg: true },
         },
         {
@@ -104,6 +122,10 @@ const router = createRouter({
               component: () => import('../portals/workspace/PatientHealthReportView.vue'),
             },
             {
+              path: 'assessments',
+              component: () => import('../portals/workspace/PatientAssessmentsView.vue'),
+            },
+            {
               path: 'observations',
               component: () => import('../portals/workspace/PatientObservationLayout.vue'),
               redirect: (to) => `/workspace/patients/${to.params.peopleId}/observations/metrics`,
@@ -129,6 +151,10 @@ const router = createRouter({
             {
               path: 'revisions',
               component: () => import('../portals/workspace/PatientRevisionView.vue'),
+            },
+            {
+              path: 'chat',
+              component: () => import('../portals/workspace/PatientChatView.vue'),
             },
           ],
         },

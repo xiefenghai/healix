@@ -84,10 +84,3 @@ export const LAB_PANELS: LabPanel[] = [
     ],
   },
 ]
-
-export const LAB_PANEL_BY_KEY = Object.fromEntries(LAB_PANELS.map((p) => [p.key, p])) as Record<
-  string,
-  LabPanel
->
-
-export const ALL_LAB_ITEM_CODES = [...new Set(LAB_PANELS.flatMap((p) => p.codes))]

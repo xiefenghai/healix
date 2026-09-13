@@ -421,6 +421,27 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "merged_into_people_id",
                 "ALTER TABLE people_profile ADD COLUMN merged_into_people_id VARCHAR(32) NULL COMMENT '已合并到的目标 people_id' AFTER emergency_contact_json");
 
+        ensureColumn(
+                "people_profile",
+                "mobile",
+                "ALTER TABLE people_profile ADD COLUMN mobile VARCHAR(32) NULL COMMENT '联系手机号' AFTER name_pinyin");
+        ensureColumn(
+                "people_profile",
+                "address",
+                "ALTER TABLE people_profile ADD COLUMN address VARCHAR(256) NULL COMMENT '家庭住址' AFTER mobile");
+        ensureColumn(
+                "people_profile",
+                "education_level",
+                "ALTER TABLE people_profile ADD COLUMN education_level VARCHAR(32) NULL COMMENT '文化程度' AFTER address");
+        ensureColumn(
+                "people_profile",
+                "marital_status",
+                "ALTER TABLE people_profile ADD COLUMN marital_status VARCHAR(32) NULL COMMENT '婚姻状况' AFTER education_level");
+        ensureColumn(
+                "people_profile",
+                "occupation",
+                "ALTER TABLE people_profile ADD COLUMN occupation VARCHAR(64) NULL COMMENT '职业' AFTER marital_status");
+
         ensureTable(
                 "account_mfa",
                 """
@@ -720,6 +741,88 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     UNIQUE KEY uk_notify_delivery_channel (message_id, channel),
                     KEY idx_notify_delivery_dispatch (status, next_retry_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息通道投递'
+                """);
+        ensureTable(
+                "people_assessment_snapshot",
+                """
+                CREATE TABLE IF NOT EXISTS people_assessment_snapshot (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    kind VARCHAR(32) NOT NULL COMMENT 'INCIDENT_RISK/SEVERITY',
+                    engine_code VARCHAR(64) NOT NULL,
+                    disease_code VARCHAR(64) NULL,
+                    rule_pack_version VARCHAR(64) NOT NULL,
+                    status VARCHAR(16) NOT NULL COMMENT 'COMPLETE/INCOMPLETE',
+                    level VARCHAR(32) NULL,
+                    score DECIMAL(10,2) NULL,
+                    probability DECIMAL(8,4) NULL,
+                    result_json JSON NULL,
+                    input_snapshot_json JSON NULL,
+                    trigger_source VARCHAR(16) NOT NULL COMMENT 'MANUAL/JOB',
+                    assessed_at DATETIME NOT NULL,
+                    assessed_by_staff_id VARCHAR(32) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_assessment_snapshot_id (id),
+                    KEY idx_assessment_people_engine (tenant_id, people_id, engine_code, assessed_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患病风险/严重度评估快照'
+                """);
+        ensureTable(
+                "care_chat_thread",
+                """
+                CREATE TABLE IF NOT EXISTS care_chat_thread (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    org_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    last_message_at DATETIME NULL,
+                    last_message_preview VARCHAR(120) NULL,
+                    last_sender_type VARCHAR(16) NULL,
+                    staff_unread_count INT NOT NULL DEFAULT 0,
+                    patient_unread_count INT NOT NULL DEFAULT 0,
+                    closed_at DATETIME NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_care_chat_thread_id (id),
+                    UNIQUE KEY uk_care_chat_thread_org_people (tenant_id, org_id, people_id, gmt_deleted),
+                    KEY idx_care_chat_thread_people (tenant_id, people_id, last_message_at),
+                    KEY idx_care_chat_thread_org_unread (tenant_id, org_id, staff_unread_count)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管沟通会话线程'
+                """);
+        ensureTable(
+                "care_chat_message",
+                """
+                CREATE TABLE IF NOT EXISTS care_chat_message (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    thread_id VARCHAR(32) NOT NULL,
+                    sender_type VARCHAR(16) NOT NULL,
+                    sender_staff_id VARCHAR(32) NULL,
+                    sender_account_id VARCHAR(32) NULL,
+                    content_type VARCHAR(16) NOT NULL DEFAULT 'TEXT',
+                    content VARCHAR(2000) NOT NULL,
+                    client_msg_id VARCHAR(64) NULL,
+                    recalled_at DATETIME NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_care_chat_message_id (id),
+                    UNIQUE KEY uk_care_chat_message_client (thread_id, client_msg_id, gmt_deleted),
+                    KEY idx_care_chat_message_thread (thread_id, gmt_created),
+                    KEY idx_care_chat_message_staff (tenant_id, sender_staff_id, gmt_created)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管沟通消息气泡'
                 """);
     }
 

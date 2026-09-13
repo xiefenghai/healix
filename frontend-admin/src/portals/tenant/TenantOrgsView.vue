@@ -119,10 +119,12 @@ onMounted(() => {
 <template>
   <div>
     <div class="page-title">
-      <h1>机构管理</h1>
-      <p>创建机构，并为机构生成患者邀请码</p>
+      <div>
+        <h1>机构管理</h1>
+        <p>创建机构，并为机构生成患者邀请码</p>
+      </div>
     </div>
-    <el-card shadow="never" class="mb">
+    <el-card shadow="never" class="filter-card">
       <div class="filters">
         <el-input v-model="name" placeholder="新机构名称" style="width: 220px" />
         <el-select v-model="orgType" style="width: 180px">
@@ -137,7 +139,7 @@ onMounted(() => {
       </div>
     </el-card>
     <el-card shadow="never">
-      <el-table :data="orgs" stripe border>
+      <el-table :data="orgs" stripe>
         <el-table-column prop="id" label="ID" v-bind="TABLE_COL.bizId" />
         <el-table-column prop="orgCode" label="机构编码" v-bind="TABLE_COL.bizCode" />
         <el-table-column prop="name" label="名称" />
@@ -199,9 +201,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page-title { margin-bottom: 16px; }
-.page-title h1 { margin: 0; font-size: 16px; }
-.page-title p { margin: 6px 0 0; color: var(--admin-muted); font-size: 12px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; }
 .mb { margin-bottom: 16px; }
 .mt { margin-top: 12px; }

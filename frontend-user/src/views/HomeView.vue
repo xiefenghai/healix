@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { showToast } from 'vant'
 import { useRouter } from 'vue-router'
 import { api } from '../api/http'
+import { onCareChatEvent } from '../shared/care-chat-realtime'
+import { debounce } from '../shared/debounce'
 import {
   CARE_PLAN_CHECKIN_STATUS_LABELS,
   CARE_PLAN_TASK_CATEGORY_LABELS,
@@ -473,6 +475,20 @@ const hubs = [
     path: '/management-reports',
     tone: 'rose',
   },
+  {
+    key: 'care-chat',
+    title: '联系健管师',
+    icon: 'chat-o',
+    path: '/care-chat?contact=1',
+    tone: 'violet',
+  },
+  {
+    key: 'notifications',
+    title: '消息中心',
+    icon: 'bell',
+    path: '/notifications',
+    tone: 'coral',
+  },
 ]
 
 interface LatestReport {
@@ -485,6 +501,11 @@ interface LatestReport {
 
 const latestReport = ref<LatestReport | null>(null)
 const unreadNotifyCount = ref(0)
+const unreadChatCount = ref(0)
+let unsubChat: (() => void) | null = null
+const scheduleChatUnread = debounce(() => {
+  void loadUnreadChatCount()
+}, 300)
 
 function periodTypeLabel(code?: string) {
   if (code === 'WEEK') return '周报'
@@ -511,13 +532,23 @@ onMounted(async () => {
       loadLatestMetrics(),
       loadLatestReport(),
       loadUnreadNotifyCount(),
+      loadUnreadChatCount(),
     ])
+    unsubChat = onCareChatEvent(() => {
+      scheduleChatUnread()
+    })
   } catch (e) {
     const msg = e instanceof Error ? e.message : ''
     if (msg.includes('就诊人')) {
       await router.replace('/patient-cards')
     }
   }
+})
+
+onBeforeUnmount(() => {
+  scheduleChatUnread.cancel()
+  unsubChat?.()
+  unsubChat = null
 })
 
 async function loadLatestReport() {
@@ -535,6 +566,15 @@ async function loadUnreadNotifyCount() {
     unreadNotifyCount.value = Number(res.data?.count || 0)
   } catch {
     unreadNotifyCount.value = 0
+  }
+}
+
+async function loadUnreadChatCount() {
+  try {
+    const res = await api<{ data: { count?: number } }>('/api/c/v1/care-chat/unread-count')
+    unreadChatCount.value = Number(res.data?.count || 0)
+  } catch {
+    unreadChatCount.value = 0
   }
 }
 
@@ -686,6 +726,15 @@ function checkinStatusLabel(code?: string) {
         </div>
       </div>
       <div class="hero-actions">
+        <button
+          class="icon-btn"
+          type="button"
+          aria-label="联系健管师团队"
+          @click="router.push('/care-chat?contact=1')"
+        >
+          <van-icon name="chat-o" size="20" />
+          <span v-if="unreadChatCount > 0" class="badge">{{ unreadChatCount > 99 ? '99+' : unreadChatCount }}</span>
+        </button>
         <button class="icon-btn" type="button" aria-label="消息" @click="router.push('/notifications')">
           <van-icon name="bell" size="20" />
           <span v-if="unreadNotifyCount > 0" class="badge">{{ unreadNotifyCount > 99 ? '99+' : unreadNotifyCount }}</span>
@@ -696,7 +745,7 @@ function checkinStatusLabel(code?: string) {
       </div>
     </header>
 
-    <section class="hubs">
+    <section class="hubs" aria-label="常用入口">
       <button
         v-for="h in hubs"
         :key="h.key"
@@ -707,6 +756,14 @@ function checkinStatusLabel(code?: string) {
       >
         <span class="hub-icon">
           <van-icon :name="h.icon" size="18" />
+          <span
+            v-if="h.key === 'care-chat' && unreadChatCount > 0"
+            class="hub-badge"
+          >{{ unreadChatCount > 99 ? '99+' : unreadChatCount }}</span>
+          <span
+            v-else-if="h.key === 'notifications' && unreadNotifyCount > 0"
+            class="hub-badge"
+          >{{ unreadNotifyCount > 99 ? '99+' : unreadNotifyCount }}</span>
         </span>
         <strong>{{ h.title }}</strong>
       </button>
@@ -1083,7 +1140,7 @@ function checkinStatusLabel(code?: string) {
 
 .hubs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -1093,23 +1150,42 @@ function checkinStatusLabel(code?: string) {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: 16px;
-  padding: 12px 6px 10px;
+  border-radius: 14px;
+  padding: 12px 4px 10px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--hx-shadow);
+  text-align: center;
+  min-height: 0;
 }
 .hub-icon {
+  position: relative;
   width: 36px;
   height: 36px;
   border-radius: 12px;
   display: grid;
   place-items: center;
+  flex-shrink: 0;
+}
+.hub-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 .hub strong {
   font-size: 12px;
   font-weight: 650;
   color: var(--hx-text);
-  line-height: 1.2;
+  line-height: 1.25;
   text-align: center;
 }
 .tone-teal .hub-icon {
@@ -1135,6 +1211,14 @@ function checkinStatusLabel(code?: string) {
 .tone-slate .hub-icon {
   background: #eef2f6;
   color: #5a6b7d;
+}
+.tone-violet .hub-icon {
+  background: #efe9ff;
+  color: #6d5bd0;
+}
+.tone-coral .hub-icon {
+  background: #fff0e8;
+  color: #e07a3a;
 }
 
 .card {

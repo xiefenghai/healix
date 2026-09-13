@@ -9,11 +9,13 @@ public final class HealthConstants {
     private HealthConstants() {
     }
 
-    public static final String TRACE_HEADER = "X-Trace-Id";
 
     public static final String REDIS_CHAT_MEMORY_PREFIX = "healix:chat:memory:";
 
     public static final String REDIS_STAFF_AGENT_SESSION_PREFIX = "healix:agent:staff-session:";
+
+    /** 驾驶舱开场简报日缓存：healix:cockpit:briefing:{staffId}:{orgId}:{yyyy-MM-dd} */
+    public static final String REDIS_COCKPIT_BRIEFING_PREFIX = "healix:cockpit:briefing:";
 
     public static final int DEFAULT_CHAT_MEMORY_TURNS = 3;
 

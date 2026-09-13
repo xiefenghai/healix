@@ -37,4 +37,23 @@
           AND is_deleted = 0
         ORDER BY gmt_created ASC
     </select>
+
+    <select id="listLatestNumericByPeople"
+            resultType="com.healix.core.observation.mapper.LabResultItemMapper$LabLatestNumeric">
+        SELECT i.item_code AS itemCode,
+               i.value_num AS valueNum,
+               i.unit AS unit,
+               COALESCE(r.reported_at, r.sampled_at, i.gmt_created) AS recordedAt
+        FROM lab_result_item i
+        INNER JOIN lab_report r ON r.id = i.report_id AND r.is_deleted = 0
+        WHERE r.tenant_id = #{tenantId}
+          AND r.people_id = #{peopleId}
+          AND i.is_deleted = 0
+          AND i.value_num IS NOT NULL
+          AND i.item_code IN
+          <foreach collection="itemCodes" item="code" open="(" separator="," close=")">
+              #{code}
+          </foreach>
+        ORDER BY COALESCE(r.reported_at, r.sampled_at, i.gmt_created) DESC
+    </select>
 </mapper>

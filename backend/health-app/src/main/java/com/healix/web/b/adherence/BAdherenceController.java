@@ -8,6 +8,7 @@ import com.healix.core.adherence.dto.AdherenceNudgeResultDto;
 import com.healix.core.adherence.dto.AdherenceOverviewDto;
 import com.healix.core.adherence.dto.AdherencePatientDetailDto;
 import com.healix.core.adherence.dto.AdherencePatientItemDto;
+import com.healix.core.adherence.dto.AdherencePatientSummaryDto;
 import com.healix.core.adherence.dto.AdherenceTrendPointDto;
 import com.healix.core.adherence.service.AdherenceBoardActionService;
 import com.healix.core.adherence.service.AdherenceQueryService;
@@ -75,6 +76,20 @@ public class BAdherenceController {
                 keyword,
                 page,
                 size));
+    }
+
+    /**
+     * 单患者依从性摘要（实时轻量）：近 7 日方案完成率百分比 + 当日用药完成率。
+     * <p>详情页 Hero / 列表角标优先用本接口；完整日曲线仍用 {@code /patients/{id}/adherence}。
+     */
+    @GetMapping("/patients/{peopleId}/adherence/summary")
+    public ApiResult<AdherencePatientSummaryDto> patientSummary(
+            @PathVariable String peopleId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        String tenantId = SecurityUtils.requireTenantId();
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        return ApiResult.ok(adherenceQueryService.patientSummary(tenantId, orgId, peopleId, date));
     }
 
     @GetMapping("/patients/{peopleId}/adherence")

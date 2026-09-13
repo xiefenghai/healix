@@ -1,5 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+/**
+ * C 端路由。
+ * `/health`：底栏 Tab「健康」；`/health-data`：同组件但 hideTab，带返回的堆叠页。
+ */
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -73,6 +77,16 @@ const router = createRouter({
     {
       path: '/notifications',
       component: () => import('../views/NotificationsView.vue'),
+      meta: { hideTab: true },
+    },
+    {
+      path: '/care-chat',
+      component: () => import('../views/CareChatListView.vue'),
+      meta: { hideTab: true },
+    },
+    {
+      path: '/care-chat/:threadId',
+      component: () => import('../views/CareChatThreadView.vue'),
       meta: { hideTab: true },
     },
     { path: '/health', component: () => import('../views/HealthDataHubView.vue'), meta: { title: '健康' } },

@@ -29,6 +29,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+/**
+ * 跨端账号 / 人员档案查询与注册（Ops / B / C）。
+ */
 @Service
 @RequiredArgsConstructor
 public class IdentityService {
@@ -121,31 +124,7 @@ public class IdentityService {
         return account;
     }
 
-    /**
-     * @deprecated 家庭账号模型下注册不再创建 people；请用 {@link #registerAccount}。
-     */
-    @Deprecated
-    @Transactional
-    public PeopleProfile registerPeople(String tenantId, String username, String password, String displayName) {
-        PeopleAccount account = registerAccount(tenantId, username, password);
-        PeopleProfile profile = new PeopleProfile();
-        profile.setTenantId(tenantId);
-        profile.setAccountId(null);
-        profile.setDisplayName(displayName != null ? displayName : username);
-        profile.setNamePinyin(toPinyinKey(profile.getDisplayName()));
-        profile.setAllergensJson("[]");
-        EntityMeta.onCreate(profile);
-        peopleProfileMapper.insert(profile);
-        return profile;
-    }
 
-    public PeopleAccount requirePeopleAccountById(String accountId) {
-        PeopleAccount account = peopleAccountMapper.findById(accountId);
-        if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
-            throw new BusinessException(401, "用户名或密码错误");
-        }
-        return account;
-    }
 
     public PeopleAccount requirePeopleAccount(String tenantId, String username) {
         PeopleAccount account = peopleAccountMapper.findByTenantAndUsername(tenantId, username);
@@ -155,13 +134,6 @@ public class IdentityService {
         return account;
     }
 
-    public PeopleProfile requirePeopleByAccount(String accountId) {
-        PeopleProfile profile = peopleProfileMapper.findByAccountId(accountId);
-        if (profile == null) {
-            throw new BusinessException("患者资料不存在");
-        }
-        return profile;
-    }
 
     public PeopleProfile requirePeople(String peopleId) {
         PeopleProfile profile = peopleProfileMapper.findById(peopleId);
@@ -171,11 +143,6 @@ public class IdentityService {
         return profile;
     }
 
-    /** @deprecated use requirePeople */
-    @Deprecated
-    public PeopleProfile requirePatient(String patientId) {
-        return requirePeople(patientId);
-    }
 
     @Transactional
     public PeopleProfile updatePeopleProfile(
@@ -204,11 +171,6 @@ public class IdentityService {
         return peopleProfileMapper.searchByTenant(tenantId, keyword, limit);
     }
 
-    /** @deprecated use searchPeople */
-    @Deprecated
-    public List<PeopleProfile> searchPatients(String tenantId, String keyword, int limit) {
-        return searchPeople(tenantId, keyword, limit);
-    }
 
     public List<String> peopleAllergens(String peopleId) {
         PeopleProfile profile = requirePeople(peopleId);
@@ -220,12 +182,6 @@ public class IdentityService {
             return List.of();
         }
         return List.of(raw.split(",")).stream().map(String::trim).filter(s -> !s.isEmpty()).toList();
-    }
-
-    /** @deprecated use peopleAllergens */
-    @Deprecated
-    public List<String> patientAllergens(String patientId) {
-        return peopleAllergens(patientId);
     }
 
     public int opsAccountCount() {

@@ -43,11 +43,6 @@ public class JwtTokenProvider {
         return builder.compact();
     }
 
-    /** @deprecated use overload with activePatientCardId */
-    @Deprecated
-    public String createPatientToken(String accountId, String patientId, String homeTenantId) {
-        return createPatientToken(accountId, patientId, homeTenantId, null);
-    }
 
     public String createStaffToken(
             String accountId, String staffId, String tenantId, String currentOrgId, Collection<String> roles) {

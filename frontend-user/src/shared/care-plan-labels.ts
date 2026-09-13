@@ -129,15 +129,3 @@ export function formatWeeklyPlanDay(day?: string | null): string {
   return map[day] || day
 }
 
-export function formatExerciseItem(item: unknown): string {
-  if (!item || typeof item !== 'object') return String(item ?? '')
-  const o = item as Record<string, unknown>
-  const type = formatCarePlanLabel(CARE_PLAN_EXERCISE_TYPE_LABELS, o.type != null ? String(o.type) : '')
-  const intensity = formatCarePlanLabel(
-    CARE_PLAN_INTENSITY_LABELS,
-    o.intensity != null ? String(o.intensity) : '',
-  )
-  const duration = o.durationMin != null ? `${o.durationMin} 分钟` : ''
-  const note = o.note != null ? String(o.note).trim() : ''
-  return [type || o.title, intensity, duration, note].filter(Boolean).join(' · ')
-}

@@ -17,6 +17,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
 
+/**
+ * 检验单 OCR 占位（能力未启用）：对话内识别预留。
+ */
 @Component
 @RequiredArgsConstructor
 public class OcrLabSkill implements AgentSkill {

@@ -8,7 +8,4 @@ public record AgentAction(String type, String label, String path, Map<String, Ob
         return new AgentAction("NAVIGATE", label, path, null);
     }
 
-    public static AgentAction payload(String type, String label, Map<String, Object> payload) {
-        return new AgentAction(type, label, null, payload);
-    }
 }

@@ -21,10 +21,10 @@
 
 <style scoped>
 .ai-disclaimer {
-  border: 1px solid #f5d9a8;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #fff9ed 0%, #fff4e0 100%);
-  box-shadow: 0 2px 8px rgba(230, 162, 60, 0.08);
+  border: 1px solid #bfdbfe;
+  border-radius: var(--admin-radius, 12px);
+  background: linear-gradient(135deg, #eff6ff, #f0fdfa);
+  box-shadow: var(--admin-shadow);
   overflow: hidden;
   padding: 12px 14px 14px;
 }
@@ -33,7 +33,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #8a5a12;
+  color: var(--brand-600, #1e63d9);
 }
 
 .ai-disclaimer-icon {
@@ -42,9 +42,9 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 50%;
-  background: #ffe7ba;
-  color: #d48806;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--brand-500), var(--violet-500));
+  color: #fff;
   flex-shrink: 0;
 }
 
@@ -63,6 +63,10 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.7;
-  color: #7c5a1e;
+  color: var(--ink-700, #334155);
+}
+
+.ai-disclaimer-body strong {
+  color: var(--brand-500);
 }
 </style>

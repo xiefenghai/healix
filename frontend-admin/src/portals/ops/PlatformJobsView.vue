@@ -297,16 +297,15 @@ onMounted(() => {
 <template>
   <div>
     <div class="page-title">
-      <h1>平台任务</h1>
-      <p>从已注册的任务类型加入全平台调度；可启停、改 Cron、整轮手动执行与查看日志。</p>
+      <div>
+        <h1>平台任务</h1>
+        <p>从已注册的任务类型加入全平台调度；可启停、改 Cron、整轮手动执行与查看日志。</p>
+      </div>
+      <el-button v-if="canWrite" type="primary" @click="openCreate">新增任务</el-button>
     </div>
 
-    <el-card shadow="never">
-      <div class="toolbar">
-        <div class="spacer" />
-        <el-button v-if="canWrite" type="primary" @click="openCreate">新增任务</el-button>
-      </div>
-      <el-table v-loading="loading" :data="list" stripe border empty-text="暂无任务，点击右上角「新增任务」从目录加入">
+    <el-card class="jobs-card" shadow="never">
+      <el-table v-loading="loading" :data="list" stripe empty-text="暂无任务，点击右上角「新增任务」从目录加入">
         <el-table-column prop="displayName" label="任务" min-width="140">
           <template #default="{ row }">
             <div class="name">{{ row.displayName }}</div>
@@ -431,7 +430,7 @@ onMounted(() => {
     </el-dialog>
 
     <el-drawer v-model="logVisible" :title="logJob ? `${logJob.displayName} · 执行日志` : '执行日志'" size="780px">
-      <el-table v-loading="logLoading" :data="logList" stripe border size="small">
+      <el-table v-loading="logLoading" :data="logList" stripe size="small">
         <el-table-column label="开始" width="160">
           <template #default="{ row }">{{ formatTime(row.startedAt) }}</template>
         </el-table-column>
@@ -468,47 +467,77 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
-.spacer { flex: 1; }
-.page-title { margin-bottom: 16px; }
-.page-title h1 { margin: 0; font-size: 16px; }
-.page-title p { margin: 6px 0 0; color: var(--admin-muted); font-size: 12px; }
-.name { font-weight: 600; }
-.muted { color: var(--admin-muted); font-size: 12px; margin-top: 2px; }
-.pager { margin-top: 12px; display: flex; justify-content: flex-end; }
+.jobs-card {
+  border: 1px solid var(--ink-200);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.jobs-card :deep(.el-card__body) {
+  padding: 0;
+}
+.name {
+  font-weight: 600;
+  color: var(--ink-800);
+}
+.muted {
+  color: var(--ink-400);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.pager {
+  margin-top: 0;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--ink-100);
+}
 .empty-catalog {
   padding: 16px;
-  background: #f8fafc;
-  border: 1px dashed var(--admin-border);
+  background: var(--ink-50);
+  border: 1px dashed var(--ink-200);
   border-radius: 8px;
-  color: var(--admin-muted);
+  color: var(--ink-500);
   font-size: 13px;
   line-height: 1.6;
 }
 .job-form :deep(.el-form-item) { margin-bottom: 18px; }
-.job-form :deep(.el-form-item__label) { font-weight: 600; color: var(--admin-text); }
-.type-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.job-form :deep(.el-form-item__label) {
+  font-weight: 600;
+  color: var(--ink-800);
+}
+.type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
 .type-card {
   display: block;
   width: 100%;
   text-align: left;
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--ink-200);
   background: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px 14px;
   cursor: pointer;
+  transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  font: inherit;
+  color: inherit;
 }
-.type-card:hover { border-color: #99f6e4; }
+.type-card:hover {
+  border-color: var(--brand-300, #7ba9fb);
+  box-shadow: var(--admin-shadow-sm);
+}
 .type-card.active {
-  border-color: var(--admin-primary);
-  background: var(--el-color-primary-light-9);
-  box-shadow: 0 0 0 1px var(--admin-primary) inset;
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  box-shadow: 0 0 0 1px var(--brand-500) inset;
 }
 .type-card.readonly { cursor: default; }
 .type-card p {
   margin: 6px 0 0;
   font-size: 12px;
-  color: var(--admin-muted);
+  color: var(--ink-500);
   line-height: 1.55;
 }
 .type-head {
@@ -517,20 +546,24 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
 }
-.type-name { font-weight: 600; color: var(--admin-text); }
+.type-name {
+  font-weight: 600;
+  color: var(--ink-800);
+}
 .type-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
-  color: var(--admin-primary-hover);
-  background: var(--admin-primary-muted);
+  font-weight: 600;
+  color: var(--brand-600);
+  background: var(--brand-50);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
 }
 .enable-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--admin-text-secondary);
+  color: var(--ink-500);
   font-size: 13px;
 }
 </style>

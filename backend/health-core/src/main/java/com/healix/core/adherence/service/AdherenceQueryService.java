@@ -6,6 +6,7 @@ import com.healix.core.adherence.dto.AdherenceMedMetricsDto;
 import com.healix.core.adherence.dto.AdherenceOverviewDto;
 import com.healix.core.adherence.dto.AdherencePatientDetailDto;
 import com.healix.core.adherence.dto.AdherencePatientItemDto;
+import com.healix.core.adherence.dto.AdherencePatientSummaryDto;
 import com.healix.core.adherence.dto.AdherencePlanMetricsDto;
 import com.healix.core.adherence.dto.AdherenceTodayMedItemDto;
 import com.healix.core.adherence.dto.AdherenceTodayTaskItemDto;
@@ -44,6 +45,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+/**
+ * 依从性读模型：看板、驾驶舱优先名单与日待办摘要共用。
+ */
 @Service
 @RequiredArgsConstructor
 public class AdherenceQueryService {
@@ -364,6 +368,83 @@ public class AdherenceQueryService {
             PlanWindow window,
             List<CarePlanTask> tasks,
             Map<LocalDate, Map<String, String>> checkinsByDay) {}
+
+    /**
+     * 单患者依从性摘要（实时）：近 7 日方案完成率百分比 + 当日用药完成率，不返回明细列表。
+     */
+    public AdherencePatientSummaryDto patientSummary(
+            String tenantId, String orgId, String peopleId, LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now();
+        // 校验患者属于当前机构宇宙
+        orgWorkspaceService.getOrgPatient(orgId, peopleId);
+
+        PersonPlanContext ctx = loadPersonPlan(tenantId, peopleId, day);
+        boolean hasActivePlan = ctx.hasActivePlan();
+
+        DayPlanStats todayPlan = DayPlanStats.empty();
+        Double rate7d = null;
+        int streak = 0;
+        if (hasActivePlan) {
+            todayPlan = calcPlanDay(
+                    ctx.tasks(),
+                    ctx.checkinsByDay().getOrDefault(day, Map.of()),
+                    day,
+                    ctx.window().planStart(),
+                    ctx.window().horizonDays());
+            rate7d = calcRate7d(
+                    ctx.tasks(),
+                    ctx.checkinsByDay(),
+                    day,
+                    ctx.window().planStart(),
+                    ctx.window().horizonDays());
+            streak = calcStreak(
+                    ctx.tasks(),
+                    ctx.checkinsByDay(),
+                    day,
+                    ctx.window().planStart(),
+                    ctx.window().horizonDays());
+        }
+
+        List<PeopleMedication> meds = medicationMapper.listByPeople(tenantId, peopleId, "ACTIVE");
+        List<PeopleMedicationIntake> intakes = intakeMapper.listByPeopleDate(tenantId, peopleId, day);
+        Map<String, Set<String>> takenSlots = new HashMap<>();
+        for (PeopleMedicationIntake intake : intakes) {
+            if (MedicationIntakeStatusEnum.TAKEN.name().equals(intake.getStatus())) {
+                takenSlots
+                        .computeIfAbsent(intake.getMedicationId(), k -> new HashSet<>())
+                        .add(slotKey(intake.getTimeSlot()));
+            }
+        }
+        AdherenceMedMetricsDto medMetrics = calcMedMetrics(meds, takenSlots, day);
+
+        AdherencePlanMetricsDto planMetrics = new AdherencePlanMetricsDto();
+        planMetrics.setHasActivePlan(hasActivePlan);
+        planMetrics.setDue(todayPlan.due);
+        planMetrics.setDone(todayPlan.done);
+        planMetrics.setSkipped(todayPlan.skipped);
+        planMetrics.setIncomplete(todayPlan.incomplete);
+        planMetrics.setTodayIncomplete(todayPlan.incompleteFlag);
+        planMetrics.setStreakDays(streak);
+        planMetrics.setRate7d(rate7d);
+
+        AdherencePatientSummaryDto out = new AdherencePatientSummaryDto();
+        out.setPeopleId(peopleId);
+        out.setDate(day);
+        out.setWindowDays(RATE_WINDOW_DAYS);
+        out.setHasActivePlan(hasActivePlan);
+        out.setStreakDays(streak);
+        out.setRate(rate7d);
+        out.setPercent(rate7d == null ? null : (int) Math.round(rate7d * 100.0d));
+        out.setPlanTodayIncomplete(todayPlan.incompleteFlag);
+        out.setMedTodayIncomplete(medMetrics.isTodayIncomplete());
+        out.setMedPercent(
+                medMetrics.getDueDoseCount() > 0
+                        ? (int) Math.round(
+                                100.0d * medMetrics.getTakenDoseCount() / (double) medMetrics.getDueDoseCount())
+                        : null);
+        out.setRiskLevel(resolveRisk(planMetrics, medMetrics).name());
+        return out;
+    }
 
     /** 单患者依从性详情：摘要 + 近日日曲线 + 当日任务/用药明细。 */
     public AdherencePatientDetailDto patientDetail(
