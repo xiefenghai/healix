@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Healix · 患者管理</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --brand-50:#EAF2FF; --brand-100:#D6E6FF; --brand-500:#2C7EF8; --brand-600:#1E63D9;
+    --teal-500:#00B8A9; --teal-50:#E6FAF7;
+    --amber-500:#F59E0B; --amber-50:#FEF6E2;
+    --rose-500:#EF4444; --rose-50:#FEE9E7;
+    --violet-500:#8B5CF6; --violet-50:#F1ECFE;
+    --ink-900:#0F172A; --ink-800:#1E293B; --ink-700:#334155; --ink-500:#64748B;
+    --ink-400:#94A3B8; --ink-300:#CBD5E1; --ink-200:#E2E8F0; --ink-100:#F1F5F9; --ink-50:#F8FAFC;
+    --bg:#F5F7FB; --surface:#FFFFFF;
+    --radius:12px; --radius-sm:8px;
+    --shadow-sm:0 1px 2px rgba(15,23,42,.04);
+    --shadow:0 1px 3px rgba(15,23,42,.06), 0 8px 24px -8px rgba(15,23,42,.08);
+    --transition:180ms cubic-bezier(.4,0,.2,1);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;color:var(--ink-800);background:var(--bg);-webkit-font-smoothing:antialiased;}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;}
+  a{color:inherit;text-decoration:none;}
+
+  /* Reuse sidebar/topbar (compact) */
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh;}
+  .sidebar{background:linear-gradient(180deg,#0F172A 0%,#131C30 100%);color:#94A3B8;padding:20px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;border-right:1px solid rgba(255,255,255,.04);}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 22px;color:#fff;}
+  .brand-logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2C7EF8,#00B8A9);display:grid;place-items:center;box-shadow:0 6px 16px -4px rgba(44,126,248,.6);}
+  .brand-logo svg{width:22px;height:22px;}
+  .brand-name{font-weight:700;font-size:16px;}.brand-name small{display:block;font-weight:500;font-size:11px;color:#94A3B8;letter-spacing:.6px;margin-top:2px;}
+  .nav-section{margin-top:14px;}
+  .nav-title{font-size:11px;font-weight:600;letter-spacing:1.2px;color:#64748B;text-transform:uppercase;padding:12px 12px 8px;}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:8px;color:#94A3B8;font-size:13.5px;font-weight:500;transition:180ms;margin-bottom:2px;cursor:pointer;position:relative;}
+  .nav-item:hover{background:rgba(255,255,255,.05);color:#fff;}
+  .nav-item.active{background:linear-gradient(90deg,rgba(44,126,248,.18),rgba(44,126,248,.04));color:#fff;}
+  .nav-item.active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;background:#2C7EF8;border-radius:0 3px 3px 0;}
+  .nav-item svg{width:18px;height:18px;flex-shrink:0;opacity:.85;}.nav-item.active svg{opacity:1;}
+  .nav-badge{margin-left:auto;font-size:11px;background:#EF4444;color:#fff;padding:2px 7px;border-radius:999px;font-weight:600;}
+  .nav-badge.muted{background:rgba(255,255,255,.1);color:#CBD5E1;}
+
+  .main{display:flex;flex-direction:column;min-width:0;}
+  .topbar{height:60px;background:#fff;border-bottom:1px solid #E2E8F0;display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:10;}
+  .crumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748B;}.crumbs strong{color:#1E293B;font-weight:600;}
+  .crumbs svg{width:14px;height:14px;opacity:.5;}
+  .search{flex:1;max-width:380px;position:relative;}
+  .search input{width:100%;height:36px;padding:0 14px 0 36px;border-radius:8px;border:1px solid #E2E8F0;background:#F8FAFC;font-size:13px;transition:180ms;}
+  .search input:focus{outline:none;background:#fff;border-color:#2C7EF8;box-shadow:0 0 0 3px rgba(44,126,248,.12);}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:#94A3B8;}
+  .topbar-right{display:flex;align-items:center;gap:6px;margin-left:auto;}
+  .icon-btn{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:#64748B;transition:180ms;position:relative;}
+  .icon-btn:hover{background:#F1F5F9;color:#1E293B;}.icon-btn svg{width:18px;height:18px;}
+  .icon-btn .dot{position:absolute;width:7px;height:7px;border-radius:50%;background:#EF4444;box-shadow:0 0 0 2px #fff;margin-left:10px;margin-top:-10px;}
+  .org-switch{display:flex;align-items:center;gap:10px;padding:3px 10px 3px 3px;border-radius:999px;background:#F8FAFC;border:1px solid #E2E8F0;margin:0 8px;cursor:pointer;}
+  .org-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#EF4444);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600;}
+  .org-meta{line-height:1.2;}.org-meta .name{font-size:13px;font-weight:600;color:#1E293B;}.org-meta .role{font-size:11px;color:#64748B;}
+  .user-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#2C7EF8);display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;}
+
+  .content{padding:24px 32px 40px;flex:1;}
+
+  /* Page head */
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:20px;flex-wrap:wrap;}
+  .page-head h1{font-size:22px;font-weight:700;margin:0 0 4px;color:#0F172A;letter-spacing:-.3px;}
+  .page-head p{margin:0;color:#64748B;font-size:13.5px;}
+  .head-actions{display:flex;gap:10px;}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:8px;font-size:13px;font-weight:600;transition:180ms;border:1px solid transparent;}
+  .btn svg{width:15px;height:15px;}
+  .btn-primary{background:#2C7EF8;color:#fff;box-shadow:0 4px 10px -2px rgba(44,126,248,.4);}
+  .btn-primary:hover{background:#1E63D9;transform:translateY(-1px);}
+  .btn-ghost{background:#fff;color:#334155;border-color:#E2E8F0;}
+  .btn-ghost:hover{background:#F8FAFC;border-color:#CBD5E1;}
+
+  /* KPI Strip */
+  .kpi-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px;}
+  .kpi{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px;}
+  .kpi-label{font-size:12px;color:#64748B;font-weight:500;}
+  .kpi-val{font-size:24px;font-weight:700;color:#0F172A;margin-top:6px;letter-spacing:-.5px;}
+  .kpi-val small{font-size:13px;color:#94A3B8;font-weight:500;}
+  .kpi-trend{font-size:11.5px;margin-top:4px;font-weight:600;display:inline-flex;align-items:center;gap:3px;}
+  .kpi-trend.up{color:#10B981;}.kpi-trend.down{color:#EF4444;}
+  .kpi-trend svg{width:11px;height:11px;}
+
+  /* Toolbar */
+  .toolbar{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
+  .toolbar-search{flex:1;min-width:240px;position:relative;}
+  .toolbar-search input{width:100%;height:36px;padding:0 12px 0 36px;border:1px solid #E2E8F0;border-radius:8px;background:#F8FAFC;font-size:13px;}
+  .toolbar-search input:focus{outline:none;background:#fff;border-color:#2C7EF8;}
+  .toolbar-search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:#94A3B8;}
+  .select{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border:1px solid #E2E8F0;border-radius:8px;background:#fff;font-size:13px;color:#334155;font-weight:500;cursor:pointer;transition:180ms;}
+  .select:hover{border-color:#CBD5E1;}
+  .select svg{width:14px;height:14px;color:#94A3B8;}
+  .toggle{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:#334155;cursor:pointer;}
+  .toggle input{width:32px;height:18px;appearance:none;background:#CBD5E1;border-radius:9px;position:relative;cursor:pointer;transition:180ms;}
+  .toggle input:checked{background:#2C7EF8;}
+  .toggle input::before{content:'';position:absolute;left:2px;top:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:180ms;}
+  .toggle input:checked::before{left:16px;}
+
+  /* Table */
+  .table-card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;overflow:hidden;}
+  .table-head-bar{padding:14px 20px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between;}
+  .table-title{font-size:14px;font-weight:600;color:#1E293B;}
+  .table-title .count{color:#94A3B8;font-weight:500;margin-left:6px;}
+  .batch-actions{display:flex;align-items:center;gap:10px;padding:10px 20px;background:var(--brand-50);border-bottom:1px solid #E2E8F0;font-size:13px;color:#1E63D9;}
+  .batch-actions .close{margin-left:auto;cursor:pointer;color:#64748B;}
+  table{width:100%;border-collapse:collapse;}
+  th{text-align:left;font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.8px;padding:12px 16px;background:#F8FAFC;border-bottom:1px solid #F1F5F9;}
+  td{padding:14px 16px;font-size:13px;border-bottom:1px solid #F1F5F9;vertical-align:middle;}
+  tr:hover td{background:#FBFCFE;}
+  tr:last-child td{border-bottom:0;}
+  .cell-check{width:36px;}
+  .cell-check input{width:16px;height:16px;cursor:pointer;accent-color:#2C7EF8;}
+  .patient{display:flex;align-items:center;gap:10px;}
+  .patient .av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:600;font-size:13px;flex-shrink:0;}
+  .patient .name{font-weight:600;color:#1E293B;line-height:1.3;}
+  .patient .meta{font-size:11.5px;color:#94A3B8;margin-top:2px;}
+  .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;}
+  .tag.brand{background:#EAF2FF;color:#1E63D9;}
+  .tag.teal{background:#E6FAF7;color:#0F766E;}
+  .tag.amber{background:#FEF6E2;color:#B45309;}
+  .tag.rose{background:#FEE9E7;color:#EF4444;}
+  .tag.violet{background:#F1ECFE;color:#6D28D9;}
+  .tag.muted{background:#F1F5F9;color:#64748B;}
+  .progress{display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;}
+  .progress .bar{flex:1;height:5px;background:#F1F5F9;border-radius:3px;overflow:hidden;min-width:60px;}
+  .progress .fill{height:100%;border-radius:3px;}
+  .progress .fill.high{background:linear-gradient(90deg,#10B981,#0F766E);}
+  .progress .fill.mid{background:linear-gradient(90deg,#F59E0B,#EA580C);}
+  .progress .fill.low{background:linear-gradient(90deg,#EF4444,#BE123C);}
+  .progress .pct{font-weight:600;min-width:32px;text-align:right;color:#0F172A;}
+  .row-actions{display:flex;gap:4px;}
+  .row-actions button{width:28px;height:28px;border-radius:6px;color:#64748B;display:grid;place-items:center;transition:180ms;}
+  .row-actions button:hover{background:#F1F5F9;color:#1E293B;}
+  .row-actions svg{width:14px;height:14px;}
+  .row-actions button.primary:hover{background:#EAF2FF;color:#1E63D9;}
+
+  .pager{padding:14px 20px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #F1F5F9;}
+  .pager-info{font-size:12.5px;color:#64748B;}
+  .pager-pages{display:flex;gap:4px;}
+  .pager-pages button{width:30px;height:30px;border-radius:6px;font-size:12.5px;color:#475569;border:1px solid transparent;}
+  .pager-pages button:hover{background:#F1F5F9;}
+  .pager-pages button.active{background:#2C7EF8;color:#fff;}
+  .pager-pages button:disabled{opacity:.4;cursor:not-allowed;}
+
+  @media(max-width:1280px){.kpi-strip{grid-template-columns:repeat(3,1fr);}}
+  @media(max-width:960px){.app{grid-template-columns:1fr;}.sidebar{display:none;}.content{padding:16px;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+      <div class="brand-name">Healix<small>机构工作台 · v3.20</small></div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">主导航</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        智能驾驶舱
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        工作台任务<span class="nav-badge">12</span>
+      </div>
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+        患者管理
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        依从性看板
+      </div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">协作</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
+        健管组
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        健康方案库<span class="nav-badge muted">86</span>
+      </div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">管理</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
+        机构成员
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>
+        系统设置
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="crumbs">
+        <span>机构工作台</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <strong>患者管理</strong>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="全局搜索…" />
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" style="position:relative"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="dot"></span></button>
+        <div class="org-switch"><div class="org-avatar">沪</div><div class="org-meta"><div class="name">上海仁济健管中心</div><div class="role">健管师 · 李医生</div></div></div>
+        <div class="user-avatar">LF</div>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- Page head -->
+      <section class="page-head">
+        <div>
+          <h1>患者管理</h1>
+          <p>共 <strong style="color:var(--ink-800)">1,248</strong> 位在管患者 · 今日新增 12 位 · 23 位高风险预警</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn btn-ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            导出 Excel
+          </button>
+          <button class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            新建患者档案
+          </button>
+        </div>
+      </section>
+
+      <!-- KPI Strip -->
+      <section class="kpi-strip">
+        <div class="kpi">
+          <div class="kpi-label">在管患者</div>
+          <div class="kpi-val">1,248 <small>人</small></div>
+          <div class="kpi-trend up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>12.5% 较上月</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">高风险</div>
+          <div class="kpi-val" style="color:var(--rose-500)">23 <small>人</small></div>
+          <div class="kpi-trend up" style="color:var(--rose-500)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>+5 较上周</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">本月新增</div>
+          <div class="kpi-val">86 <small>人</small></div>
+          <div class="kpi-trend up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>同比 +18%</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">平均依从率</div>
+          <div class="kpi-val">82.4<small>%</small></div>
+          <div class="kpi-trend up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>+3.2%</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">C 端激活</div>
+          <div class="kpi-val">1,089 <small>人</small></div>
+          <div class="kpi-trend up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>激活率 87%</div>
+        </div>
+      </section>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input placeholder="搜索患者姓名 / 身份证 / 手机号" />
+        </div>
+        <button class="select">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          健管组: 全部
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <button class="select">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          风险等级: 全部
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <button class="select">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
+          主责医生: 全部
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <label class="toggle">
+          <input type="checkbox" />
+          仅未入组
+        </label>
+        <label class="toggle">
+          <input type="checkbox" checked />
+          仅低依从
+        </label>
+      </div>
+
+      <!-- Table -->
+      <div class="table-card">
+        <div class="table-head-bar">
+          <div class="table-title">患者列表 <span class="count">· 共 1,248 条 · 当前筛选 86 条</span></div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-ghost" style="height:32px;font-size:12px;">批量操作</button>
+            <button class="icon-btn" title="列设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4"/></svg></button>
+          </div>
+        </div>
+
+        <div class="batch-actions">
+          <span>已选 <strong>3</strong> 项</span>
+          <span style="color:var(--ink-500);">·</span>
+          <a href="#" style="color:#1E63D9;font-weight:500;">批量加入健管组</a>
+          <a href="#" style="color:#1E63D9;font-weight:500;">批量发送通知</a>
+          <a href="#" style="color:var(--rose-500);font-weight:500;">批量导出</a>
+          <span class="close">✕</span>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th class="cell-check"><input type="checkbox" /></th>
+              <th>患者</th>
+              <th>健管组</th>
+              <th>主要病种</th>
+              <th>主责医生</th>
+              <th>最近体征</th>
+              <th>7 天依从</th>
+              <th>风险</th>
+              <th>状态</th>
+              <th style="width:130px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="cell-check"><input type="checkbox" checked /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#3B82F6,#1D4ED8)">张</div>
+                  <div><div class="name">张建国</div><div class="meta">62 岁 · 男 · ID 100023</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand">控糖先锋组</span></td>
+              <td><span class="tag brand">糖尿病</span> <span class="tag teal">高血压</span></td>
+              <td>王医生</td>
+              <td style="color:var(--rose-500);font-weight:600;">BP 162/98</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill mid" style="width:78%"></div></div><div class="pct">78%</div></div>
+              </td>
+              <td><span class="tag rose">高</span></td>
+              <td><span class="tag teal">C 端激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary" title="查看详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button title="加入健管组"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button title="发起随访"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></button>
+                  <button title="更多"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" checked /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#8B5CF6,#6D28D9)">陈</div>
+                  <div><div class="name">陈晓宇</div><div class="meta">48 岁 · 男 · ID 100024</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand">心脑血管组</span></td>
+              <td><span class="tag teal">高血压</span></td>
+              <td>李医生</td>
+              <td style="color:var(--amber-500);font-weight:600;">BP 148/92</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill mid" style="width:62%"></div></div><div class="pct">62%</div></div>
+              </td>
+              <td><span class="tag amber">中</span></td>
+              <td><span class="tag teal">C 端激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#F59E0B,#EA580C)">王</div>
+                  <div><div class="name">王秀英</div><div class="meta">67 岁 · 女 · ID 100025</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand">老年慢病组</span></td>
+              <td><span class="tag teal">高血压</span> <span class="tag brand">糖尿病</span></td>
+              <td>张医生</td>
+              <td style="color:var(--rose-500);font-weight:600;">Glu 11.2</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill high" style="width:86%"></div></div><div class="pct">86%</div></div>
+              </td>
+              <td><span class="tag amber">中</span></td>
+              <td><span class="tag teal">C 端激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" checked /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#EC4899,#BE185D)">赵</div>
+                  <div><div class="name">赵志强</div><div class="meta">59 岁 · 男 · ID 100026</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand">控糖先锋组</span></td>
+              <td><span class="tag brand">糖尿病</span></td>
+              <td>王医生</td>
+              <td style="color:var(--rose-500);font-weight:600;">Glu 12.4</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill low" style="width:54%"></div></div><div class="pct">54%</div></div>
+              </td>
+              <td><span class="tag rose">高</span></td>
+              <td><span class="tag muted">未激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#10B981,#0F766E)">李</div>
+                  <div><div class="name">李美芳</div><div class="meta">55 岁 · 女 · ID 100027</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand">心脑血管组</span></td>
+              <td><span class="tag teal">高血压</span></td>
+              <td>李医生</td>
+              <td style="color:#10B981;font-weight:600;">BP 128/82</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill high" style="width:94%"></div></div><div class="pct">94%</div></div>
+              </td>
+              <td><span class="tag brand">低</span></td>
+              <td><span class="tag teal">C 端激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#06B6D4,#0E7490)">孙</div>
+                  <div><div class="name">孙建华</div><div class="meta">71 岁 · 男 · ID 100028</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand">老年慢病组</span></td>
+              <td><span class="tag brand">糖尿病</span> <span class="tag violet">冠心病</span></td>
+              <td>陈医生</td>
+              <td style="color:var(--rose-500);font-weight:600;">HR 102</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill mid" style="width:71%"></div></div><div class="pct">71%</div></div>
+              </td>
+              <td><span class="tag rose">高</span></td>
+              <td><span class="tag teal">C 端激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#F43F5E,#9F1239)">周</div>
+                  <div><div class="name">周丽华</div><div class="meta">63 岁 · 女 · ID 100029</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand">心脑血管组</span></td>
+              <td><span class="tag teal">高血压</span></td>
+              <td>李医生</td>
+              <td style="color:var(--ink-500);">BP 135/85</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill high" style="width:88%"></div></div><div class="pct">88%</div></div>
+              </td>
+              <td><span class="tag brand">低</span></td>
+              <td><span class="tag teal">C 端激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="patient">
+                  <div class="av" style="background:linear-gradient(135deg,#84CC16,#3F6212)">吴</div>
+                  <div><div class="name">吴志强</div><div class="meta">52 岁 · 男 · ID 100030</div></div>
+                </div>
+              </td>
+              <td><span class="tag muted">未入组</span></td>
+              <td><span class="tag brand">糖尿病</span></td>
+              <td>—</td>
+              <td style="color:var(--ink-400);">暂无数据</td>
+              <td>
+                <div class="progress"><div class="bar"><div class="fill mid" style="width:45%"></div></div><div class="pct">45%</div></div>
+              </td>
+              <td><span class="tag amber">中</span></td>
+              <td><span class="tag muted">未激活</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></button>
+                  <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div class="pager-info">显示 <strong style="color:var(--ink-800)">1-8</strong> 条 / 共 1,248 条</div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            <button class="select" style="height:30px;font-size:12px;">每页 20 条 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><polyline points="6 9 12 15 18 9"/></svg></button>
+            <div class="pager-pages">
+              <button disabled>‹</button>
+              <button class="active">1</button>
+              <button>2</button>
+              <button>3</button>
+              <button>4</button>
+              <button>…</button>
+              <button>63</button>
+              <button>›</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+</body>
+</html>

@@ -51,21 +51,27 @@ public class CarePlanLlmGenerator {
         String skill = loadSkillMarkdown();
         String userMessage = buildUserMessage(templateKey, ctx, instruction, diseaseCodes);
         CarePlanStreamSink.progress(sink, "正在调用 AI 生成运动、饮食与执行计划…");
-        CarePlanStreamSink.tool(sink, "DeepSeek", "running", "流式生成方案 JSON");
+        long thinkStarted = System.currentTimeMillis();
+        CarePlanStreamSink.thinkingStart(sink, "规划运动、饮食与执行结构…");
+        CarePlanStreamSink.tool(sink, "DeepSeek", "running", "正在生成管理方案…");
+        CarePlanReadableStreamer readable = new CarePlanReadableStreamer(sink);
         LlmResponse llm = llmClient.streamChat(
                 "CARE_PLAN_GENERATE",
                 skill,
                 userMessage,
                 List.of(),
-                token -> CarePlanStreamSink.token(sink, token));
+                readable::onToken);
+        long thinkMs = System.currentTimeMillis() - thinkStarted;
         if (!llm.fromLlm() || !StringUtils.hasText(llm.content())) {
             log.warn(
                     "[CarePlan] LLM empty response, fallback to template templateKey={}",
                     templateKey);
-            CarePlanStreamSink.tool(sink, "DeepSeek", "done", "未返回有效内容");
+            CarePlanStreamSink.tool(sink, "DeepSeek", "done", "未返回有效内容 · " + thinkMs + "ms");
+            CarePlanStreamSink.thinkingDone(sink, "模型未返回有效内容", thinkMs);
             return Optional.empty();
         }
-        CarePlanStreamSink.tool(sink, "DeepSeek", "done", "生成完成，共 " + llm.content().length() + " 字符");
+        CarePlanStreamSink.tool(sink, "DeepSeek", "done", "方案草案已生成 · " + thinkMs + "ms");
+        CarePlanStreamSink.thinkingDone(sink, "已整理运动、饮食与执行计划", thinkMs);
         CarePlanStreamSink.progress(sink, "正在校验方案结构…");
         try {
             LlmPlanResult result = parseLlmOutput(llm, templateKey, ctx, diseaseCodes);
@@ -76,13 +82,16 @@ public class CarePlanLlmGenerator {
                     llm.content().length(),
                     llm.promptTokens(),
                     llm.completionTokens());
+            if (StringUtils.hasText(result.goalSummary())) {
+                CarePlanStreamSink.progress(sink, "目标：" + truncate(result.goalSummary(), 48));
+            }
             return Optional.of(result);
         } catch (Exception e) {
             log.warn(
                     "[CarePlan] LLM parse failed, fallback to template templateKey={} error={}",
                     templateKey,
                     e.getMessage());
-            CarePlanStreamSink.tool(sink, "parseCarePlanJson", "done", "解析失败: " + e.getMessage());
+            CarePlanStreamSink.tool(sink, "parseCarePlan", "done", "结构校验未通过，改用模板方案");
             return Optional.empty();
         }
     }
@@ -169,7 +178,8 @@ public class CarePlanLlmGenerator {
         }
         payload.set("patientContext", ctx == null ? JsonUtils.emptyObject() : ctx.snapshot());
         return """
-                请根据以下输入生成完整管理方案 JSON（含 summary、goalSummary、exercise、diet、execution）。
+                请根据以下输入生成完整管理方案 JSON。
+                字段顺序必须为：exercise → diet → execution → summary → goalSummary。
                 仅输出 JSON，不要 markdown。
 
                 %s
@@ -186,6 +196,13 @@ public class CarePlanLlmGenerator {
         } catch (Exception e) {
             log.debug("management-plan skill missing: {}", e.getMessage());
         }
-        return "生成管理方案 JSON，包含 summary、goalSummary、exercise、diet、execution。";
+        return "按患者档案生成管理方案（运动、饮食、执行计划与目标总结）。";
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null || s.length() <= max) {
+            return s == null ? "" : s;
+        }
+        return s.substring(0, max) + "…";
     }
 }

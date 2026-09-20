@@ -318,52 +318,68 @@ public class CarePlanAgentService {
     }
 
     private String loadSkillMarkdown(Consumer<AgentStreamEvent> sink) {
-        String[] paths = {
-            "classpath:skills/care-plan-orchestrator/SKILL.md",
-            "classpath:skills/management-plan/SKILL.md"
-        };
-        String[] names = {"care-plan-orchestrator", "management-plan"};
-        StringBuilder sb = new StringBuilder();
-        CarePlanStreamSink.progress(sink, "正在加载 Skill 指引…");
-        for (int i = 0; i < paths.length; i++) {
-            String path = paths[i];
-            String name = names[i];
-            try {
-                Resource res = resourceLoader.getResource(path);
-                if (res.exists()) {
-                    String content =
-                            StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
-                    sb.append("--- ").append(path).append(" ---\n");
-                    sb.append(content);
-                    sb.append("\n");
-                    String excerpt = summarizeSkillExcerpt(content);
-                    CarePlanStreamSink.skill(sink, name, excerpt);
-                }
-            } catch (Exception ignored) {
-                // skill 文档缺失不影响生成
+        String path = "classpath:skills/management-plan/SKILL.md";
+        CarePlanStreamSink.progress(sink, "正在加载方案生成指引…");
+        try {
+            Resource res = resourceLoader.getResource(path);
+            if (res.exists()) {
+                String content =
+                        StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
+                SkillMeta meta = parseSkillMeta(content);
+                CarePlanStreamSink.skill(sink, meta.displayName(), meta.summary());
+                return "--- " + path + " ---\n" + content + "\n";
             }
+        } catch (Exception ignored) {
+            // skill 文档缺失不影响生成
         }
-        return sb.isEmpty() ? "(skills missing)" : sb.toString();
+        return "(skills missing)";
     }
 
-    private static String summarizeSkillExcerpt(String content) {
+    /** 给前端时间线用的可读文案，不暴露 markdown 标题摘录。 */
+    private static SkillMeta parseSkillMeta(String content) {
+        String displayName = "管理方案生成";
+        String summary = "生成运动、饮食、执行计划与方案总结草稿";
         if (!StringUtils.hasText(content)) {
-            return "（空）";
+            return new SkillMeta(displayName, summary);
         }
-        String[] lines = content.split("\n");
-        StringBuilder sb = new StringBuilder();
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("#") || trimmed.startsWith("##")) {
-                if (!sb.isEmpty()) {
-                    sb.append("；");
+        if (content.startsWith("---")) {
+            int end = content.indexOf("\n---", 3);
+            if (end > 0) {
+                String front = content.substring(3, end);
+                for (String line : front.split("\n")) {
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("display_name:")) {
+                        String v = trimmed.substring("display_name:".length()).trim();
+                        if (StringUtils.hasText(v)) {
+                            displayName = stripQuotes(v);
+                        }
+                    } else if (trimmed.startsWith("description:")) {
+                        String v = trimmed.substring("description:".length()).trim();
+                        if (StringUtils.hasText(v)) {
+                            String plain = stripQuotes(v);
+                            int cut = plain.indexOf('。');
+                            summary = cut > 0 ? plain.substring(0, cut + 1) : plain;
+                            if (summary.length() > 60) {
+                                summary = summary.substring(0, 60) + "…";
+                            }
+                        }
+                    }
                 }
-                sb.append(trimmed.replaceFirst("^#+\\s*", ""));
-            }
-            if (sb.length() > 120) {
-                break;
             }
         }
-        return sb.isEmpty() ? content.substring(0, Math.min(80, content.length())).trim() : sb.toString();
+        return new SkillMeta(displayName, summary);
     }
+
+    private static String stripQuotes(String raw) {
+        if (raw.length() >= 2) {
+            char a = raw.charAt(0);
+            char b = raw.charAt(raw.length() - 1);
+            if ((a == '"' && b == '"') || (a == '\'' && b == '\'')) {
+                return raw.substring(1, raw.length() - 1).trim();
+            }
+        }
+        return raw;
+    }
+
+    private record SkillMeta(String displayName, String summary) {}
 }

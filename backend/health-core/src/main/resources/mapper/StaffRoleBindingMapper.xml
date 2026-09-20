@@ -43,6 +43,14 @@
         LIMIT 1
     </select>
 
+    <select id="listStaffIdsByTenantAndRole" resultType="java.lang.String">
+        SELECT DISTINCT staff_id
+        FROM staff_role_binding
+        WHERE tenant_id = #{tenantId}
+          AND role_code = #{roleCode}
+          AND is_deleted = 0
+    </select>
+
     <update id="softDeleteAssignableByStaff">
         UPDATE staff_role_binding
         SET is_deleted = 1, gmt_deleted = #{gmtDeleted}, gmt_modified = #{gmtModified}

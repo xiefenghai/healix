@@ -94,8 +94,9 @@ const LATEST_TYPE_ORDER = [
   'SLEEP_HOURS',
 ]
 
+const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
 const saving = ref(false)

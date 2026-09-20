@@ -40,10 +40,19 @@ public class ExamOcrRecognitionService {
                 structureUserPrompt(),
                 imageBytes,
                 mimeType,
-                "你是医疗检查报告 OCR 助手，仅输出 JSON，结论照抄原文，不做诊断。",
-                "检查报告识别失败，请检查图片清晰度或稍后重试");
+                SYSTEM_PROMPT,
+                FAILURE);
         return toPrefill(root);
     }
+
+    /** 驾驶舱入库：原文已抽出且配额已占用，只做结构化。 */
+    public ExamOcrPrefillDto recognizePrepared(byte[] imageBytes, String mimeType, String documentText) {
+        return toPrefill(ocrRunner.structureDocument(
+                "ocr-exam", structureUserPrompt(), imageBytes, mimeType, documentText, SYSTEM_PROMPT, FAILURE));
+    }
+
+    private static final String SYSTEM_PROMPT = "你是医疗检查报告 OCR 助手，仅输出 JSON，结论照抄原文，不做诊断。";
+    private static final String FAILURE = "检查报告识别失败，请检查图片清晰度或稍后重试";
 
     private ExamOcrPrefillDto toPrefill(JsonNode root) {
         List<String> warnings = new ArrayList<>();

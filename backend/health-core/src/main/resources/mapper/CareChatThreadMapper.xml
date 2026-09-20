@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.carechat.mapper.CareChatThreadMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id,
+        last_message_at, last_message_preview, last_sender_type,
+        staff_unread_count, patient_unread_count, closed_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="findById" resultType="com.healix.core.carechat.domain.CareChatThread">
+        SELECT <include refid="cols"/>
+        FROM care_chat_thread
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByOrgPeople" resultType="com.healix.core.carechat.domain.CareChatThread">
+        SELECT <include refid="cols"/>
+        FROM care_chat_thread
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleIds" resultType="com.healix.core.carechat.domain.CareChatThread">
+        SELECT <include refid="cols"/>
+        FROM care_chat_thread
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND people_id IN
+        <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+            #{pid}
+        </foreach>
+        ORDER BY COALESCE(last_message_at, gmt_created) DESC
+    </select>
+
+    <select id="listByOrg" resultType="com.healix.core.carechat.domain.CareChatThread">
+        SELECT <include refid="cols"/>
+        FROM care_chat_thread
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND is_deleted = 0
+        ORDER BY COALESCE(last_message_at, gmt_created) DESC
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_chat_thread(
+            id, tenant_id, org_id, people_id,
+            last_message_at, last_message_preview, last_sender_type,
+            staff_unread_count, patient_unread_count, closed_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId},
+            #{lastMessageAt}, #{lastMessagePreview}, #{lastSenderType},
+            #{staffUnreadCount}, #{patientUnreadCount}, #{closedAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateAfterSend">
+        UPDATE care_chat_thread
+        SET last_message_at = #{lastMessageAt},
+            last_message_preview = #{lastMessagePreview},
+            last_sender_type = #{lastSenderType},
+            staff_unread_count = staff_unread_count + #{incStaffUnread},
+            patient_unread_count = patient_unread_count + #{incPatientUnread},
+            gmt_modified = CURRENT_TIMESTAMP
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="clearStaffUnread">
+        UPDATE care_chat_thread
+        SET staff_unread_count = 0, gmt_modified = CURRENT_TIMESTAMP
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="clearPatientUnread">
+        UPDATE care_chat_thread
+        SET patient_unread_count = 0, gmt_modified = CURRENT_TIMESTAMP
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="sumStaffUnreadByOrg" resultType="long">
+        SELECT COALESCE(SUM(staff_unread_count), 0)
+        FROM care_chat_thread
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND is_deleted = 0
+    </select>
+</mapper>

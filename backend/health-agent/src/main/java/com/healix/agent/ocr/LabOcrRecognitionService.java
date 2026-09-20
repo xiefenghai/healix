@@ -33,9 +33,18 @@ public class LabOcrRecognitionService {
                 structureUserPrompt(),
                 imageBytes,
                 mimeType,
-                "你是医疗检验单 OCR 助手，仅输出 JSON，不做诊断。",
-                "检验单识别失败，请检查图片清晰度或稍后重试"));
+                SYSTEM_PROMPT,
+                FAILURE));
     }
+
+    /** 驾驶舱入库：原文已抽出且配额已占用，只做结构化。 */
+    public LabOcrPrefillDto recognizePrepared(byte[] imageBytes, String mimeType, String documentText) {
+        return toPrefill(ocrRunner.structureDocument(
+                "ocr-lab", structureUserPrompt(), imageBytes, mimeType, documentText, SYSTEM_PROMPT, FAILURE));
+    }
+
+    private static final String SYSTEM_PROMPT = "你是医疗检验单 OCR 助手，仅输出 JSON，不做诊断。";
+    private static final String FAILURE = "检验单识别失败，请检查图片清晰度或稍后重试";
 
     private LabOcrPrefillDto toPrefill(JsonNode root) {
         List<String> warnings = new ArrayList<>();

@@ -61,6 +61,7 @@ public enum MetaDataCodeEnum {
     DISEASE_DIABETES_HYPOGLYCEMIA_REACTION("disease.diabetes.hypoglycemiaReaction"),
     DISEASE_DIABETES_HYPOGLYCEMIA_COUNT("disease.diabetes.hypoglycemiaCountLastMonth"),
     DISEASE_DIABETES_HYPOGLYCEMIA_HANDLING("disease.diabetes.hypoglycemiaHandling"),
+    DISEASE_DIABETES_END_STAGE_CHRONIC("disease.diabetes.endStageChronicDisease"),
     DISEASE_DIABETES_REMARK("disease.diabetes.remark"),
     DISEASE_HYPERTENSION_DIAGNOSIS_DATE("disease.hypertension.diagnosisDate"),
     DISEASE_HYPERTENSION_TYPE("disease.hypertension.hypertensionType"),

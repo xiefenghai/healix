@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>健康方案 · 患者 360</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --primary:#2C7EF8; --primary-light:#EFF6FF; --primary-dark:#1F5DC9;
+  --teal:#00B8A9; --teal-light:#CCFBF1;
+  --amber:#F59E0B; --amber-light:#FEF3C7;
+  --rose:#EF4444; --rose-light:#FEE2E2;
+  --violet:#8B5CF6; --violet-light:#EDE9FE;
+  --sky:#0EA5E9;
+  --bg:#F8FAFC; --surface:#FFFFFF;
+  --text:#0F172A; --text-2:#475569; --text-3:#94A3B8;
+  --border:#E2E8F0; --border-light:#F1F5F9;
+  --radius:8px; --radius-lg:12px; --radius-xl:16px;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+  --shadow:0 4px 12px rgba(15,23,42,.06), 0 2px 4px rgba(15,23,42,.04);
+  --shadow-lg:0 20px 40px -12px rgba(15,23,42,.12), 0 8px 16px -4px rgba(15,23,42,.06);
+  --sidebar-w:240px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter','PingFang SC',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--text);background:var(--bg);font-size:14px;line-height:1.5}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+
+/* ===== 侧边栏 ===== */
+.layout{display:grid;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh}
+.sidebar{background:#0F172A;color:#CBD5E1;padding:18px 14px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.s-logo{display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:18px}
+.s-logo .m{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--teal));display:grid;place-items:center;color:#fff;font-weight:800;font-size:14px}
+.s-logo .t{font-weight:700;color:#fff;font-size:16px;letter-spacing:-.2px}
+
+.s-group{margin-top:18px}
+.s-group-title{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#475569;padding:6px 10px;font-weight:600}
+.s-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13px;color:#94A3B8;cursor:pointer;transition:.15s}
+.s-item:hover{background:#1E293B;color:#E2E8F0}
+.s-item.active{background:rgba(44,126,248,.15);color:#fff;font-weight:500}
+.s-item.active::before{content:"";position:absolute;left:0;width:3px;height:18px;background:var(--primary);border-radius:0 2px 2px 0}
+.s-item svg{width:16px;height:16px;opacity:.8;flex-shrink:0}
+.s-item .badge{margin-left:auto;background:var(--rose);color:#fff;font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px}
+
+.s-foot{position:absolute;bottom:18px;left:14px;right:14px;padding:12px;background:linear-gradient(135deg,#1E293B,#334155);border-radius:10px;font-size:11px;color:#94A3B8}
+.s-foot .t{color:#fff;font-weight:600;font-size:12px;margin-bottom:4px}
+.s-foot a{color:var(--teal);display:inline-block;margin-top:6px}
+
+/* ===== 主区 ===== */
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{height:60px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:10}
+.crumbs{font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px}
+.crumbs a{color:var(--text-2)}
+.crumbs a:hover{color:var(--primary)}
+.crumbs svg{width:14px;height:14px;opacity:.5}
+.crumbs .now{color:var(--text);font-weight:500}
+
+.top-search{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);padding:7px 12px;border-radius:8px;width:280px;color:var(--text-3);font-size:12px}
+.top-search kbd{font-family:inherit;font-size:11px;background:#fff;border:1px solid var(--border);padding:1px 6px;border-radius:4px;color:var(--text-3)}
+.top-search input{background:none;border:none;outline:none;flex:1;color:var(--text)}
+
+.top-actions{display:flex;align-items:center;gap:14px}
+.icon-btn{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--text-2);position:relative;transition:.15s}
+.icon-btn:hover{background:var(--bg);color:var(--text)}
+.icon-btn svg{width:18px;height:18px}
+.icon-btn .dot{position:absolute;top:8px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--rose);border:2px solid #fff}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#EF4444);color:#fff;display:grid;place-items:center;font-weight:600;font-size:12px}
+
+/* 患者 Hero */
+.hero{padding:20px 24px;background:#fff;border-bottom:1px solid var(--border)}
+.hero-row{display:flex;align-items:flex-start;gap:18px}
+.hero-pic{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#60A5FA,#34D399);color:#fff;display:grid;place-items:center;font-weight:700;font-size:22px;flex-shrink:0;position:relative}
+.hero-pic .online{position:absolute;bottom:2px;right:2px;width:14px;height:14px;border-radius:50%;background:var(--teal);border:2px solid #fff}
+.hero-info{flex:1;min-width:0}
+.hero-info h1{font-size:20px;font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:10px}
+.hero-info .id{font-size:12px;color:var(--text-3);font-weight:400;font-family:ui-monospace,Menlo,monospace}
+.hero-meta{margin-top:6px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-2);flex-wrap:wrap}
+.hero-meta .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text-2)}
+.hero-meta .chip.danger{background:var(--rose-light);border-color:#FCA5A5;color:#B91C1C}
+.hero-meta .chip.warn{background:var(--amber-light);border-color:#FCD34D;color:#B45309}
+
+.hero-actions{display:flex;gap:8px;flex-shrink:0}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;transition:.15s;white-space:nowrap}
+.btn svg{width:14px;height:14px}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-dark)}
+.btn-ghost{background:#fff;color:var(--text-2);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--bg);color:var(--text)}
+.btn-amber{background:var(--amber);color:#fff}
+.btn-amber:hover{filter:brightness(.92)}
+
+/* Tabs */
+.tabs{display:flex;align-items:center;gap:4px;padding:0 24px;background:#fff;border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{padding:14px 16px;font-size:13px;color:var(--text-2);border-bottom:2px solid transparent;cursor:pointer;font-weight:500;white-space:nowrap;transition:.15s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.tab .pill{margin-left:6px;font-size:10px;padding:1px 6px;background:var(--bg);color:var(--text-3);border-radius:10px;font-weight:600}
+.tab.active .pill{background:var(--primary-light);color:var(--primary)}
+
+/* ===== 内容区 ===== */
+.content{padding:24px;flex:1}
+
+/* 当前页：健康方案 */
+.cp-layout{display:grid;grid-template-columns:1fr 380px;gap:20px}
+.panel{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.panel-head{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.panel-head h3{font-size:14px;font-weight:600;letter-spacing:-.1px;display:flex;align-items:center;gap:8px}
+.panel-head .sub{font-size:12px;color:var(--text-3);font-weight:400;margin-left:4px}
+
+/* 左侧：方案主体 */
+.cp-main{padding:0}
+.cp-meta{padding:18px 20px;background:linear-gradient(135deg,#EFF6FF,#F0FDFA);border-bottom:1px solid var(--border);display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.cm-cell{padding:10px 12px;background:#fff;border-radius:8px;border:1px solid var(--border)}
+.cm-k{font-size:11px;color:var(--text-3);margin-bottom:3px;letter-spacing:.2px}
+.cm-v{font-size:14px;font-weight:600;color:var(--text)}
+
+.section{padding:20px;border-bottom:1px solid var(--border)}
+.section:last-child{border-bottom:none}
+.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-head h4{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.section-head .ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center}
+.section-head .ic svg{width:14px;height:14px}
+.section-head .actions{display:flex;gap:6px}
+.mini-btn{font-size:11px;padding:4px 10px;border-radius:6px;background:var(--bg);color:var(--text-2);font-weight:500;transition:.15s}
+.mini-btn:hover{background:var(--border-light);color:var(--text)}
+.mini-btn.primary{background:var(--primary-light);color:var(--primary)}
+.mini-btn.primary:hover{background:#DBEAFE}
+
+/* 目标卡 */
+.goals{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.goal{padding:14px;border:1px solid var(--border);border-radius:10px;position:relative;background:#fff;transition:.15s}
+.goal:hover{border-color:var(--primary);box-shadow:var(--shadow-sm)}
+.goal .tag{position:absolute;top:10px;right:10px;font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;letter-spacing:.3px}
+.goal h5{font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.goal .meta{font-size:11px;color:var(--text-3);margin-bottom:10px}
+.goal .progress{display:flex;align-items:center;gap:8px}
+.goal .bar{flex:1;height:6px;background:var(--border-light);border-radius:3px;overflow:hidden}
+.goal .bar div{height:100%;border-radius:3px;transition:width .3s}
+.goal .num{font-size:11px;font-weight:600;color:var(--text-2);font-variant-numeric:tabular-nums}
+.goal.ok .tag{background:var(--teal-light);color:#0F766E}
+.goal.ok .bar div{background:linear-gradient(90deg,var(--teal),#34D399)}
+.goal.warn .tag{background:var(--amber-light);color:#B45309}
+.goal.warn .bar div{background:linear-gradient(90deg,var(--amber),#FB923C)}
+.goal.risk .tag{background:var(--rose-light);color:#B91C1C}
+.goal.risk .bar div{background:linear-gradient(90deg,var(--rose),#F87171)}
+.goal.done .tag{background:#E2E8F0;color:#475569}
+.goal.done .bar div{background:linear-gradient(90deg,#94A3B8,#CBD5E1)}
+
+/* 用药卡 */
+.meds{display:flex;flex-direction:column;gap:8px}
+.med{display:flex;align-items:center;gap:14px;padding:12px 14px;background:var(--bg);border-radius:10px;border:1px solid var(--border-light);transition:.15s}
+.med:hover{background:#fff;border-color:var(--border);box-shadow:var(--shadow-sm)}
+.med .pill-ic{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;flex-shrink:0}
+.med .pill-ic svg{width:18px;height:18px}
+.med .body{flex:1;min-width:0}
+.med .name{font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px}
+.med .name .gen{font-size:11px;font-weight:400;color:var(--text-3)}
+.med .desc{font-size:11px;color:var(--text-2);margin-top:2px}
+.med .dose{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.med .dose-v{font-size:13px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+.med .dose-k{font-size:10px;color:var(--text-3);letter-spacing:.3px}
+.med .act{display:flex;gap:4px;margin-left:6px}
+.med .ic-btn{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;color:var(--text-3);transition:.15s}
+.med .ic-btn:hover{background:#fff;color:var(--text)}
+.med .ic-btn svg{width:13px;height:13px}
+
+/* 运动 + 饮食 + 随访 */
+.lifestyle{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.lc{padding:14px;border:1px solid var(--border);border-radius:10px;background:#fff}
+.lc h5{font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:6px}
+.lc h5 svg{width:13px;height:13px}
+.lc ul{list-style:none}
+.lc li{padding:7px 0;font-size:12px;color:var(--text);display:flex;align-items:flex-start;gap:8px;border-bottom:1px dashed var(--border-light)}
+.lc li:last-child{border-bottom:none}
+.lc li::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--primary);margin-top:6px;flex-shrink:0}
+.lc li small{color:var(--text-3);margin-left:auto;font-size:10px}
+
+.followup-list{display:flex;flex-direction:column;gap:8px}
+.fu{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border-light)}
+.fu .date{width:48px;flex-shrink:0;text-align:center}
+.fu .date .d{font-size:18px;font-weight:700;color:var(--text);line-height:1}
+.fu .date .m{font-size:10px;color:var(--text-3);margin-top:2px;letter-spacing:.3px}
+.fu .body{flex:1;min-width:0}
+.fu .t{font-size:13px;font-weight:500;color:var(--text)}
+.fu .s{font-size:11px;color:var(--text-2);margin-top:2px}
+.fu .stat{font-size:10px;font-weight:600;padding:3px 8px;border-radius:5px;flex-shrink:0}
+
+/* ===== 右侧 AI 草稿 ===== */
+.cp-side{display:flex;flex-direction:column;gap:20px;min-width:0}
+
+.draft-head{display:flex;align-items:center;gap:8px;padding:14px 18px;background:linear-gradient(135deg,var(--primary),var(--violet));color:#fff}
+.draft-head .ai-ic{width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.18);display:grid;place-items:center}
+.draft-head .ai-ic svg{width:18px;height:18px}
+.draft-head h3{font-size:14px;font-weight:600;color:#fff}
+.draft-head p{font-size:11px;color:rgba(255,255,255,.75);margin-top:2px}
+
+.draft-body{padding:14px 18px;max-height:420px;overflow-y:auto}
+.draft{margin-bottom:14px;padding:12px 14px;background:#F8FAFC;border:1px solid var(--border-light);border-radius:10px;border-left:3px solid var(--primary)}
+.draft:last-child{margin-bottom:0}
+.draft .row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.draft .who{font-size:11px;font-weight:600;color:var(--primary);display:flex;align-items:center;gap:5px}
+.draft .who svg{width:11px;height:11px}
+.draft .when{font-size:10px;color:var(--text-3)}
+.draft .txt{font-size:12px;color:var(--text);line-height:1.6}
+.draft .txt b{color:var(--text);font-weight:600}
+.draft .txt code{background:#fff;padding:1px 5px;border-radius:3px;font-size:11px;color:#BE185D;border:1px solid var(--border-light)}
+.draft .acts{display:flex;gap:6px;margin-top:8px}
+.act{padding:5px 10px;border-radius:6px;font-size:11px;font-weight:500;background:#fff;color:var(--text-2);border:1px solid var(--border);cursor:pointer;transition:.15s}
+.act:hover{border-color:var(--primary);color:var(--primary)}
+.act.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.act.primary:hover{background:var(--primary-dark);color:#fff}
+
+.draft-foot{padding:14px 18px;border-top:1px solid var(--border);background:#fff}
+.chat-box{display:flex;gap:8px;align-items:flex-end}
+.chat-box textarea{flex:1;min-height:60px;max-height:120px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-size:13px;resize:vertical;outline:none;transition:.15s}
+.chat-box textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(44,126,248,.1)}
+.chat-box .send{width:38px;height:38px;border-radius:10px;background:var(--primary);color:#fff;display:grid;place-items:center;transition:.15s;flex-shrink:0}
+.chat-box .send:hover{background:var(--primary-dark)}
+.chat-box .send svg{width:16px;height:16px}
+.chat-box .send:disabled{opacity:.5;cursor:not-allowed}
+
+.quick{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.quick span{font-size:11px;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:999px;color:var(--text-2);cursor:pointer;transition:.15s}
+.quick span:hover{background:var(--primary-light);color:var(--primary);border-color:var(--primary)}
+
+/* 协作动态 */
+.collab{padding:0}
+.collab .timeline{padding:14px 18px;display:flex;flex-direction:column;gap:12px;max-height:280px;overflow-y:auto}
+.tl-item{display:flex;gap:10px;position:relative}
+.tl-item::before{content:"";position:absolute;left:13px;top:26px;bottom:-12px;width:1px;background:var(--border)}
+.tl-item:last-child::before{display:none}
+.tl-dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;color:#fff;font-size:11px;font-weight:600}
+.tl-dot svg{width:13px;height:13px}
+.tl-body{flex:1;min-width:0;padding-bottom:2px}
+.tl-t{font-size:12px;color:var(--text);line-height:1.5}
+.tl-t b{font-weight:600}
+.tl-m{font-size:10px;color:var(--text-3);margin-top:2px}
+
+@media (max-width:1280px){
+  .cp-layout{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="s-logo"><div class="m">H</div><div class="t">Healix</div></div>
+
+    <div class="s-group">
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>总览</div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>消息中心</div>
+    </div>
+
+    <div class="s-group">
+      <div class="s-group-title">智能体</div>
+      <div class="s-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/></svg>智能驾驶舱 <span class="badge">3</span></div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>工作台任务</div>
+    </div>
+
+    <div class="s-group">
+      <div class="s-group-title">患者管理</div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>患者列表</div>
+      <div class="s-item" style="background:#1E293B;color:#E2E8F0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="21.17" y1="8" x2="12" y2="8"/><line x1="3.95" y1="6.06" x2="8.54" y2="14"/><line x1="10.88" y1="21.94" x2="15.46" y2="14"/></svg>患者 360</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">档案</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">用药</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px;background:rgba(44,126,248,.18);color:#fff;border-radius:6px">健康方案</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">依从性</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">随访</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">健康报告</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">观测数据</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">修订审计</div>
+    </div>
+
+    <div class="s-group">
+      <div class="s-group-title">团队</div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>健管组</div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>依从性看板</div>
+    </div>
+
+    <div class="s-foot">
+      <div class="t">📈 Healix Pro</div>
+      <div>解锁 AI 风险预测、自动方案、批量随访等高级能力</div>
+      <a>了解 Pro →</a>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main class="main">
+    <header class="topbar">
+      <div class="crumbs">
+        <a href="workspace-patients.html">患者管理</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <a href="patient-detail.html">张建国</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="now">健康方案</span>
+      </div>
+      <div class="top-search">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="搜索患者、方案、用药…">
+        <kbd>⌘ K</kbd>
+      </div>
+      <div class="top-actions">
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="dot"></span></button>
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+        <div class="avatar">王</div>
+      </div>
+    </header>
+
+    <!-- 患者 Hero -->
+    <section class="hero">
+      <div class="hero-row">
+        <div class="hero-pic">张<span class="online"></span></div>
+        <div class="hero-info">
+          <h1>张建国 <span class="id">#P20260308-0447</span>
+            <span class="chip danger" style="background:#FEE2E2;border-color:#FCA5A5;color:#B91C1C">⚠ 高风险</span>
+            <span class="chip warn" style="background:#FEF3C7;border-color:#FCD34D;color:#B45309">糖尿病合并高血压</span>
+          </h1>
+          <div class="hero-meta">
+            <span class="chip">男 · 58 岁</span>
+            <span class="chip">📞 138****8821</span>
+            <span class="chip">📍 杭州 · 西湖区</span>
+            <span class="chip">签约：微医集团 · 三甲合作机构</span>
+            <span class="chip">健管师：王晓琳</span>
+            <span class="chip">主治医生：李志远 主任医师</span>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>随访</button>
+          <button class="btn btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>呼叫</button>
+          <button class="btn btn-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>智能问诊</button>
+          <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新建方案</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <div class="tab">档案</div>
+      <div class="tab">用药</div>
+      <div class="tab active">健康方案 <span class="pill">v3</span></div>
+      <div class="tab">依从性</div>
+      <div class="tab">随访</div>
+      <div class="tab">健康报告</div>
+      <div class="tab">观测数据</div>
+      <div class="tab">修订审计</div>
+    </nav>
+
+    <!-- 内容 -->
+    <div class="content">
+      <div class="cp-layout">
+
+        <!-- ===== 左侧：方案主体 ===== -->
+        <div class="panel cp-main">
+          <!-- 方案元信息 -->
+          <div class="cp-meta">
+            <div class="cm-cell">
+              <div class="cm-k">方案编号</div>
+              <div class="cm-v" style="font-family:ui-monospace,Menlo,monospace">CP-2026-0447-V3</div>
+            </div>
+            <div class="cm-cell">
+              <div class="cm-k">方案状态</div>
+              <div class="cm-v" style="color:#0F766E">● 执行中</div>
+            </div>
+            <div class="cm-cell">
+              <div class="cm-k">创建 / 修订</div>
+              <div class="cm-v">2026-03-08 · v3</div>
+            </div>
+            <div class="cm-cell">
+              <div class="cm-k">下次评估</div>
+              <div class="cm-v" style="color:var(--amber)">2026-10-15 (36天)</div>
+            </div>
+          </div>
+
+          <!-- 健康目标 -->
+          <div class="section">
+            <div class="section-head">
+              <h4>
+                <span class="ic" style="background:#DBEAFE;color:#1D4ED8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg></span>
+                健康目标 · 4 项
+              </h4>
+              <div class="actions">
+                <button class="mini-btn">编辑目标</button>
+                <button class="mini-btn primary">+ 添加</button>
+              </div>
+            </div>
+            <div class="goals">
+              <div class="goal ok">
+                <span class="tag">达标</span>
+                <h5>糖化血红蛋白 HbA1c</h5>
+                <div class="meta">目标 &lt; 7.0% · 当前 6.8%</div>
+                <div class="progress"><div class="bar"><div style="width:90%;background:linear-gradient(90deg,var(--teal),#34D399)"></div></div><span class="num">90%</span></div>
+              </div>
+              <div class="goal warn">
+                <span class="tag">关注</span>
+                <h5>血压控制 BP</h5>
+                <div class="meta">目标 &lt; 130/80 mmHg · 当前 142/88</div>
+                <div class="progress"><div class="bar"><div style="width:62%;background:linear-gradient(90deg,var(--amber),#FB923C)"></div></div><span class="num">62%</span></div>
+              </div>
+              <div class="goal risk">
+                <span class="tag">异常</span>
+                <h5>体重管理 BMI</h5>
+                <div class="meta">目标 22-24 · 当前 27.3（超重）</div>
+                <div class="progress"><div class="bar"><div style="width:38%;background:linear-gradient(90deg,var(--rose),#F87171)"></div></div><span class="num">38%</span></div>
+              </div>
+              <div class="goal done">
+                <span class="tag">已完成</span>
+                <h5>运动频次</h5>
+                <div class="meta">目标 ≥ 5次/周 · 当前 5.2次</div>
+                <div class="progress"><div class="bar"><div style="width:100%;background:linear-gradient(90deg,#94A3B8,#CBD5E1)"></div></div><span class="num">100%</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 用药方案 -->
+          <div class="section">
+            <div class="section-head">
+              <h4>
+                <span class="ic" style="background:#FEF3C7;color:#B45309"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="18" height="8" rx="4"/><line x1="12" y1="8" x2="12" y2="16"/></svg></span>
+                用药方案 · 5 项
+              </h4>
+              <div class="actions">
+                <button class="mini-btn">查看处方</button>
+                <button class="mini-btn primary">+ 添加</button>
+              </div>
+            </div>
+            <div class="meds">
+              <div class="med">
+                <div class="pill-ic" style="background:#FEE2E2;color:#B91C1C"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.5 20.5L20.5 10.5a4.95 4.95 0 0 0-7-7L3.5 13.5a4.95 4.95 0 0 0 7 7z"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/></svg></div>
+                <div class="body">
+                  <div class="name">二甲双胍片 <span class="gen">Metformin</span> <span class="chip" style="font-size:10px;padding:1px 6px;background:#FEE2E2;color:#B91C1C;border-radius:4px">长期</span></div>
+                  <div class="desc">随餐服用 · 每日 2 次 · 餐后立即</div>
+                </div>
+                <div class="dose"><div class="dose-v">0.5g</div><div class="dose-k">BID 口服</div></div>
+                <div class="act"><button class="ic-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button></div>
+              </div>
+              <div class="med">
+                <div class="pill-ic" style="background:#DBEAFE;color:#1D4ED8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="12" y1="12" x2="16" y2="14"/></svg></div>
+                <div class="body">
+                  <div class="name">厄贝沙坦片 <span class="gen">Irbesartan</span></div>
+                  <div class="desc">每日 1 次 · 早晨固定时间</div>
+                </div>
+                <div class="dose"><div class="dose-v">150mg</div><div class="dose-k">QD 口服</div></div>
+                <div class="act"><button class="ic-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button></div>
+              </div>
+              <div class="med">
+                <div class="pill-ic" style="background:#CCFBF1;color:#0F766E"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                <div class="body">
+                  <div class="name">阿托伐他汀钙片 <span class="gen">Atorvastatin</span></div>
+                  <div class="desc">每日 1 次 · 睡前服用</div>
+                </div>
+                <div class="dose"><div class="dose-v">20mg</div><div class="dose-k">QN 口服</div></div>
+                <div class="act"><button class="ic-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button></div>
+              </div>
+              <div class="med">
+                <div class="pill-ic" style="background:#EDE9FE;color:#7C3AED"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.29 1.51 4.04 3 5.5l7 7Z"/></svg></div>
+                <div class="body">
+                  <div class="name">阿司匹林肠溶片 <span class="gen">Aspirin</span></div>
+                  <div class="desc">每日 1 次 · 晚餐后</div>
+                </div>
+                <div class="dose"><div class="dose-v">100mg</div><div class="dose-k">QD 口服</div></div>
+                <div class="act"><button class="ic-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button></div>
+              </div>
+              <div class="med">
+                <div class="pill-ic" style="background:#FEF3C7;color:#B45309"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+                <div class="body">
+                  <div class="name">维生素 D3 滴剂</div>
+                  <div class="desc">每日 1 次 · 随餐服用</div>
+                </div>
+                <div class="dose"><div class="dose-v">800 IU</div><div class="dose-k">QD 口服</div></div>
+                <div class="act"><button class="ic-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 生活方式 -->
+          <div class="section">
+            <div class="section-head">
+              <h4>
+                <span class="ic" style="background:#CCFBF1;color:#0F766E"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg></span>
+                生活方式干预
+              </h4>
+              <div class="actions"><button class="mini-btn">编辑</button></div>
+            </div>
+            <div class="lifestyle">
+              <div class="lc">
+                <h5>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                  运动处方
+                </h5>
+                <ul>
+                  <li>快走 30 分钟 / 日 <small>5次/周</small></li>
+                  <li>餐后 15 分钟轻度活动 <small>每日</small></li>
+                  <li>抗阻训练 2 次/周 <small>循序渐进</small></li>
+                  <li>避免久坐 &gt; 60min <small>全天</small></li>
+                </ul>
+              </div>
+              <div class="lc">
+                <h5>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3"/></svg>
+                  饮食指导
+                </h5>
+                <ul>
+                  <li>主食减量 1/3，粗粮替代 <small>每日</small></li>
+                  <li>低盐 &lt; 5g/日，低脂饮食 <small>每日</small></li>
+                  <li>蔬菜 ≥ 500g，深色占 1/2 <small>每日</small></li>
+                  <li>戒酒或限酒 &lt; 25g/日 <small>持续</small></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- 随访计划 -->
+          <div class="section">
+            <div class="section-head">
+              <h4>
+                <span class="ic" style="background:#FCE7F3;color:#9D174D"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+                随访计划 · 接下来 30 天
+              </h4>
+              <div class="actions">
+                <button class="mini-btn">查看全部</button>
+                <button class="mini-btn primary">+ 排期</button>
+              </div>
+            </div>
+            <div class="followup-list">
+              <div class="fu">
+                <div class="date"><div class="d">14</div><div class="m">9月</div></div>
+                <div class="body">
+                  <div class="t">血压远程监测</div>
+                  <div class="s">每日 3 次上传血压数据 · 异常自动告警</div>
+                </div>
+                <span class="stat" style="background:#DBEAFE;color:#1D4ED8">已排期</span>
+              </div>
+              <div class="fu">
+                <div class="date"><div class="d">18</div><div class="m">9月</div></div>
+                <div class="body">
+                  <div class="t">电话随访 · 王晓琳</div>
+                  <div class="s">评估用药依从性 · 生活方式干预反馈</div>
+                </div>
+                <span class="stat" style="background:#DBEAFE;color:#1D4ED8">已排期</span>
+              </div>
+              <div class="fu">
+                <div class="date"><div class="d">25</div><div class="m">9月</div></div>
+                <div class="body">
+                  <div class="t">门诊复查 · 李志远主任</div>
+                  <div class="s">糖化血红蛋白 + 肝肾功能 + 心电图</div>
+                </div>
+                <span class="stat" style="background:#FEF3C7;color:#B45309">待确认</span>
+              </div>
+              <div class="fu">
+                <div class="date"><div class="d">15</div><div class="m">10月</div></div>
+                <div class="body">
+                  <div class="t">方案评估 · v4 修订</div>
+                  <div class="s">综合指标达成情况，决定是否调整方案</div>
+                </div>
+                <span class="stat" style="background:#FEF3C7;color:#B45309">待确认</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== 右侧：AI 草稿 + 协作 ===== -->
+        <aside class="cp-side">
+          <!-- AI 草稿面板 -->
+          <div class="panel">
+            <div class="draft-head">
+              <div class="ai-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg></div>
+              <div>
+                <h3>AI 方案草稿</h3>
+                <p>基于近 30 天数据智能生成</p>
+              </div>
+            </div>
+            <div class="draft-body">
+              <div class="draft">
+                <div class="row">
+                  <span class="who"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/></svg>健管智能体</span>
+                  <span class="when">2 分钟前</span>
+                </div>
+                <div class="txt">
+                  检测到 <b>血压近 7 天均值偏高</b>（142/88），建议将厄贝沙坦剂量从 <code>150mg</code> 调整为 <code>300mg</code>，并在 2 周后复查。
+                </div>
+                <div class="acts">
+                  <button class="act primary">采纳并调整</button>
+                  <button class="act">查看依据</button>
+                  <button class="act">驳回</button>
+                </div>
+              </div>
+
+              <div class="draft">
+                <div class="row">
+                  <span class="who"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/></svg>健管智能体</span>
+                  <span class="when">10 分钟前</span>
+                </div>
+                <div class="txt">
+                  BMI <b>27.3 持续超重</b>，建议新增 <code>司美格鲁肽</code>（2.4mg/周）联合治疗，已评估与现有用药无相互作用。
+                </div>
+                <div class="acts">
+                  <button class="act primary">采纳</button>
+                  <button class="act">查看依据</button>
+                  <button class="act">驳回</button>
+                </div>
+              </div>
+
+              <div class="draft">
+                <div class="row">
+                  <span class="who"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/></svg>健管智能体</span>
+                  <span class="when">18 分钟前</span>
+                </div>
+                <div class="txt">
+                  患者近 3 次随访<b>运动依从率仅 41%</b>，建议将快走目标从 30 分钟调整为 <code>20 分钟 × 5 天</code>，并加入家属监督机制。
+                </div>
+                <div class="acts">
+                  <button class="act primary">采纳</button>
+                  <button class="act">查看依据</button>
+                  <button class="act">驳回</button>
+                </div>
+              </div>
+            </div>
+            <div class="draft-foot">
+              <div class="chat-box">
+                <textarea placeholder="向 AI 智能体提问，如：'为什么建议调整厄贝沙坦？'"></textarea>
+                <button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+              </div>
+              <div class="quick">
+                <span>分析血压趋势</span>
+                <span>优化用药组合</span>
+                <span>评估依从性</span>
+                <span>调整运动处方</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 协作动态 -->
+          <div class="panel collab">
+            <div class="panel-head">
+              <h3>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                协作动态 <span class="sub">最近 7 天</span>
+              </h3>
+              <button class="mini-btn">查看全部</button>
+            </div>
+            <div class="timeline">
+              <div class="tl-item">
+                <div class="tl-dot" style="background:var(--primary)">王</div>
+                <div class="tl-body">
+                  <div class="tl-t"><b>王晓琳</b> 采纳了 AI 建议，新增「司美格鲁肽」用药方案</div>
+                  <div class="tl-m">今天 14:32 · 需要 <b>李志远</b> 审核</div>
+                </div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-dot" style="background:var(--amber)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></div>
+                <div class="tl-body">
+                  <div class="tl-t"><b>李志远</b> 审核通过用药方案 <code>CP-2026-0447-V3</code></div>
+                  <div class="tl-m">今天 11:08</div>
+                </div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-dot" style="background:var(--violet)">AI</div>
+                <div class="tl-body">
+                  <div class="tl-t"><b>健管智能体</b> 生成了 3 条方案调整建议（血压/BMI/运动）</div>
+                  <div class="tl-m">今天 09:15 · 触发于血压异常告警</div>
+                </div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-dot" style="background:var(--teal)">王</div>
+                <div class="tl-body">
+                  <div class="tl-t"><b>王晓琳</b> 完成了 9 月随访电话记录</div>
+                  <div class="tl-m">昨天 16:42</div>
+                </div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-dot" style="background:var(--rose)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+                <div class="tl-body">
+                  <div class="tl-t">系统检测到 <b>3 次血压异常</b>，已触发告警</div>
+                  <div class="tl-m">2026-09-06 · 自动</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// 草稿操作交互
+document.querySelectorAll('.act').forEach(btn=>{
+  btn.addEventListener('click',function(){
+    if(this.classList.contains('primary')){
+      const d=this.closest('.draft');
+      d.style.opacity='.5';d.style.pointerEvents='none';
+      d.querySelector('.acts').innerHTML='<span style="font-size:11px;color:#0F766E;font-weight:500">✓ 已采纳，正在更新方案...</span>';
+      setTimeout(()=>{d.style.opacity='';d.style.pointerEvents=''},1800);
+    } else if(this.textContent==='驳回'){
+      const d=this.closest('.draft');
+      d.style.opacity='.5';d.style.pointerEvents='none';
+      d.querySelector('.acts').innerHTML='<span style="font-size:11px;color:#94A3B8">已驳回</span>';
+    }
+  });
+});
+</script>
+
+</body>
+</html>

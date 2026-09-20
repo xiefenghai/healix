@@ -45,8 +45,9 @@ interface LatestLabItem extends LabItem {
   reportId?: string
 }
 
+const props = defineProps<{ peopleId?: string; consumeOcrDraft?: boolean }>()
 const route = useRoute()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
 const saving = ref(false)
@@ -438,7 +439,7 @@ async function onOcrFileChange(e: Event) {
 }
 
 function tryOpenOcrDraft() {
-  if (route.query.ocr !== '1') return
+  if (route.query.ocr !== '1' && !props.consumeOcrDraft) return
   const draft = loadLabOcrDraft()
   if (!draft?.items?.length) return
   applyOcrDraft(draft)

@@ -29,13 +29,15 @@ display_name: 管理方案生成
 
 ```json
 {
-  "summary": "200字以内方案总结：阶段目标、核心干预、随访要点",
-  "goalSummary": "一句话目标，用于方案头",
   "exercise": { },
   "diet": { },
-  "execution": { }
+  "execution": { },
+  "summary": "200字以内方案总结：阶段目标、核心干预、随访要点",
+  "goalSummary": "一句话目标，用于方案头"
 }
 ```
+
+**流式展示约定**：必须按 `exercise → diet → execution → summary → goalSummary` 顺序输出字段，便于前端边生成边展示。
 
 ---
 

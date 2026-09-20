@@ -145,7 +145,11 @@ const INSTRUCTION_CHIPS = [
 
 const route = useRoute()
 const router = useRouter()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const props = defineProps<{
+  /** 驾驶舱抽屉等场景传入；不传则走路由 params */
+  peopleId?: string
+}>()
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
 const saving = ref(false)
@@ -1634,7 +1638,7 @@ watch(
 <style scoped>
 .care-plan {
   width: 100%;
-  padding: 14px 20px 24px;
+  padding: 8px 0 24px;
 }
 
 .adjust-hint {

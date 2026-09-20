@@ -4,6 +4,7 @@ import com.healix.agent.careplan.CarePlanAgentService;
 import com.healix.agent.careplan.CarePlanStreamSummary;
 import com.healix.agent.log.AgentInteractionLog;
 import com.healix.agent.log.AgentInteractionLogMapper;
+import com.healix.agent.memory.AgentConversationService;
 import com.healix.agent.memory.StaffSessionStore;
 import com.healix.agent.support.AgentSessionIds;
 import com.healix.agent.support.AiUsageGuard;
@@ -11,6 +12,8 @@ import com.healix.agent.skill.AgentSkill;
 import com.healix.agent.skill.AgentSkillContext;
 import com.healix.agent.skill.CarePlanSkill;
 import com.healix.agent.skill.GeneralChatSkill;
+import com.healix.agent.skill.OcrExamSkill;
+import com.healix.agent.skill.OcrLabSkill;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.util.JsonUtils;
@@ -37,6 +40,7 @@ public class StaffAgentGateway {
 
     private final List<AgentSkill> skills;
     private final StaffSessionStore sessionStore;
+    private final AgentConversationService conversationService;
     private final ArchiveAccessService archiveAccessService;
     private final AgentInteractionLogMapper interactionLogMapper;
     private final CarePlanAgentService carePlanAgentService;
@@ -68,6 +72,7 @@ public class StaffAgentGateway {
     }
 
     private AgentResponse doChat(AgentChatCommand cmd, Consumer<AgentStreamEvent> sink) {
+        long startedAt = System.currentTimeMillis();
         boolean orgSession = !StringUtils.hasText(cmd.peopleId());
         if (!orgSession) {
             archiveAccessService.assertStaffCanAccessPeople(cmd.tenantId(), cmd.orgId(), cmd.peopleId());
@@ -82,42 +87,87 @@ public class StaffAgentGateway {
             displayName = profile.getDisplayName() == null ? "患者" : profile.getDisplayName();
         }
 
-        String sessionId = AgentSessionIds.normalize(cmd.sessionId());
+        String sessionId = conversationService.ensureSession(
+                cmd.tenantId(),
+                cmd.orgId(),
+                cmd.staffId(),
+                cmd.peopleId(),
+                AgentSessionIds.normalize(cmd.sessionId()));
         var history = sessionStore.loadTurns(sessionId);
         AgentCapability routed = route(cmd);
         if (orgSession && routed != AgentCapability.GENERAL_CHAT) {
             // 机构首页会话禁止需患者的能力（方案 / OCR 等）
             routed = AgentCapability.GENERAL_CHAT;
         }
+        AgentStreamEvent.safeEmit(
+                sink, AgentStreamEvent.skill(routed.label(), "已选择能力 · " + routed.name()));
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("开始处理：" + routed.label()));
+
         AgentSkillContext ctx = new AgentSkillContext(cmd, sessionId, history, displayName);
 
         AgentResponse response;
         if (routed == AgentCapability.CARE_PLAN) {
             response = streamCarePlan(ctx, sink);
-        } else if (sink != null) {
-            response = generalChatSkill.executeStream(ctx, sink);
+        } else if (routed == AgentCapability.GENERAL_CHAT) {
+            response = sink != null ? generalChatSkill.executeStream(ctx, sink) : generalChatSkill.execute(ctx);
         } else {
-            AgentSkill skill = resolveSkill(routed, cmd);
-            response = skill.execute(ctx);
+            // OCR 等非流式 Skill：流式通道上先推进度，再同步执行
+            if (sink != null) {
+                AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress(ocrProgressLabel(routed)));
+                AgentStreamEvent.safeEmit(
+                        sink, AgentStreamEvent.tool(routed.name(), "running", ocrProgressLabel(routed)));
+            }
+            long ocrStarted = System.currentTimeMillis();
+            response = resolveSkill(routed, cmd).execute(ctx);
+            if (sink != null) {
+                AgentStreamEvent.safeEmit(
+                        sink,
+                        AgentStreamEvent.tool(
+                                routed.name(),
+                                "done",
+                                "识别完成 · " + (System.currentTimeMillis() - ocrStarted) + "ms"));
+            }
         }
 
         sessionStore.appendTurn(sessionId, cmd.message(), response.reply());
+        conversationService.appendUser(sessionId, cmd.message());
+        conversationService.appendAssistant(sessionId, response.reply(), response.actions());
         persistLog(cmd, sessionId, response);
         if (sink != null) {
+            boolean keepExtracted =
+                    AgentCapability.OCR_LAB.name().equals(response.capability())
+                            || AgentCapability.OCR_EXAM.name().equals(response.capability());
             AgentStreamEvent.safeEmit(
                     sink,
                     AgentStreamEvent.result(
                             new AgentResponse(
-                                    response.sessionId(),
+                                    sessionId,
                                     response.capability(),
                                     response.intent(),
                                     response.reply(),
                                     response.actions(),
                                     response.safetyFlags(),
-                                    null)));
+                                    keepExtracted ? response.extracted() : null)));
         }
-        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.done());
-        return response;
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.done(System.currentTimeMillis() - startedAt));
+        return new AgentResponse(
+                sessionId,
+                response.capability(),
+                response.intent(),
+                response.reply(),
+                response.actions(),
+                response.safetyFlags(),
+                response.extracted());
+    }
+
+    private static String ocrProgressLabel(AgentCapability routed) {
+        if (routed == AgentCapability.OCR_LAB) {
+            return "正在识别检验单…";
+        }
+        if (routed == AgentCapability.OCR_EXAM) {
+            return "正在识别检查单…";
+        }
+        return "正在处理…";
     }
 
     private AgentResponse streamCarePlan(AgentSkillContext ctx, Consumer<AgentStreamEvent> sink) {
@@ -170,6 +220,13 @@ public class StaffAgentGateway {
         }
         if (CarePlanSkill.matchesMessage(cmd.message())) {
             return AgentCapability.CARE_PLAN;
+        }
+        // 检查单关键词优先于检验（避免「检查」误入检验）
+        if (OcrExamSkill.matchesMessage(cmd.message())) {
+            return AgentCapability.OCR_EXAM;
+        }
+        if (OcrLabSkill.matchesMessage(cmd.message())) {
+            return AgentCapability.OCR_LAB;
         }
         return AgentCapability.GENERAL_CHAT;
     }

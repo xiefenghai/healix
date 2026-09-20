@@ -1,31 +1,28 @@
 package com.healix.agent.skill;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.gateway.AgentAction;
 import com.healix.agent.gateway.AgentCapability;
 import com.healix.agent.gateway.AgentChatCommand;
 import com.healix.agent.gateway.AgentResponse;
-import com.healix.agent.llm.LlmClient;
-import com.healix.agent.llm.LlmResponse;
-import com.healix.common.util.JsonUtils;
+import com.healix.agent.ocr.LabOcrRecognitionService;
+import com.healix.common.exception.BusinessException;
+import com.healix.core.observation.dto.LabOcrPrefillDto;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
 
 /**
- * 检验单 OCR 占位（能力未启用）：对话内识别预留。
+ * 对话内检验单识别：复用观测页 OCR 服务，结果供人工确认后录入。
  */
 @Component
 @RequiredArgsConstructor
 public class OcrLabSkill implements AgentSkill {
 
-    private final LlmClient llmClient;
-    private final ResourceLoader resourceLoader;
+    private final LabOcrRecognitionService labOcrRecognitionService;
 
     @Override
     public AgentCapability capability() {
@@ -34,69 +31,54 @@ public class OcrLabSkill implements AgentSkill {
 
     @Override
     public boolean supports(AgentCapability routed, AgentChatCommand cmd) {
-        if (routed == AgentCapability.OCR_LAB) {
-            return true;
-        }
-        return StringUtils.hasText(cmd.imageBase64()) && matchesMessage(cmd.message());
+        return routed == AgentCapability.OCR_LAB;
     }
 
     @Override
     public AgentResponse execute(AgentSkillContext ctx) {
         AgentChatCommand cmd = ctx.command();
+        String path = "/workspace/patients/" + cmd.peopleId() + "/observations/labs?ocr=1";
         if (!StringUtils.hasText(cmd.imageBase64())) {
             return new AgentResponse(
                     ctx.sessionId(),
                     AgentCapability.OCR_LAB.name(),
                     "OCR_LAB",
-                    "请上传检验单图片后再识别。",
-                    List.of(),
+                    "请上传检验单图片（JPG/PNG/WEBP，≤5MB）后识别；也可前往检验录入页使用「拍照识别」。",
+                    List.of(AgentAction.navigate("前往检验录入", path)),
                     List.of(),
                     null);
         }
-        String systemPrompt = loadSkillPrompt();
-        String userPrompt = """
-                请识别这张检验/化验单，输出严格 JSON（不要 markdown 代码块）：
-                {
-                  "specimenType": "标本类型",
-                  "sampledAt": "采样时间 ISO-8601 或 null",
-                  "reportedAt": "报告时间 ISO-8601 或 null",
-                  "note": "备注",
-                  "items": [
-                    {
-                      "itemName": "项目名",
-                      "valueNum": 数值或null,
-                      "valueText": "文本值",
-                      "unit": "单位",
-                      "refLow": 参考下限或null,
-                      "refHigh": 参考上限或null,
-                      "abnormalFlag": "H/L/N"
-                    }
-                  ],
-                  "warnings": ["异常提示"]
-                }
-                """;
-        LlmResponse llm = llmClient.chatWithImage(
-                systemPrompt, userPrompt, cmd.imageBase64(), cmd.imageMimeType());
-        if (!llm.fromLlm() || !StringUtils.hasText(llm.content())) {
+        try {
+            byte[] bytes = decodeImage(cmd.imageBase64());
+            String mime = StringUtils.hasText(cmd.imageMimeType()) ? cmd.imageMimeType() : "image/jpeg";
+            LabOcrPrefillDto prefill = labOcrRecognitionService.recognize(bytes, mime);
+            return new AgentResponse(
+                    ctx.sessionId(),
+                    AgentCapability.OCR_LAB.name(),
+                    "OCR_LAB",
+                    buildReply(prefill),
+                    List.of(AgentAction.navigate("前往检验录入确认", path)),
+                    List.of(),
+                    prefill);
+        } catch (BusinessException e) {
+            return new AgentResponse(
+                    ctx.sessionId(),
+                    AgentCapability.OCR_LAB.name(),
+                    "OCR_LAB",
+                    e.getMessage(),
+                    List.of(AgentAction.navigate("前往检验录入", path)),
+                    List.of(),
+                    null);
+        } catch (Exception e) {
             return new AgentResponse(
                     ctx.sessionId(),
                     AgentCapability.OCR_LAB.name(),
                     "OCR_LAB",
                     "检验单识别失败，请检查图片清晰度或稍后重试。",
-                    List.of(),
+                    List.of(AgentAction.navigate("前往检验录入", path)),
                     List.of(),
                     null);
         }
-        JsonNode extracted = parseJson(llm.content());
-        String path = "/workspace/patients/" + cmd.peopleId() + "/observations/labs";
-        return new AgentResponse(
-                ctx.sessionId(),
-                AgentCapability.OCR_LAB.name(),
-                "OCR_LAB",
-                "检验单识别完成，请在检验页确认后保存。",
-                List.of(AgentAction.navigate("前往检验录入", path)),
-                List.of(),
-                extracted);
     }
 
     public static boolean matchesMessage(String message) {
@@ -104,35 +86,31 @@ public class OcrLabSkill implements AgentSkill {
             return false;
         }
         String msg = message.toLowerCase(Locale.ROOT);
-        return containsAny(msg, "检验", "化验", "检验单", "lab", "ocr");
+        return containsAny(msg, "检验单", "化验单", "检验报告", "化验报告", "lab report", "ocr-lab");
     }
 
-    private JsonNode parseJson(String content) {
-        String trimmed = content.trim();
-        if (trimmed.startsWith("```")) {
-            int start = trimmed.indexOf('{');
-            int end = trimmed.lastIndexOf('}');
-            if (start >= 0 && end > start) {
-                trimmed = trimmed.substring(start, end + 1);
-            }
+    private static String buildReply(LabOcrPrefillDto prefill) {
+        int mapped = prefill.items() == null ? 0 : prefill.items().size();
+        int ignored = prefill.ignoredItems() == null ? 0 : prefill.ignoredItems().size();
+        List<String> parts = new ArrayList<>();
+        parts.add("检验单识别完成：已映射 " + mapped + " 项");
+        if (ignored > 0) {
+            parts.add("忽略未收录 " + ignored + " 项");
         }
-        try {
-            return JsonUtils.mapper().readTree(trimmed);
-        } catch (Exception e) {
-            return JsonUtils.emptyObject().put("rawText", content);
+        if (prefill.warnings() != null && !prefill.warnings().isEmpty()) {
+            parts.add("提示：" + String.join("；", prefill.warnings().subList(0, Math.min(3, prefill.warnings().size()))));
         }
+        parts.add("请前往检验页核对后保存（对话识别结果不会自动落库）。");
+        return String.join("。", parts);
     }
 
-    private String loadSkillPrompt() {
-        try {
-            Resource res = resourceLoader.getResource("classpath:skills/ocr-lab/SKILL.md");
-            if (res.exists()) {
-                return StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
-            }
-        } catch (Exception ignored) {
-            // fallback
+    private static byte[] decodeImage(String imageBase64) {
+        String raw = imageBase64.trim();
+        int comma = raw.indexOf(',');
+        if (raw.startsWith("data:") && comma > 0) {
+            raw = raw.substring(comma + 1);
         }
-        return "你是医疗检验单 OCR 助手，仅输出 JSON，不做诊断。";
+        return Base64.getDecoder().decode(raw);
     }
 
     private static boolean containsAny(String msg, String... keywords) {

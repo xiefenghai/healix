@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
@@ -29,7 +29,11 @@ interface HealthReportListItem {
 type StatusFilter = 'ALL' | 'DRAFT' | 'PUBLISHED' | 'SKIPPED'
 
 const route = useRoute()
-const peopleId = () => String(route.params.peopleId || '')
+const props = defineProps<{
+  /** 驾驶舱抽屉等场景传入；不传则走路由 params */
+  peopleId?: string
+}>()
+const peopleId = () => String(props.peopleId || route.params.peopleId || '')
 const loading = ref(false)
 const items = ref<HealthReportListItem[]>([])
 const detailId = ref<string | null>(null)
@@ -116,6 +120,12 @@ function generatedByLabel(v?: string) {
 }
 
 onMounted(() => void load())
+watch(
+  () => props.peopleId || route.params.peopleId,
+  () => {
+    void load()
+  },
+)
 </script>
 
 <template>

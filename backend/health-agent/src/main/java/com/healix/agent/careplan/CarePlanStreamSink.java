@@ -19,6 +19,14 @@ final class CarePlanStreamSink {
         AgentStreamEvent.safeEmit(sink, AgentStreamEvent.skill(name, detail));
     }
 
+    static void thinkingStart(Consumer<AgentStreamEvent> sink, String text) {
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingStart(text));
+    }
+
+    static void thinkingDone(Consumer<AgentStreamEvent> sink, String text, long elapsedMs) {
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingDone(text, elapsedMs));
+    }
+
     static void token(Consumer<AgentStreamEvent> sink, String text) {
         AgentStreamEvent.safeEmit(sink, AgentStreamEvent.token(text));
     }

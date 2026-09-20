@@ -54,6 +54,7 @@ import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -111,19 +112,26 @@ public class OrgWorkspaceService {
 
     public List<OrgStaffItem> listOrgStaff(String orgId, String roleCode, String keyword) {
         requireOrgWorkspaceAccess(orgId);
-        List<StaffOrgBinding> bindings = staffOrgBindingMapper.listByOrg(orgId);
-        if (bindings.isEmpty()) {
+        LinkedHashSet<String> staffIds = new LinkedHashSet<>();
+        for (StaffOrgBinding binding : staffOrgBindingMapper.listByOrg(orgId)) {
+            staffIds.add(binding.getStaffId());
+        }
+        // 租户管理员默认无机构绑定，但仍可担任主责健管师 / 入组
+        staffIds.addAll(
+                staffRoleBindingMapper.listStaffIdsByTenantAndRole(
+                        requireTenantId(), StaffRoleEnum.TENANT_ADMIN.name()));
+        if (staffIds.isEmpty()) {
             return List.of();
         }
-        List<String> staffIds = bindings.stream().map(StaffOrgBinding::getStaffId).toList();
-        Map<String, List<String>> rolesByStaff = loadRoles(staffIds);
+        Map<String, List<String>> rolesByStaff = loadRoles(new ArrayList<>(staffIds));
         List<OrgStaffItem> items = new ArrayList<>();
         for (String staffId : staffIds) {
             List<String> roles = rolesByStaff.getOrDefault(staffId, List.of());
-            boolean isClinical =
+            boolean eligible =
                     roles.contains(StaffRoleEnum.CARE_MANAGER.name())
-                            || roles.contains(StaffRoleEnum.DOCTOR.name());
-            if (!isClinical) {
+                            || roles.contains(StaffRoleEnum.DOCTOR.name())
+                            || roles.contains(StaffRoleEnum.TENANT_ADMIN.name());
+            if (!eligible) {
                 continue;
             }
             if (StringUtils.hasText(roleCode) && !roles.contains(roleCode)) {
@@ -1017,18 +1025,24 @@ public class OrgWorkspaceService {
         if (profile == null || !tenantId.equals(profile.getTenantId())) {
             throw new BusinessException(400, "员工不属于当前租户：" + staffId);
         }
-        if (staffOrgBindingMapper.countBinding(staffId, orgId) <= 0) {
-            throw new BusinessException(400, "员工未绑定该机构：" + staffId);
-        }
         Set<String> roles = staffRoleBindingMapper.listByStaff(staffId).stream()
                 .map(StaffRoleBinding::getRoleCode)
                 .collect(Collectors.toSet());
+        boolean tenantAdmin = roles.contains(StaffRoleEnum.TENANT_ADMIN.name());
+        if (!tenantAdmin && staffOrgBindingMapper.countBinding(staffId, orgId) <= 0) {
+            throw new BusinessException(400, "员工未绑定该机构：" + staffId);
+        }
         boolean clinical = roles.contains(StaffRoleEnum.CARE_MANAGER.name())
-                || roles.contains(StaffRoleEnum.DOCTOR.name());
+                || roles.contains(StaffRoleEnum.DOCTOR.name())
+                || tenantAdmin;
         if (!clinical) {
             throw new BusinessException(400, "员工不是健管师或医生：" + staffId);
         }
         if (requiredRole != null && !roles.contains(requiredRole.name())) {
+            // 租户管理员可兼任主责健管师，无需再挂 CARE_MANAGER
+            if (requiredRole == StaffRoleEnum.CARE_MANAGER && tenantAdmin) {
+                return;
+            }
             throw new BusinessException(400, "员工缺少角色 " + requiredRole.name());
         }
     }

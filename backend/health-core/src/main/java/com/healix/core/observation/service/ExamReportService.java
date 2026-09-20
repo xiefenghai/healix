@@ -60,13 +60,25 @@ public class ExamReportService {
     @Transactional
     public ExamReportViewDto create(
             String tenantId, String orgId, String peopleId, String staffId, ExamCommand cmd) {
+        return insert(tenantId, orgId, peopleId, staffId, cmd, HealthDataSourceEnum.resolveExamStaffWrite());
+    }
+
+    /** 驾驶舱 OCR 入库：来源记为医护代录-OCR。 */
+    @Transactional
+    public ExamReportViewDto createFromStaffOcr(
+            String tenantId, String orgId, String peopleId, String staffId, ExamCommand cmd) {
+        return insert(tenantId, orgId, peopleId, staffId, cmd, HealthDataSourceEnum.staffOcr().name());
+    }
+
+    private ExamReportViewDto insert(
+            String tenantId, String orgId, String peopleId, String staffId, ExamCommand cmd, String source) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         validate(cmd);
         ExamReport row = new ExamReport();
         row.setTenantId(tenantId);
         row.setPeopleId(peopleId);
         row.setOrgId(orgId);
-        row.setSource(HealthDataSourceEnum.resolveExamStaffWrite());
+        row.setSource(source);
         row.setCreatedByStaffId(staffId);
         row.setUpdatedByStaffId(staffId);
         apply(row, cmd);

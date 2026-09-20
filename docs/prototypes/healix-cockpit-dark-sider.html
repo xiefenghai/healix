@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Healix 智能驾驶舱 · HTML 定稿原型</title>
+<style>
+:root{
+  --sider:#062a5f;
+  --sider-2:#0a3a7a;
+  --active:#1677ff;
+  --blue:#1677ff;
+  --text:#1f2937;
+  --muted:#8c8c8c;
+  --border:#e8e8e8;
+  --danger:#ff4d4f;
+  --warn:#fa8c16;
+  --bg:#f3f5f9;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+.app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+.sider{background:linear-gradient(180deg,var(--sider),#041f47);color:#fff;display:flex;flex-direction:column;padding:18px 0 12px}
+.brand{padding:0 18px 22px;display:flex;gap:10px;align-items:center}
+.brand .mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#69b1ff,#1677ff);display:grid;place-items:center;font-weight:800}
+.brand b{display:block;font-size:14px}
+.brand small{opacity:.65;font-size:11px}
+.nav-item{width:calc(100% - 16px);margin:3px 8px;border:0;background:transparent;color:rgba(255,255,255,.88);border-radius:10px;padding:11px 14px;text-align:left;cursor:pointer;font-size:13px;display:flex;gap:10px;align-items:center}
+.nav-item:hover{background:rgba(255,255,255,.08)}
+.nav-item.active{background:var(--active);font-weight:600;color:#fff;box-shadow:0 6px 16px rgba(22,119,255,.35)}
+.sider-user{margin-top:auto;margin:auto 12px 8px;padding:12px;border-radius:12px;background:rgba(255,255,255,.06);display:flex;gap:10px;align-items:center}
+.avatar{width:36px;height:36px;border-radius:50%;background:#3b82f6;display:grid;place-items:center;font-size:12px;font-weight:700}
+.sider-user .meta{font-size:12px;opacity:.85}
+.sider-user .meta b{display:block;font-size:13px;opacity:1}
+.main{min-width:0;display:flex;flex-direction:column}
+.top{height:58px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;padding:0 18px}
+.title{font-weight:600;font-size:14px}
+.org,.chip,.search,.iconbtn{border:1px solid var(--border);background:#fff;border-radius:10px;padding:7px 12px;font-size:12px;cursor:pointer}
+.chips{display:flex;gap:8px}
+.chip strong{color:var(--text)}
+.chip.danger{background:#fff1f0;border-color:#ffccc7;color:#cf1322}
+.chip.danger strong{color:#cf1322}
+.chip.warn{background:#fff7e6;border-color:#ffd591;color:#d46b08}
+.chip.warn strong{color:#d46b08}
+.spacer{flex:1}
+.search{width:240px;cursor:text}
+.content{padding:12px;flex:1;min-height:0}
+.cockpit{height:calc(100vh - 58px - 24px);display:flex;flex-direction:column;gap:10px}
+.board{flex:1;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr) 320px;gap:12px}
+.col{background:#fff;border:1px solid var(--border);border-radius:14px;min-height:0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.col-head{display:flex;align-items:center;gap:6px;padding:14px 14px 8px}
+.col-head h2{margin:0;font-size:15px}
+.spark{color:var(--blue);letter-spacing:-2px;font-size:12px}
+.tabs{display:flex;border-bottom:1px solid var(--border);padding:0 8px}
+.tab{flex:1;border:0;background:transparent;padding:11px 4px;font-size:12px;color:var(--muted);cursor:pointer;position:relative}
+.tab.active{color:var(--blue);font-weight:600}
+.tab.active::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;background:var(--blue);border-radius:2px}
+.list{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.card{text-align:left;border:1px solid var(--border);border-radius:12px;padding:12px;background:#fff;cursor:pointer}
+.card:hover{border-color:#91caff}
+.card.active{border-color:#69b1ff;background:#f0f7ff;box-shadow:0 0 0 1px rgba(22,119,255,.12)}
+.card-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+.badge.red{background:#fff1f0;color:#cf1322}
+.badge.orange{background:#fff7e6;color:#d46b08}
+.badge.purple{background:#f9f0ff;color:#722ed1}
+.meta{margin-top:6px;font-size:12px;color:var(--muted);display:flex;gap:8px}
+.note{margin:8px 0 0;font-size:12px;color:#595959;line-height:1.45}
+.code{font-family:ui-monospace,Menlo,monospace;font-size:10px;background:#f5f5f5;padding:1px 6px;border-radius:4px;margin-right:4px}
+.viewall{border:0;border-top:1px solid var(--border);background:#fff;color:var(--blue);padding:11px 14px;text-align:left;cursor:pointer}
+.agent-head{display:flex;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)}
+.bot{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#69b1ff,#1677ff);display:grid;place-items:center}
+.bot.sm{width:28px;height:28px;font-size:14px}
+.ctx{font-size:12px;color:var(--muted);margin-top:2px}
+.chat{flex:1;overflow:auto;padding:14px;background:#f7fbff}
+.row{display:flex;gap:8px;margin-bottom:12px}
+.row.user{justify-content:flex-end}
+.bubble{max-width:92%;background:#fff;border:1px solid var(--border);border-radius:14px;padding:12px}
+.bubble.user{background:var(--blue);color:#fff;border-color:var(--blue)}
+.bhead{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:6px}
+.btext{font-size:13px;line-height:1.55;white-space:pre-wrap}
+.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chipbtn{border:1px solid #91caff;background:#e6f4ff;color:var(--blue);border-radius:999px;padding:5px 11px;font-size:12px;cursor:pointer}
+.composer{border-top:1px solid var(--border);padding:10px 12px;background:#fff}
+.inputrow{display:flex;gap:8px;align-items:flex-end}
+textarea{flex:1;border:1px solid var(--border);border-radius:10px;padding:9px 11px;font:inherit;resize:none;min-height:40px}
+.btn{border:1px solid var(--border);background:#fff;border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.block{width:100%}
+.disc{margin:6px 0 0;font-size:11px;color:var(--muted)}
+.focus-h{display:flex;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border)}
+.name{font-weight:700;display:flex;gap:6px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:#52c41a;display:inline-block}
+.sub{margin-top:4px;font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px}
+.snap{background:#fafafa;border-radius:10px;padding:10px}
+.snap span{display:block;font-size:11px;color:var(--muted)}
+.snap strong{font-size:14px}
+.snap strong.warn{color:var(--warn)}
+.snap strong.ok{color:#389e0d}
+.block{padding:0 12px 8px}
+.btitle{font-size:12px;font-weight:600;margin-bottom:8px}
+.draft{border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:8px;display:flex;gap:8px;align-items:flex-start}
+.draft .main{flex:1}
+.draft strong{font-size:13px}
+.draft p{margin:4px 0;font-size:12px;color:#595959}
+.tagmini{font-size:10px;background:#fff7e6;color:#d46b08;padding:1px 6px;border-radius:4px}
+.fa{padding:0 12px 12px;display:grid;gap:8px}
+.dock{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.dock button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:12px 8px;cursor:pointer;font-size:12px}
+.dock button:hover{border-color:#91caff;color:var(--blue)}
+.empty{flex:1;display:grid;place-items:center;color:var(--muted);text-align:center;padding:24px}
+.toast{position:fixed;right:20px;bottom:20px;background:#111;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;opacity:0;transform:translateY(8px);transition:.2s;z-index:20}
+.toast.show{opacity:1;transform:none}
+.page{display:none;height:calc(100vh - 58px - 24px)}
+.page.on{display:block}
+.stub{background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sider">
+    <div class="brand"><div class="mark">♥</div><div><b>Healix 健管智能体</b><small>机构工作台</small></div></div>
+    <button class="nav-item active" data-page="cockpit">✦ 智能驾驶舱</button>
+    <button class="nav-item" data-page="tasks">🎫 工作台</button>
+    <button class="nav-item" data-page="adherence">📈 依从看板</button>
+    <button class="nav-item" data-page="patients">👤 患者</button>
+    <button class="nav-item" data-page="followup">📅 随访管理</button>
+    <button class="nav-item" data-page="plans">📋 方案管理</button>
+    <button class="nav-item" data-page="reports">📊 报告中心</button>
+    <button class="nav-item" data-page="kb">📚 知识库</button>
+    <button class="nav-item" data-page="settings">⚙️ 设置中心</button>
+    <div class="sider-user"><div class="avatar">管</div><div class="meta"><b>管理员</b>健管师</div></div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <div class="title" id="topTitle">Healix 健管智能体 | 智能驾驶舱</div>
+      <button class="org">阳光健管中心 ▾</button>
+      <div class="chips" id="chips">
+        <button class="chip">待办 <strong>12</strong></button>
+        <button class="chip danger">红人 <strong>5</strong></button>
+        <button class="chip warn">超期 <strong>2</strong></button>
+      </div>
+      <div class="spacer"></div>
+      <input class="search" placeholder="搜索患者" />
+      <button class="iconbtn">🔔</button>
+    </header>
+    <div class="content">
+      <div class="page on" id="page-cockpit">
+        <div class="cockpit">
+          <div class="board">
+            <section class="col">
+              <div class="col-head"><span class="spark">✦✦</span><h2>今日优先</h2></div>
+              <div class="tabs">
+                <button class="tab active">须立即处理</button>
+                <button class="tab">今日关注</button>
+                <button class="tab">我的在办</button>
+              </div>
+              <div class="list" id="plist"></div>
+              <button class="viewall" onclick="go('tasks')">查看全部优先患者 →</button>
+            </section>
+            <section class="col">
+              <div class="agent-head"><div class="bot">🤖</div><div><strong>健管智能体</strong><div class="ctx" id="ctx">机构级会话 · 点左侧名单注入患者</div></div></div>
+              <div class="chat" id="chat"></div>
+              <div class="composer">
+                <div class="inputrow">
+                  <button class="btn" onclick="need('附件 / 上传检验 OCR')">📎</button>
+                  <textarea id="inp" rows="1" placeholder="问我任何关于患者或今日工作的问题…"></textarea>
+                  <button class="btn primary" onclick="send()">发送</button>
+                </div>
+                <p class="disc">智能体基于知识库与患者数据生成建议，请人工核对。</p>
+              </div>
+            </section>
+            <aside class="col" id="right">
+              <div class="empty" id="emptyRight"><div><div style="font-size:28px;margin-bottom:8px">👤</div>点左侧优先对象查看详情</div></div>
+              <div id="focus" style="display:none;flex-direction:column;height:100%;min-height:0"></div>
+            </aside>
+          </div>
+          <footer class="dock">
+            <button onclick="need('新建随访')">📅 新建随访</button>
+            <button onclick="need('上传检验OCR')">🧾 上传检验OCR</button>
+            <button onclick="need('生成方案')">📋 生成方案</button>
+            <button onclick="need('管理报告')">📊 管理报告</button>
+          </footer>
+        </div>
+      </div>
+      <div class="page" id="page-tasks"><div class="stub"><b>工作台</b><p style="color:var(--muted)">侧栏已切深色。任务页可继续用上一版原型；本文件聚焦驾驶舱定稿。</p><button class="btn primary" onclick="go('cockpit')">返回驾驶舱</button></div></div>
+      <div class="page" id="page-adherence"><div class="stub">依从看板 · 占位</div></div>
+      <div class="page" id="page-patients"><div class="stub">患者 · 占位</div></div>
+      <div class="page" id="page-followup"><div class="stub">随访管理 · 占位</div></div>
+      <div class="page" id="page-plans"><div class="stub">方案管理 · 占位</div></div>
+      <div class="page" id="page-reports"><div class="stub">报告中心 · 占位</div></div>
+      <div class="page" id="page-kb"><div class="stub">知识库 · 占位</div></div>
+      <div class="page" id="page-settings"><div class="stub">设置中心 · 占位</div></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const data=[
+ {id:'p1',name:'张敏',sex:'♀',badge:'用药未打卡×3',tone:'red',time:'08:30',note:'PLAN_NUDGE 连续 3 日用药未打卡，依从风险高',disease:'2型糖尿病',rate:'62%',bp:'138/86',linked:true,age:'58岁',
+  drafts:[{t:'方案草稿',d:'AI 已生成管理方案草稿，待人审确认'},{t:'检验OCR预填',d:'检验单识别结果待核对入库'}]},
+ {id:'p2',name:'李强',sex:'♂',badge:'申请回访',tone:'orange',time:'09:15',note:'FOLLOW_UP 患者提交回访申请，待处理',disease:'高血压',rate:'78%',bp:'148/92',linked:true,age:'61岁',
+  drafts:[{t:'随访待办',d:'患者申请回访，待开/办随访单'}]},
+ {id:'p3',name:'王芳',sex:'♀',badge:'方案待发布',tone:'purple',time:'昨天',note:'AI Draft：已生成方案草稿，等待确认发布',disease:'血脂异常',rate:'81%',bp:'128/78',linked:false,age:'49岁',
+  drafts:[{t:'方案草稿',d:'待确认后发布给患者'}]},
+ {id:'p4',name:'赵磊',sex:'♂',badge:'指标异常',tone:'red',time:'昨天',note:'METRIC_ALERT 血压偏高，指标波动异常',disease:'高血压',rate:'55%',bp:'156/98',linked:true,age:'66岁',
+  drafts:[{t:'指标异常',d:'血压异常待审阅跟进'}]},
+];
+let focus=null;
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(window.__t);window.__t=setTimeout(()=>t.classList.remove('show'),2000)}
+function go(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.toggle('on',p.id==='page-'+page));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));
+  const map={cockpit:'智能驾驶舱',tasks:'工作台',adherence:'依从看板',patients:'患者',followup:'随访管理',plans:'方案管理',reports:'报告中心',kb:'知识库',settings:'设置中心'};
+  document.getElementById('topTitle').textContent='Healix 健管智能体 | '+(map[page]||page);
+  document.getElementById('chips').style.display=page==='cockpit'?'flex':'none';
+}
+document.querySelectorAll('.nav-item').forEach(b=>b.onclick=()=>go(b.dataset.page));
+function renderList(){
+  document.getElementById('plist').innerHTML=data.map(p=>`
+    <button class="card ${focus===p.id?'active':''}" onclick="select('${p.id}')">
+      <div class="card-top"><strong>${p.name} ${p.sex}</strong><span class="badge ${p.tone}">${p.badge}</span></div>
+      <div class="meta"><span>${p.time}</span></div>
+      <p class="note"><span class="code">${p.note.split(' ')[0]}</span>${p.note.replace(/^\\S+\\s*/,'')}</p>
+    </button>`).join('');
+}
+function select(id){
+  focus=id; const p=data.find(x=>x.id===id); renderList();
+  document.getElementById('ctx').textContent='当前患者：'+p.name;
+  document.getElementById('emptyRight').style.display='none';
+  const box=document.getElementById('focus'); box.style.display='flex';
+  box.innerHTML=`
+    <div class="focus-h"><div><div class="name">当前：${p.name} ${p.sex} <i class="dot"></i></div>
+    <div class="sub"><span>${p.age}</span><span>${p.disease}</span><span>${p.linked?'C端已激活':'C端未激活'}</span></div></div>
+    <button class="btn" onclick="clearF()">×</button></div>
+    <div class="grid">
+      <div class="snap"><span>病种</span><strong>${p.disease}</strong></div>
+      <div class="snap"><span>依从率</span><strong class="warn">${p.rate}</strong></div>
+      <div class="snap"><span>血压</span><strong>${p.bp}</strong></div>
+      <div class="snap"><span>C端</span><strong class="${p.linked?'ok':''}">${p.linked?'已激活':'未激活'}</strong></div>
+    </div>
+    <div class="block"><div class="btitle">待确认草稿</div>
+      ${p.drafts.map(d=>`<div class="draft"><div class="main"><strong>${d.t}</strong><p>${d.d}</p><span class="tagmini">待确认</span></div>
+      <button class="btn primary" onclick="toast('确认 · ${d.t}')">确认</button></div>`).join('')}
+    </div>
+    <div class="fa">
+      <button class="btn primary block" onclick="toast('查看完整档案')">查看完整档案</button>
+      <button class="btn block" onclick="toast('管理报告')">管理报告</button>
+      <button class="btn block" onclick="toast('应用到方案')">应用到方案</button>
+      <button class="btn block" onclick="toast('写入点评')">写入点评</button>
+    </div>`;
+  addAssistant(`已选择「${p.name}」。近 7 日依从 ${p.rate}，建议：提醒患者补打卡，必要时开用药随访；右侧草稿请人审后确认。`,[
+    ['提醒患者',`toast('提醒患者')`],['开用药随访',`toast('开用药随访')`],['生成方案草稿',`toast('生成方案草稿')`]
+  ]);
+}
+function clearF(){focus=null;document.getElementById('ctx').textContent='机构级会话 · 点左侧名单注入患者';document.getElementById('emptyRight').style.display='grid';document.getElementById('focus').style.display='none';renderList()}
+function addAssistant(text,actions){
+  const chat=document.getElementById('chat');
+  const btns=(actions||[]).map(([l,fn])=>`<button class="chipbtn" onclick="${fn}">${l}</button>`).join('');
+  chat.insertAdjacentHTML('beforeend',`<div class="row"><div class="bot sm">🤖</div><div class="bubble"><div class="bhead"><span>健管智能体</span><em>${new Date().toTimeString().slice(0,5)}</em></div><div class="btext">${text}</div>${btns?`<div class="actions">${btns}</div>`:''}</div></div>`);
+  chat.scrollTop=chat.scrollHeight;
+}
+function boot(){
+  document.getElementById('chat').innerHTML=`
+  <div class="row"><div class="bot sm">🤖</div><div class="bubble">
+    <div class="bhead"><span>今日简报</span><em>09:00</em></div>
+    <div class="btext">今天建议优先处理：张敏（用药连续未打）、李强（申请回访）、王芳（方案草稿待确认）。</div>
+    <div class="actions">
+      <button class="chipbtn" onclick="select('p1')">处理张敏</button>
+      <button class="chipbtn" onclick="select('p2')">处理李强</button>
+      <button class="chipbtn" onclick="select('p3')">处理王芳</button>
+      <button class="chipbtn" onclick="toast('查看全部红人')">查看全部红人</button>
+    </div>
+  </div></div>`;
+}
+function send(){
+  const v=document.getElementById('inp').value.trim(); if(!v)return;
+  document.getElementById('chat').insertAdjacentHTML('beforeend',`<div class="row user"><div class="bubble user"><div class="btext">${v}</div></div></div>`);
+  document.getElementById('inp').value='';
+  addAssistant('（原型）此处对接 /api/b/v1/agent/chat/stream，并结合当前患者上下文返回建议与动作卡。');
+}
+function need(msg){ if(!focus){toast('请先从左侧选择一位患者');return;} toast(msg); }
+renderList(); boot();
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+</script>
+</body>
+</html>

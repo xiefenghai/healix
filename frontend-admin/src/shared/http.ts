@@ -121,6 +121,28 @@ export function clearSession() {
   orgSessionTick.value++
 }
 
+let authRedirecting = false
+
+/** Token 失效：清会话并跳转登录（并发请求只处理一次） */
+export function redirectToLogin() {
+  if (authRedirecting) return
+  authRedirecting = true
+  const entry = getEntry()
+  clearSession()
+  // 动态导入避免 router ↔ http 循环依赖
+  void import('../router').then(({ default: router }) => {
+    const path =
+      entry === 'ops' || entry === 'tenant' || entry === 'workspace'
+        ? `/login/${entry}`
+        : '/entry'
+    void router.replace(path).finally(() => {
+      window.setTimeout(() => {
+        authRedirecting = false
+      }, 1500)
+    })
+  })
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
   if (!headers.has('Content-Type') && options.body) {
@@ -133,6 +155,10 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
   const res = await fetch(path, { ...options, headers })
   const data = await res.json().catch(() => ({}))
+  if (res.status === 401) {
+    redirectToLogin()
+    throw new Error(data.message || '登录信息已过期')
+  }
   if (!res.ok || (typeof data.code === 'number' && data.code !== 0)) {
     throw new Error(data.message || `HTTP ${res.status}`)
   }
@@ -149,6 +175,10 @@ export async function apiUpload<T>(path: string, file: File, fieldName = 'file')
   }
   const res = await fetch(path, { method: 'POST', body: form, headers })
   const data = await res.json().catch(() => ({}))
+  if (res.status === 401) {
+    redirectToLogin()
+    throw new Error(data.message || '登录信息已过期')
+  }
   if (!res.ok || (typeof data.code === 'number' && data.code !== 0)) {
     throw new Error(data.message || `HTTP ${res.status}`)
   }

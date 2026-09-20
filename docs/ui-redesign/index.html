@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Healix · B 端 UI 改版样例导航</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --brand-500:#2C7EF8; --brand-600:#1E63D9; --brand-50:#EAF2FF; --brand-100:#D6E6FF;
+    --teal-500:#00B8A9; --teal-50:#E6FAF7;
+    --amber-500:#F59E0B; --amber-50:#FEF6E2;
+    --rose-500:#EF4444; --rose-50:#FEE9E7;
+    --violet-500:#8B5CF6; --violet-50:#F1ECFE;
+    --ink-900:#0F172A; --ink-800:#1E293B; --ink-700:#334155; --ink-500:#64748B;
+    --ink-400:#94A3B8; --ink-300:#CBD5E1; --ink-200:#E2E8F0; --ink-100:#F1F5F9; --ink-50:#F8FAFC;
+    --bg:#F5F7FB;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;color:var(--ink-800);background:linear-gradient(135deg,#0F172A 0%,#1E293B 100%);min-height:100vh;-webkit-font-smoothing:antialiased;}
+  a{color:inherit;text-decoration:none;}
+
+  .hero{padding:80px 48px 60px;text-align:center;color:#fff;position:relative;overflow:hidden;}
+  .hero::before{content:'';position:absolute;top:-100px;left:50%;transform:translateX(-50%);width:600px;height:600px;background:radial-gradient(circle,rgba(44,126,248,.25) 0%,transparent 70%);}
+  .hero h1{font-size:42px;font-weight:800;margin:0 0 14px;letter-spacing:-1px;position:relative;}
+  .hero h1 .grad{background:linear-gradient(90deg,#7BA9FB 0%,#00B8A9 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+  .hero p{font-size:15px;color:rgba(255,255,255,.7);max-width:600px;margin:0 auto 32px;line-height:1.7;position:relative;}
+  .hero-meta{display:inline-flex;align-items:center;gap:14px;padding:8px 16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:999px;font-size:12.5px;color:rgba(255,255,255,.85);position:relative;backdrop-filter:blur(10px);}
+  .hero-meta .dot{width:6px;height:6px;border-radius:50%;background:#10B981;box-shadow:0 0 0 4px rgba(16,185,129,.2);}
+
+  .container{max-width:1200px;margin:0 auto;padding:0 32px 80px;}
+
+  .section-title{font-size:14px;font-weight:600;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1.5px;margin:48px 0 20px;display:flex;align-items:center;gap:10px;}
+  .section-title::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(255,255,255,.1),transparent);}
+
+  /* Grid */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}
+  .card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;transition:280ms cubic-bezier(.4,0,.2,1);position:relative;}
+  .card:hover{transform:translateY(-4px);border-color:rgba(44,126,248,.5);background:rgba(255,255,255,.06);box-shadow:0 16px 40px -8px rgba(0,0,0,.4);}
+  .card-thumb{height:180px;background:linear-gradient(135deg,#1E293B 0%,#0F172A 100%);position:relative;overflow:hidden;border-bottom:1px solid rgba(255,255,255,.06);}
+  .card-thumb::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 30% 30%,rgba(44,126,248,.15) 0%,transparent 60%);}
+  .mini{display:flex;height:100%;}
+  .mini-side{width:60px;background:#0F172A;border-right:1px solid rgba(255,255,255,.05);}
+  .mini-side div{height:24px;margin:8px;background:rgba(255,255,255,.04);border-radius:4px;}
+  .mini-side div:nth-child(1){background:linear-gradient(90deg,rgba(44,126,248,.3),transparent);}
+  .mini-main{flex:1;padding:14px;display:flex;flex-direction:column;gap:8px;}
+  .mini-bar{height:8px;background:rgba(255,255,255,.06);border-radius:4px;}
+  .mini-bar.l{width:60%;}.mini-bar.m{width:40%;}.mini-bar.s{width:30%;background:rgba(44,126,248,.3);}
+  .mini-row{display:flex;gap:8px;}
+  .mini-row > div{flex:1;height:32px;background:rgba(255,255,255,.04);border-radius:6px;}
+
+  .card-thumb .badge{position:absolute;top:12px;right:12px;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;z-index:2;}
+  .badge.ai{background:linear-gradient(135deg,#8B5CF6,#2C7EF8);color:#fff;}
+  .badge.core{background:var(--rose-500);color:#fff;}
+  .badge.new{background:var(--teal-500);color:#fff;}
+
+  .card-body{padding:18px 20px 20px;color:#fff;}
+  .card-body h3{margin:0 0 6px;font-size:16px;font-weight:700;}
+  .card-body .path{font-size:11.5px;color:rgba(255,255,255,.4);font-family:Menlo,Monaco,monospace;margin-bottom:10px;}
+  .card-body p{margin:0 0 14px;font-size:13px;color:rgba(255,255,255,.65);line-height:1.6;}
+
+  .tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:4px;font-weight:600;background:rgba(255,255,255,.08);color:rgba(255,255,255,.75);}
+  .tag.ai{background:rgba(139,92,246,.2);color:#C4B5FD;}
+  .tag.brand{background:rgba(44,126,248,.2);color:#93C5FD;}
+  .tag.teal{background:rgba(0,184,169,.2);color:#5EEAD4;}
+
+  .open{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:12.5px;font-weight:600;transition:180ms;}
+  .open:hover{background:#2C7EF8;border-color:#2C7EF8;}
+  .open svg{width:13px;height:13px;}
+
+  /* Design system */
+  .design{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:32px;margin-top:60px;}
+  .design h2{margin:0 0 8px;font-size:20px;color:#fff;font-weight:700;}
+  .design .sub{color:rgba(255,255,255,.6);font-size:13px;margin-bottom:28px;}
+  .design-row{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;}
+  .design-card{background:rgba(0,0,0,.2);border-radius:12px;padding:20px;}
+  .design-card h4{margin:0 0 14px;font-size:13px;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;}
+  .design-card h4 .meta{font-size:11px;color:rgba(255,255,255,.5);font-weight:400;}
+  .swatch-row{display:flex;gap:8px;margin-bottom:14px;}
+  .swatch{flex:1;height:48px;border-radius:8px;display:flex;align-items:flex-end;padding:6px;font-size:10px;font-weight:600;color:#fff;}
+  .type-row{padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);color:#fff;display:flex;align-items:center;justify-content:space-between;}
+  .type-row:last-child{border:0;}
+  .type-row .name{color:rgba(255,255,255,.7);font-size:11px;font-family:Menlo,Monaco,monospace;}
+
+  footer{text-align:center;color:rgba(255,255,255,.4);font-size:12px;padding:40px 0;}
+  footer a{color:#7BA9FB;}
+
+  @media(max-width:960px){.grid{grid-template-columns:1fr;}.design-row{grid-template-columns:1fr;}.hero{padding:48px 24px 40px;}.hero h1{font-size:30px;}}
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <h1>Healix · <span class="grad">B 端 UI 改版方案</span></h1>
+  <p>现代化企业级 SaaS 设计语言 · 医疗行业专业感 · 信息密度合理 · 全组件库闭环 · 由 傻buddy 草拟</p>
+  <div class="hero-meta">
+    <span class="dot"></span>
+    v0.3 样例 · 共 10 个页面 · 1 套设计系统
+  </div>
+</section>
+
+<div class="container">
+
+  <div class="section-title">核心页面 · Workspace 入口</div>
+  <div class="grid">
+
+    <a href="workspace-cockpit.html" class="card">
+      <div class="card-thumb">
+        <span class="badge ai">AI</span>
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-bar l"></div>
+            <div class="mini-bar m"></div>
+            <div class="mini-row"><div></div><div></div></div>
+            <div class="mini-bar s"></div>
+            <div class="mini-bar m"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>智能驾驶舱</h3>
+        <div class="path">/workspace/cockpit</div>
+        <p>健管智能体三栏对话入口：左优先患者 · 中 AI Chat · 右患者焦点</p>
+        <div class="tags">
+          <span class="tag ai">AI Agent</span>
+          <span class="tag">三栏</span>
+          <span class="tag">SSE 流</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+    <a href="workspace-patients.html" class="card">
+      <div class="card-thumb">
+        <span class="badge core">核心</span>
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-row"><div></div><div></div><div></div><div></div></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>患者管理</h3>
+        <div class="path">/workspace/patients</div>
+        <p>列表 + 多维筛选 + 批量操作 + 5 项 KPI 概览</p>
+        <div class="tags">
+          <span class="tag brand">列表</span>
+          <span class="tag">筛选</span>
+          <span class="tag">批量操作</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+    <a href="patient-detail.html" class="card">
+      <div class="card-thumb">
+        <span class="badge core">核心</span>
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-row"><div></div><div></div><div></div><div></div><div></div><div></div></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-row"><div></div><div></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>患者详情 360</h3>
+        <div class="path">/workspace/patients/:id</div>
+        <p>Hero 患者档案 + 6 KPI + 8 Tab + 血压趋势图 + 病史 + 用药 + 方案</p>
+        <div class="tags">
+          <span class="tag">8 Tab</span>
+          <span class="tag">Hero</span>
+          <span class="tag">ECharts</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+  </div>
+
+  <div class="section-title">高频任务 · 日常作业</div>
+  <div class="grid">
+
+    <a href="workspace-tasks.html" class="card">
+      <div class="card-thumb">
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-row"><div></div><div></div><div></div><div></div></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>工作台任务</h3>
+        <div class="path">/workspace/tasks</div>
+        <p>4 池 KPI（公共/我的/今日/全部） + 12 列任务表 + 详情分发</p>
+        <div class="tags">
+          <span class="tag">任务池</span>
+          <span class="tag brand">状态</span>
+          <span class="tag">分发</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+    <a href="workspace-adherence.html" class="card">
+      <div class="card-thumb">
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-row"><div></div><div></div><div></div><div></div></div>
+            <div class="mini-row"><div></div><div></div></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>依从性看板</h3>
+        <div class="path">/workspace/adherence</div>
+        <p>4 KPI（连续打卡/方案/用药/待跟进）+ 14 天趋势图 + 待跟进名单</p>
+        <div class="tags">
+          <span class="tag teal">趋势图</span>
+          <span class="tag">名单</span>
+          <span class="tag">催办</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+    <a href="workspace-care-teams.html" class="card">
+      <div class="card-thumb">
+        <span class="badge new">协作</span>
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-row"><div></div><div></div><div></div></div>
+            <div class="mini-row"><div></div><div></div><div></div></div>
+            <div class="mini-bar l"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>健管组</h3>
+        <div class="path">/workspace/care-teams</div>
+        <p>4 项概览 + 6 个健管组卡片 · 主责医生 + 团队头像 + 依从率</p>
+        <div class="tags">
+          <span class="tag">卡片</span>
+          <span class="tag">团队</span>
+          <span class="tag teal">评分</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+  </div>
+
+  <div class="section-title">患者 360 子页详情</div>
+  <div class="grid">
+
+    <a href="patient-care-plan.html" class="card">
+      <div class="card-thumb">
+        <span class="badge ai">AI 联动</span>
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-row"><div></div><div></div><div></div><div></div></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar m"></div>
+            <div class="mini-bar l"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>健康方案编辑</h3>
+        <div class="path">/workspace/patients/:id/care-plan</div>
+        <p>方案元信息 + 4 健康目标 + 5 用药 + 生活方式 + 随访 + AI 草稿待确认 + 协作时间线</p>
+        <div class="tags">
+          <span class="tag ai">AI 草稿</span>
+          <span class="tag brand">方案</span>
+          <span class="tag teal">协作</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+    <a href="patient-observations.html" class="card">
+      <div class="card-thumb">
+        <div class="mini">
+          <div class="mini-side"><div></div><div></div><div></div><div></div></div>
+          <div class="mini-main">
+            <div class="mini-row"><div></div><div></div><div></div><div></div></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar l"></div>
+            <div class="mini-bar m"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>观测数据（4 子页）</h3>
+        <div class="path">/workspace/patients/:id/observations</div>
+        <p>4 子 Tab · 指标录入 / 趋势图（4 图表） / 化验报告（带 AI 解读） / 检查记录</p>
+        <div class="tags">
+          <span class="tag">4 子页</span>
+          <span class="tag brand">ECharts</span>
+          <span class="tag ai">AI 解读</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+  </div>
+
+  <div class="section-title">登录与品牌门面</div>
+  <div class="grid">
+
+    <a href="login.html" class="card">
+      <div class="card-thumb" style="background:linear-gradient(135deg,#0F172A 0%,#1E3A8A 100%);">
+        <span class="badge new">v0.2 新增</span>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:14px;color:rgba(255,255,255,.85);font-size:13px;z-index:2">
+          <div style="width:64px;height:64px;border-radius:14px;background:linear-gradient(135deg,#1E3A8A,#3B82F6);display:grid;place-items:center;font-weight:700">Ops</div>
+          <div style="width:64px;height:64px;border-radius:14px;background:linear-gradient(135deg,#8B5CF6,#A78BFA);display:grid;place-items:center;font-weight:700">租户</div>
+          <div style="width:64px;height:64px;border-radius:14px;background:linear-gradient(135deg,#00B8A9,#2DD4BF);display:grid;place-items:center;font-weight:700">工作台</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>登录入口选择</h3>
+        <div class="path">/login</div>
+        <p>左品牌区（医疗渐变 + 实时数据 + 圆点脉冲）+ 右三入口卡片（Ops / 租户 / 工作台）</p>
+        <div class="tags">
+          <span class="tag brand">品牌门面</span>
+          <span class="tag teal">三入口</span>
+          <span class="tag">营销</span>
+        </div>
+        <span class="open">查看页面 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>
+      </div>
+    </a>
+
+  </div>
+
+  <div class="design">
+    <h2>🎨 设计系统 · Design Tokens</h2>
+    <p class="sub">本套改版使用的核心色板与字体规格</p>
+
+    <div class="design-row">
+      <div class="design-card">
+        <h4>主色板 <span class="meta">Brand · Accent · Risk</span></h4>
+        <div class="swatch-row">
+          <div class="swatch" style="background:#2C7EF8;">#2C7EF8<br>brand</div>
+          <div class="swatch" style="background:#00B8A9;">#00B8A9<br>teal</div>
+          <div class="swatch" style="background:#F59E0B;">#F59E0B<br>amber</div>
+          <div class="swatch" style="background:#EF4444;">#EF4444<br>rose</div>
+          <div class="swatch" style="background:#8B5CF6;">#8B5CF6<br>violet</div>
+        </div>
+        <h4 style="margin-top:18px;">中性色 <span class="meta">ink-50 → ink-900</span></h4>
+        <div class="swatch-row">
+          <div class="swatch" style="background:#0F172A;color:#fff;">#0F172A</div>
+          <div class="swatch" style="background:#1E293B;color:#fff;">#1E293B</div>
+          <div class="swatch" style="background:#475569;color:#fff;">#475569</div>
+          <div class="swatch" style="background:#94A3B8;">#94A3B8</div>
+          <div class="swatch" style="background:#E2E8F0;color:#1E293B;">#E2E8F0</div>
+          <div class="swatch" style="background:#F5F7FB;color:#1E293B;">#F5F7FB</div>
+        </div>
+      </div>
+
+      <div class="design-card">
+        <h4>字号规格 <span class="meta">Inter 14px base</span></h4>
+        <div class="type-row">
+          <span style="font-size:22px;font-weight:700;">H1 · 22 / 700</span>
+          <span class="name">page title</span>
+        </div>
+        <div class="type-row">
+          <span style="font-size:16px;font-weight:600;">H2 · 16 / 600</span>
+          <span class="name">card title</span>
+        </div>
+        <div class="type-row">
+          <span style="font-size:14px;font-weight:500;">Body · 14 / 500</span>
+          <span class="name">default</span>
+        </div>
+        <div class="type-row">
+          <span style="font-size:12.5px;color:#94A3B8;">Meta · 12.5 / 400</span>
+          <span class="name">sub text</span>
+        </div>
+        <div class="type-row">
+          <span style="font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:.8px;">LABEL · 11 / 600</span>
+          <span class="name">table head</span>
+        </div>
+
+        <h4 style="margin-top:18px;">圆角 & 阴影</h4>
+        <div style="display:flex;gap:12px;margin-top:8px;">
+          <div style="flex:1;height:48px;background:#fff;border-radius:8px;display:grid;place-items:center;font-size:11px;color:#64748B;">8px</div>
+          <div style="flex:1;height:48px;background:#fff;border-radius:12px;display:grid;place-items:center;font-size:11px;color:#64748B;">12px</div>
+          <div style="flex:1;height:48px;background:#fff;border-radius:16px;display:grid;place-items:center;font-size:11px;color:#64748B;box-shadow:0 4px 12px rgba(15,23,42,.12);">16px</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Healix UI 改版方案 · v0.2 · 由 傻buddy 草拟 ·
+    <a href="workspace-cockpit.html">从驾驶舱开始看 →</a>
+  </footer>
+
+</div>
+
+</body>
+</html>

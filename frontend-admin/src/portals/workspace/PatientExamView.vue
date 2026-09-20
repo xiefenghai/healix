@@ -15,6 +15,11 @@ import {
   optionLabel,
 } from '../../shared/exam-panels'
 import { formatHealthDataSource } from '../../shared/health-data-source'
+import {
+  clearExamOcrDraft,
+  loadExamOcrDraft,
+  type ExamOcrDraft,
+} from '../../shared/exam-ocr'
 
 interface DictItem {
   dictCode: string
@@ -44,8 +49,9 @@ interface ExamOcrResult {
   warnings?: string[]
 }
 
+const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
 const saving = ref(false)
@@ -317,6 +323,9 @@ async function onOcrFileChange(e: Event) {
       `/api/b/v1/patients/${peopleId.value}/exam-reports/ocr`,
       file,
     )
+    if (mode.value !== 'edit') {
+      openCreate()
+    }
     applyOcr(res.data)
     ElMessage.success('识别完成，请核对后保存')
   } catch (err) {
@@ -324,6 +333,18 @@ async function onOcrFileChange(e: Event) {
   } finally {
     ocrLoading.value = false
   }
+}
+
+function tryOpenOcrDraft() {
+  if (route.query.ocr !== '1') return
+  const draft = loadExamOcrDraft() as ExamOcrDraft | null
+  if (!draft) return
+  const hasFindings = draft.findings && Object.keys(draft.findings).length > 0
+  if (!draft.examType && !draft.conclusion && !hasFindings) return
+  openCreate()
+  applyOcr(draft)
+  clearExamOcrDraft()
+  ElMessage.success('已载入对话识别结果，请核对后保存')
 }
 
 function openEdit(row: ExamReport) {
@@ -430,7 +451,15 @@ onMounted(async () => {
   await loadDict()
   initQuickEntry()
   await loadList()
+  tryOpenOcrDraft()
 })
+
+watch(
+  () => route.query.ocr,
+  (v) => {
+    if (v === '1') tryOpenOcrDraft()
+  },
+)
 </script>
 
 <template>

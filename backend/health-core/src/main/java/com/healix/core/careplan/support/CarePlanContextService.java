@@ -17,6 +17,7 @@ import com.healix.core.observation.mapper.LabReportMapper;
 import com.healix.core.observation.mapper.LabResultItemMapper;
 import com.healix.core.people.domain.PeopleBasicArchive;
 import com.healix.core.people.mapper.PeopleBasicArchiveMapper;
+import com.healix.core.people.support.DiseaseCodeLabels;
 import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
 import java.time.LocalDate;
@@ -93,11 +94,20 @@ public class CarePlanContextService {
         trace(tracer, "PeopleDiseaseArchive", "running", "读取病种专病档案");
         List<PeopleDiseaseArchive> diseaseArchives = diseaseArchiveMapper.listByTenantAndPeople(tenantId, peopleId);
         ArrayNode diseaseSnap = snapshot.putArray("diseaseArchives");
+        ArrayNode diseaseLabelSnap = snapshot.putArray("diseaseLabels");
+        Set<String> labeled = new LinkedHashSet<>();
         if (diseaseArchives != null) {
             for (PeopleDiseaseArchive a : diseaseArchives) {
                 if (a.getDiseaseCode() != null) {
-                    diseases.add(a.getDiseaseCode().toUpperCase(Locale.ROOT));
-                    diseaseSnap.add(a.getDiseaseCode());
+                    String code = a.getDiseaseCode();
+                    diseases.add(code.toUpperCase(Locale.ROOT));
+                    ObjectNode row = diseaseSnap.addObject();
+                    row.put("code", code);
+                    String label = DiseaseCodeLabels.label(code);
+                    row.put("label", label);
+                    if (labeled.add(label)) {
+                        diseaseLabelSnap.add(label);
+                    }
                 }
                 if ("diabetes".equalsIgnoreCase(a.getDiseaseCode()) && StringUtils.hasText(a.getContentJson())) {
                     JsonNode c = JsonUtils.readTree(a.getContentJson());
@@ -116,7 +126,18 @@ public class CarePlanContextService {
                 }
             }
         }
-        trace(tracer, "PeopleDiseaseArchive", "done", diseases.isEmpty() ? "无病种记录" : "病种: " + String.join(", ", diseases));
+        // 现病史里的英文 code 也转成中文标签，避免 Agent 原文复述
+        for (String raw : new ArrayList<>(diseases)) {
+            String label = DiseaseCodeLabels.label(raw);
+            if (StringUtils.hasText(label) && labeled.add(label)) {
+                diseaseLabelSnap.add(label);
+            }
+        }
+        trace(
+                tracer,
+                "PeopleDiseaseArchive",
+                "done",
+                labeled.isEmpty() ? "无病种记录" : "病种: " + String.join("、", labeled));
 
         trace(tracer, "peopleAllergens", "running", "读取过敏原");
         List<String> allergens = identityService.peopleAllergens(peopleId);

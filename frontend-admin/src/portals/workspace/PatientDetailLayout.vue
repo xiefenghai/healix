@@ -56,6 +56,28 @@ interface AdherenceSummary {
   medPercent?: number | null
 }
 
+interface AssessmentSnapshot {
+  engineCode: string
+  level?: string
+  levelLabel?: string
+  status?: string
+  advice?: string
+  assessedAt?: string
+}
+
+interface AssessmentOverview {
+  latest?: AssessmentSnapshot[]
+  availableEngines?: { engineCode: string }[]
+}
+
+const RISK_ENGINES = [
+  { code: 'CDRS', short: '糖', title: '糖尿病' },
+  { code: 'HYPERTENSION_RISK', short: '压', title: '高血压' },
+  { code: 'OBESITY_SCREEN', short: '胖', title: '肥胖' },
+] as const
+
+const CONTROL_ENGINE_CODE = 'DIABETES_CONTROL_LABEL'
+
 const route = useRoute()
 const router = useRouter()
 const peopleId = computed(() => String(route.params.peopleId || ''))
@@ -63,6 +85,7 @@ const patient = ref<OrgPatientListItem | null>(null)
 const latestInvite = ref<InviteView | null>(null)
 const completeness = ref<ArchiveCompleteness | null>(null)
 const adherence = ref<AdherenceSummary | null>(null)
+const assessmentOverview = ref<AssessmentOverview | null>(null)
 const issuing = ref(false)
 const basicInfoEditorRef = ref<{ openEdit: () => void } | null>(null)
 const revealMobile = ref(false)
@@ -77,7 +100,6 @@ const activeTab = computed(() => {
   if (path.includes('/followups')) return 'followups'
   if (path.includes('/health-reports')) return 'health-reports'
   if (path.includes('/assessments')) return 'assessments'
-  if (path.includes('/chat')) return 'chat'
   return 'archive'
 })
 
@@ -172,6 +194,122 @@ const completenessHint = computed(() => {
   return `已填 ${completeness.value.filledCount}/${completeness.value.totalCount}`
 })
 
+function assessmentSeverity(level?: string, status?: string): number {
+  if (!level || status === 'INCOMPLETE') return 0
+  if (
+    level === 'HIGH'
+    || level === 'GRADE_3'
+    || level === 'GRADE_2'
+    || level.includes('SEVERE')
+    || level === 'EXTREME_OBESITY'
+  ) {
+    return 3
+  }
+  if (
+    level === 'MID'
+    || level === 'GRADE_1'
+    || level === 'PREHYPERTENSION'
+    || level === 'OVERWEIGHT'
+    || level === 'MILD_OBESITY'
+    || level === 'MODERATE_OBESITY'
+  ) {
+    return 2
+  }
+  return 1
+}
+
+const assessmentItems = computed(() => {
+  const latest = assessmentOverview.value?.latest || []
+  const byCode = new Map(latest.map((row) => [row.engineCode, row]))
+  const available = new Set(
+    (assessmentOverview.value?.availableEngines || []).map((e) => e.engineCode),
+  )
+  return RISK_ENGINES.map((meta) => {
+    const snap = byCode.get(meta.code)
+    const severity = assessmentSeverity(snap?.level, snap?.status)
+    let label = '未评'
+    if (snap?.status === 'INCOMPLETE') label = '缺项'
+    else if (snap?.levelLabel) label = snap.levelLabel
+    else if (snap?.level) label = snap.level
+    else if (!available.has(meta.code) && assessmentOverview.value) label = '不适用'
+    return {
+      ...meta,
+      label,
+      severity,
+      hasResult: Boolean(snap && snap.status !== 'INCOMPLETE' && snap.level),
+    }
+  })
+})
+
+const controlLabelSnap = computed(() => {
+  const rows = assessmentOverview.value?.latest || []
+  return rows.find((r) => r.engineCode === CONTROL_ENGINE_CODE) || null
+})
+
+const showControlLabel = computed(() => {
+  const engines = assessmentOverview.value?.availableEngines || []
+  return Boolean(controlLabelSnap.value || engines.some((e) => e.engineCode === CONTROL_ENGINE_CODE))
+})
+
+/** 参考「评估标签」行：分标 + 发病风险，一眼可扫 */
+const evalTags = computed(() => {
+  const tags: Array<{
+    key: string
+    text: string
+    tone: 'danger' | 'warning' | 'success' | 'info' | 'muted'
+    title: string
+  }> = []
+
+  if (showControlLabel.value) {
+    const snap = controlLabelSnap.value
+    const level = snap?.level
+    let tone: 'danger' | 'warning' | 'success' | 'info' | 'muted' = 'muted'
+    if (level === 'RED') tone = 'danger'
+    else if (level === 'YELLOW') tone = 'warning'
+    else if (level === 'GREEN' || level === 'NEAR_GREEN') tone = 'success'
+    else if (level === 'NONE') tone = 'info'
+    const label = !snap
+      ? '未评估'
+      : snap.level === 'NONE'
+        ? '未分标'
+        : snap.levelLabel || snap.level || '未评估'
+    tags.push({
+      key: CONTROL_ENGINE_CODE,
+      text: `血糖${label}`,
+      tone,
+      title: snap?.advice || '血糖控制分标',
+    })
+  }
+
+  for (const item of assessmentItems.value) {
+    if (item.label === '不适用') continue
+    let tone: 'danger' | 'warning' | 'success' | 'info' | 'muted' = 'muted'
+    if (item.severity >= 3) tone = 'danger'
+    else if (item.severity === 2) tone = 'warning'
+    else if (item.severity === 1) tone = 'success'
+    else if (item.label === '缺项' || item.label === '未评') tone = 'muted'
+
+    let text: string
+    if (item.code === 'CDRS') {
+      text = item.hasResult || item.label === '缺项' ? `糖尿病${item.label}` : '糖尿病未评估'
+    } else if (item.code === 'HYPERTENSION_RISK') {
+      text = item.hasResult || item.label === '缺项' ? item.label : '高血压未评估'
+    } else {
+      text = item.hasResult || item.label === '缺项' ? item.label : '肥胖未评估'
+    }
+
+    tags.push({
+      key: item.code,
+      text,
+      tone,
+      title: item.title,
+    })
+  }
+  return tags
+})
+
+const evalTagsAlert = computed(() => evalTags.value.some((t) => t.tone === 'danger'))
+
 const heroMeta = computed(() => {
   const parts: string[] = []
   if (patientAge.value && patientAge.value !== '-') parts.push(patientAge.value)
@@ -215,6 +353,22 @@ async function loadAdherenceSummary() {
   } catch {
     adherence.value = null
   }
+}
+
+async function loadAssessmentSummary() {
+  if (!peopleId.value) return
+  try {
+    const res = await api<{ data: AssessmentOverview }>(
+      `/api/b/v1/patients/${peopleId.value}/assessments`,
+    )
+    assessmentOverview.value = res.data
+  } catch {
+    assessmentOverview.value = null
+  }
+}
+
+function goAssessments() {
+  switchTab('assessments')
 }
 
 async function loadInvites() {
@@ -302,8 +456,6 @@ function switchTab(name: string | number) {
     router.push({ path: `${base}/health-reports`, query })
   } else if (name === 'assessments') {
     router.push({ path: `${base}/assessments`, query })
-  } else if (name === 'chat') {
-    router.push({ path: `${base}/chat`, query })
   } else {
     router.push({ path: `${base}/archive`, query })
   }
@@ -314,10 +466,16 @@ watch(
   async () => {
     await loadPatient()
     await loadInvites()
-    await Promise.all([loadCompleteness(), loadAdherenceSummary()])
+    await Promise.all([loadCompleteness(), loadAdherenceSummary(), loadAssessmentSummary()])
   },
   { immediate: false },
 )
+
+watch(activeTab, (tab, prev) => {
+  if (prev === 'assessments' && tab !== 'assessments') {
+    void loadAssessmentSummary()
+  }
+})
 
 onMounted(async () => {
   setArchiveCompletenessRefresh(() => {
@@ -325,7 +483,7 @@ onMounted(async () => {
   })
   await loadPatient()
   await loadInvites()
-  await Promise.all([loadCompleteness(), loadAdherenceSummary()])
+  await Promise.all([loadCompleteness(), loadAdherenceSummary(), loadAssessmentSummary()])
 })
 
 onBeforeUnmount(() => {
@@ -383,6 +541,27 @@ onBeforeUnmount(() => {
             >
               档案完整度 {{ completenessPercent }}%
             </span>
+          </div>
+
+          <div v-if="evalTags.length" class="eval-row">
+            <div class="eval-label" :class="{ alert: evalTagsAlert }">
+              <span v-if="evalTagsAlert" class="eval-dot" aria-hidden="true" />
+              评估标签
+            </div>
+            <div class="eval-tags">
+              <button
+                v-for="tag in evalTags"
+                :key="tag.key"
+                type="button"
+                class="eval-tag"
+                :class="tag.tone"
+                :title="tag.title"
+                @click="goAssessments"
+              >
+                {{ tag.text }}
+                <span class="eval-q" aria-hidden="true">?</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -457,15 +636,14 @@ onBeforeUnmount(() => {
         :before-leave="onPatientTabBeforeLeave"
         @tab-change="switchTab"
       >
-        <el-tab-pane label="档案" name="archive" />
+        <el-tab-pane label="健康档案" name="archive" />
         <el-tab-pane label="健康数据" name="observations" />
         <el-tab-pane label="健康方案" name="care-plan" />
-        <el-tab-pane label="用药" name="medications" />
+        <el-tab-pane label="用药管理" name="medications" />
         <el-tab-pane label="疾病评估" name="assessments" />
-        <el-tab-pane label="随访" name="followups" />
-        <el-tab-pane label="沟通" name="chat" />
+        <el-tab-pane label="随访管理" name="followups" />
         <el-tab-pane label="健康报告" name="health-reports" />
-        <el-tab-pane label="依从性" name="adherence" />
+        <el-tab-pane label="依从性分析" name="adherence" />
         <el-tab-pane label="修订审计" name="revisions" />
       </el-tabs>
     </div>
@@ -538,7 +716,7 @@ onBeforeUnmount(() => {
 .hero-row {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 20px;
   margin-bottom: 20px;
 }
@@ -633,6 +811,111 @@ onBeforeUnmount(() => {
 .tag.muted {
   background: var(--ink-100);
   color: var(--ink-500);
+}
+
+.eval-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.eval-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 64px;
+  padding-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-500);
+  line-height: 1.4;
+}
+
+.eval-label.alert {
+  color: #b91c1c;
+}
+
+.eval-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  flex-shrink: 0;
+}
+
+.eval-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.eval-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 4px;
+  border: 1px solid var(--ink-200);
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-600);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.eval-tag:hover {
+  filter: brightness(0.98);
+}
+
+.eval-q {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.eval-tag.danger {
+  color: #dc2626;
+  border-color: #fca5a5;
+  background: #fff5f5;
+}
+
+.eval-tag.warning {
+  color: #c2410c;
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.eval-tag.success {
+  color: #047857;
+  border-color: #6ee7b7;
+  background: #ecfdf5;
+}
+
+.eval-tag.info {
+  color: #2563eb;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.eval-tag.muted {
+  color: var(--ink-500);
+  border-color: var(--ink-200);
+  background: #f8fafc;
 }
 
 .hero-actions {

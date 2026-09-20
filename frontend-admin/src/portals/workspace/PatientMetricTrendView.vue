@@ -36,8 +36,9 @@ interface Metric {
 
 type RangeKey = '30' | '90' | '180' | '365'
 
+const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
 const rangeDays = ref<RangeKey>('90')

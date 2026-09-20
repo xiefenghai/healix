@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Healix · 健管智能体驾驶舱</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --brand-50:#EAF2FF; --brand-100:#D6E6FF; --brand-300:#7BA9FB;
+    --brand-500:#2C7EF8; --brand-600:#1E63D9; --brand-700:#174DB0;
+    --teal-500:#00B8A9; --teal-50:#E6FAF7;
+    --amber-500:#F59E0B; --amber-50:#FEF6E2;
+    --rose-500:#EF4444; --rose-50:#FEE9E7;
+    --violet-500:#8B5CF6; --violet-50:#F1ECFE;
+    --ink-900:#0F172A; --ink-800:#1E293B; --ink-700:#334155;
+    --ink-500:#64748B; --ink-400:#94A3B8; --ink-300:#CBD5E1;
+    --ink-200:#E2E8F0; --ink-100:#F1F5F9; --ink-50:#F8FAFC;
+    --bg:#F5F7FB; --surface:#FFFFFF;
+    --sidebar:#0F172A; --sidebar-text:#94A3B8;
+    --radius:12px; --radius-sm:8px;
+    --shadow-sm:0 1px 2px rgba(15,23,42,.04);
+    --shadow:0 1px 3px rgba(15,23,42,.06), 0 8px 24px -8px rgba(15,23,42,.08);
+    --transition:180ms cubic-bezier(.4,0,.2,1);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;color:var(--ink-800);background:var(--bg);-webkit-font-smoothing:antialiased;}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;}
+  a{color:inherit;text-decoration:none;}
+
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh;}
+
+  /* ========== Sidebar ========== */
+  .sidebar{background:linear-gradient(180deg,#0F172A 0%,#131C30 100%);color:var(--sidebar-text);padding:20px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;border-right:1px solid rgba(255,255,255,.04);}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 22px;color:#fff;}
+  .brand-logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2C7EF8 0%,#00B8A9 100%);display:grid;place-items:center;box-shadow:0 6px 16px -4px rgba(44,126,248,.6);}
+  .brand-logo svg{width:22px;height:22px;}
+  .brand-name{font-weight:700;font-size:16px;}
+  .brand-name small{display:block;font-weight:500;font-size:11px;color:var(--ink-400);letter-spacing:.6px;margin-top:2px;}
+  .nav-section{margin-top:14px;}
+  .nav-title{font-size:11px;font-weight:600;letter-spacing:1.2px;color:var(--ink-500);text-transform:uppercase;padding:12px 12px 8px;}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:var(--radius-sm);color:var(--sidebar-text);font-size:13.5px;font-weight:500;transition:var(--transition);margin-bottom:2px;cursor:pointer;position:relative;}
+  .nav-item:hover{background:rgba(255,255,255,.05);color:#fff;}
+  .nav-item.active{background:linear-gradient(90deg,rgba(44,126,248,.18) 0%,rgba(44,126,248,.04) 100%);color:#fff;}
+  .nav-item.active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;background:var(--brand-500);border-radius:0 3px 3px 0;}
+  .nav-item svg{width:18px;height:18px;flex-shrink:0;opacity:.85;}
+  .nav-item.active svg{opacity:1;}
+  .nav-badge{margin-left:auto;font-size:11px;background:var(--rose-500);color:#fff;padding:2px 7px;border-radius:999px;font-weight:600;}
+  .nav-badge.muted{background:rgba(255,255,255,.1);color:var(--ink-300);}
+
+  /* ========== Main ========== */
+  .main{display:flex;flex-direction:column;min-width:0;min-height:100vh;}
+
+  /* Topbar */
+  .topbar{height:60px;background:var(--surface);border-bottom:1px solid var(--ink-200);display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:10;}
+  .crumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-500);}
+  .crumbs strong{color:var(--ink-800);font-weight:600;}
+  .crumbs svg{width:14px;height:14px;opacity:.5;}
+  .search{flex:1;max-width:380px;position:relative;}
+  .search input{width:100%;height:36px;padding:0 14px 0 36px;border-radius:var(--radius-sm);border:1px solid var(--ink-200);background:var(--ink-50);font-size:13px;transition:var(--transition);}
+  .search input:focus{outline:none;background:#fff;border-color:var(--brand-500);box-shadow:0 0 0 3px rgba(44,126,248,.12);}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--ink-400);}
+  .topbar-right{display:flex;align-items:center;gap:6px;margin-left:auto;}
+  .icon-btn{width:36px;height:36px;border-radius:var(--radius-sm);display:grid;place-items:center;color:var(--ink-500);transition:var(--transition);}
+  .icon-btn:hover{background:var(--ink-100);color:var(--ink-800);}
+  .icon-btn svg{width:18px;height:18px;}
+  .icon-btn .dot{position:absolute;width:7px;height:7px;border-radius:50%;background:var(--rose-500);box-shadow:0 0 0 2px #fff;margin-left:10px;margin-top:-10px;}
+  .org-switch{display:flex;align-items:center;gap:10px;padding:3px 10px 3px 3px;border-radius:999px;background:var(--ink-50);border:1px solid var(--ink-200);margin:0 8px;cursor:pointer;transition:var(--transition);}
+  .org-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#EF4444);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600;}
+  .org-meta{line-height:1.2;}
+  .org-meta .name{font-size:13px;font-weight:600;color:var(--ink-800);}
+  .org-meta .role{font-size:11px;color:var(--ink-500);}
+  .user-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#2C7EF8);display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;}
+
+  /* ========== Cockpit 3-column ========== */
+  .cockpit{display:grid;grid-template-columns:300px 1fr 340px;gap:16px;padding:16px 24px;flex:1;min-height:0;background:var(--bg);}
+  .col{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--ink-200);border-radius:var(--radius);min-height:0;overflow:hidden;}
+
+  /* Column header */
+  .col-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--ink-100);flex-shrink:0;}
+  .col-head h3{margin:0;font-size:14px;font-weight:600;color:var(--ink-800);}
+  .col-head .sub{margin:2px 0 0;font-size:11.5px;color:var(--ink-500);}
+  .col-actions{display:flex;gap:4px;}
+  .col-actions button{width:28px;height:28px;border-radius:6px;color:var(--ink-500);display:grid;place-items:center;transition:var(--transition);}
+  .col-actions button:hover{background:var(--ink-100);color:var(--ink-800);}
+  .col-actions svg{width:15px;height:15px;}
+
+  /* ========== LEFT: Priority patients ========== */
+  .priority-tabs{display:flex;padding:6px;margin:10px 12px 0;background:var(--ink-100);border-radius:8px;gap:2px;}
+  .priority-tabs button{flex:1;padding:6px 8px;font-size:12px;border-radius:6px;color:var(--ink-500);font-weight:500;}
+  .priority-tabs button.active{background:#fff;color:var(--ink-800);box-shadow:0 1px 2px rgba(15,23,42,.06);}
+  .priority-tabs .count{display:inline-block;background:var(--rose-500);color:#fff;font-size:10px;padding:0 5px;border-radius:8px;margin-left:3px;font-weight:600;}
+  .priority-tabs button.active .count{background:var(--rose-500);}
+  .priority-tabs button:not(.active) .count{background:var(--ink-300);color:#fff;}
+
+  .priority-list{flex:1;overflow-y:auto;padding:10px 12px 14px;}
+  .priority-list::-webkit-scrollbar{width:6px;}
+  .priority-list::-webkit-scrollbar-thumb{background:var(--ink-200);border-radius:3px;}
+
+  .pcard{background:var(--surface);border:1px solid var(--ink-200);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:var(--transition);position:relative;}
+  .pcard:hover{border-color:var(--brand-300);box-shadow:var(--shadow-sm);transform:translateY(-1px);}
+  .pcard.focused{border-color:var(--brand-500);background:var(--brand-50);}
+  .pcard.focused::before{content:'';position:absolute;left:-1px;top:12px;bottom:12px;width:3px;background:var(--brand-500);border-radius:0 3px 3px 0;}
+  .pcard-top{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .pcard-avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600;flex-shrink:0;}
+  .pcard-name{font-size:13px;font-weight:600;color:var(--ink-800);flex:1;min-width:0;}
+  .pcard-tags{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;}
+  .risk-badge{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;padding:2px 7px;border-radius:4px;font-weight:600;}
+  .risk-badge.high{background:var(--rose-50);color:var(--rose-500);}
+  .risk-badge.mid{background:var(--amber-50);color:#B45309;}
+  .risk-badge.low{background:var(--brand-50);color:var(--brand-600);}
+  .risk-badge .dot{width:5px;height:5px;border-radius:50%;background:currentColor;}
+  .ai-draft{background:linear-gradient(90deg,var(--violet-50),var(--brand-50));color:var(--violet-500);font-size:10.5px;padding:2px 7px;border-radius:4px;font-weight:600;display:inline-flex;align-items:center;gap:3px;}
+  .ai-draft svg{width:10px;height:10px;}
+  .pcard-meta{font-size:11.5px;color:var(--ink-500);line-height:1.5;}
+  .pcard-meta b{color:var(--ink-800);font-weight:600;}
+  .pcard-progress{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--ink-500);}
+  .pcard-progress .bar{flex:1;height:4px;background:var(--ink-100);border-radius:2px;overflow:hidden;}
+  .pcard-progress .fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--brand-500),var(--teal-500));}
+  .pcard-progress .pct{font-weight:600;color:var(--ink-800);min-width:32px;text-align:right;}
+
+  /* ========== CENTER: AI Chat ========== */
+  .chat-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--ink-100);}
+  .ai-avatar{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--violet-500),var(--brand-500));display:grid;place-items:center;color:#fff;position:relative;}
+  .ai-avatar svg{width:20px;height:20px;}
+  .ai-avatar::after{content:'';position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;background:#10B981;border:2px solid #fff;border-radius:50%;}
+  .ai-info{flex:1;}
+  .ai-info .name{font-size:14px;font-weight:600;color:var(--ink-800);display:flex;align-items:center;gap:6px;}
+  .ai-info .name .badge{font-size:10px;background:linear-gradient(90deg,var(--violet-500),var(--brand-500));color:#fff;padding:1px 6px;border-radius:4px;font-weight:600;}
+  .ai-info .desc{font-size:11.5px;color:var(--ink-500);margin-top:1px;}
+  .ai-info .desc .pulse{display:inline-block;width:6px;height:6px;background:#10B981;border-radius:50%;margin-right:4px;animation:pulse 2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+
+  .briefing{padding:14px 18px;background:linear-gradient(180deg,var(--violet-50) 0%,transparent 100%);border-bottom:1px solid var(--ink-100);}
+  .briefing-label{font-size:11px;font-weight:600;color:var(--violet-500);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;display:flex;align-items:center;gap:4px;}
+  .briefing-label svg{width:12px;height:12px;}
+  .briefing-text{font-size:13px;color:var(--ink-700);line-height:1.65;}
+  .briefing-text b{color:var(--ink-900);}
+
+  .messages{flex:1;overflow-y:auto;padding:20px 18px 16px;display:flex;flex-direction:column;gap:16px;background:linear-gradient(180deg,#FBFCFE 0%,var(--surface) 100%);}
+  .messages::-webkit-scrollbar{width:6px;}
+  .messages::-webkit-scrollbar-thumb{background:var(--ink-200);border-radius:3px;}
+
+  .msg{display:flex;gap:10px;max-width:90%;animation:fadeIn .3s ease;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+  .msg.user{margin-left:auto;flex-direction:row-reverse;}
+  .msg-avatar{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:#fff;flex-shrink:0;}
+  .msg.user .msg-avatar{background:linear-gradient(135deg,#8B5CF6,#2C7EF8);}
+  .msg.ai .msg-avatar{background:linear-gradient(135deg,var(--violet-500),var(--brand-500));}
+  .msg-bubble{padding:10px 14px;border-radius:12px;font-size:13.5px;line-height:1.65;word-break:break-word;}
+  .msg.user .msg-bubble{background:var(--brand-500);color:#fff;border-bottom-right-radius:4px;}
+  .msg.ai .msg-bubble{background:var(--ink-100);color:var(--ink-800);border-bottom-left-radius:4px;}
+  .msg.ai .msg-bubble p{margin:0 0 8px;}
+  .msg.ai .msg-bubble p:last-child{margin-bottom:0;}
+  .msg.ai .msg-bubble code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:3px;font-family:'Menlo','Monaco',monospace;font-size:12px;}
+  .msg.ai .msg-bubble ul,.msg.ai .msg-bubble ol{margin:6px 0;padding-left:20px;}
+  .msg.ai .msg-bubble li{margin-bottom:3px;}
+  .msg-meta{font-size:10.5px;color:var(--ink-400);margin-top:4px;}
+
+  .action-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+  .chip{padding:6px 12px;background:var(--surface);border:1px solid var(--ink-200);border-radius:999px;font-size:12px;font-weight:500;color:var(--ink-700);transition:var(--transition);display:inline-flex;align-items:center;gap:5px;}
+  .chip:hover{border-color:var(--brand-500);color:var(--brand-600);background:var(--brand-50);}
+  .chip svg{width:12px;height:12px;}
+  .chip.primary{background:var(--brand-500);color:#fff;border-color:var(--brand-500);}
+  .chip.primary:hover{background:var(--brand-600);color:#fff;}
+
+  .typing{display:inline-flex;gap:3px;padding:4px 0;}
+  .typing span{width:6px;height:6px;background:var(--ink-400);border-radius:50%;animation:bounce 1.4s infinite;}
+  .typing span:nth-child(2){animation-delay:.2s;}
+  .typing span:nth-child(3){animation-delay:.4s;}
+  @keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.4;}40%{transform:translateY(-5px);opacity:1;}}
+
+  /* Chat input */
+  .composer{padding:12px 14px 14px;border-top:1px solid var(--ink-100);background:var(--surface);position:relative;}
+  .composer-box{background:var(--ink-50);border:1px solid var(--ink-200);border-radius:var(--radius);padding:10px 12px;transition:var(--transition);}
+  .composer-box:focus-within{background:#fff;border-color:var(--brand-500);box-shadow:0 0 0 3px rgba(44,126,248,.10);}
+  .composer textarea{width:100%;border:none;background:transparent;outline:none;resize:none;font-family:inherit;font-size:13.5px;color:var(--ink-800);line-height:1.55;min-height:36px;max-height:120px;}
+  .composer-toolbar{display:flex;align-items:center;justify-content:space-between;margin-top:8px;}
+  .composer-tools{display:flex;gap:4px;}
+  .composer-tools button{width:30px;height:30px;border-radius:6px;color:var(--ink-500);display:grid;place-items:center;transition:var(--transition);}
+  .composer-tools button:hover{background:var(--ink-100);color:var(--ink-800);}
+  .composer-tools svg{width:16px;height:16px;}
+  .composer-send{display:flex;align-items:center;gap:8px;}
+  .composer-hint{font-size:11px;color:var(--ink-400);}
+  .send-btn{height:32px;padding:0 14px;background:var(--brand-500);color:#fff;border-radius:8px;font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:var(--transition);}
+  .send-btn:hover{background:var(--brand-600);}
+  .send-btn svg{width:14px;height:14px;}
+
+  /* Dock */
+  .dock{position:sticky;bottom:0;display:flex;gap:6px;padding:8px 14px;background:var(--surface);border-top:1px solid var(--ink-100);overflow-x:auto;}
+  .dock::-webkit-scrollbar{display:none;}
+  .dock-btn{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--ink-50);border:1px solid var(--ink-200);border-radius:999px;font-size:12px;font-weight:500;color:var(--ink-700);transition:var(--transition);white-space:nowrap;}
+  .dock-btn:hover{background:var(--brand-50);border-color:var(--brand-300);color:var(--brand-600);}
+  .dock-btn svg{width:14px;height:14px;}
+  .dock-btn .kbd{font-size:10px;color:var(--ink-400);padding:1px 5px;background:#fff;border:1px solid var(--ink-200);border-radius:3px;margin-left:4px;}
+
+  /* ========== RIGHT: Focus ========== */
+  .focus-card{margin:12px;background:linear-gradient(135deg,var(--brand-50) 0%,var(--teal-50) 100%);border-radius:var(--radius);padding:16px;}
+  .focus-top{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+  .focus-avatar{width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,#3B82F6,#1D4ED8);display:grid;place-items:center;color:#fff;font-weight:600;font-size:16px;box-shadow:0 4px 12px -2px rgba(59,130,246,.3);}
+  .focus-name{font-size:15px;font-weight:700;color:var(--ink-900);}
+  .focus-meta{font-size:11.5px;color:var(--ink-500);margin-top:2px;}
+  .focus-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;}
+  .tag{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:4px;font-weight:600;}
+  .tag.brand{background:var(--brand-100);color:var(--brand-700);}
+  .tag.teal{background:var(--teal-50);color:#0F766E;}
+  .tag.rose{background:var(--rose-50);color:var(--rose-500);}
+  .focus-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .metric{background:var(--surface);border-radius:8px;padding:10px;}
+  .metric-label{font-size:11px;color:var(--ink-500);margin-bottom:3px;}
+  .metric-val{font-size:18px;font-weight:700;color:var(--ink-900);line-height:1.2;}
+  .metric-val small{font-size:11px;color:var(--ink-400);font-weight:500;margin-left:2px;}
+  .metric-trend{font-size:10.5px;margin-top:2px;}
+  .metric-trend.up{color:#10B981;}
+  .metric-trend.down{color:var(--rose-500);}
+  .metric-trend.warn{color:var(--amber-500);}
+
+  .section{padding:14px 16px;border-bottom:1px solid var(--ink-100);}
+  .section:last-child{border-bottom:0;}
+  .section-title{font-size:12px;font-weight:600;color:var(--ink-700);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;}
+  .section-title .count{font-size:10.5px;color:var(--ink-500);font-weight:500;}
+
+  .draft-item{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:linear-gradient(90deg,var(--violet-50) 0%,transparent 100%);border:1px solid var(--violet-50);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:var(--transition);}
+  .draft-item:hover{border-color:var(--violet-500);}
+  .draft-icon{width:24px;height:24px;border-radius:6px;background:var(--violet-500);color:#fff;display:grid;place-items:center;flex-shrink:0;}
+  .draft-icon svg{width:12px;height:12px;}
+  .draft-body{flex:1;min-width:0;}
+  .draft-title{font-size:12.5px;font-weight:600;color:var(--ink-800);line-height:1.4;}
+  .draft-meta{font-size:11px;color:var(--ink-500);margin-top:2px;}
+
+  .quick-btn{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border:1px solid var(--ink-200);border-radius:8px;font-size:12.5px;font-weight:500;color:var(--ink-700);margin-bottom:6px;cursor:pointer;transition:var(--transition);}
+  .quick-btn:hover{border-color:var(--brand-500);color:var(--brand-600);background:var(--brand-50);}
+  .quick-btn svg{width:14px;height:14px;color:var(--brand-500);}
+
+  @media(max-width:1280px){.cockpit{grid-template-columns:280px 1fr 300px;}}
+  @media(max-width:960px){.app{grid-template-columns:1fr;}.sidebar{display:none;}.cockpit{grid-template-columns:1fr;padding:12px;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      </div>
+      <div class="brand-name">Healix<small>机构工作台 · v3.20</small></div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-title">主导航</div>
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M22 12A10 10 0 0 0 12 2v10z"/><circle cx="12" cy="12" r="2"/></svg>
+        智能驾驶舱
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        工作台任务<span class="nav-badge">12</span>
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+        患者管理
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        依从性看板
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-title">协作</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
+        健管组
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        健康方案库<span class="nav-badge muted">86</span>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-title">管理</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
+        机构成员
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06"/></svg>
+        系统设置
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="crumbs">
+        <span>机构工作台</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <strong>健管智能体驾驶舱</strong>
+      </div>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="搜索患者 / 任务 / 报告…" />
+      </div>
+
+      <div class="topbar-right">
+        <button class="icon-btn" style="position:relative" title="通知">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="dot"></span>
+        </button>
+        <div class="org-switch">
+          <div class="org-avatar">沪</div>
+          <div class="org-meta"><div class="name">上海仁济健管中心</div><div class="role">健管师 · 李医生</div></div>
+        </div>
+        <div class="user-avatar">LF</div>
+      </div>
+    </header>
+
+    <!-- Cockpit 3-col -->
+    <div class="cockpit">
+
+      <!-- LEFT -->
+      <aside class="col">
+        <div class="col-head">
+          <div>
+            <h3>今日优先</h3>
+            <p class="sub">机构级 · 智能排序</p>
+          </div>
+          <div class="col-actions">
+            <button title="刷新"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg></button>
+            <button title="筛选"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+          </div>
+        </div>
+
+        <div class="priority-tabs">
+          <button class="active">立即处理<span class="count">3</span></button>
+          <button>今日关注<span class="count">8</span></button>
+          <button>我的在办</button>
+        </div>
+
+        <div class="priority-list">
+          <div class="pcard focused">
+            <div class="pcard-top">
+              <div class="pcard-avatar" style="background:linear-gradient(135deg,#3B82F6,#1D4ED8)">张</div>
+              <div class="pcard-name">张建国</div>
+              <span class="risk-badge high"><span class="dot"></span>高风险</span>
+            </div>
+            <div class="pcard-tags">
+              <span class="tag brand">糖尿病</span>
+              <span class="ai-draft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>AI 草稿</span>
+            </div>
+            <div class="pcard-meta">收缩压连续 <b>3 天 > 160</b>mmHg，建议介入</div>
+            <div class="pcard-progress">
+              <div class="bar"><div class="fill" style="width:78%"></div></div>
+              <div class="pct">78%</div>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <div class="pcard-top">
+              <div class="pcard-avatar" style="background:linear-gradient(135deg,#8B5CF6,#6D28D9)">陈</div>
+              <div class="pcard-name">陈晓宇</div>
+              <span class="risk-badge high"><span class="dot"></span>高风险</span>
+            </div>
+            <div class="pcard-tags">
+              <span class="tag brand">高血压</span>
+              <span class="ai-draft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>随访话术</span>
+            </div>
+            <div class="pcard-meta">用药 <b>连续 2 天漏服</b>二甲双胍</div>
+            <div class="pcard-progress">
+              <div class="bar"><div class="fill" style="width:62%"></div></div>
+              <div class="pct">62%</div>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <div class="pcard-top">
+              <div class="pcard-avatar" style="background:linear-gradient(135deg,#F59E0B,#EA580C)">王</div>
+              <div class="pcard-name">王秀英</div>
+              <span class="risk-badge mid"><span class="dot"></span>中风险</span>
+            </div>
+            <div class="pcard-tags">
+              <span class="tag teal">高血压</span>
+            </div>
+            <div class="pcard-meta">9 月健康报告待解读 · 漏报体征 5 天</div>
+            <div class="pcard-progress">
+              <div class="bar"><div class="fill" style="width:86%"></div></div>
+              <div class="pct">86%</div>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <div class="pcard-top">
+              <div class="pcard-avatar" style="background:linear-gradient(135deg,#EC4899,#BE185D)">赵</div>
+              <div class="pcard-name">赵志强</div>
+              <span class="risk-badge mid"><span class="dot"></span>中风险</span>
+            </div>
+            <div class="pcard-tags">
+              <span class="tag brand">糖尿病</span>
+              <span class="ai-draft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>方案 v3</span>
+            </div>
+            <div class="pcard-meta">本周餐后血糖均值 <b>11.2</b> mmol/L</div>
+            <div class="pcard-progress">
+              <div class="bar"><div class="fill" style="width:71%"></div></div>
+              <div class="pct">71%</div>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <div class="pcard-top">
+              <div class="pcard-avatar" style="background:linear-gradient(135deg,#10B981,#0F766E)">李</div>
+              <div class="pcard-name">李美芳</div>
+              <span class="risk-badge low"><span class="dot"></span>低风险</span>
+            </div>
+            <div class="pcard-tags">
+              <span class="tag brand">高血压</span>
+            </div>
+            <div class="pcard-meta">本月依从性优秀 · 定期健康提醒</div>
+            <div class="pcard-progress">
+              <div class="bar"><div class="fill" style="width:94%"></div></div>
+              <div class="pct">94%</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- CENTER: AI Chat -->
+      <main class="col">
+        <div class="chat-head">
+          <div class="ai-avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1H7a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v3a3 3 0 0 0 6 0v-3h1a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2V5a3 3 0 0 0-3-3z"/></svg>
+          </div>
+          <div class="ai-info">
+            <div class="name">健管智能体 <span class="badge">BETA</span></div>
+            <div class="desc"><span class="pulse"></span>已就绪 · 当前会话: 张建国 · 糖尿病随访</div>
+          </div>
+          <button class="icon-btn" title="重置对话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+          <button class="icon-btn" title="更多"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+        </div>
+
+        <!-- Briefing -->
+        <div class="briefing">
+          <div class="briefing-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/></svg>
+            今日机构简报 · 9 月 9 日
+          </div>
+          <div class="briefing-text">
+            当前在管 <b>1,248</b> 人，今日新增 <b>12</b>。识别到 <b style="color:var(--rose-500)">3 位高风险</b> 患者待立即介入，其中 <b>张建国</b> 已为本次会话焦点。我已为你生成 <b>5 份</b> 随访话术与 <b>2 份</b> 方案草稿，等待审阅。
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div class="messages">
+          <div class="msg user">
+            <div class="msg-avatar">L</div>
+            <div>
+              <div class="msg-bubble">张建国最近血压怎么样？需要调方案吗？</div>
+              <div class="msg-meta" style="text-align:right;color:var(--ink-400)">14:32</div>
+            </div>
+          </div>
+
+          <div class="msg ai">
+            <div class="msg-avatar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 8V4H8"/><path d="M2 12h20"/><path d="M12 2v4M4.93 4.93l2.83 2.83"/></svg>
+            </div>
+            <div style="max-width:100%">
+              <div class="msg-bubble">
+                <p>我看了张建国 <b>过去 7 天</b> 的数据，有几个关键信号 👇</p>
+                <ul>
+                  <li><b>收缩压</b>：连续 3 天 <code style="color:var(--rose-500)">>160</code> mmHg，较上周均值上升 <b>12%</b></li>
+                  <li><b>服药依从</b>：本周 5/7，漏服集中在工作日中午</li>
+                  <li><b>运动打卡</b>：0 次（连续 9 天未达标）</li>
+                </ul>
+                <p>建议：</p>
+                <ol>
+                  <li>把缬沙坦从 <code>80mg qd</code> 调整为 <code>160mg qd</code></li>
+                  <li>增加中午服药提醒 · 拆分运动目标为「2 次散步 + 1 次拉伸」</li>
+                </ol>
+                <p>我已经按这个思路 <b>生成了方案 v3 草稿</b>，你可以预览后采纳，或告诉我具体怎么改。</p>
+              </div>
+              <div class="action-chips">
+                <div class="chip primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  查看方案 v3
+                </div>
+                <div class="chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  修改剂量
+                </div>
+                <div class="chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  生成随访话术
+                </div>
+                <div class="chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  加入对比图表
+                </div>
+              </div>
+              <div class="msg-meta">14:32 · 智能体思考 3.2s · 基于 28 条记录</div>
+            </div>
+          </div>
+
+          <div class="msg user">
+            <div class="msg-avatar">L</div>
+            <div>
+              <div class="msg-bubble">中午漏服是因为他在公司吗？能根据这个改提醒方案吗？</div>
+              <div class="msg-meta" style="text-align:right;color:var(--ink-400)">14:34</div>
+            </div>
+          </div>
+
+          <div class="msg ai">
+            <div class="msg-avatar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 8V4H8"/></svg>
+            </div>
+            <div>
+              <div class="msg-bubble">
+                <p>是的，从打卡时间戳看，<b>12:30 ± 30 分钟</b> 这个时段漏服占比 78%，且 C 端定位显示他通常在 <b>张江园区</b>，我推断是工作日午休时段。</p>
+                <p>我重新调整了提醒方案：</p>
+                <ul>
+                  <li>🔔 新增 <b>工作日 12:15</b> 服药提醒（强提醒 + 桌面推送）</li>
+                  <li>📱 周末切换为 <b>09:00 / 21:00</b> 双提醒</li>
+                  <li>📋 在方案备注里标注「工作日中午漏服高发」</li>
+                </ul>
+              </div>
+              <div class="action-chips">
+                <div class="chip primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  采纳提醒方案
+                </div>
+                <div class="chip">调整时间</div>
+                <div class="chip">先看对比</div>
+              </div>
+              <div class="msg-meta">14:34 · 智能体思考 2.1s</div>
+            </div>
+          </div>
+
+          <div class="msg ai">
+            <div class="msg-avatar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 8V4H8"/></svg>
+            </div>
+            <div>
+              <div class="msg-bubble">
+                <p>正在生成 <b>方案 v4 草稿</b> 和随访话术…<span class="typing"><span></span><span></span><span></span></span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Composer -->
+        <div class="composer">
+          <div class="composer-box">
+            <textarea placeholder="问问健管智能体，或让他帮你写方案、起话术…"></textarea>
+            <div class="composer-toolbar">
+              <div class="composer-tools">
+                <button title="上传 OCR"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                <button title="添加附件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                <button title="语音"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+              </div>
+              <div class="composer-send">
+                <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
+                <button class="send-btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  发送
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dock -->
+          <div class="dock">
+            <button class="dock-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+              新建随访
+            </button>
+            <button class="dock-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              上传 OCR
+            </button>
+            <button class="dock-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              调整方案
+            </button>
+            <button class="dock-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              管理报告
+            </button>
+            <button class="dock-btn" style="margin-left:auto;background:var(--violet-50);border-color:var(--violet-50);color:var(--violet-500)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="12 1 12 23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              能力切换
+            </button>
+          </div>
+        </div>
+      </main>
+
+      <!-- RIGHT: Focus -->
+      <aside class="col" style="overflow-y:auto;">
+        <div class="col-head">
+          <div>
+            <h3>当前焦点</h3>
+            <p class="sub">点击左侧卡片切换</p>
+          </div>
+        </div>
+
+        <div class="focus-card">
+          <div class="focus-top">
+            <div class="focus-avatar">张</div>
+            <div style="flex:1;min-width:0;">
+              <div class="focus-name">张建国</div>
+              <div class="focus-meta">62 岁 · 男 · 控糖先锋组</div>
+            </div>
+            <button class="icon-btn" title="更多"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+          <div class="focus-tags">
+            <span class="tag brand">糖尿病</span>
+            <span class="tag brand">高血压</span>
+            <span class="tag teal">C 端已激活</span>
+            <span class="tag rose">高风险</span>
+          </div>
+          <div class="focus-metrics">
+            <div class="metric">
+              <div class="metric-label">本周依从</div>
+              <div class="metric-val">78<small>%</small></div>
+              <div class="metric-trend down">↓ 较上周 -8%</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">血压</div>
+              <div class="metric-val">162<small>/98</small></div>
+              <div class="metric-trend warn">⚠ 偏高</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">空腹血糖</div>
+              <div class="metric-val">8.4<small>mmol/L</small></div>
+              <div class="metric-trend up">↑ 略升</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">风险评分</div>
+              <div class="metric-val" style="color:var(--rose-500)">7.8</div>
+              <div class="metric-trend down">⚠ 高风险</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">
+            AI 待办草稿
+            <span class="count">2 项</span>
+          </div>
+          <div class="draft-item">
+            <div class="draft-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div>
+            <div class="draft-body">
+              <div class="draft-title">方案 v3 · 调剂量 + 拆分运动目标</div>
+              <div class="draft-meta">刚刚 · 由智能体生成</div>
+            </div>
+          </div>
+          <div class="draft-item">
+            <div class="draft-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+            <div class="draft-body">
+              <div class="draft-title">随访话术 · 工作日漏服关怀</div>
+              <div class="draft-meta">5 分钟前 · 待审阅</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">快速跳转</div>
+          <div class="quick-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            查看完整档案
+          </div>
+          <div class="quick-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/></svg>
+            新增随访任务
+          </div>
+          <div class="quick-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/></svg>
+            进入方案编辑
+          </div>
+          <div class="quick-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            查看依从性趋势
+          </div>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>

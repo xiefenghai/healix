@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Healix · 健管组</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --brand-500:#2C7EF8; --brand-600:#1E63D9; --brand-50:#EAF2FF; --brand-100:#D6E6FF;
+    --teal-500:#00B8A9; --teal-50:#E6FAF7;
+    --amber-500:#F59E0B; --amber-50:#FEF6E2;
+    --rose-500:#EF4444; --rose-50:#FEE9E7;
+    --violet-500:#8B5CF6; --violet-50:#F1ECFE;
+    --ink-900:#0F172A; --ink-800:#1E293B; --ink-700:#334155; --ink-500:#64748B;
+    --ink-400:#94A3B8; --ink-300:#CBD5E1; --ink-200:#E2E8F0; --ink-100:#F1F5F9; --ink-50:#F8FAFC;
+    --bg:#F5F7FB; --surface:#FFFFFF;
+    --radius:12px; --radius-sm:8px;
+    --shadow-sm:0 1px 2px rgba(15,23,42,.04);
+    --transition:180ms cubic-bezier(.4,0,.2,1);
+  }
+  *{box-sizing:border-box;}body{margin:0;font-family:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;color:var(--ink-800);background:var(--bg);-webkit-font-smoothing:antialiased;}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;}a{color:inherit;text-decoration:none;}
+
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh;}
+  .sidebar{background:linear-gradient(180deg,#0F172A 0%,#131C30 100%);color:#94A3B8;padding:20px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 22px;color:#fff;}
+  .brand-logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2C7EF8,#00B8A9);display:grid;place-items:center;}
+  .brand-logo svg{width:22px;height:22px;}
+  .brand-name{font-weight:700;font-size:16px;}.brand-name small{display:block;font-weight:500;font-size:11px;color:#94A3B8;margin-top:2px;}
+  .nav-section{margin-top:14px;}
+  .nav-title{font-size:11px;font-weight:600;letter-spacing:1.2px;color:#64748B;text-transform:uppercase;padding:12px 12px 8px;}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:8px;color:#94A3B8;font-size:13.5px;font-weight:500;transition:180ms;margin-bottom:2px;cursor:pointer;position:relative;}
+  .nav-item:hover{background:rgba(255,255,255,.05);color:#fff;}
+  .nav-item.active{background:linear-gradient(90deg,rgba(44,126,248,.18),rgba(44,126,248,.04));color:#fff;}
+  .nav-item.active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;background:#2C7EF8;border-radius:0 3px 3px 0;}
+  .nav-item svg{width:18px;height:18px;flex-shrink:0;opacity:.85;}
+  .nav-badge{margin-left:auto;font-size:11px;background:#EF4444;color:#fff;padding:2px 7px;border-radius:999px;font-weight:600;}
+  .nav-badge.muted{background:rgba(255,255,255,.1);color:#CBD5E1;}
+
+  .main{display:flex;flex-direction:column;min-width:0;}
+  .topbar{height:60px;background:#fff;border-bottom:1px solid #E2E8F0;display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:10;}
+  .crumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748B;}.crumbs strong{color:#1E293B;font-weight:600;}
+  .crumbs svg{width:14px;height:14px;opacity:.5;}
+  .search{flex:1;max-width:380px;position:relative;}
+  .search input{width:100%;height:36px;padding:0 14px 0 36px;border-radius:8px;border:1px solid #E2E8F0;background:#F8FAFC;font-size:13px;}
+  .search input:focus{outline:none;background:#fff;border-color:#2C7EF8;box-shadow:0 0 0 3px rgba(44,126,248,.12);}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:#94A3B8;}
+  .topbar-right{display:flex;align-items:center;gap:6px;margin-left:auto;}
+  .icon-btn{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:#64748B;transition:180ms;}
+  .icon-btn:hover{background:#F1F5F9;color:#1E293B;}.icon-btn svg{width:18px;height:18px;}
+  .org-switch{display:flex;align-items:center;gap:10px;padding:3px 10px 3px 3px;border-radius:999px;background:#F8FAFC;border:1px solid #E2E8F0;margin:0 8px;cursor:pointer;}
+  .org-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#EF4444);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600;}
+  .org-meta .name{font-size:13px;font-weight:600;color:#1E293B;line-height:1.2;}.org-meta .role{font-size:11px;color:#64748B;}
+  .user-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#2C7EF8);display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;}
+
+  .content{padding:24px 32px 40px;flex:1;}
+
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:20px;flex-wrap:wrap;}
+  .page-head h1{font-size:22px;font-weight:700;margin:0 0 4px;color:#0F172A;letter-spacing:-.3px;}
+  .page-head p{margin:0;color:#64748B;font-size:13.5px;}
+  .head-actions{display:flex;gap:10px;}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:8px;font-size:13px;font-weight:600;transition:180ms;border:1px solid transparent;}
+  .btn svg{width:15px;height:15px;}
+  .btn-primary{background:#2C7EF8;color:#fff;box-shadow:0 4px 10px -2px rgba(44,126,248,.4);}
+  .btn-primary:hover{background:#1E63D9;transform:translateY(-1px);}
+  .btn-ghost{background:#fff;color:#334155;border-color:#E2E8F0;}
+  .btn-ghost:hover{background:#F8FAFC;}
+
+  /* Stat cards */
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;}
+  .stat{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px;display:flex;align-items:center;gap:14px;}
+  .stat-icon{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;flex-shrink:0;}
+  .stat-icon svg{width:20px;height:20px;}
+  .stat-label{font-size:12px;color:#64748B;font-weight:500;}
+  .stat-val{font-size:22px;font-weight:700;color:#0F172A;margin-top:2px;line-height:1.1;}
+
+  /* Toolbar */
+  .toolbar{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
+  .toolbar-search{flex:1;min-width:240px;position:relative;}
+  .toolbar-search input{width:100%;height:36px;padding:0 12px 0 36px;border:1px solid #E2E8F0;border-radius:8px;background:#F8FAFC;font-size:13px;}
+  .toolbar-search input:focus{outline:none;background:#fff;border-color:#2C7EF8;}
+  .toolbar-search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:#94A3B8;}
+  .select{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border:1px solid #E2E8F0;border-radius:8px;background:#fff;font-size:13px;color:#334155;font-weight:500;cursor:pointer;}
+  .select:hover{border-color:#CBD5E1;}
+  .select svg{width:13px;height:13px;color:#94A3B8;}
+
+  /* Card grid */
+  .team-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+  .team-card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;transition:180ms;cursor:pointer;}
+  .team-card:hover{border-color:#2C7EF8;box-shadow:0 4px 16px -4px rgba(44,126,248,.12);transform:translateY(-2px);}
+  .team-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;}
+  .team-code{font-size:11px;font-weight:600;color:#94A3B8;letter-spacing:.6px;}
+  .team-name{font-size:16px;font-weight:700;color:#0F172A;margin:2px 0 4px;}
+  .team-desc{font-size:12.5px;color:#64748B;line-height:1.5;}
+
+  .team-leads{display:flex;align-items:center;gap:10px;padding:12px 0;border-top:1px solid #F1F5F9;border-bottom:1px solid #F1F5F9;margin-bottom:12px;}
+  .lead-avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:11px;font-weight:600;}
+  .lead-info .name{font-size:12.5px;font-weight:600;color:#1E293B;line-height:1.3;}
+  .lead-info .role{font-size:11px;color:#64748B;}
+  .lead-stack{display:flex;}
+  .lead-stack .av{width:24px;height:24px;border-radius:50%;border:2px solid #fff;margin-left:-6px;display:grid;place-items:center;color:#fff;font-size:10px;font-weight:600;}
+  .lead-stack .av:first-child{margin-left:0;}
+  .lead-stack .more-av{background:#F1F5F9;color:#64748B;font-size:10px;}
+
+  .team-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+  .t-stat{text-align:center;padding:8px 0;background:#F8FAFC;border-radius:8px;}
+  .t-stat .v{font-size:18px;font-weight:700;color:#0F172A;}
+  .t-stat .l{font-size:10.5px;color:#94A3B8;margin-top:2px;}
+
+  .team-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;}
+  .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;}
+  .tag.brand{background:#EAF2FF;color:#1E63D9;}.tag.teal{background:#E6FAF7;color:#0F766E;}
+  .tag.amber{background:#FEF6E2;color:#B45309;}.tag.violet{background:#F1ECFE;color:#6D28D9;}
+
+  .team-foot{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:#94A3B8;}
+  .progress-mini{display:flex;align-items:center;gap:6px;}
+  .progress-mini .bar{width:60px;height:4px;background:#F1F5F9;border-radius:2px;overflow:hidden;}
+  .progress-mini .fill{height:100%;background:linear-gradient(90deg,#2C7EF8,#00B8A9);}
+
+  @media(max-width:1280px){.stat-grid{grid-template-columns:repeat(2,1fr);}.team-grid{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:960px){.app{grid-template-columns:1fr;}.sidebar{display:none;}.content{padding:16px;}.team-grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+      <div class="brand-name">Healix<small>机构工作台 · v3.20</small></div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">主导航</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>智能驾驶舱</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/></svg>工作台任务<span class="nav-badge">12</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>患者管理</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>依从性看板</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">协作</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>健管组</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>健康方案库<span class="nav-badge muted">86</span></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs">
+        <span>协作</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <strong>健管组</strong>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="搜索…" />
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></button>
+        <div class="org-switch"><div class="org-avatar">沪</div><div class="org-meta"><div class="name">上海仁济健管中心</div><div class="role">健管师 · 李医生</div></div></div>
+        <div class="user-avatar">LF</div>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <section class="page-head">
+        <div>
+          <h1>健管组</h1>
+          <p>共 8 个健管组 · 在管 1,089 位患者 · 平均每组 136 人</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn btn-ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/></svg>
+            导出
+          </button>
+          <button class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            新建健管组
+          </button>
+        </div>
+      </section>
+
+      <!-- Stat -->
+      <section class="stat-grid">
+        <div class="stat">
+          <div class="stat-icon" style="background:#EAF2FF;color:#2C7EF8;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg></div>
+          <div><div class="stat-label">健管组总数</div><div class="stat-val">8</div></div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon" style="background:#E6FAF7;color:#0F766E;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
+          <div><div class="stat-label">在管患者</div><div class="stat-val">1,089</div></div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon" style="background:#FEF6E2;color:#B45309;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></div>
+          <div><div class="stat-label">健管师</div><div class="stat-val">14</div></div>
+        </div>
+        <div class="stat">
+          <div class="stat-icon" style="background:#F1ECFE;color:#6D28D9;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+          <div><div class="stat-label">平均依从率</div><div class="stat-val">84.2%</div></div>
+        </div>
+      </section>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input placeholder="搜索健管组名称 / 编码" />
+        </div>
+        <button class="select">病种: 全部 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <button class="select">健管师: 全部 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <button class="select">排序: 成员数 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+      </div>
+
+      <!-- Team cards grid -->
+      <div class="team-grid">
+
+        <div class="team-card">
+          <div class="team-head">
+            <div>
+              <div class="team-code">TEAM-001</div>
+              <div class="team-name">控糖先锋组</div>
+              <div class="team-desc">针对 2 型糖尿病患者的强化管理组，6 周方案循环</div>
+            </div>
+            <button class="icon-btn" style="width:28px;height:28px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+          <div class="team-leads">
+            <div class="lead-avatar" style="background:linear-gradient(135deg,#3B82F6,#1D4ED8)">王</div>
+            <div class="lead-info">
+              <div class="name">王医生</div>
+              <div class="role">主责 · 内分泌科</div>
+            </div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+              <div class="lead-stack">
+                <div class="av" style="background:linear-gradient(135deg,#10B981,#0F766E)">李</div>
+                <div class="av" style="background:linear-gradient(135deg,#F59E0B,#EA580C)">张</div>
+                <div class="av more-av">+3</div>
+              </div>
+            </div>
+          </div>
+          <div class="team-tags">
+            <span class="tag brand">糖尿病</span>
+            <span class="tag violet">高血压</span>
+            <span class="tag teal">高依从</span>
+          </div>
+          <div class="team-stats">
+            <div class="t-stat"><div class="v">186</div><div class="l">成员</div></div>
+            <div class="t-stat"><div class="v">91%</div><div class="l">依从率</div></div>
+            <div class="t-stat"><div class="v">4.6</div><div class="l">评分</div></div>
+          </div>
+          <div class="team-foot">
+            <span>创建于 2024-08-12</span>
+            <div class="progress-mini"><div class="bar"><div class="fill" style="width:91%"></div></div><span>91%</span></div>
+          </div>
+        </div>
+
+        <div class="team-card">
+          <div class="team-head">
+            <div>
+              <div class="team-code">TEAM-002</div>
+              <div class="team-name">心脑血管组</div>
+              <div class="team-desc">高血压、冠心病、脑卒中康复期患者管理</div>
+            </div>
+            <button class="icon-btn" style="width:28px;height:28px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+          <div class="team-leads">
+            <div class="lead-avatar" style="background:linear-gradient(135deg,#8B5CF6,#6D28D9)">李</div>
+            <div class="lead-info">
+              <div class="name">李医生</div>
+              <div class="role">主责 · 心血管内科</div>
+            </div>
+            <div style="margin-left:auto;">
+              <div class="lead-stack">
+                <div class="av" style="background:linear-gradient(135deg,#EC4899,#BE185D)">赵</div>
+                <div class="av" style="background:linear-gradient(135deg,#06B6D4,#0E7490)">孙</div>
+                <div class="av more-av">+4</div>
+              </div>
+            </div>
+          </div>
+          <div class="team-tags">
+            <span class="tag brand">高血压</span>
+            <span class="tag violet">冠心病</span>
+          </div>
+          <div class="team-stats">
+            <div class="t-stat"><div class="v">224</div><div class="l">成员</div></div>
+            <div class="t-stat"><div class="v">86%</div><div class="l">依从率</div></div>
+            <div class="t-stat"><div class="v">4.4</div><div class="l">评分</div></div>
+          </div>
+          <div class="team-foot">
+            <span>创建于 2024-06-08</span>
+            <div class="progress-mini"><div class="bar"><div class="fill" style="width:86%"></div></div><span>86%</span></div>
+          </div>
+        </div>
+
+        <div class="team-card">
+          <div class="team-head">
+            <div>
+              <div class="team-code">TEAM-003</div>
+              <div class="team-name">老年慢病组</div>
+              <div class="team-desc">65+ 多病共存老人，重点关注用药安全</div>
+            </div>
+            <button class="icon-btn" style="width:28px;height:28px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+          <div class="team-leads">
+            <div class="lead-avatar" style="background:linear-gradient(135deg,#F59E0B,#EA580C)">张</div>
+            <div class="lead-info">
+              <div class="name">张医生</div>
+              <div class="role">主责 · 老年医学</div>
+            </div>
+            <div style="margin-left:auto;">
+              <div class="lead-stack">
+                <div class="av" style="background:linear-gradient(135deg,#F43F5E,#9F1239)">周</div>
+                <div class="av" style="background:linear-gradient(135deg,#84CC16,#3F6212)">吴</div>
+                <div class="av more-av">+2</div>
+              </div>
+            </div>
+          </div>
+          <div class="team-tags">
+            <span class="tag amber">多病共存</span>
+            <span class="tag brand">高龄</span>
+          </div>
+          <div class="team-stats">
+            <div class="t-stat"><div class="v">142</div><div class="l">成员</div></div>
+            <div class="t-stat"><div class="v">78%</div><div class="l">依从率</div></div>
+            <div class="t-stat"><div class="v">4.1</div><div class="l">评分</div></div>
+          </div>
+          <div class="team-foot">
+            <span>创建于 2024-04-15</span>
+            <div class="progress-mini"><div class="bar"><div class="fill" style="width:78%"></div></div><span>78%</span></div>
+          </div>
+        </div>
+
+        <div class="team-card">
+          <div class="team-head">
+            <div>
+              <div class="team-code">TEAM-004</div>
+              <div class="team-name">减重干预组</div>
+              <div class="team-desc">BMI ≥ 28 用户，3 个月强化方案</div>
+            </div>
+            <button class="icon-btn" style="width:28px;height:28px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+          <div class="team-leads">
+            <div class="lead-avatar" style="background:linear-gradient(135deg,#10B981,#0F766E)">陈</div>
+            <div class="lead-info">
+              <div class="name">陈医生</div>
+              <div class="role">主责 · 营养科</div>
+            </div>
+            <div style="margin-left:auto;">
+              <div class="lead-stack">
+                <div class="av" style="background:linear-gradient(135deg,#8B5CF6,#6D28D9)">钱</div>
+                <div class="av" style="background:linear-gradient(135deg,#3B82F6,#1D4ED8)">郑</div>
+              </div>
+            </div>
+          </div>
+          <div class="team-tags">
+            <span class="tag brand">减重</span>
+            <span class="tag teal">营养</span>
+          </div>
+          <div class="team-stats">
+            <div class="t-stat"><div class="v">68</div><div class="l">成员</div></div>
+            <div class="t-stat"><div class="v">82%</div><div class="l">依从率</div></div>
+            <div class="t-stat"><div class="v">4.3</div><div class="l">评分</div></div>
+          </div>
+          <div class="team-foot">
+            <span>创建于 2025-03-01</span>
+            <div class="progress-mini"><div class="bar"><div class="fill" style="width:82%"></div></div><span>82%</span></div>
+          </div>
+        </div>
+
+        <div class="team-card">
+          <div class="team-head">
+            <div>
+              <div class="team-code">TEAM-005</div>
+              <div class="team-name">术后康复组</div>
+              <div class="team-desc">心脏支架 / 关节置换术后 3-6 个月随访</div>
+            </div>
+            <button class="icon-btn" style="width:28px;height:28px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+          <div class="team-leads">
+            <div class="lead-avatar" style="background:linear-gradient(135deg,#EC4899,#BE185D)">周</div>
+            <div class="lead-info">
+              <div class="name">周医生</div>
+              <div class="role">主责 · 康复科</div>
+            </div>
+            <div style="margin-left:auto;">
+              <div class="lead-stack">
+                <div class="av" style="background:linear-gradient(135deg,#06B6D4,#0E7490)">孙</div>
+                <div class="av" style="background:linear-gradient(135deg,#84CC16,#3F6212)">吴</div>
+              </div>
+            </div>
+          </div>
+          <div class="team-tags">
+            <span class="tag violet">术后</span>
+            <span class="tag amber">康复</span>
+          </div>
+          <div class="team-stats">
+            <div class="t-stat"><div class="v">94</div><div class="l">成员</div></div>
+            <div class="t-stat"><div class="v">88%</div><div class="l">依从率</div></div>
+            <div class="t-stat"><div class="v">4.7</div><div class="l">评分</div></div>
+          </div>
+          <div class="team-foot">
+            <span>创建于 2025-01-20</span>
+            <div class="progress-mini"><div class="bar"><div class="fill" style="width:88%"></div></div><span>88%</span></div>
+          </div>
+        </div>
+
+        <div class="team-card">
+          <div class="team-head">
+            <div>
+              <div class="team-code">TEAM-006</div>
+              <div class="team-name">高危早期干预组</div>
+              <div class="team-desc">多指标异常 · 12 周强化监测 + AI 预警</div>
+            </div>
+            <button class="icon-btn" style="width:28px;height:28px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+          <div class="team-leads">
+            <div class="lead-avatar" style="background:linear-gradient(135deg,#F43F5E,#9F1239)">赵</div>
+            <div class="lead-info">
+              <div class="name">赵医生</div>
+              <div class="role">主责 · 全科</div>
+            </div>
+            <div style="margin-left:auto;">
+              <div class="lead-stack">
+                <div class="av" style="background:linear-gradient(135deg,#F59E0B,#EA580C)">张</div>
+                <div class="av" style="background:linear-gradient(135deg,#3B82F6,#1D4ED8)">钱</div>
+                <div class="av more-av">+5</div>
+              </div>
+            </div>
+          </div>
+          <div class="team-tags">
+            <span class="tag rose" style="background:#FEE9E7;color:#EF4444;">高风险</span>
+            <span class="tag violet">AI 监控</span>
+          </div>
+          <div class="team-stats">
+            <div class="t-stat"><div class="v">42</div><div class="l">成员</div></div>
+            <div class="t-stat"><div class="v">94%</div><div class="l">依从率</div></div>
+            <div class="t-stat"><div class="v">4.8</div><div class="l">评分</div></div>
+          </div>
+          <div class="team-foot">
+            <span>创建于 2025-09-01</span>
+            <div class="progress-mini"><div class="bar"><div class="fill" style="width:94%"></div></div><span>94%</span></div>
+          </div>
+        </div>
+
+      </div>
+
+    </main>
+  </div>
+</div>
+</body>
+</html>

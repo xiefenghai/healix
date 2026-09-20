@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
+import { takeAgentDraft } from '../../shared/agent-draft-bus'
 import FollowupSectionFields from './FollowupSectionFields.vue'
 import FollowupRecordDetailDialog from './FollowupRecordDetailDialog.vue'
 import PatientArchiveView from './PatientArchiveView.vue'
@@ -39,7 +40,11 @@ interface FollowupItem {
 }
 
 const route = useRoute()
-const peopleId = () => String(route.params.peopleId || '')
+const props = defineProps<{
+  /** 驾驶舱抽屉等场景传入；不传则走路由 params */
+  peopleId?: string
+}>()
+const peopleId = () => String(props.peopleId || route.params.peopleId || '')
 const loading = ref(false)
 const items = ref<FollowupItem[]>([])
 const createOpen = ref(false)
@@ -118,16 +123,24 @@ function resetSection(target: { section: FollowupSection }) {
   target.section = emptyFollowupSection()
 }
 
-function openCreate() {
+function openCreate(prefill?: { guidance?: string }) {
   createForm.followupType = 'ROUTINE'
   createForm.completeNow = true
   createForm.createTask = true
   createForm.contactTarget = ''
   createForm.followupMethod = ''
-  createForm.guidance = ''
+  createForm.guidance = prefill?.guidance || ''
   createForm.suggestPlanAdjust = false
   resetSection(createForm)
   createOpen.value = true
+}
+
+function consumeAgentDraft() {
+  const id = peopleId()
+  if (!id) return
+  const draft = takeAgentDraft(id, 'followups')
+  if (!draft) return
+  openCreate({ guidance: draft.draftContent || '' })
 }
 
 watch(
@@ -285,11 +298,14 @@ async function cancelRow(row: FollowupItem) {
 }
 
 watch(
-  () => route.params.peopleId,
+  () => props.peopleId || route.params.peopleId,
   () => void load(),
 )
 
-onMounted(() => void load())
+onMounted(async () => {
+  await load()
+  consumeAgentDraft()
+})
 </script>
 
 <template>

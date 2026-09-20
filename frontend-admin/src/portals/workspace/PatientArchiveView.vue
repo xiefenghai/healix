@@ -239,6 +239,8 @@ interface DiseaseFormState {
   hypoglycemiaReaction?: string
   hypoglycemiaCountLastMonth?: number | null
   hypoglycemiaHandling?: string
+  /** 终末期慢性疾病（分标目标值分组③） */
+  endStageChronicDisease?: boolean
   remark?: string
 }
 
@@ -257,6 +259,7 @@ function emptyDiabetesForm(): DiseaseFormState {
     hypoglycemiaReaction: '',
     hypoglycemiaCountLastMonth: null,
     hypoglycemiaHandling: '',
+    endStageChronicDisease: false,
     remark: '',
   }
 }
@@ -771,6 +774,7 @@ async function loadDisease(code: string) {
         ? Number(content.hypoglycemiaCountLastMonth)
         : null
     diseaseForms[code].hypoglycemiaHandling = String(content.hypoglycemiaHandling ?? '')
+    diseaseForms[code].endStageChronicDisease = Boolean(content.endStageChronicDisease)
     diseaseForms[code].remark = String(content.remark ?? '')
   } else if (code === 'hypertension') {
     diseaseForms[code].hypertensionType = String(content.hypertensionType ?? '')
@@ -819,6 +823,7 @@ function buildDiseaseContentJson(code: string): Record<string, unknown> {
       hypoglycemiaHandling: hasHypoglycemia
         ? state.hypoglycemiaHandling?.trim() || undefined
         : undefined,
+      endStageChronicDisease: state.endStageChronicDisease ? true : undefined,
       remark: state.remark?.trim() || undefined,
     }
   }
@@ -1991,6 +1996,16 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                       </div>
+                    </div>
+                  </div>
+
+                  <div class="archive-row">
+                    <label class="row-label">终末期慢性病</label>
+                    <div class="row-body">
+                      <el-checkbox v-model="diseaseForms.diabetes.endStageChronicDisease">
+                        存在终末期慢性疾病（心衰3–4期 / 氧依赖肺病 / 透析肾病 / 不可控转移癌）
+                      </el-checkbox>
+                      <p class="field-hint">用于血糖控制分标目标值分组（≥65岁进第③组）</p>
                     </div>
                   </div>
 

@@ -1,4 +1,4 @@
-import { getToken } from './http'
+import { getToken, redirectToLogin } from './http'
 
 export interface StreamEnvelope {
   type: string
@@ -16,14 +16,25 @@ export interface StreamSkillEvent {
   detail: string
 }
 
+export interface StreamThinkingEvent {
+  status: 'start' | 'delta' | 'done' | string
+  text?: string
+  elapsedMs?: number
+}
+
+export interface StreamDoneMeta {
+  elapsedMs?: number
+}
+
 export interface StreamHandlers {
   onProgress?: (message: string, index: number) => void
   onTool?: (event: StreamToolEvent) => void
   onSkill?: (event: StreamSkillEvent) => void
+  onThinking?: (event: StreamThinkingEvent) => void
   onToken?: (text: string) => void
   onResult?: (payload: unknown) => void
   onError?: (message: string) => void
-  onDone?: () => void
+  onDone?: (meta?: StreamDoneMeta) => void
 }
 
 /** 开发环境直连后端，避免 Vite 代理缓冲 SSE */
@@ -52,7 +63,15 @@ export async function postSse(
   const res = await fetch(sseUrl(path), { method: 'POST', headers, body: JSON.stringify(body) })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || `HTTP ${res.status}`)
+    const msg = String((err as { message?: string }).message || `HTTP ${res.status}`)
+    if (
+      res.status === 401
+      || /jwt expired|token expired|unauthorized|登录已过期/i.test(msg)
+    ) {
+      redirectToLogin()
+      throw new Error('登录已过期，请重新登录')
+    }
+    throw new Error(msg)
   }
   if (!res.body) {
     throw new Error('无流式响应')
@@ -108,6 +127,12 @@ function parseSseBlock(block: string): StreamEnvelope | null {
   }
 }
 
+function asNumber(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string' && v.trim() && Number.isFinite(Number(v))) return Number(v)
+  return undefined
+}
+
 function dispatch(
   event: StreamEnvelope,
   handlers: StreamHandlers,
@@ -131,6 +156,13 @@ function dispatch(
         detail: String(data.detail || ''),
       })
       break
+    case 'thinking':
+      handlers.onThinking?.({
+        status: String(data.status || 'delta'),
+        text: data.text != null ? String(data.text) : undefined,
+        elapsedMs: asNumber(data.elapsedMs),
+      })
+      break
     case 'token':
       handlers.onToken?.(String(data.text || ''))
       break
@@ -141,7 +173,7 @@ function dispatch(
       handlers.onError?.(String(data.message || '未知错误'))
       break
     case 'done':
-      handlers.onDone?.()
+      handlers.onDone?.({ elapsedMs: asNumber(data.elapsedMs) })
       break
     default:
       break

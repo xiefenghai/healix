@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Healix · 入口选择</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --primary:#2C7EF8; --primary-dark:#1F5DC9;
+  --teal:#00B8A9; --teal-dark:#008B7F;
+  --amber:#F59E0B; --rose:#EF4444; --violet:#8B5CF6;
+  --bg:#F8FAFC; --surface:#FFFFFF;
+  --text:#0F172A; --text-2:#475569; --text-3:#94A3B8;
+  --border:#E2E8F0; --border-light:#F1F5F9;
+  --radius:12px; --radius-lg:16px;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+  --shadow:0 4px 12px rgba(15,23,42,.06), 0 2px 4px rgba(15,23,42,.04);
+  --shadow-lg:0 20px 40px -12px rgba(15,23,42,.12), 0 8px 16px -4px rgba(15,23,42,.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter','PingFang SC',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--text);background:var(--bg);min-height:100vh;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none}
+
+.page{display:grid;grid-template-columns:1.05fr 1fr;min-height:100vh}
+
+/* ============ 左侧品牌区 ============ */
+.brand{position:relative;padding:48px 56px;color:#fff;overflow:hidden;
+  background:linear-gradient(135deg,#0F172A 0%,#1E293B 45%,#1E3A8A 100%)}
+.brand::before{content:"";position:absolute;inset:0;
+  background:radial-gradient(900px 600px at 80% 10%, rgba(44,126,248,.45), transparent 60%),
+             radial-gradient(700px 500px at 10% 90%, rgba(0,184,169,.35), transparent 60%);
+  pointer-events:none}
+.brand::after{content:"";position:absolute;inset:0;
+  background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),
+                    linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:radial-gradient(ellipse at center,#000 30%,transparent 80%);
+  -webkit-mask-image:radial-gradient(ellipse at center,#000 30%,transparent 80%);
+  pointer-events:none}
+.brand-inner{position:relative;z-index:2;display:flex;flex-direction:column;height:100%;min-height:calc(100vh - 96px)}
+
+.brand-header{display:flex;align-items:center;justify-content:space-between}
+.brand-logo{display:flex;align-items:center;gap:12px}
+.logo-mark{width:40px;height:40px;border-radius:10px;
+  background:linear-gradient(135deg,var(--primary),var(--teal));
+  display:grid;place-items:center;color:#fff;font-weight:800;font-size:18px;
+  box-shadow:0 6px 16px rgba(44,126,248,.45)}
+.logo-text{font-size:20px;font-weight:700;letter-spacing:-.3px}
+.brand-meta{font-size:12px;color:rgba(255,255,255,.55);display:flex;align-items:center;gap:6px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 4px rgba(0,184,169,.18)}
+
+.brand-hero{flex:1;display:flex;flex-direction:column;justify-content:center;padding:48px 0;max-width:520px}
+.brand-tag{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  font-size:12px;font-weight:500;letter-spacing:.3px;color:#CBD5E1;width:fit-content;backdrop-filter:blur(8px)}
+.brand-tag .pulse{width:6px;height:6px;border-radius:50%;background:var(--teal);animation:p 1.6s ease-in-out infinite}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.4}}
+
+.brand h1{font-size:44px;line-height:1.1;font-weight:800;margin-top:20px;letter-spacing:-1.2px}
+.brand h1 span{background:linear-gradient(135deg,#60A5FA,#00B8A9);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand p{font-size:15px;line-height:1.7;color:rgba(255,255,255,.7);margin-top:20px;max-width:460px}
+
+.brand-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:40px}
+.stat{padding:18px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(12px)}
+.stat-v{font-size:26px;font-weight:700;letter-spacing:-.5px}
+.stat-k{font-size:11px;color:rgba(255,255,255,.55);margin-top:6px;letter-spacing:.3px}
+
+.brand-foot{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:rgba(255,255,255,.45)}
+.brand-foot .links{display:flex;gap:18px}
+.brand-foot a:hover{color:#fff;transition:.2s}
+
+/* ============ 右侧选择区 ============ */
+.choose{padding:48px 56px;display:flex;flex-direction:column;justify-content:center;background:var(--bg)}
+.choose-inner{max-width:560px;width:100%;margin:0 auto}
+.choose-head h2{font-size:28px;font-weight:700;letter-spacing:-.5px}
+.choose-head p{color:var(--text-2);font-size:14px;margin-top:8px}
+.choose-head .seg{display:inline-flex;background:#fff;border:1px solid var(--border);border-radius:8px;padding:3px;margin-top:18px;font-size:12px}
+.choose-head .seg span{padding:6px 14px;border-radius:6px;color:var(--text-2)}
+.choose-head .seg .on{background:var(--primary);color:#fff;font-weight:500}
+
+.entrance-list{display:flex;flex-direction:column;gap:14px;margin-top:32px}
+.entrance{position:relative;display:flex;align-items:stretch;padding:20px 22px;background:#fff;border:1px solid var(--border);
+  border-radius:var(--radius-lg);cursor:pointer;transition:all .25s ease;overflow:hidden}
+.entrance:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg);border-color:transparent}
+.entrance::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent;transition:width .25s}
+.entrance:hover::before{width:4px}
+
+.entrance .ico{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;flex-shrink:0;margin-right:18px}
+.entrance .ico svg{width:26px;height:26px}
+.entrance .body{flex:1;min-width:0}
+.entrance h3{font-size:16px;font-weight:600;letter-spacing:-.2px;display:flex;align-items:center;gap:10px}
+.entrance .badge{font-size:10px;font-weight:600;padding:2px 8px;border-radius:6px;letter-spacing:.3px}
+.entrance p{font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.6}
+.entrance .meta{display:flex;align-items:center;gap:14px;margin-top:10px;font-size:11px;color:var(--text-3)}
+.entrance .meta span{display:inline-flex;align-items:center;gap:4px}
+.entrance .go{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--text-3);background:var(--border-light);transition:.25s;align-self:center;flex-shrink:0;margin-left:16px}
+.entrance:hover .go{background:var(--primary);color:#fff;transform:translateX(4px)}
+
+/* 三入口配色 */
+.e-ops .ico{background:linear-gradient(135deg,#1E3A8A,#3B82F6);color:#fff}
+.e-ops:hover::before{background:#3B82F6}
+.e-ops .badge{background:#DBEAFE;color:#1D4ED8}
+
+.e-tenant .ico{background:linear-gradient(135deg,#8B5CF6,#A78BFA);color:#fff}
+.e-tenant:hover::before{background:#8B5CF6}
+.e-tenant .badge{background:#EDE9FE;color:#7C3AED}
+
+.e-workspace .ico{background:linear-gradient(135deg,#00B8A9,#2DD4BF);color:#fff}
+.e-workspace:hover::before{background:#00B8A9}
+.e-workspace .badge{background:#CCFBF1;color:#0F766E}
+.e-workspace{position:relative}
+.e-workspace .rec{position:absolute;top:14px;right:14px;font-size:10px;font-weight:600;padding:3px 10px;border-radius:999px;background:linear-gradient(135deg,#F59E0B,#EF4444);color:#fff;letter-spacing:.5px}
+
+.choose-foot{margin-top:36px;padding-top:24px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-2)}
+.choose-foot .links{display:flex;gap:18px}
+.choose-foot a{color:var(--text-2);transition:.2s}
+.choose-foot a:hover{color:var(--primary)}
+
+/* 响应式 */
+@media (max-width:980px){
+  .page{grid-template-columns:1fr}
+  .brand{padding:40px 32px;min-height:400px}
+  .brand-hero{padding:24px 0}
+  .brand h1{font-size:34px}
+  .choose{padding:40px 32px}
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <!-- 左侧品牌区 -->
+  <section class="brand">
+    <div class="brand-inner">
+      <div class="brand-header">
+        <div class="brand-logo">
+          <div class="logo-mark">H</div>
+          <div class="logo-text">Healix</div>
+        </div>
+        <div class="brand-meta">
+          <span class="dot"></span>
+          <span>生产环境 · v3.19.2</span>
+        </div>
+      </div>
+
+      <div class="brand-hero">
+        <div class="brand-tag">
+          <span class="pulse"></span>
+          AI · 医疗 · 全周期健康管理
+        </div>
+        <h1>让每一次<br><span>健康干预</span><br>都精准及时</h1>
+        <p>基于多病种知识图谱与 AI 智能体，为健管师、医生、机构提供从风险识别、方案制定到随访依从的全流程工作平台。</p>
+
+        <div class="brand-stats">
+          <div class="stat">
+            <div class="stat-v">128<i style="font-size:14px;color:rgba(255,255,255,.55);margin-left:4px;font-weight:500">家</i></div>
+            <div class="stat-k">合作机构</div>
+          </div>
+          <div class="stat">
+            <div class="stat-v">42.6<i style="font-size:14px;color:rgba(255,255,255,.55);margin-left:4px;font-weight:500">万</i></div>
+            <div class="stat-k">服务患者</div>
+          </div>
+          <div class="stat">
+            <div class="stat-v">96.8<i style="font-size:14px;color:rgba(255,255,255,.55);margin-left:4px;font-weight:500">%</i></div>
+            <div class="stat-k">方案依从率</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="brand-foot">
+        <div>© 2026 Healix Health Tech. All rights reserved.</div>
+        <div class="links">
+          <a href="#">ICP 备案</a>
+          <a href="#">隐私政策</a>
+          <a href="#">服务条款</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 右侧选择区 -->
+  <section class="choose">
+    <div class="choose-inner">
+      <div class="choose-head">
+        <h2>选择登录入口</h2>
+        <p>请根据你的身份选择对应的工作台入口</p>
+        <div class="seg">
+          <span class="on">三种身份</span>
+          <span>单点登录</span>
+          <span>企业 SSO</span>
+        </div>
+      </div>
+
+      <div class="entrance-list">
+        <!-- Ops 超管 -->
+        <div class="entrance e-ops" onclick="go('ops')">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <div class="body">
+            <h3>Ops 平台超管 <span class="badge">PLATFORM</span></h3>
+            <p>全局租户、机构、用户与权限管理，平台级数据看板与系统配置。</p>
+            <div class="meta">
+              <span>仅限平台管理员</span>
+              <span>·</span>
+              <span>14 项核心能力</span>
+            </div>
+          </div>
+          <div class="go">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </div>
+        </div>
+
+        <!-- 租户管理 -->
+        <div class="entrance e-tenant" onclick="go('tenant')">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/><circle cx="9" cy="14" r="1.5" fill="currentColor"/></svg>
+          </div>
+          <div class="body">
+            <h3>租户管理中心 <span class="badge">TENANT</span></h3>
+            <p>机构入驻审核、品牌配置、计费规则、子机构管理。</p>
+            <div class="meta">
+              <span>租户管理员</span>
+              <span>·</span>
+              <span>9 项核心能力</span>
+            </div>
+          </div>
+          <div class="go">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </div>
+        </div>
+
+        <!-- 机构工作台 -->
+        <div class="entrance e-workspace" onclick="go('workspace')">
+          <span class="rec">推荐入口</span>
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><path d="M16 3.13a4 4 0 0 1 0 7.75" stroke-dasharray="2 2"/></svg>
+          </div>
+          <div class="body">
+            <h3>机构工作台 <span class="badge">WORKSPACE</span></h3>
+            <p>健管师 / 医生日常工作：患者管理、智能驾驶舱、健康方案、依从性看板。</p>
+            <div class="meta">
+              <span>健管师 · 医生 · 机构管理员</span>
+              <span>·</span>
+              <span>28 项核心能力</span>
+            </div>
+          </div>
+          <div class="go">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div class="choose-foot">
+        <div>忘记账号？<a href="#" style="color:var(--primary);font-weight:500">联系企业管理员</a></div>
+        <div class="links">
+          <a href="#">帮助中心</a>
+          <a href="#">下载客户端</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+function go(t){
+  const map={ops:'ops-platform.html',tenant:'tenant-center.html',workspace:'workspace-cockpit.html'};
+  location.href=map[t];
+}
+</script>
+
+</body>
+</html>

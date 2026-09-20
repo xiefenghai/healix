@@ -26,13 +26,12 @@ const BIZ_MENUS = [
 
 interface CockpitSummary {
   openTaskCount: number
-  redCount: number
   overdueCount: number
 }
 
-const summary = ref<CockpitSummary>({ openTaskCount: 0, redCount: 0, overdueCount: 0 })
+const summary = ref<CockpitSummary>({ openTaskCount: 0, overdueCount: 0 })
 const chatUnread = ref(0)
-const chipHandler = ref<((kind: 'tasks' | 'red' | 'overdue') => void) | null>(null)
+const chipHandler = ref<((kind: 'tasks' | 'overdue') => void) | null>(null)
 
 provide('cockpitChipHandler', chipHandler)
 
@@ -105,13 +104,12 @@ function switchOrg() {
   router.push('/workspace/orgs')
 }
 
-function onChip(kind: 'tasks' | 'red' | 'overdue') {
+function onChip(kind: 'tasks' | 'overdue') {
   if (chipHandler.value) {
     chipHandler.value(kind)
     return
   }
-  if (kind === 'tasks') router.push('/workspace/tasks')
-  else router.push('/workspace/adherence')
+  router.push('/workspace/tasks')
 }
 
 watch(
@@ -209,10 +207,6 @@ onBeforeUnmount(() => {
         <i class="dot todo" />
         待办 <strong>{{ summary.openTaskCount }}</strong>
       </button>
-      <button type="button" class="sum-chip danger" @click="onChip('red')">
-        <i class="dot red" />
-        红人 <strong>{{ summary.redCount }}</strong>
-      </button>
       <button type="button" class="sum-chip warn" @click="onChip('overdue')">
         <i class="dot overdue" />
         超期 <strong>{{ summary.overdueCount }}</strong>
@@ -255,10 +249,6 @@ onBeforeUnmount(() => {
   background: var(--rose-500);
 }
 
-.sum-chip .dot.red {
-  background: var(--amber-500);
-}
-
 .sum-chip .dot.overdue {
   background: var(--rose-500);
 }
@@ -267,16 +257,6 @@ onBeforeUnmount(() => {
   margin-left: 2px;
   color: var(--ink-800);
   font-size: 13px;
-}
-
-.sum-chip.danger {
-  background: var(--rose-50);
-  border-color: #fecaca;
-  color: var(--rose-500);
-}
-
-.sum-chip.danger strong {
-  color: var(--rose-500);
 }
 
 .sum-chip.warn {

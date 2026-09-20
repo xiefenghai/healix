@@ -127,6 +127,7 @@ public class DictSeedRunner implements ApplicationRunner {
         // 已有库也可幂等补齐糖尿病 / 高血压扩展字段
         ensureDiabetesArchiveExtensions();
         ensureHypertensionArchiveExtensions();
+        ensureObesityDiseaseAndPresentIllness();
         ensureLifestyleSocialHistoryOptions();
         ensureDoseUnitOptions();
         ensureMedicationUsageOptions();
@@ -451,6 +452,13 @@ public class DictSeedRunner implements ApplicationRunner {
                 50);
         seedDiseaseFieldIfAbsent(
                 "diabetes",
+                "endStageChronicDisease",
+                "终末期慢性疾病",
+                DictFieldSchemas.booleanField(
+                        MetaDataCodeEnum.DISEASE_DIABETES_END_STAGE_CHRONIC, "终末期慢性疾病"),
+                45);
+        seedDiseaseFieldIfAbsent(
+                "diabetes",
                 "remark",
                 "备注",
                 DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_DIABETES_REMARK, "备注"),
@@ -688,10 +696,25 @@ public class DictSeedRunner implements ApplicationRunner {
         seedOption("presentIllness", "MALIGNANT_TUMOR", "恶性肿瘤", 140, null);
         seedOption("presentIllness", "BPH", "良性前列腺增生", 135, null);
         seedOption("presentIllness", "THYROID_DISORDER", "甲状腺功能减退/亢进", 130, null);
+        seedOption("presentIllness", "OBESITY", "肥胖症", 125, null);
+    }
+
+    /** 肥胖症病种 + 现有疾病勾选项（幂等）。 */
+    private void ensureObesityDiseaseAndPresentIllness() {
+        seedDiseaseIfAbsent("obesity", "肥胖症", 80);
+        seedOptionIfAbsent("presentIllness", "OBESITY", "肥胖症", 125);
+        log.warn("Ensured obesity disease / presentIllness options");
     }
 
     private void seedDisease(String code, String desc, int sort) {
         insert(DictTypeEnum.DISEASE.name(), "0", code, desc, "{}", sort);
+    }
+
+    private void seedDiseaseIfAbsent(String code, String desc, int sort) {
+        if (hasDict(DictTypeEnum.DISEASE.name(), "0", code)) {
+            return;
+        }
+        seedDisease(code, desc, sort);
     }
 
     private void seedBasicField(String code, String desc, String content, int sort) {

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.agent.memory.AgentSessionMapper">
+
+    <sql id="baseCols">
+        id, agent_type AS agentType, tenant_id AS tenantId, people_id AS peopleId,
+        staff_id AS staffId, org_id AS orgId, title, status,
+        is_deleted AS isDeleted, gmt_created AS gmtCreated, gmt_modified AS gmtModified
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO agent_session(
+            id, agent_type, tenant_id, people_id, staff_id, org_id, title, status,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{agentType}, #{tenantId}, #{peopleId}, #{staffId}, #{orgId}, #{title}, #{status},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="findById" resultType="com.healix.agent.memory.AgentSessionEntity">
+        SELECT <include refid="baseCols"/>
+        FROM agent_session
+        WHERE id = #{id} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findActive" resultType="com.healix.agent.memory.AgentSessionEntity">
+        SELECT <include refid="baseCols"/>
+        FROM agent_session
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND staff_id = #{staffId}
+          AND agent_type = #{agentType}
+          AND status = 'ACTIVE'
+          AND is_deleted = 0
+          <choose>
+            <when test="peopleId != null and peopleId != ''">
+              AND people_id = #{peopleId}
+            </when>
+            <otherwise>
+              AND (people_id IS NULL OR people_id = '')
+            </otherwise>
+          </choose>
+        ORDER BY gmt_modified DESC
+        LIMIT 1
+    </select>
+
+    <select id="listByStaff" resultType="com.healix.agent.memory.AgentSessionEntity">
+        SELECT <include refid="baseCols"/>
+        FROM agent_session
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND staff_id = #{staffId}
+          AND agent_type = #{agentType}
+          AND is_deleted = 0
+          <choose>
+            <when test="peopleId != null and peopleId != ''">
+              AND people_id = #{peopleId}
+            </when>
+            <otherwise>
+              AND (people_id IS NULL OR people_id = '')
+            </otherwise>
+          </choose>
+        ORDER BY gmt_modified DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="touch">
+        UPDATE agent_session
+        SET gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="close">
+        UPDATE agent_session
+        SET status = 'CLOSED', gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0 AND status = 'ACTIVE'
+    </update>
+
+    <update id="closeActive">
+        UPDATE agent_session
+        SET status = 'CLOSED', gmt_modified = NOW()
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND staff_id = #{staffId}
+          AND agent_type = #{agentType}
+          AND status = 'ACTIVE'
+          AND is_deleted = 0
+          <choose>
+            <when test="peopleId != null and peopleId != ''">
+              AND people_id = #{peopleId}
+            </when>
+            <otherwise>
+              AND (people_id IS NULL OR people_id = '')
+            </otherwise>
+          </choose>
+    </update>
+
+    <update id="reactivate">
+        UPDATE agent_session
+        SET status = 'ACTIVE', gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="updateTitle">
+        UPDATE agent_session
+        SET title = #{title}, gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

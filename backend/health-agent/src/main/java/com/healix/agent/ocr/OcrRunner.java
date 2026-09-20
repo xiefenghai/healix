@@ -62,7 +62,7 @@ public class OcrRunner {
             throw new BusinessException("OCR 服务未启用，请配置 healix.agent.enabled=true 及 API Key");
         }
         String systemPrompt = loadSkillPrompt(skill, fallbackSystemPrompt);
-        String mode = ocrMode == null ? "TEXT_LLM" : ocrMode.trim().toUpperCase(Locale.ROOT);
+        String mode = currentMode();
         log.info("[OCR] recognize start skill={} mode={} imageBytes={} mime={}", skill, mode, imageBytes.length, mimeType);
 
         LlmResponse llm;
@@ -80,6 +80,40 @@ public class OcrRunner {
             throw new BusinessException(failureMessage + hint);
         }
         return parseJson(llm.content());
+    }
+
+    /**
+     * 在已经抽出单据原文、并且调用方已占用 OCR 配额之后做结构化。
+     * VISION 模式仍把原图交给识图模型；TEXT_LLM 模式复用已抽出的文字，避免再读一遍图。
+     */
+    public JsonNode structureDocument(
+            String skill,
+            String userPrompt,
+            byte[] imageBytes,
+            String mimeType,
+            String documentText,
+            String fallbackSystemPrompt,
+            String failureMessage) {
+        if (!llmClient.isEnabled()) {
+            throw new BusinessException("OCR 服务未启用，请配置 healix.agent.enabled=true 及 API Key");
+        }
+        String systemPrompt = loadSkillPrompt(skill, fallbackSystemPrompt);
+        String mode = currentMode();
+        LlmResponse llm;
+        if ("VISION".equals(mode)) {
+            String base64 = Base64.getEncoder().encodeToString(imageBytes);
+            llm = llmClient.chatWithImage(skill, systemPrompt, userPrompt, base64, mimeType);
+        } else {
+            llm = llmClient.chat(skill, systemPrompt, userPrompt + "\n\nOCR 文本：\n" + documentText, List.of());
+        }
+        if (!llm.fromLlm() || !StringUtils.hasText(llm.content())) {
+            throw new BusinessException(failureMessage);
+        }
+        return parseJson(llm.content());
+    }
+
+    private String currentMode() {
+        return ocrMode == null ? "TEXT_LLM" : ocrMode.trim().toUpperCase(Locale.ROOT);
     }
 
     public void validateImage(byte[] imageBytes, String mimeType) {

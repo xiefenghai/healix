@@ -63,7 +63,9 @@ const addStaffId = ref<string | null>(null)
 const addPatientId = ref<string | null>(null)
 
 const careManagers = computed(() =>
-  staffList.value.filter((s) => s.roles?.includes(StaffRole.CARE_MANAGER)),
+  staffList.value.filter(
+    (s) => s.roles?.includes(StaffRole.CARE_MANAGER) || s.roles?.includes(StaffRole.TENANT_ADMIN),
+  ),
 )
 const doctors = computed(() => staffList.value.filter((s) => s.roles?.includes(StaffRole.DOCTOR)))
 

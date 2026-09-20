@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Healix · 工作台任务</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --brand-500:#2C7EF8; --brand-600:#1E63D9; --brand-50:#EAF2FF; --brand-100:#D6E6FF;
+    --teal-500:#00B8A9; --teal-50:#E6FAF7;
+    --amber-500:#F59E0B; --amber-50:#FEF6E2;
+    --rose-500:#EF4444; --rose-50:#FEE9E7;
+    --violet-500:#8B5CF6; --violet-50:#F1ECFE;
+    --ink-900:#0F172A; --ink-800:#1E293B; --ink-700:#334155; --ink-500:#64748B;
+    --ink-400:#94A3B8; --ink-300:#CBD5E1; --ink-200:#E2E8F0; --ink-100:#F1F5F9; --ink-50:#F8FAFC;
+    --bg:#F5F7FB; --surface:#FFFFFF;
+    --radius:12px; --radius-sm:8px;
+    --shadow-sm:0 1px 2px rgba(15,23,42,.04);
+    --transition:180ms cubic-bezier(.4,0,.2,1);
+  }
+  *{box-sizing:border-box;}body{margin:0;font-family:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;color:var(--ink-800);background:var(--bg);-webkit-font-smoothing:antialiased;}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;}a{color:inherit;text-decoration:none;}
+
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh;}
+  .sidebar{background:linear-gradient(180deg,#0F172A 0%,#131C30 100%);color:#94A3B8;padding:20px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 22px;color:#fff;}
+  .brand-logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2C7EF8,#00B8A9);display:grid;place-items:center;}
+  .brand-logo svg{width:22px;height:22px;}
+  .brand-name{font-weight:700;font-size:16px;}.brand-name small{display:block;font-weight:500;font-size:11px;color:#94A3B8;margin-top:2px;}
+  .nav-section{margin-top:14px;}
+  .nav-title{font-size:11px;font-weight:600;letter-spacing:1.2px;color:#64748B;text-transform:uppercase;padding:12px 12px 8px;}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:8px;color:#94A3B8;font-size:13.5px;font-weight:500;transition:180ms;margin-bottom:2px;cursor:pointer;position:relative;}
+  .nav-item:hover{background:rgba(255,255,255,.05);color:#fff;}
+  .nav-item.active{background:linear-gradient(90deg,rgba(44,126,248,.18),rgba(44,126,248,.04));color:#fff;}
+  .nav-item.active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;background:#2C7EF8;border-radius:0 3px 3px 0;}
+  .nav-item svg{width:18px;height:18px;flex-shrink:0;opacity:.85;}
+  .nav-badge{margin-left:auto;font-size:11px;background:#EF4444;color:#fff;padding:2px 7px;border-radius:999px;font-weight:600;}
+  .nav-badge.muted{background:rgba(255,255,255,.1);color:#CBD5E1;}
+
+  .main{display:flex;flex-direction:column;min-width:0;}
+  .topbar{height:60px;background:#fff;border-bottom:1px solid #E2E8F0;display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:10;}
+  .crumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748B;}.crumbs strong{color:#1E293B;font-weight:600;}
+  .crumbs svg{width:14px;height:14px;opacity:.5;}
+  .search{flex:1;max-width:380px;position:relative;}
+  .search input{width:100%;height:36px;padding:0 14px 0 36px;border-radius:8px;border:1px solid #E2E8F0;background:#F8FAFC;font-size:13px;}
+  .search input:focus{outline:none;background:#fff;border-color:#2C7EF8;box-shadow:0 0 0 3px rgba(44,126,248,.12);}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:#94A3B8;}
+  .topbar-right{display:flex;align-items:center;gap:6px;margin-left:auto;}
+  .icon-btn{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:#64748B;transition:180ms;}
+  .icon-btn:hover{background:#F1F5F9;color:#1E293B;}.icon-btn svg{width:18px;height:18px;}
+  .org-switch{display:flex;align-items:center;gap:10px;padding:3px 10px 3px 3px;border-radius:999px;background:#F8FAFC;border:1px solid #E2E8F0;margin:0 8px;cursor:pointer;}
+  .org-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#EF4444);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600;}
+  .org-meta .name{font-size:13px;font-weight:600;color:#1E293B;line-height:1.2;}.org-meta .role{font-size:11px;color:#64748B;}
+  .user-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#2C7EF8);display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;}
+
+  .content{padding:24px 32px 40px;flex:1;}
+
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:20px;flex-wrap:wrap;}
+  .page-head h1{font-size:22px;font-weight:700;margin:0 0 4px;color:#0F172A;letter-spacing:-.3px;}
+  .page-head p{margin:0;color:#64748B;font-size:13.5px;}
+  .head-actions{display:flex;gap:10px;}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:8px;font-size:13px;font-weight:600;transition:180ms;border:1px solid transparent;}
+  .btn svg{width:15px;height:15px;}
+  .btn-primary{background:#2C7EF8;color:#fff;box-shadow:0 4px 10px -2px rgba(44,126,248,.4);}
+  .btn-primary:hover{background:#1E63D9;transform:translateY(-1px);}
+  .btn-ghost{background:#fff;color:#334155;border-color:#E2E8F0;}
+  .btn-ghost:hover{background:#F8FAFC;}
+
+  /* KPI cards (clickable) */
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;}
+  .kpi{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;cursor:pointer;transition:180ms;position:relative;overflow:hidden;}
+  .kpi:hover{box-shadow:0 1px 3px rgba(15,23,42,.06),0 8px 24px -8px rgba(15,23,42,.08);transform:translateY(-1px);}
+  .kpi.active{border-color:#2C7EF8;background:linear-gradient(180deg,#F8FBFF,#fff);}
+  .kpi.active::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#2C7EF8;}
+  .kpi-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .kpi-label{font-size:12.5px;color:#64748B;font-weight:500;}
+  .kpi-icon{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;}
+  .kpi-icon svg{width:17px;height:17px;}
+  .kpi-val{font-size:26px;font-weight:700;color:#0F172A;letter-spacing:-.5px;line-height:1.1;}
+  .kpi-foot{font-size:11.5px;color:#94A3B8;margin-top:6px;}
+
+  /* Filter bar */
+  .filter-bar{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .tabs{display:inline-flex;background:#F1F5F9;border-radius:8px;padding:3px;gap:2px;}
+  .tabs button{padding:6px 12px;font-size:12.5px;border-radius:6px;color:#64748B;font-weight:500;}
+  .tabs button.active{background:#fff;color:#1E293B;box-shadow:0 1px 2px rgba(15,23,42,.06);}
+  .select{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:1px solid #E2E8F0;border-radius:8px;background:#fff;font-size:12.5px;color:#334155;font-weight:500;cursor:pointer;}
+  .select:hover{border-color:#CBD5E1;}
+  .select svg{width:13px;height:13px;color:#94A3B8;}
+  .filter-spacer{flex:1;}
+
+  /* Table */
+  .table-card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;overflow:hidden;}
+  .table-head-bar{padding:14px 20px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between;}
+  .table-title{font-size:14px;font-weight:600;color:#1E293B;}
+  .table-title .count{color:#94A3B8;font-weight:500;margin-left:6px;}
+
+  table{width:100%;border-collapse:collapse;}
+  th{text-align:left;font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.8px;padding:12px 14px;background:#F8FAFC;border-bottom:1px solid #F1F5F9;}
+  td{padding:14px;font-size:13px;border-bottom:1px solid #F1F5F9;vertical-align:middle;}
+  tr:hover td{background:#FBFCFE;}
+  tr:last-child td{border-bottom:0;}
+  .cell-check{width:36px;}
+  .cell-check input{width:16px;height:16px;cursor:pointer;accent-color:#2C7EF8;}
+
+  .type-icon{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex-shrink:0;}
+  .type-icon svg{width:14px;height:14px;}
+  .task-cell{display:flex;align-items:center;gap:10px;}
+  .task-cell .title{font-weight:600;color:#1E293B;line-height:1.3;}
+  .task-cell .meta{font-size:11.5px;color:#94A3B8;margin-top:2px;}
+
+  .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;white-space:nowrap;}
+  .tag.brand{background:#EAF2FF;color:#1E63D9;}
+  .tag.teal{background:#E6FAF7;color:#0F766E;}
+  .tag.amber{background:#FEF6E2;color:#B45309;}
+  .tag.rose{background:#FEE9E7;color:#EF4444;}
+  .tag.violet{background:#F1ECFE;color:#6D28D9;}
+  .tag.muted{background:#F1F5F9;color:#64748B;}
+  .tag-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+
+  .deadline{font-size:12px;color:#475569;}
+  .deadline .time{font-weight:600;color:#1E293B;}
+  .deadline.urgent{color:var(--rose-500);}
+  .deadline.urgent .time{color:var(--rose-500);}
+  .deadline.warn{color:var(--amber-500);}
+  .deadline.warn .time{color:var(--amber-500);}
+
+  .row-actions{display:flex;gap:4px;}
+  .row-actions button{height:28px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:500;color:#475569;display:inline-flex;align-items:center;gap:4px;transition:180ms;}
+  .row-actions button:hover{background:#F1F5F9;color:#1E293B;}
+  .row-actions button.primary{background:#2C7EF8;color:#fff;}
+  .row-actions button.primary:hover{background:#1E63D9;}
+  .row-actions svg{width:13px;height:13px;}
+  .row-actions .more{width:28px;padding:0;display:grid;place-items:center;}
+
+  .pager{padding:14px 20px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #F1F5F9;}
+  .pager-info{font-size:12.5px;color:#64748B;}
+  .pager-pages{display:flex;gap:4px;}
+  .pager-pages button{width:30px;height:30px;border-radius:6px;font-size:12.5px;color:#475569;border:1px solid transparent;}
+  .pager-pages button:hover{background:#F1F5F9;}
+  .pager-pages button.active{background:#2C7EF8;color:#fff;}
+  .pager-pages button:disabled{opacity:.4;cursor:not-allowed;}
+
+  @media(max-width:1280px){.kpi-grid{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:960px){.app{grid-template-columns:1fr;}.sidebar{display:none;}.content{padding:16px;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+      <div class="brand-name">Healix<small>机构工作台 · v3.20</small></div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">主导航</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>智能驾驶舱</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>工作台任务<span class="nav-badge">12</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>患者管理</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>依从性看板</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">协作</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>健管组</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>健康方案库<span class="nav-badge muted">86</span></div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">管理</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>机构成员</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>系统设置</div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs">
+        <span>机构工作台</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <strong>工作台任务</strong>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="搜索任务 / 患者…" />
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></button>
+        <div class="org-switch"><div class="org-avatar">沪</div><div class="org-meta"><div class="name">上海仁济健管中心</div><div class="role">健管师 · 李医生</div></div></div>
+        <div class="user-avatar">LF</div>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <section class="page-head">
+        <div>
+          <h1>工作台任务</h1>
+          <p>点击上方卡片可快速切换任务池 · 共 86 项进行中，3 项逾期</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg>刷新</button>
+          <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建任务</button>
+        </div>
+      </section>
+
+      <!-- KPI -->
+      <section class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-head">
+            <span class="kpi-label">公共任务池</span>
+            <div class="kpi-icon" style="background:#F1F5F9;color:#64748B"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 21V9"/></svg></div>
+          </div>
+          <div class="kpi-val">23</div>
+          <div class="kpi-foot">待领取 · 含 8 项高优</div>
+        </div>
+        <div class="kpi active">
+          <div class="kpi-head">
+            <span class="kpi-label">我的待办</span>
+            <div class="kpi-icon" style="background:var(--brand-50);color:var(--brand-500)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+          </div>
+          <div class="kpi-val">12</div>
+          <div class="kpi-foot" style="color:var(--rose-500);">3 项逾期</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-head">
+            <span class="kpi-label">今日已办</span>
+            <div class="kpi-icon" style="background:var(--teal-50);color:var(--teal-500)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div>
+          </div>
+          <div class="kpi-val">8</div>
+          <div class="kpi-foot">完成率 92% · 平均时长 12 分钟</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-head">
+            <span class="kpi-label">全部任务</span>
+            <div class="kpi-icon" style="background:var(--violet-50);color:var(--violet-500)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+          </div>
+          <div class="kpi-val">86</div>
+          <div class="kpi-foot">本月累计 · 进行中 12</div>
+        </div>
+      </section>
+
+      <!-- Filter bar -->
+      <div class="filter-bar">
+        <div class="tabs">
+          <button>全部</button>
+          <button class="active">待办</button>
+          <button>进行中</button>
+          <button>已完成</button>
+          <button>已取消</button>
+        </div>
+        <div style="width:1px;height:18px;background:#E2E8F0;"></div>
+        <button class="select">类型: 全部 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <button class="select">健管组: 全部 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <button class="select">归属池: 我的 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <div class="filter-spacer"></div>
+        <button class="select" style="background:#F8FAFC;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>高级筛选</button>
+        <button class="select" style="background:#F8FAFC;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="9" y2="18"/></svg>排序: 到期时间</button>
+      </div>
+
+      <!-- Table -->
+      <div class="table-card">
+        <div class="table-head-bar">
+          <div class="table-title">我的待办 <span class="count">· 12 项 · 3 项逾期</span></div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" style="height:32px;font-size:12px;">批量分派</button>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th class="cell-check"><input type="checkbox" /></th>
+              <th>任务</th>
+              <th>类型</th>
+              <th>患者</th>
+              <th>健管组</th>
+              <th>归属池</th>
+              <th>到期</th>
+              <th>状态</th>
+              <th style="width:200px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#FEE9E7;color:#EF4444;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div>
+                  <div><div class="title">9 月健康报告审阅</div><div class="meta">王秀英 · 健管师 提交</div></div>
+                </div>
+              </td>
+              <td><span class="tag rose"><span class="tag-dot" style="background:#EF4444"></span>报告审阅</span></td>
+              <td><strong>王秀英</strong></td>
+              <td><span class="tag brand">老年慢病组</span></td>
+              <td>我的</td>
+              <td><div class="deadline urgent"><div class="time">今天 10:30</div><div>逾期 4 小时</div></div></td>
+              <td><span class="tag rose">待处理</span></td>
+              <td><div class="row-actions"><button class="primary">立即处理</button><button>退回</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#FEF6E2;color:#F59E0B;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></div>
+                  <div><div class="title">电话随访 · 控糖方案 6 周复盘</div><div class="meta">需要 30 分钟</div></div>
+                </div>
+              </td>
+              <td><span class="tag amber"><span class="tag-dot" style="background:#F59E0B"></span>电话随访</span></td>
+              <td><strong>张建国</strong></td>
+              <td><span class="tag brand">控糖先锋组</span></td>
+              <td>我的</td>
+              <td><div class="deadline warn"><div class="time">今天 15:00</div><div>还有 2 小时</div></div></td>
+              <td><span class="tag amber">紧急</span></td>
+              <td><div class="row-actions"><button class="primary">开始</button><button>改期</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#EAF2FF;color:#2C7EF8;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+                  <div><div class="title">方案审核 · v3 草稿</div><div class="meta">由 AI 生成 · 待医生审核</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand"><span class="tag-dot" style="background:#2C7EF8"></span>方案审核</span></td>
+              <td><strong>陈晓宇</strong></td>
+              <td><span class="tag brand">心脑血管组</span></td>
+              <td>我的</td>
+              <td><div class="deadline"><div class="time">今天 17:00</div><div>还有 4 小时</div></div></td>
+              <td><span class="tag brand">进行中</span></td>
+              <td><div class="row-actions"><button class="primary">审核</button><button>退回</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#F1ECFE;color:#8B5CF6;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+                  <div><div class="title">审阅 AI 生成的 5 份随访话术</div><div class="meta">AI 草稿 · 平均 80 字</div></div>
+                </div>
+              </td>
+              <td><span class="tag violet"><span class="tag-dot" style="background:#8B5CF6"></span>AI 审阅</span></td>
+              <td>5 位患者</td>
+              <td>—</td>
+              <td>我的</td>
+              <td><div class="deadline"><div class="time">明天 14:00</div></div></td>
+              <td><span class="tag brand">进行中</span></td>
+              <td><div class="row-actions"><button class="primary">批量审阅</button><button>分派</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#E6FAF7;color:#0F766E;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>
+                  <div><div class="title">为糖尿病组分配本周健康教育</div><div class="meta">模板 · 控糖饮食指南</div></div>
+                </div>
+              </td>
+              <td><span class="tag teal"><span class="tag-dot" style="background:#0F766E"></span>健管组任务</span></td>
+              <td>12 位患者</td>
+              <td><span class="tag brand">控糖先锋组</span></td>
+              <td>我的</td>
+              <td><div class="deadline"><div class="time">明天 09:00</div></div></td>
+              <td><span class="tag brand">进行中</span></td>
+              <td><div class="row-actions"><button class="primary">编辑</button><button>分派</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#FEE9E7;color:#EF4444;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div>
+                  <div><div class="title">8 月健康报告审阅</div><div class="meta">陈晓宇 · 健管师 提交</div></div>
+                </div>
+              </td>
+              <td><span class="tag rose"><span class="tag-dot" style="background:#EF4444"></span>报告审阅</span></td>
+              <td><strong>陈晓宇</strong></td>
+              <td><span class="tag brand">心脑血管组</span></td>
+              <td>我的</td>
+              <td><div class="deadline urgent"><div class="time">昨天 17:00</div><div>逾期 1 天</div></div></td>
+              <td><span class="tag rose">待处理</span></td>
+              <td><div class="row-actions"><button class="primary">立即处理</button><button>退回</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#FEF6E2;color:#F59E0B;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/></svg></div>
+                  <div><div class="title">上传 OCR · 化验单识别</div><div class="meta">李美芳 · 2 张图片</div></div>
+                </div>
+              </td>
+              <td><span class="tag amber"><span class="tag-dot" style="background:#F59E0B"></span>OCR 上传</span></td>
+              <td><strong>李美芳</strong></td>
+              <td><span class="tag brand">心脑血管组</span></td>
+              <td>我的</td>
+              <td><div class="deadline"><div class="time">周五 18:00</div></div></td>
+              <td><span class="tag muted">已上传</span></td>
+              <td><div class="row-actions"><button class="primary">确认入库</button><button>查看</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+            <tr>
+              <td class="cell-check"><input type="checkbox" /></td>
+              <td>
+                <div class="task-cell">
+                  <div class="type-icon" style="background:#EAF2FF;color:#2C7EF8;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/></svg></div>
+                  <div><div class="title">建档 · 新患者 3 名</div><div class="meta">机构管理员分派 · 含 OCR</div></div>
+                </div>
+              </td>
+              <td><span class="tag brand"><span class="tag-dot" style="background:#2C7EF8"></span>患者建档</span></td>
+              <td>3 位新患者</td>
+              <td>—</td>
+              <td>我的</td>
+              <td><div class="deadline"><div class="time">本周内</div></div></td>
+              <td><span class="tag brand">进行中</span></td>
+              <td><div class="row-actions"><button class="primary">开始建档</button><button>分派</button><button class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></div></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div class="pager-info">显示 <strong style="color:var(--ink-800)">1-8</strong> 条 / 共 12 条</div>
+          <div class="pager-pages">
+            <button disabled>‹</button>
+            <button class="active">1</button>
+            <button>2</button>
+            <button>›</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+</body>
+</html>
