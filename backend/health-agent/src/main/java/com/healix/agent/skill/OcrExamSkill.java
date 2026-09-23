@@ -57,7 +57,7 @@ public class OcrExamSkill implements AgentSkill {
                     AgentCapability.OCR_EXAM.name(),
                     "OCR_EXAM",
                     buildReply(prefill),
-                    List.of(AgentAction.navigate("前往检查录入确认", path)),
+                    List.of(),
                     List.of(),
                     prefill);
         } catch (BusinessException e) {
@@ -66,7 +66,7 @@ public class OcrExamSkill implements AgentSkill {
                     AgentCapability.OCR_EXAM.name(),
                     "OCR_EXAM",
                     e.getMessage(),
-                    List.of(AgentAction.navigate("前往检查录入", path)),
+                    List.of(),
                     List.of(),
                     null);
         } catch (Exception e) {
@@ -75,7 +75,7 @@ public class OcrExamSkill implements AgentSkill {
                     AgentCapability.OCR_EXAM.name(),
                     "OCR_EXAM",
                     "检查单识别失败，请检查图片清晰度或稍后重试。",
-                    List.of(AgentAction.navigate("前往检查录入", path)),
+                    List.of(),
                     List.of(),
                     null);
         }
@@ -102,7 +102,7 @@ public class OcrExamSkill implements AgentSkill {
         if (prefill.warnings() != null && !prefill.warnings().isEmpty()) {
             parts.add("提示：" + String.join("；", prefill.warnings().subList(0, Math.min(3, prefill.warnings().size()))));
         }
-        parts.add("请前往检查页核对后保存（对话识别结果不会自动落库）。");
+        parts.add("请在对话中核对后确认入库（不会自动落库）。");
         return String.join("。", parts);
     }
 

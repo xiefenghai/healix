@@ -39,7 +39,7 @@ public class CockpitFocusDto {
     /** 待确认 AI 产物：方案草稿 / 报告草稿等 */
     private List<PendingDraft> pendingDrafts = new ArrayList<>();
     private String archivePath;
-    /** 健康沟通入口 */
+    /** 患者沟通入口 */
     private String careChatPath;
 
     @Data
@@ -64,12 +64,14 @@ public class CockpitFocusDto {
     /** 右栏「待你确认」草稿项 */
     @Data
     public static class PendingDraft {
-        /** CARE_PLAN / REPORT / OCR_HINT */
+        /** CARE_PLAN / REPORT */
         private String kind;
         private String id;
         private String title;
         private String summary;
         /** 打开抽屉 mode 或相对路径提示 */
         private String sheetMode;
+        /** 按钮文案，如「去审阅」 */
+        private String actionLabel;
     }
 }

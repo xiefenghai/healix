@@ -6,6 +6,8 @@ public enum AgentCapability {
     CARE_PLAN("制定管理方案", true),
     OCR_LAB("检验单识别", true),
     OCR_EXAM("检查单识别", true),
+    OCR_MED("用药单识别", true),
+    REPORT_SUMMARY("管理报告点评", true),
     GENERAL_CHAT("健康咨询", true);
 
     private final String label;

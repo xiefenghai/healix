@@ -21,6 +21,8 @@ export interface CarePlanPreviewCheckin {
 export interface CarePlanPreviewData {
   title?: string
   goalSummary?: string
+  /** 方案总结（AI/人工撰写的阶段总结） */
+  summary?: string
   source?: string
   versionLabel?: string
   status?: string
@@ -63,13 +65,13 @@ const visible = computed({
   set: (v) => emit('update:modelValue', v),
 })
 
-const activeSections = ref<string[]>(['exercise', 'diet', 'execution', 'checkins'])
+const activeSections = ref<string[]>(['summary', 'exercise', 'diet', 'execution', 'checkins'])
 
 watch(
   () => props.modelValue,
   (open) => {
     if (open) {
-      activeSections.value = ['exercise', 'diet', 'execution', 'checkins']
+      activeSections.value = ['summary', 'exercise', 'diet', 'execution', 'checkins']
     }
   },
 )
@@ -173,6 +175,19 @@ function formatDateTime(iso?: string) {
       <CarePlanAiDisclaimer v-if="isAiSource" class="ai-disclaimer-block" />
 
       <el-collapse v-model="activeSections" class="plan-sections">
+        <el-collapse-item name="summary">
+          <template #title>
+            <div class="section-head section-head--summary">
+              <span class="section-icon"><el-icon><Document /></el-icon></span>
+              <span class="section-name">方案总结</span>
+            </div>
+          </template>
+          <div class="section-body">
+            <p v-if="data.summary" class="section-lead">{{ data.summary }}</p>
+            <p v-else class="section-lead muted">（未填写）</p>
+          </div>
+        </el-collapse-item>
+
         <el-collapse-item name="exercise">
           <template #title>
             <div class="section-head section-head--exercise">
@@ -441,6 +456,11 @@ function formatDateTime(iso?: string) {
   height: 30px;
   border-radius: 8px;
   flex-shrink: 0;
+}
+
+.section-head--summary .section-icon {
+  background: #ede9fe;
+  color: #7c3aed;
 }
 
 .section-head--exercise .section-icon {

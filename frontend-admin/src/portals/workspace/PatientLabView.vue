@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiUpload } from '../../shared/http'
@@ -441,9 +441,16 @@ async function onOcrFileChange(e: Event) {
 function tryOpenOcrDraft() {
   if (route.query.ocr !== '1' && !props.consumeOcrDraft) return
   const draft = loadLabOcrDraft()
-  if (!draft?.items?.length) return
-  applyOcrDraft(draft)
-  clearLabOcrDraft()
+  if (draft?.items?.length) {
+    applyOcrDraft(draft)
+    clearLabOcrDraft()
+    return
+  }
+  // 无图 OCR 入口：无会话草稿时直接唤起拍照
+  if (route.query.ocr === '1') {
+    ocrHint.value = '请拍照或选择检验单图片，识别后核对入库'
+    nextTick(() => openOcrPicker())
+  }
 }
 
 function openEdit(row: LabReport) {

@@ -131,7 +131,8 @@ public class FollowupScheduleService {
     /**
      * C 端患者主动申请回访：在其活跃机构开 OPEN 定期随访 + FOLLOW_UP。
      *
-     * <p>同一机构已有未办结的患者请求单时直接复用，避免重复提交刷单。
+     * <p>只与已有未办结的「患者申请」单去重；健管师手工/用药随访等 OPEN PERIODIC
+     * 不挡申请。若申请单仍在但关联任务已关，补开任务。
      */
     @Transactional
     public RequestResult requestByPatient(
@@ -156,15 +157,6 @@ public class FollowupScheduleService {
         }
         String orgId = target.getOrgId();
 
-        FollowupRecord existing = followupRecordMapper.findOpenPeriodicByPeople(orgId, peopleId);
-        if (existing != null) {
-            return new RequestResult(
-                    existing.getId(),
-                    existing.getWorkspaceTaskId(),
-                    false,
-                    "已有待处理的随访安排，健管师会尽快联系您");
-        }
-
         LocalDate today = LocalDate.now(JobCronSupport.ZONE);
         LocalDate planned = preferredDay != null && !preferredDay.isBefore(today) ? preferredDay : today;
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
@@ -173,6 +165,17 @@ public class FollowupScheduleService {
             note = note.substring(0, 200);
         }
         FollowupType followupType = FollowupType.ROUTINE;
+
+        FollowupRecord existing = followupRecordMapper.findOpenPatientRequestByPeople(orgId, peopleId);
+        if (existing != null) {
+            String taskId = ensurePatientRequestTask(
+                    tenantId, orgId, peopleId, existing, followupType, note, planned, now);
+            return new RequestResult(
+                    existing.getId(),
+                    taskId,
+                    false,
+                    "已有待处理的回访申请，健管师会尽快联系您");
+        }
 
         FollowupRecord record = new FollowupRecord();
         record.setTenantId(tenantId);
@@ -202,6 +205,30 @@ public class FollowupScheduleService {
             followupRecordMapper.updateWorkspaceTaskId(record.getId(), taskId, now);
         }
         return new RequestResult(record.getId(), taskId, true, "已提交回访申请，健管师会尽快联系您");
+    }
+
+    /** 复用申请单时，若任务已取消/缺失则补开，保证管理端待办可见。 */
+    private String ensurePatientRequestTask(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            FollowupRecord record,
+            FollowupType followupType,
+            String reason,
+            LocalDate preferredDay,
+            LocalDateTime now) {
+        if (StringUtils.hasText(record.getWorkspaceTaskId())) {
+            WorkspaceTask linked = workspaceTaskMapper.findById(record.getWorkspaceTaskId());
+            if (linked != null && WorkspaceTaskStatus.OPEN.matches(linked.getStatus())) {
+                return linked.getId();
+            }
+        }
+        String taskId = openPatientRequestTask(tenantId, orgId, peopleId, record, followupType, reason, preferredDay);
+        if (StringUtils.hasText(taskId)) {
+            followupRecordMapper.updateWorkspaceTaskId(record.getId(), taskId, now);
+            record.setWorkspaceTaskId(taskId);
+        }
+        return taskId;
     }
 
     private String openPatientRequestTask(

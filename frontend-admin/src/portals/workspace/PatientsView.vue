@@ -16,6 +16,17 @@ interface OrgPatientListItem {
   careTeamId?: string | null
   careTeamName?: string | null
   joinedAt?: string
+  diseaseLabels?: string[]
+  assessmentTags?: Array<{
+    engineCode?: string
+    text: string
+    tone?: string
+    title?: string
+  }>
+  primaryCareManagerStaffId?: string | null
+  primaryCareManagerName?: string | null
+  archiveCompletenessPercent?: number | null
+  watched?: boolean | null
 }
 
 interface CareTeamListItem {
@@ -51,6 +62,7 @@ const teams = ref<CareTeamListItem[]>([])
 const keyword = ref('')
 const careTeamId = ref<string | ''>('')
 const unassignedOnly = ref(false)
+const watchedOnly = ref(false)
 const adherenceFilter = ref<'' | 'PLAN_INCOMPLETE' | 'MED_INCOMPLETE' | 'STREAK_GE_3'>('')
 const adherenceMode = computed(() => !!adherenceFilter.value)
 
@@ -76,6 +88,9 @@ const attachCandidates = computed(() => baselineList.value.length ? baselineList
 const totalCount = computed(() => baselineList.value.length)
 const unassignedCount = computed(
   () => baselineList.value.filter((p) => !p.careTeamId).length,
+)
+const watchedCount = computed(
+  () => baselineList.value.filter((p) => !!p.watched).length,
 )
 const enrolledCount = computed(() => totalCount.value - unassignedCount.value)
 const monthNewCount = computed(() => {
@@ -109,7 +124,7 @@ const enrolledRate = computed(() => {
   return `${Math.round((enrolledCount.value / totalCount.value) * 100)}%`
 })
 
-type SummaryKey = 'all' | 'unassigned' | 'month' | 'adherence' | 'client'
+type SummaryKey = 'all' | 'unassigned' | 'watched' | 'month' | 'adherence' | 'client'
 
 const summaryCards = computed(() => [
   {
@@ -117,7 +132,21 @@ const summaryCards = computed(() => [
     label: '在管患者',
     value: String(totalCount.value),
     hint: '当前机构全部档案',
-    active: !unassignedOnly.value && !adherenceFilter.value && !careTeamId.value && !keyword.value.trim(),
+    active:
+      !unassignedOnly.value
+      && !watchedOnly.value
+      && !adherenceFilter.value
+      && !careTeamId.value
+      && !keyword.value.trim(),
+    clickable: true,
+    danger: false,
+  },
+  {
+    key: 'watched' as SummaryKey,
+    label: '重点关注',
+    value: String(watchedCount.value),
+    hint: '我标记的患者',
+    active: watchedOnly.value,
     clickable: true,
     danger: false,
   },
@@ -229,9 +258,30 @@ function patientMeta(row: OrgPatientListItem) {
   const parts = [
     age !== '-' ? `${age} 岁` : null,
     gender !== '-' ? gender : null,
-    `ID ${row.peopleId}`,
   ].filter(Boolean)
-  return parts.join(' · ')
+  return parts.join(' · ') || '-'
+}
+
+function assessmentToneType(tone?: string): 'danger' | 'warning' | 'success' | 'info' | undefined {
+  switch (tone) {
+    case 'danger':
+      return 'danger'
+    case 'warning':
+      return 'warning'
+    case 'success':
+      return 'success'
+    case 'info':
+      return 'info'
+    default:
+      return undefined
+  }
+}
+
+function archiveToneClass(percent?: number | null) {
+  if (percent == null) return ''
+  if (percent >= 80) return 'good'
+  if (percent >= 50) return 'fair'
+  return 'poor'
 }
 
 async function ensureOrg() {
@@ -284,10 +334,11 @@ async function load() {
       if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
       if (unassignedOnly.value) q.set('unassigned', 'true')
       else if (careTeamId.value !== '') q.set('careTeamId', String(careTeamId.value))
+      if (watchedOnly.value) q.set('watched', 'true')
       const qs = q.toString()
       const res = await api<{ data: OrgPatientListItem[] }>(`/api/b/v1/org-patients${qs ? `?${qs}` : ''}`)
       list.value = res.data ?? []
-      if (!keyword.value.trim() && !unassignedOnly.value && careTeamId.value === '') {
+      if (!keyword.value.trim() && !unassignedOnly.value && !watchedOnly.value && careTeamId.value === '') {
         baselineList.value = list.value
       }
     }
@@ -307,7 +358,17 @@ function onSummaryClick(key: SummaryKey) {
     keyword.value = ''
     careTeamId.value = ''
     unassignedOnly.value = false
+    watchedOnly.value = false
     adherenceFilter.value = ''
+    void load()
+    return
+  }
+  if (key === 'watched') {
+    keyword.value = ''
+    careTeamId.value = ''
+    adherenceFilter.value = ''
+    unassignedOnly.value = false
+    watchedOnly.value = true
     void load()
     return
   }
@@ -315,6 +376,7 @@ function onSummaryClick(key: SummaryKey) {
     keyword.value = ''
     careTeamId.value = ''
     adherenceFilter.value = ''
+    watchedOnly.value = false
     unassignedOnly.value = true
     void load()
   }
@@ -324,11 +386,21 @@ watch(unassignedOnly, (v) => {
   if (v) {
     careTeamId.value = ''
     adherenceFilter.value = ''
+    watchedOnly.value = false
+  }
+})
+
+watch(watchedOnly, (v) => {
+  if (v) {
+    adherenceFilter.value = ''
   }
 })
 
 watch(adherenceFilter, (v) => {
-  if (v) unassignedOnly.value = false
+  if (v) {
+    unassignedOnly.value = false
+    watchedOnly.value = false
+  }
 })
 
 function openArchive() {
@@ -499,6 +571,7 @@ onMounted(async () => {
           <el-option label="连续未执行≥3天" value="STREAK_GE_3" />
         </el-select>
         <el-checkbox v-model="unassignedOnly" :disabled="adherenceMode">仅未入组</el-checkbox>
+        <el-checkbox v-model="watchedOnly" :disabled="adherenceMode">仅重点关注</el-checkbox>
         <el-button type="primary" @click="load">查询</el-button>
       </div>
     </el-card>
@@ -516,29 +589,89 @@ onMounted(async () => {
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="list" stripe>
-        <el-table-column label="患者" min-width="220">
+      <el-table v-loading="loading" :data="list" stripe class="patients-table">
+        <el-table-column label="患者" min-width="160">
           <template #default="{ row }">
             <div class="patient-cell">
               <div class="patient-av" :style="avatarStyle(row.displayName)">
                 {{ avatarChar(row.displayName) }}
               </div>
               <div class="patient-text">
-                <div class="patient-name">{{ row.displayName || '-' }}</div>
+                <div class="patient-name">
+                  {{ row.displayName || '-' }}
+                  <el-tag v-if="row.watched" size="small" type="warning" effect="plain" class="watch-tag">
+                    关注
+                  </el-tag>
+                </div>
                 <div class="patient-meta">{{ patientMeta(row) }}</div>
               </div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="证件" min-width="150">
+        <el-table-column label="证件" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.identityMask || '-' }}</template>
         </el-table-column>
-        <el-table-column label="健管组" min-width="140">
+        <el-table-column label="病种档案" min-width="140">
+          <template #default="{ row }">
+            <div v-if="row.diseaseLabels?.length" class="tag-wrap">
+              <el-tag
+                v-for="d in row.diseaseLabels"
+                :key="d"
+                size="small"
+                effect="light"
+                type="warning"
+              >
+                {{ d }}
+              </el-tag>
+            </div>
+            <span v-else class="muted">暂无</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="评估标签" min-width="200">
+          <template #default="{ row }">
+            <div v-if="row.assessmentTags?.length" class="tag-wrap">
+              <el-tag
+                v-for="t in row.assessmentTags"
+                :key="t.engineCode || t.text"
+                size="small"
+                effect="plain"
+                :type="assessmentToneType(t.tone)"
+                :title="t.title || t.text"
+              >
+                {{ t.text }}
+              </el-tag>
+            </div>
+            <span v-else class="muted">暂无</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="主责健管师" min-width="110" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.primaryCareManagerName || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="健管组" min-width="120">
           <template #default="{ row }">
             <el-tag v-if="row.careTeamName" size="small" effect="light" type="primary">
               {{ row.careTeamName }}
             </el-tag>
             <el-tag v-else size="small" effect="plain" type="info">未入组</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="档案完整度" width="120">
+          <template #default="{ row }">
+            <div
+              class="archive-cell"
+              :class="archiveToneClass(row.archiveCompletenessPercent)"
+            >
+              <span class="archive-val">
+                {{
+                  row.archiveCompletenessPercent != null
+                    ? `${row.archiveCompletenessPercent}%`
+                    : '—'
+                }}
+              </span>
+              <div class="archive-bar" aria-hidden="true">
+                <i :style="{ width: `${row.archiveCompletenessPercent ?? 0}%` }" />
+              </div>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="入机构时间" v-bind="TABLE_COL.datetime">
@@ -733,6 +866,14 @@ onMounted(async () => {
   font-weight: 600;
   color: var(--ink-800);
   line-height: 1.3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.watch-tag {
+  font-weight: 500;
 }
 
 .patient-meta {
@@ -742,6 +883,70 @@ onMounted(async () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tag-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.muted {
+  color: var(--ink-400);
+  font-size: 12px;
+}
+
+.archive-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.archive-val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-800);
+  line-height: 1.2;
+}
+
+.archive-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: #e8eef5;
+  overflow: hidden;
+}
+
+.archive-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #94a3b8;
+}
+
+.archive-cell.good .archive-val {
+  color: #059669;
+}
+
+.archive-cell.good .archive-bar > i {
+  background: #10b981;
+}
+
+.archive-cell.fair .archive-val {
+  color: #d97706;
+}
+
+.archive-cell.fair .archive-bar > i {
+  background: #f59e0b;
+}
+
+.archive-cell.poor .archive-val {
+  color: #e11d48;
+}
+
+.archive-cell.poor .archive-bar > i {
+  background: #f43f5e;
 }
 
 .hint {

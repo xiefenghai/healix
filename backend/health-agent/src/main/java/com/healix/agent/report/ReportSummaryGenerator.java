@@ -3,12 +3,14 @@ package com.healix.agent.report;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
+import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
@@ -18,9 +20,9 @@ import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
 
 /**
- * 管理报告点评草稿生成：把 content_json 压成摘要喂给 LLM，产出 staffComment / nextFocus / quarterAdvice。
+ * 管理报告寄语草稿：压 content_json 喂 LLM，产出面向患者的 staffComment / nextFocus / quarterAdvice。
  *
- * <p>只产出草稿，不落库、不发布；LLM 未开或返回异常时降级为按依从性档位的模板文案。
+ * <p>只产出草稿，不落库、不发布；LLM 未开或异常时降级为第二人称分档模板。
  */
 @Slf4j
 @Component
@@ -41,35 +43,106 @@ public class ReportSummaryGenerator {
             String staffComment, String nextFocus, String quarterAdvice, boolean fromLlm, String note) {}
 
     public ReportSummaryDraft generate(JsonNode content, String periodType) {
+        return generate(content, periodType, null, null);
+    }
+
+    /**
+     * @param sink 非空时流式推送可读寄语/关注点
+     * @param reviseInstruction 非空时在现有草稿基础上按意见修订
+     */
+    public ReportSummaryDraft generate(
+            JsonNode content,
+            String periodType,
+            Consumer<AgentStreamEvent> sink,
+            ReviseContext revise) {
         boolean quarter = "QUARTER".equals(periodType);
         if (!llmClient.isEnabled()) {
-            return fallback(content, quarter, "AI 未启用，已按依从性档位生成模板草稿");
+            ReportSummaryDraft fb = fallback(content, quarter, "AI 未启用，已按依从性档位生成模板草稿");
+            emitFallbackStream(sink, fb);
+            return fb;
         }
         String digest;
         try {
             digest = JsonUtils.toJson(buildDigest(content, periodType));
         } catch (Exception e) {
             log.warn("[ReportSummary] digest build failed: {}", e.getMessage());
-            return fallback(content, quarter, "报告数据解析失败，已回退模板草稿");
+            ReportSummaryDraft fb = fallback(content, quarter, "报告数据解析失败，已回退模板草稿");
+            emitFallbackStream(sink, fb);
+            return fb;
         }
 
-        LlmResponse llm = llmClient.chat("REPORT_SUMMARY", loadSkillMarkdown(), digest, List.of());
+        String system = loadSkillMarkdown();
+        String userMessage = digest;
+        String scene = "REPORT_SUMMARY";
+        if (revise != null && StringUtils.hasText(revise.instruction())) {
+            scene = "REPORT_SUMMARY_REVISE";
+            system = system
+                    + "\n\n## 修订模式（REVISE）\n"
+                    + "在「当前点评草稿」基础上按「修订意见」调整 staffComment / nextFocus"
+                    + (quarter ? " / quarterAdvice" : "")
+                    + "；未提及的部分尽量保持原样。仍只输出完整 JSON。\n";
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("reportDigest", JsonUtils.readTree(digest));
+            Map<String, Object> current = new LinkedHashMap<>();
+            current.put("staffComment", revise.staffComment());
+            current.put("nextFocus", revise.nextFocus());
+            current.put("quarterAdvice", revise.quarterAdvice());
+            payload.put("currentDraft", current);
+            payload.put("instruction", revise.instruction());
+            userMessage = JsonUtils.toJson(payload);
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在按你的要求修订点评草稿…"));
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingStart("对照现有寄语落实修订意见…"));
+        } else {
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在调用 AI 生成健管师寄语…"));
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingStart("梳理依从与指标，组织对患者的寄语…"));
+        }
+
+        long started = System.currentTimeMillis();
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.tool("DeepSeek", "running", "正在生成点评…"));
+        ReportReadableStreamer readable = new ReportReadableStreamer(sink);
+        LlmResponse llm = sink != null
+                ? llmClient.streamChat(scene, system, userMessage, List.of(), readable::onToken)
+                : llmClient.chat(scene, system, userMessage, List.of());
+        long ms = System.currentTimeMillis() - started;
+
         if (!llm.fromLlm() || !StringUtils.hasText(llm.content())) {
-            return fallback(content, quarter, "AI 未返回内容，已回退模板草稿");
+            AgentStreamEvent.safeEmit(
+                    sink, AgentStreamEvent.tool("DeepSeek", "done", "未返回有效内容 · " + ms + "ms"));
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingDone("模型未返回有效内容", ms));
+            ReportSummaryDraft fb = fallback(content, quarter, "AI 未返回内容，已回退模板草稿");
+            emitFallbackStream(sink, fb);
+            return fb;
         }
         try {
             JsonNode parsed = JsonUtils.readTree(stripCodeFence(llm.content()));
             if (parsed == null || !parsed.isObject()) {
-                return fallback(content, quarter, "AI 返回格式异常，已回退模板草稿");
+                AgentStreamEvent.safeEmit(
+                        sink, AgentStreamEvent.tool("DeepSeek", "done", "格式异常 · " + ms + "ms"));
+                ReportSummaryDraft fb = fallback(content, quarter, "AI 返回格式异常，已回退模板草稿");
+                emitFallbackStream(sink, fb);
+                return fb;
             }
             String staffComment = text(parsed, "staffComment");
             if (!StringUtils.hasText(staffComment)) {
-                return fallback(content, quarter, "AI 未给出点评，已回退模板草稿");
+                ReportSummaryDraft fb = fallback(content, quarter, "AI 未给出点评，已回退模板草稿");
+                emitFallbackStream(sink, fb);
+                return fb;
             }
             String nextFocus = text(parsed, "nextFocus");
             String quarterAdvice = quarter ? text(parsed, "quarterAdvice") : null;
+            AgentStreamEvent.safeEmit(
+                    sink,
+                    AgentStreamEvent.tool(
+                            "DeepSeek",
+                            "done",
+                            (revise != null ? "修订完成 · " : "点评已生成 · ") + ms + "ms"));
+            AgentStreamEvent.safeEmit(
+                    sink,
+                    AgentStreamEvent.thinkingDone(
+                            revise != null ? "已按意见整理寄语" : "已整理寄语与下阶段关注", ms));
             log.info(
-                    "[ReportSummary] llm ok periodType={} commentChars={} promptTokens={} completionTokens={}",
+                    "[ReportSummary] llm ok scene={} periodType={} commentChars={} promptTokens={} completionTokens={}",
+                    scene,
                     periodType,
                     staffComment.length(),
                     llm.promptTokens(),
@@ -77,7 +150,29 @@ public class ReportSummaryGenerator {
             return new ReportSummaryDraft(staffComment, nextFocus, quarterAdvice, true, null);
         } catch (Exception e) {
             log.warn("[ReportSummary] parse failed: {}", e.getMessage());
-            return fallback(content, quarter, "AI 返回解析失败，已回退模板草稿");
+            ReportSummaryDraft fb = fallback(content, quarter, "AI 返回解析失败，已回退模板草稿");
+            emitFallbackStream(sink, fb);
+            return fb;
+        }
+    }
+
+    public record ReviseContext(
+            String instruction, String staffComment, String nextFocus, String quarterAdvice) {}
+
+    private static void emitFallbackStream(Consumer<AgentStreamEvent> sink, ReportSummaryDraft draft) {
+        if (sink == null || draft == null) {
+            return;
+        }
+        if (StringUtils.hasText(draft.staffComment())) {
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.token("健管师寄语\n" + draft.staffComment().trim()));
+        }
+        if (StringUtils.hasText(draft.nextFocus())) {
+            AgentStreamEvent.safeEmit(
+                    sink, AgentStreamEvent.token("\n\n下阶段关注\n" + draft.nextFocus().trim()));
+        }
+        if (StringUtils.hasText(draft.quarterAdvice())) {
+            AgentStreamEvent.safeEmit(
+                    sink, AgentStreamEvent.token("\n\n阶段建议\n" + draft.quarterAdvice().trim()));
         }
     }
 
@@ -194,17 +289,20 @@ public class ReportSummaryGenerator {
         String abnormalPart = abnormalTotal > 0 ? "，指标异常 " + abnormalTotal + " 次" : "，指标未见明显异常";
 
         String comment = switch (tier) {
-            case "GOOD" -> ratePart + abnormalPart + "，整体执行良好，请继续保持当前节奏。";
-            case "FAIR" -> ratePart + abnormalPart + "，执行情况中等，部分任务存在漏打，建议聚焦薄弱环节。";
-            default -> ratePart + abnormalPart + "，执行情况偏弱，建议尽快沟通阻碍原因并简化任务。";
+            case "GOOD" -> "您好，" + ratePart + abnormalPart
+                    + "。整体执行不错，请您继续保持当前节奏，有不适或疑问随时联系我。";
+            case "FAIR" -> "您好，" + ratePart + abnormalPart
+                    + "。部分任务还有漏打，没关系，我们一起把薄弱环节补上；有困难请告诉我。";
+            default -> "您好，" + ratePart + abnormalPart
+                    + "。本周期节奏偏紧或任务偏多都有可能，我们一起找找原因、适当简化安排；有需要随时联系我。";
         };
         String focus = switch (tier) {
-            case "GOOD" -> "保持现有打卡频率，关注指标波动趋势。";
-            case "FAIR" -> "补齐漏打任务，固定每日打卡时间；异常指标安排复测。";
-            default -> "先与患者确认执行阻碍，必要时下调任务强度；异常指标建议复测或就诊。";
+            case "GOOD" -> "请您保持现有打卡频率，并留意指标有无明显波动。";
+            case "FAIR" -> "请您尽量补齐漏打任务，固定每日打卡时间；若有异常指标，建议安排复测。";
+            default -> "请您先和我说说执行上的困难，必要时我们一起下调任务强度；异常指标建议复测或就诊。";
         };
         String advice = quarter
-                ? "综合本季度执行与指标情况，建议复核现有方案强度与任务数量，必要时调整方案并请医生复核用药。"
+                ? "综合本季执行与指标情况，建议您与医生/健管师一起复核方案强度与任务数量，必要时调整方案并请医生复核用药。"
                 : null;
         return new ReportSummaryDraft(comment, focus, advice, false, note);
     }
@@ -218,7 +316,8 @@ public class ReportSummaryGenerator {
         } catch (Exception e) {
             log.debug("report-summary skill missing: {}", e.getMessage());
         }
-        return "根据管理报告数据生成 JSON：staffComment、nextFocus、quarterAdvice。只输出 JSON。";
+        return "为患者撰写将发布的健管师寄语 JSON（staffComment/nextFocus/quarterAdvice）。"
+                + "必须用第二人称「您」对患者说话，禁止第三人称案头备注。只输出 JSON。";
     }
 
     private static String stripCodeFence(String raw) {

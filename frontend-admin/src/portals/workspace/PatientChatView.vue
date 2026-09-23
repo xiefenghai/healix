@@ -78,7 +78,7 @@ let unsubSse: (() => void) | null = null
 const canSend = computed(() => !!session.value?.canSend)
 const blockReason = computed(() => session.value?.blockReason || '')
 const patientName = computed(
-  () => focus.value?.displayName || session.value?.thread?.peopleName || '健康沟通',
+  () => focus.value?.displayName || session.value?.thread?.peopleName || '患者沟通',
 )
 const patientAge = computed(() => ageFromBirthday(focus.value?.birthday))
 const patientGender = computed(() => genderLabel(focus.value?.gender))

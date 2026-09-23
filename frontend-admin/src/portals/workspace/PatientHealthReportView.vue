@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
+import { takeAgentDraft } from '../../shared/agent-draft-bus'
 import {
   formatHealthReportPeriodType,
   formatHealthReportStatus,
@@ -10,7 +11,7 @@ import {
   formatReportDateTime,
   healthReportStatusTagType,
 } from '../../shared/health-report-labels'
-import HealthReportReviewDialog from './HealthReportReviewDialog.vue'
+import HealthReportReviewDialog, { type ReportAiPrefill } from './HealthReportReviewDialog.vue'
 
 interface HealthReportListItem {
   id: string
@@ -33,11 +34,15 @@ const props = defineProps<{
   /** 驾驶舱抽屉等场景传入；不传则走路由 params */
   peopleId?: string
 }>()
+const emit = defineEmits<{
+  published: []
+}>()
 const peopleId = () => String(props.peopleId || route.params.peopleId || '')
 const loading = ref(false)
 const items = ref<HealthReportListItem[]>([])
 const detailId = ref<string | null>(null)
 const detailMode = ref<'review' | 'readonly'>('readonly')
+const aiPrefill = ref<ReportAiPrefill | null>(null)
 const generating = ref(false)
 const statusFilter = ref<StatusFilter>('ALL')
 
@@ -73,6 +78,21 @@ async function load() {
   }
 }
 
+function applyAgentDraft() {
+  const pid = peopleId()
+  if (!pid) return
+  const draft = takeAgentDraft(pid, 'reports')
+  if (!draft?.openReview || !draft.reportId) return
+  aiPrefill.value = {
+    staffComment: draft.staffComment,
+    nextFocus: draft.nextFocus,
+    quarterAdvice: draft.quarterAdvice,
+    note: '已从灵犀填入点评草稿，请核对后发布',
+  }
+  detailMode.value = 'review'
+  detailId.value = draft.reportId
+}
+
 async function generate(periodType: 'WEEK' | 'MONTH' | 'QUARTER') {
   generating.value = true
   try {
@@ -97,6 +117,7 @@ async function generate(periodType: 'WEEK' | 'MONTH' | 'QUARTER') {
 }
 
 function openRow(row: HealthReportListItem) {
+  aiPrefill.value = null
   detailMode.value = row.status === 'DRAFT' ? 'review' : 'readonly'
   detailId.value = row.id
 }
@@ -119,11 +140,22 @@ function generatedByLabel(v?: string) {
   return ''
 }
 
-onMounted(() => void load())
+function onDialogClosed() {
+  detailId.value = null
+  aiPrefill.value = null
+}
+
+onMounted(async () => {
+  await load()
+  applyAgentDraft()
+})
 watch(
   () => props.peopleId || route.params.peopleId,
-  () => {
-    void load()
+  async () => {
+    detailId.value = null
+    aiPrefill.value = null
+    await load()
+    applyAgentDraft()
   },
 )
 </script>
@@ -281,8 +313,10 @@ watch(
     <HealthReportReviewDialog
       :report-id="detailId"
       :mode="detailMode"
-      @closed="detailId = null"
+      :ai-prefill="aiPrefill"
+      @closed="onDialogClosed"
       @changed="load"
+      @published="emit('published')"
     />
   </div>
 </template>

@@ -15,13 +15,13 @@ const route = useRoute()
 const router = useRouter()
 
 const BIZ_MENUS = [
-  { path: '/workspace/cockpit', label: '智能驾驶舱', icon: 'dashboard' },
-  { path: '/workspace/tasks', label: '工作台', icon: 'ticket' },
-  { path: '/workspace/care-chat', label: '健康沟通', icon: 'chat' },
-  { path: '/workspace/patients', label: '患者管理', icon: 'user' },
-  { path: '/workspace/adherence', label: '依从性看板', icon: 'data' },
-  { path: '/workspace/care-teams', label: '健管组', icon: 'data' },
-  { path: '/workspace/staff', label: '成员管理', icon: 'user' },
+  { path: '/workspace/cockpit', label: '智能驾驶舱', icon: 'dashboard', group: '日常工作' },
+  { path: '/workspace/tasks', label: '工作台', icon: 'ticket', group: '日常工作' },
+  { path: '/workspace/care-chat', label: '患者沟通', icon: 'chat', group: '日常工作' },
+  { path: '/workspace/patients', label: '患者管理', icon: 'user', group: '日常工作' },
+  { path: '/workspace/adherence', label: '依从性看板', icon: 'chart', group: '日常工作' },
+  { path: '/workspace/care-teams', label: '健管组', icon: 'team', group: '组织管理' },
+  { path: '/workspace/staff', label: '成员管理', icon: 'staff', group: '组织管理' },
 ]
 
 interface CockpitSummary {
@@ -57,7 +57,7 @@ const isCockpit = computed(() => route.path.startsWith('/workspace/cockpit'))
 const pageTitle = computed(() => {
   if (route.path.startsWith('/workspace/cockpit')) return '智能驾驶舱'
   if (route.path.startsWith('/workspace/tasks')) return '工作台任务'
-  if (route.path.startsWith('/workspace/care-chat')) return '健康沟通'
+  if (route.path.startsWith('/workspace/care-chat')) return '患者沟通'
   if (route.path.startsWith('/workspace/adherence')) return '依从性看板'
   if (route.path.startsWith('/workspace/patients')) return '患者管理'
   if (route.path.startsWith('/workspace/care-teams')) return '健管组'

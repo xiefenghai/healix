@@ -3,9 +3,11 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../api/http'
+import { ensureActivePeople } from '../shared/patient-context'
 
 interface Item {
   id: string
+  peopleId?: string
   title?: string
   body?: string
   linkPath?: string
@@ -18,6 +20,7 @@ interface Item {
 const router = useRouter()
 const loading = ref(false)
 const markingAll = ref(false)
+const openingId = ref<string | null>(null)
 const items = ref<Item[]>([])
 
 function formatTime(iso?: string) {
@@ -44,17 +47,27 @@ async function load() {
 }
 
 async function openItem(row: Item) {
+  if (openingId.value) return
+  openingId.value = row.id
   try {
     if (row.unread) {
-      await api(`/api/c/v1/notifications/${row.id}/read`, { method: 'POST' })
-      row.unread = false
+      try {
+        await api(`/api/c/v1/notifications/${row.id}/read`, { method: 'POST' })
+        row.unread = false
+      } catch {
+        // 仍尝试跳转
+      }
     }
-  } catch {
-    // 仍尝试跳转
-  }
-  const path = row.linkPath?.trim()
-  if (path) {
-    await router.push(path)
+    // 消息按账号投递：打开前切到消息归属就诊人，避免详情接口按当前就诊人拒读
+    await ensureActivePeople(row.peopleId)
+    const path = row.linkPath?.trim()
+    if (path) {
+      await router.push(path)
+    }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '打开失败')
+  } finally {
+    openingId.value = null
   }
 }
 
@@ -96,7 +109,8 @@ onMounted(() => void load())
         :key="row.id"
         type="button"
         class="card"
-        :class="{ unread: row.unread }"
+        :class="{ unread: row.unread, opening: openingId === row.id }"
+        :disabled="openingId === row.id"
         @click="openItem(row)"
       >
         <div class="card-top">
@@ -146,6 +160,9 @@ onMounted(() => void load())
 }
 .card.unread {
   background: #fff;
+}
+.card:disabled {
+  opacity: 0.7;
 }
 .card-top {
   display: flex;

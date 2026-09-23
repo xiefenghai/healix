@@ -101,6 +101,12 @@ logging:
     com.healix.agent.ocr: INFO
     org.springframework.ai: WARN
     dev.langchain4j: WARN
+    # 未登录/无权限被拒是常态，不需要每次打完整 AccessDeniedException 堆栈
+    org.springframework.security: WARN
+    org.springframework.security.web.access: WARN
+    org.springframework.security.authorization: WARN
+    org.springframework.security.web.access.intercept.AuthorizationFilter: WARN
+    org.springframework.security.web.ObservationFilterChainDecorator: WARN
 
 # CareChat SSE 为进程内广播；多实例部署须对 /api/*/care-chat/events 做 sticky
 # （参考仓库 deploy/nginx-care-chat-sse.example.conf），否则推送可能丢失、仅靠轮询兜底。

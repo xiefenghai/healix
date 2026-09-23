@@ -458,6 +458,7 @@ async function openPlanVersionPreview(peopleId: string, versionId: string) {
         exercise?: CarePlanPreviewData['exercise']
         diet?: CarePlanPreviewData['diet']
         execution?: CarePlanPreviewData['execution']
+        contextSnapshot?: { summary?: string }
         publishedAt?: string
       }
     }>(`/api/b/v1/patients/${peopleId}/care-plan/versions/${versionId}`),
@@ -471,9 +472,12 @@ async function openPlanVersionPreview(peopleId: string, versionId: string) {
     return
   }
   const currentId = bundleRes?.data?.plan?.currentVersionId
+  const snapSummary =
+    typeof v.contextSnapshot?.summary === 'string' ? v.contextSnapshot.summary.trim() : ''
   planPreviewData.value = {
     title: v.title,
     goalSummary: v.exercise?.goal,
+    summary: snapSummary || undefined,
     source: v.source,
     versionLabel: v.versionLabel || (v.versionNo != null ? `V${v.versionNo}` : undefined),
     status: currentId === versionId ? 'ACTIVE' : 'ARCHIVED',
@@ -554,6 +558,14 @@ function canForm(row: WorkspaceTaskItem) {
 
 function canAssignOrRelease(row: WorkspaceTaskItem) {
   return row.status === 'OPEN' && (!!row.assigneeStaffId || isAdmin.value)
+}
+
+function canCancel(row: WorkspaceTaskItem) {
+  return isAdmin.value && row.status === 'OPEN'
+}
+
+function canRelease(row: WorkspaceTaskItem) {
+  return canAssignOrRelease(row) && !!row.assigneeStaffId
 }
 
 watch(pool, () => {
@@ -661,14 +673,14 @@ onMounted(async () => {
       </template>
 
       <el-table :data="items" stripe class="tasks-table" style="width: 100%">
-        <el-table-column label="任务" min-width="260">
+        <el-table-column label="任务" min-width="200">
           <template #default="{ row }">
             <div class="task-cell">
               <div class="task-type-icon" :class="`tt-${taskTypeTagType(row.taskType)}`">
                 {{ (row.taskTypeLabel || '?').slice(0, 1) }}
               </div>
               <div class="task-text">
-                <div class="task-title">
+                <div class="task-title" :title="row.summary || row.taskTypeLabel || ''">
                   <span
                     v-if="row.taskType === 'METRIC_ALERT'"
                     class="summary-text"
@@ -693,21 +705,21 @@ onMounted(async () => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="108">
+        <el-table-column label="类型" min-width="110" class-name="col-tag">
           <template #default="{ row }">
             <el-tag size="small" effect="light" :type="taskTypeTagType(row.taskType)">
               {{ row.taskTypeLabel }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" label="状态" width="88">
+        <el-table-column label="状态" min-width="92" class-name="col-tag">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small" effect="light">
               {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" width="80">
+        <el-table-column v-if="pool === 'ALL'" min-width="76" class-name="col-tag">
           <template #header>
             <el-tooltip :content="POOL_COLUMN_HINT" placement="top">
               <span class="col-hint">归属</span>
@@ -739,7 +751,12 @@ onMounted(async () => {
             }}
           </template>
         </el-table-column>
-        <el-table-column label="到期" width="148" class-name="col-due">
+        <el-table-column label="生成时间" min-width="120">
+          <template #default="{ row }">
+            <span class="time-cell">{{ formatDueShort(row.openedAt) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="到期" min-width="136" class-name="col-due">
           <template #default="{ row }">
             <div
               class="due-cell"
@@ -753,10 +770,15 @@ onMounted(async () => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="完成时间" width="148" show-overflow-tooltip>
+        <el-table-column v-if="pool === 'DONE'" label="完成时间" min-width="148" show-overflow-tooltip>
           <template #default="{ row }">{{ formatTime(row.doneAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="right" class-name="col-actions">
+        <el-table-column
+          label="操作"
+          :width="isAdmin ? 268 : 200"
+          align="right"
+          class-name="col-actions"
+        >
           <template #default="{ row }">
             <div class="row-actions">
               <el-button
@@ -776,18 +798,17 @@ onMounted(async () => {
                 {{ formActionLabel(row) }}
               </el-button>
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-              <el-button v-if="canAssignOrRelease(row)" link type="primary" @click="openAssign(row)">
+              <el-button
+                v-if="canAssignOrRelease(row)"
+                link
+                type="primary"
+                @click="openAssign(row)"
+              >
                 分派
               </el-button>
+              <el-button v-if="canRelease(row)" link @click="release(row)">退回</el-button>
               <el-button
-                v-if="canAssignOrRelease(row) && row.assigneeStaffId"
-                link
-                @click="release(row)"
-              >
-                退回
-              </el-button>
-              <el-button
-                v-if="isAdmin && row.status === 'OPEN'"
+                v-if="canCancel(row)"
                 link
                 type="danger"
                 @click="cancelTask(row)"
@@ -962,16 +983,27 @@ onMounted(async () => {
 
 .task-text {
   min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .task-title {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   font-weight: 600;
   color: var(--ink-800);
   line-height: 1.3;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.task-title > span:not(.hit-tag) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-meta {
@@ -1000,8 +1032,6 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-width: 100%;
-  overflow: hidden;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
 }
@@ -1009,16 +1039,12 @@ onMounted(async () => {
 .due-time {
   font-weight: 600;
   color: var(--ink-800);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .due-hint {
   font-size: 11px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1032,6 +1058,12 @@ onMounted(async () => {
 .due-cell.is-urgent .due-time,
 .due-cell.is-urgent .due-hint {
   color: var(--amber-500, #f59e0b);
+}
+
+.time-cell {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-700, #334155);
+  white-space: nowrap;
 }
 
 .row-actions {
@@ -1048,16 +1080,28 @@ onMounted(async () => {
 }
 
 .row-actions :deep(.el-button.is-link) {
-  padding: 4px 6px;
+  padding: 4px 4px;
 }
 
-:deep(.tasks-table .cell) {
-  overflow: hidden;
+.row-actions :deep(.el-button--small) {
+  padding: 5px 8px;
 }
 
-:deep(.col-due .cell),
+/* 仅任务列做省略；标签列禁止裁切，避免「报告审阅..」 */
+:deep(.col-tag .cell) {
+  overflow: visible;
+}
+
+:deep(.col-tag .el-tag) {
+  max-width: none;
+}
+
+:deep(.col-due .cell) {
+  overflow: visible;
+}
+
 :deep(.col-actions .cell) {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .col-hint {
@@ -1074,6 +1118,12 @@ onMounted(async () => {
 
 .list-card :deep(.tasks-table) {
   width: 100%;
+}
+
+.list-card :deep(.tasks-table .el-table__header th.el-table__cell),
+.list-card :deep(.tasks-table .el-table__body td.el-table__cell) {
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
 @media (max-width: 1280px) {

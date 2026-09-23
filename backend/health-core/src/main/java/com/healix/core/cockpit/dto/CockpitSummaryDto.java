@@ -11,8 +11,12 @@ public class CockpitSummaryDto {
     private int overdueCount;
     /** 左栏「立即处理」人数（当前 = 有我名下 OPEN 任务的人） */
     private int urgentCount;
-    /** 左栏「今日关注」人数（非高紧迫在办） */
+    /** 左栏「我的关注」人数（个人重点关注） */
     private int watchCount;
     /** 左栏「我的在办」人数（有我名下 OPEN 任务的人） */
     private int mineCount;
+    /** 当前员工可见范围内：待审阅方案草稿数 */
+    private int pendingCarePlanDraftCount;
+    /** 当前员工可见范围内：待审阅报告草稿数 */
+    private int pendingReportDraftCount;
 }

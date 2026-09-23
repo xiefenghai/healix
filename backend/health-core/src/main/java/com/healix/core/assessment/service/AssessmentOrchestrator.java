@@ -55,6 +55,15 @@ public class AssessmentOrchestrator {
 
     public AssessmentOverviewDto overview(String tenantId, String orgId, String peopleId) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        return buildOverview(tenantId, peopleId);
+    }
+
+    /** C 端只读概览：当前就诊人的最新评估结果（不做员工档案权限校验）。 */
+    public AssessmentOverviewDto overviewForPatient(String tenantId, String peopleId) {
+        return buildOverview(tenantId, peopleId);
+    }
+
+    private AssessmentOverviewDto buildOverview(String tenantId, String peopleId) {
         AssessmentContext ctx = contextBuilder.build(tenantId, peopleId);
 
         AssessmentOverviewDto dto = new AssessmentOverviewDto();
@@ -255,6 +264,10 @@ public class AssessmentOrchestrator {
 
     public AssessmentSnapshotDto detail(String tenantId, String orgId, String peopleId, String id) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        return detailForPatient(tenantId, peopleId, id);
+    }
+
+    public AssessmentSnapshotDto detailForPatient(String tenantId, String peopleId, String id) {
         PeopleAssessmentSnapshot row = snapshotMapper.findById(id);
         if (row == null || !tenantId.equals(row.getTenantId()) || !peopleId.equals(row.getPeopleId())) {
             throw new BusinessException(404, "评估记录不存在");

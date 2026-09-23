@@ -175,6 +175,23 @@ CREATE TABLE IF NOT EXISTS staff_role_binding (
     KEY idx_staff_role_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='人员-角色绑定';
 
+CREATE TABLE IF NOT EXISTS staff_patient_watch (
+    pk_id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                  VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id           VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    org_id              VARCHAR(32)  NOT NULL COMMENT '机构业务ID',
+    staff_id            VARCHAR(32)  NOT NULL COMMENT '关注人 staff_profile.id',
+    people_id           VARCHAR(32)  NOT NULL COMMENT '患者 people_profile.id',
+    is_deleted      TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted     DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_staff_patient_watch_id (id),
+    UNIQUE KEY uk_staff_patient_watch (staff_id, org_id, people_id, gmt_deleted),
+    KEY idx_staff_patient_watch_org_staff (org_id, staff_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='员工个人重点关注患者';
+
 -- =============================================================================
 -- 患者 people_*
 -- =============================================================================

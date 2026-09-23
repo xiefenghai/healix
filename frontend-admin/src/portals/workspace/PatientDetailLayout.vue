@@ -24,6 +24,7 @@ interface OrgPatientListItem {
   maritalStatus?: string | null
   occupation?: string | null
   identityMask?: string | null
+  watched?: boolean | null
 }
 
 interface InviteView {
@@ -87,6 +88,7 @@ const completeness = ref<ArchiveCompleteness | null>(null)
 const adherence = ref<AdherenceSummary | null>(null)
 const assessmentOverview = ref<AssessmentOverview | null>(null)
 const issuing = ref(false)
+const watching = ref(false)
 const basicInfoEditorRef = ref<{ openEdit: () => void } | null>(null)
 const revealMobile = ref(false)
 
@@ -262,41 +264,38 @@ const evalTags = computed(() => {
 
   if (showControlLabel.value) {
     const snap = controlLabelSnap.value
-    const level = snap?.level
-    let tone: 'danger' | 'warning' | 'success' | 'info' | 'muted' = 'muted'
-    if (level === 'RED') tone = 'danger'
-    else if (level === 'YELLOW') tone = 'warning'
-    else if (level === 'GREEN' || level === 'NEAR_GREEN') tone = 'success'
-    else if (level === 'NONE') tone = 'info'
-    const label = !snap
-      ? '未评估'
-      : snap.level === 'NONE'
-        ? '未分标'
-        : snap.levelLabel || snap.level || '未评估'
-    tags.push({
-      key: CONTROL_ENGINE_CODE,
-      text: `血糖${label}`,
-      tone,
-      title: snap?.advice || '血糖控制分标',
-    })
+    if (snap?.status !== 'INCOMPLETE') {
+      const level = snap?.level
+      let tone: 'danger' | 'warning' | 'success' | 'info' | 'muted' = 'muted'
+      if (level === 'RED') tone = 'danger'
+      else if (level === 'YELLOW') tone = 'warning'
+      else if (level === 'GREEN' || level === 'NEAR_GREEN') tone = 'success'
+      else if (level === 'NONE') tone = 'info'
+      const label = !snap
+        ? '未评估'
+        : snap.level === 'NONE'
+          ? '未分标'
+          : snap.levelLabel || snap.level || '未评估'
+      tags.push({
+        key: CONTROL_ENGINE_CODE,
+        text: label.includes('血糖') ? label : `血糖${label}`,
+        tone,
+        title: snap?.advice || '血糖控制分标',
+      })
+    }
   }
 
   for (const item of assessmentItems.value) {
-    if (item.label === '不适用') continue
+    if (item.label === '不适用' || item.label === '缺项') continue
     let tone: 'danger' | 'warning' | 'success' | 'info' | 'muted' = 'muted'
     if (item.severity >= 3) tone = 'danger'
     else if (item.severity === 2) tone = 'warning'
     else if (item.severity === 1) tone = 'success'
-    else if (item.label === '缺项' || item.label === '未评') tone = 'muted'
+    else if (item.label === '未评') tone = 'muted'
 
-    let text: string
-    if (item.code === 'CDRS') {
-      text = item.hasResult || item.label === '缺项' ? `糖尿病${item.label}` : '糖尿病未评估'
-    } else if (item.code === 'HYPERTENSION_RISK') {
-      text = item.hasResult || item.label === '缺项' ? item.label : '高血压未评估'
-    } else {
-      text = item.hasResult || item.label === '缺项' ? item.label : '肥胖未评估'
-    }
+    const text = item.hasResult
+      ? prefixedAssessmentLabel(item.title, item.label)
+      : `${item.title}未评估`
 
     tags.push({
       key: item.code,
@@ -307,6 +306,16 @@ const evalTags = computed(() => {
   }
   return tags
 })
+
+function prefixedAssessmentLabel(title: string, label: string) {
+  if (!label) return `${title}未评估`
+  if (label.includes(title)) return label
+  if (title === '高血压' && label.includes('血压')) return label
+  if (title === '肥胖' && (label.includes('肥胖') || label.includes('超重') || /bmi/i.test(label))) {
+    return label
+  }
+  return `${title}${label}`
+}
 
 const evalTagsAlert = computed(() => evalTags.value.some((t) => t.tone === 'danger'))
 
@@ -411,6 +420,26 @@ async function copyCode() {
     ElMessage.success('已复制激活码')
   } catch {
     ElMessage.warning(latestInvite.value.code)
+  }
+}
+
+async function toggleWatch() {
+  if (!peopleId.value || watching.value) return
+  const watched = !!patient.value?.watched
+  watching.value = true
+  try {
+    const res = await api<{ data: OrgPatientListItem }>(
+      `/api/b/v1/patients/${peopleId.value}/watch`,
+      { method: watched ? 'DELETE' : 'POST' },
+    )
+    if (patient.value) {
+      patient.value = { ...patient.value, watched: !!res.data?.watched }
+    }
+    ElMessage.success(watched ? '已取消重点关注' : '已加入重点关注')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  } finally {
+    watching.value = false
   }
 }
 
@@ -566,6 +595,18 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="hero-actions">
+          <button
+            type="button"
+            class="btn ghost"
+            :class="{ 'is-watched': patient?.watched }"
+            :disabled="watching || !patient"
+            @click="toggleWatch"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            </svg>
+            {{ watching ? '处理中…' : patient?.watched ? '取消关注' : '重点关注' }}
+          </button>
           <button type="button" class="btn ghost" :disabled="issuing" @click="issueCode">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -969,6 +1010,17 @@ onBeforeUnmount(() => {
 
 .btn.ghost:hover:not(:disabled) {
   background: var(--ink-50);
+}
+
+.btn.ghost.is-watched {
+  border-color: #f59e0b;
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.btn.ghost.is-watched svg {
+  fill: #f59e0b;
+  stroke: #f59e0b;
 }
 
 .text-btn {

@@ -1,7 +1,10 @@
 package com.healix.core.workspace.dto;
 
+import com.healix.core.assessment.dto.AssessmentTagView;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Data;
 
 @Data
@@ -33,4 +36,17 @@ public class OrgPatientListItem {
     private String maritalStatus;
     /** 职业 */
     private String occupation;
+
+    /** 病种档案展示名 */
+    private List<String> diseaseLabels = new ArrayList<>();
+    /** 评估标签 */
+    private List<AssessmentTagView> assessmentTags = new ArrayList<>();
+    /** 主责健管师 staffId */
+    private String primaryCareManagerStaffId;
+    /** 主责健管师姓名 */
+    private String primaryCareManagerName;
+    /** 档案完整度 0–100 */
+    private Integer archiveCompletenessPercent;
+    /** 当前登录员工是否已将该患者标为个人重点关注 */
+    private Boolean watched;
 }

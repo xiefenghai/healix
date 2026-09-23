@@ -71,8 +71,9 @@ public class CockpitBriefingService {
                     硬性规则：
                     1. 只能依据下方「摘要」与「优先名单」写，禁止编造名单外的患者、人数或分类标签。
                     2. 优先名单为空时：说明今日暂无待办/超期优先对象，引导查看左侧优先名单或工作台待办即可。
-                    3. 禁止使用「红人」「红标」「依从红人」「红灯」等说法；也不要用同义改写暗示这类标签。
-                    4. 不做诊断、不开方；禁止 Markdown（不要 #、**、表格、列表符号），用纯中文短句。
+                    3. 若摘要中方案待确认或报告待审阅大于 0，用一句提醒健管师处理右栏草稿箱（勿虚构具体患者）。
+                    4. 禁止使用「红人」「红标」「依从红人」「红灯」等说法；也不要用同义改写暗示这类标签。
+                    5. 不做诊断、不开方；禁止 Markdown（不要 #、**、表格、列表符号），用纯中文短句。
                     """;
             String user = buildUserPrompt(summary, top);
             var llm = llmClient.chat("COCKPIT_BRIEFING", system, user, List.of());
@@ -119,6 +120,19 @@ public class CockpitBriefingService {
             }
             sb.append("。点左侧名单即可带入对话处理。");
         }
+        int planDrafts = summary.getPendingCarePlanDraftCount();
+        int reportDrafts = summary.getPendingReportDraftCount();
+        if (planDrafts + reportDrafts > 0) {
+            sb.append("另有待你确认：");
+            List<String> parts = new ArrayList<>();
+            if (planDrafts > 0) {
+                parts.add("方案相关 " + planDrafts + " 项");
+            }
+            if (reportDrafts > 0) {
+                parts.add("报告审阅 " + reportDrafts + " 项");
+            }
+            sb.append(String.join("、", parts)).append("，选中患者后可在右栏草稿箱处理。");
+        }
         CockpitBriefingDto dto = new CockpitBriefingDto();
         dto.setText(sb.toString());
         dto.setFromLlm(false);
@@ -132,6 +146,10 @@ public class CockpitBriefingService {
                 .append(summary.getOpenTaskCount())
                 .append(" 超期=")
                 .append(summary.getOverdueCount())
+                .append(" 方案待确认=")
+                .append(summary.getPendingCarePlanDraftCount())
+                .append(" 报告待审阅=")
+                .append(summary.getPendingReportDraftCount())
                 .append('\n');
         sb.append("优先名单：\n");
         if (top.isEmpty()) {
@@ -177,7 +195,7 @@ public class CockpitBriefingService {
 
     private static String cacheKey(String staffId, String orgId) {
         LocalDate day = LocalDate.now(JobCronSupport.ZONE);
-        // v3：加强禁词与输出校验，换键使含「红人」的旧缓存失效
-        return HealthConstants.REDIS_COCKPIT_BRIEFING_PREFIX + staffId + ":" + orgId + ":" + day + ":v3";
+        // v4：简报纳入方案/报告待确认计数
+        return HealthConstants.REDIS_COCKPIT_BRIEFING_PREFIX + staffId + ":" + orgId + ":" + day + ":v4";
     }
 }

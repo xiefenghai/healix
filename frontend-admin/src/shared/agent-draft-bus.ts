@@ -5,6 +5,12 @@ export type AgentDraftPayload = {
   mode: string
   draftContent?: string
   openCreate?: boolean
+  /** 管理报告审阅预填 */
+  reportId?: string
+  openReview?: boolean
+  staffComment?: string
+  nextFocus?: string
+  quarterAdvice?: string
 }
 
 let pending: AgentDraftPayload | null = null

@@ -6,6 +6,8 @@ import com.healix.agent.ocr.ObservationReportIngestService.ConfirmCommand;
 import com.healix.agent.ocr.ObservationReportIngestService.ConfirmExam;
 import com.healix.agent.ocr.ObservationReportIngestService.ConfirmLab;
 import com.healix.agent.ocr.ObservationReportIngestService.ConfirmLabItem;
+import com.healix.agent.ocr.ObservationReportIngestService.ConfirmMed;
+import com.healix.agent.ocr.ObservationReportIngestService.ConfirmMedItem;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.result.ApiResult;
 import com.healix.core.cockpit.dto.CockpitBriefingDto;
@@ -15,9 +17,9 @@ import com.healix.core.cockpit.dto.CockpitSummaryDto;
 import com.healix.core.cockpit.service.CockpitService;
 import com.healix.core.observation.dto.ObservationOcrIngestDto;
 import com.healix.core.observation.dto.ObservationOcrPreviewDto;
-import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.security.SecurityUtils;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -63,9 +65,10 @@ public class BCockpitController {
 
     /**
      * 我的患者：当前员工作为主责健管师的健管组下患者列表（可 keyword 筛选）。
+     * 返回结构与 /priority 优先卡一致，便于左栏三 Tab 共用同一套卡片。
      */
     @GetMapping("/my-patients")
-    public ApiResult<List<OrgPatientListItem>> myPatients(
+    public ApiResult<List<CockpitPriorityCardDto>> myPatients(
             @RequestParam(required = false) String keyword) {
         return ApiResult.ok(cockpitService.myPatients(SecurityUtils.requireCurrentOrgId(), keyword));
     }
@@ -142,12 +145,29 @@ public class BCockpitController {
                     request.exam().conclusion(),
                     request.exam().findings());
         }
+        ConfirmMed med = null;
+        if (request.med() != null) {
+            List<ConfirmMedItem> medItems = request.med().items() == null
+                    ? List.of()
+                    : request.med().items().stream()
+                            .map(i -> new ConfirmMedItem(
+                                    i.drugName(),
+                                    i.usageMethod(),
+                                    i.frequency(),
+                                    i.doseAmount(),
+                                    i.doseUnit(),
+                                    i.timingNote(),
+                                    i.courseDays(),
+                                    i.startDate()))
+                            .toList();
+            med = new ConfirmMed(medItems);
+        }
         return ApiResult.ok(observationReportIngestService.confirm(
                 SecurityUtils.requireTenantId(),
                 SecurityUtils.requireCurrentOrgId(),
                 peopleId,
                 SecurityUtils.requireStaffId(),
-                new ConfirmCommand(request.kind(), lab, exam)));
+                new ConfirmCommand(request.kind(), lab, exam, med)));
     }
 
     /** 兼容旧路径：等同 recognize（不再自动入库）。 */
@@ -166,7 +186,7 @@ public class BCockpitController {
                 true));
     }
 
-    public record ConfirmRequest(String kind, ConfirmLabBody lab, ConfirmExamBody exam) {}
+    public record ConfirmRequest(String kind, ConfirmLabBody lab, ConfirmExamBody exam, ConfirmMedBody med) {}
 
     public record ConfirmLabBody(
             String specimenType,
@@ -191,4 +211,16 @@ public class BCockpitController {
             LocalDateTime examinedAt,
             String conclusion,
             Map<String, Object> findings) {}
+
+    public record ConfirmMedBody(List<ConfirmMedItemBody> items) {}
+
+    public record ConfirmMedItemBody(
+            String drugName,
+            String usageMethod,
+            String frequency,
+            String doseAmount,
+            String doseUnit,
+            String timingNote,
+            Integer courseDays,
+            LocalDate startDate) {}
 }

@@ -85,6 +85,18 @@
         LIMIT 1
     </select>
 
+    <select id="findOpenPatientRequestByPeople" resultType="com.healix.core.followup.domain.FollowupRecord">
+        SELECT <include refid="cols"/>
+        FROM followup_record
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+          AND status = 'OPEN'
+          AND source = 'PATIENT_REQUEST'
+        ORDER BY gmt_created DESC, id DESC
+        LIMIT 1
+    </select>
+
     <select id="findOpenByTaskId" resultType="com.healix.core.followup.domain.FollowupRecord">
         SELECT <include refid="cols"/>
         FROM followup_record
@@ -160,7 +172,7 @@
         WHERE tenant_id = #{tenantId}
           AND people_id = #{peopleId}
           AND is_deleted = 0
-          AND status IN ('OPEN', 'DONE')
+          AND status = 'DONE'
         ORDER BY COALESCE(completed_at, planned_at, gmt_created) DESC, id DESC
         LIMIT #{limit}
     </select>

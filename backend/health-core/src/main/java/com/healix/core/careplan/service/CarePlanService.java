@@ -293,7 +293,6 @@ public class CarePlanService {
         return getBundle(tenantId, orgId, peopleId);
     }
 
-    @Transactional
     public CarePlanBundleDto updateDraft(
             String tenantId,
             String orgId,
@@ -305,6 +304,23 @@ public class CarePlanService {
             JsonNode execution,
             String title,
             String goalSummary) {
+        return updateDraft(
+                tenantId, orgId, peopleId, staffId, expectedVersion, exercise, diet, execution, title, goalSummary, null);
+    }
+
+    @Transactional
+    public CarePlanBundleDto updateDraft(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            int expectedVersion,
+            JsonNode exercise,
+            JsonNode diet,
+            JsonNode execution,
+            String title,
+            String goalSummary,
+            String planSummary) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         CarePlan plan = requirePlan(tenantId, peopleId);
         CarePlanDraft draft = draftMapper.findByPlanId(plan.getId());
@@ -328,6 +344,9 @@ public class CarePlanService {
         draft.setDietJson(JsonUtils.toJson(diet == null ? JsonUtils.emptyObject() : diet));
         draft.setExecutionJson(JsonUtils.toJson(execution == null ? JsonUtils.emptyObject() : execution));
         draft.setSafetyFlagsJson(safetyService.toFlagsJson(flags));
+        if (planSummary != null) {
+            draft.setContextSnapshotJson(mergePlanSummaryIntoSnapshot(draft.getContextSnapshotJson(), planSummary));
+        }
         if (CarePlanSourceEnum.TEMPLATE.name().equals(draft.getSource())
                 || CarePlanSourceEnum.LLM.name().equals(draft.getSource())) {
             draft.setSource(
@@ -351,6 +370,23 @@ public class CarePlanService {
         carePlanMapper.update(plan);
         recordRevision(tenantId, peopleId, staffId, orgId, plan.getId(), ver, ver + 1, oldSnap, draftContentSnap(draft));
         return getBundle(tenantId, orgId, peopleId);
+    }
+
+    /** 将方案总结写入 context_snapshot.summary，保留其余快照字段。 */
+    private static String mergePlanSummaryIntoSnapshot(String existingJson, String planSummary) {
+        ObjectNode snap;
+        try {
+            JsonNode raw = JsonUtils.readTree(existingJson == null || existingJson.isBlank() ? "{}" : existingJson);
+            snap = raw != null && raw.isObject() ? (ObjectNode) raw.deepCopy() : JsonUtils.emptyObject();
+        } catch (Exception e) {
+            snap = JsonUtils.emptyObject();
+        }
+        if (StringUtils.hasText(planSummary)) {
+            snap.put("summary", planSummary.trim());
+        } else {
+            snap.remove("summary");
+        }
+        return JsonUtils.toJson(snap);
     }
 
     @Transactional
@@ -907,6 +943,8 @@ public class CarePlanService {
         dto.setDiet(JsonUtils.readTree(ver.getDietJson()));
         dto.setExecution(JsonUtils.readTree(ver.getExecutionJson()));
         dto.setSafetyFlags(JsonUtils.readTree(ver.getSafetyFlagsJson() == null ? "[]" : ver.getSafetyFlagsJson()));
+        dto.setContextSnapshot(JsonUtils.readTree(
+                ver.getContextSnapshotJson() == null ? "{}" : ver.getContextSnapshotJson()));
         dto.setPublishedAt(ver.getPublishedAt());
         dto.setPublishedByStaffId(ver.getPublishedByStaffId());
         dto.setSignStatus(ver.getSignStatus());

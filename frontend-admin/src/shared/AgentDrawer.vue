@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from './http'
-import { AGENT_FULL_NAME, AGENT_WELCOME } from './agent-brand'
+import { AGENT_FULL_NAME, AGENT_LOGO, AGENT_NAME, AGENT_WELCOME } from './agent-brand'
 import { postSse } from './agent-stream'
 import {
   appendProgress,
@@ -14,11 +14,25 @@ import {
   type ActivityItem,
 } from './agent-activity'
 import AgentActivityPanel from './AgentActivityPanel.vue'
+import AgentOcrReviewCard from './AgentOcrReviewCard.vue'
+import AgentReportReviewCard from './AgentReportReviewCard.vue'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from './CarePlanPreviewDialog.vue'
-import { saveLabOcrDraft, type LabOcrDraft } from './lab-ocr'
-import { saveExamOcrDraft, type ExamOcrDraft } from './exam-ocr'
 import { setAgentDraft } from './agent-draft-bus'
 import { formatAssistantPlainHtml } from './agent-plain-text'
+import { callApiDoneLabel, runAgentCallApi } from './agent-call-api'
+import { resolveStickyCapabilityHint } from './agent-sticky'
+import {
+  buildConfirmBody,
+  buildOcrReview,
+  buildReportReview,
+  formatOcrDt,
+  MED_DOSE_UNIT_FALLBACK,
+  MED_FREQUENCY_FALLBACK,
+  MED_USAGE_OPTIONS,
+  reportStatusLine,
+  type OcrReview,
+  type ReportReviewPreview,
+} from './agent-ocr'
 
 export interface AgentAction {
   type: string
@@ -26,6 +40,8 @@ export interface AgentAction {
   path?: string
   peopleId?: string
   payload?: Record<string, unknown>
+  /** CALL_API 执行态：busy 请求中；done 已成功，禁止再点 */
+  runState?: 'busy' | 'done'
 }
 
 export interface AgentChatResponse {
@@ -52,6 +68,10 @@ interface ChatMessage {
   actions?: AgentAction[]
   streaming?: boolean
   isCarePlan?: boolean
+  imageUrl?: string
+  imageName?: string
+  ocrReview?: OcrReview
+  reportReview?: ReportReviewPreview
 }
 
 const props = defineProps<{
@@ -75,7 +95,9 @@ const chatBodyRef = ref<HTMLElement | null>(null)
 const previewVisible = ref(false)
 const previewData = ref<CarePlanPreviewData | null>(null)
 const ocrFileRef = ref<HTMLInputElement | null>(null)
-const pendingOcrCapability = ref<'OCR_LAB' | 'OCR_EXAM' | null>(null)
+const uploading = ref(false)
+const imagePreviewUrl = ref<string | null>(null)
+const stickyCapability = ref<string | null>(null)
 const historyOpen = ref(false)
 const historyLoading = ref(false)
 const historyBusy = ref(false)
@@ -113,6 +135,41 @@ const isArchivedSession = computed(
   () => (sessionStatus.value || '').toUpperCase() === 'CLOSED',
 )
 
+const MED_FREQUENCY_CODES = new Set(MED_FREQUENCY_FALLBACK.map((o) => o.value))
+const MED_DOSE_UNIT_CODES = new Set(MED_DOSE_UNIT_FALLBACK.map((o) => o.value))
+const MED_USAGE_CODES = new Set(MED_USAGE_OPTIONS.map((o) => o.value))
+const knownMedCodes = {
+  usage: MED_USAGE_CODES,
+  frequency: MED_FREQUENCY_CODES,
+  doseUnit: MED_DOSE_UNIT_CODES,
+}
+
+const AI_CAP_CODES = new Set(['CARE_PLAN', 'REPORT_SUMMARY', 'GENERAL_CHAT'])
+
+const capabilityChips = computed(() => {
+  const base = capabilities.value.filter((c) => AI_CAP_CODES.has(c.code))
+  const chips = base.length
+    ? base.map((c) => ({
+        ...c,
+        label:
+          c.code === 'CARE_PLAN'
+            ? '生成方案'
+            : c.code === 'REPORT_SUMMARY'
+              ? '报告点评'
+              : '健康咨询',
+      }))
+    : [
+        { code: 'CARE_PLAN', label: '生成方案' },
+        { code: 'REPORT_SUMMARY', label: '报告点评' },
+        { code: 'GENERAL_CHAT', label: '健康咨询' },
+      ]
+  const reportIdx = chips.findIndex((c) => c.code === 'REPORT_SUMMARY')
+  const ocrChip = { code: 'OCR_UPLOAD', label: '单据录入' }
+  if (reportIdx >= 0) chips.splice(reportIdx + 1, 0, ocrChip)
+  else chips.push(ocrChip)
+  return chips
+})
+
 async function loadCapabilities() {
   try {
     const res = await api<{ data: AgentCapability[] }>('/api/b/v1/agent/capabilities')
@@ -120,20 +177,33 @@ async function loadCapabilities() {
   } catch {
     capabilities.value = [
       { code: 'CARE_PLAN', label: '制定管理方案' },
+      { code: 'REPORT_SUMMARY', label: '管理报告点评' },
+      { code: 'GENERAL_CHAT', label: '健康咨询' },
       { code: 'OCR_LAB', label: '检验单识别' },
       { code: 'OCR_EXAM', label: '检查单识别' },
-      { code: 'GENERAL_CHAT', label: '健康咨询' },
+      { code: 'OCR_MED', label: '用药单识别' },
     ]
   }
 }
 
-function applyAgentResult(row: ChatMessage, payload: unknown) {
+function applyAgentResult(
+  row: ChatMessage,
+  payload: unknown,
+  previewUrl?: string,
+) {
   const data = payload as AgentChatResponse
   const streamed = (row.streamContent || '').trim()
-  if (!data?.reply && !streamed) return
-  // 通用对话优先用后端 sanitize 后的 reply；管理方案等长文仍保留流式正文
+  if (!data?.reply && !streamed && !data?.extracted) return
   if (data.capability === 'CARE_PLAN') {
     row.content = streamed || data.reply || ''
+  } else if (data.capability === 'REPORT_SUMMARY' && data.extracted) {
+    const preview = buildReportReview(data.extracted)
+    if (preview) {
+      row.reportReview = preview
+      row.content = reportStatusLine(preview)
+    } else {
+      row.content = (data.reply && data.reply.trim()) || streamed || ''
+    }
   } else {
     row.content = (data.reply && data.reply.trim()) || streamed || ''
   }
@@ -149,63 +219,60 @@ function applyAgentResult(row: ChatMessage, payload: unknown) {
     sessionId.value = data.sessionId
     sessionStatus.value = 'ACTIVE'
   }
+  if (data.capability === 'CARE_PLAN' || data.capability === 'REPORT_SUMMARY') {
+    stickyCapability.value = data.capability
+  } else if (
+    data.capability === 'OCR_LAB' ||
+    data.capability === 'OCR_EXAM' ||
+    data.capability === 'OCR_MED' ||
+    data.capability === 'GENERAL_CHAT'
+  ) {
+    stickyCapability.value = null
+  }
   if (data.capability === 'CARE_PLAN') {
     emit('care-plan-updated')
   }
-  if (data.capability === 'OCR_LAB' && data.extracted) {
-    stashLabOcrDraft(data.extracted)
+  if (
+    (data.capability === 'OCR_LAB' ||
+      data.capability === 'OCR_EXAM' ||
+      data.capability === 'OCR_MED') &&
+    data.extracted
+  ) {
+    const review = buildOcrReview(
+      data.capability,
+      data.extracted,
+      props.peopleId,
+      previewUrl,
+      knownMedCodes,
+    )
+    if (review) row.ocrReview = review
   }
-  if (data.capability === 'OCR_EXAM' && data.extracted) {
-    stashExamOcrDraft(data.extracted)
-  }
-}
-
-function stashLabOcrDraft(extracted: unknown) {
-  const raw = extracted as LabOcrDraft
-  if (!raw?.items?.length) return
-  saveLabOcrDraft({
-    specimenType: raw.specimenType,
-    sampledAt: typeof raw.sampledAt === 'string' ? raw.sampledAt : undefined,
-    reportedAt: typeof raw.reportedAt === 'string' ? raw.reportedAt : undefined,
-    note: raw.note,
-    items: raw.items,
-    ignoredItems: raw.ignoredItems,
-    warnings: raw.warnings,
-  })
-}
-
-function stashExamOcrDraft(extracted: unknown) {
-  const raw = extracted as ExamOcrDraft
-  if (!raw) return
-  const hasFindings = raw.findings && Object.keys(raw.findings).length > 0
-  if (!raw.examType && !raw.conclusion && !hasFindings) return
-  saveExamOcrDraft({
-    examType: raw.examType,
-    examTypeName: raw.examTypeName,
-    examinedAt: typeof raw.examinedAt === 'string' ? raw.examinedAt : raw.examinedAt ? String(raw.examinedAt) : undefined,
-    conclusion: raw.conclusion,
-    findings: raw.findings,
-    ignoredFindings: raw.ignoredFindings,
-    warnings: raw.warnings,
-  })
 }
 
 async function sendMessage(
   message: string,
-  capabilityHint?: string,
-  image?: { base64: string; mimeType: string; name?: string } | null,
+  capabilityHint?: string | null,
+  image?: { base64: string; mimeType: string; name?: string; previewUrl?: string } | null,
 ) {
   if (!message.trim() && !image) return
   if (isArchivedSession.value) {
     ElMessage.info('当前为历史会话，请先点击「继续此会话」')
     return
   }
-  const userText =
-    message.trim() || (capabilityHint === 'OCR_EXAM' ? '请识别这张检查单' : '请识别这张检验单')
-  const isCarePlan = capabilityHint === 'CARE_PLAN'
+  const stickyHint = resolveStickyCapabilityHint(stickyCapability.value, message.trim())
+  if (stickyCapability.value && !capabilityHint && !stickyHint && !image) {
+    stickyCapability.value = null
+  }
+  const effectiveHint =
+    capabilityHint ||
+    (!image && stickyHint ? stickyHint : null)
+  const userText = message.trim() || (image ? '请识别这张单据' : '')
+  const isCarePlan = effectiveHint === 'CARE_PLAN'
   messages.value.push({
     role: 'user',
     content: image ? `${userText}\n[已附图片${image.name ? `：${image.name}` : ''}]` : userText,
+    imageUrl: image?.previewUrl,
+    imageName: image?.name,
   })
   input.value = ''
   sending.value = true
@@ -229,7 +296,7 @@ async function sendMessage(
         peopleId: props.peopleId,
         sessionId: sessionId.value,
         message: userText,
-        capabilityHint: capabilityHint || null,
+        capabilityHint: effectiveHint || null,
         imageBase64: image?.base64 || null,
         imageMimeType: image?.mimeType || null,
       },
@@ -270,7 +337,7 @@ async function sendMessage(
         },
         onResult: (payload) => {
           const row = messages.value[assistantIdx]
-          if (row) applyAgentResult(row, payload)
+          if (row) applyAgentResult(row, payload, image?.previewUrl)
           void scrollToBottom()
         },
         onDone: (meta) => {
@@ -288,6 +355,7 @@ async function sendMessage(
     ElMessage.error(e instanceof Error ? e.message : '发送失败')
   } finally {
     sending.value = false
+    uploading.value = false
     const row = messages.value[assistantIdx]
     if (row) {
       row.streaming = false
@@ -303,13 +371,13 @@ function toggleActivity(msg: ChatMessage, id: string) {
 }
 
 function quickAction(code: string, label: string) {
-  if (code === 'OCR_LAB' || code === 'OCR_EXAM') {
-    pendingOcrCapability.value = code
+  if (code === 'OCR_UPLOAD') {
     ocrFileRef.value?.click()
     return
   }
   const prompts: Record<string, string> = {
     CARE_PLAN: '请为这位患者生成管理方案草稿',
+    REPORT_SUMMARY: '请为这位患者生成或点评管理报告',
     GENERAL_CHAT: '请根据患者档案给出健康管理建议',
   }
   void sendMessage(prompts[code] || label, code)
@@ -318,10 +386,8 @@ function quickAction(code: string, label: string) {
 async function onOcrFileChange(e: Event) {
   const inputEl = e.target as HTMLInputElement
   const file = inputEl.files?.[0]
-  const cap = pendingOcrCapability.value
   inputEl.value = ''
-  pendingOcrCapability.value = null
-  if (!file || !cap) return
+  if (!file || uploading.value || sending.value) return
   if (file.size > 5 * 1024 * 1024) {
     ElMessage.warning('图片大小不能超过 5MB')
     return
@@ -331,11 +397,18 @@ async function onOcrFileChange(e: Event) {
     ElMessage.warning('仅支持 JPG、PNG、WEBP 图片')
     return
   }
+  uploading.value = true
   try {
     const base64 = await readFileAsBase64(file)
-    const prompt = cap === 'OCR_EXAM' ? '请识别这张检查单' : '请识别这张检验单'
-    await sendMessage(prompt, cap, { base64, mimeType: mime, name: file.name })
+    const previewUrl = URL.createObjectURL(file)
+    await sendMessage('请识别这张单据', null, {
+      base64,
+      mimeType: mime,
+      name: file.name,
+      previewUrl,
+    })
   } catch {
+    uploading.value = false
     ElMessage.error('读取图片失败')
   }
 }
@@ -358,21 +431,54 @@ function runAction(action: AgentAction) {
     void openCarePlanPreview()
     return
   }
-  if (action.type === 'REFRESH' || action.type === 'FOCUS_PATIENT') {
+  if (action.type === 'REFRESH') {
+    drawerVisible.value = false
+    router.push({ path: '/workspace/cockpit' })
+    return
+  }
+  if (action.type === 'FOCUS_PATIENT' && action.peopleId) {
+    drawerVisible.value = false
+    router.push({ path: '/workspace/cockpit', query: { peopleId: action.peopleId } })
+    return
+  }
+  if (action.type === 'SET_COCKPIT_TAB' && action.path) {
+    drawerVisible.value = false
+    const q: Record<string, string> = { tab: action.path }
+    if (props.peopleId) q.peopleId = props.peopleId
+    router.push({ path: '/workspace/cockpit', query: q })
     return
   }
   if (action.type === 'CALL_API') {
     void executeCallApi(action)
     return
   }
+  if (action.type === 'TRIGGER_CAPABILITY' && action.path) {
+    if (action.path === 'GENERAL_CHAT') {
+      stickyCapability.value = null
+    }
+    void sendMessage(action.label, action.path)
+    return
+  }
   if (action.type === 'OPEN_SHEET' && action.path) {
     const peopleId = action.peopleId || props.peopleId
-    if (action.payload?.draftContent || action.payload?.openCreate) {
+    if (
+      action.payload?.draftContent ||
+      action.payload?.openCreate ||
+      action.payload?.openReview ||
+      action.payload?.staffComment ||
+      action.payload?.reportId
+    ) {
       setAgentDraft({
         peopleId,
         mode: action.path,
         draftContent: typeof action.payload.draftContent === 'string' ? action.payload.draftContent : undefined,
         openCreate: !!action.payload.openCreate,
+        reportId: typeof action.payload.reportId === 'string' ? action.payload.reportId : undefined,
+        openReview: !!action.payload.openReview,
+        staffComment: typeof action.payload.staffComment === 'string' ? action.payload.staffComment : undefined,
+        nextFocus: typeof action.payload.nextFocus === 'string' ? action.payload.nextFocus : undefined,
+        quarterAdvice:
+          typeof action.payload.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
       })
     }
     const target = sheetModeToPath(peopleId, action.path)
@@ -394,36 +500,25 @@ function runAction(action: AgentAction) {
 }
 
 async function executeCallApi(action: AgentAction) {
+  if (action.runState === 'busy' || action.runState === 'done') return
   const peopleId = action.peopleId || props.peopleId
   if (!peopleId) return
   const apiKey = action.path || ''
+  action.runState = 'busy'
   try {
-    let receipt = ''
-    if (apiKey === 'NUDGE') {
-      const res = await api<{ data: { sent?: boolean; message?: string; reason?: string } }>(
-        `/api/b/v1/adherence/patients/${peopleId}/nudge`,
-        { method: 'POST' },
-      )
-      receipt = res.data?.message || (res.data?.sent ? '已发送站内提醒' : '提醒未发送')
-      if (res.data?.reason === 'NO_LINKED_ACCOUNT') {
-        receipt = '患者未激活 C 端账号，无法站内提醒'
-      }
-    } else if (apiKey === 'CREATE_FOLLOWUP') {
-      const followupType =
-        typeof action.payload?.followupType === 'string' ? action.payload.followupType : 'PERIODIC'
-      await api('/api/b/v1/followups', {
-        method: 'POST',
-        body: JSON.stringify({
-          peopleId,
-          followupType,
-          createTask: action.payload?.createTask !== false,
-          completeNow: false,
-        }),
-      })
-      receipt = '已创建随访待办'
-    } else {
-      ElMessage.warning('暂不支持该动作')
-      return
+    const result = await runAgentCallApi(apiKey, peopleId, action.payload)
+    const receipt = result.message
+    action.runState = 'done'
+    const doneLabel = callApiDoneLabel(apiKey)
+    if (doneLabel) action.label = doneLabel
+    if (apiKey === 'PUBLISH_REPORT' || apiKey === 'PUBLISH_CARE_PLAN') {
+      stickyCapability.value = null
+      emit('care-plan-updated')
+    }
+    if (result.openSheet) {
+      const target = sheetModeToPath(peopleId, result.openSheet)
+      drawerVisible.value = false
+      router.push(target)
     }
     messages.value.push({
       role: 'assistant',
@@ -432,8 +527,91 @@ async function executeCallApi(action: AgentAction) {
     ElMessage.success(receipt)
     await scrollToBottom()
   } catch (e) {
+    action.runState = undefined
+    if (e === 'cancel' || (e && typeof e === 'object' && 'action' in e && (e as { action?: string }).action === 'cancel')) {
+      return
+    }
     ElMessage.error(e instanceof Error ? e.message : '动作执行失败')
   }
+}
+
+function openImagePreview(url?: string | null) {
+  if (!url) return
+  imagePreviewUrl.value = url
+}
+
+function closeImagePreview() {
+  imagePreviewUrl.value = null
+}
+
+async function confirmOcr(msg: ChatMessage) {
+  const review = msg.ocrReview
+  if (!review || review.status !== 'pending' || !review.peopleId) return
+  const kindLabel =
+    review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药处方' : '检查报告'
+  const timeHint =
+    review.kind === 'LAB'
+      ? `采样 ${formatOcrDt(review.lab?.sampledAt)}，报告 ${formatOcrDt(review.lab?.reportedAt)}`
+      : review.kind === 'MED'
+        ? `共 ${review.med?.items?.length ?? 0} 种药品，请核对用法、剂量与疗程`
+        : `检查时间 ${formatOcrDt(review.exam?.examinedAt)}`
+  const confirmTitle = review.kind === 'MED' ? '确认写入用药清单' : '确认入库'
+  const confirmText =
+    review.kind === 'MED'
+      ? `确认将「${review.title || kindLabel}」写入患者用药清单？${timeHint}。`
+      : `确认将「${review.title || kindLabel}」写入患者健康数据？请再核对时间：${timeHint}。入库后可在观测数据中查看。`
+  try {
+    await ElMessageBox.confirm(confirmText, confirmTitle, {
+      type: 'warning',
+      confirmButtonText: '确认入库',
+      cancelButtonText: '再检查一下',
+      distinguishCancelAndClose: true,
+    })
+  } catch {
+    return
+  }
+  review.status = 'saving'
+  try {
+    const body = buildConfirmBody(review)
+    const res = await api<{ data: { reportId: string; title: string; summary: string } }>(
+      `/api/b/v1/cockpit/patients/${review.peopleId}/reports/confirm`,
+      { method: 'POST', body: JSON.stringify(body) },
+    )
+    review.status = 'confirmed'
+    review.reportId = res.data.reportId
+    msg.content = res.data.summary
+    if (review.kind === 'MED') {
+      msg.actions = [
+        {
+          type: 'OPEN_SHEET',
+          label: '查看用药清单',
+          path: 'medications',
+          peopleId: review.peopleId,
+        },
+      ]
+    } else {
+      msg.actions = [
+        {
+          type: 'OPEN_SHEET',
+          label: '查看健康数据',
+          path: 'observations',
+          peopleId: review.peopleId,
+        },
+      ]
+    }
+    ElMessage.success(review.kind === 'MED' ? '已写入用药清单' : '已入库')
+  } catch (e) {
+    review.status = 'pending'
+    ElMessage.error(e instanceof Error ? e.message : '入库失败')
+  }
+}
+
+function discardOcr(msg: ChatMessage) {
+  const review = msg.ocrReview
+  if (!review) return
+  if (review.imageUrl) URL.revokeObjectURL(review.imageUrl)
+  review.status = 'discarded'
+  msg.ocrReview = undefined
 }
 
 function sheetModeToPath(peopleId: string, mode: string): string {
@@ -453,6 +631,8 @@ function sheetModeToPath(peopleId: string, mode: string): string {
       return `${base}/chat`
     case 'assessments':
       return `${base}/assessments`
+    case 'medications':
+      return `${base}/medications`
     default:
       return base
   }
@@ -468,6 +648,7 @@ async function openCarePlanPreview() {
         exercise?: CarePlanPreviewData['exercise']
         diet?: CarePlanPreviewData['diet']
         execution?: CarePlanPreviewData['execution']
+        contextSnapshot?: { summary?: string }
       }
       activeVersion?: {
         source?: string
@@ -475,13 +656,17 @@ async function openCarePlanPreview() {
         exercise?: CarePlanPreviewData['exercise']
         diet?: CarePlanPreviewData['diet']
         execution?: CarePlanPreviewData['execution']
+        contextSnapshot?: { summary?: string }
         publishedAt?: string
       }
     }
     const src = b.draft || b.activeVersion
+    const snapSummary =
+      typeof src?.contextSnapshot?.summary === 'string' ? src.contextSnapshot.summary.trim() : ''
     previewData.value = {
       title: b.plan?.title,
       goalSummary: b.plan?.goalSummary,
+      summary: snapSummary || undefined,
       source: b.draft?.source || b.activeVersion?.source,
       versionLabel: b.draft ? '草稿' : `v${b.activeVersion?.versionNo || ''}`,
       status: b.draft ? 'DRAFT' : 'ACTIVE',
@@ -585,6 +770,7 @@ async function openHistorySession(row: SessionSummaryRow) {
 async function startNewChat() {
   if (!props.peopleId || sending.value || historyBusy.value) return
   historyBusy.value = true
+  stickyCapability.value = null
   try {
     const res = await api<{ data: SessionBundlePayload }>('/api/b/v1/agent/sessions/new', {
       method: 'POST',
@@ -638,104 +824,200 @@ watch(
 <template>
   <el-drawer
     v-model="drawerVisible"
-    :title="AGENT_FULL_NAME"
     direction="rtl"
-    size="420px"
+    size="440px"
+    :with-header="false"
     :append-to-body="true"
+    class="agent-drawer-host"
   >
     <div class="agent-drawer">
-      <div class="drawer-toolbar">
-        <div class="quick-actions">
-          <el-button
-            v-for="cap in capabilities"
-            :key="cap.code"
-            size="small"
-            :disabled="sending || isArchivedSession"
-            @click="quickAction(cap.code, cap.label)"
+      <header class="drawer-head">
+        <div class="ai-avatar" aria-hidden="true">
+          <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
+        </div>
+        <div class="ai-info">
+          <div class="ai-name">
+            {{ AGENT_NAME }}
+            <span class="beta">BETA</span>
+          </div>
+          <div class="ai-sub">
+            <i class="pulse" />
+            {{ AGENT_FULL_NAME }}
+          </div>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="icon-btn" title="历史会话" @click="openHistory">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="9" />
+              <polyline points="12 7 12 12 15.5 14" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            title="新建会话"
+            :disabled="sending || historyBusy"
+            @click="startNewChat"
           >
-            {{ cap.label }}
-          </el-button>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn close"
+            title="关闭"
+            @click="drawerVisible = false"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-        <div class="session-actions">
-          <el-button size="small" text @click="openHistory">历史</el-button>
-          <el-button size="small" text :disabled="sending || historyBusy" @click="startNewChat">
-            新建
-          </el-button>
-        </div>
+      </header>
+
+      <div class="quick-rail" aria-label="快捷能力">
+        <button
+          v-for="cap in capabilityChips"
+          :key="cap.code"
+          type="button"
+          class="quick-chip"
+          :disabled="sending || uploading || isArchivedSession"
+          @click="quickAction(cap.code, cap.label)"
+        >
+          {{ cap.label }}
+        </button>
       </div>
 
       <div v-if="isArchivedSession" class="session-banner">
-        <span>历史会话</span>
-        <el-button size="small" type="primary" :loading="historyBusy" @click="resumeArchivedSession">
+        <span>历史会话，发送前请先继续</span>
+        <button
+          type="button"
+          class="session-resume"
+          :disabled="historyBusy"
+          @click="resumeArchivedSession"
+        >
           继续此会话
-        </el-button>
+        </button>
       </div>
 
       <div ref="chatBodyRef" class="chat-body">
         <div
           v-for="(msg, idx) in messages"
           :key="idx"
-          class="chat-bubble"
+          class="msg-row"
           :class="msg.role"
         >
-          <AgentActivityPanel
-            v-if="msg.activity?.length || msg.elapsedMs"
-            :items="msg.activity || []"
-            :streaming="msg.streaming"
-            :elapsed-ms="msg.elapsedMs"
-            @toggle="(id) => toggleActivity(msg, id)"
-          />
+          <div v-if="msg.role === 'assistant'" class="msg-avatar" aria-hidden="true">
+            <img :src="AGENT_LOGO" :alt="AGENT_NAME" />
+          </div>
+          <div class="bubble" :class="msg.role">
+            <div v-if="msg.role === 'assistant'" class="bubble-head">
+              <span>{{ AGENT_NAME }}</span>
+            </div>
 
-          <div v-if="msg.streamContent" class="bubble-content stream-output">
-            <template v-if="msg.isCarePlan">
-              <div class="stream-label">AI 生成中</div>
+            <AgentActivityPanel
+              v-if="msg.activity?.length || msg.elapsedMs"
+              :items="msg.activity || []"
+              :streaming="msg.streaming"
+              :elapsed-ms="msg.elapsedMs"
+              @toggle="(id) => toggleActivity(msg, id)"
+            />
+
+            <div v-if="msg.streamContent" class="bubble-text stream-output">
+              <div v-if="msg.isCarePlan" class="stream-label">AI 生成中</div>
               <div class="plain-body" v-html="formatAssistantPlainHtml(msg.streamContent)" />
-            </template>
-            <div v-else class="plain-body" v-html="formatAssistantPlainHtml(msg.streamContent)" />
-          </div>
-          <div
-            v-else-if="msg.content && msg.role === 'assistant'"
-            class="bubble-content plain-body"
-            v-html="formatAssistantPlainHtml(msg.content)"
-          />
-          <div v-else-if="msg.content" class="bubble-content">
-            {{ msg.content }}
-          </div>
-          <div v-else-if="msg.streaming && !msg.activity?.length" class="bubble-content typing">
-            思考中…
-          </div>
-
-          <div v-if="msg.actions?.length" class="bubble-actions">
-            <el-button
-              v-for="(act, i) in msg.actions"
-              :key="i"
-              type="primary"
-              link
-              size="small"
-              @click="runAction(act)"
+            </div>
+            <div
+              v-else-if="msg.content && msg.role === 'assistant' && !msg.reportReview"
+              class="bubble-text plain-body"
+              v-html="formatAssistantPlainHtml(msg.content)"
+            />
+            <div v-else-if="msg.reportReview" class="bubble-text plain-body report-status">
+              {{ msg.content }}
+            </div>
+            <div v-else-if="msg.content" class="bubble-text">
+              {{ msg.content }}
+            </div>
+            <div
+              v-else-if="msg.streaming && !msg.activity?.length"
+              class="typing"
+              aria-label="思考中"
             >
-              {{ act.label }}
-            </el-button>
+              <span /><span /><span />
+            </div>
+
+            <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
+
+            <button
+              v-if="msg.imageUrl"
+              type="button"
+              class="msg-image"
+              :title="msg.imageName || '查看原图'"
+              @click="openImagePreview(msg.imageUrl)"
+            >
+              <img :src="msg.imageUrl" :alt="msg.imageName || '上传原图'" />
+            </button>
+
+            <AgentOcrReviewCard
+              v-if="msg.ocrReview && msg.ocrReview.status !== 'discarded'"
+              :review="msg.ocrReview"
+              @preview="openImagePreview"
+              @confirm="confirmOcr(msg)"
+              @discard="discardOcr(msg)"
+            />
+
+            <div v-if="msg.actions?.length" class="bubble-actions">
+              <button
+                v-for="(act, i) in msg.actions"
+                :key="i"
+                type="button"
+                class="action-chip"
+                :class="{
+                  primary: i === 0 || act.type === 'CALL_API' || act.type === 'TRIGGER_CAPABILITY',
+                  do: act.type === 'CALL_API' || act.type === 'TRIGGER_CAPABILITY',
+                  done: act.runState === 'done',
+                }"
+                :disabled="act.runState === 'busy' || act.runState === 'done'"
+                @click="runAction(act)"
+              >
+                {{ act.runState === 'busy' ? '处理中…' : act.label }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="chat-input">
-        <el-input
-          v-model="input"
-          placeholder="输入消息..."
-          :disabled="sending || isArchivedSession"
-          @keyup.enter="sendMessage(input)"
-        />
-        <el-button
-          type="primary"
-          :loading="sending"
-          :disabled="isArchivedSession"
-          @click="sendMessage(input)"
-        >
-          发送
-        </el-button>
+      <div class="composer">
+        <div class="composer-box">
+          <el-input
+            v-model="input"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 4 }"
+            resize="none"
+            :disabled="sending || isArchivedSession"
+            placeholder="问问健管智能体，或让他帮你写方案…"
+            @keydown.enter.exact.prevent="sendMessage(input)"
+          />
+          <div class="composer-bar">
+            <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+            <button
+              type="button"
+              class="send-btn"
+              :disabled="sending || uploading || isArchivedSession || !input.trim()"
+              @click="sendMessage(input)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+              {{ sending ? '发送中' : '发送' }}
+            </button>
+          </div>
+        </div>
+        <p class="disclaimer">智能体建议请人工核对后再执行。</p>
       </div>
+
       <input
         ref="ocrFileRef"
         type="file"
@@ -745,6 +1027,21 @@ watch(
       />
     </div>
     <CarePlanPreviewDialog v-model="previewVisible" :data="previewData" />
+
+    <el-dialog
+      :model-value="!!imagePreviewUrl"
+      title="原图预览"
+      width="720px"
+      append-to-body
+      @update:model-value="(v) => !v && closeImagePreview()"
+    >
+      <img
+        v-if="imagePreviewUrl"
+        :src="imagePreviewUrl"
+        alt="原图"
+        style="display: block; max-width: 100%; margin: 0 auto"
+      />
+    </el-dialog>
   </el-drawer>
 
   <el-drawer
@@ -757,9 +1054,14 @@ watch(
     <div class="history-panel" v-loading="historyLoading">
       <div class="history-toolbar">
         <span class="history-hint">当前患者会话</span>
-        <el-button size="small" type="primary" :disabled="sending || historyBusy" @click="startNewChat">
+        <button
+          type="button"
+          class="history-new"
+          :disabled="sending || historyBusy"
+          @click="startNewChat"
+        >
           新建会话
-        </el-button>
+        </button>
       </div>
       <el-empty
         v-if="!historyLoading && !historyRows.length"
@@ -798,39 +1100,522 @@ watch(
 .agent-drawer {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 120px);
+  height: 100%;
+  background: linear-gradient(180deg, #f8fbff 0%, #f4f7fb 48%, #f8fafc 100%);
 }
 
-.drawer-toolbar {
+.drawer-head {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
 }
 
-.quick-actions {
+.ai-avatar {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(44, 126, 248, 0.12);
+}
+
+.ai-avatar .ai-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #fff;
+}
+
+.ai-avatar::after {
+  content: '';
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  width: 10px;
+  height: 10px;
+  background: #10b981;
+  border: 2px solid #fff;
+  border-radius: 50%;
+}
+
+.ai-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 650;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.beta {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.ai-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+.pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45);
+  animation: pulse-dot 1.8s ease-out infinite;
+}
+
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-btn.close:hover:not(:disabled) {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.quick-rail {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  padding: 10px 14px 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.04);
+  background: rgba(255, 255, 255, 0.55);
 }
 
-.session-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
+.quick-chip {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.quick-chip:hover:not(:disabled) {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.08);
+}
+
+.quick-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .session-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--el-color-primary-light-9);
+  gap: 10px;
+  margin: 10px 14px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1e3a5f;
   font-size: 12px;
-  color: var(--el-text-color-regular);
+  flex-shrink: 0;
+}
+
+.session-resume {
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 10px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 560;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.session-resume:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.chat-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.msg-row {
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.msg-row.user {
+  justify-content: flex-end;
+}
+
+.msg-row.assistant {
+  justify-content: flex-start;
+}
+
+.msg-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  margin-top: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.06);
+}
+
+.msg-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.bubble {
+  max-width: min(420px, calc(100% - 36px));
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.bubble.assistant {
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  border-top-left-radius: 6px;
+}
+
+.bubble.user {
+  max-width: 88%;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+  border-top-right-radius: 6px;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+}
+
+.bubble-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.bubble-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.plain-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.plain-body :deep(.section-title) {
+  display: block;
+  margin: 6px 0 2px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.plain-body :deep(.section-title:first-child) {
+  margin-top: 0;
+}
+
+.plain-body :deep(.field-label) {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.stream-output {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.stream-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.bubble-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action-chip {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.action-chip:hover {
+  border-color: #3b82f6;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.action-chip.primary {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.action-chip.primary:hover {
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.action-chip.do:not(.primary) {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.action-chip:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.action-chip.done,
+.action-chip.done:hover {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #e2e8f0;
+}
+
+.msg-image {
+  display: block;
+  margin-top: 8px;
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+  cursor: zoom-in;
+  line-height: 0;
+}
+
+.msg-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+}
+
+.report-status {
+  color: #475569;
+  font-size: 13px;
+}
+
+.typing {
+  display: inline-flex;
+  gap: 4px;
+  padding: 6px 2px;
+}
+
+.typing span {
+  width: 6px;
+  height: 6px;
+  background: #94a3b8;
+  border-radius: 50%;
+  animation: bounce 1.4s infinite;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+.composer {
+  flex-shrink: 0;
+  padding: 12px 14px 14px;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.composer-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 10px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.composer-box:focus-within {
+  background: #fff;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.composer-box :deep(.el-textarea__inner) {
+  box-shadow: none !important;
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #0f172a;
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  gap: 8px;
+}
+
+.composer-bar .hint {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.send-btn {
+  height: 32px;
+  padding: 0 14px;
+  background: #2563eb;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.send-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.disclaimer {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: center;
 }
 
 .history-panel {
@@ -849,26 +1634,43 @@ watch(
 
 .history-hint {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #64748b;
+}
+
+.history-new {
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 10px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.history-new:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .history-item {
   width: 100%;
   text-align: left;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #fff;
   padding: 10px 12px;
   cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .history-item:hover:not(:disabled) {
-  border-color: var(--el-color-primary-light-5);
-  background: var(--el-color-primary-light-9);
+  border-color: #93c5fd;
+  background: #eff6ff;
 }
 
 .history-item.active {
-  border-color: var(--el-color-primary);
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #bfdbfe;
 }
 
 .history-item:disabled {
@@ -905,15 +1707,15 @@ watch(
 }
 
 .history-status.off {
-  color: var(--el-text-color-secondary);
-  background: var(--el-fill-color-light);
-  border-color: var(--el-border-color-lighter);
+  color: #64748b;
+  background: #f8fafc;
+  border-color: #e2e8f0;
 }
 
 .history-preview {
   margin: 6px 0 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #64748b;
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -926,107 +1728,23 @@ watch(
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: var(--el-text-color-placeholder);
-}
-
-.chat-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.chat-bubble {
-  max-width: 95%;
-}
-
-.chat-bubble.user {
-  align-self: flex-end;
-}
-
-.chat-bubble.assistant {
-  align-self: flex-start;
-}
-
-.bubble-content {
-  padding: 10px 12px;
-  border-radius: 10px;
-  font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-.plain-body {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.plain-body :deep(.section-title) {
-  font-weight: 700;
-  color: var(--el-text-color-primary);
-}
-
-.plain-body :deep(.field-label) {
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.stream-output {
-  max-height: 240px;
-  overflow: auto;
-}
-
-.stream-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 6px;
-}
-
-.stream-hint {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--el-text-color-regular);
-}
-
-.stream-pre {
-  margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.chat-bubble.user .bubble-content {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-text-color-primary);
-}
-
-.chat-bubble.assistant .bubble-content {
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
-}
-
-.bubble-actions {
-  margin-top: 6px;
-}
-
-.chat-input {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding-top: 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-.typing {
-  color: var(--el-text-color-secondary);
+  color: #94a3b8;
 }
 
 .ocr-file-input {
   display: none;
+}
+</style>
+
+<style>
+.agent-drawer-host.el-drawer {
+  border-radius: 16px 0 0 16px;
+  overflow: hidden;
+}
+
+.agent-drawer-host .el-drawer__body {
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
 }
 </style>

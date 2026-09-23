@@ -23,6 +23,7 @@ import com.healix.core.patient.domain.PatientCareAssignment;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.enums.MembershipStatusEnum;
 import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
+import com.healix.core.patientcard.mapper.AccountPatientMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
@@ -74,6 +75,7 @@ public class HealthReportService {
     private final OrgWorkspaceService orgWorkspaceService;
     private final ArchiveAccessService archiveAccessService;
     private final NotifyFacade notifyFacade;
+    private final AccountPatientMapper accountPatientMapper;
 
     /**
      * 生成报告。fromJob=true 时门槛不足/已存在则返回 null（静默跳过）。
@@ -272,6 +274,44 @@ public class HealthReportService {
         EntityMeta.onUpdate(row);
         healthReportMapper.updateContent(row);
         return toView(healthReportMapper.findById(row.getId()));
+    }
+
+    /**
+     * 将 AI/人工寄语写入报告草稿（仍为 DRAFT，不发布）。供对话内点评与多轮修订。
+     */
+    @Transactional
+    public HealthReportViewDto saveNarrativeDraft(
+            String orgId, String id, String staffId, String staffComment, String nextFocus, String quarterAdvice) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        HealthReport row = requireInOrg(orgId, id);
+        archiveAccessService.assertStaffCanAccessPeople(requireTenantId(), orgId, row.getPeopleId());
+        assertPrimaryOrg(orgId, row);
+        if (!HealthReportStatus.DRAFT.matches(row.getStatus())) {
+            throw new BusinessException(400, "仅待审阅报告可保存点评草稿");
+        }
+        // 对话内 AI 点评写入草稿：不强制已领取审阅任务（发布时仍校验）
+
+        Map<String, Object> content = readContent(row.getContentJson());
+        Map<String, Object> narrative = narrativeMap(content);
+        if (StringUtils.hasText(staffComment)) {
+            narrative.put("staffComment", staffComment.trim());
+        }
+        if (StringUtils.hasText(nextFocus)) {
+            narrative.put("nextFocus", nextFocus.trim());
+        }
+        if (StringUtils.hasText(quarterAdvice)) {
+            narrative.put("quarterAdvice", quarterAdvice.trim());
+        }
+        if (StringUtils.hasText(str(narrative.get("staffComment")))) {
+            narrative.put("templateTier", null);
+        }
+        content.put("narrative", narrative);
+
+        row.setContentJson(JsonUtils.toJson(content));
+        row.setStaffComment(str(narrative.get("staffComment")));
+        EntityMeta.onUpdate(row);
+        healthReportMapper.updateDraftNarrative(row);
+        return toView(healthReportMapper.findById(id));
     }
 
     @Transactional
@@ -495,15 +535,29 @@ public class HealthReportService {
         return out;
     }
 
-    public HealthReportViewDto getPublishedForPatient(String tenantId, String peopleId, String id) {
+    /**
+     * C 端报告详情：账号维度可读。
+     *
+     * <p>消息中心按账号投递，但 JWT 当前就诊人可能不是报告归属人；只要该账号绑定了报告对应就诊人即可查看。
+     */
+    public HealthReportViewDto getPublishedForPatient(
+            String tenantId, String accountId, String activePeopleId, String id) {
         HealthReport row = healthReportMapper.findById(id);
         if (row == null
                 || !tenantId.equals(row.getTenantId())
-                || !peopleId.equals(row.getPeopleId())
                 || !HealthReportStatus.PUBLISHED.matches(row.getStatus())) {
             throw new BusinessException(404, "报告不存在");
         }
-        return toView(row);
+        if (StringUtils.hasText(activePeopleId) && activePeopleId.equals(row.getPeopleId())) {
+            return toView(row);
+        }
+        if (StringUtils.hasText(accountId)) {
+            var card = accountPatientMapper.findByAccountAndPeople(accountId, row.getPeopleId());
+            if (card != null && row.getTenantId().equals(card.getTenantId())) {
+                return toView(row);
+            }
+        }
+        throw new BusinessException(404, "报告不存在");
     }
 
     public List<String> listPeopleIdsByPrimaryOrg(String tenantId, String orgId, int limit) {

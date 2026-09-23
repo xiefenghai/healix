@@ -35,7 +35,18 @@ public class PatientCardService {
     private final QuotaService quotaService;
 
     public List<AccountPatient> listByAccount(String accountId) {
-        return accountPatientMapper.listByAccount(accountId);
+        List<AccountPatient> cards = accountPatientMapper.listByAccount(accountId);
+        // 档案姓名为准，避免卡片冗余名与管理端不一致
+        for (AccountPatient card : cards) {
+            if (!StringUtils.hasText(card.getPeopleId())) {
+                continue;
+            }
+            PeopleProfile profile = peopleProfileMapper.findById(card.getPeopleId());
+            if (profile != null && StringUtils.hasText(profile.getDisplayName())) {
+                card.setDisplayName(profile.getDisplayName().trim());
+            }
+        }
+        return cards;
     }
 
     public AccountPatient requireOwnedCard(String accountId, String cardId) {

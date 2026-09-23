@@ -18,7 +18,9 @@ import com.healix.core.people.domain.PeopleAccount;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleAccountMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
+import com.healix.core.patientcard.mapper.AccountPatientMapper;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -43,6 +45,7 @@ public class IdentityService {
     private final StaffRoleBindingMapper staffRoleBindingMapper;
     private final PeopleAccountMapper peopleAccountMapper;
     private final PeopleProfileMapper peopleProfileMapper;
+    private final AccountPatientMapper accountPatientMapper;
     private final PasswordEncoder passwordEncoder;
 
     public OpsAccount requireOpsByUsername(String username) {
@@ -164,6 +167,11 @@ public class IdentityService {
         }
         EntityMeta.onUpdate(profile);
         peopleProfileMapper.updateProfile(profile);
+        // 档案姓名为准，同步 C 端就诊人卡片上的冗余 display_name
+        if (StringUtils.hasText(profile.getDisplayName())) {
+            accountPatientMapper.updateDisplayNameByPeopleId(
+                    peopleId, profile.getDisplayName().trim(), LocalDateTime.now());
+        }
         return profile;
     }
 

@@ -14,6 +14,9 @@ public interface HealthReportMapper {
 
     int updateContent(HealthReport row);
 
+    /** 待审阅报告：写入寄语草稿（不发布）。 */
+    int updateDraftNarrative(HealthReport row);
+
     int updateStatus(HealthReport row);
 
     int updateWorkspaceTaskId(

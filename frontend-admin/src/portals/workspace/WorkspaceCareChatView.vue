@@ -305,7 +305,7 @@ onBeforeUnmount(() => {
     <aside v-loading="loading" class="inbox">
       <div class="inbox-head">
         <div>
-          <h1>健康沟通</h1>
+          <h1>患者沟通</h1>
           <p>
             共 {{ inbox?.groups.reduce((s, g) => s + g.patientCount, 0) || 0 }} 位患者
             <template v-if="(inbox?.totalUnread || 0) > 0">

@@ -137,7 +137,8 @@ public class BCarePlanController {
                 request.diet(),
                 request.execution(),
                 request.title(),
-                request.goalSummary()));
+                request.goalSummary(),
+                request.summary()));
     }
 
     @DeleteMapping("/patients/{peopleId}/care-plan/draft")
@@ -276,7 +277,9 @@ public class BCarePlanController {
             JsonNode diet,
             JsonNode execution,
             String title,
-            String goalSummary) {}
+            String goalSummary,
+            /** 方案总结（写入 context_snapshot.summary） */
+            String summary) {}
 
     public record PublishRequest(List<String> ackWarnCodes, String title) {}
 }

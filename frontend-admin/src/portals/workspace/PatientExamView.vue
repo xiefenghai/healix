@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiUpload } from '../../shared/http'
@@ -338,13 +338,19 @@ async function onOcrFileChange(e: Event) {
 function tryOpenOcrDraft() {
   if (route.query.ocr !== '1') return
   const draft = loadExamOcrDraft() as ExamOcrDraft | null
-  if (!draft) return
-  const hasFindings = draft.findings && Object.keys(draft.findings).length > 0
-  if (!draft.examType && !draft.conclusion && !hasFindings) return
-  openCreate()
-  applyOcr(draft)
-  clearExamOcrDraft()
-  ElMessage.success('已载入对话识别结果，请核对后保存')
+  if (draft) {
+    const hasFindings = draft.findings && Object.keys(draft.findings).length > 0
+    if (draft.examType || draft.conclusion || hasFindings) {
+      openCreate()
+      applyOcr(draft)
+      clearExamOcrDraft()
+      ElMessage.success('已载入对话识别结果，请核对后保存')
+      return
+    }
+  }
+  // 无图 OCR 入口：无会话草稿时直接唤起拍照
+  ocrHint.value = '请拍照或选择检查单图片，识别后核对入库'
+  nextTick(() => openOcrPicker())
 }
 
 function openEdit(row: ExamReport) {

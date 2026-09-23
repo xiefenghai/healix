@@ -101,7 +101,7 @@ public class FollowupService {
         return items;
     }
 
-    /** C 端：当前就诊人可见的随访（OPEN/DONE）。 */
+    /** C 端：当前就诊人已完成的随访记录。 */
     public List<FollowupListItemDto> listForPatient(String tenantId, String peopleId, int limit) {
         int lim = Math.min(Math.max(limit, 1), 100);
         List<FollowupListItemDto> items = new ArrayList<>();
@@ -113,13 +113,13 @@ public class FollowupService {
         return items;
     }
 
-    /** C 端详情：须属于当前患者且未取消。 */
+    /** C 端详情：须属于当前患者且已办结。 */
     public FollowupRecordViewDto getForPatient(String tenantId, String peopleId, String id) {
         FollowupRecord row = followupRecordMapper.findById(id);
         if (row == null
                 || !tenantId.equals(row.getTenantId())
                 || !peopleId.equals(row.getPeopleId())
-                || FollowupRecordStatus.CANCELLED.matches(row.getStatus())) {
+                || !FollowupRecordStatus.DONE.matches(row.getStatus())) {
             throw new BusinessException(404, "随访记录不存在");
         }
         return toPatientView(row);
@@ -156,6 +156,7 @@ public class FollowupService {
 
         FollowupType followupType;
         Map<String, Object> normalized;
+        String openGuidance = null;
         if (completeNow) {
             Map<String, Object> raw = content == null ? new LinkedHashMap<>() : new LinkedHashMap<>(content);
             if (!StringUtils.hasText(FollowupContentValidator.str(raw.get("followupType")))) {
@@ -170,6 +171,19 @@ public class FollowupService {
             followupType = FollowupType.require(code);
             Map<String, Object> draft = new LinkedHashMap<>();
             draft.put("followupType", followupType.name());
+            if (content != null) {
+                String guidance = FollowupContentValidator.str(content.get("guidance"));
+                if (!StringUtils.hasText(guidance)) {
+                    guidance = FollowupContentValidator.str(content.get("draftContent"));
+                }
+                if (StringUtils.hasText(guidance)) {
+                    openGuidance = guidance.trim();
+                    if (openGuidance.length() > 500) {
+                        openGuidance = openGuidance.substring(0, 500);
+                    }
+                    draft.put("guidance", openGuidance);
+                }
+            }
             normalized = draft;
         }
 
@@ -180,7 +194,7 @@ public class FollowupService {
         record.setRecordType(FollowupRecordType.PERIODIC.name());
         record.setSource(FollowupRecordSource.MANUAL.name());
         record.setTitle(followupType.label());
-        record.setSummary(followupType.label());
+        record.setSummary(StringUtils.hasText(openGuidance) ? openGuidance : followupType.label());
         record.setPlannedAt(plannedAt);
         record.setAssigneeStaffId(staffId);
         record.setContentJson(JsonUtils.toJson(normalized));
@@ -396,10 +410,13 @@ public class FollowupService {
         }
         row.setAssigneeStaffId(assignee);
         row.setTitle(type.label());
-        row.setSummary(followupType.label());
+        row.setSummary(StringUtils.hasText(record.getSummary()) ? record.getSummary() : followupType.label());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("followupId", record.getId());
         payload.put("followupType", followupType.name());
+        if (StringUtils.hasText(record.getSummary()) && !followupType.label().equals(record.getSummary())) {
+            payload.put("guidance", record.getSummary());
+        }
         row.setPayloadJson(JsonUtils.toJson(payload));
         row.setSource("FOLLOWUP");
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);

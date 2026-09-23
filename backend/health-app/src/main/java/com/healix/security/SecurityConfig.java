@@ -35,8 +35,17 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // SSE / SseEmitter 会触发 ASYNC 二次分发，内部请求不带 JWT，须放行
-                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.FORWARD)
+                        // SSE 断连后 Tomcat 用 INCLUDE 渲染 /error；ASYNC/ERROR/FORWARD 二次分发也不带 JWT
+                        .dispatcherTypeMatchers(
+                                        DispatcherType.ASYNC,
+                                        DispatcherType.ERROR,
+                                        DispatcherType.FORWARD,
+                                        DispatcherType.INCLUDE)
+                                .permitAll()
+                        // CORS 预检无 Authorization，不能走 ROLE_* 校验
+                        .requestMatchers(HttpMethod.OPTIONS, "/**")
+                        .permitAll()
+                        .requestMatchers("/error", "/error/**")
                         .permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
@@ -50,10 +59,19 @@ public class SecurityConfig {
                         .requestMatchers("/api/ops/v1/**").hasAuthority("ROLE_OPS")
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint((request, response, authException) ->
-                                writeAuthJson(response, 401, "登录信息已过期"))
-                        .accessDeniedHandler((request, response, accessDeniedException) ->
-                                writeAuthJson(response, 403, "登录信息已过期或无权限")))
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            if (response.isCommitted()) {
+                                return;
+                            }
+                            writeAuthJson(response, 401, "登录信息已过期");
+                        })
+                        // 已登录但角色不匹配（如 C Token 打 B 接口）→ 403；匿名未带 Token 走上面 EntryPoint
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            if (response.isCommitted()) {
+                                return;
+                            }
+                            writeAuthJson(response, 403, "登录信息已过期或无权限");
+                        }))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

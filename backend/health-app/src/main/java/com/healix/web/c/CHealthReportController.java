@@ -31,7 +31,11 @@ public class CHealthReportController {
 
     @GetMapping("/{id}")
     public ApiResult<HealthReportViewDto> detail(@PathVariable String id) {
+        var ctx = SecurityUtils.requireContext();
         return ApiResult.ok(healthReportService.getPublishedForPatient(
-                SecurityUtils.requireTenantId(), SecurityUtils.requirePatientId(), id));
+                SecurityUtils.requireTenantId(),
+                ctx.getAccountId(),
+                ctx.getPatientId(),
+                id));
     }
 }

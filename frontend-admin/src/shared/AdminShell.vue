@@ -2,11 +2,21 @@
 import { computed, ref, useSlots } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { clearSession, getCurrentOrgName, getEntry } from '../shared/http'
+import brandShieldUrl from '../assets/brand-shield.png'
+
+export type ShellMenuItem = {
+  path: string
+  label: string
+  icon?: string
+  badge?: boolean | number
+  /** 侧栏分组标题；同组连续展示 */
+  group?: string
+}
 
 const props = withDefaults(
   defineProps<{
     title: string
-    menus: Array<{ path: string; label: string; icon?: string; badge?: boolean | number }>
+    menus: ShellMenuItem[]
     hideSider?: boolean
     orgSwitchable?: boolean
     flushContent?: boolean
@@ -23,7 +33,6 @@ const emit = defineEmits<{
 const slots = useSlots()
 const router = useRouter()
 const route = useRoute()
-const keyword = ref('')
 const collapsed = ref(false)
 const entry = computed(() => getEntry())
 const orgName = computed(() => getCurrentOrgName())
@@ -33,6 +42,21 @@ const active = computed(() => {
   return matched?.path ?? path
 })
 const orgInitial = computed(() => (orgName.value || '机').slice(0, 1))
+
+/** 按 group 聚合；无 group 的归入空标题一组 */
+const menuSections = computed(() => {
+  const sections: Array<{ title: string; items: ShellMenuItem[] }> = []
+  for (const m of props.menus) {
+    const title = m.group?.trim() || ''
+    const last = sections[sections.length - 1]
+    if (last && last.title === title) {
+      last.items.push(m)
+    } else {
+      sections.push({ title, items: [m] })
+    }
+  }
+  return sections
+})
 
 function logout() {
   clearSession()
@@ -44,10 +68,6 @@ function goSecurity() {
   if (e === 'ops') router.push('/ops/security')
   else if (e === 'tenant') router.push('/tenant/security')
   else router.push('/workspace/security')
-}
-
-function onSearch() {
-  /* placeholder global search */
 }
 
 function onSwitchOrg() {
@@ -67,19 +87,6 @@ function onSwitchOrg() {
         <div v-if="slots.chips" class="chip-slot">
           <slot name="chips" />
         </div>
-      </div>
-      <div class="search-wrap">
-        <el-input
-          v-model="keyword"
-          placeholder="搜索用户 / 机构 / 患者…"
-          clearable
-          class="search-input"
-          @keyup.enter="onSearch"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
       </div>
       <div class="right">
         <template v-if="orgName && entry === 'workspace'">
@@ -121,42 +128,66 @@ function onSwitchOrg() {
     <div class="body" :class="{ 'no-sider': hideSider }">
       <aside v-if="!hideSider" class="sider" :class="{ collapsed }">
         <div class="brand">
-          <span class="brand-logo" aria-hidden="true" />
+          <span class="brand-mark" aria-hidden="true">
+            <img class="brand-logo" :src="brandShieldUrl" alt="" />
+          </span>
           <div v-if="!collapsed" class="brand-copy">
             <span class="brand-name">Healix</span>
             <small>机构工作台</small>
           </div>
         </div>
+
         <div class="sider-inner">
-          <div v-if="!collapsed" class="nav-title">主导航</div>
-          <el-menu :default-active="active" router :collapse="collapsed" class="side-menu">
-            <el-menu-item v-for="m in menus" :key="m.path" :index="m.path">
-              <el-icon v-if="m.icon === 'dashboard'"><Odometer /></el-icon>
-              <el-icon v-else-if="m.icon === 'user'"><User /></el-icon>
-              <el-icon v-else-if="m.icon === 'data'"><DataLine /></el-icon>
-              <el-icon v-else-if="m.icon === 'chat'"><ChatDotRound /></el-icon>
-              <el-icon v-else-if="m.icon === 'setting'"><Setting /></el-icon>
-              <el-icon v-else-if="m.icon === 'office'"><OfficeBuilding /></el-icon>
-              <el-icon v-else-if="m.icon === 'ticket'"><Ticket /></el-icon>
-              <el-icon v-else-if="m.icon === 'timer'"><Timer /></el-icon>
-              <el-icon v-else><Menu /></el-icon>
-              <template v-if="!collapsed">
-                <span>{{ m.label }}</span>
-                <i v-if="m.badge === true || (typeof m.badge === 'number' && m.badge > 0)" class="menu-dot" />
-                <span
-                  v-if="typeof m.badge === 'number' && m.badge > 0"
-                  class="menu-badge"
-                >{{ m.badge > 99 ? '99+' : m.badge }}</span>
-              </template>
-              <template v-else>
-                <i v-if="m.badge === true || (typeof m.badge === 'number' && m.badge > 0)" class="menu-dot collapsed-dot" />
-              </template>
-            </el-menu-item>
-          </el-menu>
+          <template v-for="(sec, si) in menuSections" :key="`${sec.title}-${si}`">
+            <div v-if="!collapsed && sec.title" class="nav-title" :class="{ spaced: si > 0 }">
+              {{ sec.title }}
+            </div>
+            <div v-else-if="collapsed && si > 0" class="nav-divider" aria-hidden="true" />
+            <el-menu :default-active="active" router :collapse="collapsed" class="side-menu">
+              <el-menu-item v-for="m in sec.items" :key="m.path" :index="m.path">
+                <el-icon v-if="m.icon === 'dashboard'"><Odometer /></el-icon>
+                <el-icon v-else-if="m.icon === 'user'"><User /></el-icon>
+                <el-icon v-else-if="m.icon === 'staff'"><Avatar /></el-icon>
+                <el-icon v-else-if="m.icon === 'team'"><Coordinate /></el-icon>
+                <el-icon v-else-if="m.icon === 'chart'"><TrendCharts /></el-icon>
+                <el-icon v-else-if="m.icon === 'data'"><DataLine /></el-icon>
+                <el-icon v-else-if="m.icon === 'chat'"><ChatDotRound /></el-icon>
+                <el-icon v-else-if="m.icon === 'setting'"><Setting /></el-icon>
+                <el-icon v-else-if="m.icon === 'office'"><OfficeBuilding /></el-icon>
+                <el-icon v-else-if="m.icon === 'ticket'"><Ticket /></el-icon>
+                <el-icon v-else-if="m.icon === 'timer'"><Timer /></el-icon>
+                <el-icon v-else><Menu /></el-icon>
+                <template v-if="!collapsed">
+                  <span class="menu-label">{{ m.label }}</span>
+                  <i
+                    v-if="m.badge === true || (typeof m.badge === 'number' && m.badge > 0)"
+                    class="menu-dot"
+                  />
+                  <span
+                    v-if="typeof m.badge === 'number' && m.badge > 0"
+                    class="menu-badge"
+                  >{{ m.badge > 99 ? '99+' : m.badge }}</span>
+                </template>
+                <template v-else>
+                  <i
+                    v-if="m.badge === true || (typeof m.badge === 'number' && m.badge > 0)"
+                    class="menu-dot collapsed-dot"
+                  />
+                </template>
+              </el-menu-item>
+            </el-menu>
+          </template>
         </div>
-        <el-button class="collapse-btn" text @click="collapsed = !collapsed">
-          {{ collapsed ? '展开' : '收起侧栏' }}
-        </el-button>
+
+        <button
+          type="button"
+          class="collapse-btn"
+          :title="collapsed ? '展开侧栏' : '收起侧栏'"
+          @click="collapsed = !collapsed"
+        >
+          <el-icon><DArrowLeft v-if="!collapsed" /><DArrowRight v-else /></el-icon>
+          <span v-if="!collapsed">收起导航</span>
+        </button>
       </aside>
       <main class="content" :class="{ flush: flushContent }">
         <slot />
@@ -172,11 +203,11 @@ function onSwitchOrg() {
 }
 
 .topbar {
-  height: 60px;
-  padding: 0 24px;
+  height: 56px;
+  padding: 0 20px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   background: var(--admin-topbar-bg);
   border-bottom: 1px solid var(--admin-topbar-border);
   position: sticky;
@@ -188,7 +219,7 @@ function onSwitchOrg() {
 .right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .crumbs {
@@ -217,34 +248,8 @@ function onSwitchOrg() {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: 8px;
+  margin-left: 6px;
   flex-wrap: wrap;
-}
-
-.search-wrap {
-  flex: 1;
-  max-width: 380px;
-  min-width: 180px;
-}
-
-.search-input {
-  width: 100%;
-}
-
-.search-input :deep(.el-input__wrapper) {
-  background: var(--ink-50);
-  box-shadow: 0 0 0 1px var(--ink-200) inset;
-  border-radius: 8px;
-  transition: box-shadow var(--admin-transition), background var(--admin-transition);
-}
-
-.search-input :deep(.el-input__wrapper:hover) {
-  background: #fff;
-}
-
-.search-input :deep(.el-input__wrapper.is-focus) {
-  background: #fff;
-  box-shadow: 0 0 0 1px var(--brand-500), 0 0 0 3px rgba(44, 126, 248, 0.12) !important;
 }
 
 .right {
@@ -305,8 +310,8 @@ function onSwitchOrg() {
 }
 
 .user-avatar {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: linear-gradient(135deg, #8b5cf6, #2c7ef8);
   display: grid;
@@ -319,7 +324,7 @@ function onSwitchOrg() {
 .body {
   display: grid;
   grid-template-columns: auto 1fr;
-  min-height: calc(100vh - 60px);
+  min-height: calc(100vh - 56px);
 }
 
 .body.no-sider {
@@ -327,144 +332,226 @@ function onSwitchOrg() {
 }
 
 .sider {
-  width: 248px;
-  background: linear-gradient(180deg, #0f172a 0%, #131c30 100%);
-  border-right: 1px solid var(--admin-sidebar-border);
+  width: 228px;
+  background:
+    radial-gradient(120% 60% at 0% 0%, rgba(44, 126, 248, 0.18), transparent 55%),
+    linear-gradient(180deg, #0b1220 0%, #101826 48%, #0f172a 100%);
+  border-right: 1px solid rgba(148, 163, 184, 0.08);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
 }
 
 .sider.collapsed {
-  width: 72px;
+  width: 68px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 20px 14px 8px;
+  gap: 12px;
+  padding: 18px 16px 14px;
   color: #fff;
+  min-height: 72px;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.sider.collapsed .brand {
+  justify-content: center;
+  padding: 18px 8px 14px;
+}
+
+.brand-mark {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(160deg, #ffffff 0%, #e8eef8 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 8px 18px rgba(37, 99, 235, 0.28);
 }
 
 .brand-logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  flex-shrink: 0;
-  background: linear-gradient(135deg, #2c7ef8, #00b8a9);
-  box-shadow: 0 6px 16px -4px rgba(44, 126, 248, 0.6);
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  object-position: center;
+  display: block;
 }
 
 .brand-copy {
   min-width: 0;
+  line-height: 1.15;
 }
 
 .brand-name {
   display: block;
   font-weight: 700;
   font-size: 16px;
-  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: #f8fafc;
 }
 
 .brand-copy small {
   display: block;
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--ink-400);
+  color: #94a3b8;
   letter-spacing: 0.04em;
 }
 
 .sider-inner {
   flex: 1;
-  padding: 4px 0 12px;
+  padding: 8px 0 12px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .nav-title {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 1.2px;
-  color: var(--ink-500);
-  text-transform: uppercase;
-  padding: 12px 22px 8px;
+  letter-spacing: 0.1em;
+  text-transform: none;
+  color: #64748b;
+  padding: 8px 18px 8px;
+}
+
+.nav-title.spaced {
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.nav-divider {
+  height: 1px;
+  margin: 10px 14px;
+  background: rgba(148, 163, 184, 0.12);
 }
 
 .content {
-  padding: 24px 32px 40px;
+  padding: 20px 28px 36px;
   min-width: 0;
 }
 
 .content.flush {
   padding: 0;
   overflow: hidden;
-  height: calc(100vh - 60px);
+  height: calc(100vh - 56px);
 }
 
 .collapse-btn {
-  margin: 8px 12px 16px;
-  color: var(--admin-sidebar-text) !important;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 12px 14px;
+  padding: 9px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #94a3b8;
+  font: inherit;
   font-size: 12px;
-  justify-content: flex-start;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .collapse-btn:hover {
-  color: #fff !important;
-  background: var(--admin-sidebar-hover) !important;
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+.sider.collapsed .collapse-btn {
+  justify-content: center;
+  margin: 4px 10px 14px;
+  padding: 10px 0;
 }
 
 :deep(.side-menu) {
   border-right: none;
   background: transparent;
+  padding: 0 10px;
 }
 
 :deep(.side-menu.el-menu--collapse) {
-  width: 72px;
+  width: 68px;
+  padding: 0 8px;
 }
 
 :deep(.side-menu .el-menu-item) {
   height: 40px;
   line-height: 40px;
-  margin: 2px 10px;
-  border-radius: 8px;
-  color: var(--admin-sidebar-text);
-  font-size: 13.5px;
+  margin: 3px 0;
+  padding: 0 12px !important;
+  border-radius: 10px;
+  color: #94a3b8;
+  font-size: 13px;
   font-weight: 500;
+  letter-spacing: 0.01em;
   position: relative;
   display: flex;
   align-items: center;
+  gap: 11px;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+:deep(.side-menu.el-menu--collapse .el-menu-item) {
+  padding: 0 !important;
+  justify-content: center;
+  gap: 0;
 }
 
 :deep(.side-menu .el-menu-item .el-icon) {
   color: inherit;
-  opacity: 0.85;
+  opacity: 0.92;
+  font-size: 17px;
+  margin: 0 !important;
+  width: 18px;
+  transition: color 0.15s ease;
+}
+
+.menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :deep(.side-menu .el-menu-item:hover) {
-  background: var(--admin-sidebar-hover) !important;
-  color: #fff;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #e2e8f0;
 }
 
 :deep(.side-menu .el-menu-item.is-active) {
-  background: linear-gradient(90deg, rgba(44, 126, 248, 0.18), rgba(44, 126, 248, 0.04)) !important;
+  background: linear-gradient(90deg, rgba(44, 126, 248, 0.28), rgba(44, 126, 248, 0.08)) !important;
   color: #fff !important;
   font-weight: 600;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
 }
 
 :deep(.side-menu .el-menu-item.is-active .el-icon) {
   opacity: 1;
+  color: #93c5fd;
 }
 
 :deep(.side-menu .el-menu-item.is-active::before) {
   content: '';
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
+  top: 10px;
+  bottom: 10px;
   width: 3px;
-  background: var(--brand-500);
+  background: linear-gradient(180deg, #60a5fa, #2563eb);
   border-radius: 0 3px 3px 0;
 }
 
@@ -473,19 +560,19 @@ function onSwitchOrg() {
 }
 
 .menu-dot {
-  width: 8px;
-  height: 8px;
-  margin-left: 6px;
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
   border-radius: 50%;
   background: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
   flex-shrink: 0;
 }
 
 .menu-dot.collapsed-dot {
   position: absolute;
-  top: 8px;
-  right: 10px;
+  top: 7px;
+  right: 8px;
   margin: 0;
 }
 

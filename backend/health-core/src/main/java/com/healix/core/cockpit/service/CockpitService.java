@@ -10,9 +10,8 @@ import com.healix.core.archive.dto.DiseaseArchiveViewDto;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.archive.service.ArchiveCompletenessService;
 import com.healix.core.archive.service.DiseaseArchiveService;
-import com.healix.core.assessment.dto.AssessmentOverviewDto;
-import com.healix.core.assessment.dto.AssessmentSnapshotDto;
-import com.healix.core.assessment.service.AssessmentOrchestrator;
+import com.healix.core.assessment.dto.AssessmentTagView;
+import com.healix.core.assessment.support.AssessmentTagAssembler;
 import com.healix.core.care.domain.CareTeam;
 import com.healix.core.care.domain.CareTeamMember;
 import com.healix.core.care.mapper.CareTeamMapper;
@@ -29,6 +28,7 @@ import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.people.support.DiseaseCodeLabels;
 import com.healix.core.vitals.enums.MetricTypeEnum;
 import com.healix.core.workspace.dto.OrgPatientListItem;
+import com.healix.core.workspace.mapper.StaffPatientWatchMapper;
 import com.healix.core.workspace.service.OrgWorkspaceService;
 import com.healix.core.careplan.dto.CarePlanBundleDto;
 import com.healix.core.careplan.service.CarePlanService;
@@ -51,7 +51,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -66,11 +65,6 @@ import org.springframework.util.StringUtils;
 public class CockpitService {
 
     private static final int TASK_FETCH = 100;
-    private static final String CONTROL_ENGINE = "DIABETES_CONTROL_LABEL";
-    private static final List<String[]> RISK_ENGINES = List.of(
-            new String[] {"CDRS", "糖尿病"},
-            new String[] {"HYPERTENSION_RISK", "高血压"},
-            new String[] {"OBESITY_SCREEN", "肥胖"});
 
     private final OrgWorkspaceService orgWorkspaceService;
     private final AdherenceQueryService adherenceQueryService;
@@ -81,10 +75,11 @@ public class CockpitService {
     private final ArchiveAccessService archiveAccessService;
     private final DiseaseArchiveService diseaseArchiveService;
     private final ArchiveCompletenessService archiveCompletenessService;
-    private final AssessmentOrchestrator assessmentOrchestrator;
+    private final AssessmentTagAssembler assessmentTagAssembler;
     private final MetricService metricService;
     private final CarePlanService carePlanService;
     private final HealthReportService healthReportService;
+    private final StaffPatientWatchMapper staffPatientWatchMapper;
 
     public CockpitSummaryDto summary(String tenantId, String orgId) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
@@ -99,36 +94,51 @@ public class CockpitService {
         List<CockpitPriorityCardDto> all = buildPriorityCards(tenantId, orgId, staffId);
         int overdue = 0;
         int urgent = 0;
-        int watch = 0;
         int mine = 0;
         for (CockpitPriorityCardDto card : all) {
             overdue += Math.max(0, card.getOverdueTaskCount());
             if (matchTab("urgent", card)) {
                 urgent++;
             }
-            if (matchTab("watch", card)) {
-                watch++;
-            }
             if (matchTab("mine", card)) {
                 mine++;
             }
         }
+        int pendingPlan = 0;
+        int pendingReport = 0;
+        for (WorkspaceTask t : loadMineOpenTasks(tenantId, orgId, staffId)) {
+            if (t == null || !StringUtils.hasText(t.getTaskType())) {
+                continue;
+            }
+            if (WorkspaceTaskType.PLAN_CREATE.matches(t.getTaskType())
+                    || WorkspaceTaskType.PLAN_REVIEW.matches(t.getTaskType())) {
+                pendingPlan++;
+            } else if (WorkspaceTaskType.REPORT_REVIEW.matches(t.getTaskType())) {
+                pendingReport++;
+            }
+        }
         dto.setOverdueCount(overdue);
         dto.setUrgentCount(urgent);
-        dto.setWatchCount(watch);
+        // 「我的关注」= 个人重点关注人数，与任务分桶无关
+        dto.setWatchCount(staffPatientWatchMapper.countByStaffOrg(staffId, orgId));
         dto.setMineCount(mine);
+        dto.setPendingCarePlanDraftCount(pendingPlan);
+        dto.setPendingReportDraftCount(pendingReport);
         return dto;
     }
 
     /**
-     * 左栏优先患者：仅当前员工 assignee 的 OPEN 任务，按人聚合后排序并按 tab 过滤。
+     * 左栏优先患者。
      *
-     * @param tab urgent|mine = 我的全部在办；watch = 非高紧迫子集；默认 urgent
+     * @param tab urgent = 我的高优在办；watch = 个人重点关注患者；mine = 我的全部在办；默认 urgent
      */
     public List<CockpitPriorityCardDto> priority(String tenantId, String orgId, String tab) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
         String staffId = requireStaffId();
         String bucket = normalizeTab(tab);
+        if ("watch".equals(bucket)) {
+            return buildWatchedCards(orgId, staffId);
+        }
         return buildPriorityCards(tenantId, orgId, staffId).stream()
                 .filter(c -> matchTab(bucket, c))
                 .toList();
@@ -136,9 +146,9 @@ public class CockpitService {
 
     /**
      * 我的患者：当前员工作为主责健管师的健管组下全部患者（可按姓名关键字筛选）。
-     * 不要求有待办，供驾驶舱注入对话使用。
+     * 卡片字段与「立即处理 / 我的关注」对齐；无待办也可列出，供驾驶舱注入对话。
      */
-    public List<OrgPatientListItem> myPatients(String orgId, String keyword) {
+    public List<CockpitPriorityCardDto> myPatients(String orgId, String keyword) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
         String staffId = requireStaffId();
         List<CareTeam> teams = careTeamMapper.listByPrimaryCareManager(orgId, staffId);
@@ -156,11 +166,89 @@ public class CockpitService {
                 byPeople.putIfAbsent(row.getPeopleId(), row);
             }
         }
-        List<OrgPatientListItem> out = new ArrayList<>(byPeople.values());
-        out.sort(Comparator.comparing(
-                r -> r.getDisplayName() == null ? "" : r.getDisplayName(),
-                String.CASE_INSENSITIVE_ORDER));
+        return buildPatientRosterCards(
+                orgId, staffId, new ArrayList<>(byPeople.values()), "mine", "主责患者", null);
+    }
+
+    /** 个人重点关注患者卡片（可无待办）。 */
+    private List<CockpitPriorityCardDto> buildWatchedCards(String orgId, String staffId) {
+        List<OrgPatientListItem> watched =
+                orgWorkspaceService.listOrgPatients(orgId, null, null, null, true);
+        return buildPatientRosterCards(orgId, staffId, watched, "watch", "重点关注", "WATCHED");
+    }
+
+    /**
+     * 将机构患者列表叠上名下 OPEN 任务，产出与优先卡同结构的左栏卡片。
+     *
+     * @param extraBadge 额外徽章（如 WATCHED）；可为 null
+     * @param defaultReason 无任务时的兜底说明
+     */
+    private List<CockpitPriorityCardDto> buildPatientRosterCards(
+            String orgId,
+            String staffId,
+            List<OrgPatientListItem> patients,
+            String bucket,
+            String defaultReason,
+            String extraBadge) {
+        if (patients == null || patients.isEmpty()) {
+            return List.of();
+        }
+        Map<String, CockpitPriorityCardDto> taskByPeople = new HashMap<>();
+        for (CockpitPriorityCardDto card : buildPriorityCards(requireTenantId(), orgId, staffId)) {
+            taskByPeople.put(card.getPeopleId(), card);
+        }
+        List<CockpitPriorityCardDto> out = new ArrayList<>();
+        for (OrgPatientListItem p : patients) {
+            if (p == null || !StringUtils.hasText(p.getPeopleId())) {
+                continue;
+            }
+            CockpitPriorityCardDto fromTask = taskByPeople.get(p.getPeopleId());
+            CockpitPriorityCardDto card;
+            if (fromTask != null) {
+                card = fromTask;
+                if (!StringUtils.hasText(card.getCareTeamName()) && StringUtils.hasText(p.getCareTeamName())) {
+                    card.setCareTeamId(p.getCareTeamId());
+                    card.setCareTeamName(p.getCareTeamName());
+                }
+                if (card.getClientLinked() == null) {
+                    card.setClientLinked(p.getClientLinked());
+                }
+            } else {
+                card = ensureCard(new HashMap<>(), p.getPeopleId(), p.getDisplayName());
+                card.setDisplayName(p.getDisplayName());
+                card.setGender(p.getGender());
+                card.setCareTeamId(p.getCareTeamId());
+                card.setCareTeamName(p.getCareTeamName());
+                card.setClientLinked(p.getClientLinked());
+                card.setOpenTaskCount(0);
+                card.setOverdueTaskCount(0);
+                card.setUrgencyScore(0);
+            }
+            if (StringUtils.hasText(extraBadge)) {
+                addBadge(card, extraBadge);
+            }
+            card.setBucket(bucket);
+            if (!StringUtils.hasText(card.getTopReason()) || "今日关注".equals(card.getTopReason())) {
+                if (StringUtils.hasText(defaultReason)) {
+                    card.setTopReason(defaultReason);
+                } else if (StringUtils.hasText(p.getCareTeamName())) {
+                    card.setTopReason(p.getCareTeamName());
+                }
+            }
+            out.add(card);
+        }
+        out.sort(Comparator.comparingInt(CockpitPriorityCardDto::getUrgencyScore)
+                .reversed()
+                .thenComparing(c -> c.getDisplayName() == null ? "" : c.getDisplayName()));
         return out;
+    }
+
+    private static String requireTenantId() {
+        RequestContext ctx = RequestContextHolder.get();
+        if (ctx == null || ctx.getTenantId() == null) {
+            throw new BusinessException(401, "缺少租户上下文");
+        }
+        return ctx.getTenantId();
     }
 
     /** 构建全量优先卡（未按 tab 过滤），供 summary / priority / topUrgent 共用。 */
@@ -282,6 +370,7 @@ public class CockpitService {
                         (StringUtils.hasText(goal) ? goal : "待审阅发布")
                                 + (StringUtils.hasText(source) ? " · " + source : ""));
                 d.setSheetMode("care-plan");
+                d.setActionLabel("去审阅方案");
                 dto.getPendingDrafts().add(d);
             }
         } catch (Exception ignored) {
@@ -304,6 +393,7 @@ public class CockpitService {
                                         ? r.getPeriodTypeLabel() + " · 待审阅"
                                         : "待审阅发布"));
                 d.setSheetMode("reports");
+                d.setActionLabel(StringUtils.hasText(comment) ? "去审阅发布" : "去补点评");
                 dto.getPendingDrafts().add(d);
             }
         } catch (Exception ignored) {
@@ -426,112 +516,14 @@ public class CockpitService {
     }
 
     private void fillAssessmentTags(CockpitFocusDto dto, String tenantId, String orgId, String peopleId) {
-        AssessmentOverviewDto overview;
-        try {
-            overview = assessmentOrchestrator.overview(tenantId, orgId, peopleId);
-        } catch (Exception ignored) {
-            return;
-        }
-        Map<String, AssessmentSnapshotDto> byCode = overview.getLatest().stream()
-                .filter(s -> StringUtils.hasText(s.getEngineCode()))
-                .collect(Collectors.toMap(
-                        AssessmentSnapshotDto::getEngineCode, s -> s, (a, b) -> a, HashMap::new));
-        Set<String> available = overview.getAvailableEngines().stream()
-                .map(AssessmentOverviewDto.AvailableEngineDto::getEngineCode)
-                .filter(StringUtils::hasText)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
-        AssessmentSnapshotDto control = byCode.get(CONTROL_ENGINE);
-        if (control != null || available.contains(CONTROL_ENGINE)) {
-            dto.getAssessmentTags().add(controlTag(control));
-        }
-        for (String[] meta : RISK_ENGINES) {
-            String code = meta[0];
-            String title = meta[1];
-            AssessmentSnapshotDto snap = byCode.get(code);
-            String label = "未评";
-            if (snap != null && "INCOMPLETE".equals(snap.getStatus())) {
-                label = "缺项";
-            } else if (snap != null && StringUtils.hasText(snap.getLevelLabel())) {
-                label = snap.getLevelLabel();
-            } else if (snap != null && StringUtils.hasText(snap.getLevel())) {
-                label = snap.getLevel();
-            } else if (!available.contains(code)) {
-                continue; // 不适用，不展示
-            }
-            boolean hasResult = snap != null
-                    && !"INCOMPLETE".equals(snap.getStatus())
-                    && StringUtils.hasText(snap.getLevel());
-            String text;
-            if ("CDRS".equals(code)) {
-                text = hasResult || "缺项".equals(label) ? "糖尿病" + label : "糖尿病未评估";
-            } else if ("HYPERTENSION_RISK".equals(code)) {
-                text = hasResult || "缺项".equals(label) ? label : "高血压未评估";
-            } else {
-                text = hasResult || "缺项".equals(label) ? label : "肥胖未评估";
-            }
+        for (AssessmentTagView view : assessmentTagAssembler.assemble(tenantId, orgId, peopleId)) {
             CockpitFocusDto.AssessmentTag tag = new CockpitFocusDto.AssessmentTag();
-            tag.setEngineCode(code);
-            tag.setText(text);
-            tag.setTone(riskTone(snap));
-            tag.setTitle(title);
+            tag.setEngineCode(view.getEngineCode());
+            tag.setText(view.getText());
+            tag.setTone(view.getTone());
+            tag.setTitle(view.getTitle());
             dto.getAssessmentTags().add(tag);
         }
-    }
-
-    private static CockpitFocusDto.AssessmentTag controlTag(AssessmentSnapshotDto snap) {
-        CockpitFocusDto.AssessmentTag tag = new CockpitFocusDto.AssessmentTag();
-        tag.setEngineCode(CONTROL_ENGINE);
-        tag.setTitle("血糖控制分标");
-        String level = snap == null ? null : snap.getLevel();
-        String tone = "muted";
-        if ("RED".equals(level)) {
-            tone = "danger";
-        } else if ("YELLOW".equals(level)) {
-            tone = "warning";
-        } else if ("GREEN".equals(level) || "NEAR_GREEN".equals(level)) {
-            tone = "success";
-        } else if ("NONE".equals(level)) {
-            tone = "info";
-        }
-        String label;
-        if (snap == null) {
-            label = "未评估";
-        } else if ("NONE".equals(level)) {
-            label = "未分标";
-        } else if (StringUtils.hasText(snap.getLevelLabel())) {
-            label = snap.getLevelLabel();
-        } else if (StringUtils.hasText(level)) {
-            label = level;
-        } else {
-            label = "未评估";
-        }
-        tag.setText("血糖" + label);
-        tag.setTone(tone);
-        return tag;
-    }
-
-    private static String riskTone(AssessmentSnapshotDto snap) {
-        if (snap == null || "INCOMPLETE".equals(snap.getStatus()) || !StringUtils.hasText(snap.getLevel())) {
-            return "muted";
-        }
-        String level = snap.getLevel();
-        if ("HIGH".equals(level)
-                || "GRADE_3".equals(level)
-                || "GRADE_2".equals(level)
-                || level.contains("SEVERE")
-                || "EXTREME_OBESITY".equals(level)) {
-            return "danger";
-        }
-        if ("MID".equals(level)
-                || "GRADE_1".equals(level)
-                || "PREHYPERTENSION".equals(level)
-                || "OVERWEIGHT".equals(level)
-                || "MILD_OBESITY".equals(level)
-                || "MODERATE_OBESITY".equals(level)) {
-            return "warning";
-        }
-        return "success";
     }
 
     private String resolveBloodPressure(String tenantId, String orgId, String peopleId) {
@@ -656,8 +648,7 @@ public class CockpitService {
     }
 
     /**
-     * bucket 仅用于「今日关注」细分：高紧迫进 urgent，其余进 watch。
-     * 「立即处理 / 我的在办」Tab 都会展示我名下全部在办（见 {@link #matchTab}）。
+     * bucket 仅用于「立即处理」内部区分高紧迫；「我的关注」已改为个人重点关注列表，不再用此分桶。
      */
     private static String classifyBucket(CockpitPriorityCardDto card) {
         List<String> b = card.getBadges();
@@ -671,12 +662,9 @@ public class CockpitService {
     }
 
     private static boolean matchTab(String tab, CockpitPriorityCardDto card) {
-        // 领取后多为 MEDIUM（随访/打卡等）：默认「立即处理」与「我的在办」都展示全部，再按 urgencyScore 排序
+        // watch 走独立的 buildWatchedCards，不经过此处
         if ("urgent".equals(tab) || "mine".equals(tab)) {
             return card.getOpenTaskCount() > 0;
-        }
-        if ("watch".equals(tab)) {
-            return "watch".equals(card.getBucket());
         }
         return true;
     }

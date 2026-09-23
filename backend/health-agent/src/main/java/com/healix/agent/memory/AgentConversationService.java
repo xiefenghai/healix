@@ -116,9 +116,10 @@ public class AgentConversationService {
 
     public String ensureSession(
             String tenantId, String orgId, String staffId, String peopleId, String sessionId) {
+        String wantPeopleId = blankToNull(peopleId);
         if (StringUtils.hasText(sessionId)) {
             AgentSessionEntity existing = requireOwned(sessionId.trim(), staffId);
-            if (existing != null) {
+            if (existing != null && java.util.Objects.equals(wantPeopleId, blankToNull(existing.getPeopleId()))) {
                 if (!"ACTIVE".equalsIgnoreCase(existing.getStatus())) {
                     sessionMapper.closeActive(
                             tenantId, orgId, staffId, blankToNull(existing.getPeopleId()), AGENT_TYPE);
@@ -130,7 +131,7 @@ public class AgentConversationService {
             }
         }
         AgentSessionEntity active =
-                sessionMapper.findActive(tenantId, orgId, staffId, blankToNull(peopleId), AGENT_TYPE);
+                sessionMapper.findActive(tenantId, orgId, staffId, wantPeopleId, AGENT_TYPE);
         if (active != null) {
             sessionMapper.touch(active.getId());
             return active.getId();

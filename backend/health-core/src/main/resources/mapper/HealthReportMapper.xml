@@ -39,6 +39,16 @@
           AND status = 'DRAFT'
     </update>
 
+    <update id="updateDraftNarrative">
+        UPDATE health_report
+        SET content_json = #{contentJson},
+            staff_comment = #{staffComment},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+          AND status = 'DRAFT'
+    </update>
+
     <update id="updateStatus">
         UPDATE health_report
         SET status = #{status},

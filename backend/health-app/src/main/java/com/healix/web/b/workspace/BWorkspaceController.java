@@ -42,6 +42,20 @@ public class BWorkspaceController {
         return ApiResult.ok(orgWorkspaceService.getOrgPatient(orgId, peopleId));
     }
 
+    /** 将患者加入当前员工个人重点关注。 */
+    @PostMapping("/patients/{peopleId}/watch")
+    public ApiResult<OrgPatientListItem> watchPatient(@PathVariable String peopleId) {
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        return ApiResult.ok(orgWorkspaceService.watchPatient(orgId, peopleId));
+    }
+
+    /** 取消当前员工对患者的个人重点关注。 */
+    @DeleteMapping("/patients/{peopleId}/watch")
+    public ApiResult<OrgPatientListItem> unwatchPatient(@PathVariable String peopleId) {
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        return ApiResult.ok(orgWorkspaceService.unwatchPatient(orgId, peopleId));
+    }
+
     /** 更新患者人口学基础信息（姓名、联系方式、住址、文化程度、婚姻、职业）。 */
     @PutMapping("/patients/{peopleId}/basic-info")
     public ApiResult<OrgPatientListItem> updatePatientBasicInfo(
@@ -185,14 +199,16 @@ public class BWorkspaceController {
      * @param keyword    姓名等关键字
      * @param careTeamId 按照护团队筛选
      * @param unassigned 是否仅看未分配团队患者
+     * @param watched    是否仅看当前员工重点关注患者
      */
     @GetMapping("/org-patients")
     public ApiResult<List<OrgPatientListItem>> listOrgPatients(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String careTeamId,
-            @RequestParam(required = false) Boolean unassigned) {
+            @RequestParam(required = false) Boolean unassigned,
+            @RequestParam(required = false) Boolean watched) {
         String orgId = SecurityUtils.requireCurrentOrgId();
-        return ApiResult.ok(orgWorkspaceService.listOrgPatients(orgId, keyword, careTeamId, unassigned));
+        return ApiResult.ok(orgWorkspaceService.listOrgPatients(orgId, keyword, careTeamId, unassigned, watched));
     }
 
     /** 为当前机构创建患者档案头（可无证件建档，或挂接已有 people）。 */

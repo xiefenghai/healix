@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
@@ -120,7 +120,10 @@ const CONTROL_ENGINE = {
 
 const route = useRoute()
 const router = useRouter()
-const peopleId = () => String(route.params.peopleId || '')
+const props = defineProps<{
+  peopleId?: string
+}>()
+const peopleId = () => String(props.peopleId || route.params.peopleId || '')
 
 const loading = ref(false)
 const running = ref(false)
@@ -426,6 +429,13 @@ async function loadHistory() {
 }
 
 onMounted(loadOverview)
+
+watch(
+  () => peopleId(),
+  (id, prev) => {
+    if (id && id !== prev) void loadOverview()
+  },
+)
 </script>
 
 <template>

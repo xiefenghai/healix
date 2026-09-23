@@ -13,11 +13,13 @@ public class CorsConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(
-                "http://127.0.0.1:5173",
-                "http://localhost:5173",
-                "http://127.0.0.1:5174",
-                "http://localhost:5174"));
+        // 允许本机 + 局域网 IP 访问前端（同事同 Wi‑Fi 调试）；生产应收紧
+        config.setAllowedOriginPatterns(List.of(
+                "http://localhost:*",
+                "http://127.0.0.1:*",
+                "http://192.168.*.*:*",
+                "http://10.*.*.*:*",
+                "http://172.*.*.*:*"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

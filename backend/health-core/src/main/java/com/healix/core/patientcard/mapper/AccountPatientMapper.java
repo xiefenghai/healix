@@ -31,5 +31,10 @@ public interface AccountPatientMapper {
 
     int insert(AccountPatient card);
 
+    int updateDisplayNameByPeopleId(
+            @Param("peopleId") String peopleId,
+            @Param("displayName") String displayName,
+            @Param("gmtModified") java.time.LocalDateTime gmtModified);
+
     int softDelete(@Param("id") String id, @Param("gmtDeleted") java.time.LocalDateTime gmtDeleted);
 }

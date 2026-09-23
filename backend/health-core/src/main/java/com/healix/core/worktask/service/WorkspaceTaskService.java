@@ -229,6 +229,14 @@ public class WorkspaceTaskService {
                 now,
                 requireStaffId(),
                 now);
+        // 任务取消时同步关掉关联 OPEN 随访，避免留下「有单无待办」挡住患者申请/排期
+        String cancelNote = "任务已取消：" + reason.trim();
+        for (FollowupRecord rec : followupRecordMapper.listByTaskId(id)) {
+            if (FollowupRecordStatus.OPEN.matches(rec.getStatus())) {
+                followupRecordMapper.updateCancel(
+                        rec.getId(), FollowupRecordStatus.CANCELLED.name(), cancelNote, now);
+            }
+        }
         audit(actorAccountId, AuditActionEnum.WORKSPACE_TASK_DONE, "workspace_task", id, task.getPeopleId(),
                 AuditDetails.of(
                         "taskType", task.getTaskType(),

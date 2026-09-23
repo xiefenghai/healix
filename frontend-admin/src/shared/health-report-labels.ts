@@ -57,11 +57,11 @@ export function resolveTemplateTier(content?: Record<string, unknown> | null): T
 export function templateCommentForTier(tier: TemplateTier): string {
   switch (tier) {
     case 'GOOD':
-      return '本周期执行情况良好，请继续按方案与用药计划坚持。'
+      return '您好，本周期执行情况不错，请您继续按方案与用药计划坚持；有不适随时联系我。'
     case 'FAIR':
-      return '本周期部分任务未完成，建议按方案补齐打卡并监测关键指标。'
+      return '您好，本周期有部分任务未完成，请您按方案尽量补齐打卡，并留意关键指标；有困难可以告诉我。'
     case 'POOR':
-      return '本周期执行偏弱，请尽快与健管师沟通，调整节奏或方案。'
+      return '您好，本周期节奏有些吃力也正常，请您尽快和我沟通，我们一起调整节奏或方案。'
   }
 }
 
@@ -72,7 +72,7 @@ export function resolveDisplayComment(
 ): string {
   if (staffComment && staffComment.trim()) return staffComment.trim()
   const tier = resolveTemplateTier(content)
-  if (!tier) return '本周期管理数据如下，请按方案继续执行；有疑问联系健管师。'
+  if (!tier) return '您好，本周期管理数据如下，请您按方案继续执行；有疑问随时联系我。'
   return templateCommentForTier(tier)
 }
 

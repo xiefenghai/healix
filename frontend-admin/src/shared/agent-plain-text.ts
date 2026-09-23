@@ -5,6 +5,9 @@ const SECTION_TITLES = new Set([
   '执行计划',
   '方案总结',
   '阶段目标',
+  '健管师寄语',
+  '下阶段关注',
+  '阶段建议',
 ])
 
 /** 行首字段标签（只加粗标签名，冒号后正文不加粗） */
@@ -29,7 +32,24 @@ export function breakChineseSections(input: string): string {
   s = s.replace(/([。！？；;])(\d+[.．、）)])/g, '$1\n$2')
   // 「·条目」粘在句末后
   s = s.replace(/([。！？；;])(·\s*)/g, '$1\n$2')
-  return s.replace(/\n{3,}/g, '\n\n')
+  return tightenBlankLines(s)
+}
+
+/**
+ * 压缩多余空行：条目之间单行紧凑；仅在「一、二、」分节标题前保留一行空行。
+ */
+function tightenBlankLines(input: string): string {
+  const lines = input.split('\n')
+  const out: string[] = []
+  for (const raw of lines) {
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    if (out.length > 0 && isSectionTitleLine(trimmed)) {
+      out.push('')
+    }
+    out.push(raw.replace(/\s+$/, ''))
+  }
+  return out.join('\n')
 }
 
 /** 真正的分节标题：短、无句号逗号，例如「一、当前最需处理的事项」 */
@@ -86,4 +106,15 @@ export function formatAssistantPlainHtml(text: string | undefined | null): strin
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
   return escaped.split('\n').map(formatLine).join('\n')
+}
+
+/** 流式展示：有【回答】只显示其后；仍在【思考】时暂不铺正文；无标记则全文展示。 */
+export function visibleAnswerFromRawStream(raw: string | undefined | null): string {
+  if (!raw) return ''
+  for (const m of ['【回答】', '[回答]']) {
+    const i = raw.indexOf(m)
+    if (i >= 0) return raw.slice(i + m.length).replace(/^\r?\n/, '')
+  }
+  if (raw.includes('【思考】') || raw.includes('[思考]')) return ''
+  return raw
 }

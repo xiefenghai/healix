@@ -96,9 +96,9 @@ public class CareChatSseHub implements CareChatRealtimePublisher {
             emitter.send(SseEmitter.event()
                     .name("ready")
                     .data(Map.of("type", "ready", "ok", true), MediaType.APPLICATION_JSON));
-        } catch (IOException e) {
-            detachQuietly(emitter);
-            safeCompleteWithError(emitter, e);
+        } catch (Exception e) {
+            // 握手即断：安静收尾，勿 completeWithError（会触发 dispatcherServlet ERROR）
+            dropEmitter(emitter, e);
         }
         return emitter;
     }
@@ -109,14 +109,18 @@ public class CareChatSseHub implements CareChatRealtimePublisher {
         }
         scheduler.scheduleAtFixedRate(
                 () -> {
-                    for (SseEmitter emitter : emitterCleanups.keySet()) {
-                        try {
-                            emitter.send(SseEmitter.event().comment("ping"));
-                        } catch (Exception ex) {
-                            // 浏览器关页/刷新后连接已断：只摘订阅，勿再 complete/flush
-                            detachQuietly(emitter);
-                            log.debug("care-chat sse heartbeat drop: {}", rootMessage(ex));
+                    try {
+                        for (SseEmitter emitter : emitterCleanups.keySet()) {
+                            try {
+                                emitter.send(SseEmitter.event().comment("ping"));
+                            } catch (Exception ex) {
+                                // 浏览器关页/刷新后连接已断：摘订阅并安静 complete
+                                dropEmitter(emitter, ex);
+                            }
                         }
+                    } catch (Exception ex) {
+                        // 保住 ticker：单次异常不能停掉 scheduleAtFixedRate
+                        log.debug("care-chat sse heartbeat tick failed: {}", rootMessage(ex));
                     }
                 },
                 HEARTBEAT_SEC,
@@ -133,9 +137,19 @@ public class CareChatSseHub implements CareChatRealtimePublisher {
             try {
                 emitter.send(SseEmitter.event().name(name).data(event, MediaType.APPLICATION_JSON));
             } catch (Exception e) {
-                detachQuietly(emitter);
-                log.debug("care-chat sse fanOut drop: {}", rootMessage(e));
+                dropEmitter(emitter, e);
             }
+        }
+    }
+
+    /** 断连或发送失败：从索引移除并安静结束，避免 Broken pipe 冒泡到容器日志。 */
+    private void dropEmitter(SseEmitter emitter, Exception cause) {
+        detachQuietly(emitter);
+        safeComplete(emitter);
+        if (isClientGone(cause)) {
+            log.debug("care-chat sse drop (client gone): {}", rootMessage(cause));
+        } else {
+            log.debug("care-chat sse drop: {}", rootMessage(cause));
         }
     }
 
@@ -154,20 +168,51 @@ public class CareChatSseHub implements CareChatRealtimePublisher {
         }
     }
 
-    private static void safeCompleteWithError(SseEmitter emitter, Exception e) {
+    private static void safeComplete(SseEmitter emitter) {
+        if (emitter == null) {
+            return;
+        }
         try {
-            emitter.completeWithError(e);
+            emitter.complete();
         } catch (Exception ignored) {
             // response 已不可用时忽略
         }
+    }
+
+    private static boolean isClientGone(Throwable ex) {
+        Throwable cur = ex;
+        while (cur != null) {
+            if (cur instanceof AsyncRequestNotUsableException) {
+                return true;
+            }
+            String name = cur.getClass().getName();
+            if (name.contains("ClientAbortException")) {
+                return true;
+            }
+            String msg = cur.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase();
+                if (lower.contains("broken pipe")
+                        || lower.contains("connection reset")
+                        || lower.contains("异步请求")
+                        || lower.contains("not usable")) {
+                    return true;
+                }
+            }
+            if (cur instanceof IOException && cur == ex) {
+                // top-level IOException 在 SSE 场景几乎都是客户端断开
+                return true;
+            }
+            cur = cur.getCause();
+        }
+        return false;
     }
 
     private static String rootMessage(Throwable ex) {
         if (ex == null) {
             return "";
         }
-        if (ex instanceof AsyncRequestNotUsableException
-                || ex.getClass().getName().contains("ClientAbortException")) {
+        if (isClientGone(ex)) {
             return "client disconnected";
         }
         String msg = ex.getMessage();

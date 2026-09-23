@@ -74,11 +74,12 @@ public class StaffBizTools {
         boolean wantObs = containsAny(msg, "指标", "血压", "血糖", "健康数据", "录入", "化验", "检验");
         boolean wantPlan = containsAny(msg, "方案", "打卡", "依从", "执行计划");
         boolean wantArchive = containsAny(msg, "档案", "完整度", "补档", "缺项");
-        boolean wantAssess = containsAny(msg, "评估", "分标", "风险");
-        boolean wantReport = containsAny(msg, "报告", "月报");
+        boolean wantAssess = containsAny(msg, "评估", "分标", "风险", "cdss", "糖标", "压标");
+        boolean wantMed = containsAny(msg, "用药", "服药", "吃药", "药品", "漏服", "停药", "medication");
+        boolean wantReport = containsAny(msg, "报告", "月报", "周报", "季报");
 
         if (wantFollowup) {
-            out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "PERIODIC"));
+            out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "ROUTINE"));
             out.add(AgentAction.openSheet("打开随访页", "followups", peopleId));
         }
         if (wantChat) {
@@ -91,20 +92,50 @@ public class StaffBizTools {
             out.add(AgentAction.openSheet("录入健康数据", "observations", peopleId));
         }
         if (wantPlan) {
+            out.add(AgentAction.triggerCapability("一键生成方案草稿", "CARE_PLAN", peopleId));
             out.add(AgentAction.openSheet("查看方案", "care-plan", peopleId));
+            if (focus != null && Boolean.TRUE.equals(focus.getClientLinked())) {
+                Double rate = focus.getPlanRate7d();
+                if (rate != null && rate < 0.7) {
+                    out.add(AgentAction.nudgePatient("提醒补打卡", peopleId));
+                }
+            }
         }
-        if (wantArchive || wantAssess) {
+        if (wantMed) {
+            out.add(AgentAction.openSheet("查看用药", "medications", peopleId));
+            if (focus != null && Boolean.TRUE.equals(focus.getClientLinked()) && focus.isMedIncomplete()) {
+                out.add(AgentAction.nudgePatient("提醒按时服药", peopleId));
+            }
+        }
+        if (wantAssess) {
+            out.add(AgentAction.openSheet("查看评估", "assessments", peopleId));
+        }
+        if (wantArchive) {
             out.add(AgentAction.openSheet("查看档案", "archive", peopleId));
         }
         if (wantReport) {
-            out.add(AgentAction.openSheet("查看报告", "reports", peopleId));
+            out.add(AgentAction.triggerCapability("一键生成报告点评", "REPORT_SUMMARY", peopleId));
+            if (wantsReportSummary(message)) {
+                out.add(AgentAction.openSheet("打开报告审阅", "reports", peopleId));
+            } else {
+                out.add(AgentAction.openSheet("查看报告", "reports", peopleId));
+            }
         }
 
-        // 无明确意图时，按焦点缺口补默认动作
+        // 无明确意图时，按焦点缺口补默认动作（优先一键办结）
         if (out.isEmpty() && focus != null) {
             Integer pct = focus.getArchiveCompletenessPercent();
             if (pct != null && pct < 80) {
                 out.add(AgentAction.openSheet("补全档案", "archive", peopleId));
+            }
+            if (focus.getAssessmentTags() != null && !focus.getAssessmentTags().isEmpty()) {
+                out.add(AgentAction.openSheet("查看评估标签", "assessments", peopleId));
+            }
+            if (focus.isMedIncomplete()) {
+                out.add(AgentAction.openSheet("核对今日用药", "medications", peopleId));
+                if (Boolean.TRUE.equals(focus.getClientLinked())) {
+                    out.add(AgentAction.nudgePatient("提醒补服药", peopleId));
+                }
             }
             Double rate = focus.getPlanRate7d();
             if (rate != null && rate < 0.7) {
@@ -114,14 +145,20 @@ public class StaffBizTools {
                 }
             }
             if (focus.getOpenTasks() != null && !focus.getOpenTasks().isEmpty()) {
-                String type = focus.getOpenTasks().get(0).getTaskType();
+                var top = focus.getOpenTasks().get(0);
+                String type = top.getTaskType();
+                if (StringUtils.hasText(top.getId())) {
+                    out.add(AgentAction.claimTask("领取待办「" + top.getTaskTypeLabel() + "」", peopleId, top.getId()));
+                }
                 if ("FOLLOW_UP".equals(type) || "PLAN_NUDGE".equals(type)) {
-                    out.add(AgentAction.createFollowupTask("创建随访待办", peopleId, "PERIODIC"));
+                    out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "ROUTINE"));
                     out.add(AgentAction.openSheet("处理随访", "followups", peopleId));
                 } else if ("PLAN_CREATE".equals(type) || "PLAN_REVIEW".equals(type)) {
+                    out.add(AgentAction.triggerCapability("一键生成方案草稿", "CARE_PLAN", peopleId));
                     out.add(AgentAction.openSheet("处理方案待办", "care-plan", peopleId));
                 } else if ("REPORT_REVIEW".equals(type)) {
-                    out.add(AgentAction.openSheet("查看报告", "reports", peopleId));
+                    out.add(AgentAction.triggerCapability("一键生成报告点评", "REPORT_SUMMARY", peopleId));
+                    out.add(AgentAction.openSheet("审阅管理报告", "reports", peopleId));
                 } else if ("METRIC_ALERT".equals(type)) {
                     out.add(AgentAction.openSheet("录入健康数据", "observations", peopleId));
                 } else {
@@ -156,6 +193,25 @@ public class StaffBizTools {
                 "写回复",
                 "帮我回",
                 "沟通草稿");
+    }
+
+    public static boolean wantsReportSummary(String message) {
+        return containsAny(
+                message == null ? "" : message.toLowerCase(Locale.ROOT),
+                "报告点评",
+                "点评报告",
+                "生成点评",
+                "ai点评",
+                "写点评",
+                "写寄语",
+                "审阅报告",
+                "管理报告点评",
+                "报告寄语",
+                "生成周报",
+                "生成月报",
+                "生成报告",
+                "出周报",
+                "出报告");
     }
 
     private static String formatFocus(CockpitFocusDto f) {

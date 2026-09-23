@@ -86,6 +86,7 @@ interface CarePlanBundle {
     exercise?: any
     diet?: any
     execution?: any
+    contextSnapshot?: any
     publishedAt?: string
     tasks?: Array<{
       id: string
@@ -155,7 +156,7 @@ const loading = ref(false)
 const saving = ref(false)
 const bundle = ref<CarePlanBundle | null>(null)
 const mainTab = ref<'list' | 'compose' | 'checkins'>('list')
-const subTab = ref<'overview' | 'exercise' | 'diet' | 'execution'>('overview')
+const subTab = ref<'overview' | 'summary' | 'exercise' | 'diet' | 'execution'>('overview')
 const adjustHintVisible = ref(false)
 
 const listLoading = ref(false)
@@ -257,6 +258,8 @@ const editForm = reactive({
   version: 1,
   title: '',
   goalSummary: '',
+  /** 方案总结（contextSnapshot.summary） */
+  planSummary: '',
   exerciseGoal: '',
   exercisePrecautions: '',
   exerciseContraindications: '',
@@ -314,12 +317,18 @@ function normalizeFoodList(list: FoodItem[]): FoodItem[] {
     .filter((f) => f.label || f.code)
 }
 
+function readPlanSummary(src?: { contextSnapshot?: any } | null): string {
+  const raw = src?.contextSnapshot?.summary
+  return typeof raw === 'string' ? raw.trim() : ''
+}
+
 function syncFormFromBundle() {
   const b = bundle.value
   const src = b?.draft || b?.activeVersion
   editForm.version = b?.draft?.version ?? 1
   editForm.title = b?.plan?.title || ''
   editForm.goalSummary = b?.plan?.goalSummary || src?.exercise?.goal || ''
+  editForm.planSummary = readPlanSummary(src)
   editForm.exerciseGoal = src?.exercise?.goal || ''
   editForm.exercisePrecautions = Array.isArray(src?.exercise?.precautions)
     ? src!.exercise!.precautions.join('\n')
@@ -498,6 +507,7 @@ async function openListDetail(row: CarePlanListItem) {
       previewData.value = {
         title: row.title || b.plan?.title,
         goalSummary: b.plan?.goalSummary || d.exercise?.goal || row.goalSummary,
+        summary: readPlanSummary(d),
         source: d.source,
         versionLabel: row.versionLabel,
         status: row.status,
@@ -515,6 +525,7 @@ async function openListDetail(row: CarePlanListItem) {
       previewData.value = {
         title: row.title,
         goalSummary: row.goalSummary || v.exercise?.goal,
+        summary: readPlanSummary(v),
         source: v.source,
         versionLabel: row.versionLabel,
         status: row.status,
@@ -583,6 +594,7 @@ async function openVersionFromQuery() {
           exercise?: any
           diet?: any
           execution?: any
+          contextSnapshot?: any
           publishedAt?: string
         }
       }>(`/api/b/v1/patients/${peopleId.value}/care-plan/versions/${versionId}`),
@@ -593,6 +605,7 @@ async function openVersionFromQuery() {
     previewData.value = {
       title: planRes?.data?.plan?.title,
       goalSummary: planRes?.data?.plan?.goalSummary || v.exercise?.goal,
+      summary: readPlanSummary(v),
       source: v.source,
       versionLabel: v.versionLabel,
       status: currentId === versionId ? 'ACTIVE' : 'ARCHIVED',
@@ -761,6 +774,7 @@ function buildPayload() {
     version: editForm.version,
     title: editForm.title,
     goalSummary: editForm.goalSummary || editForm.exerciseGoal,
+    summary: editForm.planSummary.trim(),
     exercise: {
       goal: editForm.exerciseGoal,
       precautions: lines(editForm.exercisePrecautions),
@@ -1166,6 +1180,7 @@ watch(
     <template v-else-if="bundle?.plan">
       <el-tabs v-model="subTab" class="sub-tabs">
         <el-tab-pane label="总览" name="overview" />
+        <el-tab-pane label="方案总结" name="summary" />
         <el-tab-pane label="运动方案" name="exercise" />
         <el-tab-pane label="饮食方案" name="diet" />
         <el-tab-pane label="执行计划" name="execution" />
@@ -1199,6 +1214,30 @@ watch(
             <span class="hint">当前为已发布只读内容。修改请点「编辑」开新草稿。</span>
           </el-form-item>
         </el-form>
+        </div>
+      </div>
+
+      <div v-show="subTab === 'summary'" class="panel section-card">
+        <div class="panel-head">
+          <h3 class="section-title">
+            <span class="section-ic section-ic--brand">总</span>
+            方案总结
+          </h3>
+        </div>
+        <div class="panel-body">
+          <el-form label-width="96px">
+            <el-form-item label="总结">
+              <el-input
+                v-model="editForm.planSummary"
+                :readonly="!isDraftMode"
+                type="textarea"
+                :autosize="{ minRows: 6, maxRows: 18 }"
+                placeholder="面向健管师的阶段总结：控制目标、运动饮食要点、执行重点与复评建议（约 200 字内）"
+                :class="{ 'textarea-readonly': !isDraftMode }"
+              />
+            </el-form-item>
+            <p v-if="!isDraftMode && !editForm.planSummary" class="hint">暂无方案总结</p>
+          </el-form>
         </div>
       </div>
 

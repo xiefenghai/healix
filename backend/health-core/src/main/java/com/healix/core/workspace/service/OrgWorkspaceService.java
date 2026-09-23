@@ -27,7 +27,13 @@ import com.healix.core.identity.mapper.StaffProfileMapper;
 import com.healix.core.identity.mapper.StaffRoleBindingMapper;
 import com.healix.core.org.domain.Organization;
 import com.healix.core.org.mapper.OrganizationMapper;
+import com.healix.core.archive.dto.ArchiveCompletenessDto;
+import com.healix.core.archive.dto.DiseaseArchiveViewDto;
+import com.healix.core.archive.service.ArchiveCompletenessService;
 import com.healix.core.archive.service.BasicArchiveService;
+import com.healix.core.archive.service.DiseaseArchiveService;
+import com.healix.core.assessment.dto.AssessmentTagView;
+import com.healix.core.assessment.support.AssessmentTagAssembler;
 import com.healix.core.govern.enums.QuotaKeyEnum;
 import com.healix.core.govern.service.QuotaService;
 import com.healix.core.patientcard.mapper.AccountPatientMapper;
@@ -41,15 +47,18 @@ import com.healix.core.people.enums.MaritalStatusEnum;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
+import com.healix.core.people.support.DiseaseCodeLabels;
 import com.healix.core.identity.service.IdentityService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.portal.enums.PortalEnum;
+import com.healix.core.workspace.domain.StaffPatientWatch;
 import com.healix.core.workspace.dto.CareTeamListItem;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.dto.OrgStaffItem;
+import com.healix.core.workspace.mapper.StaffPatientWatchMapper;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -81,6 +90,9 @@ public class OrgWorkspaceService {
     private final PeopleIdentityMapper peopleIdentityMapper;
     private final PatientOrgMembershipMapper membershipMapper;
     private final BasicArchiveService basicArchiveService;
+    private final DiseaseArchiveService diseaseArchiveService;
+    private final ArchiveCompletenessService archiveCompletenessService;
+    private final AssessmentTagAssembler assessmentTagAssembler;
     private final PatientCareAssignmentMapper careAssignmentMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
@@ -88,6 +100,7 @@ public class OrgWorkspaceService {
     private final AccountPatientMapper accountPatientMapper;
     private final ObjectProvider<WorkspaceTaskGenerator> workspaceTaskGenerator;
     private final QuotaService quotaService;
+    private final StaffPatientWatchMapper staffPatientWatchMapper;
 
     public void requireOrgWorkspaceAccess(String orgId) {
         String tenantId = requireTenantId();
@@ -537,8 +550,13 @@ public class OrgWorkspaceService {
 
     public List<OrgPatientListItem> listOrgPatients(
             String orgId, String keyword, String careTeamId, Boolean unassigned) {
+        return listOrgPatients(orgId, keyword, careTeamId, unassigned, null);
+    }
+
+    public List<OrgPatientListItem> listOrgPatients(
+            String orgId, String keyword, String careTeamId, Boolean unassigned, Boolean watched) {
         requireOrgWorkspaceAccess(orgId);
-        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned);
+        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, watched, true);
     }
 
     /**
@@ -552,11 +570,17 @@ public class OrgWorkspaceService {
         if (org == null || !tenantId.equals(org.getTenantId())) {
             throw new BusinessException(404, "机构不存在");
         }
-        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned);
+        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, null, false);
     }
 
     private List<OrgPatientListItem> listOrgPatientsInternal(
-            String orgId, String keyword, String careTeamId, Boolean unassigned) {
+            String orgId,
+            String keyword,
+            String careTeamId,
+            Boolean unassigned,
+            Boolean watched,
+            boolean fillWatch) {
+        Set<String> watchedPeopleIds = fillWatch ? currentWatchPeopleIds(orgId) : Set.of();
         List<PatientOrgMembership> memberships = membershipMapper.listActiveByOrg(orgId);
         List<OrgPatientListItem> items = new ArrayList<>();
         for (PatientOrgMembership m : memberships) {
@@ -582,7 +606,15 @@ public class OrgWorkspaceService {
                     continue;
                 }
             }
-            items.add(toPatientItem(p, m, teamMember));
+            boolean isWatched = watchedPeopleIds.contains(p.getId());
+            if (Boolean.TRUE.equals(watched) && !isWatched) {
+                continue;
+            }
+            OrgPatientListItem item = toPatientItem(p, m, teamMember);
+            if (fillWatch) {
+                item.setWatched(isWatched);
+            }
+            items.add(item);
         }
         return items;
     }
@@ -601,7 +633,58 @@ public class OrgWorkspaceService {
             throw new BusinessException(403, "患者未在本机构有效入组");
         }
         CareTeamMember teamMember = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
-        return toPatientItem(profile, membership, teamMember);
+        OrgPatientListItem item = toPatientItem(profile, membership, teamMember);
+        item.setWatched(isWatched(orgId, peopleId));
+        return item;
+    }
+
+    /** 将患者加入当前员工在本机构的重点关注（幂等）。 */
+    @Transactional
+    public OrgPatientListItem watchPatient(String orgId, String peopleId) {
+        OrgPatientListItem item = getOrgPatient(orgId, peopleId);
+        if (Boolean.TRUE.equals(item.getWatched())) {
+            return item;
+        }
+        String staffId = requireStaffId();
+        StaffPatientWatch row = new StaffPatientWatch();
+        row.setTenantId(requireTenantId());
+        row.setOrgId(orgId);
+        row.setStaffId(staffId);
+        row.setPeopleId(peopleId);
+        EntityMeta.onCreate(row);
+        staffPatientWatchMapper.insert(row);
+        item.setWatched(true);
+        return item;
+    }
+
+    /** 取消当前员工对本机构患者的重点关注（幂等）。 */
+    @Transactional
+    public OrgPatientListItem unwatchPatient(String orgId, String peopleId) {
+        OrgPatientListItem item = getOrgPatient(orgId, peopleId);
+        if (!Boolean.TRUE.equals(item.getWatched())) {
+            return item;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        staffPatientWatchMapper.softDelete(requireStaffId(), orgId, peopleId, now, now);
+        item.setWatched(false);
+        return item;
+    }
+
+    private Set<String> currentWatchPeopleIds(String orgId) {
+        RequestContext ctx = RequestContextHolder.get();
+        if (ctx == null || ctx.getStaffId() == null) {
+            return Set.of();
+        }
+        List<String> ids = staffPatientWatchMapper.listPeopleIdsByStaffOrg(ctx.getStaffId(), orgId);
+        return ids == null || ids.isEmpty() ? Set.of() : new HashSet<>(ids);
+    }
+
+    private boolean isWatched(String orgId, String peopleId) {
+        RequestContext ctx = RequestContextHolder.get();
+        if (ctx == null || ctx.getStaffId() == null) {
+            return false;
+        }
+        return staffPatientWatchMapper.findActive(ctx.getStaffId(), orgId, peopleId) != null;
     }
 
     @Transactional
@@ -730,8 +813,9 @@ public class OrgWorkspaceService {
             item.setIdentityMask(id.getIdentityValueMask());
             item.setIdentityType(id.getIdentityType());
         }
+        CareTeam team = null;
         if (teamMember != null) {
-            CareTeam team = careTeamMapper.findById(teamMember.getTeamId());
+            team = careTeamMapper.findById(teamMember.getTeamId());
             if (team != null) {
                 item.setCareTeamId(team.getId());
                 item.setCareTeamName(team.getName());
@@ -745,7 +829,59 @@ public class OrgWorkspaceService {
         item.setEducationLevel(p.getEducationLevel());
         item.setMaritalStatus(p.getMaritalStatus());
         item.setOccupation(p.getOccupation());
+        enrichClinicalSummary(item, p.getTenantId(), m.getOrgId(), p.getId(), team);
         return item;
+    }
+
+    /** 病种 / 评估标签 / 主责健管师 / 档案完整度（列表展示用，失败不阻断）。 */
+    private void enrichClinicalSummary(
+            OrgPatientListItem item, String tenantId, String orgId, String peopleId, CareTeam team) {
+        try {
+            List<String> labels = new ArrayList<>();
+            for (DiseaseArchiveViewDto row : diseaseArchiveService.list(tenantId, peopleId)) {
+                if (!StringUtils.hasText(row.getDiseaseCode())) {
+                    continue;
+                }
+                String label = DiseaseCodeLabels.label(row.getDiseaseCode());
+                if (StringUtils.hasText(label)) {
+                    labels.add(label);
+                }
+            }
+            item.setDiseaseLabels(labels);
+        } catch (Exception ignored) {
+            item.setDiseaseLabels(List.of());
+        }
+
+        try {
+            List<AssessmentTagView> tags = assessmentTagAssembler.assemble(tenantId, orgId, peopleId);
+            item.setAssessmentTags(tags == null ? List.of() : tags);
+        } catch (Exception ignored) {
+            item.setAssessmentTags(List.of());
+        }
+
+        try {
+            String cmStaffId = null;
+            PatientCareAssignment assignment = careAssignmentMapper.find(tenantId, peopleId);
+            if (assignment != null && StringUtils.hasText(assignment.getPrimaryCareManagerStaffId())) {
+                cmStaffId = assignment.getPrimaryCareManagerStaffId();
+            } else if (team != null && StringUtils.hasText(team.getPrimaryCareManagerStaffId())) {
+                cmStaffId = team.getPrimaryCareManagerStaffId();
+            }
+            if (StringUtils.hasText(cmStaffId)) {
+                item.setPrimaryCareManagerStaffId(cmStaffId);
+                StaffProfile cm = staffProfileMapper.findById(cmStaffId);
+                item.setPrimaryCareManagerName(cm == null ? null : cm.getDisplayName());
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+
+        try {
+            ArchiveCompletenessDto c = archiveCompletenessService.compute(tenantId, peopleId);
+            item.setArchiveCompletenessPercent(c.getPercent());
+        } catch (Exception ignored) {
+            item.setArchiveCompletenessPercent(null);
+        }
     }
 
     /**
@@ -824,6 +960,7 @@ public class OrgWorkspaceService {
         profile.setOccupation(occupationNorm);
         EntityMeta.onUpdate(profile);
         peopleProfileMapper.updateProfile(profile);
+        accountPatientMapper.updateDisplayNameByPeopleId(peopleId, name, LocalDateTime.now());
 
         auditService.record(
                 PortalEnum.B.code(),

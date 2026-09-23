@@ -39,9 +39,46 @@ public final class AgentReplyPlainText {
         s = breakChineseSections(s);
         // 英文病种 code → 中文（防止模型照抄上下文）
         s = localizeDiseaseCodes(s);
-        // 多余空行
-        s = s.replaceAll("\n{3,}", "\n\n");
+        // 压缩空行：条目紧凑，仅分节标题前留一行
+        s = tightenBlankLines(s);
         return s.trim();
+    }
+
+    /**
+     * 条目之间不留空行；「一、二、」分节标题前保留一行空行。
+     */
+    static String tightenBlankLines(String input) {
+        String[] lines = input.split("\n", -1);
+        StringBuilder out = new StringBuilder();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!StringUtils.hasText(trimmed)) {
+                continue;
+            }
+            if (!out.isEmpty() && isSectionTitleLine(trimmed)) {
+                out.append('\n');
+            }
+            if (!out.isEmpty()) {
+                out.append('\n');
+            }
+            out.append(line.replaceAll("\\s+$", ""));
+        }
+        return out.toString();
+    }
+
+    /** 与前端 agent-plain-text isSectionTitleLine 对齐 */
+    static boolean isSectionTitleLine(String trimmed) {
+        if (!trimmed.matches("^[一二三四五六七八九十百]+[、.．].+$")) {
+            return false;
+        }
+        if (trimmed.matches(".*\\d+[、.．].*")) {
+            return false;
+        }
+        String title = trimmed.replaceFirst("^[一二三四五六七八九十百]+[、.．]\\s*", "").trim();
+        if (!StringUtils.hasText(title) || title.length() > 20) {
+            return false;
+        }
+        return !title.matches(".*[，。；;！？].*");
     }
 
     /** 把回复里残留的英文病种 code 换成中文。 */

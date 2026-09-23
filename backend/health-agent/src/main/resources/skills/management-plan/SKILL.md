@@ -22,8 +22,21 @@ display_name: 管理方案生成
 
 1. 拉取 `CarePlanContext`（档案、病种、过敏、用药、最近指标与检验）
 2. 解析模板键：`DIABETES` / `HYPERTENSION` / `DIABETES_HYPERTENSION` / `GENERAL`
-3. 结合 `instruction`（健管师备注）生成整包 JSON
-4. 服务端 Safety 校验 → 写入 `care_plan_draft`
+3. 结合 `instruction`（健管师备注）生成整包 JSON；若为**修订模式**，在 `currentDraft` 上按 `revisionInstruction` 局部调整后仍输出完整 JSON
+4. 服务端 Safety 校验 → 写入 / 更新 `care_plan_draft`
+
+### 修订模式（REVISE）
+
+当用户反馈类似「把运动改成步行」「饮食少盐一点」「最近骨折了」「经常拉肚子」时：
+
+- 输入含 `currentDraft`（exercise/diet/execution/goalSummary）、`revisionInstruction`，以及可选的 `mustPreserveConstraints`
+- **未提及的块尽量保持原意与结构**，仅改被点名的部分；仍输出完整 `exercise → diet → execution → summary → goalSummary`
+- **安全约束累积保留（硬性）**：
+  - 若当前草稿或 `mustPreserveConstraints` 已含骨折 / 石膏 / 卧床 / 医嘱制动 / 禁止负重等限制，后续修订**必须继续保留**在 `exercise.goal`、`contraindications`、`precautions` 与 execution 运动任务中
+  - 仅当修订意见**明确解除**（如「骨折已愈合」「医生允许负重」「可以恢复步行」）才可去掉上述限制
+  - 饮食/消化类意见（火锅、拉肚子、少油少辣等）**优先只改 diet**（原则、推荐/限制食物、示例日、notes），**不得**把运动从制动/床旁活动改回常规有氧或站立训练
+- 禁止借修订编造新的检验数值或过敏原
+- `goalSummary` 须同时覆盖仍有效的安全限制与本次新增关注点（例如：骨折制动 + 腹泻饮食调整）
 
 ## 输出格式（严格 JSON，无 markdown 代码块）
 
@@ -173,5 +186,5 @@ display_name: 管理方案生成
 2. 编造检验数值或诊断
 3. 自动发布或声称「已生效」
 4. 过敏食物出现在推荐列表
-5. 卧床/骨折场景推荐剧烈运动
+5. 卧床/骨折场景推荐剧烈运动；多轮修订时因饮食意见而丢掉既有骨折/制动限制
 6. 在总结中承诺疗效或替代就医

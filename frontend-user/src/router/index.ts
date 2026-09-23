@@ -70,6 +70,11 @@ const router = createRouter({
       meta: { hideTab: true },
     },
     {
+      path: '/assessments',
+      component: () => import('../views/AssessmentsView.vue'),
+      meta: { hideTab: true },
+    },
+    {
       path: '/followups/:id',
       component: () => import('../views/FollowupDetailView.vue'),
       meta: { hideTab: true },

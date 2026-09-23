@@ -19,8 +19,14 @@ import com.healix.core.observation.service.ExamReportService.ExamCommand;
 import com.healix.core.observation.service.LabReportService;
 import com.healix.core.observation.service.LabReportService.LabItemCommand;
 import com.healix.core.observation.service.LabReportService.LabReportCommand;
-import com.healix.core.observation.support.ExamTypeCatalog;
+import com.healix.core.medication.dto.MedOcrPrefillDto;
+import com.healix.core.medication.dto.MedOcrPrefillDto.MedOcrItemDto;
+import com.healix.core.medication.dto.MedicationViewDto;
+import com.healix.core.medication.service.MedicationService;
+import com.healix.core.medication.service.MedicationService.MedicationCommand;
 import java.math.BigDecimal;
+import com.healix.core.observation.support.ExamTypeCatalog;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,8 +52,10 @@ public class ObservationReportIngestService {
     private final AiUsageGuard aiUsageGuard;
     private final LabOcrRecognitionService labOcrRecognitionService;
     private final ExamOcrRecognitionService examOcrRecognitionService;
+    private final MedOcrRecognitionService medOcrRecognitionService;
     private final LabReportService labReportService;
     private final ExamReportService examReportService;
+    private final MedicationService medicationService;
     private final ArchiveAccessService archiveAccessService;
     private final LlmClient llmClient;
 
@@ -64,6 +72,13 @@ public class ObservationReportIngestService {
 
         Kind kind = classify(text);
         log.info("[OCR] preview peopleId={} kind={}", peopleId, kind);
+        if (kind == Kind.MED) {
+            MedOcrPrefillDto med = medOcrRecognitionService.recognizePrepared(imageBytes, mimeType, text);
+            if (canSave(med)) {
+                return medPreview(med);
+            }
+            throw cannotSaveMed(med);
+        }
         if (kind == Kind.LAB) {
             LabOcrPrefillDto lab = labOcrRecognitionService.recognizePrepared(imageBytes, mimeType, text);
             if (canSave(lab)) {
@@ -101,18 +116,25 @@ public class ObservationReportIngestService {
         if ("EXAM".equals(kind)) {
             return saveExam(tenantId, orgId, peopleId, staffId, toExamPrefill(cmd));
         }
+        if ("MED".equals(kind)) {
+            return saveMed(tenantId, orgId, peopleId, staffId, toMedPrefill(cmd));
+        }
         throw new BusinessException("不支持的单据类型: " + cmd.kind());
     }
 
     private ObservationOcrPreviewDto labPreview(LabOcrPrefillDto lab) {
-        return new ObservationOcrPreviewDto("LAB", "检验报告", warnings(lab.warnings()), lab, null);
+        return new ObservationOcrPreviewDto("LAB", "检验报告", warnings(lab.warnings()), lab, null, null);
     }
 
     private ObservationOcrPreviewDto examPreview(ExamOcrPrefillDto exam) {
         String title = StringUtils.hasText(exam.examTypeName())
                 ? exam.examTypeName()
                 : ExamTypeCatalog.label(exam.examType());
-        return new ObservationOcrPreviewDto("EXAM", title, warnings(exam.warnings()), null, exam);
+        return new ObservationOcrPreviewDto("EXAM", title, warnings(exam.warnings()), null, exam, null);
+    }
+
+    private ObservationOcrPreviewDto medPreview(MedOcrPrefillDto med) {
+        return new ObservationOcrPreviewDto("MED", "用药处方", warnings(med.warnings()), null, null, med);
     }
 
     private ObservationOcrIngestDto saveLab(
@@ -174,6 +196,70 @@ public class ObservationReportIngestService {
                 "EXAM", saved.id(), title, "已确认写入检查数据：" + title + "。请到健康数据中继续核对。", warnings(prefill.warnings()));
     }
 
+    private ObservationOcrIngestDto saveMed(
+            String tenantId, String orgId, String peopleId, String staffId, MedOcrPrefillDto prefill) {
+        if (!canSave(prefill)) {
+            throw new BusinessException("请至少确认一种药品及用法");
+        }
+        List<MedicationCommand> commands = prefill.items().stream()
+                .filter(i -> i != null && StringUtils.hasText(i.drugName()))
+                .map(this::toMedicationCommand)
+                .toList();
+        if (commands.isEmpty()) {
+            throw new BusinessException("请至少确认一种药品及用法");
+        }
+        List<MedicationViewDto> saved =
+                medicationService.createPrescription(tenantId, orgId, peopleId, staffId, commands);
+        String groupId = saved.get(0).getPrescriptionGroupId();
+        return new ObservationOcrIngestDto(
+                "MED",
+                groupId,
+                "用药处方",
+                "已确认写入用药清单，共 " + saved.size() + " 种药品。请到用药管理中继续核对。",
+                warnings(prefill.warnings()));
+    }
+
+    private MedicationCommand toMedicationCommand(MedOcrItemDto item) {
+        String usage = MedOcrRecognitionService.normalizeUsageMethod(item.usageMethod());
+        if (!StringUtils.hasText(usage)) {
+            usage = "ORAL";
+        }
+        return new MedicationCommand(
+                item.drugName(),
+                usage,
+                item.frequency(),
+                item.doseAmount(),
+                item.doseUnit(),
+                item.startDate(),
+                null,
+                item.timingNote(),
+                item.courseDays(),
+                null,
+                null,
+                null);
+    }
+
+    private static MedOcrPrefillDto toMedPrefill(ConfirmCommand cmd) {
+        if (cmd.med() == null) {
+            throw new BusinessException("用药识别结果不能为空");
+        }
+        ConfirmMed med = cmd.med();
+        List<MedOcrItemDto> items = med.items() == null
+                ? List.of()
+                : med.items().stream()
+                        .map(i -> new MedOcrItemDto(
+                                i.drugName(),
+                                i.usageMethod(),
+                                i.frequency(),
+                                i.doseAmount(),
+                                i.doseUnit(),
+                                i.timingNote(),
+                                i.courseDays(),
+                                i.startDate()))
+                        .toList();
+        return new MedOcrPrefillDto(items, List.of());
+    }
+
     private static LabOcrPrefillDto toLabPrefill(ConfirmCommand cmd) {
         if (cmd.lab() == null) {
             throw new BusinessException("检验识别结果不能为空");
@@ -223,6 +309,21 @@ public class ObservationReportIngestService {
         return hasFindings || StringUtils.hasText(prefill.conclusion());
     }
 
+    private static boolean canSave(MedOcrPrefillDto prefill) {
+        return prefill != null
+                && prefill.items() != null
+                && prefill.items().stream().anyMatch(i -> i != null && StringUtils.hasText(i.drugName()));
+    }
+
+    private static BusinessException cannotSaveMed(MedOcrPrefillDto med) {
+        List<String> parts = new ArrayList<>();
+        parts.add("未能从图片中提取可写入的用药数据");
+        if (med != null && med.warnings() != null) {
+            parts.addAll(med.warnings());
+        }
+        return new BusinessException(String.join("。", parts));
+    }
+
     private static BusinessException cannotSave(LabOcrPrefillDto lab, ExamOcrPrefillDto exam) {
         List<String> parts = new ArrayList<>();
         parts.add("未能从图片中提取可写入的检查或检验数据");
@@ -240,6 +341,27 @@ public class ObservationReportIngestService {
 
     private Kind classify(String text) {
         String compact = text.replaceAll("\\s+", "");
+        int med = hits(
+                compact,
+                "处方",
+                "药品",
+                "用法",
+                "用量",
+                "口服",
+                "每日",
+                "一次",
+                "mg",
+                "μg",
+                "ug",
+                "片",
+                "粒",
+                "胶囊",
+                "注射液",
+                "bid",
+                "tid",
+                "qd",
+                "qn",
+                "带药");
         int lab = hits(
                 compact,
                 "检验报告",
@@ -266,6 +388,9 @@ public class ObservationReportIngestService {
                 "CT",
                 "MRI",
                 "核磁");
+        if (med >= 2 && med > lab && med > exam) {
+            return Kind.MED;
+        }
         if (lab >= 2 && lab > exam) {
             return Kind.LAB;
         }
@@ -286,13 +411,16 @@ public class ObservationReportIngestService {
         String snippet = text.length() > CLASSIFY_TEXT_LIMIT ? text.substring(0, CLASSIFY_TEXT_LIMIT) : text;
         LlmResponse response = llmClient.chat(
                 "ocr-kind",
-                "你只回答 LAB 或 EXAM。检验/化验单回答 LAB，超声/影像/心电等检查报告回答 EXAM。不要解释。",
+                "你只回答 LAB、EXAM 或 MED。检验/化验单回答 LAB，超声/影像/心电等检查报告回答 EXAM，处方/用药清单回答 MED。不要解释。",
                 snippet,
                 List.of());
         if (!response.fromLlm() || !StringUtils.hasText(response.content())) {
             return null;
         }
         String answer = response.content().trim().toUpperCase(Locale.ROOT);
+        if (answer.contains("MED")) {
+            return Kind.MED;
+        }
         if (answer.contains("EXAM")) {
             return Kind.EXAM;
         }
@@ -319,10 +447,11 @@ public class ObservationReportIngestService {
 
     private enum Kind {
         LAB,
-        EXAM
+        EXAM,
+        MED
     }
 
-    public record ConfirmCommand(String kind, ConfirmLab lab, ConfirmExam exam) {}
+    public record ConfirmCommand(String kind, ConfirmLab lab, ConfirmExam exam, ConfirmMed med) {}
 
     public record ConfirmLab(
             String specimenType,
@@ -347,4 +476,16 @@ public class ObservationReportIngestService {
             LocalDateTime examinedAt,
             String conclusion,
             Map<String, Object> findings) {}
+
+    public record ConfirmMed(List<ConfirmMedItem> items) {}
+
+    public record ConfirmMedItem(
+            String drugName,
+            String usageMethod,
+            String frequency,
+            String doseAmount,
+            String doseUnit,
+            String timingNote,
+            Integer courseDays,
+            LocalDate startDate) {}
 }

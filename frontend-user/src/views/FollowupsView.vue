@@ -127,7 +127,7 @@ onMounted(() => {
     />
     <van-loading v-if="loading" class="loading" vertical>加载中</van-loading>
     <template v-else>
-      <van-empty v-if="!items.length" description="暂无随访记录">
+      <van-empty v-if="!items.length" description="暂无已完成的随访记录">
         <van-button round type="primary" size="small" @click="requestOpen = true">
           申请回访
         </van-button>

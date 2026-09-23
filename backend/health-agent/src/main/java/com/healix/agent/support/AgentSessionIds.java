@@ -14,14 +14,14 @@ public final class AgentSessionIds {
 
     public static String normalize(String sessionId) {
         if (!StringUtils.hasText(sessionId)) {
-            return newSessionId();
+            return null;
         }
         String id = sessionId.trim();
         if (id.length() > 32) {
             id = id.replace("-", "");
         }
         if (id.length() > 32) {
-            return newSessionId();
+            return null;
         }
         return id;
     }

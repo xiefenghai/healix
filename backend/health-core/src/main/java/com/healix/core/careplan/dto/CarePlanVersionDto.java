@@ -23,6 +23,7 @@ public class CarePlanVersionDto {
     private JsonNode diet;
     private JsonNode execution;
     private JsonNode safetyFlags;
+    private JsonNode contextSnapshot;
     private LocalDateTime publishedAt;
     private String publishedByStaffId;
     private String signStatus;

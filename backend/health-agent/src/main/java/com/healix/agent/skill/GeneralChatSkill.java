@@ -108,31 +108,52 @@ public class GeneralChatSkill implements AgentSkill {
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.thinkingDelta("开始推理：梳理要点并组织对健管师的回复。\n"));
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.tool("llm.chat", "running", "调用大模型生成回复"));
-            AnswerTokenStreamer answerStream = new AnswerTokenStreamer(sink).onAnswerStart(() -> {
-                long ms = System.currentTimeMillis() - thinkStarted;
-                AgentStreamEvent.safeEmit(
-                        sink, AgentStreamEvent.tool("llm.chat", "done", "开始输出回复 · " + ms + "ms"));
-                AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingDone("开始组织正式回复", ms));
-            });
+            // 原始 token 原样下发；前端 visibleAnswerFromRawStream 剥离【思考】，边收边显示【回答】
+            StringBuilder rawBuf = new StringBuilder();
+            final boolean[] answerStarted = {false};
             var llm = llmClient.streamChat(
                     orgSession ? "COCKPIT_ORG_CHAT" : "GENERAL_CHAT",
                     systemPrompt,
                     cmd.message(),
                     ctx.history(),
-                    answerStream::accept);
+                    token -> {
+                        if (token == null || token.isEmpty()) {
+                            return;
+                        }
+                        rawBuf.append(token);
+                        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.token(token));
+                        if (!answerStarted[0]) {
+                            String s = rawBuf.toString();
+                            boolean hitAnswer = s.contains("【回答】") || s.contains("[回答]");
+                            boolean plain =
+                                    s.length() >= 16
+                                            && !s.contains("【思考】")
+                                            && !s.contains("[思考]")
+                                            && !s.trim().startsWith("{");
+                            if (hitAnswer || plain) {
+                                answerStarted[0] = true;
+                                long ms = System.currentTimeMillis() - thinkStarted;
+                                AgentStreamEvent.safeEmit(
+                                        sink,
+                                        AgentStreamEvent.tool(
+                                                "llm.chat", "done", "开始输出回复 · " + ms + "ms"));
+                                AgentStreamEvent.safeEmit(
+                                        sink, AgentStreamEvent.thinkingDone("开始组织正式回复", ms));
+                            }
+                        }
+                    });
             long thinkMs = System.currentTimeMillis() - thinkStarted;
             String raw = llm.fromLlm() && StringUtils.hasText(llm.content())
                     ? llm.content()
-                    : answerStream.raw();
+                    : rawBuf.toString();
             ThinkAnswer split = splitThinkAnswer(raw);
-            if (StringUtils.hasText(split.thinking()) && !answerStream.answerStarted()) {
+            if (StringUtils.hasText(split.thinking()) && !answerStarted[0]) {
                 AgentStreamEvent.safeEmit(
                         sink, AgentStreamEvent.thinkingDelta("\n—— 模型思考 ——\n" + split.thinking().trim() + "\n"));
             }
             reply = split.answer();
             if (StringUtils.hasText(reply)) {
-                if (!answerStream.answerStarted()) {
-                    // 模型未按标记分段：整段作为回答流式补发一次体验较差，直接结果落盘
+                if (!answerStarted[0]) {
                     AgentStreamEvent.safeEmit(
                             sink,
                             AgentStreamEvent.tool(
@@ -140,6 +161,7 @@ public class GeneralChatSkill implements AgentSkill {
                                     "done",
                                     "生成完成 · " + reply.length() + " 字 · " + thinkMs + "ms"));
                     AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingDone(null, thinkMs));
+                    new AnswerTokenStreamer(sink).finish(AgentReplyPlainText.sanitize(reply));
                 }
             } else {
                 AgentStreamEvent.safeEmit(
@@ -207,11 +229,28 @@ public class GeneralChatSkill implements AgentSkill {
         if (followupDraft) {
             replaceOrAdd(
                     actions,
-                    AgentAction.openSheet("使用随访草稿", "followups", cmd.peopleId(), payload));
-        } else {
+                    AgentAction.createFollowupTask("一键创建随访待办", cmd.peopleId(), "ROUTINE", draft));
             replaceOrAdd(
                     actions,
-                    AgentAction.openSheet("使用沟通草稿", "care-chat", cmd.peopleId(), payload));
+                    AgentAction.openSheet("打开随访页完善", "followups", cmd.peopleId(), payload));
+        } else {
+            if (focus != null && Boolean.TRUE.equals(focus.getClientLinked())) {
+                replaceOrAdd(
+                        actions,
+                        AgentAction.sendCareChat("一键发送给患者", cmd.peopleId(), draft));
+                replaceOrAdd(actions, AgentAction.nudgePatient("站内提醒打卡/用药", cmd.peopleId()));
+                replaceOrAdd(
+                        actions,
+                        AgentAction.openSheet("打开沟通窗口", "care-chat", cmd.peopleId(), payload));
+            } else {
+                // 未绑 C：无法送达，引导改为随访待办或仅本地预填
+                replaceOrAdd(
+                        actions,
+                        AgentAction.createFollowupTask("改为随访待办", cmd.peopleId(), "ROUTINE", draft));
+                replaceOrAdd(
+                        actions,
+                        AgentAction.openSheet("本地预填沟通草稿", "care-chat", cmd.peopleId(), payload));
+            }
         }
     }
 

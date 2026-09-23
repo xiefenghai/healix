@@ -19,6 +19,27 @@ public class SchemaEnsureRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        ensureTable(
+                "staff_patient_watch",
+                """
+                CREATE TABLE IF NOT EXISTS staff_patient_watch (
+                    pk_id           BIGINT       NOT NULL AUTO_INCREMENT,
+                    id              VARCHAR(32)  NOT NULL,
+                    tenant_id       VARCHAR(32)  NOT NULL,
+                    org_id          VARCHAR(32)  NOT NULL,
+                    staff_id        VARCHAR(32)  NOT NULL,
+                    people_id       VARCHAR(32)  NOT NULL,
+                    is_deleted      TINYINT      NOT NULL DEFAULT 0,
+                    gmt_created     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted     DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_staff_patient_watch_id (id),
+                    UNIQUE KEY uk_staff_patient_watch (staff_id, org_id, people_id, gmt_deleted),
+                    KEY idx_staff_patient_watch_org_staff (org_id, staff_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """);
+
         ensureColumn(
                 "people_medication",
                 "timing_note",

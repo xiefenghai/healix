@@ -38,9 +38,9 @@ function onCarePlanUpdated() {
 <template>
   <template v-if="inOrgWorkspace">
     <button
+      v-show="!visible"
       type="button"
       class="agent-fab"
-      :class="{ open: visible }"
       :aria-label="AGENT_NAME"
       :title="AGENT_NAME"
       @click="openDrawer"
@@ -90,12 +90,6 @@ function onCarePlanUpdated() {
   transform: translateY(0) scale(0.97);
 }
 
-.agent-fab.open {
-  opacity: 0;
-  pointer-events: none;
-  transform: scale(0.9);
-}
-
 .agent-fab-glow {
   position: absolute;
   inset: -10px;
@@ -117,7 +111,7 @@ function onCarePlanUpdated() {
   inset: 0;
   border-radius: 50%;
   overflow: hidden;
-  background: linear-gradient(160deg, #eaf2ff, #f8fafc);
+  background: #fff;
   border: 2px solid rgba(255, 255, 255, 0.95);
   box-shadow:
     0 10px 28px rgba(44, 126, 248, 0.38),
@@ -125,13 +119,13 @@ function onCarePlanUpdated() {
 }
 
 .agent-fab-logo {
-  width: 128%;
-  height: 128%;
-  margin: -14% 0 0 -14%;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   object-fit: cover;
-  object-position: center 42%;
+  object-position: center;
   display: block;
-  background: linear-gradient(160deg, #eaf2ff, #f8fafc);
+  background: #fff;
 }
 
 @keyframes fab-pulse {

@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** C 端随访记录：只读，OPEN/DONE。 */
+/** C 端随访记录：只读已完成（DONE）。 */
 @Validated
 @RestController
 @RequestMapping("/api/c/v1/followups")

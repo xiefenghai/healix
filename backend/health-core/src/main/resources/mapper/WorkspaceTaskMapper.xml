@@ -260,6 +260,21 @@
             <when test="pool != null and pool.equals('DONE')">
                 ORDER BY t.done_at DESC, t.id DESC
             </when>
+            <when test="pool != null and pool.equals('ALL')">
+                <!-- 全部：已逾期 OPEN → 其余待处理 OPEN → 已关闭；同组内越近截止越前 -->
+                ORDER BY
+                    CASE
+                        WHEN t.status = 'OPEN' AND t.due_at IS NOT NULL AND t.due_at &lt; NOW() THEN 0
+                        WHEN t.status = 'OPEN' THEN 1
+                        ELSE 2
+                    END ASC,
+                    CASE
+                        WHEN t.status = 'OPEN' THEN IFNULL(t.due_at, '9999-12-31 23:59:59')
+                        ELSE NULL
+                    END ASC,
+                    t.opened_at DESC,
+                    t.id DESC
+            </when>
             <otherwise>
                 ORDER BY t.opened_at DESC, t.id DESC
             </otherwise>

@@ -462,6 +462,13 @@ const hubs = [
     tone: 'amber',
   },
   {
+    key: 'assessments',
+    title: '健康评估',
+    icon: 'medal-o',
+    path: '/assessments',
+    tone: 'coral',
+  },
+  {
     key: 'followups',
     title: '随访记录',
     icon: 'phone-o',
@@ -481,13 +488,6 @@ const hubs = [
     icon: 'chat-o',
     path: '/care-chat?contact=1',
     tone: 'violet',
-  },
-  {
-    key: 'notifications',
-    title: '消息中心',
-    icon: 'bell',
-    path: '/notifications',
-    tone: 'coral',
   },
 ]
 
@@ -726,15 +726,6 @@ function checkinStatusLabel(code?: string) {
         </div>
       </div>
       <div class="hero-actions">
-        <button
-          class="icon-btn"
-          type="button"
-          aria-label="联系健管师团队"
-          @click="router.push('/care-chat?contact=1')"
-        >
-          <van-icon name="chat-o" size="20" />
-          <span v-if="unreadChatCount > 0" class="badge">{{ unreadChatCount > 99 ? '99+' : unreadChatCount }}</span>
-        </button>
         <button class="icon-btn" type="button" aria-label="消息" @click="router.push('/notifications')">
           <van-icon name="bell" size="20" />
           <span v-if="unreadNotifyCount > 0" class="badge">{{ unreadNotifyCount > 99 ? '99+' : unreadNotifyCount }}</span>
@@ -760,10 +751,6 @@ function checkinStatusLabel(code?: string) {
             v-if="h.key === 'care-chat' && unreadChatCount > 0"
             class="hub-badge"
           >{{ unreadChatCount > 99 ? '99+' : unreadChatCount }}</span>
-          <span
-            v-else-if="h.key === 'notifications' && unreadNotifyCount > 0"
-            class="hub-badge"
-          >{{ unreadNotifyCount > 99 ? '99+' : unreadNotifyCount }}</span>
         </span>
         <strong>{{ h.title }}</strong>
       </button>

@@ -5,8 +5,8 @@
  */
 import { computed, inject, nextTick, onMounted, ref, type Ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { api, apiUpload } from '../../shared/http'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { api } from '../../shared/http'
 import { postSse } from '../../shared/agent-stream'
 import {
   appendProgress,
@@ -19,14 +19,25 @@ import {
 import AgentActivityPanel from '../../shared/AgentActivityPanel.vue'
 import CockpitPatientSheet, { type CockpitSheetMode } from '../../shared/CockpitPatientSheet.vue'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
-import { formatAssistantPlainHtml } from '../../shared/agent-plain-text'
+import { formatAssistantPlainHtml, visibleAnswerFromRawStream } from '../../shared/agent-plain-text'
 import { AGENT_LOGO, AGENT_NAME } from '../../shared/agent-brand'
 import { debounce } from '../../shared/debounce'
+import AgentOcrReviewCard from '../../shared/AgentOcrReviewCard.vue'
+import AgentReportReviewCard from '../../shared/AgentReportReviewCard.vue'
+import { callApiDoneLabel, runAgentCallApi } from '../../shared/agent-call-api'
+import { resolveStickyCapabilityHint } from '../../shared/agent-sticky'
 import {
-  EXAM_FINDING_FIELDS,
-  examTypeLabel,
-  formatExamFindingValue,
-} from '../../shared/exam-panels'
+  buildConfirmBody,
+  buildOcrReview,
+  buildReportReview,
+  formatOcrDt,
+  MED_DOSE_UNIT_FALLBACK,
+  MED_FREQUENCY_FALLBACK,
+  MED_USAGE_OPTIONS,
+  reportStatusLine,
+  type OcrReview,
+  type ReportReviewPreview,
+} from '../../shared/agent-ocr'
 
 interface Summary {
   openTaskCount: number
@@ -91,6 +102,7 @@ interface PendingDraft {
   title: string
   summary?: string
   sheetMode?: string
+  actionLabel?: string
 }
 
 interface Briefing {
@@ -108,63 +120,16 @@ interface AgentAction {
     openCreate?: boolean
     [key: string]: unknown
   }
-}
-
-interface OcrLabItem {
-  itemCode: string
-  itemName: string
-  valueNum?: number | null
-  valueText?: string | null
-  unit?: string | null
-  refLow?: number | null
-  refHigh?: number | null
-  abnormalFlag?: string | null
-}
-
-interface OcrLabDraft {
-  specimenType?: string | null
-  sampledAt?: string | null
-  reportedAt?: string | null
-  note?: string | null
-  items: OcrLabItem[]
-  ignoredItems?: Array<{ rawName: string; reason?: string }>
-  warnings?: string[]
-}
-
-interface OcrExamDraft {
-  examType?: string | null
-  examTypeName?: string | null
-  examinedAt?: string | null
-  conclusion?: string | null
-  findings?: Record<string, unknown> | null
-  ignoredFindings?: string[]
-  warnings?: string[]
-}
-
-interface OcrPreview {
-  kind: 'LAB' | 'EXAM'
-  title: string
-  warnings?: string[]
-  lab?: OcrLabDraft | null
-  exam?: OcrExamDraft | null
-}
-
-interface OcrReview {
-  peopleId: string
-  kind: 'LAB' | 'EXAM'
-  title: string
-  warnings: string[]
-  imageUrl?: string
-  lab?: OcrLabDraft | null
-  exam?: OcrExamDraft | null
-  status: 'pending' | 'saving' | 'confirmed' | 'discarded'
-  reportId?: string
+  /** CALL_API 执行态：busy 请求中；done 已成功，禁止再点 */
+  runState?: 'busy' | 'done'
 }
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   streamContent?: string
+  /** 原始流式缓冲（含思考/回答标记） */
+  rawStream?: string
   actions?: AgentAction[]
   streaming?: boolean
   at?: string
@@ -173,18 +138,11 @@ interface ChatMessage {
   ocrReview?: OcrReview
   activity?: ActivityItem[]
   elapsedMs?: number | null
+  reportReview?: ReportReviewPreview
 }
 
 type TabKey = 'urgent' | 'watch' | 'mine'
 
-interface SearchPatient {
-  peopleId: string
-  displayName?: string
-  gender?: string
-  birthday?: string
-  careTeamName?: string
-  clientLinked?: boolean
-}
 type ChipKind = 'tasks' | 'overdue'
 
 /** 需跳转方案/报告审阅页的任务类型 */
@@ -199,12 +157,29 @@ const AVATAR_TONES = [
   'linear-gradient(135deg,#2C7EF8,#00B8A9)',
 ]
 
+const MED_FREQUENCY_CODES = new Set(MED_FREQUENCY_FALLBACK.map((o) => o.value))
+const MED_DOSE_UNIT_CODES = new Set(MED_DOSE_UNIT_FALLBACK.map((o) => o.value))
+const MED_USAGE_CODES = new Set(MED_USAGE_OPTIONS.map((o) => o.value))
+
+const knownMedCodes = {
+  usage: MED_USAGE_CODES,
+  frequency: MED_FREQUENCY_CODES,
+  doseUnit: MED_DOSE_UNIT_CODES,
+}
+
 const router = useRouter()
 const route = useRoute()
 /** 顶栏「待办/超期」点击 → 切左栏 Tab */
 const chipHandler = inject<Ref<((kind: ChipKind) => void) | null> | null>('cockpitChipHandler', null)
 
+interface AgentCapabilityItem {
+  code: string
+  label: string
+  enabled?: boolean
+}
+
 const loading = ref(false)
+const capabilities = ref<AgentCapabilityItem[]>([])
 const summary = ref<Summary>({
   openTaskCount: 0,
   overdueCount: 0,
@@ -215,7 +190,7 @@ const summary = ref<Summary>({
 const tab = ref<TabKey>('urgent')
 const cards = ref<PriorityCard[]>([])
 const searchKeyword = ref('')
-const searchResults = ref<SearchPatient[]>([])
+const searchResults = ref<PriorityCard[]>([])
 const searchLoading = ref(false)
 const searchTried = ref(false)
 const focusPeopleId = ref<string | null>(null)
@@ -227,6 +202,16 @@ const input = ref('')
 const sending = ref(false)
 const uploading = ref(false)
 const reportFileRef = ref<HTMLInputElement | null>(null)
+const imagePreviewUrl = ref<string | null>(null)
+
+function openImagePreview(url?: string | null) {
+  if (!url) return
+  imagePreviewUrl.value = url
+}
+
+function closeImagePreview() {
+  imagePreviewUrl.value = null
+}
 const sheetOpen = ref(false)
 const sheetMode = ref<CockpitSheetMode>('archive')
 const sheetPeopleId = ref('')
@@ -259,6 +244,33 @@ const sessionId = computed(() =>
   focusPeopleId.value ? patientSessionId.value : orgSessionId.value,
 )
 
+/** 切换患者时内存缓存，避免异步恢复未完成 / 流式回调串台导致历史被清空 */
+type PatientSessionCache = {
+  sessionId: string | null
+  status: string
+  messages: ChatMessage[]
+}
+const patientSessionCache = new Map<string, PatientSessionCache>()
+let focusSwitchSeq = 0
+
+function cachePatientSession(peopleId: string | null | undefined) {
+  if (!peopleId) return
+  patientSessionCache.set(peopleId, {
+    sessionId: patientSessionId.value,
+    status: sessionStatus.value,
+    messages: messages.value.slice(),
+  })
+}
+
+function applyPatientSessionCache(peopleId: string): boolean {
+  const cached = patientSessionCache.get(peopleId)
+  if (!cached) return false
+  patientSessionId.value = cached.sessionId
+  sessionStatus.value = cached.status || 'ACTIVE'
+  messages.value = cached.messages.slice()
+  return true
+}
+
 const isArchivedSession = computed(
   () => (sessionStatus.value || '').toUpperCase() === 'CLOSED',
 )
@@ -279,6 +291,29 @@ const urgentShare = computed(() => {
 const todoTasks = computed(() => focus.value?.openTasks || [])
 const pendingDrafts = computed(() => focus.value?.pendingDrafts || [])
 const pendingDraftCount = computed(() => pendingDrafts.value.length)
+const FOCUS_LIST_LIMIT = 3
+const pendingDraftsExpanded = ref(false)
+const todoTasksExpanded = ref(false)
+const visiblePendingDrafts = computed(() =>
+  pendingDraftsExpanded.value
+    ? pendingDrafts.value
+    : pendingDrafts.value.slice(0, FOCUS_LIST_LIMIT),
+)
+const pendingDraftMore = computed(() =>
+  Math.max(0, pendingDrafts.value.length - FOCUS_LIST_LIMIT),
+)
+const visibleTodoTasks = computed(() =>
+  todoTasksExpanded.value ? todoTasks.value : todoTasks.value.slice(0, FOCUS_LIST_LIMIT),
+)
+const todoTaskMore = computed(() => Math.max(0, todoTasks.value.length - FOCUS_LIST_LIMIT))
+
+watch(
+  () => focus.value?.peopleId,
+  () => {
+    pendingDraftsExpanded.value = false
+    todoTasksExpanded.value = false
+  },
+)
 const planRateLabel = computed(() => rateText(focus.value?.planRate7d))
 const focusAge = computed(() => ageFromBirthday(focus.value?.birthday))
 const archivePercent = computed(() => focus.value?.archiveCompletenessPercent ?? null)
@@ -293,14 +328,15 @@ const archiveHint = computed(() => {
 const assessmentTags = computed(() => focus.value?.assessmentTags || [])
 const assessmentAlert = computed(() => assessmentTags.value.some((t) => t.tone === 'danger'))
 
-/** 首条「今日简报」进固定区；其余进入对话流 */
+/** 首条「今日简报」进固定区；其余进入对话流。
+ * 只能靠 REFRESH 动作识别简报——机构/患者建议回复常含「今日待办」，
+ * 若用文案或 system 角色误判，刷新后回答会被折叠掉，对话流只剩健管师输入。 */
 function isBriefingLike(m: {
   role?: string
   content?: string
   actions?: AgentAction[]
 }): boolean {
-  if (m.actions?.some((a) => a.type === 'REFRESH' || a.type === 'FOCUS_PATIENT')) return true
-  return /今日待办|早上好[，,]今日/.test(m.content || '')
+  return !!m.actions?.some((a) => a.type === 'REFRESH')
 }
 
 /** 多次刷新简报曾重复落库；恢复时只保留最新一条简报 */
@@ -315,9 +351,8 @@ function collapseDuplicateBriefings<T extends { role?: string; content?: string;
 
 const briefingMsg = computed(() => {
   const m = messages.value[0]
-  if (!m) return null
-  if (isBriefingLike(m)) return m
-  return m.role === 'assistant' ? m : null
+  if (m && isBriefingLike(m)) return m
+  return null
 })
 const threadMessages = computed(() =>
   briefingMsg.value ? messages.value.slice(1) : messages.value,
@@ -395,6 +430,9 @@ function riskBadge(card: PriorityCard) {
   if (level === 'MEDIUM' || badges.includes('PLAN_NUDGE') || badges.includes('FOLLOW_UP') || badges.includes('PATIENT_REQUEST')) {
     return { text: '中风险', tone: 'mid' }
   }
+  if (badges.includes('WATCHED') && !(card.openTaskCount && card.openTaskCount > 0)) {
+    return { text: '关注', tone: 'mid' }
+  }
   return { text: '低风险', tone: 'low' }
 }
 
@@ -439,12 +477,16 @@ function cardTags(card: PriorityCard) {
       if (badgeAllow.has(b) && !tags.includes(b)) tags.push(b)
     }
   }
+  if ((card.badges || []).includes('WATCHED') && !tags.includes('重点关注')) {
+    tags.unshift('重点关注')
+  }
   return tags.slice(0, 3)
 }
 
 function footerNote(card: PriorityCard) {
   if (card.topReason) return card.topReason
   const b = card.badges || []
+  if (b.includes('WATCHED')) return '重点关注'
   if (b.includes('MED_INCOMPLETE')) return '今日服药未确认'
   if (b.includes('PLAN_INCOMPLETE')) return '今日方案未打完'
   return '需关注'
@@ -486,14 +528,14 @@ async function loadPriority() {
   }
 }
 
-/** 我主责健管组下的患者（可关键字筛选） */
+/** 我主责健管组下的患者（可关键字筛选；卡片结构与优先/关注一致） */
 async function searchPatients() {
   searchLoading.value = true
   searchTried.value = true
   try {
     const q = searchKeyword.value.trim()
     const qs = q ? `?keyword=${encodeURIComponent(q)}` : ''
-    const res = await api<{ data: SearchPatient[] }>(`/api/b/v1/cockpit/my-patients${qs}`)
+    const res = await api<{ data: PriorityCard[] }>(`/api/b/v1/cockpit/my-patients${qs}`)
     searchResults.value = res.data || []
   } catch (e) {
     searchResults.value = []
@@ -510,20 +552,8 @@ function onSearchInput() {
   debouncedSearchPatients()
 }
 
-function selectSearchPatient(p: SearchPatient) {
-  void selectPatient(p.peopleId, { autoAsk: true, reason: '我的患者' })
-}
-
-function searchMeta(p: SearchPatient) {
-  const parts: string[] = []
-  const age = ageFromBirthday(p.birthday)
-  if (age != null) parts.push(`${age} 岁`)
-  const g = genderLabel(p.gender)
-  if (g) parts.push(g)
-  if (p.careTeamName) parts.push(p.careTeamName)
-  parts.push(p.clientLinked ? '已绑 C 端' : '未绑 C 端')
-  return parts.join(' · ')
-}
+/** 左栏当前 Tab 的患者卡列表 */
+const listCards = computed(() => (tab.value === 'mine' ? searchResults.value : cards.value))
 
 async function loadBriefing(force = false) {
   if (!force) {
@@ -601,13 +631,28 @@ function applySessionBundle(bundle: SessionBundlePayload, peopleId: string | nul
     }
   })
   messages.value = collapseDuplicateBriefings(mapped)
+  if (peopleId) {
+    patientSessionCache.set(peopleId, {
+      sessionId: bundle.sessionId,
+      status: sessionStatus.value,
+      messages: messages.value.slice(),
+    })
+  }
 }
 
 /** 恢复可见会话；有历史则写入 messages 并返回 true */
 async function restoreSession(peopleId: string | null): Promise<boolean> {
+  const seq = focusSwitchSeq
+  const expectPeopleId = peopleId
   try {
     const q = peopleId ? `?peopleId=${encodeURIComponent(peopleId)}` : ''
     const res = await api<{ data: SessionBundlePayload }>(`/api/b/v1/agent/sessions/current${q}`)
+    if (seq !== focusSwitchSeq) return false
+    if (expectPeopleId) {
+      if (focusPeopleId.value !== expectPeopleId) return false
+    } else if (focusPeopleId.value) {
+      return false
+    }
     const bundle = res.data
     applySessionBundle(bundle, peopleId)
     if (!bundle.messages?.length) return false
@@ -765,16 +810,36 @@ async function loadFocus(peopleId: string) {
 }
 
 async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reason?: string }) {
-  const switching = focusPeopleId.value !== peopleId
+  const prevPeopleId = focusPeopleId.value
+  const switching = prevPeopleId !== peopleId
+  if (switching && prevPeopleId) {
+    cachePatientSession(prevPeopleId)
+  }
   focusPeopleId.value = peopleId
+  try {
+    sessionStorage.setItem(COCKPIT_FOCUS_KEY, peopleId)
+  } catch {
+    /* ignore */
+  }
+  if (route.query.peopleId !== peopleId) {
+    void router.replace({ query: { ...route.query, peopleId } })
+  }
   if (switching) {
-    patientSessionId.value = null
+    stickyCapability.value = null
+    const seq = ++focusSwitchSeq
+    const hadCache = applyPatientSessionCache(peopleId)
+    if (!hadCache) {
+      patientSessionId.value = null
+      messages.value = []
+    }
     const restored = await restoreSession(peopleId)
-    if (!restored) {
+    if (seq !== focusSwitchSeq || focusPeopleId.value !== peopleId) return
+    if (!restored && !hadCache) {
       messages.value = []
     }
   }
   await loadFocus(peopleId)
+  if (focusPeopleId.value !== peopleId) return
   const name = focus.value?.displayName || '该患者'
   if (!switching && messages.value.length) {
     // 同患者重复点击不刷屏
@@ -783,6 +848,7 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
       role: 'system',
       content: `已切换焦点：${name}${opts?.reason ? ` · ${opts.reason}` : ''}`,
     })
+    cachePatientSession(peopleId)
   }
   await scrollToBottom()
   if (opts?.autoAsk === false) return
@@ -795,9 +861,22 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
 }
 
 async function clearFocus() {
+  if (focusPeopleId.value) cachePatientSession(focusPeopleId.value)
   focusPeopleId.value = null
   focus.value = null
+  try {
+    sessionStorage.removeItem(COCKPIT_FOCUS_KEY)
+  } catch {
+    /* ignore */
+  }
+  if (route.query.peopleId) {
+    const q = { ...route.query }
+    delete q.peopleId
+    void router.replace({ query: q })
+  }
+  const seq = ++focusSwitchSeq
   const restored = await restoreSession(null)
+  if (seq !== focusSwitchSeq || focusPeopleId.value) return
   if (!restored && messages.value.length === 0) {
     await loadBriefing(false)
   }
@@ -808,15 +887,149 @@ function onChip(kind: ChipKind) {
   void loadPriority()
 }
 
+async function loadCapabilities() {
+  const aiCodes = new Set(['CARE_PLAN', 'REPORT_SUMMARY', 'GENERAL_CHAT'])
+  const mapAi = (list: AgentCapabilityItem[]) =>
+    list
+      .filter((c) => c.enabled !== false && aiCodes.has(c.code))
+      .map((c) => {
+        const base: Record<string, string> = {
+          CARE_PLAN: '生成方案',
+          REPORT_SUMMARY: '报告点评',
+          GENERAL_CHAT: c.label,
+        }
+        return { ...c, label: base[c.code] || c.label }
+      })
+  try {
+    const res = await api<{ data: AgentCapabilityItem[] }>('/api/b/v1/agent/capabilities')
+    capabilities.value = mapAi(res.data || [])
+  } catch {
+    capabilities.value = mapAi([
+      { code: 'CARE_PLAN', label: '生成方案' },
+      { code: 'REPORT_SUMMARY', label: '报告点评' },
+      { code: 'GENERAL_CHAT', label: 'GENERAL_CHAT' },
+    ])
+  }
+}
+
+/** 芯片展示：GENERAL_CHAT 随是否选中患者切换文案；单据录入在上方能力栏 */
+const capabilityChips = computed(() => {
+  const chips = capabilities.value.map((c) => {
+    if (c.code === 'GENERAL_CHAT') {
+      const hasPatient = !!focusPeopleId.value
+      return {
+        ...c,
+        label: hasPatient ? '患者建议' : '今日建议',
+        hint: hasPatient
+          ? '根据当前患者档案与近期情况给出管理建议'
+          : '根据今日优先名单给出可推进的工作建议',
+        needsPatient: false,
+      }
+    }
+    return {
+      ...c,
+      hint: !focusPeopleId.value ? '请先选择患者' : c.label,
+      needsPatient: true,
+    }
+  })
+  const reportIdx = chips.findIndex((c) => c.code === 'REPORT_SUMMARY')
+  const ocrChip = {
+    code: 'OCR_UPLOAD',
+    label: '单据录入',
+    hint: !focusPeopleId.value
+      ? '请先选择患者'
+      : '上传检验/检查/用药单，对话内核对入库',
+    needsPatient: true,
+    enabled: true,
+  }
+  if (reportIdx >= 0) {
+    chips.splice(reportIdx + 1, 0, ocrChip)
+  } else {
+    chips.push(ocrChip)
+  }
+  return chips
+})
+
+/** 方案/点评多轮修订：无显式能力时沿用上一轮 */
+const stickyCapability = ref<string | null>(null)
+
+function quickCapability(code: string, label: string) {
+  if (code === 'OCR_UPLOAD') {
+    if (!focusPeopleId.value) {
+      ElMessage.info('请先从左侧选择一位患者')
+      return
+    }
+    openReportUpload()
+    return
+  }
+  if ((code === 'CARE_PLAN' || code === 'REPORT_SUMMARY') && !focusPeopleId.value) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  const prompts: Record<string, string> = {
+    CARE_PLAN: '请为这位患者生成管理方案草稿',
+    REPORT_SUMMARY: '请为这位患者生成或点评管理报告',
+    GENERAL_CHAT: focusPeopleId.value
+      ? '请根据这位患者的档案与近期情况，给出可执行的管理建议'
+      : '请根据今日优先名单，给出我现在可推进的工作建议',
+  }
+  void sendMessage(prompts[code] || label, false, code)
+}
+
 /** @param keepInput 自动追问时保留输入框内容 */
-async function sendMessage(text: string, keepInput = false) {
-  const userText = text.trim()
-  if (!userText || sending.value) return
+async function sendMessage(
+  text: string,
+  keepInput = false,
+  capabilityHint?: string | null,
+  image?: { base64: string; mimeType: string; name?: string; previewUrl?: string } | null,
+) {
+  const stickyHint = resolveStickyCapabilityHint(stickyCapability.value, text.trim())
+  if (stickyCapability.value && !capabilityHint && !stickyHint && !image) {
+    stickyCapability.value = null
+  }
+  const effectiveHint =
+    capabilityHint ||
+    (!image && stickyHint ? stickyHint : null)
+  const userText =
+    text.trim() ||
+    (effectiveHint === 'OCR_EXAM'
+      ? '请识别这张检查单'
+      : effectiveHint === 'OCR_MED'
+        ? '请识别这张用药单'
+        : effectiveHint === 'OCR_LAB'
+          ? '请识别这张检验单'
+          : image
+            ? '请识别这张单据'
+            : '')
+  if ((!userText && !image) || sending.value) return
   if (isArchivedSession.value) {
     ElMessage.info('当前为历史会话，请先点击「继续此会话」')
     return
   }
-  messages.value.push({ role: 'user', content: userText, at: nowClock() })
+  if (
+    effectiveHint &&
+    effectiveHint !== 'GENERAL_CHAT' &&
+    !focusPeopleId.value
+  ) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  if (image && !focusPeopleId.value) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  const boundPeopleId = focusPeopleId.value
+  const boundSessionId = sessionId.value
+  const userMsg: ChatMessage = {
+    role: 'user',
+    content: image
+      ? `${userText}\n[已附图片${image.name ? `：${image.name}` : ''}]`
+      : userText,
+    at: nowClock(),
+    imageUrl: image?.previewUrl || undefined,
+    imageName: image?.name || undefined,
+  }
+  messages.value.push(userMsg)
   if (!keepInput) input.value = ''
   sending.value = true
   const assistantIdx = messages.value.length
@@ -824,100 +1037,154 @@ async function sendMessage(text: string, keepInput = false) {
     role: 'assistant',
     content: '',
     streamContent: '',
+    rawStream: '',
     streaming: true,
     at: nowClock(),
     activity: [],
     elapsedMs: null,
   })
+  cachePatientSession(boundPeopleId)
   await scrollToBottom()
 
   const body: Record<string, unknown> = {
-    sessionId: sessionId.value,
+    sessionId: boundSessionId,
     message: userText,
   }
-  if (focusPeopleId.value) body.peopleId = focusPeopleId.value
+  if (boundPeopleId) body.peopleId = boundPeopleId
+  if (effectiveHint) body.capabilityHint = effectiveHint
+  if (image?.base64) {
+    body.imageBase64 = image.base64
+    body.imageMimeType = image.mimeType || 'image/jpeg'
+  }
+
+  const rowAt = () => messages.value[assistantIdx]
 
   try {
     await postSse('/api/b/v1/agent/chat/stream', body, {
       onProgress: (msg) => {
-        const row = messages.value[assistantIdx]
+        const row = rowAt()
         if (!row) return
         if (!row.activity) row.activity = []
         appendProgress(row.activity, msg)
         void scrollToBottom()
       },
       onTool: (event) => {
-        const row = messages.value[assistantIdx]
+        const row = rowAt()
         if (!row) return
         if (!row.activity) row.activity = []
         appendTool(row.activity, event)
         void scrollToBottom()
       },
       onSkill: (event) => {
-        const row = messages.value[assistantIdx]
+        const row = rowAt()
         if (!row) return
         if (!row.activity) row.activity = []
         appendSkill(row.activity, event)
         void scrollToBottom()
       },
       onThinking: (event) => {
-        const row = messages.value[assistantIdx]
+        const row = rowAt()
         if (!row) return
         if (!row.activity) row.activity = []
         appendThinking(row.activity, event)
         void scrollToBottom()
       },
       onToken: (token) => {
-        const row = messages.value[assistantIdx]
+        const row = rowAt()
         if (!row) return
-        // 原始 JSON 对象不进气泡（可读摘要由后端抽取后再以 token 推送）
-        const next = (row.streamContent || '') + token
-        if (!row.streamContent && /^\s*\{/.test(next) && /"summary"\s*:/.test(next)) {
+        const raw = (row.rawStream || '') + token
+        // 方案 JSON 原始流不进气泡
+        if (!row.streamContent && /^\s*\{/.test(raw) && /"summary"\s*:/.test(raw)) {
+          row.rawStream = raw
           return
         }
-        row.streamContent = next
+        row.rawStream = raw
+        row.streamContent = visibleAnswerFromRawStream(raw)
         void scrollToBottom()
       },
       onResult: (payload) => {
+        const row = rowAt()
+        if (!row) return
         const data = payload as {
           sessionId?: string
           reply?: string
           actions?: AgentAction[]
+          capability?: string
+          extracted?: unknown
         }
-        const row = messages.value[assistantIdx]
-        if (!row) return
         const streamed = (row.streamContent || '').trim()
-        // 优先用后端 sanitize 后的 reply（已拆开「一、标题1.」粘连），避免气泡保留流式粘连原文
-        row.content = (data.reply && data.reply.trim()) || streamed || row.content
+        if (data.capability === 'CARE_PLAN' || data.capability === 'REPORT_SUMMARY') {
+          row.content = streamed || (data.reply && data.reply.trim()) || row.content
+          stickyCapability.value = data.capability
+        } else {
+          row.content = (data.reply && data.reply.trim()) || streamed || row.content
+          if (
+            data.capability === 'OCR_LAB' ||
+            data.capability === 'OCR_EXAM' ||
+            data.capability === 'OCR_MED' ||
+            data.capability === 'GENERAL_CHAT'
+          ) {
+            stickyCapability.value = null
+          }
+        }
         row.streamContent = ''
+        row.rawStream = ''
         row.actions = data.actions
         row.streaming = false
         finishAllActivity(row.activity)
-        if (data.sessionId) {
-          if (focusPeopleId.value) patientSessionId.value = data.sessionId
-          else orgSessionId.value = data.sessionId
-          sessionStatus.value = 'ACTIVE'
+        if (data.capability === 'REPORT_SUMMARY' && data.extracted) {
+          applyReportReview(row, data.extracted)
         }
+        if (
+          boundPeopleId &&
+          (data.capability === 'OCR_LAB' ||
+            data.capability === 'OCR_EXAM' ||
+            data.capability === 'OCR_MED') &&
+          data.extracted
+        ) {
+          applyOcrExtracted(row, data.capability, data.extracted, boundPeopleId, image?.previewUrl)
+        }
+        if (data.sessionId) {
+          if (boundPeopleId) {
+            if (focusPeopleId.value === boundPeopleId) {
+              patientSessionId.value = data.sessionId
+              sessionStatus.value = 'ACTIVE'
+            }
+            const cached = patientSessionCache.get(boundPeopleId)
+            if (cached) cached.sessionId = data.sessionId
+            else cachePatientSession(boundPeopleId)
+          } else if (!focusPeopleId.value) {
+            orgSessionId.value = data.sessionId
+            sessionStatus.value = 'ACTIVE'
+          }
+        }
+        cachePatientSession(boundPeopleId)
       },
       onDone: (meta) => {
-        const row = messages.value[assistantIdx]
+        const row = rowAt()
         if (!row) return
         row.streaming = false
         finishAllActivity(row.activity)
         if (meta?.elapsedMs != null) row.elapsedMs = meta.elapsedMs
+        cachePatientSession(boundPeopleId)
       },
       onError: (msg) => ElMessage.error(msg),
     })
   } catch (e) {
-    messages.value.splice(assistantIdx, 1)
+    if (assistantIdx >= 0 && assistantIdx < messages.value.length) {
+      messages.value.splice(assistantIdx, 1)
+    }
+    if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl)
     ElMessage.error(e instanceof Error ? e.message : '发送失败')
   } finally {
     sending.value = false
-    const row = messages.value[assistantIdx]
+    uploading.value = false
+    const row = rowAt()
     if (row) {
       row.streaming = false
       finishAllActivity(row.activity)
     }
+    cachePatientSession(boundPeopleId)
     await scrollToBottom()
   }
 }
@@ -936,20 +1203,61 @@ function runAction(action: AgentAction) {
     void refreshBriefing()
     return
   }
+  if (action.type === 'SET_COCKPIT_TAB' && action.path) {
+    const next = action.path as TabKey
+    if (next === 'urgent' || next === 'watch' || next === 'mine') {
+      tab.value = next
+      sheetOpen.value = false
+      void refreshBriefing()
+    }
+    return
+  }
   if (action.type === 'CALL_API') {
     void executeCallApi(action)
+    return
+  }
+  if (action.type === 'TRIGGER_CAPABILITY' && action.path) {
+    if (action.path === 'GENERAL_CHAT') {
+      stickyCapability.value = null
+    }
+    const peopleId = action.peopleId || focusPeopleId.value
+    if (!peopleId) {
+      ElMessage.info('请先选择患者')
+      return
+    }
+    if (peopleId !== focusPeopleId.value) {
+      void selectPatient(peopleId, { autoAsk: false }).then(() => {
+        void sendMessage(action.label, false, action.path)
+      })
+      return
+    }
+    void sendMessage(action.label, false, action.path)
     return
   }
   if (action.type === 'OPEN_SHEET' && action.path) {
     const mode = action.path as CockpitSheetMode
     const peopleId = action.peopleId || focusPeopleId.value || undefined
-    if (action.payload?.draftContent || action.payload?.openCreate) {
+    if (
+      action.payload?.draftContent ||
+      action.payload?.openCreate ||
+      action.payload?.openReview ||
+      action.payload?.staffComment ||
+      action.payload?.reportId
+    ) {
       if (peopleId) {
         setAgentDraft({
           peopleId,
           mode,
-          draftContent: action.payload.draftContent,
+          draftContent:
+            typeof action.payload.draftContent === 'string' ? action.payload.draftContent : undefined,
           openCreate: !!action.payload.openCreate,
+          reportId: typeof action.payload.reportId === 'string' ? action.payload.reportId : undefined,
+          openReview: !!action.payload.openReview,
+          staffComment:
+            typeof action.payload.staffComment === 'string' ? action.payload.staffComment : undefined,
+          nextFocus: typeof action.payload.nextFocus === 'string' ? action.payload.nextFocus : undefined,
+          quarterAdvice:
+            typeof action.payload.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
         })
       }
     }
@@ -973,6 +1281,17 @@ function runAction(action: AgentAction) {
     return
   }
   if (isObservationsPath(action.path)) {
+    // 无图 OCR 跳转带 ocr=1，不能收成 sheet 丢掉查询参数
+    if (action.path && action.path.includes('ocr=')) {
+      if (action.peopleId && action.peopleId !== focusPeopleId.value) {
+        void selectPatient(action.peopleId, { autoAsk: false }).then(() => {
+          router.push(action.path!)
+        })
+        return
+      }
+      router.push(action.path)
+      return
+    }
     openSheet('observations', action.peopleId)
     return
   }
@@ -980,44 +1299,46 @@ function runAction(action: AgentAction) {
     openSheet('care-chat', action.peopleId)
     return
   }
+  if (isMedicationsPath(action.path)) {
+    openSheet('medications', action.peopleId)
+    return
+  }
+  if (isAssessmentsPath(action.path)) {
+    openSheet('assessments', action.peopleId)
+    return
+  }
   if (action.path) router.push(action.path)
 }
 
 async function executeCallApi(action: AgentAction) {
+  if (action.runState === 'busy' || action.runState === 'done') return
   const peopleId = action.peopleId || focusPeopleId.value
   if (!peopleId) {
     ElMessage.info('请先选择患者')
     return
   }
   const apiKey = action.path || ''
+  action.runState = 'busy'
   try {
-    let receipt = ''
-    if (apiKey === 'NUDGE') {
-      const res = await api<{ data: { sent?: boolean; message?: string; reason?: string } }>(
-        `/api/b/v1/adherence/patients/${peopleId}/nudge`,
-        { method: 'POST' },
-      )
-      receipt = res.data?.message || (res.data?.sent ? '已发送站内提醒' : '提醒未发送')
-      if (res.data?.reason === 'NO_LINKED_ACCOUNT') {
-        receipt = '患者未激活 C 端账号，无法站内提醒'
-      }
-    } else if (apiKey === 'CREATE_FOLLOWUP') {
-      const followupType =
-        typeof action.payload?.followupType === 'string' ? action.payload.followupType : 'PERIODIC'
-      await api('/api/b/v1/followups', {
-        method: 'POST',
-        body: JSON.stringify({
-          peopleId,
-          followupType,
-          createTask: action.payload?.createTask !== false,
-          completeNow: false,
-        }),
-      })
-      receipt = '已创建随访待办，请在随访页完善并办结'
+    const result = await runAgentCallApi(apiKey, peopleId, action.payload)
+    const receipt = result.message
+    action.runState = 'done'
+    const doneLabel = callApiDoneLabel(apiKey)
+    if (doneLabel) action.label = doneLabel
+    if (
+      apiKey === 'CREATE_FOLLOWUP' ||
+      apiKey === 'PUBLISH_REPORT' ||
+      apiKey === 'PUBLISH_CARE_PLAN' ||
+      apiKey === 'CLAIM_TASK' ||
+      apiKey === 'SEND_CARE_CHAT'
+    ) {
       await loadFocus(peopleId)
-    } else {
-      ElMessage.warning('暂不支持该动作')
-      return
+    }
+    if (apiKey === 'PUBLISH_REPORT' || apiKey === 'PUBLISH_CARE_PLAN') {
+      stickyCapability.value = null
+    }
+    if (result.openSheet) {
+      openSheet(result.openSheet as CockpitSheetMode, peopleId)
     }
     const msg: ChatMessage = {
       role: 'assistant',
@@ -1029,6 +1350,10 @@ async function executeCallApi(action: AgentAction) {
     ElMessage.success(receipt)
     await scrollToBottom()
   } catch (e) {
+    action.runState = undefined
+    if (e === 'cancel' || (e && typeof e === 'object' && 'action' in e && (e as { action?: string }).action === 'cancel')) {
+      return
+    }
     const err = e instanceof Error ? e.message : '动作执行失败'
     messages.value.push({
       role: 'assistant',
@@ -1056,10 +1381,16 @@ function isObservationsPath(path?: string) {
   return !!path && path.includes('/observations')
 }
 function isCareChatPath(path?: string) {
-  return !!path && path.includes('/care-chat')
+  return !!path && (path.includes('/care-chat') || /\/patients\/[^/]+\/chat\/?$/.test(path))
+}
+function isMedicationsPath(path?: string) {
+  return !!path && (path === 'medications' || path.includes('/medications'))
+}
+function isAssessmentsPath(path?: string) {
+  return !!path && (path === 'assessments' || path.includes('/assessments'))
 }
 
-function openSheet(mode: CockpitSheetMode, peopleId?: string) {
+async function openSheet(mode: CockpitSheetMode, peopleId?: string) {
   const id = peopleId || focusPeopleId.value
   if (!id) {
     ElMessage.info('请先从左侧选择一位患者')
@@ -1068,8 +1399,14 @@ function openSheet(mode: CockpitSheetMode, peopleId?: string) {
   if (peopleId && peopleId !== focusPeopleId.value) {
     void selectPatient(peopleId, { autoAsk: false })
   }
+  const sameOpen = sheetOpen.value && sheetMode.value === mode && sheetPeopleId.value === id
   sheetPeopleId.value = id
   sheetMode.value = mode
+  if (sameOpen) {
+    // destroy-on-close：同页再开时强制重挂载，以便消费 Agent 草稿预填
+    sheetOpen.value = false
+    await nextTick()
+  }
   sheetOpen.value = true
 }
 
@@ -1111,8 +1448,19 @@ function goFollowups() {
 function goReports() {
   openSheet('reports')
 }
+function onReportPublished() {
+  sheetOpen.value = false
+  tab.value = 'watch'
+  void refreshBriefing()
+}
 function goObservations() {
   openSheet('observations')
+}
+function goMedications() {
+  openSheet('medications')
+}
+function goAssessments() {
+  openSheet('assessments')
 }
 function goContactPatient() {
   openSheet('care-chat')
@@ -1126,154 +1474,99 @@ function openReportUpload() {
 }
 
 async function onReportFile(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
+  const inputEl = e.target as HTMLInputElement
+  const file = inputEl.files?.[0]
+  inputEl.value = ''
   const peopleId = focusPeopleId.value
-  if (!file || !peopleId || uploading.value) return
+  if (!file || !peopleId || uploading.value || sending.value) return
   if (file.size > 5 * 1024 * 1024) {
     ElMessage.warning('图片大小不能超过 5MB')
     return
   }
+  const mime = file.type || 'image/jpeg'
+  if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(mime)) {
+    ElMessage.warning('仅支持 JPG、PNG、WEBP 图片')
+    return
+  }
   uploading.value = true
-  const imageUrl = URL.createObjectURL(file)
-  messages.value.push({
-    role: 'user',
-    content: `上传检查检验单：${file.name}`,
-    at: nowClock(),
-  })
-  const pending: ChatMessage = {
-    role: 'assistant',
-    content: '',
-    streamContent: '正在识别检查检验单，请稍候…',
-    streaming: true,
-    at: nowClock(),
-  }
-  messages.value.push(pending)
-  void scrollToBottom()
   try {
-    const res = await apiUpload<{ data: OcrPreview }>(
-      `/api/b/v1/cockpit/patients/${peopleId}/reports/recognize`,
-      file,
-    )
-    const data = res.data
-    pending.streaming = false
-    pending.streamContent = undefined
-    pending.content = `已识别为「${data.title}」，请对照原图核对后确认入库。`
-    pending.ocrReview = {
-      peopleId,
-      kind: data.kind,
-      title: data.title,
-      warnings: data.warnings || [],
-      imageUrl,
-      lab: data.lab ? cloneLabDraft(data.lab) : null,
-      exam: data.exam ? cloneExamDraft(data.exam) : null,
-      status: 'pending',
-    }
-  } catch (err) {
-    pending.streaming = false
-    pending.streamContent = undefined
-    pending.content = err instanceof Error ? err.message : '识别失败，请稍后重试'
-    ElMessage.error(pending.content)
-  } finally {
+    const base64 = await readFileAsBase64(file)
+    const previewUrl = URL.createObjectURL(file)
+    await sendMessage('请识别这张单据', false, null, {
+      base64,
+      mimeType: mime,
+      name: file.name,
+      previewUrl,
+    })
+  } catch {
     uploading.value = false
-    void scrollToBottom()
+    ElMessage.error('读取图片失败')
   }
 }
 
-function cloneLabDraft(lab: OcrLabDraft): OcrLabDraft {
-  return {
-    specimenType: lab.specimenType ?? null,
-    sampledAt: lab.sampledAt ?? null,
-    reportedAt: lab.reportedAt ?? null,
-    note: lab.note ?? null,
-    items: (lab.items || []).map((i) => ({ ...i })),
-    ignoredItems: lab.ignoredItems ? [...lab.ignoredItems] : [],
-    warnings: lab.warnings ? [...lab.warnings] : [],
-  }
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      const comma = result.indexOf(',')
+      resolve(comma >= 0 ? result.slice(comma + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }
 
-function cloneExamDraft(exam: OcrExamDraft): OcrExamDraft {
-  return {
-    examType: exam.examType ?? null,
-    examTypeName: exam.examTypeName ?? null,
-    examinedAt: exam.examinedAt ?? null,
-    conclusion: exam.conclusion ?? null,
-    findings: exam.findings ? { ...exam.findings } : {},
-    ignoredFindings: exam.ignoredFindings ? [...exam.ignoredFindings] : [],
-    warnings: exam.warnings ? [...exam.warnings] : [],
-  }
+function applyReportReview(msg: ChatMessage, extracted: unknown) {
+  const preview = buildReportReview(extracted)
+  if (!preview) return
+  msg.reportReview = preview
+  msg.content = reportStatusLine(preview)
 }
 
-function flagLabel(flag?: string | null) {
-  if (flag === 'H') return '偏高'
-  if (flag === 'L') return '偏低'
-  if (flag === 'N') return '正常'
-  return flag || '—'
-}
-
-function specimenLabel(code?: string | null) {
-  if (code === 'URINE') return '尿'
-  if (code === 'BLOOD') return '血'
-  return code || '—'
-}
-
-function formatDt(raw?: string | null) {
-  if (!raw) return '—'
-  return raw.replace('T', ' ').slice(0, 16)
-}
-
-function examFindingRows(review: OcrReview) {
-  const exam = review.exam
-  if (!exam?.examType) return []
-  const fields = EXAM_FINDING_FIELDS[exam.examType] || []
-  const findings = exam.findings || {}
-  return fields
-    .filter((f) => findings[f.key] != null && findings[f.key] !== '')
-    .map((f) => ({
-      key: f.key,
-      label: f.label,
-      value: formatExamFindingValue(f.key, findings[f.key]),
-      unit: f.unit || '',
-    }))
+function applyOcrExtracted(
+  msg: ChatMessage,
+  capability: string,
+  extracted: unknown,
+  peopleId: string,
+  previewUrl?: string,
+) {
+  const review = buildOcrReview(capability, extracted, peopleId, previewUrl, knownMedCodes)
+  if (review) msg.ocrReview = review
 }
 
 async function confirmOcr(msg: ChatMessage) {
   const review = msg.ocrReview
   if (!review || review.status !== 'pending' || !review.peopleId) return
+
+  const kindLabel =
+    review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药处方' : '检查报告'
+  const timeHint =
+    review.kind === 'LAB'
+      ? `采样 ${formatOcrDt(review.lab?.sampledAt)}，报告 ${formatOcrDt(review.lab?.reportedAt)}`
+      : review.kind === 'MED'
+        ? `共 ${review.med?.items?.length ?? 0} 种药品，请核对用法与剂量`
+        : `检查时间 ${formatOcrDt(review.exam?.examinedAt)}`
+  const confirmTitle = review.kind === 'MED' ? '确认写入用药清单' : '确认入库'
+  const confirmText =
+    review.kind === 'MED'
+      ? `确认将「${review.title || kindLabel}」写入患者用药清单？${timeHint}。`
+      : `确认将「${review.title || kindLabel}」写入患者健康数据？请再核对时间：${timeHint}。入库后可在观测数据中查看。`
+  try {
+    await ElMessageBox.confirm(confirmText, confirmTitle, {
+        type: 'warning',
+        confirmButtonText: '确认入库',
+        cancelButtonText: '再检查一下',
+        distinguishCancelAndClose: true,
+      },
+    )
+  } catch {
+    return
+  }
+
   review.status = 'saving'
   try {
-    const body =
-      review.kind === 'LAB'
-        ? {
-            kind: 'LAB',
-            lab: {
-              specimenType: review.lab?.specimenType || undefined,
-              sampledAt: review.lab?.sampledAt || undefined,
-              reportedAt: review.lab?.reportedAt || undefined,
-              note: review.lab?.note || undefined,
-              items: (review.lab?.items || []).map((i) => ({
-                itemCode: i.itemCode,
-                itemName: i.itemName,
-                valueNum: i.valueNum ?? undefined,
-                valueText: i.valueText || undefined,
-                unit: i.unit || undefined,
-                refLow: i.refLow ?? undefined,
-                refHigh: i.refHigh ?? undefined,
-                abnormalFlag: i.abnormalFlag || undefined,
-              })),
-            },
-          }
-        : {
-            kind: 'EXAM',
-            exam: {
-              examType: review.exam?.examType,
-              examTypeName: review.exam?.examTypeName || undefined,
-              examinedAt: review.exam?.examinedAt || undefined,
-              conclusion: review.exam?.conclusion || undefined,
-              findings: review.exam?.findings || {},
-            },
-          }
+    const body = buildConfirmBody(review)
     const res = await api<{ data: { reportId: string; title: string; summary: string } }>(
       `/api/b/v1/cockpit/patients/${review.peopleId}/reports/confirm`,
       { method: 'POST', body: JSON.stringify(body) },
@@ -1281,14 +1574,24 @@ async function confirmOcr(msg: ChatMessage) {
     review.status = 'confirmed'
     review.reportId = res.data.reportId
     msg.content = res.data.summary
-    const observation = review.kind === 'EXAM' ? 'exams' : 'labs'
-    msg.actions = [
-      {
-        type: 'OPEN',
-        label: review.kind === 'EXAM' ? '查看检查数据' : '查看检验数据',
-        path: `/workspace/patients/${review.peopleId}/observations/${observation}`,
-      },
-    ]
+    if (review.kind === 'MED') {
+      msg.actions = [
+        {
+          type: 'OPEN',
+          label: '查看用药清单',
+          path: `/workspace/patients/${review.peopleId}/medications`,
+        },
+      ]
+    } else {
+      const observation = review.kind === 'EXAM' ? 'exams' : 'labs'
+      msg.actions = [
+        {
+          type: 'OPEN',
+          label: review.kind === 'EXAM' ? '查看检查数据' : '查看检验数据',
+          path: `/workspace/patients/${review.peopleId}/observations/${observation}`,
+        },
+      ]
+    }
     ElMessage.success(`已写入${res.data.title || '健康数据'}`)
   } catch (err) {
     review.status = 'pending'
@@ -1331,8 +1634,17 @@ function pendingKindLabel(kind?: string) {
 }
 
 function openPendingDraft(d: PendingDraft) {
+  const peopleId = focusPeopleId.value
   const mode = (d.sheetMode || (d.kind === 'REPORT' ? 'reports' : 'care-plan')) as CockpitSheetMode
-  openSheet(mode, focusPeopleId.value || undefined)
+  if (peopleId && d.kind === 'REPORT' && d.id) {
+    setAgentDraft({
+      peopleId,
+      mode: 'reports',
+      reportId: d.id,
+      openReview: true,
+    })
+  }
+  openSheet(mode, peopleId || undefined)
 }
 
 function messageHtml(msg: ChatMessage) {
@@ -1347,13 +1659,29 @@ watch(tab, (t) => {
   void loadPriority()
 })
 
+const COCKPIT_FOCUS_KEY = 'healix.cockpit.focusPeopleId'
+
 onMounted(async () => {
   if (chipHandler) chipHandler.value = onChip
   try {
-    await Promise.all([loadSummary(), loadPriority()])
+    await Promise.all([loadSummary(), loadPriority(), loadCapabilities()])
     await loadBriefing(false)
     const qPeople = typeof route.query.peopleId === 'string' ? route.query.peopleId : ''
-    if (qPeople) await selectPatient(qPeople, { autoAsk: true })
+    const qTab = typeof route.query.tab === 'string' ? route.query.tab : ''
+    if (qTab === 'urgent' || qTab === 'watch' || qTab === 'mine') {
+      tab.value = qTab
+    }
+    let savedPeople = ''
+    try {
+      savedPeople = sessionStorage.getItem(COCKPIT_FOCUS_KEY) || ''
+    } catch {
+      savedPeople = ''
+    }
+    const restorePeople = qPeople || savedPeople
+    // 刷新恢复焦点时不要自动追问，避免重复刷屏
+    if (restorePeople) await selectPatient(restorePeople, { autoAsk: false })
+    if (qTab === 'mine') void searchPatients()
+    else if (qTab === 'urgent' || qTab === 'watch') void loadPriority()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '驾驶舱加载失败')
   }
@@ -1366,13 +1694,15 @@ onMounted(async () => {
       <!-- 左：今日优先 -->
       <section class="col left">
         <div class="col-head">
-          <div>
+          <div class="col-head-text">
             <h3>今日优先</h3>
             <p class="sub">
               {{
                 tab === 'mine'
-                  ? '主责健管组患者 · 可搜索筛选'
-                  : `机构级 · 智能排序 · 占比 ${urgentShare}`
+                  ? '主责健管组 · 可搜索'
+                  : tab === 'watch'
+                    ? '个人重点关注患者'
+                    : `智能排序 · 占比 ${urgentShare}`
               }}
             </p>
           </div>
@@ -1380,7 +1710,7 @@ onMounted(async () => {
             <button
               type="button"
               class="icon-btn"
-              :title="tab === 'mine' ? '刷新我的患者' : '刷新'"
+              :title="tab === 'mine' ? '刷新我的患者' : tab === 'watch' ? '刷新我的关注' : '刷新'"
               @click="tab === 'mine' ? searchPatients() : loadPriority()"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1392,17 +1722,38 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="priority-tabs">
-          <button type="button" :class="{ active: tab === 'urgent' }" @click="tab = 'urgent'">
-            立即处理
+        <div class="priority-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'urgent'"
+            :class="{ active: tab === 'urgent' }"
+            title="立即处理"
+            @click="tab = 'urgent'"
+          >
+            <span class="tab-label">立即处理</span>
             <span v-if="summary.urgentCount" class="count">{{ summary.urgentCount }}</span>
           </button>
-          <button type="button" :class="{ active: tab === 'watch' }" @click="tab = 'watch'">
-            今日关注
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'watch'"
+            :class="{ active: tab === 'watch' }"
+            title="我的关注"
+            @click="tab = 'watch'"
+          >
+            <span class="tab-label">我的关注</span>
             <span v-if="summary.watchCount" class="count">{{ summary.watchCount }}</span>
           </button>
-          <button type="button" :class="{ active: tab === 'mine' }" @click="tab = 'mine'">
-            我的患者
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'mine'"
+            :class="{ active: tab === 'mine' }"
+            title="我的患者"
+            @click="tab = 'mine'"
+          >
+            <span class="tab-label">我的患者</span>
             <span v-if="searchResults.length" class="count muted">{{ searchResults.length }}</span>
           </button>
         </div>
@@ -1420,87 +1771,80 @@ onMounted(async () => {
         </div>
 
         <div class="card-list" v-loading="tab === 'mine' ? searchLoading : loading">
-          <template v-if="tab === 'mine'">
-            <button
-              v-for="p in searchResults"
-              :key="p.peopleId"
-              type="button"
-              class="person-card"
-              :class="{ active: focusPeopleId === p.peopleId }"
-              @click="selectSearchPatient(p)"
-            >
-              <div class="card-top">
-                <span class="avatar" :style="{ background: avatarTone(p.peopleId || p.displayName) }">
-                  {{ nameInitial(p.displayName) }}
-                </span>
-                <strong class="name">{{ p.displayName || p.peopleId }}</strong>
-                <span class="risk" :class="p.clientLinked ? 'low' : 'mid'">
-                  <i class="dot" />
-                  {{ p.clientLinked ? '已绑 C' : '未绑 C' }}
-                </span>
+          <button
+            v-for="c in listCards"
+            :key="c.peopleId"
+            type="button"
+            class="person-card"
+            :class="{ active: focusPeopleId === c.peopleId }"
+            @click="
+              selectPatient(c.peopleId, {
+                autoAsk: true,
+                reason: tab === 'mine' ? c.topReason || '我的患者' : c.topReason,
+              })
+            "
+          >
+            <div class="card-top">
+              <span class="avatar" :style="{ background: avatarTone(c.peopleId || c.displayName) }">
+                {{ nameInitial(c.displayName) }}
+              </span>
+              <strong class="name">{{ c.displayName || c.peopleId }}</strong>
+              <span class="risk" :class="riskBadge(c).tone">
+                <i class="dot" />
+                {{ riskBadge(c).text }}
+              </span>
+            </div>
+            <div class="tag-row" v-if="cardTags(c).length">
+              <span v-for="t in cardTags(c)" :key="t" class="tag brand">{{ t }}</span>
+            </div>
+            <p class="note">{{ footerNote(c) }}</p>
+            <div class="task-meta" v-if="taskMeta(c)">
+              <span
+                class="pri"
+                :class="(c.maxTaskPriority || '').toLowerCase()"
+                v-if="priorityLabel(c.maxTaskPriority)"
+              >
+                {{ priorityLabel(c.maxTaskPriority) }}
+              </span>
+              <span>待办 {{ c.openTaskCount ?? 0 }}</span>
+              <span v-if="(c.overdueTaskCount ?? 0) > 0" class="overdue">
+                超期 {{ c.overdueTaskCount }}
+              </span>
+            </div>
+            <div class="progress">
+              <div class="bar">
+                <div class="fill" :style="{ width: `${ratePct(c.planRate7d)}%` }" />
               </div>
-              <p class="note">{{ searchMeta(p) }}</p>
-            </button>
-            <el-empty
-              v-if="!searchLoading && searchTried && !searchResults.length && !searchKeyword.trim()"
-              description="暂无你主责健管组下的患者"
-              :image-size="52"
-            />
-            <el-empty
-              v-else-if="!searchLoading && searchTried && !searchResults.length && searchKeyword.trim()"
-              description="未找到匹配患者"
-              :image-size="52"
-            />
-          </template>
-          <template v-else>
-            <button
-              v-for="c in cards"
-              :key="c.peopleId"
-              type="button"
-              class="person-card"
-              :class="{ active: focusPeopleId === c.peopleId }"
-              @click="selectPatient(c.peopleId, { autoAsk: true, reason: c.topReason })"
-            >
-              <div class="card-top">
-                <span class="avatar" :style="{ background: avatarTone(c.peopleId || c.displayName) }">
-                  {{ nameInitial(c.displayName) }}
-                </span>
-                <strong class="name">{{ c.displayName }}</strong>
-                <span class="risk" :class="riskBadge(c).tone">
-                  <i class="dot" />
-                  {{ riskBadge(c).text }}
-                </span>
-              </div>
-              <div class="tag-row" v-if="cardTags(c).length">
-                <span v-for="t in cardTags(c)" :key="t" class="tag brand">{{ t }}</span>
-              </div>
-              <p class="note">{{ footerNote(c) }}</p>
-              <div class="task-meta" v-if="taskMeta(c)">
-                <span
-                  class="pri"
-                  :class="(c.maxTaskPriority || '').toLowerCase()"
-                  v-if="priorityLabel(c.maxTaskPriority)"
-                >
-                  {{ priorityLabel(c.maxTaskPriority) }}
-                </span>
-                <span>待办 {{ c.openTaskCount ?? 0 }}</span>
-                <span v-if="(c.overdueTaskCount ?? 0) > 0" class="overdue">
-                  超期 {{ c.overdueTaskCount }}
-                </span>
-              </div>
-              <div class="progress">
-                <div class="bar">
-                  <div class="fill" :style="{ width: `${ratePct(c.planRate7d)}%` }" />
-                </div>
-                <span class="pct">{{ rateText(c.planRate7d) }}</span>
-              </div>
-            </button>
-            <el-empty v-if="!loading && !cards.length" description="本 Tab 暂无优先对象" :image-size="52" />
-          </template>
+              <span class="pct">{{ rateText(c.planRate7d) }}</span>
+            </div>
+          </button>
+          <el-empty
+            v-if="tab === 'mine' && !searchLoading && searchTried && !listCards.length && !searchKeyword.trim()"
+            description="暂无你主责健管组下的患者"
+            :image-size="52"
+          />
+          <el-empty
+            v-else-if="tab === 'mine' && !searchLoading && searchTried && !listCards.length && searchKeyword.trim()"
+            description="未找到匹配患者"
+            :image-size="52"
+          />
+          <el-empty
+            v-else-if="tab !== 'mine' && !loading && !listCards.length"
+            :description="tab === 'watch' ? '暂无重点关注患者，可在患者详情页添加' : '本 Tab 暂无优先对象'"
+            :image-size="52"
+          />
         </div>
 
-        <button v-if="tab !== 'mine'" type="button" class="view-all" @click="goTasks">
+        <button v-if="tab === 'urgent'" type="button" class="view-all" @click="goTasks">
           查看全部优先患者 →
+        </button>
+        <button
+          v-else-if="tab === 'watch'"
+          type="button"
+          class="view-all"
+          @click="router.push('/workspace/patients')"
+        >
+          去患者列表查看 →
         </button>
       </section>
 
@@ -1581,10 +1925,15 @@ onMounted(async () => {
                   :key="ai"
                   type="button"
                   class="action-chip"
-                  :class="{ primary: ai === 0 }"
+                  :class="{
+                    primary: ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
+                    do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
+                    done: a.runState === 'done',
+                  }"
+                  :disabled="a.runState === 'busy' || a.runState === 'done'"
                   @click="runAction(a)"
                 >
-                  {{ a.label }}
+                  {{ a.runState === 'busy' ? '处理中…' : a.label }}
                 </button>
               </div>
             </template>
@@ -1605,6 +1954,13 @@ onMounted(async () => {
                 <span>{{ AGENT_NAME }}</span>
                 <em v-if="msg.at">{{ msg.at }}</em>
               </div>
+              <div
+                v-if="msg.streaming && !(msg.streamContent || msg.content) && !msg.activity?.length"
+                class="typing"
+                aria-label="生成中"
+              >
+                <span /><span /><span />
+              </div>
               <AgentActivityPanel
                 v-if="msg.activity?.length || msg.elapsedMs"
                 :items="msg.activity || []"
@@ -1613,209 +1969,46 @@ onMounted(async () => {
                 @toggle="(id) => toggleActivity(msg, id)"
               />
               <div
-                v-if="msg.streaming && !(msg.streamContent || msg.content) && !msg.activity?.length"
-                class="typing"
-                aria-label="生成中"
-              >
-                <span /><span /><span />
+                v-if="msg.streamContent || (msg.content && !msg.reportReview)"
+                class="bubble-text md-body"
+                :class="{ 'stream-live': !!(msg.streamContent && msg.streaming) }"
+                v-html="messageHtml(msg)"
+              />
+              <div v-else-if="msg.reportReview" class="bubble-text md-body report-status">
+                {{ msg.content }}
               </div>
-              <template v-else>
-                <a
-                  v-if="msg.imageUrl"
-                  class="msg-image"
-                  :href="msg.imageUrl"
-                  target="_blank"
-                  rel="noopener"
-                  :title="msg.imageName || '查看原图'"
-                >
-                  <img :src="msg.imageUrl" :alt="msg.imageName || '上传原图'" />
-                </a>
-                <div
-                  v-if="msg.streamContent || msg.content"
-                  class="bubble-text md-body"
-                  v-html="messageHtml(msg)"
-                />
-                <div
-                  v-if="msg.ocrReview && msg.ocrReview.status !== 'discarded'"
-                  class="ocr-card"
-                >
-                  <div class="ocr-card-head">
-                    <div class="ocr-card-title">
-                      <strong>{{ msg.ocrReview.title }}</strong>
-                      <span class="ocr-kind">{{
-                        msg.ocrReview.kind === 'LAB' ? '检验' : '检查'
-                      }}</span>
-                    </div>
-                    <a
-                      v-if="msg.ocrReview.imageUrl"
-                      class="ocr-view-link"
-                      :href="msg.ocrReview.imageUrl"
-                      target="_blank"
-                      rel="noopener"
-                    >
-                      查看大图
-                    </a>
-                  </div>
-
-                  <a
-                    v-if="msg.ocrReview.imageUrl"
-                    class="ocr-origin"
-                    :href="msg.ocrReview.imageUrl"
-                    target="_blank"
-                    rel="noopener"
-                    title="点击查看大图"
-                  >
-                    <img :src="msg.ocrReview.imageUrl" alt="上传原图" />
-                  </a>
-
-                  <template v-if="msg.ocrReview.kind === 'LAB' && msg.ocrReview.lab">
-                    <div class="ocr-meta">
-                      <span>标本：{{ specimenLabel(msg.ocrReview.lab.specimenType) }}</span>
-                      <span>采样：{{ formatDt(msg.ocrReview.lab.sampledAt) }}</span>
-                      <span>报告：{{ formatDt(msg.ocrReview.lab.reportedAt) }}</span>
-                    </div>
-                    <div class="ocr-table-wrap">
-                      <table class="ocr-table">
-                        <thead>
-                          <tr>
-                            <th>项目</th>
-                            <th>结果</th>
-                            <th>单位</th>
-                            <th>参考范围</th>
-                            <th>标志</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr v-for="item in msg.ocrReview.lab.items" :key="item.itemCode">
-                            <td>{{ item.itemName }}</td>
-                            <td>
-                              <template v-if="msg.ocrReview.status === 'pending'">
-                                <input
-                                  v-if="item.valueText && item.valueNum == null"
-                                  v-model="item.valueText"
-                                  class="ocr-input"
-                                  type="text"
-                                />
-                                <input
-                                  v-else
-                                  v-model.number="item.valueNum"
-                                  class="ocr-input"
-                                  type="number"
-                                  step="any"
-                                />
-                              </template>
-                              <template v-else>
-                                {{
-                                  item.valueNum != null
-                                    ? item.valueNum
-                                    : item.valueText || '—'
-                                }}
-                              </template>
-                            </td>
-                            <td>{{ item.unit || '—' }}</td>
-                            <td>
-                              {{
-                                item.refLow != null || item.refHigh != null
-                                  ? `${item.refLow ?? ''} ~ ${item.refHigh ?? ''}`
-                                  : '—'
-                              }}
-                            </td>
-                            <td
-                              :class="{
-                                hi: item.abnormalFlag === 'H',
-                                lo: item.abnormalFlag === 'L',
-                              }"
-                            >
-                              {{ flagLabel(item.abnormalFlag) }}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </template>
-
-                  <template v-else-if="msg.ocrReview.kind === 'EXAM' && msg.ocrReview.exam">
-                    <div class="ocr-meta">
-                      <span>
-                        类型：{{
-                          msg.ocrReview.exam.examTypeName ||
-                          examTypeLabel(msg.ocrReview.exam.examType || '')
-                        }}
-                      </span>
-                      <span>检查时间：{{ formatDt(msg.ocrReview.exam.examinedAt) }}</span>
-                    </div>
-                    <div class="ocr-table-wrap">
-                      <table class="ocr-table">
-                        <thead>
-                          <tr>
-                            <th>字段</th>
-                            <th>识别结果</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            <td>结论</td>
-                            <td>
-                              <textarea
-                                v-if="msg.ocrReview.status === 'pending'"
-                                v-model="msg.ocrReview.exam.conclusion"
-                                class="ocr-textarea"
-                                rows="3"
-                              />
-                              <template v-else>{{
-                                msg.ocrReview.exam.conclusion || '—'
-                              }}</template>
-                            </td>
-                          </tr>
-                          <tr v-for="row in examFindingRows(msg.ocrReview)" :key="row.key">
-                            <td>{{ row.label }}</td>
-                            <td>{{ row.value }}{{ row.unit ? ` ${row.unit}` : '' }}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </template>
-
-                  <p v-if="msg.ocrReview.warnings?.length" class="ocr-warn">
-                    {{ msg.ocrReview.warnings.join('；') }}
-                  </p>
-
-                  <div
-                    v-if="msg.ocrReview.status === 'pending' || msg.ocrReview.status === 'saving'"
-                    class="ocr-actions"
-                  >
-                    <button
-                      type="button"
-                      class="action-chip"
-                      :disabled="msg.ocrReview.status === 'saving'"
-                      @click="discardOcr(msg)"
-                    >
-                      取消
-                    </button>
-                    <button
-                      type="button"
-                      class="action-chip primary"
-                      :disabled="msg.ocrReview.status === 'saving'"
-                      @click="confirmOcr(msg)"
-                    >
-                      {{ msg.ocrReview.status === 'saving' ? '入库中…' : '确认入库' }}
-                    </button>
-                  </div>
-                  <p v-else-if="msg.ocrReview.status === 'confirmed'" class="ocr-status ok">
-                    已确认入库
-                  </p>
-                </div>
-              </template>
+              <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
+              <button
+                v-if="msg.imageUrl"
+                type="button"
+                class="msg-image"
+                :title="msg.imageName || '查看原图'"
+                @click="openImagePreview(msg.imageUrl)"
+              >
+                <img :src="msg.imageUrl" :alt="msg.imageName || '上传原图'" />
+              </button>
+              <AgentOcrReviewCard
+                v-if="msg.ocrReview && msg.ocrReview.status !== 'discarded'"
+                :review="msg.ocrReview"
+                @preview="openImagePreview"
+                @confirm="confirmOcr(msg)"
+                @discard="discardOcr(msg)"
+              />
               <div v-if="msg.actions?.length" class="bubble-actions">
                 <button
                   v-for="(a, ai) in msg.actions"
                   :key="ai"
                   type="button"
                   class="action-chip"
-                  :class="{ primary: ai === 0 }"
+                  :class="{
+                    primary: ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
+                    do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
+                    done: a.runState === 'done',
+                  }"
+                  :disabled="a.runState === 'busy' || a.runState === 'done'"
                   @click="runAction(a)"
                 >
-                  {{ a.label }}
+                  {{ a.runState === 'busy' ? '处理中…' : a.label }}
                 </button>
               </div>
             </div>
@@ -1831,6 +2024,24 @@ onMounted(async () => {
         </div>
 
         <div class="composer">
+          <div v-if="capabilityChips.length" class="quick-rail" aria-label="快捷能力">
+            <button
+              v-for="cap in capabilityChips"
+              :key="cap.code"
+              type="button"
+              class="quick-chip"
+              :disabled="
+                sending ||
+                uploading ||
+                isArchivedSession ||
+                (cap.needsPatient && !focusPeopleId)
+              "
+              :title="cap.hint"
+              @click="quickCapability(cap.code, cap.label)"
+            >
+              {{ cap.label }}
+            </button>
+          </div>
           <div class="composer-box">
             <el-input
               v-model="input"
@@ -1842,21 +2053,6 @@ onMounted(async () => {
               @keydown.enter.exact.prevent="sendMessage(input)"
             />
             <div class="composer-bar">
-              <div class="composer-tools">
-                <button
-                  type="button"
-                  class="tool-btn"
-                  title="上传检查检验单"
-                  :disabled="uploading || sending || isArchivedSession"
-                  @click="openReportUpload"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                    <path
-                      d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
-                    />
-                  </svg>
-                </button>
-              </div>
               <div class="composer-send">
                 <span class="hint">Enter 发送 · Shift+Enter 换行</span>
                 <button
@@ -1882,45 +2078,6 @@ onMounted(async () => {
             @change="onReportFile"
           />
           <p class="disclaimer">智能体基于知识库与患者数据生成建议，请人工核对。</p>
-
-          <div class="dock">
-            <button type="button" class="dock-item" @click="goFollowups">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                <circle cx="8.5" cy="7" r="4" />
-                <line x1="20" y1="8" x2="20" y2="14" />
-                <line x1="23" y1="11" x2="17" y2="11" />
-              </svg>
-              新建随访
-            </button>
-            <button
-              type="button"
-              class="dock-item"
-              :disabled="uploading || sending"
-              @click="openReportUpload"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              {{ uploading ? '识别中…' : '上传检查检验单' }}
-            </button>
-            <button type="button" class="dock-item" @click="goCarePlan">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-              调整方案
-            </button>
-            <button type="button" class="dock-item" @click="goReports">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-              管理报告
-            </button>
-          </div>
         </div>
 
         <el-drawer
@@ -1995,7 +2152,7 @@ onMounted(async () => {
         </div>
 
         <template v-if="focus">
-          <div class="focus-scroll">
+          <div class="focus-body">
             <div class="focus-card">
               <div class="focus-top">
                 <span
@@ -2005,9 +2162,14 @@ onMounted(async () => {
                   {{ nameInitial(focus.displayName) }}
                 </span>
                 <div class="focus-identity">
-                  <div class="focus-name">
-                    {{ focus.displayName }}
-                    <i class="live" :class="{ on: focus.clientLinked }" />
+                  <div class="focus-name-row">
+                    <div class="focus-name">
+                      {{ focus.displayName }}
+                      <i class="live" :class="{ on: focus.clientLinked }" />
+                    </div>
+                    <button type="button" class="focus-contact-link" @click="goContactPatient">
+                      联系
+                    </button>
                   </div>
                   <div class="focus-meta">
                     <span v-if="focusAge != null">{{ focusAge }} 岁</span>
@@ -2016,12 +2178,6 @@ onMounted(async () => {
                   </div>
                 </div>
               </div>
-              <button type="button" class="focus-contact" @click="goContactPatient">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                联系患者
-              </button>
 
               <div class="focus-eval">
                 <div class="eval-label" :class="{ alert: assessmentAlert }">
@@ -2081,115 +2237,182 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="section">
-              <div class="section-title">
-                待你确认
-                <span class="count">{{ pendingDraftCount }} 项</span>
+            <div class="focus-mid">
+              <div class="section compact">
+                <div class="section-title">
+                  待你确认
+                  <span class="count">{{ pendingDraftCount }} 项</span>
+                </div>
+                <div v-if="visiblePendingDrafts.length" class="draft-list">
+                  <button
+                    v-for="d in visiblePendingDrafts"
+                    :key="`${d.kind}-${d.id || d.title}`"
+                    type="button"
+                    class="draft-item draft"
+                    :class="{ report: d.kind === 'REPORT', plan: d.kind === 'CARE_PLAN' }"
+                    :title="`${d.title}${d.summary ? ' · ' + d.summary : ''}`"
+                    @click="openPendingDraft(d)"
+                  >
+                    <span class="draft-icon warn">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                      </svg>
+                    </span>
+                    <span class="draft-body">
+                      <span class="draft-title">{{ d.title }}</span>
+                      <span class="draft-meta">
+                        {{ pendingKindLabel(d.kind) }}
+                        <template v-if="d.summary"> · {{ d.summary }}</template>
+                      </span>
+                    </span>
+                    <span class="draft-cta">{{ d.actionLabel || '去审阅' }}</span>
+                  </button>
+                  <button
+                    v-if="pendingDraftMore > 0"
+                    type="button"
+                    class="list-expand"
+                    :aria-expanded="pendingDraftsExpanded"
+                    :title="pendingDraftsExpanded ? '收起' : `展开其余 ${pendingDraftMore} 项`"
+                    @click="pendingDraftsExpanded = !pendingDraftsExpanded"
+                  >
+                    <template v-if="pendingDraftsExpanded">收起</template>
+                    <template v-else>···</template>
+                  </button>
+                </div>
+                <p v-else class="empty-hint">暂无方案/报告待确认草稿</p>
               </div>
-              <div v-if="pendingDrafts.length" class="draft-list">
-                <button
-                  v-for="d in pendingDrafts"
-                  :key="`${d.kind}-${d.id || d.title}`"
-                  type="button"
-                  class="draft-item draft"
-                  @click="openPendingDraft(d)"
-                >
-                  <span class="draft-icon warn">
+
+              <div class="section compact">
+                <div class="section-title">
+                  工作台待办
+                  <span class="count">{{ draftTaskCount || todoTasks.length }} 项</span>
+                </div>
+                <div v-if="visibleTodoTasks.length" class="draft-list">
+                  <button
+                    v-for="t in visibleTodoTasks"
+                    :key="t.id"
+                    type="button"
+                    class="draft-item"
+                    :class="{ draft: isDraftTask(t) }"
+                    :title="`${t.taskTypeLabel} · ${t.summary || '待处理'}${t.overdue ? ' · 超期' : ''}`"
+                    @click="openTodoTask(t)"
+                  >
+                    <span class="draft-icon" :class="{ warn: t.overdue }">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path
+                          v-if="isDraftTask(t)"
+                          d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                        />
+                        <path
+                          v-else
+                          d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                        />
+                      </svg>
+                    </span>
+                    <span class="draft-body">
+                      <span class="draft-title">{{ t.taskTypeLabel }}</span>
+                      <span class="draft-meta">
+                        {{ t.summary || '待处理' }}
+                        <template v-if="t.overdue"> · 超期</template>
+                        <template v-else-if="isDraftTask(t)"> · AI 草稿</template>
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    v-if="todoTaskMore > 0"
+                    type="button"
+                    class="list-expand"
+                    :aria-expanded="todoTasksExpanded"
+                    :title="todoTasksExpanded ? '收起' : `展开其余 ${todoTaskMore} 项`"
+                    @click="todoTasksExpanded = !todoTasksExpanded"
+                  >
+                    <template v-if="todoTasksExpanded">收起</template>
+                    <template v-else>···</template>
+                  </button>
+                </div>
+                <p v-else class="empty-hint">暂无待办任务</p>
+              </div>
+            </div>
+
+            <div class="section quick-actions">
+              <div class="section-title">快捷办理</div>
+              <div class="quick-list">
+                <button type="button" class="quick-btn" @click="goArchive">
+                  <span class="quick-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </span>
+                  <span class="quick-label">查看档案</span>
+                  <span class="quick-arrow" aria-hidden="true">›</span>
+                </button>
+                <button type="button" class="quick-btn" @click="goObservations">
+                  <span class="quick-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                    </svg>
+                  </span>
+                  <span class="quick-label">录入数据</span>
+                  <span class="quick-arrow" aria-hidden="true">›</span>
+                </button>
+                <button type="button" class="quick-btn" @click="goFollowups">
+                  <span class="quick-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M9 11l3 3L22 4" />
+                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                    </svg>
+                  </span>
+                  <span class="quick-label">创建随访</span>
+                  <span class="quick-arrow" aria-hidden="true">›</span>
+                </button>
+                <button type="button" class="quick-btn" @click="goCarePlan">
+                  <span class="quick-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </span>
+                  <span class="quick-label">编辑方案</span>
+                  <span class="quick-arrow" aria-hidden="true">›</span>
+                </button>
+                <button type="button" class="quick-btn" @click="goReports">
+                  <span class="quick-ico" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                       <polyline points="14 2 14 8 20 8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                      <polyline points="10 9 9 9 8 9" />
                     </svg>
                   </span>
-                  <span class="draft-body">
-                    <span class="draft-title">{{ d.title }}</span>
-                    <span class="draft-meta">
-                      {{ pendingKindLabel(d.kind) }}
-                      <template v-if="d.summary"> · {{ d.summary }}</template>
-                    </span>
-                  </span>
+                  <span class="quick-label">查看报告</span>
+                  <span class="quick-arrow" aria-hidden="true">›</span>
                 </button>
-              </div>
-              <p v-else class="empty-hint">暂无方案/报告待确认草稿</p>
-            </div>
-
-            <div class="section">
-              <div class="section-title">
-                工作台待办
-                <span class="count">{{ draftTaskCount || todoTasks.length }} 项</span>
-              </div>
-              <div v-if="todoTasks.length" class="draft-list">
-                <button
-                  v-for="t in todoTasks"
-                  :key="t.id"
-                  type="button"
-                  class="draft-item"
-                  :class="{ draft: isDraftTask(t) }"
-                  @click="openTodoTask(t)"
-                >
-                  <span class="draft-icon" :class="{ warn: t.overdue }">
+                <button type="button" class="quick-btn" @click="goMedications">
+                  <span class="quick-ico" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path
-                        v-if="isDraftTask(t)"
-                        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-                      />
-                      <path
-                        v-else
-                        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                      />
+                      <rect x="3" y="8" width="18" height="8" rx="4" />
+                      <path d="M7 8v8" />
+                      <path d="M12 8v8" />
                     </svg>
                   </span>
-                  <span class="draft-body">
-                    <span class="draft-title">{{ t.taskTypeLabel }}</span>
-                    <span class="draft-meta">
-                      {{ t.summary || '待处理' }}
-                      <template v-if="t.overdue"> · 超期</template>
-                      <template v-else-if="isDraftTask(t)"> · AI 草稿</template>
-                    </span>
+                  <span class="quick-label">用药管理</span>
+                  <span class="quick-arrow" aria-hidden="true">›</span>
+                </button>
+                <button type="button" class="quick-btn" @click="goAssessments">
+                  <span class="quick-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 20V10" />
+                      <path d="M18 20V4" />
+                      <path d="M6 20v-4" />
+                    </svg>
                   </span>
+                  <span class="quick-label">疾病评估</span>
+                  <span class="quick-arrow" aria-hidden="true">›</span>
                 </button>
               </div>
-              <p v-else class="empty-hint">暂无待办任务</p>
-            </div>
-
-            <div class="section">
-              <div class="section-title">快捷办理</div>
-              <button type="button" class="quick-btn" @click="goArchive">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
-                查看档案
-              </button>
-              <button type="button" class="quick-btn" @click="goObservations">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                </svg>
-                录入健康数据
-              </button>
-              <button type="button" class="quick-btn" @click="goFollowups">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M9 11l3 3L22 4" />
-                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                </svg>
-                创建随访
-              </button>
-              <button type="button" class="quick-btn" @click="goCarePlan">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                </svg>
-                编辑方案
-              </button>
-              <button type="button" class="quick-btn" @click="goReports">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                  <polyline points="10 9 9 9 8 9" />
-                </svg>
-                查看报告
-              </button>
             </div>
           </div>
         </template>
@@ -2211,6 +2434,14 @@ onMounted(async () => {
       :people-id="sheetPeopleId"
       :mode="sheetMode"
       :patient-name="focus?.displayName"
+      @published="onReportPublished"
+    />
+
+    <el-image-viewer
+      v-if="imagePreviewUrl"
+      :url-list="[imagePreviewUrl]"
+      teleported
+      @close="closeImagePreview"
     />
   </div>
 </template>
@@ -2229,7 +2460,7 @@ onMounted(async () => {
 
 .board {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1.55fr) minmax(260px, 300px);
+  grid-template-columns: minmax(268px, 300px) minmax(0, 1.55fr) minmax(260px, 300px);
   gap: 14px;
   flex: 1;
   min-height: 0;
@@ -2238,6 +2469,7 @@ onMounted(async () => {
 .col {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--admin-card, #fff);
@@ -2248,12 +2480,17 @@ onMounted(async () => {
 
 .col-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  padding: 14px 18px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--ink-100);
   flex-shrink: 0;
+}
+
+.col-head-text {
+  min-width: 0;
+  flex: 1;
 }
 
 .col-head h3 {
@@ -2267,11 +2504,16 @@ onMounted(async () => {
   margin: 2px 0 0;
   font-size: 11.5px;
   color: var(--ink-500);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .col-actions {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
+  padding-top: 1px;
 }
 
 .icon-btn {
@@ -2298,26 +2540,37 @@ onMounted(async () => {
 }
 
 .priority-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
-  margin: 10px 12px 0;
-  padding: 6px;
+  margin: 10px 10px 0;
+  padding: 4px;
   background: var(--ink-100);
   border-radius: var(--admin-radius-sm, 8px);
   flex-shrink: 0;
 }
 
 .priority-tabs button {
-  flex: 1;
+  min-width: 0;
   border: 0;
   background: transparent;
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 6px 2px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--ink-500);
   border-radius: 6px;
   cursor: pointer;
   transition: var(--admin-transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.priority-tabs .tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2355,14 +2608,19 @@ onMounted(async () => {
 }
 
 .priority-tabs .count {
-  display: inline-block;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
   background: var(--rose-500);
   color: #fff;
   font-size: 10px;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: 8px;
-  margin-left: 3px;
   font-weight: 600;
+  line-height: 1;
 }
 
 .priority-tabs .count.muted,
@@ -2801,10 +3059,10 @@ onMounted(async () => {
 }
 
 .ai-avatar .ai-logo {
-  width: 132%;
-  height: 132%;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  object-position: center 42%;
+  object-position: center;
   display: block;
   background: #fff;
 }
@@ -3005,7 +3263,7 @@ onMounted(async () => {
 
 .msg-row.assistant {
   align-self: flex-start;
-  max-width: 96%;
+  max-width: min(560px, 96%);
 }
 
 .msg-row.user {
@@ -3039,20 +3297,21 @@ onMounted(async () => {
 }
 
 .msg-avatar .ai-logo {
-  width: 132%;
-  height: 132%;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  object-position: center 42%;
+  object-position: center;
   display: block;
   background: #fff;
 }
 
 .bubble {
   min-width: 0;
+  max-width: min(520px, 100%);
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 13.5px;
-  line-height: 1.65;
+  line-height: 1.45;
 }
 
 .bubble.assistant {
@@ -3096,14 +3355,35 @@ onMounted(async () => {
   word-break: break-word;
 }
 
+.bubble-text.stream-live::after {
+  content: '▍';
+  display: inline-block;
+  margin-left: 2px;
+  animation: stream-caret 0.9s steps(1) infinite;
+  color: var(--brand-500, #0d9488);
+}
+
+@keyframes stream-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
 .msg-image {
   display: block;
   margin: 0 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.18);
   max-width: 220px;
+  padding: 0;
   background: #0f172a;
+  cursor: zoom-in;
 }
 
 .msg-row.user .msg-image {
@@ -3115,7 +3395,6 @@ onMounted(async () => {
   width: 100%;
   max-height: 180px;
   object-fit: contain;
-  background: #0f172a;
 }
 
 .ocr-card {
@@ -3158,9 +3437,14 @@ onMounted(async () => {
 }
 
 .ocr-view-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
   font-size: 12px;
   color: var(--brand-500);
-  text-decoration: none;
+  cursor: pointer;
   flex-shrink: 0;
 }
 
@@ -3170,12 +3454,20 @@ onMounted(async () => {
 
 .ocr-origin {
   display: block;
+  width: 100%;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--ink-200);
   background: #f8fafc;
-  text-decoration: none;
+  padding: 0;
+  margin: 0;
   line-height: 0;
+  cursor: zoom-in;
+  text-align: left;
+}
+
+.ocr-origin:hover {
+  border-color: var(--brand-300, #93c5fd);
 }
 
 .ocr-origin img {
@@ -3189,9 +3481,32 @@ onMounted(async () => {
 .ocr-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 14px;
+  align-items: center;
+  gap: 8px 12px;
   font-size: 11.5px;
   color: var(--ink-500);
+}
+
+.ocr-meta-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+
+.ocr-meta-label {
+  flex-shrink: 0;
+  color: var(--ink-500);
+}
+
+.ocr-dt {
+  width: 168px;
+}
+
+.ocr-dt :deep(.el-input__wrapper) {
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 .ocr-table-wrap {
@@ -3245,6 +3560,66 @@ onMounted(async () => {
   font-size: 12px;
   color: var(--ink-800);
   background: #fff;
+  box-sizing: border-box;
+}
+
+.ocr-input-sm {
+  width: 52px;
+  min-width: 48px;
+  max-width: 56px;
+  flex: 0 0 auto;
+}
+
+.ocr-table-med {
+  table-layout: fixed;
+}
+
+.ocr-table-med th:nth-child(1),
+.ocr-table-med td:nth-child(1) {
+  width: 30%;
+}
+
+.ocr-table-med th:nth-child(2),
+.ocr-table-med td:nth-child(2) {
+  width: 28%;
+}
+
+.ocr-table-med th:nth-child(3),
+.ocr-table-med td:nth-child(3) {
+  width: 22%;
+}
+
+.ocr-table-med th:nth-child(4),
+.ocr-table-med td:nth-child(4) {
+  width: 20%;
+}
+
+.ocr-table-med td {
+  overflow: hidden;
+}
+
+.ocr-dose-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ocr-unit-select {
+  flex: 0 0 68px;
+  width: 68px !important;
+}
+
+.ocr-freq-select,
+.ocr-usage-select {
+  width: 100%;
+}
+
+.ocr-unit-select :deep(.el-select__wrapper),
+.ocr-freq-select :deep(.el-select__wrapper),
+.ocr-usage-select :deep(.el-select__wrapper) {
+  min-height: 28px;
+  font-size: 12px;
 }
 
 .ocr-textarea {
@@ -3288,6 +3663,119 @@ onMounted(async () => {
 .md-body :deep(.section-title) {
   font-weight: 700;
   color: var(--ink-900);
+  display: block;
+  margin: 6px 0 2px;
+}
+
+.md-body :deep(.section-title:first-child) {
+  margin-top: 0;
+}
+
+.report-status {
+  font-size: 12.5px;
+  color: var(--ink-600);
+  margin-bottom: 8px;
+}
+
+.report-card {
+  border: 1px solid var(--ink-200);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.report-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #f8fafc, #fff);
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.report-card-head strong {
+  font-size: 13px;
+  color: var(--ink-900);
+  line-height: 1.35;
+}
+
+.report-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.report-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--ink-100);
+  color: var(--ink-600);
+}
+
+.report-chip.ai {
+  background: color-mix(in srgb, var(--brand-500, #0d9488) 14%, #fff);
+  color: var(--brand-700, #0f766e);
+}
+
+.report-chip.tpl {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.report-sec {
+  padding: 10px 12px;
+  border-top: 1px solid var(--ink-100);
+}
+
+.report-sec:first-of-type,
+.report-card-head + .report-sec {
+  border-top: none;
+}
+
+.report-sec h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand-700, #0f766e);
+}
+
+.report-sec p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-800);
+  white-space: pre-wrap;
+}
+
+.report-sec.focus {
+  background: color-mix(in srgb, var(--brand-500, #0d9488) 6%, #fff);
+}
+
+.report-sec ol {
+  margin: 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.report-sec li {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-800);
+}
+
+.report-note {
+  margin: 0;
+  padding: 8px 12px 10px;
+  font-size: 11.5px;
+  color: var(--ink-500);
+  border-top: 1px solid var(--ink-100);
 }
 
 .md-body :deep(.field-label) {
@@ -3329,6 +3817,24 @@ onMounted(async () => {
 .action-chip.primary:hover {
   background: var(--brand-600);
   color: #fff;
+}
+
+.action-chip.do:not(.primary) {
+  border-color: var(--brand-300, #93c5fd);
+  color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+.action-chip:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.action-chip.done,
+.action-chip.done:hover {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #e2e8f0;
 }
 
 .typing {
@@ -3373,6 +3879,37 @@ onMounted(async () => {
   padding: 12px 14px 14px;
 }
 
+.quick-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.quick-chip {
+  border: 1px solid var(--ink-200);
+  background: var(--ink-50);
+  color: var(--ink-700);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--admin-transition);
+  white-space: nowrap;
+}
+
+.quick-chip:hover:not(:disabled) {
+  border-color: var(--brand-300);
+  background: var(--brand-50);
+  color: var(--brand-700);
+}
+
+.quick-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .composer-box {
   background: var(--ink-50);
   border: 1px solid var(--ink-200);
@@ -3400,41 +3937,8 @@ onMounted(async () => {
 .composer-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-top: 8px;
-}
-
-.composer-tools {
-  display: flex;
-  gap: 4px;
-}
-
-.tool-btn {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--ink-500);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transition: var(--admin-transition);
-}
-
-.tool-btn:hover {
-  background: var(--ink-100);
-  color: var(--ink-800);
-}
-
-.tool-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.tool-btn svg {
-  width: 16px;
-  height: 16px;
 }
 
 .composer-send {
@@ -3484,66 +3988,22 @@ onMounted(async () => {
   color: var(--ink-400);
 }
 
-.dock {
-  display: flex;
-  gap: 6px;
-  margin: 10px -14px -14px;
-  padding: 8px 14px;
-  background: #fff;
-  border-top: 1px solid var(--ink-100);
-  overflow-x: auto;
-}
-
-.dock::-webkit-scrollbar {
-  display: none;
-}
-
-.dock-item:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .report-file-input {
   display: none;
 }
 
-.dock-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--ink-200);
-  background: var(--ink-50);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink-700);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: var(--admin-transition);
-}
-
-.dock-item svg {
-  width: 14px;
-  height: 14px;
-  color: var(--brand-500);
-}
-
-.dock-item:hover {
-  background: var(--brand-50);
-  border-color: var(--brand-300);
-  color: var(--brand-600);
-}
-
-.focus-scroll {
+.focus-body {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .focus-card {
-  margin: 12px;
-  padding: 16px;
+  flex-shrink: 0;
+  margin: 8px 10px 0;
+  padding: 10px 12px;
   background: linear-gradient(135deg, var(--brand-50) 0%, var(--teal-50) 100%);
   border-radius: var(--admin-radius, 12px);
 }
@@ -3551,8 +4011,8 @@ onMounted(async () => {
 .focus-top {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .focus-identity {
@@ -3561,25 +4021,37 @@ onMounted(async () => {
 }
 
 .focus-avatar {
-  width: 46px;
-  height: 46px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   color: #fff;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 14px;
   box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.3);
   flex-shrink: 0;
 }
 
+.focus-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .focus-name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--ink-900);
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .live {
@@ -3587,6 +4059,7 @@ onMounted(async () => {
   height: 8px;
   border-radius: 50%;
   background: var(--ink-300);
+  flex-shrink: 0;
 }
 
 .live.on {
@@ -3598,51 +4071,40 @@ onMounted(async () => {
   margin-top: 2px;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  font-size: 11.5px;
+  gap: 6px;
+  font-size: 11px;
   color: var(--ink-500);
 }
 
-.focus-contact {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  border: 1px solid rgba(59, 130, 246, 0.28);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--brand-600, #2563eb);
-  font-size: 12.5px;
+.focus-contact-link {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
   font-weight: 600;
+  color: var(--brand-600, #2563eb);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.focus-contact:hover {
-  background: var(--brand-50, #eff6ff);
-  border-color: var(--brand-500, #3b82f6);
-}
-
-.focus-contact svg {
-  width: 14px;
-  height: 14px;
+.focus-contact-link:hover {
+  text-decoration: underline;
 }
 
 .focus-eval {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .eval-label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   color: var(--ink-500);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .eval-label.alert {
@@ -3660,17 +4122,17 @@ onMounted(async () => {
 .eval-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .eval-tag {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.35;
   border: 1px solid transparent;
 }
 
@@ -3706,30 +4168,30 @@ onMounted(async () => {
 
 .eval-empty {
   margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--ink-400);
 }
 
 .focus-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
 }
 
 .metric {
   background: #fff;
   border-radius: 8px;
-  padding: 10px;
+  padding: 7px 8px;
 }
 
 .metric-label {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--ink-500);
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 
 .metric-val {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--ink-900);
   line-height: 1.2;
@@ -3740,8 +4202,8 @@ onMounted(async () => {
 }
 
 .metric-bar {
-  margin-top: 8px;
-  height: 4px;
+  margin-top: 5px;
+  height: 3px;
   border-radius: 999px;
   background: #eef2f7;
   overflow: hidden;
@@ -3780,9 +4242,109 @@ onMounted(async () => {
   background: var(--rose-500, #f43f5e);
 }
 
+.focus-mid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .section {
-  padding: 14px 16px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--ink-100);
+}
+
+.section.compact {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.section.quick-actions {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border-bottom: 0;
+  border-top: 1px solid var(--ink-100);
+  background: #fff;
+}
+
+.section.quick-actions .section-title {
+  margin-bottom: 8px;
+}
+
+.quick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quick-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  margin: 0;
+  background: var(--ink-50, #f8fafc);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-800);
+  cursor: pointer;
+  transition: var(--admin-transition);
+  text-align: left;
+  min-width: 0;
+}
+
+.quick-btn:hover {
+  background: var(--brand-50, #eff6ff);
+  border-color: var(--brand-200, #bfdbfe);
+  color: var(--brand-700, #1d4ed8);
+}
+
+.quick-btn:hover .quick-ico {
+  background: #fff;
+  color: var(--brand-600, #2563eb);
+}
+
+.quick-btn:hover .quick-arrow {
+  color: var(--brand-500, #3b82f6);
+  transform: translateX(2px);
+}
+
+.quick-ico {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 1px solid var(--ink-100, #eef2f7);
+  color: var(--brand-600, #2563eb);
+  flex-shrink: 0;
+  transition: var(--admin-transition);
+}
+
+.quick-ico svg {
+  width: 14px;
+  height: 14px;
+}
+
+.quick-label {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.quick-arrow {
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-300);
+  transition: var(--admin-transition);
 }
 
 .section:last-child {
@@ -3790,10 +4352,10 @@ onMounted(async () => {
 }
 
 .section-title {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--ink-700);
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3808,16 +4370,16 @@ onMounted(async () => {
 .draft-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .draft-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 8px 10px;
+  padding: 6px 8px;
   background: linear-gradient(90deg, var(--violet-50) 0%, transparent 100%);
   border: 1px solid var(--violet-50);
   border-radius: 8px;
@@ -3825,6 +4387,7 @@ onMounted(async () => {
   transition: var(--admin-transition);
   font: inherit;
   color: inherit;
+  min-width: 0;
 }
 
 .draft-item:not(.draft) {
@@ -3841,8 +4404,8 @@ onMounted(async () => {
 }
 
 .draft-icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 6px;
   background: var(--violet-500);
   color: #fff;
@@ -3856,63 +4419,78 @@ onMounted(async () => {
 }
 
 .draft-icon svg {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
 }
 
 .draft-body {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
 }
 
 .draft-title {
-  font-size: 12.5px;
+  flex-shrink: 0;
+  max-width: 42%;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink-800);
-  line-height: 1.4;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .draft-meta {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   color: var(--ink-500);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.quick-btn {
+.draft-cta {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand-600, #2c7ef8);
+  white-space: nowrap;
+}
+
+.draft-item.plan .draft-cta,
+.draft-item.report .draft-cta {
+  color: var(--brand-600, #2c7ef8);
+}
+
+.list-expand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
   width: 100%;
-  padding: 9px 12px;
+  border: 1px dashed var(--ink-200);
   background: #fff;
-  border: 1px solid var(--ink-200);
   border-radius: 8px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--ink-700);
-  margin-bottom: 6px;
+  padding: 4px 8px;
+  margin: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ink-500);
   cursor: pointer;
   transition: var(--admin-transition);
-  text-align: left;
+  line-height: 1.2;
 }
 
-.quick-btn:last-child {
-  margin-bottom: 0;
-}
-
-.quick-btn:hover {
-  border-color: var(--brand-500);
-  color: var(--brand-600);
-  background: var(--brand-50);
-}
-
-.quick-btn svg {
-  width: 14px;
-  height: 14px;
-  color: var(--brand-500);
-  flex-shrink: 0;
+.list-expand:hover {
+  border-color: var(--brand-400, #60a5fa);
+  color: var(--brand-600, #2563eb);
+  background: #f8fbff;
 }
 
 .empty-hint {
@@ -3953,13 +4531,13 @@ onMounted(async () => {
 
 @media (max-width: 1280px) {
   .board {
-    grid-template-columns: minmax(200px, 240px) minmax(0, 1fr) minmax(240px, 280px);
+    grid-template-columns: minmax(252px, 280px) minmax(0, 1fr) minmax(240px, 280px);
   }
 }
 
 @media (max-width: 1200px) {
   .board {
-    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
   }
   .right {
     grid-column: 1 / -1;

@@ -33,6 +33,10 @@ public interface FollowupRecordMapper {
     /** 患者当前 OPEN 的定期随访（一键催办复用）。 */
     FollowupRecord findOpenPeriodicByPeople(@Param("orgId") String orgId, @Param("peopleId") String peopleId);
 
+    /** 患者当前 OPEN 的主动申请回访单（避免重复刷单）。 */
+    FollowupRecord findOpenPatientRequestByPeople(
+            @Param("orgId") String orgId, @Param("peopleId") String peopleId);
+
     FollowupRecord findLatestByTaskAndType(
             @Param("workspaceTaskId") String workspaceTaskId, @Param("recordType") String recordType);
 

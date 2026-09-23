@@ -53,8 +53,12 @@ interface Intake {
 
 const TIMING_PRESETS = ['晨起', '饭前', '饭后', '睡前', '痛时服'] as const
 
+const props = defineProps<{
+  peopleId?: string
+}>()
+
 const route = useRoute()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
 const saving = ref(false)
@@ -522,6 +526,10 @@ watch(
 onMounted(async () => {
   await loadDict()
   await loadList()
+})
+
+watch(peopleId, async (id, prev) => {
+  if (id && id !== prev) await loadList()
 })
 </script>
 

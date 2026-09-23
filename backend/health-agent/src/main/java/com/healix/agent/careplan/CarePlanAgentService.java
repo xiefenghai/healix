@@ -119,6 +119,109 @@ public class CarePlanAgentService {
         return bundle;
     }
 
+    /**
+     * 多轮修订：在当前草稿上按指令更新；无草稿时回退为重新生成。
+     */
+    public CarePlanBundleDto reviseStream(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String instruction,
+            Consumer<AgentStreamEvent> sink) {
+        CarePlanStreamSink.progress(sink, "开始按你的要求修订方案草稿…");
+        CarePlanBundleDto current = carePlanService.getBundle(tenantId, orgId, peopleId);
+        if (current == null || current.getDraft() == null) {
+            CarePlanStreamSink.progress(sink, "当前无草稿，改为生成新方案…");
+            return generateStream(
+                    tenantId, orgId, peopleId, staffId, instruction, null, null, true, sink, true);
+        }
+        CarePlanBundleDto bundle =
+                self.reviseAndPersist(tenantId, orgId, peopleId, staffId, instruction, sink);
+        CarePlanStreamSink.progress(sink, "方案草稿已更新，可前往审阅");
+        return bundle;
+    }
+
+    @Transactional
+    public CarePlanBundleDto reviseAndPersist(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String instruction,
+            Consumer<AgentStreamEvent> sink) {
+        CarePlanBundleDto current = carePlanService.getBundle(tenantId, orgId, peopleId);
+        if (current == null || current.getDraft() == null) {
+            throw new BusinessException("无草稿可修订，请先生成管理方案");
+        }
+        var draft = current.getDraft();
+        int expectedVersion = draft.getVersion() == null ? 1 : draft.getVersion();
+
+        CarePlanStreamSink.progress(sink, "正在加载患者档案与观测数据…");
+        CarePlanContext ctx = contextTools.loadCarePlanContext(
+                tenantId,
+                peopleId,
+                (tool, status, detail) -> CarePlanStreamSink.tool(sink, tool, status, detail));
+        List<String> diseaseCodes = ctx.diseaseCodes();
+        CarePlanTemplateKeyEnum key = templateRegistry.resolveTemplateKey(diseaseCodes, null);
+
+        AgentInteractionLog logEntity = new AgentInteractionLog();
+        logEntity.setAgentType(AgentTypeEnum.CARE_COPILOT.name());
+        logEntity.setTenantId(tenantId);
+        logEntity.setPeopleId(peopleId);
+        logEntity.setStaffId(staffId);
+        logEntity.setIntent("CARE_PLAN_REVISE");
+        logEntity.setUserMessage(instruction == null ? "revise care plan" : instruction);
+        logEntity.setToolCallsJson("CarePlanContextTools.loadCarePlanContext");
+
+        if (!agentLlmEnabled || !llmClient.isEnabled()) {
+            throw new BusinessException(
+                    "LLM 未启用：请使用 dev profile 启动后端，并在 application-local.yml 配置 DeepSeek API Key");
+        }
+
+        String goalFromPlan =
+                current.getPlan() != null ? current.getPlan().getGoalSummary() : null;
+        var llmResult = carePlanLlmGenerator.tryRevise(
+                key,
+                ctx,
+                instruction,
+                diseaseCodes,
+                draft.getExercise(),
+                draft.getDiet(),
+                draft.getExecution(),
+                goalFromPlan,
+                sink);
+        if (llmResult.isEmpty()) {
+            throw new BusinessException("AI 修订失败：请换一种说法重试，或打开方案页手工编辑");
+        }
+        LlmPlanResult r = llmResult.get();
+        logEntity.setDraftReply("LLM_REVISE");
+        if (r.llmResponse() != null) {
+            logEntity.setPromptTokens(r.llmResponse().promptTokens());
+            logEntity.setCompletionTokens(r.llmResponse().completionTokens());
+        }
+        logEntity.setFinalReply("LLM_REVISE");
+        EntityMeta.onCreate(logEntity);
+        interactionLogMapper.insert(logEntity);
+
+        CarePlanStreamSink.progress(sink, "正在保存修订后的草稿…");
+        CarePlanStreamSink.tool(sink, "updateDraft", "running", "写入方案草稿");
+        CarePlanBundleDto bundle = carePlanService.updateDraft(
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                expectedVersion,
+                r.plan().exercise(),
+                r.plan().diet(),
+                r.plan().execution(),
+                null,
+                r.goalSummary(),
+                r.summary());
+        CarePlanStreamSink.tool(sink, "updateDraft", "done", "草稿已更新");
+        return bundle;
+    }
+
     @Transactional
     public CarePlanBundleDto generateAndPersist(
             String tenantId,

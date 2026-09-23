@@ -22,15 +22,26 @@ export interface HealthReportDetail {
   content?: Record<string, unknown> | null
 }
 
+export type ReportAiPrefill = {
+  staffComment?: string
+  nextFocus?: string
+  quarterAdvice?: string
+  fromLlm?: boolean
+  note?: string
+}
+
 const props = defineProps<{
   reportId: string | null
   /** 审阅模式：可刷新/发布/跳过；只读则仅看 */
   mode?: 'review' | 'readonly'
+  /** 灵犀对话带入的点评预填（不落库，人确认后发布） */
+  aiPrefill?: ReportAiPrefill | null
 }>()
 
 const emit = defineEmits<{
   closed: []
   changed: []
+  published: []
 }>()
 
 const open = ref(false)
@@ -44,13 +55,7 @@ const aiLoading = ref(false)
 const aiNote = ref('')
 const exporting = ref(false)
 
-type AiSummary = {
-  staffComment?: string
-  nextFocus?: string
-  quarterAdvice?: string
-  fromLlm?: boolean
-  note?: string
-}
+type AiSummary = ReportAiPrefill
 
 const isReview = computed(() => props.mode !== 'readonly' && report.value?.status === 'DRAFT')
 const isQuarter = computed(() => report.value?.periodType === 'QUARTER')
@@ -85,6 +90,7 @@ async function load(id: string) {
     const n = res.data.content?.narrative as { nextFocus?: string; quarterAdvice?: string } | undefined
     if (n?.nextFocus) nextFocus.value = String(n.nextFocus)
     if (n?.quarterAdvice) quarterAdvice.value = String(n.quarterAdvice)
+    applyAiPrefill(props.aiPrefill)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载报告失败')
     open.value = false
@@ -93,6 +99,25 @@ async function load(id: string) {
     loading.value = false
   }
 }
+
+function applyAiPrefill(p?: ReportAiPrefill | null) {
+  if (!p || !report.value) return
+  if (p.staffComment) staffComment.value = p.staffComment
+  if (p.nextFocus) nextFocus.value = p.nextFocus
+  if (p.quarterAdvice && isQuarter.value) {
+    quarterAdvice.value = p.quarterAdvice
+  }
+  aiNote.value = p.note || '已从灵犀填入点评草稿，请核对后发布'
+}
+
+watch(
+  () => props.aiPrefill,
+  (p) => {
+    if (p && report.value && !loading.value) {
+      applyAiPrefill(p)
+    }
+  },
+)
 
 /** 覆盖前先确认，避免冲掉健管师已写的内容 */
 async function generateAiSummary() {
@@ -193,6 +218,7 @@ async function publish() {
     report.value = res.data
     ElMessage.success('已发布')
     emit('changed')
+    emit('published')
     open.value = false
     emit('closed')
   } catch (e) {
@@ -272,26 +298,33 @@ function onClosed() {
             <el-input
               v-model="staffComment"
               type="textarea"
-              :rows="3"
+              :autosize="{ minRows: 6, maxRows: 14 }"
               maxlength="1000"
               show-word-limit
-              placeholder="给患者的一句话；留空则使用分档模板"
+              placeholder="写给患者看的寄语，用「您」说话；留空则使用分档模板"
             />
             <div v-if="commentPreview" class="preview">
               <span class="preview-label">患者将看到：</span>{{ commentPreview }}
             </div>
           </el-form-item>
           <el-form-item label="下期关注（选填）">
-            <el-input v-model="nextFocus" maxlength="200" placeholder="例如：加强晨起血压监测" />
+            <el-input
+              v-model="nextFocus"
+              type="textarea"
+              :autosize="{ minRows: 4, maxRows: 10 }"
+              maxlength="500"
+              show-word-limit
+              placeholder="1–3 条请患者去做的动作，每条一行，例如：&#10;1. 建议您早餐后测血压并记录&#10;2. 漏打任务尽量当天补上"
+            />
           </el-form-item>
           <el-form-item v-if="isQuarter" label="阶段建议（必填）" required>
             <el-input
               v-model="quarterAdvice"
               type="textarea"
-              :rows="3"
+              :autosize="{ minRows: 4, maxRows: 10 }"
               maxlength="1000"
               show-word-limit
-              placeholder="本季管理小结与下阶段建议，可含是否建议调整方案"
+              placeholder="对本季情况的小结，以及对您下阶段的建议（对患者说）"
             />
           </el-form-item>
         </el-form>
@@ -328,7 +361,7 @@ function onClosed() {
   margin-bottom: 12px;
 }
 .body-scroll {
-  max-height: min(52vh, 520px);
+  max-height: min(40vh, 420px);
   overflow: auto;
   padding-right: 4px;
 }
@@ -337,6 +370,10 @@ function onClosed() {
   padding: 14px 14px 2px;
   border-radius: 10px;
   background: var(--el-fill-color-light);
+}
+.review-form :deep(.el-textarea__inner) {
+  line-height: 1.55;
+  font-size: 13px;
 }
 .ai-bar {
   display: flex;

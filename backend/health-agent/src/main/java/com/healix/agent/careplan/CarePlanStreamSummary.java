@@ -11,8 +11,12 @@ public final class CarePlanStreamSummary {
     private CarePlanStreamSummary() {}
 
     public static String buildReply(CarePlanBundleDto bundle) {
+        return buildReply(bundle, false);
+    }
+
+    public static String buildReply(CarePlanBundleDto bundle, boolean revised) {
         StringBuilder sb = new StringBuilder();
-        sb.append("管理方案草稿已生成，请审阅后发布。");
+        sb.append(revised ? "管理方案草稿已按你的要求修订，请审阅后发布。" : "管理方案草稿已生成，请审阅后发布。");
         if (bundle == null || bundle.getDraft() == null) {
             return sb.toString();
         }
