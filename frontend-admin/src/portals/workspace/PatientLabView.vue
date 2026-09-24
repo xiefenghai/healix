@@ -10,6 +10,7 @@ import {
   type LabOcrDraft,
 } from '../../shared/lab-ocr'
 import { formatHealthDataSource, isOcrSource } from '../../shared/health-data-source'
+import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 
 interface DictItem {
   dictCode: string
@@ -519,6 +520,7 @@ async function saveQuick() {
     ElMessage.success('已保存')
     initQuickEntry()
     await loadList()
+    notifyCockpitTasksPossiblyChanged(peopleId.value)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
@@ -567,6 +569,7 @@ async function save() {
     ElMessage.success('已保存')
     backToList()
     await loadList()
+    notifyCockpitTasksPossiblyChanged(peopleId.value)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {

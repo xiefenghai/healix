@@ -246,6 +246,35 @@ public class WorkspaceTaskService {
         return toDetail(requireTask(orgId, id));
     }
 
+    /**
+     * 保存填单草稿：FOLLOW_UP / METRIC_ALERT / PLAN_NUDGE；不关任务、不写档案。
+     */
+    @Transactional
+    public WorkspaceTaskDetailDto saveFormDraft(
+            String orgId, String id, Map<String, Object> content, String actorAccountId) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        WorkspaceTask task = requireTask(orgId, id);
+        assertOpen(task);
+        String staffId = requireStaffId();
+        if (!StringUtils.hasText(task.getAssigneeStaffId())) {
+            throw new BusinessException(400, "请先领取任务");
+        }
+        if (!staffId.equals(task.getAssigneeStaffId())) {
+            throw new BusinessException(400, "仅当前处理人可保存，请先分派给自己或使用处理人账号登录");
+        }
+        WorkspaceTaskType type = WorkspaceTaskType.require(task.getTaskType());
+        if (type == WorkspaceTaskType.FOLLOW_UP) {
+            followupService.saveDraftFromWorkspaceTask(task, content, staffId, actorAccountId);
+        } else if (type == WorkspaceTaskType.METRIC_ALERT) {
+            followupService.saveMetricReviewDraftFromWorkspaceTask(task, content, staffId, actorAccountId);
+        } else if (type == WorkspaceTaskType.PLAN_NUDGE) {
+            followupService.savePlanNudgeDraftFromWorkspaceTask(task, content, staffId, actorAccountId);
+        } else {
+            throw new BusinessException(400, "该类任务不支持保存填单草稿");
+        }
+        return toDetail(requireTask(orgId, id));
+    }
+
     @Transactional
     public WorkspaceTaskDetailDto submitForm(
             String orgId, String id, Map<String, Object> content, String actorAccountId) {
@@ -284,34 +313,60 @@ public class WorkspaceTaskService {
                         ? validateNudge(formContent)
                         : FollowupContentValidator.validateMetricReview(formContent);
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
-        FollowupRecord record = new FollowupRecord();
-        record.setTenantId(task.getTenantId());
-        record.setOrgId(orgId);
-        record.setPeopleId(task.getPeopleId());
-        record.setWorkspaceTaskId(id);
-        record.setRecordType(recordType.name());
-        record.setSource(FollowupRecordSource.WORKSPACE_TASK.name());
-        record.setStatus(FollowupRecordStatus.DONE.name());
-        record.setTitle(recordType.label());
-        record.setSummary(task.getSummary());
-        record.setDueAt(task.getDueAt());
-        record.setAssigneeStaffId(staffId);
-        record.setContactChannel(str(normalized.get("followupMethod")));
-        if (!StringUtils.hasText(record.getContactChannel())) {
-            record.setContactChannel(str(normalized.get("contactChannel")));
+        FollowupRecord openDraft = followupRecordMapper.findOpenByTaskId(id);
+        FollowupRecord record;
+        if (openDraft != null && recordType.matches(openDraft.getRecordType())) {
+            record = openDraft;
+            record.setTitle(recordType.label());
+            record.setSummary(task.getSummary());
+            record.setStatus(FollowupRecordStatus.DONE.name());
+            record.setContactChannel(str(normalized.get("followupMethod")));
+            if (!StringUtils.hasText(record.getContactChannel())) {
+                record.setContactChannel(str(normalized.get("contactChannel")));
+            }
+            if (!StringUtils.hasText(record.getContactChannel())) {
+                record.setContactChannel(null);
+            }
+            record.setContactResult(str(normalized.get("contactResult")));
+            if (!StringUtils.hasText(record.getContactResult())) {
+                record.setContactResult(null);
+            }
+            record.setContentJson(JsonUtils.toJson(normalized));
+            record.setCompletedAt(now);
+            record.setCompletedByStaffId(staffId);
+            record.setAssigneeStaffId(staffId);
+            EntityMeta.onUpdate(record);
+            followupRecordMapper.updateOnComplete(record);
+        } else {
+            record = new FollowupRecord();
+            record.setTenantId(task.getTenantId());
+            record.setOrgId(orgId);
+            record.setPeopleId(task.getPeopleId());
+            record.setWorkspaceTaskId(id);
+            record.setRecordType(recordType.name());
+            record.setSource(FollowupRecordSource.WORKSPACE_TASK.name());
+            record.setStatus(FollowupRecordStatus.DONE.name());
+            record.setTitle(recordType.label());
+            record.setSummary(task.getSummary());
+            record.setDueAt(task.getDueAt());
+            record.setAssigneeStaffId(staffId);
+            record.setContactChannel(str(normalized.get("followupMethod")));
+            if (!StringUtils.hasText(record.getContactChannel())) {
+                record.setContactChannel(str(normalized.get("contactChannel")));
+            }
+            if (!StringUtils.hasText(record.getContactChannel())) {
+                record.setContactChannel(null);
+            }
+            record.setContactResult(str(normalized.get("contactResult")));
+            if (!StringUtils.hasText(record.getContactResult())) {
+                record.setContactResult(null);
+            }
+            record.setContentJson(JsonUtils.toJson(normalized));
+            record.setCompletedAt(now);
+            record.setCompletedByStaffId(staffId);
+            EntityMeta.onCreate(record);
+            followupRecordMapper.insert(record);
         }
-        if (!StringUtils.hasText(record.getContactChannel())) {
-            record.setContactChannel(null);
-        }
-        record.setContactResult(str(normalized.get("contactResult")));
-        if (!StringUtils.hasText(record.getContactResult())) {
-            record.setContactResult(null);
-        }
-        record.setContentJson(JsonUtils.toJson(normalized));
-        record.setCompletedAt(now);
-        record.setCompletedByStaffId(staffId);
-        EntityMeta.onCreate(record);
-        followupRecordMapper.insert(record);
         taskMapper.close(
                 id,
                 WorkspaceTaskStatus.DONE.name(),

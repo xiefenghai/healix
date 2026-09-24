@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Healix · 产品与技术介绍</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0c1218;
+      --bg-elev: #131c26;
+      --ink: #e8eef4;
+      --muted: #8b9aab;
+      --line: rgba(232, 238, 244, 0.1);
+      --accent: #2ec4a6;
+      --accent-dim: rgba(46, 196, 166, 0.14);
+      --warn: #f0b429;
+      --card: #182330;
+      --radius: 14px;
+      --font: "Outfit", system-ui, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font); overflow: hidden; }
+    body {
+      background:
+        radial-gradient(1100px 600px at 10% -8%, rgba(46, 196, 166, 0.13), transparent 55%),
+        radial-gradient(900px 520px at 100% 85%, rgba(56, 120, 200, 0.1), transparent 50%),
+        var(--bg);
+    }
+    .deck { height: 100%; width: 100%; position: relative; }
+    .slide {
+      position: absolute; inset: 0;
+      padding: clamp(1.75rem, 4.5vw, 4rem) clamp(1.75rem, 5.5vw, 5rem) 4.75rem;
+      display: flex; flex-direction: column; justify-content: center;
+      opacity: 0; visibility: hidden; transform: translateY(10px);
+      transition: opacity .32s ease, transform .32s ease, visibility .32s;
+      pointer-events: none;
+    }
+    .slide.active { opacity: 1; visibility: visible; transform: none; pointer-events: auto; }
+    .brand {
+      font-size: .8rem; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--accent); font-weight: 600; margin-bottom: .75rem;
+    }
+    h1 {
+      font-size: clamp(2.1rem, 4.8vw, 3.4rem); font-weight: 700;
+      line-height: 1.12; letter-spacing: -.02em; max-width: 18ch;
+    }
+    h2 {
+      font-size: clamp(1.55rem, 3.2vw, 2.35rem); font-weight: 650;
+      letter-spacing: -.02em; margin-bottom: 1.1rem;
+    }
+    .lead {
+      margin-top: 1.1rem; font-size: clamp(1rem, 1.9vw, 1.28rem);
+      color: var(--muted); max-width: 38ch; line-height: 1.55;
+    }
+    .pill-row { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: 1.4rem; }
+    .pill {
+      border: 1px solid var(--line); background: var(--accent-dim);
+      padding: .4rem .8rem; border-radius: 999px; font-size: .9rem;
+    }
+    .grid-3, .grid-4, .grid-2 {
+      display: grid; gap: .85rem; margin-top: .35rem;
+    }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: 1fr 1fr; gap: 1.1rem; }
+    @media (max-width: 980px) {
+      .grid-3, .grid-4, .grid-2 { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 1rem 1.15rem;
+    }
+    .card h3 { font-size: 1rem; margin-bottom: .45rem; font-weight: 600; }
+    .card p, .card li { color: var(--muted); font-size: .9rem; line-height: 1.48; }
+    .card ul { list-style: none; display: grid; gap: .28rem; }
+    .card li::before { content: "·"; color: var(--accent); margin-right: .4rem; font-weight: 700; }
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .7rem; }
+    .flow .step {
+      background: var(--bg-elev); border: 1px solid var(--line);
+      padding: .55rem .8rem; border-radius: 10px; font-size: .9rem; font-weight: 500;
+    }
+    .flow .arrow { color: var(--accent); font-family: var(--mono); }
+    .arch {
+      font-family: var(--mono); font-size: clamp(.7rem, 1.25vw, .88rem);
+      line-height: 1.52; background: var(--card); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 1.15rem 1.25rem;
+      white-space: pre; overflow: auto; color: #c9d6e2;
+    }
+    .arch .hi { color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; margin-top: .4rem; font-size: .9rem; }
+    th, td { text-align: left; padding: .62rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; }
+    td strong { color: var(--ink); font-weight: 600; }
+    .tag {
+      display: inline-block; font-family: var(--mono); font-size: .74rem;
+      padding: .12rem .4rem; border-radius: 6px; background: var(--accent-dim); color: var(--accent);
+    }
+    .quote {
+      margin-top: 1.25rem; padding-left: .95rem; border-left: 3px solid var(--accent);
+      font-size: 1.1rem; max-width: 42ch; line-height: 1.5;
+    }
+    .kicker { color: var(--warn); font-size: .85rem; margin-bottom: .3rem; font-weight: 500; }
+    .check li::before { content: "✓"; color: var(--accent); }
+    .todo li::before { content: "○"; color: var(--warn); }
+    .footer-bar {
+      position: fixed; left: 0; right: 0; bottom: 0; height: 3.4rem;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 clamp(1rem, 3.5vw, 2.25rem);
+      background: linear-gradient(to top, rgba(12,18,24,.96), transparent);
+      z-index: 20; pointer-events: none;
+    }
+    .footer-bar > * { pointer-events: auto; }
+    .dots { display: flex; gap: .35rem; flex-wrap: wrap; max-width: 45vw; }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: rgba(232,238,244,.2); border: 0; cursor: pointer;
+    }
+    .dot.on { background: var(--accent); transform: scale(1.2); }
+    .nav-hint { color: var(--muted); font-size: .78rem; font-family: var(--mono); }
+    .nav-btns { display: flex; gap: .45rem; }
+    .nav-btns button {
+      background: var(--bg-elev); border: 1px solid var(--line); color: var(--ink);
+      border-radius: 8px; padding: .35rem .7rem; cursor: pointer; font-family: var(--font); font-size: .82rem;
+    }
+    .nav-btns button:hover { border-color: var(--accent); color: var(--accent); }
+    .click-zones {
+      position: fixed; inset: 0; display: grid; grid-template-columns: 1fr 1fr; z-index: 5;
+    }
+    .click-zones button { background: transparent; border: 0; cursor: pointer; }
+    .section-label {
+      font-size: .75rem; color: var(--muted); letter-spacing: .08em;
+      text-transform: uppercase; margin-bottom: .35rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+
+    <section class="slide active" data-title="封面">
+      <div class="brand">Healix Product &amp; Architecture</div>
+      <h1>个人健康管理平台</h1>
+      <p class="lead">面向医疗机构的多租户健管 SaaS。<br />对话驱动工作台 · AI 起草 · 人确认落库。</p>
+      <div class="pill-row">
+        <span class="pill">产品能力</span>
+        <span class="pill">技术架构</span>
+        <span class="pill">C / B / Ops</span>
+      </div>
+    </section>
+
+    <section class="slide" data-title="一句话">
+      <div class="brand">01 · 产品定位</div>
+      <h2>健管师每天从「该处理谁」开始</h2>
+      <p class="quote">看谁优先 → 判怎么做 → AI 出草稿 → 人确认落库</p>
+      <div class="grid-3" style="margin-top:1.5rem">
+        <div class="card"><h3>主卖点</h3><p>管理方案生成、单据 OCR（检验 / 检查 / 用药）</p></div>
+        <div class="card"><h3>运营底座</h3><p>档案、工作台任务、随访、依从、报告、沟通</p></div>
+        <div class="card"><h3>原则</h3><p>LLM 不直写业务库；责任在员工操作</p></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="三角色">
+      <div class="brand">02 · 三角色入口</div>
+      <h2>分端、分认证、分菜单</h2>
+      <div class="grid-3">
+        <div class="card">
+          <div class="section-label">C · 患者</div>
+          <h3>frontend-user</h3>
+          <ul>
+            <li>激活入组 / 档案</li>
+            <li>体征与健康数据</li>
+            <li>Patient Agent（另线）</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="section-label">B · 健管 / 租户</div>
+          <h3>frontend-admin</h3>
+          <ul>
+            <li>机构工作台（主演示）</li>
+            <li>租户管理建机构邀员</li>
+            <li>驾驶舱 + 业务菜单</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="section-label">Ops · 平台</div>
+          <h3>同壳分权限</h3>
+          <ul>
+            <li>开租户 / 配额</li>
+            <li>审计与检索</li>
+            <li>aud=ops JWT</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="产品地图">
+      <div class="brand">03 · B 端产品地图</div>
+      <h2>机构工作台能力一览</h2>
+      <div class="grid-4">
+        <div class="card"><h3>智能驾驶舱</h3><p>主入口 · 优先名单 · 对话 · 焦点</p></div>
+        <div class="card"><h3>患者管理</h3><p>建档入组 · 档案 · 健管组</p></div>
+        <div class="card"><h3>工作台任务</h3><p>领取分派 · 填单办结 · 草稿</p></div>
+        <div class="card"><h3>随访管理</h3><p>定期随访 · 当场办结 · 闭环任务</p></div>
+        <div class="card"><h3>管理方案</h3><p>AI 草稿 · 审阅发布 · 依从打卡</p></div>
+        <div class="card"><h3>健康数据</h3><p>指标 · 检验 · 检查 · OCR 入库</p></div>
+        <div class="card"><h3>患者沟通</h3><p>站内会话 · 提醒触达</p></div>
+        <div class="card"><h3>依从 / 报告 / 统计</h3><p>看板催办 · 管理报告 · 运营回顾</p></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="驾驶舱">
+      <div class="brand">04 · 主入口 · 智能驾驶舱</div>
+      <h2>左看人 · 中对话 · 右上下文</h2>
+      <div class="grid-3">
+        <div class="card"><h3>今日优先</h3><p>待办 / 超期 / 关注信号按人聚合</p></div>
+        <div class="card"><h3>健管智能体</h3><p>建议 · 方案 · OCR · 完成待办 · SSE</p></div>
+        <div class="card"><h3>当前焦点</h3><p>风险依从 · 待确认草稿 · 工作台待办</p></div>
+      </div>
+      <div class="flow" style="margin-top:1.35rem">
+        <span class="step">点人注入上下文</span><span class="arrow">→</span>
+        <span class="step">机构会话 / 患者会话</span><span class="arrow">→</span>
+        <span class="step">动作卡落业务</span>
+      </div>
+    </section>
+
+    <section class="slide" data-title="AI卖点">
+      <div class="brand">05 · AI 主卖点</div>
+      <h2>方案生成 + 单据 OCR</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>管理方案</h3>
+          <ul>
+            <li>运动 / 饮食 / 执行计划结构</li>
+            <li>SSE 边想边出</li>
+            <li>进草稿箱，发布才生效</li>
+            <li>同一患者至多 1 个 ACTIVE</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>单据 OCR</h3>
+          <ul>
+            <li>检验 / 检查 / 用药单识图</li>
+            <li>对话内预填核对</li>
+            <li>字典对不齐进忽略列表</li>
+            <li>确认入库才写业务表</li>
+          </ul>
+        </div>
+      </div>
+      <p class="lead" style="max-width:40ch;margin-top:1.1rem">演示口播：故意改一处再确认 —— 责任在人。</p>
+    </section>
+
+    <section class="slide" data-title="运营底座">
+      <div class="brand">06 · 运营底座</div>
+      <h2>任务 · 随访 · 档案 · 沟通</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>工作台任务</h3>
+          <ul>
+            <li>类型：随访 / 指标异常 / 打卡跟进 / 方案·报告审阅…</li>
+            <li>领取 · 分派 · 退回 · 取消</li>
+            <li>填单：保存草稿 / 提交办结</li>
+            <li>驾驶舱与工作台同一弹窗</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>随访与双入口</h3>
+          <ul>
+            <li>OPEN / DONE / CANCELLED</li>
+            <li>排期生成 FOLLOW_UP 待办</li>
+            <li>详情「当场办结」关同类型任务</li>
+            <li>避免访过了待办还在</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="演示路径">
+      <div class="brand">07 · 演示怎么讲</div>
+      <h2>六幕业务闭环</h2>
+      <div class="flow">
+        <span class="step">1 看三栏</span><span class="arrow">→</span>
+        <span class="step">2 点人建议</span><span class="arrow">→</span>
+        <span class="step">3 完成待办</span><span class="arrow">→</span>
+        <span class="step">4 生成方案</span><span class="arrow">→</span>
+        <span class="step">5 OCR 入库</span><span class="arrow">→</span>
+        <span class="step">6 随访闭环</span>
+      </div>
+      <div class="grid-2" style="margin-top:1.35rem">
+        <div class="card">
+          <h3>强调落库点</h3>
+          <ul>
+            <li>动作卡 / 填单才写库</li>
+            <li>保存 ≠ 提交</li>
+            <li>草稿 ≠ 发布</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>收口</h3>
+          <ul>
+            <li>驾驶舱是主入口</li>
+            <li>方案 + OCR 是卖点</li>
+            <li>全程人审</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="技术架构">
+      <div class="brand">08 · 技术架构</div>
+      <h2>Modulith 单体 · 模块边界清晰</h2>
+      <pre class="arch"><span class="hi">多租户 SaaS</span>
+ ├── C  aud=c     frontend-user
+ ├── B  aud=b     frontend-admin
+ └── Ops aud=ops  （同壳分菜单）
+          │
+          ▼
+ Spring Boot 3.3 / Java 21 · health-app
+ ├── health-common   JWT · 证件加密 · 工具
+ ├── health-core     档案·任务·随访·方案·观测…
+ └── health-agent    CARE_COPILOT · Skill · SSE
+          │
+          ▼
+ MySQL · Redis · DeepSeek（Spring AI）</pre>
+    </section>
+
+    <section class="slide" data-title="Agent">
+      <div class="brand">09 · Agent 技术</div>
+      <h2>路由 · SSE · 动作卡</h2>
+      <table>
+        <thead><tr><th>Capability</th><th>作用</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tag">GENERAL_CHAT</span></td><td>建议、办结引导、机构简报</td></tr>
+          <tr><td><span class="tag">CARE_PLAN</span></td><td>管理方案草稿（流式）</td></tr>
+          <tr><td><span class="tag">REPORT_SUMMARY</span></td><td>管理报告点评草稿</td></tr>
+          <tr><td><span class="tag">OCR_LAB / EXAM / MED</span></td><td>单据识别预填</td></tr>
+        </tbody>
+      </table>
+      <p class="lead" style="max-width:42ch;margin-top:1.1rem">
+        不另起 AI 库：动作打到现有 B API；机构会话不能无上下文乱出方案写库路径。
+      </p>
+    </section>
+
+    <section class="slide" data-title="人在环">
+      <div class="brand">10 · 落库闸门</div>
+      <h2>为什么模型不直接 UPDATE</h2>
+      <table>
+        <thead><tr><th>能力</th><th>AI 产出</th><th>生效</th></tr></thead>
+        <tbody>
+          <tr><td><strong>方案</strong></td><td>draft</td><td>员工 publish</td></tr>
+          <tr><td><strong>OCR</strong></td><td>预填卡</td><td>确认入库 + 字典</td></tr>
+          <tr><td><strong>随访填单</strong></td><td>可保存草稿</td><td>提交 → DONE + 关任务</td></tr>
+        </tbody>
+      </table>
+      <div class="pill-row">
+        <span class="pill">可追责</span>
+        <span class="pill">可改草稿</span>
+        <span class="pill">字段进字典</span>
+        <span class="pill">失败可重试</span>
+      </div>
+    </section>
+
+    <section class="slide" data-title="多租户">
+      <div class="brand">11 · 多租户与安全</div>
+      <h2>隔离边界</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>数据模型</h3>
+          <ul>
+            <li>行级 tenant_id</li>
+            <li>people 属单租户</li>
+            <li>机构 = 工作 / 任务边界</li>
+            <li>体征·报告租户共享</li>
+            <li>随访·工单机构隔离</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>认证与隐私</h3>
+          <ul>
+            <li>C / B / Ops aud 分离</li>
+            <li>B API 带当前机构</li>
+            <li>身份证哈希 + 密文</li>
+            <li>原图不进模型日志</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="栈与仓库">
+      <div class="brand">12 · 工程结构</div>
+      <h2>Monorepo</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>后端模块</h3>
+          <ul>
+            <li>health-app · HTTP / 启动</li>
+            <li>health-core · 领域服务</li>
+            <li>health-agent · 智能体</li>
+            <li>health-common · 基础库</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>前端与栈</h3>
+          <ul>
+            <li>frontend-admin · B+Ops Vue</li>
+            <li>frontend-user · C H5</li>
+            <li>Java 21 · Boot 3.3 · MyBatis</li>
+            <li>Spring AI / DeepSeek · JWT</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="完成度">
+      <div class="brand">13 · 完成度</div>
+      <h2>已闭环 / 还在磨</h2>
+      <div class="grid-2">
+        <div class="card">
+          <div class="kicker">已可演示试用</div>
+          <ul class="check">
+            <li>驾驶舱三栏 + 优先名单</li>
+            <li>方案流式草稿 + 人工发布</li>
+            <li>OCR 预填 + 确认入库</li>
+            <li>任务 / 随访双入口闭环</li>
+            <li>填单保存草稿</li>
+            <li>多租户 B 主路径</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="kicker">后续重点</div>
+          <ul class="todo">
+            <li>模型稳定性与延迟</li>
+            <li>识别字段质量</li>
+            <li>长会话与极端并发</li>
+            <li>C 端能力另线深化</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="收口">
+      <div class="brand">14 · 收口</div>
+      <h1 style="max-width:18ch">基本业务闭环已可演示</h1>
+      <p class="lead">AI 加速起草，责任在人。<br />下一步稳质量，而不是再堆页面。</p>
+      <p class="quote">谢谢 · 欢迎追问</p>
+      <div class="pill-row">
+        <span class="pill">← → / 空格翻页</span>
+        <span class="pill">F 全屏</span>
+        <span class="pill">讲稿 · 组内技术分享-Healix健管智能体.md</span>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="click-zones" aria-hidden="true">
+    <button type="button" id="zonePrev" title="上一页"></button>
+    <button type="button" id="zoneNext" title="下一页"></button>
+  </div>
+
+  <div class="footer-bar">
+    <div class="dots" id="dots"></div>
+    <div class="nav-hint"><span id="pageLabel">1</span></div>
+    <div class="nav-btns">
+      <button type="button" id="btnPrev">上一页</button>
+      <button type="button" id="btnNext">下一页</button>
+    </div>
+  </div>
+
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    const dots = document.getElementById("dots");
+    const pageLabel = document.getElementById("pageLabel");
+    let i = 0;
+
+    slides.forEach((_, idx) => {
+      const b = document.createElement("button");
+      b.className = "dot" + (idx === 0 ? " on" : "");
+      b.type = "button";
+      b.addEventListener("click", (e) => { e.stopPropagation(); go(idx); });
+      dots.appendChild(b);
+    });
+
+    function go(n) {
+      i = Math.max(0, Math.min(slides.length - 1, n));
+      slides.forEach((s, idx) => s.classList.toggle("active", idx === i));
+      [...dots.children].forEach((d, idx) => d.classList.toggle("on", idx === i));
+      pageLabel.textContent = (i + 1) + " / " + slides.length;
+      document.title = "Healix · " + (slides[i].dataset.title || "介绍");
+    }
+    const next = () => go(i + 1);
+    const prev = () => go(i - 1);
+
+    document.getElementById("btnNext").addEventListener("click", (e) => { e.stopPropagation(); next(); });
+    document.getElementById("btnPrev").addEventListener("click", (e) => { e.stopPropagation(); prev(); });
+    document.getElementById("zoneNext").addEventListener("click", next);
+    document.getElementById("zonePrev").addEventListener("click", prev);
+
+    window.addEventListener("keydown", (e) => {
+      if (["ArrowRight", " ", "PageDown"].includes(e.key)) { e.preventDefault(); next(); }
+      else if (["ArrowLeft", "PageUp"].includes(e.key)) { e.preventDefault(); prev(); }
+      else if (e.key === "Home") go(0);
+      else if (e.key === "End") go(slides.length - 1);
+      else if (e.key === "f" || e.key === "F") {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+        else document.exitFullscreen?.();
+      }
+    });
+    go(0);
+  </script>
+</body>
+</html>

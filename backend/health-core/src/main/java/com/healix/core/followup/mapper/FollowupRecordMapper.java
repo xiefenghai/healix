@@ -13,6 +13,9 @@ public interface FollowupRecordMapper {
 
     int updateOnComplete(FollowupRecord row);
 
+    /** OPEN 草稿：只改内容，不改 status / completed_* */
+    int updateDraft(FollowupRecord row);
+
     int updateCancel(
             @Param("id") String id,
             @Param("status") String status,

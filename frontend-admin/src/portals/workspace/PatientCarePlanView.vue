@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
 import { postSse } from '../../shared/agent-stream'
 import { onAgentCarePlanUpdated } from '../../shared/agent-events'
+import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import CarePlanAiDisclaimer from '../../shared/CarePlanAiDisclaimer.vue'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from '../../shared/CarePlanPreviewDialog.vue'
 import {
@@ -650,6 +651,7 @@ async function deleteListItem(row: CarePlanListItem) {
 
 function refreshAfterMutation() {
   void loadList()
+  notifyCockpitTasksPossiblyChanged(peopleId.value)
 }
 
 function handleAgentCarePlanUpdated() {

@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
 import { takeAgentDraft } from '../../shared/agent-draft-bus'
+import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import FollowupSectionFields from './FollowupSectionFields.vue'
 import FollowupRecordDetailDialog from './FollowupRecordDetailDialog.vue'
 import PatientArchiveView from './PatientArchiveView.vue'
@@ -17,6 +18,7 @@ import {
   formatFollowupRecordType,
   formatFollowupStatus,
   formatFollowupType,
+  hydrateFollowupFormFromContent,
   validateFollowupSection,
   type FollowupSection,
 } from '../../shared/followup-labels'
@@ -192,14 +194,57 @@ async function submitCreate() {
     })
     ElMessage.success(
       planAdjustSuccessMessage(
-        createForm.completeNow ? '已记录随访' : '已创建待办随访',
+        createForm.completeNow ? '已记录随访' : '已创建未完成随访',
         createForm.completeNow && createForm.suggestPlanAdjust,
       ),
     )
     createOpen.value = false
     await load()
+    notifyCockpitTasksPossiblyChanged(peopleId())
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+/** 新建弹窗「保存」：落 OPEN 草稿 + 工作台待办，不办结 */
+async function saveCreateDraft() {
+  if (!createForm.followupType) {
+    ElMessage.warning('请选择随访类型')
+    return
+  }
+  if (!createForm.completeNow) {
+    ElMessage.info('「先建待办」请直接点提交；保存草稿用于「当场处理」中途暂存')
+    return
+  }
+  submitting.value = true
+  try {
+    await api('/api/b/v1/followups', {
+      method: 'POST',
+      body: JSON.stringify({
+        peopleId: peopleId(),
+        followupType: createForm.followupType,
+        completeNow: false,
+        createTask: true,
+        content: buildFollowupContentPayload(
+          createForm.followupType,
+          {
+            contactTarget: createForm.contactTarget,
+            followupMethod: createForm.followupMethod,
+            guidance: createForm.guidance,
+            suggestPlanAdjust: createForm.suggestPlanAdjust,
+          },
+          createForm.section,
+        ),
+      }),
+    })
+    ElMessage.success('已保存为未完成随访，可稍后在列表中继续处理')
+    createOpen.value = false
+    await load()
+    notifyCockpitTasksPossiblyChanged(peopleId())
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
     submitting.value = false
   }
@@ -209,7 +254,10 @@ function openDetail(row: FollowupItem) {
   followupDetailId.value = row.id
 }
 
+const hydratingComplete = ref(false)
+
 async function openComplete(row: FollowupItem) {
+  hydratingComplete.value = true
   completingId.value = row.id
   completeForm.followupType = row.followupType || 'ROUTINE'
   completeForm.contactTarget = ''
@@ -218,23 +266,63 @@ async function openComplete(row: FollowupItem) {
   completeForm.suggestPlanAdjust = false
   resetSection(completeForm)
   try {
-    const res = await api<{ data: { content?: { followupType?: string } } }>(
+    const res = await api<{ data: { content?: Record<string, unknown> } }>(
       `/api/b/v1/followups/${row.id}`,
     )
-    if (res.data?.content?.followupType) {
-      completeForm.followupType = res.data.content.followupType
+    if (res.data?.content) {
+      const h = hydrateFollowupFormFromContent(res.data.content)
+      completeForm.followupType = h.followupType
+      completeForm.contactTarget = h.contactTarget
+      completeForm.followupMethod = h.followupMethod
+      completeForm.guidance = h.guidance
+      completeForm.suggestPlanAdjust = h.suggestPlanAdjust
+      completeForm.section = h.section
     }
   } catch {
     /* keep defaults */
+  } finally {
+    hydratingComplete.value = false
   }
 }
 
 watch(
   () => completeForm.followupType,
   () => {
-    if (completingId.value) resetSection(completeForm)
+    if (completingId.value && !hydratingComplete.value) resetSection(completeForm)
   },
 )
+
+async function saveCompleteDraft() {
+  if (!completingId.value) return
+  if (!completeForm.followupType) {
+    ElMessage.warning('请选择随访类型')
+    return
+  }
+  submitting.value = true
+  try {
+    await api(`/api/b/v1/followups/${completingId.value}/draft`, {
+      method: 'POST',
+      body: JSON.stringify(
+        buildFollowupContentPayload(
+          completeForm.followupType,
+          {
+            contactTarget: completeForm.contactTarget,
+            followupMethod: completeForm.followupMethod,
+            guidance: completeForm.guidance,
+            suggestPlanAdjust: completeForm.suggestPlanAdjust,
+          },
+          completeForm.section,
+        ),
+      ),
+    })
+    ElMessage.success('已保存草稿，随访仍为未完成')
+    await load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    submitting.value = false
+  }
+}
 
 async function submitComplete() {
   if (!completingId.value) return
@@ -270,6 +358,7 @@ async function submitComplete() {
     ElMessage.success(planAdjustSuccessMessage('已处理', completeForm.suggestPlanAdjust))
     completingId.value = null
     await load()
+    notifyCockpitTasksPossiblyChanged(peopleId())
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '处理失败')
   } finally {
@@ -291,6 +380,7 @@ async function cancelRow(row: FollowupItem) {
     })
     ElMessage.success('已取消')
     await load()
+    notifyCockpitTasksPossiblyChanged(peopleId())
   } catch (e) {
     if (e === 'cancel') return
     ElMessage.error(e instanceof Error ? e.message : '取消失败')
@@ -443,6 +533,13 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="createOpen = false">取消</el-button>
+        <el-button
+          v-if="createForm.completeNow"
+          :loading="submitting"
+          @click="saveCreateDraft"
+        >
+          保存
+        </el-button>
         <el-button type="primary" :loading="submitting" @click="submitCreate">提交</el-button>
       </template>
     </el-dialog>
@@ -533,6 +630,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="completingId = null">取消</el-button>
+        <el-button :loading="submitting" @click="saveCompleteDraft">保存</el-button>
         <el-button type="primary" :loading="submitting" @click="submitComplete">提交处理</el-button>
       </template>
     </el-dialog>

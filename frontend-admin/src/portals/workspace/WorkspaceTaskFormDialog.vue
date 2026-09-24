@@ -10,6 +10,7 @@ import {
   FOLLOWUP_TYPE_OPTIONS,
   buildFollowupContentPayload,
   emptyFollowupSection,
+  hydrateFollowupFormFromContent,
   validateFollowupSection,
   type FollowupSection,
 } from '../../shared/followup-labels'
@@ -23,15 +24,21 @@ interface TaskDetail {
   summary?: string
   deepLink?: string
   payload?: Record<string, unknown>
+  followups?: Array<{
+    id: string
+    status?: string
+    content?: Record<string, unknown>
+  }>
 }
 
 type MetricHit = Record<string, unknown>
 
 const props = defineProps<{ taskId: string | null }>()
-const emit = defineEmits<{ closed: []; submitted: [] }>()
+const emit = defineEmits<{ closed: []; submitted: []; saved: [] }>()
 
 const loading = ref(false)
 const submitting = ref(false)
+const saving = ref(false)
 const task = ref<TaskDetail | null>(null)
 const archiveRef = ref<{ saveAllForFollowup: () => Promise<{ diseaseCodes: string[] }> } | null>(null)
 
@@ -144,6 +151,37 @@ watch(
       if (typeof payloadType === 'string' && payloadType) {
         followupType.value = payloadType
       }
+      // 回填 OPEN 草稿（定期随访 / 指标异常 / 打卡跟进）
+      if (
+        res.data.taskType === 'FOLLOW_UP' ||
+        res.data.taskType === 'METRIC_ALERT' ||
+        res.data.taskType === 'PLAN_NUDGE'
+      ) {
+        const openDraft = (res.data.followups || []).find((f) => f.status === 'OPEN' && f.content)
+        if (openDraft?.content) {
+          const c = openDraft.content
+          if (res.data.taskType === 'FOLLOW_UP') {
+            const h = hydrateFollowupFormFromContent(c)
+            followupType.value = h.followupType
+            contactTarget.value = h.contactTarget
+            followupMethod.value = h.followupMethod
+            guidance.value = h.guidance
+            suggestPlanAdjust.value = h.suggestPlanAdjust
+            followupSection.value = h.section
+          } else if (res.data.taskType === 'METRIC_ALERT') {
+            if (typeof c.contactTarget === 'string') contactTarget.value = c.contactTarget
+            if (typeof c.followupMethod === 'string') followupMethod.value = c.followupMethod
+            if (typeof c.abnormalReason === 'string') abnormalReason.value = c.abnormalReason
+            if (typeof c.guidance === 'string') guidance.value = c.guidance
+          } else {
+            if (typeof c.contactChannel === 'string') contactChannel.value = c.contactChannel
+            if (typeof c.contactResult === 'string') contactResult.value = c.contactResult
+            if (typeof c.informedCheckin === 'boolean') informedCheckin.value = c.informedCheckin
+            if (typeof c.patientFeedback === 'string') patientFeedback.value = c.patientFeedback
+            if (typeof c.note === 'string') note.value = c.note
+          }
+        }
+      }
     } catch (e) {
       ElMessage.error(e instanceof Error ? e.message : '加载任务失败')
       emit('closed')
@@ -152,6 +190,66 @@ watch(
     }
   },
 )
+
+function buildFollowUpBody() {
+  return buildFollowupContentPayload(
+    followupType.value,
+    {
+      contactTarget: contactTarget.value,
+      followupMethod: followupMethod.value,
+      guidance: guidance.value,
+      suggestPlanAdjust: suggestPlanAdjust.value,
+    },
+    followupSection.value,
+  )
+}
+
+function buildAlertBody() {
+  return {
+    contactTarget: contactTarget.value,
+    followupMethod: followupMethod.value,
+    abnormalReason: abnormalReason.value.trim() || undefined,
+    guidance: guidance.value.trim() || undefined,
+  }
+}
+
+function buildNudgeBody() {
+  return {
+    contactChannel: contactChannel.value,
+    contactResult: contactResult.value,
+    informedCheckin: contactResult.value === 'REACHED' ? informedCheckin.value : undefined,
+    patientFeedback: patientFeedback.value.trim() || undefined,
+    note: note.value.trim() || undefined,
+  }
+}
+
+/** 保存草稿：宽松校验，不写档案、不关任务 */
+async function saveDraft() {
+  if (!props.taskId || !task.value) return
+  if (!isFollowUp.value && !isAlert.value && !isNudge.value) return
+  if (isFollowUp.value && !followupType.value) {
+    ElMessage.warning('请选择随访类型')
+    return
+  }
+  saving.value = true
+  try {
+    const body = isFollowUp.value
+      ? buildFollowUpBody()
+      : isAlert.value
+        ? buildAlertBody()
+        : buildNudgeBody()
+    await api(`/api/b/v1/workspace/tasks/${props.taskId}/forms/draft`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    ElMessage.success('已保存草稿，任务仍为未完成')
+    emit('saved')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
 
 async function submit() {
   if (!props.taskId || !task.value) return
@@ -201,13 +299,7 @@ async function submit() {
   try {
     let body: Record<string, unknown>
     if (isNudge.value) {
-      body = {
-        contactChannel: contactChannel.value,
-        contactResult: contactResult.value,
-        informedCheckin: contactResult.value === 'REACHED' ? informedCheckin.value : undefined,
-        patientFeedback: patientFeedback.value.trim() || undefined,
-        note: note.value.trim() || undefined,
-      }
+      body = buildNudgeBody()
     } else if (isFollowUp.value) {
       if (followupType.value === 'ONBOARDING') {
         if (!archiveRef.value) throw new Error('档案编辑器未就绪，请稍候再试')
@@ -218,16 +310,7 @@ async function submit() {
           diseaseCodes,
         }
       }
-      body = buildFollowupContentPayload(
-        followupType.value,
-        {
-          contactTarget: contactTarget.value,
-          followupMethod: followupMethod.value,
-          guidance: guidance.value,
-          suggestPlanAdjust: suggestPlanAdjust.value,
-        },
-        followupSection.value,
-      )
+      body = buildFollowUpBody()
     } else {
       body = {
         contactTarget: contactTarget.value,
@@ -426,7 +509,17 @@ async function submit() {
     </div>
     <template #footer>
       <el-button @click="open = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="submit">提交</el-button>
+      <el-button
+        v-if="isFollowUp || isAlert || isNudge"
+        :loading="saving"
+        :disabled="submitting"
+        @click="saveDraft"
+      >
+        保存
+      </el-button>
+      <el-button type="primary" :loading="submitting" :disabled="saving" @click="submit">
+        提交
+      </el-button>
     </template>
   </el-dialog>
 </template>

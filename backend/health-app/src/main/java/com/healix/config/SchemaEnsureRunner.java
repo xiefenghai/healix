@@ -549,6 +549,14 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_workspace_task_org_type (org_id, task_type, status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """);
+        ensureIndex(
+                "workspace_task",
+                "idx_workspace_task_org_done",
+                "ALTER TABLE workspace_task ADD KEY idx_workspace_task_org_done (org_id, status, done_at)");
+        ensureIndex(
+                "workspace_task",
+                "idx_workspace_task_org_opened",
+                "ALTER TABLE workspace_task ADD KEY idx_workspace_task_org_opened (org_id, opened_at)");
         ensureTable(
                 "followup_record",
                 """
@@ -586,6 +594,10 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_followup_type (org_id, record_type, status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """);
+        ensureIndex(
+                "followup_record",
+                "idx_followup_org_completed",
+                "ALTER TABLE followup_record ADD KEY idx_followup_org_completed (org_id, status, completed_at)");
         ensureColumn(
                 "followup_record",
                 "record_type",
@@ -697,6 +709,42 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "health_report",
                 "idx_report_people_period",
                 "ALTER TABLE health_report ADD KEY idx_report_people_period (people_id, period_type, period_start)");
+        ensureIndex(
+                "health_report",
+                "idx_report_org_published",
+                "ALTER TABLE health_report ADD KEY idx_report_org_published (org_id, status, published_at)");
+        // 报告已结案但审阅单仍 OPEN：按 bizKey=reportId 兜底办结
+        tryExecute(
+                """
+                UPDATE workspace_task t
+                INNER JOIN health_report r
+                  ON r.id = t.biz_key
+                 AND r.is_deleted = 0
+                 AND r.status IN ('PUBLISHED', 'SKIPPED')
+                SET t.status = 'DONE',
+                    t.close_reason = 'FORM',
+                    t.done_at = COALESCE(t.done_at, r.published_at, NOW()),
+                    t.done_by_staff_id = COALESCE(t.done_by_staff_id, r.published_by_staff_id, t.assignee_staff_id),
+                    t.gmt_modified = NOW()
+                WHERE t.task_type = 'REPORT_REVIEW'
+                  AND t.status = 'OPEN'
+                  AND t.is_deleted = 0
+                """);
+        // 回写报告上缺失的 workspace_task_id，便于后续发布/跳过走主键关单
+        tryExecute(
+                """
+                UPDATE health_report r
+                INNER JOIN workspace_task t
+                  ON t.biz_key = r.id
+                 AND t.task_type = 'REPORT_REVIEW'
+                 AND t.is_deleted = 0
+                 AND t.tenant_id = r.tenant_id
+                 AND t.org_id = r.org_id
+                SET r.workspace_task_id = t.id,
+                    r.gmt_modified = NOW()
+                WHERE r.is_deleted = 0
+                  AND (r.workspace_task_id IS NULL OR r.workspace_task_id = '')
+                """);
         // 旧 P2 上传元数据占位列（含 NOT NULL 的 report_date）→ 管理报告语义废弃
         dropObsoleteIndex("health_report", "idx_report_tenant_people_date");
         dropObsoleteColumn("health_report", "report_date");

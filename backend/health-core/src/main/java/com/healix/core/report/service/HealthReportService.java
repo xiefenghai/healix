@@ -40,6 +40,7 @@ import com.healix.core.report.support.HealthReportPeriodSupport.PeriodWindow;
 import com.healix.core.workspace.service.OrgWorkspaceService;
 import com.healix.core.worktask.catalog.WorkspaceTaskCloseReason;
 import com.healix.core.worktask.catalog.WorkspaceTaskStatus;
+import com.healix.core.worktask.catalog.WorkspaceTaskType;
 import com.healix.core.worktask.domain.WorkspaceTask;
 import com.healix.core.worktask.mapper.WorkspaceTaskMapper;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
@@ -607,23 +608,21 @@ public class HealthReportService {
 
     private void closeReportTask(
             HealthReport row, String staffId, WorkspaceTaskStatus status, WorkspaceTaskCloseReason reason) {
-        if (!StringUtils.hasText(row.getWorkspaceTaskId())) {
-            return;
-        }
-        WorkspaceTask task = workspaceTaskMapper.findById(row.getWorkspaceTaskId());
-        if (task == null || !WorkspaceTaskStatus.OPEN.matches(task.getStatus())) {
+        WorkspaceTask task = resolveOpenReportTask(row);
+        if (task == null) {
             return;
         }
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
         workspaceTaskMapper.close(task.getId(), status.name(), reason.name(), now, staffId, now);
+        if (!StringUtils.hasText(row.getWorkspaceTaskId())) {
+            healthReportMapper.updateWorkspaceTaskId(row.getId(), task.getId(), now);
+            row.setWorkspaceTaskId(task.getId());
+        }
     }
 
     private void cancelReportTask(HealthReport row, String staffId) {
-        if (!StringUtils.hasText(row.getWorkspaceTaskId())) {
-            return;
-        }
-        WorkspaceTask task = workspaceTaskMapper.findById(row.getWorkspaceTaskId());
-        if (task == null || !WorkspaceTaskStatus.OPEN.matches(task.getStatus())) {
+        WorkspaceTask task = resolveOpenReportTask(row);
+        if (task == null) {
             return;
         }
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
@@ -634,6 +633,24 @@ public class HealthReportService {
                 now,
                 staffId,
                 now);
+    }
+
+    /**
+     * 解析报告对应的 OPEN 审阅单：优先 {@code workspace_task_id}，否则按 bizKey=reportId 兜底。
+     * <p>避免报告已结案但 {@code workspace_task_id} 未回写时留下孤儿 OPEN。
+     */
+    private WorkspaceTask resolveOpenReportTask(HealthReport row) {
+        if (row == null || !StringUtils.hasText(row.getId())) {
+            return null;
+        }
+        if (StringUtils.hasText(row.getWorkspaceTaskId())) {
+            WorkspaceTask byId = workspaceTaskMapper.findById(row.getWorkspaceTaskId());
+            if (byId != null && WorkspaceTaskStatus.OPEN.matches(byId.getStatus())) {
+                return byId;
+            }
+        }
+        return workspaceTaskMapper.findOpen(
+                row.getTenantId(), row.getOrgId(), WorkspaceTaskType.REPORT_REVIEW.name(), row.getId());
     }
 
     private HealthReport requireInOrg(String orgId, String id) {

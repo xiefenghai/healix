@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
 import { formatHealthDataSource, isPatientSource } from '../../shared/health-data-source'
+import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import {
   abnormalLabel,
   evaluateAbnormal,
@@ -443,6 +444,7 @@ async function submitEntry() {
     ElMessage.success('已保存')
     resetForm()
     await loadAll()
+    notifyCockpitTasksPossiblyChanged(peopleId.value)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
@@ -484,6 +486,7 @@ async function saveEdit() {
     ElMessage.success('已更新')
     editVisible.value = false
     await loadAll()
+    notifyCockpitTasksPossiblyChanged(peopleId.value)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '更新失败')
   } finally {
@@ -508,6 +511,7 @@ async function removeRow(row: Metric) {
     })
     ElMessage.success('已删除')
     await loadAll()
+    notifyCockpitTasksPossiblyChanged(peopleId.value)
   } catch (e) {
     if (e === 'cancel' && row.groupId) {
       try {
@@ -516,6 +520,7 @@ async function removeRow(row: Metric) {
         })
         ElMessage.success('已删除本条')
         await loadAll()
+        notifyCockpitTasksPossiblyChanged(peopleId.value)
       } catch (err) {
         ElMessage.error(err instanceof Error ? err.message : '删除失败')
       }

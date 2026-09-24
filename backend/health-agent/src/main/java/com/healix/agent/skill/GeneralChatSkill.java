@@ -60,7 +60,7 @@ public class GeneralChatSkill implements AgentSkill {
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("准备机构级上下文…"));
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.tool("loadOrgBrief", "running", "读取今日优先与待办摘要"));
-            orgBrief = staffBizTools.loadOrgBrief(cmd.tenantId(), cmd.orgId(), cmd.staffId());
+            orgBrief = staffBizTools.loadOrgBrief(cmd.tenantId(), cmd.orgId(), cmd.staffId(), cmd.message());
             AgentStreamEvent.safeEmit(
                     sink,
                     AgentStreamEvent.tool(
@@ -71,6 +71,14 @@ public class GeneralChatSkill implements AgentSkill {
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.thinkingDelta("依据今日优先名单回答，禁止编造名单外患者。\n"));
             systemPrompt = buildOrgSystemPrompt(orgBrief.text());
+            if (StaffBizTools.wantsCompleteTask(cmd.message())) {
+                systemPrompt +=
+                        """
+
+                        用户想办结今日待办：机构会话不能直接关单。请依据优先名单，引导健管师先点击下方「处理某某的待办」注入患者，
+                        再在患者会话里用「确认办结」打开与工作台一致的填单弹窗（填完提交才写库）。
+                        """;
+            }
             actions.addAll(orgBrief.actions());
         } else {
             AgentStreamEvent.safeEmit(
@@ -99,6 +107,16 @@ public class GeneralChatSkill implements AgentSkill {
                     AgentStreamEvent.thinkingDelta(
                             "用户问题：" + truncate(cmd.message(), 120) + "\n"));
             systemPrompt = buildSystemPrompt(ctx.patientDisplayName(), patientCtx, focusBundle.text());
+            if (StaffBizTools.wantsCompleteTask(cmd.message())) {
+                systemPrompt +=
+                        """
+
+                        用户要办理当前患者的工作台待办。请严格依据焦点快照中的开放任务：
+                        1）按超期优先、再按紧急度给出简短办理建议与顺序；
+                        2）说明每条建议怎么处理（填单办结 / 打开方案页 / 审阅报告等）；
+                        3）不要声称已办结或已写库——须健管师点击下方「确认办结」等按钮并人工确认后才生效。
+                        """;
+            }
             actions.addAll(staffBizTools.suggestPatientActions(cmd.peopleId(), cmd.message(), focus));
         }
 
@@ -186,6 +204,9 @@ public class GeneralChatSkill implements AgentSkill {
             reply = fallbackReply(orgSession);
         } else {
             reply = AgentReplyPlainText.sanitize(reply);
+            if (!StringUtils.hasText(reply)) {
+                reply = fallbackReply(orgSession);
+            }
         }
 
         if (!orgSession) {
@@ -336,12 +357,30 @@ public class GeneralChatSkill implements AgentSkill {
                     .anyMatch(x -> x.type().equals(a.type())
                             && eq(x.path(), a.path())
                             && eq(x.peopleId(), a.peopleId())
-                            && eq(x.label(), a.label()));
+                            && eq(x.label(), a.label())
+                            // COMPLETE_TASK 等同 label 时仍按 taskId 区分（两条定期随访）
+                            && eq(actionIdentity(x), actionIdentity(a)));
             if (!dup) {
                 out.add(a);
             }
         }
         return out;
+    }
+
+    /** CALL_API 用 payload.taskId 区分；其它动作无额外身份键。 */
+    private static String actionIdentity(AgentAction a) {
+        if (a == null || a.payload() == null || a.payload().isEmpty()) {
+            return null;
+        }
+        Object taskId = a.payload().get("taskId");
+        if (taskId != null && StringUtils.hasText(String.valueOf(taskId))) {
+            return "taskId:" + taskId;
+        }
+        Object reportId = a.payload().get("reportId");
+        if (reportId != null && StringUtils.hasText(String.valueOf(reportId))) {
+            return "reportId:" + reportId;
+        }
+        return null;
     }
 
     private static boolean eq(String a, String b) {
@@ -361,8 +400,8 @@ public class GeneralChatSkill implements AgentSkill {
             （给健管师看的正式回复）
             2) 【回答】部分使用纯中文分段，不要使用 Markdown。
             3) 禁止：# 标题、**加粗**、表格（|）、代码块、任务勾选框（- [ ]）、水平线（---）。
-            4) 分层用「一、二、三」，每个分节标题单独占一行，标题结束后必须换行，再写条目。
-            5) 条目用「1. 2. 3.」或「·」，每个条目单独一行，不要把「1.」紧挨在标题后面。
+            4) 分层用「一、二、三」，每个分节标题单独占一行；标题下一行立刻写「1. 2. 3.」，中间不要空行。
+            5) 条目用「1. 2. 3.」或「·」，每个条目单独一行、条目之间不要空行；上一节最后一条与下一节标题之间空一行。
             6) 指标对比直接写成「血压：180/99 mmHg，明显偏高」这类短句，不要画表。
             7) 病种一律用中文（糖尿病、高血压等），禁止输出 diabetes / hypertension 等英文 code。
             """;
@@ -394,6 +433,7 @@ public class GeneralChatSkill implements AgentSkill {
                 2. 优先结合「焦点快照」中的评估标签、档案完整度、依从性与开放任务给出下一步建议。
                 3. 可解读指标趋势、生活方式建议；涉及完整方案生成请提示使用「制定管理方案」。
                 4. 回答简洁、结构化，使用中文。
+                5. 「开放任务 / 超期任务」只能依据焦点快照里标注的开放任务列出；快照未出现的任务类型（如报告审阅、打卡跟进）不得臆造为待办或超期。已发布/已跳过的管理报告不等于待审阅；若用户问报告，说明可在报告页查看已发布记录，而不是催办已结案的审阅单。
                 %s
 
                 当前患者：%s

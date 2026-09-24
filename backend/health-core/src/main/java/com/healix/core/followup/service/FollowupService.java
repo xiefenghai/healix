@@ -156,7 +156,6 @@ public class FollowupService {
 
         FollowupType followupType;
         Map<String, Object> normalized;
-        String openGuidance = null;
         if (completeNow) {
             Map<String, Object> raw = content == null ? new LinkedHashMap<>() : new LinkedHashMap<>(content);
             if (!StringUtils.hasText(FollowupContentValidator.str(raw.get("followupType")))) {
@@ -165,26 +164,22 @@ public class FollowupService {
             normalized = FollowupContentValidator.validatePeriodic(raw);
             followupType = FollowupType.require(String.valueOf(normalized.get("followupType")));
         } else {
-            String code = StringUtils.hasText(followupTypeCode)
-                    ? followupTypeCode
-                    : FollowupContentValidator.requireFollowupType(content);
-            followupType = FollowupType.require(code);
-            Map<String, Object> draft = new LinkedHashMap<>();
-            draft.put("followupType", followupType.name());
-            if (content != null) {
-                String guidance = FollowupContentValidator.str(content.get("guidance"));
-                if (!StringUtils.hasText(guidance)) {
-                    guidance = FollowupContentValidator.str(content.get("draftContent"));
-                }
+            Map<String, Object> raw = content == null ? new LinkedHashMap<>() : new LinkedHashMap<>(content);
+            if (!StringUtils.hasText(FollowupContentValidator.str(raw.get("followupType")))) {
+                String code = StringUtils.hasText(followupTypeCode)
+                        ? followupTypeCode
+                        : FollowupType.ROUTINE.name();
+                raw.put("followupType", code);
+            }
+            // 兼容旧调用：仅传 guidance / draftContent
+            if (!StringUtils.hasText(FollowupContentValidator.str(raw.get("guidance")))) {
+                String guidance = FollowupContentValidator.str(raw.get("draftContent"));
                 if (StringUtils.hasText(guidance)) {
-                    openGuidance = guidance.trim();
-                    if (openGuidance.length() > 500) {
-                        openGuidance = openGuidance.substring(0, 500);
-                    }
-                    draft.put("guidance", openGuidance);
+                    raw.put("guidance", guidance.trim());
                 }
             }
-            normalized = draft;
+            normalized = FollowupContentValidator.sanitizePeriodicDraft(raw);
+            followupType = FollowupType.require(String.valueOf(normalized.get("followupType")));
         }
 
         FollowupRecord record = new FollowupRecord();
@@ -194,16 +189,47 @@ public class FollowupService {
         record.setRecordType(FollowupRecordType.PERIODIC.name());
         record.setSource(FollowupRecordSource.MANUAL.name());
         record.setTitle(followupType.label());
-        record.setSummary(StringUtils.hasText(openGuidance) ? openGuidance : followupType.label());
+        record.setSummary(
+                completeNow
+                        ? FollowupContentValidator.buildSummary(normalized)
+                        : FollowupContentValidator.buildDraftSummary(normalized));
+        if (!StringUtils.hasText(record.getSummary())) {
+            record.setSummary(followupType.label());
+        }
         record.setPlannedAt(plannedAt);
         record.setAssigneeStaffId(staffId);
+        record.setContactChannel(FollowupContentValidator.str(normalized.get("followupMethod")));
+        if (!StringUtils.hasText(record.getContactChannel())) {
+            record.setContactChannel(null);
+        }
         record.setContentJson(JsonUtils.toJson(normalized));
         EntityMeta.onCreate(record);
 
         if (completeNow) {
+            // 已有同类型 OPEN 定期随访：办结该条并关关联任务，避免「现场新建 DONE + 工作台待办仍在」
+            FollowupRecord reuse = findOpenPeriodicSameType(orgId, peopleId, followupType);
+            if (reuse != null) {
+                applyCompleteFields(reuse, normalized, staffId, now);
+                EntityMeta.onUpdate(reuse);
+                followupRecordMapper.updateOnComplete(reuse);
+                maybeOpenPlanCreateTask(tenantId, orgId, peopleId, reuse.getId(), normalized, reuse);
+                closeLinkedTaskIfOpen(reuse, staffId, now, actorAccountId);
+                closeMatchingOpenFollowUpTasks(
+                        orgId, peopleId, followupType, staffId, now, actorAccountId, reuse.getId());
+                audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_COMPLETE, reuse.getId(), peopleId,
+                        AuditDetails.of(
+                                "recordType", "PERIODIC",
+                                "source", "MANUAL_COMPLETE_NOW",
+                                "reusedOpenId", reuse.getId(),
+                                "followupType", followupType.name()));
+                return toView(followupRecordMapper.findById(reuse.getId()));
+            }
             applyCompleteFields(record, normalized, staffId, now);
             followupRecordMapper.insert(record);
             maybeOpenPlanCreateTask(tenantId, orgId, peopleId, record.getId(), normalized, record);
+            // 新建 DONE 仍关掉同人同类型工作台 FOLLOW_UP（排期/旧待办）
+            closeMatchingOpenFollowUpTasks(
+                    orgId, peopleId, followupType, staffId, now, actorAccountId, record.getId());
             audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_CREATE, record.getId(), peopleId,
                     AuditDetails.of(
                             "recordType", "PERIODIC", "status", "DONE", "followupType", followupType.name()));
@@ -252,6 +278,10 @@ public class FollowupService {
         followupRecordMapper.updateOnComplete(record);
         maybeOpenPlanCreateTask(requireTenantId(), orgId, record.getPeopleId(), record.getId(), normalized, record);
         closeLinkedTaskIfOpen(record, staffId, now, actorAccountId);
+        FollowupType completedType =
+                FollowupType.require(String.valueOf(normalized.get("followupType")));
+        closeMatchingOpenFollowUpTasks(
+                orgId, record.getPeopleId(), completedType, staffId, now, actorAccountId, record.getId());
         audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_COMPLETE, record.getId(), record.getPeopleId(),
                 AuditDetails.of("recordType", record.getRecordType(), "source", record.getSource()));
         return toView(followupRecordMapper.findById(record.getId()));
@@ -303,6 +333,250 @@ public class FollowupService {
         audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_CANCEL, record.getId(), record.getPeopleId(),
                 AuditDetails.of("reason", reason.trim()));
         return toView(followupRecordMapper.findById(record.getId()));
+    }
+
+    /**
+     * 保存 OPEN 定期随访草稿：宽松校验，不办结、不关任务、不写档案。
+     */
+    @Transactional
+    public FollowupRecordViewDto saveDraft(
+            String orgId, String id, Map<String, Object> content, String actorAccountId) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        FollowupRecord record = requireInOrg(orgId, id);
+        archiveAccessService.assertStaffCanAccessPeople(requireTenantId(), orgId, record.getPeopleId());
+        if (!FollowupRecordStatus.OPEN.matches(record.getStatus())) {
+            throw new BusinessException(400, "仅未完成随访可保存草稿");
+        }
+        if (!FollowupRecordType.PERIODIC.matches(record.getRecordType())) {
+            throw new BusinessException(400, "该类型随访请从工作台任务保存");
+        }
+        Map<String, Object> merged = mergeFollowupType(record, content);
+        Map<String, Object> draft = FollowupContentValidator.sanitizePeriodicDraft(merged);
+        applyDraftFields(record, draft, requireStaffId());
+        EntityMeta.onUpdate(record);
+        int n = followupRecordMapper.updateDraft(record);
+        if (n <= 0) {
+            throw new BusinessException(400, "保存失败，随访可能已办结");
+        }
+        audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_DRAFT_SAVE, record.getId(), record.getPeopleId(),
+                AuditDetails.of("recordType", "PERIODIC", "status", "OPEN"));
+        return toView(followupRecordMapper.findById(record.getId()));
+    }
+
+    /**
+     * 工作台 FOLLOW_UP 任务填单草稿：保持任务 OPEN，回写/创建关联 OPEN 随访。
+     */
+    @Transactional
+    public void saveDraftFromWorkspaceTask(
+            WorkspaceTask task, Map<String, Object> content, String staffId, String actorAccountId) {
+        FollowupRecord open = followupRecordMapper.findOpenByTaskId(task.getId());
+        Map<String, Object> merged = content == null ? new LinkedHashMap<>() : new LinkedHashMap<>(content);
+        if (!StringUtils.hasText(FollowupContentValidator.str(merged.get("followupType")))) {
+            if (open != null) {
+                Map<String, Object> existing =
+                        JsonUtils.fromJson(open.getContentJson(), new TypeReference<>() {});
+                String t = existing == null ? "" : FollowupContentValidator.str(existing.get("followupType"));
+                if (StringUtils.hasText(t)) {
+                    merged.put("followupType", t);
+                }
+            }
+            if (!StringUtils.hasText(FollowupContentValidator.str(merged.get("followupType")))
+                    && StringUtils.hasText(task.getPayloadJson())) {
+                Map<String, Object> payload =
+                        JsonUtils.fromJson(task.getPayloadJson(), new TypeReference<>() {});
+                String t = payload == null ? "" : FollowupContentValidator.str(payload.get("followupType"));
+                if (StringUtils.hasText(t)) {
+                    merged.put("followupType", t);
+                }
+            }
+        }
+        Map<String, Object> draft = FollowupContentValidator.sanitizePeriodicDraft(merged);
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        if (open != null) {
+            applyDraftFields(open, draft, staffId);
+            EntityMeta.onUpdate(open);
+            int n = followupRecordMapper.updateDraft(open);
+            if (n <= 0) {
+                throw new BusinessException(400, "保存失败，随访可能已办结");
+            }
+            audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_DRAFT_SAVE, open.getId(), task.getPeopleId(),
+                    AuditDetails.of(
+                            "recordType", "PERIODIC",
+                            "source", "WORKSPACE_TASK",
+                            "taskId", task.getId(),
+                            "status", "OPEN"));
+            return;
+        }
+        FollowupType followupType =
+                FollowupType.require(String.valueOf(draft.get("followupType")));
+        FollowupRecord record = new FollowupRecord();
+        record.setTenantId(task.getTenantId());
+        record.setOrgId(task.getOrgId());
+        record.setPeopleId(task.getPeopleId());
+        record.setWorkspaceTaskId(task.getId());
+        record.setRecordType(FollowupRecordType.PERIODIC.name());
+        record.setSource(FollowupRecordSource.WORKSPACE_TASK.name());
+        record.setStatus(FollowupRecordStatus.OPEN.name());
+        record.setDueAt(task.getDueAt());
+        applyDraftFields(record, draft, staffId);
+        EntityMeta.onCreate(record);
+        followupRecordMapper.insert(record);
+        audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_CREATE, record.getId(), task.getPeopleId(),
+                AuditDetails.of(
+                        "recordType", "PERIODIC",
+                        "status", "OPEN",
+                        "source", "WORKSPACE_TASK_DRAFT",
+                        "taskId", task.getId(),
+                        "followupType", followupType.name()));
+        audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_DRAFT_SAVE, record.getId(), task.getPeopleId(),
+                AuditDetails.of("recordType", "PERIODIC", "taskId", task.getId(), "status", "OPEN"));
+    }
+
+    /**
+     * 工作台 METRIC_ALERT 指标异常填单草稿：OPEN METRIC_REVIEW，不关任务。
+     */
+    @Transactional
+    public void saveMetricReviewDraftFromWorkspaceTask(
+            WorkspaceTask task, Map<String, Object> content, String staffId, String actorAccountId) {
+        FollowupRecord open = followupRecordMapper.findOpenByTaskId(task.getId());
+        Map<String, Object> raw = content == null ? new LinkedHashMap<>() : new LinkedHashMap<>(content);
+        List<Map<String, Object>> hits = MetricAbnormalEvaluator.extractHits(task.getPayloadJson());
+        Object existingHits = raw.get("hits");
+        boolean missingHits = existingHits == null
+                || (existingHits instanceof java.util.Collection<?> c && c.isEmpty());
+        if (!hits.isEmpty() && missingHits) {
+            raw.put("hits", hits);
+        }
+        Map<String, Object> draft = FollowupContentValidator.sanitizeMetricReviewDraft(raw);
+        if (open != null) {
+            if (!FollowupRecordType.METRIC_REVIEW.matches(open.getRecordType())) {
+                throw new BusinessException(400, "该任务已关联其他类型未完成随访，无法保存指标草稿");
+            }
+            applyMetricReviewDraftFields(open, draft, staffId, task.getSummary());
+            EntityMeta.onUpdate(open);
+            int n = followupRecordMapper.updateDraft(open);
+            if (n <= 0) {
+                throw new BusinessException(400, "保存失败，记录可能已办结");
+            }
+            audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_DRAFT_SAVE, open.getId(), task.getPeopleId(),
+                    AuditDetails.of(
+                            "recordType", "METRIC_REVIEW",
+                            "source", "WORKSPACE_TASK",
+                            "taskId", task.getId(),
+                            "status", "OPEN"));
+            return;
+        }
+        FollowupRecord record = new FollowupRecord();
+        record.setTenantId(task.getTenantId());
+        record.setOrgId(task.getOrgId());
+        record.setPeopleId(task.getPeopleId());
+        record.setWorkspaceTaskId(task.getId());
+        record.setRecordType(FollowupRecordType.METRIC_REVIEW.name());
+        record.setSource(FollowupRecordSource.WORKSPACE_TASK.name());
+        record.setStatus(FollowupRecordStatus.OPEN.name());
+        record.setDueAt(task.getDueAt());
+        applyMetricReviewDraftFields(record, draft, staffId, task.getSummary());
+        EntityMeta.onCreate(record);
+        followupRecordMapper.insert(record);
+        audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_CREATE, record.getId(), task.getPeopleId(),
+                AuditDetails.of(
+                        "recordType", "METRIC_REVIEW",
+                        "status", "OPEN",
+                        "source", "WORKSPACE_TASK_DRAFT",
+                        "taskId", task.getId()));
+        audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_DRAFT_SAVE, record.getId(), task.getPeopleId(),
+                AuditDetails.of("recordType", "METRIC_REVIEW", "taskId", task.getId(), "status", "OPEN"));
+    }
+
+    /**
+     * 工作台 PLAN_NUDGE 打卡跟进填单草稿：OPEN PLAN_NUDGE，不关任务。
+     */
+    @Transactional
+    public void savePlanNudgeDraftFromWorkspaceTask(
+            WorkspaceTask task, Map<String, Object> content, String staffId, String actorAccountId) {
+        FollowupRecord open = followupRecordMapper.findOpenByTaskId(task.getId());
+        Map<String, Object> draft = FollowupContentValidator.sanitizePlanNudgeDraft(
+                content == null ? Map.of() : content);
+        if (open != null) {
+            if (!FollowupRecordType.PLAN_NUDGE.matches(open.getRecordType())) {
+                throw new BusinessException(400, "该任务已关联其他类型未完成记录，无法保存打卡跟进草稿");
+            }
+            applyPlanNudgeDraftFields(open, draft, staffId, task.getSummary());
+            EntityMeta.onUpdate(open);
+            int n = followupRecordMapper.updateDraft(open);
+            if (n <= 0) {
+                throw new BusinessException(400, "保存失败，记录可能已办结");
+            }
+            audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_DRAFT_SAVE, open.getId(), task.getPeopleId(),
+                    AuditDetails.of(
+                            "recordType", "PLAN_NUDGE",
+                            "source", "WORKSPACE_TASK",
+                            "taskId", task.getId(),
+                            "status", "OPEN"));
+            return;
+        }
+        FollowupRecord record = new FollowupRecord();
+        record.setTenantId(task.getTenantId());
+        record.setOrgId(task.getOrgId());
+        record.setPeopleId(task.getPeopleId());
+        record.setWorkspaceTaskId(task.getId());
+        record.setRecordType(FollowupRecordType.PLAN_NUDGE.name());
+        record.setSource(FollowupRecordSource.WORKSPACE_TASK.name());
+        record.setStatus(FollowupRecordStatus.OPEN.name());
+        record.setDueAt(task.getDueAt());
+        applyPlanNudgeDraftFields(record, draft, staffId, task.getSummary());
+        EntityMeta.onCreate(record);
+        followupRecordMapper.insert(record);
+        audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_CREATE, record.getId(), task.getPeopleId(),
+                AuditDetails.of(
+                        "recordType", "PLAN_NUDGE",
+                        "status", "OPEN",
+                        "source", "WORKSPACE_TASK_DRAFT",
+                        "taskId", task.getId()));
+        audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_DRAFT_SAVE, record.getId(), task.getPeopleId(),
+                AuditDetails.of("recordType", "PLAN_NUDGE", "taskId", task.getId(), "status", "OPEN"));
+    }
+
+    private void applyPlanNudgeDraftFields(
+            FollowupRecord record, Map<String, Object> draft, String staffId, String taskSummary) {
+        record.setTitle(FollowupRecordType.PLAN_NUDGE.label());
+        record.setSummary(FollowupContentValidator.buildPlanNudgeDraftSummary(draft, taskSummary));
+        String channel = FollowupContentValidator.str(draft.get("contactChannel"));
+        record.setContactChannel(StringUtils.hasText(channel) ? channel : null);
+        String result = FollowupContentValidator.str(draft.get("contactResult"));
+        record.setContactResult(StringUtils.hasText(result) ? result : null);
+        record.setContentJson(JsonUtils.toJson(draft));
+        if (StringUtils.hasText(staffId)) {
+            record.setAssigneeStaffId(staffId);
+        }
+    }
+
+    private void applyMetricReviewDraftFields(
+            FollowupRecord record, Map<String, Object> draft, String staffId, String taskSummary) {
+        record.setTitle(FollowupRecordType.METRIC_REVIEW.label());
+        String summary = FollowupContentValidator.buildMetricReviewDraftSummary(draft, taskSummary);
+        record.setSummary(summary);
+        String channel = FollowupContentValidator.str(draft.get("followupMethod"));
+        record.setContactChannel(StringUtils.hasText(channel) ? channel : null);
+        record.setContactResult(null);
+        record.setContentJson(JsonUtils.toJson(draft));
+        if (StringUtils.hasText(staffId)) {
+            record.setAssigneeStaffId(staffId);
+        }
+    }
+
+    private void applyDraftFields(FollowupRecord record, Map<String, Object> draft, String staffId) {
+        FollowupType followupType = FollowupType.require(String.valueOf(draft.get("followupType")));
+        record.setTitle(followupType.label());
+        String summary = FollowupContentValidator.buildDraftSummary(draft);
+        record.setSummary(StringUtils.hasText(summary) ? summary : followupType.label() + "（未完成）");
+        String channel = FollowupContentValidator.str(draft.get("followupMethod"));
+        record.setContactChannel(StringUtils.hasText(channel) ? channel : null);
+        record.setContactResult(null);
+        record.setContentJson(JsonUtils.toJson(draft));
+        if (StringUtils.hasText(staffId)) {
+            record.setAssigneeStaffId(staffId);
+        }
     }
 
     /** 工作台 FOLLOW_UP 任务填单关单。 */
@@ -456,6 +730,94 @@ public class FollowupService {
                 record.getPeopleId(),
                 AuditDetails.of(
                         "taskType", task.getTaskType(), "closeReason", "FORM", "fromFollowup", record.getId()));
+    }
+
+    /**
+     * 现场办结定期随访后：关掉同患者、同 followupType 的 OPEN FOLLOW_UP 工作台任务，
+     * 并取消其关联的其它 OPEN 随访单（避免有单无待办 / 有待办无现场记录）。
+     */
+    private void closeMatchingOpenFollowUpTasks(
+            String orgId,
+            String peopleId,
+            FollowupType followupType,
+            String staffId,
+            LocalDateTime now,
+            String actorAccountId,
+            String fromFollowupId) {
+        if (!StringUtils.hasText(peopleId) || followupType == null) {
+            return;
+        }
+        for (WorkspaceTask task : workspaceTaskMapper.listOpenByPeople(orgId, peopleId)) {
+            if (!WorkspaceTaskType.FOLLOW_UP.matches(task.getTaskType())) {
+                continue;
+            }
+            if (!followUpTaskMatchesType(task, followupType)) {
+                continue;
+            }
+            workspaceTaskMapper.close(
+                    task.getId(),
+                    WorkspaceTaskStatus.DONE.name(),
+                    WorkspaceTaskCloseReason.FORM.name(),
+                    now,
+                    staffId,
+                    now);
+            auditService.record(
+                    PortalEnum.B.code(),
+                    actorAccountId,
+                    "STAFF",
+                    requireTenantId(),
+                    AuditActionEnum.WORKSPACE_TASK_DONE.name(),
+                    "workspace_task",
+                    task.getId(),
+                    peopleId,
+                    AuditDetails.of(
+                            "taskType",
+                            task.getTaskType(),
+                            "closeReason",
+                            "FORM",
+                            "fromFollowup",
+                            fromFollowupId,
+                            "matchedType",
+                            followupType.name()));
+            FollowupRecord linked = followupRecordMapper.findOpenByTaskId(task.getId());
+            if (linked != null && !linked.getId().equals(fromFollowupId)) {
+                String reason = "已由现场随访办结覆盖（记录 " + fromFollowupId + "）";
+                followupRecordMapper.updateCancel(
+                        linked.getId(), FollowupRecordStatus.CANCELLED.name(), reason, now);
+                audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_CANCEL, linked.getId(), peopleId,
+                        AuditDetails.of(
+                                "reason", reason, "supersededBy", fromFollowupId, "auto", true));
+            }
+        }
+    }
+
+    private boolean followUpTaskMatchesType(WorkspaceTask task, FollowupType followupType) {
+        if (task == null || !StringUtils.hasText(task.getPayloadJson())) {
+            // 旧任务无类型：保守匹配，避免误关其它类型
+            return true;
+        }
+        Map<String, Object> payload = JsonUtils.fromJson(task.getPayloadJson(), new TypeReference<>() {});
+        String t = payload == null ? "" : FollowupContentValidator.str(payload.get("followupType"));
+        if (!StringUtils.hasText(t)) {
+            return true;
+        }
+        return followupType.name().equals(t);
+    }
+
+    private FollowupRecord findOpenPeriodicSameType(String orgId, String peopleId, FollowupType followupType) {
+        List<FollowupRecord> rows =
+                followupRecordMapper.listByPeople(orgId, peopleId, FollowupRecordType.PERIODIC.name(), 20);
+        for (FollowupRecord row : rows) {
+            if (!FollowupRecordStatus.OPEN.matches(row.getStatus())) {
+                continue;
+            }
+            Map<String, Object> content = JsonUtils.fromJson(row.getContentJson(), new TypeReference<>() {});
+            String t = content == null ? "" : FollowupContentValidator.str(content.get("followupType"));
+            if (followupType.name().equals(t) || !StringUtils.hasText(t)) {
+                return row;
+            }
+        }
+        return null;
     }
 
     private void applyCompleteFields(

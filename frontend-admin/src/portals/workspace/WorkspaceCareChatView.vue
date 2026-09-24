@@ -264,6 +264,10 @@ function openTodoTask(task: FocusTask) {
     goPatientPath('/care-plan')
     return
   }
+  if (task.taskType === 'TEAM_ASSIGN') {
+    router.push('/workspace/tasks?pool=MINE&taskType=TEAM_ASSIGN')
+    return
+  }
   if (task.taskType === 'FOLLOW_UP' || task.taskType === 'PLAN_NUDGE' || task.taskType === 'METRIC_ALERT') {
     goPatientPath('/followups')
     return

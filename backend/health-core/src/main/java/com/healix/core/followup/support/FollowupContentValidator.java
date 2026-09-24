@@ -78,6 +78,115 @@ public final class FollowupContentValidator {
         return out;
     }
 
+    /** 指标异常草稿：宽松落库，不要求字段齐全。 */
+    public static Map<String, Object> sanitizeMetricReviewDraft(Map<String, Object> raw) {
+        Map<String, Object> c = raw == null ? Map.of() : raw;
+        Map<String, Object> out = new LinkedHashMap<>();
+        String contactTarget = str(c.get("contactTarget"));
+        if (CONTACT_TARGETS.contains(contactTarget)) {
+            out.put("contactTarget", contactTarget);
+        }
+        String followupMethod = str(c.get("followupMethod"));
+        if (FOLLOWUP_METHODS.contains(followupMethod)) {
+            out.put("followupMethod", followupMethod);
+        }
+        String abnormalReason = clip(str(c.get("abnormalReason")), TEXT_MAX);
+        if (StringUtils.hasText(abnormalReason)) {
+            out.put("abnormalReason", abnormalReason);
+        }
+        String guidance = clip(str(c.get("guidance")), TEXT_MAX);
+        if (StringUtils.hasText(guidance)) {
+            out.put("guidance", guidance);
+        }
+        Object hitsRaw = c.get("hits");
+        if (hitsRaw instanceof Collection<?> col && !col.isEmpty()) {
+            List<Map<String, Object>> hits = new ArrayList<>();
+            for (Object item : col) {
+                if (item instanceof Map<?, ?> m) {
+                    Map<String, Object> hit = new LinkedHashMap<>();
+                    for (Map.Entry<?, ?> e : m.entrySet()) {
+                        if (e.getKey() != null) {
+                            hit.put(String.valueOf(e.getKey()), e.getValue());
+                        }
+                    }
+                    if (!hit.isEmpty()) {
+                        hits.add(hit);
+                    }
+                }
+            }
+            if (!hits.isEmpty()) {
+                out.put("hits", hits);
+                out.put("hitCount", hits.size());
+            }
+        }
+        return out;
+    }
+
+    public static String buildMetricReviewDraftSummary(Map<String, Object> draft, String fallback) {
+        String reason = str(draft == null ? null : draft.get("abnormalReason"));
+        if (StringUtils.hasText(reason)) {
+            return clip("指标异常 · " + reason, 200);
+        }
+        String guidance = str(draft == null ? null : draft.get("guidance"));
+        if (StringUtils.hasText(guidance)) {
+            return clip("指标异常 · " + guidance, 200);
+        }
+        if (StringUtils.hasText(fallback)) {
+            return clip(fallback + "（未完成）", 200);
+        }
+        return "指标异常处理（未完成）";
+    }
+
+    /** 打卡跟进草稿：联系渠道与定期随访不同（PHONE/WECOM/IN_PERSON/OTHER）。 */
+    public static final Set<String> NUDGE_CONTACT_CHANNELS = Set.of("PHONE", "WECOM", "IN_PERSON", "OTHER");
+    public static final Set<String> NUDGE_CONTACT_RESULTS = Set.of("REACHED", "UNREACHED");
+
+    public static Map<String, Object> sanitizePlanNudgeDraft(Map<String, Object> raw) {
+        Map<String, Object> c = raw == null ? Map.of() : raw;
+        Map<String, Object> out = new LinkedHashMap<>();
+        String channel = str(c.get("contactChannel"));
+        if (NUDGE_CONTACT_CHANNELS.contains(channel)) {
+            out.put("contactChannel", channel);
+        }
+        String result = str(c.get("contactResult"));
+        if (NUDGE_CONTACT_RESULTS.contains(result)) {
+            out.put("contactResult", result);
+        }
+        Boolean informed = bool(c.get("informedCheckin"));
+        if (informed != null) {
+            out.put("informedCheckin", informed);
+        }
+        String feedback = clip(str(c.get("patientFeedback")), TEXT_MAX);
+        if (StringUtils.hasText(feedback)) {
+            out.put("patientFeedback", feedback);
+        }
+        String note = clip(str(c.get("note")), TEXT_MAX);
+        if (StringUtils.hasText(note)) {
+            out.put("note", note);
+        }
+        return out;
+    }
+
+    public static String buildPlanNudgeDraftSummary(Map<String, Object> draft, String fallback) {
+        String result = str(draft == null ? null : draft.get("contactResult"));
+        String head = switch (result) {
+            case "REACHED" -> "打卡跟进 · 已接通";
+            case "UNREACHED" -> "打卡跟进 · 未接通";
+            default -> "打卡跟进";
+        };
+        String note = str(draft == null ? null : draft.get("note"));
+        if (!StringUtils.hasText(note)) {
+            note = str(draft == null ? null : draft.get("patientFeedback"));
+        }
+        if (StringUtils.hasText(note)) {
+            return clip(head + " · " + note, 200);
+        }
+        if (StringUtils.hasText(fallback)) {
+            return clip(fallback + "（未完成）", 200);
+        }
+        return head + "（未完成）";
+    }
+
     public static Map<String, Object> validatePeriodic(Map<String, Object> raw) {
         Map<String, Object> c = raw == null ? Map.of() : raw;
         String followupTypeCode = str(c.get("followupType"));
@@ -115,6 +224,168 @@ public final class FollowupContentValidator {
                 };
         out.put("section", section);
         return out;
+    }
+
+    /**
+     * 随访草稿：宽松落库，不要求字段齐全；非法枚举丢弃，超长截断。
+     * 至少保留 followupType（缺省 ROUTINE）。
+     */
+    public static Map<String, Object> sanitizePeriodicDraft(Map<String, Object> raw) {
+        Map<String, Object> c = raw == null ? Map.of() : raw;
+        String followupTypeCode = str(c.get("followupType"));
+        if (!FollowupType.CODES.contains(followupTypeCode)) {
+            followupTypeCode = FollowupType.ROUTINE.name();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("followupType", followupTypeCode);
+        String contactTarget = str(c.get("contactTarget"));
+        if (CONTACT_TARGETS.contains(contactTarget)) {
+            out.put("contactTarget", contactTarget);
+        }
+        String followupMethod = str(c.get("followupMethod"));
+        if (FOLLOWUP_METHODS.contains(followupMethod)) {
+            out.put("followupMethod", followupMethod);
+        }
+        String guidance = clip(str(c.get("guidance")), TEXT_MAX);
+        if (StringUtils.hasText(guidance)) {
+            out.put("guidance", guidance);
+        }
+        Boolean suggest = bool(c.get("suggestPlanAdjust"));
+        if (suggest != null) {
+            out.put("suggestPlanAdjust", suggest);
+        }
+        Map<String, Object> sectionRaw = asMap(c.get("section"));
+        if (!sectionRaw.isEmpty()) {
+            out.put("section", sanitizeDraftSection(followupTypeCode, sectionRaw));
+        }
+        return out;
+    }
+
+    /** 草稿摘要：类型 + 指导建议/未完成。 */
+    public static String buildDraftSummary(Map<String, Object> draft) {
+        String typeCode = str(draft == null ? null : draft.get("followupType"));
+        String head = FollowupType.CODES.contains(typeCode)
+                ? FollowupType.require(typeCode).label()
+                : "随访";
+        String guidance = str(draft == null ? null : draft.get("guidance"));
+        if (StringUtils.hasText(guidance)) {
+            return clip(head + " · " + guidance, 200);
+        }
+        return clip(head + "（未完成）", 200);
+    }
+
+    private static Map<String, Object> sanitizeDraftSection(String typeCode, Map<String, Object> raw) {
+        Map<String, Object> section = new LinkedHashMap<>();
+        putClip(section, raw, "adherenceNote", TEXT_MAX);
+        putClip(section, raw, "lifestyleNote", TEXT_MAX);
+        putClip(section, raw, "unsatisfiedReason", TEXT_MAX);
+        putClip(section, raw, "symptomNote", TEXT_MAX);
+        putClip(section, raw, "content", TEXT_MAX);
+        putClip(section, raw, "blockerNote", TEXT_MAX);
+        putClip(section, raw, "planChange", TEXT_MAX);
+        putClip(section, raw, "adverseNote", TEXT_MAX);
+        putClip(section, raw, "retestNote", TEXT_MAX);
+        putClip(section, raw, "gapNote", TEXT_MAX);
+        String lifestyle = str(raw.get("lifestyleLevel"));
+        if (LIFESTYLE_LEVELS.contains(lifestyle)) {
+            section.put("lifestyleLevel", lifestyle);
+        }
+        String sat = str(raw.get("planSatisfaction"));
+        if (PLAN_SATISFACTIONS.contains(sat)) {
+            section.put("planSatisfaction", sat);
+        }
+        String next = str(raw.get("nextAction"));
+        if (ONBOARDING_NEXT_ACTIONS.contains(next)) {
+            section.put("nextAction", next);
+        }
+        String blocker = str(raw.get("mainBlocker"));
+        if (PLAN_BLOCKERS.contains(blocker)) {
+            section.put("mainBlocker", blocker);
+        }
+        String missFreq = str(raw.get("missedDoseFrequency"));
+        if (MISSED_DOSE_FREQUENCIES.contains(missFreq)) {
+            section.put("missedDoseFrequency", missFreq);
+        }
+        String missReason = str(raw.get("missedDoseReason"));
+        if (MISSED_DOSE_REASONS.contains(missReason)) {
+            section.put("missedDoseReason", missReason);
+        }
+        String disposition = str(raw.get("disposition"));
+        if (SYMPTOM_DISPOSITIONS.contains(disposition)) {
+            section.put("disposition", disposition);
+        }
+        Boolean hasAdverse = bool(raw.get("hasAdverseReaction"));
+        if (hasAdverse != null) {
+            section.put("hasAdverseReaction", hasAdverse);
+        }
+        Boolean needDoctor = bool(raw.get("needDoctorAdjust"));
+        if (needDoctor != null) {
+            section.put("needDoctorAdjust", needDoctor);
+        }
+        Boolean archiveWritten = bool(raw.get("archiveWritten"));
+        if (archiveWritten != null) {
+            // 草稿不写档案；仅保留前端勾选痕迹时也不落 true，避免误导
+            section.put("archiveWritten", false);
+        }
+        Object rate = raw.get("selfRatePct");
+        if (rate != null && StringUtils.hasText(String.valueOf(rate))) {
+            try {
+                int parsed = (int) Math.round(Double.parseDouble(String.valueOf(rate).trim()));
+                if (parsed >= 0 && parsed <= 100) {
+                    section.put("selfRatePct", parsed);
+                }
+            } catch (NumberFormatException ignored) {
+                // skip
+            }
+        }
+        List<String> symptoms = stringList(raw.get("symptoms"));
+        if (!symptoms.isEmpty()) {
+            section.put("symptoms", symptoms);
+        }
+        List<String> diseaseCodes = stringList(raw.get("diseaseCodes"));
+        if (!diseaseCodes.isEmpty()) {
+            section.put("diseaseCodes", diseaseCodes);
+        }
+        Object metricsRaw = raw.get("baselineMetrics");
+        if (metricsRaw instanceof Collection<?> col && !col.isEmpty()) {
+            List<Map<String, Object>> metrics = new ArrayList<>();
+            for (Object item : col) {
+                if (!(item instanceof Map<?, ?> m)) {
+                    continue;
+                }
+                Map<String, Object> entry = new LinkedHashMap<>();
+                String metricType = str(m.get("metricType"));
+                String value = str(m.get("value"));
+                String unit = str(m.get("unit"));
+                if (StringUtils.hasText(metricType)) {
+                    entry.put("metricType", metricType);
+                }
+                if (StringUtils.hasText(value)) {
+                    entry.put("value", clip(value, 64));
+                }
+                if (StringUtils.hasText(unit)) {
+                    entry.put("unit", clip(unit, 32));
+                }
+                if (!entry.isEmpty()) {
+                    metrics.add(entry);
+                }
+            }
+            if (!metrics.isEmpty()) {
+                section.put("baselineMetrics", metrics);
+            }
+        }
+        // typeCode 预留：后续可按类型裁剪字段
+        if (!StringUtils.hasText(typeCode)) {
+            return section;
+        }
+        return section;
+    }
+
+    private static void putClip(Map<String, Object> section, Map<String, Object> raw, String key, int max) {
+        String v = clip(str(raw.get(key)), max);
+        if (StringUtils.hasText(v)) {
+            section.put(key, v);
+        }
     }
 
     public static String requireFollowupType(Map<String, Object> raw) {

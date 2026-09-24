@@ -1,4 +1,4 @@
-/** 智能体 CALL_API 共用执行：催办 / 建随访 / 发布报告 / 发布方案 / 发沟通 / 领任务 */
+/** 智能体 CALL_API 共用执行：催办 / 建随访 / 发布报告 / 发布方案 / 发沟通 / 领任务 / 办结待办 */
 import { ElMessageBox } from 'element-plus'
 import { api } from './http'
 
@@ -8,6 +8,15 @@ export type CallApiResult = {
   message: string
   /** 执行后建议打开的 sheet mode（如 care-plan） */
   openSheet?: string
+  /** 打开与工作台「处理」一致的任务填单弹窗 */
+  openTaskForm?: string
+}
+
+/** 表单类待办由驾驶舱打开 WorkspaceTaskFormDialog（与工作台「处理」一致） */
+
+function strPayload(payload: CallApiPayload, key: string): string {
+  const v = payload?.[key]
+  return typeof v === 'string' ? v.trim() : ''
 }
 
 export async function runAgentCallApi(
@@ -70,10 +79,16 @@ export async function runAgentCallApi(
   }
 
   if (apiKey === 'CLAIM_TASK') {
-    const taskId = typeof payload?.taskId === 'string' ? payload.taskId : ''
+    const taskId = strPayload(payload, 'taskId')
     if (!taskId) throw new Error('缺少任务 ID')
     await api(`/api/b/v1/workspace/tasks/${taskId}/claim`, { method: 'POST' })
     return { message: '已领取待办' }
+  }
+
+  if (apiKey === 'COMPLETE_TASK') {
+    const taskId = strPayload(payload, 'taskId')
+    if (!taskId) throw new Error('缺少任务 ID')
+    return { message: '', openTaskForm: taskId }
   }
 
   if (apiKey === 'PUBLISH_REPORT') {
@@ -149,6 +164,7 @@ export function callApiDoneLabel(apiKey: string): string | null {
   if (apiKey === 'NUDGE') return '已发送提醒'
   if (apiKey === 'SEND_CARE_CHAT') return '已发送沟通'
   if (apiKey === 'CLAIM_TASK') return '已领取待办'
+  if (apiKey === 'COMPLETE_TASK') return '已办结待办'
   if (apiKey === 'PUBLISH_REPORT') return '已发布报告'
   if (apiKey === 'PUBLISH_CARE_PLAN') return '已发布方案'
   return null

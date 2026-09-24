@@ -45,7 +45,7 @@ public final class AgentReplyPlainText {
     }
 
     /**
-     * 条目之间不留空行；「一、二、」分节标题前保留一行空行。
+     * 条目与分节标题之间不留空行；仅在「一、二、」分节标题前保留一行，与上一节隔开。
      */
     static String tightenBlankLines(String input) {
         String[] lines = input.split("\n", -1);

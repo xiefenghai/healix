@@ -189,6 +189,67 @@ export function emptyFollowupSection(): FollowupSection {
   }
 }
 
+/** 从已保存 content 回填表单（草稿 / 详情） */
+export function hydrateFollowupFormFromContent(content?: Record<string, unknown> | null): {
+  followupType: string
+  contactTarget: string
+  followupMethod: string
+  guidance: string
+  suggestPlanAdjust: boolean
+  section: FollowupSection
+} {
+  const section = emptyFollowupSection()
+  const c = content || {}
+  const followupType =
+    typeof c.followupType === 'string' && c.followupType ? c.followupType : 'ROUTINE'
+  const contactTarget = typeof c.contactTarget === 'string' ? c.contactTarget : ''
+  const followupMethod = typeof c.followupMethod === 'string' ? c.followupMethod : ''
+  const guidance = typeof c.guidance === 'string' ? c.guidance : ''
+  const suggestPlanAdjust = c.suggestPlanAdjust === true
+  const raw = c.section
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const s = raw as Record<string, unknown>
+    if (typeof s.nextAction === 'string') section.nextAction = s.nextAction
+    if (Array.isArray(s.diseaseCodes)) {
+      section.diseaseCodes = s.diseaseCodes.filter((x): x is string => typeof x === 'string')
+    }
+    if (Array.isArray(s.baselineMetrics)) {
+      section.baselineMetrics = s.baselineMetrics
+        .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object')
+        .map((m) => ({
+          metricType: typeof m.metricType === 'string' ? m.metricType : '',
+          value: typeof m.value === 'string' ? m.value : m.value != null ? String(m.value) : '',
+          unit: typeof m.unit === 'string' ? m.unit : undefined,
+        }))
+    }
+    if (typeof s.adherenceNote === 'string') section.adherenceNote = s.adherenceNote
+    if (typeof s.lifestyleNote === 'string') section.lifestyleNote = s.lifestyleNote
+    if (typeof s.lifestyleLevel === 'string') section.lifestyleLevel = s.lifestyleLevel
+    if (typeof s.planSatisfaction === 'string') section.planSatisfaction = s.planSatisfaction
+    if (typeof s.unsatisfiedReason === 'string') section.unsatisfiedReason = s.unsatisfiedReason
+    if (typeof s.symptomNote === 'string') section.symptomNote = s.symptomNote
+    if (typeof s.content === 'string') section.content = s.content
+    if (s.selfRatePct != null && s.selfRatePct !== '') {
+      const n = Number(s.selfRatePct)
+      section.selfRatePct = Number.isNaN(n) ? null : n
+    }
+    if (typeof s.mainBlocker === 'string') section.mainBlocker = s.mainBlocker
+    if (typeof s.blockerNote === 'string') section.blockerNote = s.blockerNote
+    if (typeof s.planChange === 'string') section.planChange = s.planChange
+    if (typeof s.missedDoseFrequency === 'string') section.missedDoseFrequency = s.missedDoseFrequency
+    if (typeof s.missedDoseReason === 'string') section.missedDoseReason = s.missedDoseReason
+    if (typeof s.hasAdverseReaction === 'boolean') section.hasAdverseReaction = s.hasAdverseReaction
+    if (typeof s.adverseNote === 'string') section.adverseNote = s.adverseNote
+    if (typeof s.needDoctorAdjust === 'boolean') section.needDoctorAdjust = s.needDoctorAdjust
+    if (Array.isArray(s.symptoms)) {
+      section.symptoms = s.symptoms.filter((x): x is string => typeof x === 'string')
+    }
+    if (typeof s.retestNote === 'string') section.retestNote = s.retestNote
+    if (typeof s.disposition === 'string') section.disposition = s.disposition
+  }
+  return { followupType, contactTarget, followupMethod, guidance, suggestPlanAdjust, section }
+}
+
 const TYPE_LABELS = Object.fromEntries(FOLLOWUP_TYPE_OPTIONS.map((o) => [o.value, o.label]))
 const RECORD_TYPE_LABELS = Object.fromEntries(FOLLOWUP_RECORD_TYPE_OPTIONS.map((o) => [o.value, o.label]))
 const METHOD_LABELS = Object.fromEntries(FOLLOWUP_METHOD_OPTIONS.map((o) => [o.value, o.label]))
@@ -231,7 +292,7 @@ export function formatPlanSatisfaction(code?: string | null) {
 }
 
 export function formatFollowupStatus(status?: string | null) {
-  if (status === 'OPEN') return '待办'
+  if (status === 'OPEN') return '未完成'
   if (status === 'DONE') return '已完成'
   if (status === 'CANCELLED') return '已取消'
   return status || '-'

@@ -71,6 +71,17 @@ public class BFollowupController {
                 SecurityUtils.requireContext().getAccountId()));
     }
 
+    /** 保存未完成随访草稿（不办结、不关任务） */
+    @PostMapping("/followups/{id}/draft")
+    public ApiResult<FollowupRecordViewDto> saveDraft(
+            @PathVariable String id, @RequestBody Map<String, Object> content) {
+        return ApiResult.ok(followupService.saveDraft(
+                SecurityUtils.requireCurrentOrgId(),
+                id,
+                content,
+                SecurityUtils.requireContext().getAccountId()));
+    }
+
     @PostMapping("/followups/{id}/cancel")
     public ApiResult<FollowupRecordViewDto> cancel(
             @PathVariable String id, @RequestBody @Validated ReasonRequest req) {

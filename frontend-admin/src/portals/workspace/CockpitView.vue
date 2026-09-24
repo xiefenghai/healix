@@ -3,11 +3,11 @@
  * 智能驾驶舱三栏页：左优先名单 · 中机构/患者会话 · 右焦点快照。
  * 顶栏 chips 由 WorkspaceLayout 注入 cockpitChipHandler 回调。
  */
-import { computed, inject, nextTick, onMounted, ref, type Ref, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, type Ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
-import { postSse } from '../../shared/agent-stream'
+import { postSse, isAbortError } from '../../shared/agent-stream'
 import {
   appendProgress,
   appendSkill,
@@ -18,7 +18,13 @@ import {
 } from '../../shared/agent-activity'
 import AgentActivityPanel from '../../shared/AgentActivityPanel.vue'
 import CockpitPatientSheet, { type CockpitSheetMode } from '../../shared/CockpitPatientSheet.vue'
+import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
+import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
+import {
+  notifyCockpitTasksPossiblyChanged,
+  onCockpitTasksPossiblyChanged,
+} from '../../shared/cockpit-tasks-refresh'
 import { formatAssistantPlainHtml, visibleAnswerFromRawStream } from '../../shared/agent-plain-text'
 import { AGENT_LOGO, AGENT_NAME } from '../../shared/agent-brand'
 import { debounce } from '../../shared/debounce'
@@ -146,6 +152,7 @@ type TabKey = 'urgent' | 'watch' | 'mine'
 type ChipKind = 'tasks' | 'overdue'
 
 /** 需跳转方案/报告审阅页的任务类型 */
+const FORM_CLOSE_TASK_TYPES = new Set(['PLAN_NUDGE', 'METRIC_ALERT', 'FOLLOW_UP'])
 const DRAFT_TASK_TYPES = new Set(['PLAN_CREATE', 'PLAN_REVIEW', 'REPORT_REVIEW'])
 
 const AVATAR_TONES = [
@@ -201,6 +208,21 @@ const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const sending = ref(false)
 const uploading = ref(false)
+/** 进行中的对话 SSE；切换患者 / 清除焦点时 abort，避免「发送中」卡住 */
+let chatAbort: AbortController | null = null
+
+function abortActiveChat(reason = 'focus-switch') {
+  if (chatAbort) {
+    try {
+      chatAbort.abort(reason)
+    } catch {
+      /* ignore */
+    }
+    chatAbort = null
+  }
+  sending.value = false
+  uploading.value = false
+}
 const reportFileRef = ref<HTMLInputElement | null>(null)
 const imagePreviewUrl = ref<string | null>(null)
 
@@ -215,6 +237,12 @@ function closeImagePreview() {
 const sheetOpen = ref(false)
 const sheetMode = ref<CockpitSheetMode>('archive')
 const sheetPeopleId = ref('')
+/** 与工作台「处理」同款的任务填单弹窗 */
+const formTaskId = ref<string | null>(null)
+const joinPeopleId = ref<string | null>(null)
+const joinPeopleName = ref<string | null>(null)
+const pendingCompleteAction = ref<AgentAction | null>(null)
+const pendingCompletePeopleId = ref<string | null>(null)
 /** 无焦点患者时用机构会话；选中患者后切换到患者会话（互不覆盖） */
 const orgSessionId = ref<string | null>(null)
 const patientSessionId = ref<string | null>(null)
@@ -245,21 +273,130 @@ const sessionId = computed(() =>
 )
 
 /** 切换患者时内存缓存，避免异步恢复未完成 / 流式回调串台导致历史被清空 */
-type PatientSessionCache = {
+type SessionCache = {
   sessionId: string | null
   status: string
   messages: ChatMessage[]
 }
-const patientSessionCache = new Map<string, PatientSessionCache>()
+const ORG_SESSION_CACHE_KEY = 'healix.cockpit.orgSessionCache'
+const patientSessionCache = new Map<string, SessionCache>()
+/** 机构级会话缓存：选患者前写入，清除焦点时优先恢复（兼 sessionStorage，抗 HMR/刷新） */
+let orgSessionCache: SessionCache | null = null
 let focusSwitchSeq = 0
+
+function snapshotMessages(): ChatMessage[] {
+  return messages.value.map((m) => ({ ...m, activity: m.activity?.slice(), actions: m.actions?.slice() }))
+}
+
+function cloneCacheMessages(list: ChatMessage[]): ChatMessage[] {
+  return list.map((m) => ({ ...m, activity: m.activity?.slice(), actions: m.actions?.slice() }))
+}
+
+/** 简报除外；助手字数优先——避免「仅用户多条」的服务端历史盖掉本地完整回复 */
+function countThreadMessages(list: ChatMessage[]) {
+  return list.filter((m) => !isBriefingLike(m)).length
+}
+
+function assistantContentChars(list: ChatMessage[]) {
+  let n = 0
+  for (const m of list) {
+    if (m.role !== 'assistant') continue
+    if (isBriefingLike(m)) continue
+    n += (m.content || m.streamContent || '').trim().length
+  }
+  return n
+}
+
+/** a 是否不差于 b（助手内容优先，其次条数） */
+function isSessionAtLeastAsRich(a: ChatMessage[], b: ChatMessage[]) {
+  const aAssist = assistantContentChars(a)
+  const bAssist = assistantContentChars(b)
+  if (aAssist !== bAssist) return aAssist > bAssist
+  return countThreadMessages(a) >= countThreadMessages(b)
+}
+
+function readOrgCacheFromStorage(): SessionCache | null {
+  try {
+    const raw = sessionStorage.getItem(ORG_SESSION_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as SessionCache
+    if (!parsed || !Array.isArray(parsed.messages)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeOrgCacheToStorage(cache: SessionCache | null) {
+  try {
+    if (!cache) {
+      sessionStorage.removeItem(ORG_SESSION_CACHE_KEY)
+      return
+    }
+    sessionStorage.setItem(
+      ORG_SESSION_CACHE_KEY,
+      JSON.stringify({
+        sessionId: cache.sessionId,
+        status: cache.status,
+        messages: cache.messages.map((m) => ({
+          role: m.role,
+          content: m.content || m.streamContent || '',
+          at: m.at,
+          actions: m.actions,
+          elapsedMs: m.elapsedMs,
+        })),
+      }),
+    )
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function ensureOrgSessionCache(): SessionCache | null {
+  if (orgSessionCache && countThreadMessages(orgSessionCache.messages) > 0) {
+    orgSessionCache.messages = dropOrphanUserTurns(orgSessionCache.messages)
+    return orgSessionCache
+  }
+  const stored = readOrgCacheFromStorage()
+  if (stored && countThreadMessages(stored.messages) > 0) {
+    stored.messages = dropOrphanUserTurns(stored.messages)
+    orgSessionCache = stored
+    writeOrgCacheToStorage(stored)
+    return orgSessionCache
+  }
+  return orgSessionCache
+}
 
 function cachePatientSession(peopleId: string | null | undefined) {
   if (!peopleId) return
   patientSessionCache.set(peopleId, {
     sessionId: patientSessionId.value,
     status: sessionStatus.value,
-    messages: messages.value.slice(),
+    messages: snapshotMessages(),
   })
+}
+
+function cacheOrgSession() {
+  const next: SessionCache = {
+    sessionId: orgSessionId.value,
+    status: sessionStatus.value,
+    messages: snapshotMessages(),
+  }
+  const prev = ensureOrgSessionCache()
+  // 切患者瞬间若当前气泡已被 abort 掏空，不要用空快照覆盖更完整的机构缓存
+  if (prev && !isSessionAtLeastAsRich(next.messages, prev.messages)) {
+    if (next.sessionId) prev.sessionId = next.sessionId
+    writeOrgCacheToStorage(prev)
+    return
+  }
+  orgSessionCache = next
+  writeOrgCacheToStorage(orgSessionCache)
+}
+
+/** 缓存当前可见会话（机构或患者） */
+function cacheActiveSession() {
+  if (focusPeopleId.value) cachePatientSession(focusPeopleId.value)
+  else cacheOrgSession()
 }
 
 function applyPatientSessionCache(peopleId: string): boolean {
@@ -267,8 +404,88 @@ function applyPatientSessionCache(peopleId: string): boolean {
   if (!cached) return false
   patientSessionId.value = cached.sessionId
   sessionStatus.value = cached.status || 'ACTIVE'
-  messages.value = cached.messages.slice()
+  messages.value = cloneCacheMessages(cached.messages)
   return true
+}
+
+function applyOrgSessionCache(): boolean {
+  const cache = ensureOrgSessionCache()
+  if (!cache) return false
+  orgSessionId.value = cache.sessionId
+  sessionStatus.value = cache.status || 'ACTIVE'
+  messages.value = cloneCacheMessages(cache.messages)
+  return true
+}
+
+/**
+ * 机构会话流式在切走后完成/中断时，把助手气泡写回 orgSessionCache。
+ * assistantRow 可能已不在当前 messages 里。
+ */
+function mergeAssistantIntoOrgCache(assistantRow: ChatMessage) {
+  const text = (assistantRow.content || assistantRow.streamContent || '').trim()
+  if (!text) return
+  assistantRow.content = text
+  assistantRow.streamContent = ''
+  assistantRow.streaming = false
+  const cache = ensureOrgSessionCache()
+  if (!cache) {
+    orgSessionCache = {
+      sessionId: orgSessionId.value,
+      status: sessionStatus.value || 'ACTIVE',
+      messages: [cloneCacheMessages([assistantRow])[0]],
+    }
+    writeOrgCacheToStorage(orgSessionCache)
+    return
+  }
+  const idx = cache.messages.indexOf(assistantRow)
+  if (idx >= 0) {
+    cache.messages[idx] = { ...assistantRow, activity: assistantRow.activity?.slice(), actions: assistantRow.actions?.slice() }
+  } else {
+    // 缓存里是 snapshot 拷贝，按「末尾空助手 / 同内容」对齐
+    let replaced = false
+    for (let i = cache.messages.length - 1; i >= 0; i--) {
+      const m = cache.messages[i]
+      if (m.role !== 'assistant') continue
+      const existing = (m.content || m.streamContent || '').trim()
+      if (!existing || m.streaming) {
+        cache.messages[i] = {
+          ...assistantRow,
+          activity: assistantRow.activity?.slice(),
+          actions: assistantRow.actions?.slice(),
+        }
+        replaced = true
+        break
+      }
+      break
+    }
+    if (!replaced) {
+      cache.messages.push({
+        ...assistantRow,
+        activity: assistantRow.activity?.slice(),
+        actions: assistantRow.actions?.slice(),
+      })
+    }
+  }
+  writeOrgCacheToStorage(cache)
+}
+
+/** 回机构时只同步 sessionId，不替换本地消息 */
+async function syncOrgSessionMeta(seq: number) {
+  try {
+    const res = await api<{ data: SessionBundlePayload }>('/api/b/v1/agent/sessions/current')
+    if (seq !== focusSwitchSeq || focusPeopleId.value) return
+    const sid = res.data?.sessionId || null
+    if (!sid) return
+    orgSessionId.value = sid
+    sessionStatus.value = res.data?.status || sessionStatus.value
+    if (orgSessionCache) {
+      orgSessionCache.sessionId = sid
+      orgSessionCache.status = sessionStatus.value
+      writeOrgCacheToStorage(orgSessionCache)
+    }
+  } catch {
+    /* 本地缓存已足够展示 */
+  }
 }
 
 const isArchivedSession = computed(
@@ -329,14 +546,14 @@ const assessmentTags = computed(() => focus.value?.assessmentTags || [])
 const assessmentAlert = computed(() => assessmentTags.value.some((t) => t.tone === 'danger'))
 
 /** 首条「今日简报」进固定区；其余进入对话流。
- * 只能靠 REFRESH 动作识别简报——机构/患者建议回复常含「今日待办」，
- * 若用文案或 system 角色误判，刷新后回答会被折叠掉，对话流只剩健管师输入。 */
+ * 只能认 system（落库 briefing）。机构建议回复也会带 REFRESH/FOCUS，
+ * 若靠 REFRESH 识别，collapse 会把助手回答全折叠掉，对话流只剩用户气泡。 */
 function isBriefingLike(m: {
   role?: string
   content?: string
   actions?: AgentAction[]
 }): boolean {
-  return !!m.actions?.some((a) => a.type === 'REFRESH')
+  return (m.role || '').toLowerCase() === 'system'
 }
 
 /** 多次刷新简报曾重复落库；恢复时只保留最新一条简报 */
@@ -346,7 +563,36 @@ function collapseDuplicateBriefings<T extends { role?: string; content?: string;
   const briefings = msgs.filter(isBriefingLike)
   if (briefings.length <= 1) return msgs
   const others = msgs.filter((m) => !isBriefingLike(m))
-  return [briefings[briefings.length - 1], ...others]
+  return [briefings[briefings.length - 1]!, ...others]
+}
+
+/**
+ * 丢掉「有提问无回答」的半截轮次（历史 abort 残留 / 仅 USER 落库）。
+ * 保留简报与带正文的助手消息。
+ */
+function dropOrphanUserTurns(msgs: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = []
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i]!
+    if (m.role !== 'user') {
+      out.push(m)
+      continue
+    }
+    const next = msgs[i + 1]
+    const nextHasReply =
+      next &&
+      next.role === 'assistant' &&
+      !!(next.content || next.streamContent || '').trim()
+    if (nextHasReply) {
+      out.push(m)
+      continue
+    }
+    // 紧跟空助手：一并跳过
+    if (next && next.role === 'assistant') {
+      i += 1
+    }
+  }
+  return out
 }
 
 const briefingMsg = computed(() => {
@@ -528,6 +774,36 @@ async function loadPriority() {
   }
 }
 
+/**
+ * 办结 / 入组 / 领取等会改待办数量：同步刷新左栏名单 + Tab 角标，并可选刷新右栏焦点。
+ */
+async function refreshAfterTaskChange(peopleId?: string | null) {
+  const jobs: Promise<unknown>[] = [loadSummary()]
+  if (tab.value === 'mine') {
+    jobs.push(searchPatients())
+  } else {
+    jobs.push(loadPriority())
+  }
+  if (peopleId) {
+    jobs.push(loadFocus(peopleId))
+  }
+  await Promise.all(jobs)
+}
+
+/** 外部写库（抽屉随访/方案/录入等）→ 合并短时多次通知 */
+let pendingRefreshPeopleId: string | null | undefined
+let refreshTasksTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleRefreshAfterTaskChange(peopleId?: string | null) {
+  pendingRefreshPeopleId = peopleId ?? focusPeopleId.value ?? pendingRefreshPeopleId
+  if (refreshTasksTimer) clearTimeout(refreshTasksTimer)
+  refreshTasksTimer = setTimeout(() => {
+    refreshTasksTimer = null
+    const id = pendingRefreshPeopleId
+    pendingRefreshPeopleId = undefined
+    void refreshAfterTaskChange(id)
+  }, 280)
+}
+
 /** 我主责健管组下的患者（可关键字筛选；卡片结构与优先/关注一致） */
 async function searchPatients() {
   searchLoading.value = true
@@ -557,7 +833,8 @@ const listCards = computed(() => (tab.value === 'mine' ? searchResults.value : c
 
 async function loadBriefing(force = false) {
   if (!force) {
-    const restored = await restoreSession(null)
+    // 浏览器刷新：优先拉服务端已落库会话，不被本地半截缓存盖掉
+    const restored = await restoreSession(null, { preferServer: true })
     if (restored) return
   }
   try {
@@ -579,7 +856,7 @@ async function loadBriefing(force = false) {
     }
     if (messages.value.length === 0) {
       messages.value.push({
-        role: 'assistant',
+        role: 'system',
         content,
         at: nowClock(),
         actions,
@@ -588,7 +865,7 @@ async function loadBriefing(force = false) {
     }
   } catch (e) {
     messages.value.push({
-      role: 'assistant',
+      role: 'system',
       content: '今日简报暂时不可用，请查看左侧优先名单。',
       at: nowClock(),
     })
@@ -615,7 +892,11 @@ function revokeMessageBlobs() {
   }
 }
 
-function applySessionBundle(bundle: SessionBundlePayload, peopleId: string | null) {
+function applySessionBundle(
+  bundle: SessionBundlePayload,
+  peopleId: string | null,
+  opts?: { force?: boolean },
+) {
   if (peopleId) patientSessionId.value = bundle.sessionId
   else orgSessionId.value = bundle.sessionId
   sessionStatus.value = bundle.status || 'ACTIVE'
@@ -630,18 +911,50 @@ function applySessionBundle(bundle: SessionBundlePayload, peopleId: string | nul
       actions: m.actions?.length ? m.actions : undefined,
     }
   })
-  messages.value = collapseDuplicateBriefings(mapped)
+  const incoming = dropOrphanUserTurns(collapseDuplicateBriefings(mapped))
+  const force = !!opts?.force
   if (peopleId) {
+    const prev = patientSessionCache.get(peopleId)
+    // 服务端尚未落全助手回复时，不要用「仅用户多条」覆盖本地更完整的缓存
+    if (!force && prev && !isSessionAtLeastAsRich(incoming, dropOrphanUserTurns(prev.messages))) {
+      patientSessionId.value = bundle.sessionId || prev.sessionId
+      sessionStatus.value = bundle.status || prev.status || 'ACTIVE'
+      messages.value = dropOrphanUserTurns(cloneCacheMessages(prev.messages))
+      return
+    }
+    messages.value = incoming
     patientSessionCache.set(peopleId, {
       sessionId: bundle.sessionId,
       status: sessionStatus.value,
-      messages: messages.value.slice(),
+      messages: snapshotMessages(),
     })
+    return
   }
+  const prev = ensureOrgSessionCache()
+  if (!force && prev && !isSessionAtLeastAsRich(incoming, dropOrphanUserTurns(prev.messages))) {
+    orgSessionId.value = bundle.sessionId || prev.sessionId
+    sessionStatus.value = bundle.status || prev.status || 'ACTIVE'
+    messages.value = dropOrphanUserTurns(cloneCacheMessages(prev.messages))
+    prev.sessionId = orgSessionId.value
+    prev.status = sessionStatus.value
+    prev.messages = snapshotMessages()
+    writeOrgCacheToStorage(prev)
+    return
+  }
+  messages.value = incoming
+  orgSessionCache = {
+    sessionId: bundle.sessionId,
+    status: sessionStatus.value,
+    messages: snapshotMessages(),
+  }
+  writeOrgCacheToStorage(orgSessionCache)
 }
 
 /** 恢复可见会话；有历史则写入 messages 并返回 true */
-async function restoreSession(peopleId: string | null): Promise<boolean> {
+async function restoreSession(
+  peopleId: string | null,
+  opts?: { preferServer?: boolean },
+): Promise<boolean> {
   const seq = focusSwitchSeq
   const expectPeopleId = peopleId
   try {
@@ -654,8 +967,11 @@ async function restoreSession(peopleId: string | null): Promise<boolean> {
       return false
     }
     const bundle = res.data
-    applySessionBundle(bundle, peopleId)
-    if (!bundle.messages?.length) return false
+    // 刷新进页：以服务端为准；焦点切换中：允许本地更完整缓存优先
+    applySessionBundle(bundle, peopleId, { force: !!opts?.preferServer })
+    const hasThread =
+      countThreadMessages(messages.value) > 0 || !!(bundle.messages && bundle.messages.length > 0)
+    if (!hasThread) return false
     await scrollToBottom()
     return true
   } catch {
@@ -703,7 +1019,7 @@ async function openHistorySession(row: SessionSummaryRow) {
       `/api/b/v1/agent/sessions/${encodeURIComponent(row.sessionId)}`,
     )
     revokeMessageBlobs()
-    applySessionBundle(res.data, focusPeopleId.value)
+    applySessionBundle(res.data, focusPeopleId.value, { force: true })
     historyOpen.value = false
     await scrollToBottom()
   } catch (e) {
@@ -724,7 +1040,7 @@ async function startNewChat() {
       body: JSON.stringify({ peopleId: peopleId || undefined }),
     })
     revokeMessageBlobs()
-    applySessionBundle(res.data, peopleId)
+    applySessionBundle(res.data, peopleId, { force: true })
     historyOpen.value = false
     briefingCollapsed.value = false
     if (!peopleId) {
@@ -753,7 +1069,7 @@ async function resumeArchivedSession() {
       `/api/b/v1/agent/sessions/${encodeURIComponent(id)}/resume`,
       { method: 'POST' },
     )
-    applySessionBundle(res.data, focusPeopleId.value)
+    applySessionBundle(res.data, focusPeopleId.value, { force: true })
     ElMessage.success('已继续该会话')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '继续会话失败')
@@ -812,8 +1128,11 @@ async function loadFocus(peopleId: string) {
 async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reason?: string }) {
   const prevPeopleId = focusPeopleId.value
   const switching = prevPeopleId !== peopleId
-  if (switching && prevPeopleId) {
-    cachePatientSession(prevPeopleId)
+  if (switching) {
+    // 先缓存当前会话，再中断流（避免 abort 清掉气泡后缓存已空）
+    if (prevPeopleId) cachePatientSession(prevPeopleId)
+    else cacheOrgSession()
+    abortActiveChat('select-patient')
   }
   focusPeopleId.value = peopleId
   try {
@@ -861,7 +1180,9 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
 }
 
 async function clearFocus() {
+  // 先把当前患者会话固化；机构缓存应在进患者时已写好
   if (focusPeopleId.value) cachePatientSession(focusPeopleId.value)
+  abortActiveChat('clear-focus')
   focusPeopleId.value = null
   focus.value = null
   try {
@@ -875,6 +1196,13 @@ async function clearFocus() {
     void router.replace({ query: q })
   }
   const seq = ++focusSwitchSeq
+  // 有本地机构历史时直接恢复，绝不用服务端「仅用户多条」覆盖
+  if (applyOrgSessionCache()) {
+    void syncOrgSessionMeta(seq)
+    await scrollToBottom()
+    return
+  }
+  messages.value = []
   const restored = await restoreSession(null)
   if (seq !== focusSwitchSeq || focusPeopleId.value) return
   if (!restored && messages.value.length === 0) {
@@ -912,7 +1240,7 @@ async function loadCapabilities() {
   }
 }
 
-/** 芯片展示：GENERAL_CHAT 随是否选中患者切换文案；单据录入在上方能力栏 */
+/** 芯片展示：GENERAL_CHAT 随是否选中患者切换文案；单据录入 / 完成待办为本地能力 */
 const capabilityChips = computed(() => {
   const chips = capabilities.value.map((c) => {
     if (c.code === 'GENERAL_CHAT') {
@@ -947,6 +1275,18 @@ const capabilityChips = computed(() => {
   } else {
     chips.push(ocrChip)
   }
+  const todoCount = todoTasks.value.length
+  chips.push({
+    code: 'COMPLETE_TODOS',
+    label: todoCount > 0 ? `完成待办(${todoCount})` : '完成待办',
+    hint: !focusPeopleId.value
+      ? '请先选择患者'
+      : todoCount > 0
+        ? `请模型给出办理建议，并挂出 ${todoCount} 项办结入口`
+        : '当前患者暂无工作台待办',
+    needsPatient: true,
+    enabled: true,
+  })
   return chips
 })
 
@@ -960,6 +1300,23 @@ function quickCapability(code: string, label: string) {
       return
     }
     openReportUpload()
+    return
+  }
+  if (code === 'COMPLETE_TODOS') {
+    if (!focusPeopleId.value) {
+      ElMessage.info('请先从左侧选择一位患者')
+      return
+    }
+    if (!todoTasks.value.length) {
+      ElMessage.info('当前患者暂无工作台待办')
+      return
+    }
+    // 走 GENERAL_CHAT：模型给办理建议；后端 wantsCompleteTask 挂办结动作
+    void sendMessage(
+      '完成待办：请根据这位患者当前的工作台待办，给出办理建议与优先顺序；下方会挂办结入口，须人工确认填单后再落库，不要声称已办结。',
+      false,
+      'GENERAL_CHAT',
+    )
     return
   }
   if ((code === 'CARE_PLAN' || code === 'REPORT_SUMMARY') && !focusPeopleId.value) {
@@ -1001,7 +1358,14 @@ async function sendMessage(
           : image
             ? '请识别这张单据'
             : '')
-  if ((!userText && !image) || sending.value) return
+  if ((!userText && !image) || sending.value) {
+    // 焦点切换后偶发 sending 残留且无 AbortController → 允许自愈
+    if (sending.value && !chatAbort) {
+      sending.value = false
+      uploading.value = false
+    }
+    if ((!userText && !image) || sending.value) return
+  }
   if (isArchivedSession.value) {
     ElMessage.info('当前为历史会话，请先点击「继续此会话」')
     return
@@ -1020,7 +1384,7 @@ async function sendMessage(
   }
   const boundPeopleId = focusPeopleId.value
   const boundSessionId = sessionId.value
-  const userMsg: ChatMessage = {
+  messages.value.push({
     role: 'user',
     content: image
       ? `${userText}\n[已附图片${image.name ? `：${image.name}` : ''}]`
@@ -1028,11 +1392,14 @@ async function sendMessage(
     at: nowClock(),
     imageUrl: image?.previewUrl || undefined,
     imageName: image?.name || undefined,
-  }
-  messages.value.push(userMsg)
+  })
+  /** 必须取 push 后的响应式代理；indexOf(原始对象) 会找不到，abort 时只删助手留下用户气泡 */
+  const userRow = messages.value[messages.value.length - 1]!
   if (!keepInput) input.value = ''
+  abortActiveChat('new-send')
+  const ac = new AbortController()
+  chatAbort = ac
   sending.value = true
-  const assistantIdx = messages.value.length
   messages.value.push({
     role: 'assistant',
     content: '',
@@ -1043,7 +1410,9 @@ async function sendMessage(
     activity: [],
     elapsedMs: null,
   })
-  cachePatientSession(boundPeopleId)
+  /** 必须取 push 后的响应式代理；改原始对象会导致流式 UI 不刷新 */
+  const assistantRow = messages.value[messages.value.length - 1]!
+  cacheActiveSession()
   await scrollToBottom()
 
   const body: Record<string, unknown> = {
@@ -1057,41 +1426,46 @@ async function sendMessage(
     body.imageMimeType = image.mimeType || 'image/jpeg'
   }
 
-  const rowAt = () => messages.value[assistantIdx]
+  const rowAt = () => assistantRow
+  const stillBound = () =>
+    chatAbort === ac &&
+    messages.value.includes(assistantRow) &&
+    (boundPeopleId ? focusPeopleId.value === boundPeopleId : !focusPeopleId.value)
 
   try {
     await postSse('/api/b/v1/agent/chat/stream', body, {
+      signal: ac.signal,
       onProgress: (msg) => {
+        if (!stillBound()) return
         const row = rowAt()
-        if (!row) return
         if (!row.activity) row.activity = []
         appendProgress(row.activity, msg)
         void scrollToBottom()
       },
       onTool: (event) => {
+        if (!stillBound()) return
         const row = rowAt()
-        if (!row) return
         if (!row.activity) row.activity = []
         appendTool(row.activity, event)
         void scrollToBottom()
       },
       onSkill: (event) => {
+        if (!stillBound()) return
         const row = rowAt()
-        if (!row) return
         if (!row.activity) row.activity = []
         appendSkill(row.activity, event)
         void scrollToBottom()
       },
       onThinking: (event) => {
+        if (!stillBound()) return
         const row = rowAt()
-        if (!row) return
         if (!row.activity) row.activity = []
         appendThinking(row.activity, event)
         void scrollToBottom()
       },
       onToken: (token) => {
+        if (!stillBound()) return
         const row = rowAt()
-        if (!row) return
         const raw = (row.rawStream || '') + token
         // 方案 JSON 原始流不进气泡
         if (!row.streamContent && /^\s*\{/.test(raw) && /"summary"\s*:/.test(raw)) {
@@ -1103,8 +1477,6 @@ async function sendMessage(
         void scrollToBottom()
       },
       onResult: (payload) => {
-        const row = rowAt()
-        if (!row) return
         const data = payload as {
           sessionId?: string
           reply?: string
@@ -1112,17 +1484,19 @@ async function sendMessage(
           capability?: string
           extracted?: unknown
         }
+        const row = rowAt()
         const streamed = (row.streamContent || '').trim()
         if (data.capability === 'CARE_PLAN' || data.capability === 'REPORT_SUMMARY') {
           row.content = streamed || (data.reply && data.reply.trim()) || row.content
-          stickyCapability.value = data.capability
+          if (stillBound()) stickyCapability.value = data.capability
         } else {
           row.content = (data.reply && data.reply.trim()) || streamed || row.content
           if (
-            data.capability === 'OCR_LAB' ||
-            data.capability === 'OCR_EXAM' ||
-            data.capability === 'OCR_MED' ||
-            data.capability === 'GENERAL_CHAT'
+            stillBound() &&
+            (data.capability === 'OCR_LAB' ||
+              data.capability === 'OCR_EXAM' ||
+              data.capability === 'OCR_MED' ||
+              data.capability === 'GENERAL_CHAT')
           ) {
             stickyCapability.value = null
           }
@@ -1132,10 +1506,11 @@ async function sendMessage(
         row.actions = data.actions
         row.streaming = false
         finishAllActivity(row.activity)
-        if (data.capability === 'REPORT_SUMMARY' && data.extracted) {
+        if (stillBound() && data.capability === 'REPORT_SUMMARY' && data.extracted) {
           applyReportReview(row, data.extracted)
         }
         if (
+          stillBound() &&
           boundPeopleId &&
           (data.capability === 'OCR_LAB' ||
             data.capability === 'OCR_EXAM' ||
@@ -1152,41 +1527,97 @@ async function sendMessage(
             }
             const cached = patientSessionCache.get(boundPeopleId)
             if (cached) cached.sessionId = data.sessionId
-            else cachePatientSession(boundPeopleId)
-          } else if (!focusPeopleId.value) {
-            orgSessionId.value = data.sessionId
-            sessionStatus.value = 'ACTIVE'
+            else if (focusPeopleId.value === boundPeopleId) cachePatientSession(boundPeopleId)
+          } else {
+            if (!focusPeopleId.value) {
+              orgSessionId.value = data.sessionId
+              sessionStatus.value = 'ACTIVE'
+            }
+            if (orgSessionCache) {
+              orgSessionCache.sessionId = data.sessionId
+              orgSessionCache.status = 'ACTIVE'
+            }
           }
         }
-        cachePatientSession(boundPeopleId)
+        if (!boundPeopleId) {
+          mergeAssistantIntoOrgCache(assistantRow)
+          if (stillBound()) cacheOrgSession()
+        } else if (stillBound()) {
+          cacheActiveSession()
+        }
       },
       onDone: (meta) => {
+        if (!stillBound()) {
+          if (!boundPeopleId) mergeAssistantIntoOrgCache(assistantRow)
+          return
+        }
         const row = rowAt()
-        if (!row) return
         row.streaming = false
         finishAllActivity(row.activity)
         if (meta?.elapsedMs != null) row.elapsedMs = meta.elapsedMs
-        cachePatientSession(boundPeopleId)
+        // 只有进度没有正文时给兜底，避免留下空白助手气泡
+        if (!(row.content || '').trim() && !(row.streamContent || '').trim()) {
+          row.content = '暂时没有生成有效回复，请再试一次。'
+        } else if (!(row.content || '').trim() && (row.streamContent || '').trim()) {
+          row.content = row.streamContent || ''
+          row.streamContent = ''
+        }
+        cacheActiveSession()
       },
-      onError: (msg) => ElMessage.error(msg),
+      onError: (msg) => {
+        if (!stillBound()) return
+        const row = rowAt()
+        if (!(row.content || '').trim()) {
+          row.content = msg || '生成失败，请重试'
+        }
+        row.streaming = false
+        ElMessage.error(msg)
+      },
     })
   } catch (e) {
-    if (assistantIdx >= 0 && assistantIdx < messages.value.length) {
-      messages.value.splice(assistantIdx, 1)
+    if (isAbortError(e)) {
+      assistantRow.streaming = false
+      finishAllActivity(assistantRow.activity)
+      const partial = (assistantRow.content || assistantRow.streamContent || '').trim()
+      if (partial) {
+        assistantRow.content = partial
+        assistantRow.streamContent = ''
+        if (!boundPeopleId) mergeAssistantIntoOrgCache(assistantRow)
+      } else {
+        // 中断且无任何回复：成对撤掉本轮用户+助手，避免堆一排「今日建议」空气泡
+        removeMessagePair(userRow, assistantRow)
+      }
+    } else {
+      removeMessagePair(userRow, assistantRow)
+      if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl)
+      ElMessage.error(e instanceof Error ? e.message : '发送失败')
     }
-    if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl)
-    ElMessage.error(e instanceof Error ? e.message : '发送失败')
   } finally {
-    sending.value = false
-    uploading.value = false
-    const row = rowAt()
-    if (row) {
-      row.streaming = false
-      finishAllActivity(row.activity)
+    const superseded = chatAbort !== ac
+    if (!superseded) chatAbort = null
+    if (!superseded) {
+      sending.value = false
+      uploading.value = false
     }
-    cachePatientSession(boundPeopleId)
-    await scrollToBottom()
+    assistantRow.streaming = false
+    finishAllActivity(assistantRow.activity)
+    if (!superseded) {
+      if (boundPeopleId) {
+        if (focusPeopleId.value === boundPeopleId) cachePatientSession(boundPeopleId)
+      } else if (!focusPeopleId.value) {
+        cacheOrgSession()
+      }
+      await scrollToBottom()
+    }
   }
+}
+
+/** 成对删除本轮气泡（必须传入 push 后的响应式代理） */
+function removeMessagePair(userRow: ChatMessage, assistantRow: ChatMessage) {
+  const aIdx = messages.value.indexOf(assistantRow)
+  if (aIdx >= 0) messages.value.splice(aIdx, 1)
+  const uIdx = messages.value.indexOf(userRow)
+  if (uIdx >= 0) messages.value.splice(uIdx, 1)
 }
 
 function toggleActivity(msg: ChatMessage, id: string) {
@@ -1201,6 +1632,28 @@ function runAction(action: AgentAction) {
   }
   if (action.type === 'REFRESH') {
     void refreshBriefing()
+    return
+  }
+  if (action.type === 'NAVIGATE' && action.path) {
+    if (action.path === 'join-care-team') {
+      const pid = action.peopleId || focusPeopleId.value
+      if (!pid) {
+        ElMessage.info('请先选择患者')
+        return
+      }
+      if (action.peopleId && action.peopleId !== focusPeopleId.value) {
+        void selectPatient(action.peopleId, { autoAsk: false }).then(() => {
+          joinPeopleId.value = action.peopleId!
+          joinPeopleName.value = focus.value?.displayName || null
+        })
+        return
+      }
+      joinPeopleId.value = pid
+      joinPeopleName.value =
+        pid === focusPeopleId.value ? focus.value?.displayName || null : null
+      return
+    }
+    router.push(action.path)
     return
   }
   if (action.type === 'SET_COCKPIT_TAB' && action.path) {
@@ -1321,6 +1774,11 @@ async function executeCallApi(action: AgentAction) {
   action.runState = 'busy'
   try {
     const result = await runAgentCallApi(apiKey, peopleId, action.payload)
+    // 办结待办：打开与工作台「处理」一致的填单弹窗，提交成功后再回执
+    if (result.openTaskForm) {
+      await openWorkspaceTaskForm(result.openTaskForm, { fromAction: action, peopleId })
+      return
+    }
     const receipt = result.message
     action.runState = 'done'
     const doneLabel = callApiDoneLabel(apiKey)
@@ -1332,7 +1790,7 @@ async function executeCallApi(action: AgentAction) {
       apiKey === 'CLAIM_TASK' ||
       apiKey === 'SEND_CARE_CHAT'
     ) {
-      await loadFocus(peopleId)
+      await refreshAfterTaskChange(peopleId)
     }
     if (apiKey === 'PUBLISH_REPORT' || apiKey === 'PUBLISH_CARE_PLAN') {
       stickyCapability.value = null
@@ -1340,6 +1798,7 @@ async function executeCallApi(action: AgentAction) {
     if (result.openSheet) {
       openSheet(result.openSheet as CockpitSheetMode, peopleId)
     }
+    if (!receipt) return
     const msg: ChatMessage = {
       role: 'assistant',
       content: `回执：${receipt}`,
@@ -1363,6 +1822,103 @@ async function executeCallApi(action: AgentAction) {
     ElMessage.error(err)
     await scrollToBottom()
   }
+}
+
+function onTaskFormClosed() {
+  const action = pendingCompleteAction.value
+  if (action && action.runState === 'busy') {
+    action.runState = undefined
+  }
+  pendingCompleteAction.value = null
+  pendingCompletePeopleId.value = null
+  formTaskId.value = null
+}
+
+async function onTaskFormSubmitted() {
+  const action = pendingCompleteAction.value
+  const peopleId = pendingCompletePeopleId.value || focusPeopleId.value
+  const doneLabel = callApiDoneLabel('COMPLETE_TASK')
+  if (action) {
+    action.runState = 'done'
+    if (doneLabel) action.label = doneLabel
+  }
+  pendingCompleteAction.value = null
+  pendingCompletePeopleId.value = null
+  formTaskId.value = null
+  const receipt = '已填单办结待办'
+  if (peopleId) {
+    await refreshAfterTaskChange(peopleId)
+    // 仅从气泡动作进来时写会话回执；右栏点卡片只刷新焦点
+    if (action) {
+      const msg: ChatMessage = {
+        role: 'assistant',
+        content: `回执：${receipt}`,
+        at: nowClock(),
+      }
+      messages.value.push(msg)
+      await persistVisibleMessage(peopleId, msg.content, undefined, 'receipt')
+    }
+  }
+  ElMessage.success(receipt)
+  await scrollToBottom()
+}
+
+/** 草稿保存：不关弹窗，刷新右栏待办摘要 */
+async function onTaskFormSaved() {
+  const peopleId = pendingCompletePeopleId.value || focusPeopleId.value
+  if (peopleId) await loadFocus(peopleId)
+}
+
+/** 打开与工作台「处理」同款填单；公共池未领时静默领取 */
+async function openWorkspaceTaskForm(
+  taskId: string,
+  opts?: { fromAction?: AgentAction; peopleId?: string | null },
+) {
+  const peopleId = opts?.peopleId || focusPeopleId.value
+  try {
+    const detail = await api<{ data: { assigneeStaffId?: string | null; status?: string } }>(
+      `/api/b/v1/workspace/tasks/${taskId}`,
+    )
+    const row = detail.data
+    if (!row || (row.status || '').toUpperCase() !== 'OPEN') {
+      ElMessage.warning('任务已关闭或不存在')
+      if (opts?.fromAction) opts.fromAction.runState = undefined
+      return
+    }
+    if (!row.assigneeStaffId) {
+      await api(`/api/b/v1/workspace/tasks/${taskId}/claim`, { method: 'POST' })
+    }
+  } catch (e) {
+    if (opts?.fromAction) opts.fromAction.runState = undefined
+    ElMessage.error(e instanceof Error ? e.message : '无法打开办结表单')
+    return
+  }
+  pendingCompleteAction.value = opts?.fromAction || null
+  pendingCompletePeopleId.value = peopleId || null
+  formTaskId.value = taskId
+}
+
+function goTasks() {
+  router.push('/workspace/tasks')
+}
+
+function openTodoTask(task: FocusTask) {
+  // 表单类待办：与工作台「处理」同一弹窗
+  if (FORM_CLOSE_TASK_TYPES.has(task.taskType)) {
+    void openWorkspaceTaskForm(task.id, { peopleId: focusPeopleId.value })
+    return
+  }
+  if (task.taskType === 'TEAM_ASSIGN') {
+    joinPeopleId.value = focusPeopleId.value
+    joinPeopleName.value = focus.value?.displayName || null
+    return
+  }
+  if (DRAFT_TASK_TYPES.has(task.taskType)) {
+    if (task.taskType === 'REPORT_REVIEW') goReports()
+    else goCarePlan()
+    return
+  }
+  goTasks()
 }
 
 function isCarePlanPath(path?: string) {
@@ -1415,6 +1971,8 @@ async function refreshBriefing() {
   messages.value = []
   orgSessionId.value = null
   patientSessionId.value = null
+  orgSessionCache = null
+  writeOrgCacheToStorage(null)
   sessionStatus.value = 'ACTIVE'
   briefingCollapsed.value = false
   await loadBriefing(true)
@@ -1452,6 +2010,7 @@ function onReportPublished() {
   sheetOpen.value = false
   tab.value = 'watch'
   void refreshBriefing()
+  void refreshAfterTaskChange(focusPeopleId.value)
 }
 function goObservations() {
   openSheet('observations')
@@ -1593,6 +2152,7 @@ async function confirmOcr(msg: ChatMessage) {
       ]
     }
     ElMessage.success(`已写入${res.data.title || '健康数据'}`)
+    notifyCockpitTasksPossiblyChanged(review.peopleId)
   } catch (err) {
     review.status = 'pending'
     ElMessage.error(err instanceof Error ? err.message : '入库失败')
@@ -1607,23 +2167,6 @@ function discardOcr(msg: ChatMessage) {
   review.status = 'discarded'
   msg.content = '已取消入库，识别结果未保存。'
   msg.actions = undefined
-}
-
-function goTasks() {
-  router.push('/workspace/tasks')
-}
-
-function openTodoTask(task: FocusTask) {
-  if (DRAFT_TASK_TYPES.has(task.taskType)) {
-    if (task.taskType === 'REPORT_REVIEW') goReports()
-    else goCarePlan()
-    return
-  }
-  if (task.taskType === 'FOLLOW_UP' || task.taskType === 'PLAN_NUDGE' || task.taskType === 'METRIC_ALERT') {
-    goFollowups()
-    return
-  }
-  goTasks()
 }
 
 function pendingKindLabel(kind?: string) {
@@ -1647,8 +2190,21 @@ function openPendingDraft(d: PendingDraft) {
   openSheet(mode, peopleId || undefined)
 }
 
+function escapePlainHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+}
+
 function messageHtml(msg: ChatMessage) {
-  return formatAssistantPlainHtml(msg.streamContent || msg.content)
+  const raw = msg.streamContent || msg.content || ''
+  // 用户/系统气泡不做分节排版，避免深色正文样式盖掉白字
+  if (msg.role === 'user' || msg.role === 'system') {
+    return escapePlainHtml(raw)
+  }
+  return formatAssistantPlainHtml(raw)
 }
 
 watch(tab, (t) => {
@@ -1661,29 +2217,52 @@ watch(tab, (t) => {
 
 const COCKPIT_FOCUS_KEY = 'healix.cockpit.focusPeopleId'
 
+let stopCockpitTasksRefresh: (() => void) | null = null
+
+watch(sheetOpen, (open, wasOpen) => {
+  // 快捷办理抽屉关闭：随访/录入/方案等可能已改待办
+  if (wasOpen && !open) {
+    notifyCockpitTasksPossiblyChanged(sheetPeopleId.value || focusPeopleId.value)
+  }
+})
+
 onMounted(async () => {
   if (chipHandler) chipHandler.value = onChip
+  stopCockpitTasksRefresh = onCockpitTasksPossiblyChanged((id) => {
+    scheduleRefreshAfterTaskChange(id)
+  })
   try {
     await Promise.all([loadSummary(), loadPriority(), loadCapabilities()])
+    // 先恢复机构会话（以服务端为准）
     await loadBriefing(false)
     const qPeople = typeof route.query.peopleId === 'string' ? route.query.peopleId : ''
     const qTab = typeof route.query.tab === 'string' ? route.query.tab : ''
     if (qTab === 'urgent' || qTab === 'watch' || qTab === 'mine') {
       tab.value = qTab
     }
-    let savedPeople = ''
-    try {
-      savedPeople = sessionStorage.getItem(COCKPIT_FOCUS_KEY) || ''
-    } catch {
-      savedPeople = ''
+    // 仅 URL 显式带 peopleId 时恢复患者焦点；避免 sessionStorage 残留导致刷新后看不到机构会话
+    if (qPeople) {
+      await selectPatient(qPeople, { autoAsk: false })
+    } else {
+      try {
+        sessionStorage.removeItem(COCKPIT_FOCUS_KEY)
+      } catch {
+        /* ignore */
+      }
     }
-    const restorePeople = qPeople || savedPeople
-    // 刷新恢复焦点时不要自动追问，避免重复刷屏
-    if (restorePeople) await selectPatient(restorePeople, { autoAsk: false })
     if (qTab === 'mine') void searchPatients()
     else if (qTab === 'urgent' || qTab === 'watch') void loadPriority()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '驾驶舱加载失败')
+  }
+})
+
+onUnmounted(() => {
+  stopCockpitTasksRefresh?.()
+  stopCockpitTasksRefresh = null
+  if (refreshTasksTimer) {
+    clearTimeout(refreshTasksTimer)
+    refreshTasksTimer = null
   }
 })
 </script>
@@ -2435,6 +3014,30 @@ onMounted(async () => {
       :mode="sheetMode"
       :patient-name="focus?.displayName"
       @published="onReportPublished"
+    />
+
+    <WorkspaceTaskFormDialog
+      :task-id="formTaskId"
+      @closed="onTaskFormClosed"
+      @submitted="onTaskFormSubmitted"
+      @saved="onTaskFormSaved"
+    />
+
+    <JoinCareTeamDialog
+      :people-id="joinPeopleId"
+      :people-name="joinPeopleName"
+      @closed="
+        () => {
+          joinPeopleId = null
+          joinPeopleName = null
+        }
+      "
+      @joined="
+        async () => {
+          const id = focusPeopleId
+          await refreshAfterTaskChange(id)
+        }
+      "
     />
 
     <el-image-viewer
@@ -3207,7 +3810,7 @@ onMounted(async () => {
   margin-top: 8px;
   font-size: 13px;
   color: var(--ink-700);
-  line-height: 1.6;
+  line-height: 1.35;
 }
 
 .briefing .bubble-actions {
@@ -3263,13 +3866,13 @@ onMounted(async () => {
 
 .msg-row.assistant {
   align-self: flex-start;
-  max-width: min(560px, 96%);
+  max-width: min(760px, 96%);
 }
 
 .msg-row.user {
   align-self: flex-end;
   flex-direction: row-reverse;
-  max-width: 88%;
+  max-width: min(420px, 88%);
 }
 
 .msg-row.user .bubble {
@@ -3307,11 +3910,11 @@ onMounted(async () => {
 
 .bubble {
   min-width: 0;
-  max-width: min(520px, 100%);
+  max-width: 100%;
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 13.5px;
-  line-height: 1.45;
+  line-height: 1.35;
 }
 
 .bubble.assistant {
@@ -3324,6 +3927,13 @@ onMounted(async () => {
   background: var(--brand-500);
   color: #fff;
   border-bottom-right-radius: 4px;
+}
+
+.bubble.user .md-body {
+  color: #fff;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.45;
 }
 
 .bubble.system {
@@ -3651,24 +4261,103 @@ onMounted(async () => {
 
 .bubble.assistant .md-body,
 .briefing-text.md-body {
-  white-space: pre-wrap;
+  white-space: normal;
+  word-break: break-word;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-700);
+}
+
+.bubble.system .md-body {
+  white-space: normal;
   word-break: break-word;
 }
 
-.bubble.user .md-body,
-.bubble.system .md-body {
-  white-space: pre-wrap;
+.bubble.assistant .md-body :deep(.reply-sec),
+.briefing-text.md-body :deep(.reply-sec) {
+  margin: 0;
+  padding: 0 0 0 10px;
+  border-left: 2px solid color-mix(in srgb, var(--brand-500, #0d9488) 42%, var(--ink-200));
 }
 
-.md-body :deep(.section-title) {
-  font-weight: 700;
+.bubble.assistant .md-body :deep(.reply-sec + .reply-sec),
+.briefing-text.md-body :deep(.reply-sec + .reply-sec) {
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--ink-200) 88%, transparent);
+  border-left-color: color-mix(in srgb, var(--brand-500, #0d9488) 28%, var(--ink-200));
+}
+
+.bubble.assistant .md-body :deep(.section-title),
+.briefing-text.md-body :deep(.section-title) {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  margin: 0 0 6px;
+  line-height: 1.35;
   color: var(--ink-900);
-  display: block;
-  margin: 6px 0 2px;
 }
 
-.md-body :deep(.section-title:first-child) {
-  margin-top: 0;
+.bubble.assistant .md-body :deep(.sec-idx),
+.briefing-text.md-body :deep(.sec-idx) {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand-600, #0f766e);
+  letter-spacing: 0.02em;
+}
+
+.bubble.assistant .md-body :deep(.sec-name),
+.briefing-text.md-body :deep(.sec-name) {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.bubble.assistant .md-body :deep(.reply-line),
+.briefing-text.md-body :deep(.reply-line) {
+  margin: 0;
+  padding: 2px 0;
+  line-height: 1.55;
+  color: #475569;
+}
+
+.bubble.assistant .md-body :deep(.reply-line.is-item),
+.briefing-text.md-body :deep(.reply-line.is-item) {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.bubble.assistant .md-body :deep(.item-idx),
+.briefing-text.md-body :deep(.item-idx) {
+  flex-shrink: 0;
+  min-width: 1.15em;
+  margin-top: 0.05em;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand-500, #0d9488);
+  line-height: 1.55;
+}
+
+.bubble.assistant .md-body :deep(.item-body),
+.briefing-text.md-body :deep(.item-body) {
+  flex: 1;
+  min-width: 0;
+}
+
+.bubble.assistant .md-body :deep(.field-label),
+.briefing-text.md-body :deep(.field-label) {
+  font-weight: 600;
+  color: var(--ink-800);
+}
+
+.bubble.assistant .bubble-actions {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--ink-200) 90%, transparent);
 }
 
 .report-status {

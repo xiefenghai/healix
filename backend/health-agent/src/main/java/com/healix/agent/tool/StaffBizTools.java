@@ -39,26 +39,52 @@ public class StaffBizTools {
     }
 
     public OrgBriefBundle loadOrgBrief(String tenantId, String orgId, String staffId) {
+        return loadOrgBrief(tenantId, orgId, staffId, null);
+    }
+
+    /** @param message 用户原话；含「完成待办」等时优先给出「去处理某人待办」点人动作 */
+    public OrgBriefBundle loadOrgBrief(String tenantId, String orgId, String staffId, String message) {
         try {
             CockpitSummaryDto summary = cockpitService.summary(tenantId, orgId);
             List<CockpitPriorityCardDto> top = cockpitService.topUrgent(tenantId, orgId, 5);
             List<AgentAction> actions = new ArrayList<>();
+            boolean wantComplete = wantsCompleteTask(message);
             for (CockpitPriorityCardDto c : top) {
-                if (actions.size() >= 3) {
+                if (actions.size() >= 4) {
                     break;
                 }
                 if (!StringUtils.hasText(c.getPeopleId())) {
                     continue;
                 }
+                if (wantComplete && c.getOpenTaskCount() <= 0) {
+                    continue;
+                }
                 String name = StringUtils.hasText(c.getDisplayName()) ? c.getDisplayName() : "患者";
                 String reason = StringUtils.hasText(c.getTopReason()) ? c.getTopReason() : "需关注";
-                actions.add(AgentAction.focusPatient(name + " · " + reason, c.getPeopleId()));
+                String label =
+                        wantComplete
+                                ? "处理「" + name + "」的待办"
+                                : name + " · " + reason;
+                actions.add(AgentAction.focusPatient(label, c.getPeopleId()));
             }
-            actions.add(AgentAction.refresh("刷新今日建议"));
+            // 办结意图但优先名单无人有待办时，仍回落普通点人
+            if (wantComplete && actions.isEmpty()) {
+                for (CockpitPriorityCardDto c : top) {
+                    if (actions.size() >= 3) {
+                        break;
+                    }
+                    if (!StringUtils.hasText(c.getPeopleId())) {
+                        continue;
+                    }
+                    String name = StringUtils.hasText(c.getDisplayName()) ? c.getDisplayName() : "患者";
+                    String reason = StringUtils.hasText(c.getTopReason()) ? c.getTopReason() : "需关注";
+                    actions.add(AgentAction.focusPatient(name + " · " + reason, c.getPeopleId()));
+                }
+            }
             return new OrgBriefBundle(summary, top, formatOrg(summary, top), actions);
         } catch (Exception e) {
             log.debug("loadOrgBrief failed org={}", orgId, e);
-            return new OrgBriefBundle(null, List.of(), "", List.of(AgentAction.refresh("刷新今日建议")));
+            return new OrgBriefBundle(null, List.of(), "", List.of());
         }
     }
 
@@ -69,6 +95,7 @@ public class StaffBizTools {
             return out;
         }
         String msg = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        boolean wantComplete = wantsCompleteTask(message);
         boolean wantFollowup = containsAny(msg, "随访", "回访", "起草随访", "写随访", "创建随访");
         boolean wantChat = containsAny(msg, "联系", "沟通", "回复患者", "回患者", "发消息", "起草沟通", "写回复");
         boolean wantObs = containsAny(msg, "指标", "血压", "血糖", "健康数据", "录入", "化验", "检验");
@@ -77,6 +104,19 @@ public class StaffBizTools {
         boolean wantAssess = containsAny(msg, "评估", "分标", "风险", "cdss", "糖标", "压标");
         boolean wantMed = containsAny(msg, "用药", "服药", "吃药", "药品", "漏服", "停药", "medication");
         boolean wantReport = containsAny(msg, "报告", "月报", "周报", "季报");
+
+        // 办结意图：挂齐当前患者可办结入口（人点才执行；上限与前端芯片一致）
+        if (wantComplete && focus != null && focus.getOpenTasks() != null) {
+            int n = 0;
+            for (CockpitFocusDto.OpenTaskBrief t : focus.getOpenTasks()) {
+                if (n >= 8) {
+                    break;
+                }
+                if (appendTaskCloseActions(out, peopleId, t)) {
+                    n++;
+                }
+            }
+        }
 
         if (wantFollowup) {
             out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "ROUTINE"));
@@ -122,7 +162,7 @@ public class StaffBizTools {
             }
         }
 
-        // 无明确意图时，按焦点缺口补默认动作（优先一键办结）
+        // 无明确意图时，按焦点缺口补默认动作（有待办则给办结入口）
         if (out.isEmpty() && focus != null) {
             Integer pct = focus.getArchiveCompletenessPercent();
             if (pct != null && pct < 80) {
@@ -146,13 +186,10 @@ public class StaffBizTools {
             }
             if (focus.getOpenTasks() != null && !focus.getOpenTasks().isEmpty()) {
                 var top = focus.getOpenTasks().get(0);
+                appendTaskCloseActions(out, peopleId, top);
                 String type = top.getTaskType();
-                if (StringUtils.hasText(top.getId())) {
-                    out.add(AgentAction.claimTask("领取待办「" + top.getTaskTypeLabel() + "」", peopleId, top.getId()));
-                }
                 if ("FOLLOW_UP".equals(type) || "PLAN_NUDGE".equals(type)) {
                     out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "ROUTINE"));
-                    out.add(AgentAction.openSheet("处理随访", "followups", peopleId));
                 } else if ("PLAN_CREATE".equals(type) || "PLAN_REVIEW".equals(type)) {
                     out.add(AgentAction.triggerCapability("一键生成方案草稿", "CARE_PLAN", peopleId));
                     out.add(AgentAction.openSheet("处理方案待办", "care-plan", peopleId));
@@ -161,7 +198,9 @@ public class StaffBizTools {
                     out.add(AgentAction.openSheet("审阅管理报告", "reports", peopleId));
                 } else if ("METRIC_ALERT".equals(type)) {
                     out.add(AgentAction.openSheet("录入健康数据", "observations", peopleId));
-                } else {
+                } else if ("TEAM_ASSIGN".equals(type)) {
+                    out.add(AgentAction.navigate("去分配健管组", "join-care-team", peopleId));
+                } else if (!StringUtils.hasText(type)) {
                     out.add(AgentAction.openSheet("查看档案", "archive", peopleId));
                 }
             }
@@ -171,7 +210,96 @@ public class StaffBizTools {
             out.add(AgentAction.openSheet("联系患者", "care-chat", peopleId));
         }
 
-        return limit(out, 5);
+        // 办结意图最多挂 8 条；其它建议保持精简
+        return limit(out, wantComplete ? 8 : 5);
+    }
+
+    /**
+     * 为 OPEN 待办挂「确认办结」或打开业务页。
+     * 驾驶舱「立即处理」池内任务已归属当前健管师，不挂「领取」。
+     * PLAN_NUDGE / METRIC_ALERT / FOLLOW_UP → COMPLETE_TASK（前端打开与工作台一致的填单弹窗）。
+     */
+    private static boolean appendTaskCloseActions(
+            List<AgentAction> out, String peopleId, CockpitFocusDto.OpenTaskBrief top) {
+        if (top == null || !StringUtils.hasText(top.getId())) {
+            return false;
+        }
+        String type = top.getTaskType() == null ? "" : top.getTaskType();
+        String typeLabel =
+                StringUtils.hasText(top.getTaskTypeLabel()) ? top.getTaskTypeLabel() : type;
+        if ("PLAN_NUDGE".equals(type) || "METRIC_ALERT".equals(type) || "FOLLOW_UP".equals(type)) {
+            out.add(AgentAction.completeTask(
+                    completeTaskLabel(typeLabel, top.getSummary()),
+                    peopleId,
+                    top.getId(),
+                    type,
+                    top.getSummary()));
+            return true;
+        }
+        if ("PLAN_CREATE".equals(type) || "PLAN_REVIEW".equals(type)) {
+            out.add(AgentAction.openSheet(
+                    "处理方案待办「" + typeLabel + "」" + summarySuffix(top.getSummary(), typeLabel),
+                    "care-plan",
+                    peopleId));
+            return true;
+        }
+        if ("REPORT_REVIEW".equals(type)) {
+            out.add(AgentAction.openSheet(
+                    "审阅管理报告「" + typeLabel + "」" + summarySuffix(top.getSummary(), typeLabel),
+                    "reports",
+                    peopleId));
+            return true;
+        }
+        if ("TEAM_ASSIGN".equals(type)) {
+            out.add(AgentAction.navigate(
+                    "去分配健管组「" + typeLabel + "」" + summarySuffix(top.getSummary(), typeLabel),
+                    "join-care-team",
+                    peopleId));
+            return true;
+        }
+        return false;
+    }
+
+    /** 同类型多条待办时用摘要区分按钮文案，避免去重后只剩一个。 */
+    private static String completeTaskLabel(String typeLabel, String summary) {
+        String base = "确认办结「" + typeLabel + "」";
+        String suffix = summarySuffix(summary, typeLabel);
+        return StringUtils.hasText(suffix) ? base + suffix : base;
+    }
+
+    private static String summarySuffix(String summary, String typeLabel) {
+        if (!StringUtils.hasText(summary)) {
+            return "";
+        }
+        String s = summary.trim().replace('\n', ' ');
+        if (s.equals(typeLabel)) {
+            return "";
+        }
+        if (s.startsWith(typeLabel + " · ") || s.startsWith(typeLabel + "·")) {
+            s = s.substring(typeLabel.length()).replaceFirst("^[·\\s]+", "").trim();
+        }
+        if (!StringUtils.hasText(s)) {
+            return "";
+        }
+        if (s.length() > 20) {
+            s = s.substring(0, 20) + "…";
+        }
+        return " · " + s;
+    }
+
+    public static boolean wantsCompleteTask(String message) {
+        return containsAny(
+                message == null ? "" : message.toLowerCase(Locale.ROOT),
+                "完成待办",
+                "办结待办",
+                "办结任务",
+                "完成任务",
+                "处理待办",
+                "清待办",
+                "关单",
+                "搞定待办",
+                "把待办做完",
+                "待办办掉");
     }
 
     public static boolean wantsFollowupDraft(String message) {

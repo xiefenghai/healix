@@ -11,12 +11,25 @@ ADMIN_DIR="$ROOT/frontend-admin"
 USER_PORT=5173
 ADMIN_PORT=5174
 BACKEND_PORT=8080
+# 0.0.0.0：本机 + 局域网（如 http://172.28.33.88:5174）；勿用 127.0.0.1，否则同事同 Wi‑Fi 访问不了
+DEV_HOST="0.0.0.0"
 USER_URL="http://localhost:${USER_PORT}"
 ADMIN_URL="http://localhost:${ADMIN_PORT}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}"
 
 USER_PID=""
 ADMIN_PID=""
+
+lan_ip() {
+  # 优先取常见局域网网卡地址，失败则空
+  local ip
+  ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  [[ -z "$ip" ]] && ip="$(ipconfig getifaddr en1 2>/dev/null || true)"
+  if [[ -z "$ip" ]]; then
+    ip="$(ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" {print $2; exit}')"
+  fi
+  echo "$ip"
+}
 
 # 可选：加载仓库根目录 .env（前端代理等环境变量）
 if [[ -f "$ROOT/.env" ]]; then
@@ -99,7 +112,7 @@ start_frontend() {
       echo "未找到 node_modules (${name})，正在安装依赖..."
       npm install
     fi
-    exec npm run dev -- --host 127.0.0.1 --port "$port" --strictPort
+    exec npm run dev -- --host "$DEV_HOST" --port "$port" --strictPort
   )
 }
 
@@ -144,11 +157,18 @@ wait_port "$ADMIN_PORT" "管理端前端" 60
 
 open "$USER_URL"
 open "$ADMIN_URL"
+LAN_IP="$(lan_ip)"
 echo ""
 echo "已在浏览器打开:"
 echo "  C 端:   ${USER_URL}"
 echo "  管理端: ${ADMIN_URL}"
 echo "  后端:   ${BACKEND_URL}（请自行启动）"
+if [[ -n "$LAN_IP" ]]; then
+  echo ""
+  echo "局域网（同事同 Wi‑Fi）:"
+  echo "  C 端:   http://${LAN_IP}:${USER_PORT}"
+  echo "  管理端: http://${LAN_IP}:${ADMIN_PORT}/entry"
+fi
 echo "按 Ctrl+C 停止前端"
 echo ""
 

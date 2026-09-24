@@ -40,6 +40,20 @@
           AND is_deleted = 0
     </update>
 
+    <update id="updateDraft">
+        UPDATE followup_record
+        SET title = #{title},
+            summary = #{summary},
+            contact_channel = #{contactChannel},
+            contact_result = #{contactResult},
+            content_json = #{contentJson},
+            assignee_staff_id = COALESCE(assignee_staff_id, #{assigneeStaffId}),
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+    </update>
+
     <update id="updateCancel">
         UPDATE followup_record
         SET status = #{status},

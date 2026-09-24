@@ -24,9 +24,15 @@ const apiProxy: ProxyOptions = {
 export default defineConfig({
   plugins: [vue()],
   server: {
+    host: true, // 允许局域网访问，如 http://172.28.33.88:5174/entry
     port: 5174,
     proxy: {
-      '/api': apiProxy,
+      '/api': {
+        ...apiProxy,
+        // 长连接/流式不要被代理过早掐断
+        timeout: 0,
+        proxyTimeout: 0,
+      },
     },
   },
 })

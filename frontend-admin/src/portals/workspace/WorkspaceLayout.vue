@@ -17,11 +17,12 @@ const router = useRouter()
 const BIZ_MENUS = [
   { path: '/workspace/cockpit', label: '智能驾驶舱', icon: 'dashboard', group: '日常工作' },
   { path: '/workspace/tasks', label: '工作台', icon: 'ticket', group: '日常工作' },
-  { path: '/workspace/care-chat', label: '患者沟通', icon: 'chat', group: '日常工作' },
   { path: '/workspace/patients', label: '患者管理', icon: 'user', group: '日常工作' },
+  { path: '/workspace/care-chat', label: '患者沟通', icon: 'chat', group: '日常工作' },
   { path: '/workspace/adherence', label: '依从性看板', icon: 'chart', group: '日常工作' },
   { path: '/workspace/care-teams', label: '健管组', icon: 'team', group: '组织管理' },
   { path: '/workspace/staff', label: '成员管理', icon: 'staff', group: '组织管理' },
+  { path: '/workspace/ops-stats', label: '运营统计', icon: 'data', group: '组织管理' },
 ]
 
 interface CockpitSummary {
@@ -62,6 +63,7 @@ const pageTitle = computed(() => {
   if (route.path.startsWith('/workspace/patients')) return '患者管理'
   if (route.path.startsWith('/workspace/care-teams')) return '健管组'
   if (route.path.startsWith('/workspace/staff')) return '成员管理'
+  if (route.path.startsWith('/workspace/ops-stats')) return '运营统计'
   if (route.path.startsWith('/workspace/security')) return '系统设置'
   if (route.path.startsWith('/workspace/orgs')) return '选择机构'
   return '机构工作台'

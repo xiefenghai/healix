@@ -51,6 +51,8 @@ public enum AuditActionEnum {
     /** @deprecated 已迁至 FOLLOWUP_RECORD_COMPLETE */
     FOLLOW_UP_FORM_SUBMIT,
     FOLLOWUP_RECORD_CREATE,
+    /** 随访填单草稿保存（保持 OPEN，不关任务） */
+    FOLLOWUP_RECORD_DRAFT_SAVE,
     FOLLOWUP_RECORD_COMPLETE,
     FOLLOWUP_RECORD_CANCEL,
     /** 依从性看板一键开随访 / 打卡跟进 */

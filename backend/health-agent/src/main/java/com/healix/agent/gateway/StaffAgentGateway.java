@@ -150,9 +150,13 @@ public class StaffAgentGateway {
             }
         }
 
-        sessionStore.appendTurn(sessionId, cmd.message(), response.reply());
-        conversationService.appendUser(sessionId, cmd.message());
-        conversationService.appendAssistant(sessionId, response.reply(), response.actions());
+        // 机构会话与患者会话同一路径：一问一答成对落库（中途断开不落半截 USER）
+        // 助手为空时整轮不落库，避免刷新后只剩一排用户气泡
+        if (StringUtils.hasText(response.reply())) {
+            sessionStore.appendTurn(sessionId, cmd.message(), response.reply());
+            conversationService.appendUser(sessionId, cmd.message());
+            conversationService.appendAssistant(sessionId, response.reply(), response.actions());
+        }
         persistLog(cmd, sessionId, response);
         if (sink != null) {
             boolean keepExtracted =

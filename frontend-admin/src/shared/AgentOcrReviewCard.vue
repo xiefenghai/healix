@@ -105,9 +105,20 @@ function examFindingRows() {
     }))
 }
 
-function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
-  item.timingNote = tag
-}
+/** 服用提示选项：含 OCR 常见「餐前/餐后」写法 */
+const timingSelectOptions = computed(() => {
+  const base = [...MED_TIMING_PRESETS]
+  const extra = ['餐前', '餐后']
+  const seen = new Set<string>(base)
+  for (const t of extra) {
+    if (!seen.has(t)) {
+      base.push(t)
+      seen.add(t)
+    }
+  }
+  return base
+})
+
 </script>
 
 <template>
@@ -141,9 +152,12 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 
     <template v-if="review.kind === 'LAB' && review.lab">
       <div class="ocr-meta">
-        <span>标本：{{ specimenLabel(review.lab.specimenType) }}</span>
+        <div class="ocr-meta-field">
+          <span class="ocr-meta-label">标本</span>
+          <span class="ocr-meta-value">{{ specimenLabel(review.lab.specimenType) }}</span>
+        </div>
         <label class="ocr-meta-field">
-          <span class="ocr-meta-label">采样</span>
+          <span class="ocr-meta-label">采样时间</span>
           <el-date-picker
             v-if="editable"
             v-model="review.lab.sampledAt"
@@ -155,10 +169,10 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
             value-format="YYYY-MM-DDTHH:mm"
             class="ocr-dt"
           />
-          <span v-else>{{ formatOcrDt(review.lab.sampledAt) }}</span>
+          <span v-else class="ocr-meta-value">{{ formatOcrDt(review.lab.sampledAt) }}</span>
         </label>
         <label class="ocr-meta-field">
-          <span class="ocr-meta-label">报告</span>
+          <span class="ocr-meta-label">报告时间</span>
           <el-date-picker
             v-if="editable"
             v-model="review.lab.reportedAt"
@@ -170,7 +184,7 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
             value-format="YYYY-MM-DDTHH:mm"
             class="ocr-dt"
           />
-          <span v-else>{{ formatOcrDt(review.lab.reportedAt) }}</span>
+          <span v-else class="ocr-meta-value">{{ formatOcrDt(review.lab.reportedAt) }}</span>
         </label>
       </div>
       <div class="ocr-table-wrap">
@@ -226,9 +240,12 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 
     <template v-else-if="review.kind === 'EXAM' && review.exam">
       <div class="ocr-meta">
-        <span>
-          类型：{{ review.exam.examTypeName || examTypeLabel(review.exam.examType || '') }}
-        </span>
+        <div class="ocr-meta-field">
+          <span class="ocr-meta-label">类型</span>
+          <span class="ocr-meta-value">{{
+            review.exam.examTypeName || examTypeLabel(review.exam.examType || '')
+          }}</span>
+        </div>
         <label class="ocr-meta-field">
           <span class="ocr-meta-label">检查时间</span>
           <el-date-picker
@@ -242,7 +259,7 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
             value-format="YYYY-MM-DDTHH:mm"
             class="ocr-dt"
           />
-          <span v-else>{{ formatOcrDt(review.exam.examinedAt) }}</span>
+          <span v-else class="ocr-meta-value">{{ formatOcrDt(review.exam.examinedAt) }}</span>
         </label>
       </div>
       <div class="ocr-table-wrap">
@@ -361,26 +378,24 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
                 </template>
               </td>
               <td>
-                <div v-if="editable" class="ocr-timing-edit">
-                  <input
-                    v-model="item.timingNote"
-                    class="ocr-input"
-                    type="text"
-                    maxlength="64"
-                    placeholder="如：饭后"
+                <el-select
+                  v-if="editable"
+                  v-model="item.timingNote"
+                  class="ocr-timing-select"
+                  size="small"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  placeholder="服用提示"
+                >
+                  <el-option
+                    v-for="tag in timingSelectOptions"
+                    :key="tag"
+                    :label="tag"
+                    :value="tag"
                   />
-                  <div class="ocr-timing-presets">
-                    <button
-                      v-for="tag in MED_TIMING_PRESETS"
-                      :key="tag"
-                      type="button"
-                      class="ocr-timing-chip"
-                      @click="applyTimingPreset(item, tag)"
-                    >
-                      {{ tag }}
-                    </button>
-                  </div>
-                </div>
+                </el-select>
                 <template v-else>{{ item.timingNote || '—' }}</template>
               </td>
               <td>
@@ -482,7 +497,8 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 
 .ocr-origin {
   display: block;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--ink-200);
@@ -491,7 +507,6 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
   margin: 0;
   line-height: 0;
   cursor: zoom-in;
-  text-align: left;
 }
 
 .ocr-origin:hover {
@@ -500,8 +515,9 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 
 .ocr-origin img {
   display: block;
-  width: 100%;
-  max-height: 160px;
+  width: auto;
+  max-width: min(220px, 100%);
+  max-height: 120px;
   object-fit: contain;
   background: #f8fafc;
 }
@@ -509,7 +525,9 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 .ocr-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 14px;
+  align-items: center;
+  gap: 10px 24px;
+  padding: 2px 0 4px;
   font-size: 12px;
   color: var(--ink-600);
 }
@@ -517,11 +535,25 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 .ocr-meta-field {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
 }
 
 .ocr-meta-label {
+  flex-shrink: 0;
   color: var(--ink-500);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.ocr-meta-value {
+  color: var(--ink-800);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .ocr-dt {
@@ -589,34 +621,35 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 }
 
 .ocr-table-med {
-  min-width: 720px;
+  min-width: 640px;
+  table-layout: fixed;
 }
 
 .ocr-table-med th:nth-child(1),
 .ocr-table-med td:nth-child(1) {
-  min-width: 110px;
+  width: 22%;
 }
 
 .ocr-table-med th:nth-child(2),
 .ocr-table-med td:nth-child(2) {
-  min-width: 130px;
+  width: 18%;
 }
 
 .ocr-table-med th:nth-child(3),
 .ocr-table-med td:nth-child(3),
 .ocr-table-med th:nth-child(4),
 .ocr-table-med td:nth-child(4) {
-  min-width: 100px;
+  width: 15%;
 }
 
 .ocr-table-med th:nth-child(5),
 .ocr-table-med td:nth-child(5) {
-  min-width: 140px;
+  width: 16%;
 }
 
 .ocr-table-med th:nth-child(6),
 .ocr-table-med td:nth-child(6) {
-  min-width: 72px;
+  width: 14%;
 }
 
 .ocr-table-med td {
@@ -627,6 +660,7 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .ocr-unit-select {
@@ -635,41 +669,16 @@ function applyTimingPreset(item: { timingNote?: string | null }, tag: string) {
 }
 
 .ocr-freq-select,
-.ocr-usage-select {
+.ocr-usage-select,
+.ocr-timing-select {
   width: 100%;
 }
 
 .ocr-unit-select :deep(.el-select__wrapper),
 .ocr-freq-select :deep(.el-select__wrapper),
-.ocr-usage-select :deep(.el-select__wrapper) {
+.ocr-usage-select :deep(.el-select__wrapper),
+.ocr-timing-select :deep(.el-select__wrapper) {
   min-height: 28px;
-}
-
-.ocr-timing-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.ocr-timing-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.ocr-timing-chip {
-  border: 1px solid var(--ink-200);
-  background: #f8fafc;
-  border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 11px;
-  color: var(--ink-600);
-  cursor: pointer;
-}
-
-.ocr-timing-chip:hover {
-  border-color: var(--brand-500);
-  color: var(--brand-600);
 }
 
 .ocr-course-edit {

@@ -94,8 +94,13 @@ public record AgentStreamEvent(String type, Map<String, Object> data) {
     }
 
     public static void safeEmit(Consumer<AgentStreamEvent> sink, AgentStreamEvent event) {
-        if (sink != null && event != null) {
+        if (sink == null || event == null) {
+            return;
+        }
+        try {
             sink.accept(event);
+        } catch (Exception ignored) {
+            // sink（如已断开的 SSE）不得打断 LLM / Skill 主流程
         }
     }
 }

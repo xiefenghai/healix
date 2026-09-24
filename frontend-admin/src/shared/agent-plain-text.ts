@@ -1,4 +1,4 @@
-/** 助手纯文本回复排版：转义 HTML；仅分节标题与短字段标签加粗，正文保持常规字重。 */
+/** 助手纯文本回复排版：转义 HTML；分节为块级结构，标题加粗，条目小字号悬挂缩进。 */
 const SECTION_TITLES = new Set([
   '运动方案',
   '饮食方案',
@@ -36,7 +36,7 @@ export function breakChineseSections(input: string): string {
 }
 
 /**
- * 压缩多余空行：条目之间单行紧凑；仅在「一、二、」分节标题前保留一行空行。
+ * 压缩空行：条目与分节标题之间不留空行；仅在「一、二、」分节标题前保留一行（与上一节隔开）。
  */
 function tightenBlankLines(input: string): string {
   const lines = input.split('\n')
@@ -63,49 +63,110 @@ function isSectionTitleLine(trimmed: string): boolean {
   return true
 }
 
-function formatLine(line: string): string {
-  const lead = line.match(/^\s*/)?.[0] ?? ''
-  const trimmed = line.trim()
-  if (!trimmed) return line
-
-  // 粘连未拆净时：只加粗标题段，条目保持常规字重并换行展示
-  const glued = /^([一二三四五六七八九十百]+[、.．][^\d]{1,20}?)(\d+[、.．].+)$/.exec(trimmed)
-  if (glued && !/[，。；;]/.test(glued[1])) {
-    return `${lead}<strong class="section-title">${glued[1].trim()}</strong>\n${formatLine(glued[2])}`
-  }
-
-  if (isSectionTitleLine(trimmed)) {
-    return `${lead}<strong class="section-title">${trimmed}</strong>`
-  }
-
-  // 运动方案 / 饮食方案 …
-  if (SECTION_TITLES.has(trimmed)) {
-    return `${lead}<strong class="section-title">${trimmed}</strong>`
-  }
-
-  // 目标：正文 / 禁忌：正文
-  const field = FIELD_LABEL.exec(trimmed)
-  if (field) {
-    return `${lead}<strong class="field-label">${field[1]}</strong>${field[2]}`
-  }
-
-  // 1. 短标签：正文 → 只加粗冒号前极短标签（血压/血糖等），长句列表不加粗
-  const numbered = /^(\d+[、.．]\s*)([^：:，。；;\n]{1,4})([：:].+)$/.exec(trimmed)
-  if (numbered && !/[已均建议处理确认优先请要]/.test(numbered[2])) {
-    return `${lead}${numbered[1]}<strong class="field-label">${numbered[2]}</strong>${numbered[3]}`
-  }
-
-  return line
+function isNamedSectionTitle(trimmed: string): boolean {
+  return SECTION_TITLES.has(trimmed)
 }
 
+function isListItemLine(trimmed: string): boolean {
+  return /^(\d+[、.．）)]|·)\s*/.test(trimmed)
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** 对已转义的一行做字段标签加粗（不再二次转义） */
+function enrichBodyLine(escapedTrimmed: string): string {
+  const field = FIELD_LABEL.exec(escapedTrimmed)
+  if (field) {
+    return `<strong class="field-label">${field[1]}</strong>${field[2]}`
+  }
+  const numbered = /^(\d+[、.．]\s*)([^：:，。；;\n]{1,4})([：:].+)$/.exec(escapedTrimmed)
+  if (numbered && !/[已均建议处理确认优先请要]/.test(numbered[2])) {
+    return `${numbered[1]}<strong class="field-label">${numbered[2]}</strong>${numbered[3]}`
+  }
+  return escapedTrimmed
+}
+
+function formatSectionTitleHtml(trimmed: string): string {
+  const m = /^([一二三四五六七八九十百]+[、.．])(.+)$/.exec(trimmed)
+  if (m) {
+    return (
+      `<div class="section-title">` +
+      `<span class="sec-idx">${escapeHtml(m[1])}</span>` +
+      `<span class="sec-name">${escapeHtml(m[2].trim())}</span>` +
+      `</div>`
+    )
+  }
+  return `<div class="section-title"><span class="sec-name">${escapeHtml(trimmed)}</span></div>`
+}
+
+function formatListItemHtml(trimmed: string): string {
+  const m = /^(\d+[、.．）)]\s*|·\s*)(.+)$/.exec(trimmed)
+  if (m) {
+    return (
+      `<div class="reply-line is-item">` +
+      `<span class="item-idx">${escapeHtml(m[1].trim())}</span>` +
+      `<span class="item-body">${enrichBodyLine(escapeHtml(m[2]))}</span>` +
+      `</div>`
+    )
+  }
+  return `<div class="reply-line is-item">${enrichBodyLine(escapeHtml(trimmed))}</div>`
+}
+
+/**
+ * 结构化 HTML：分节块 + 标题 + 条目行，便于 CSS 控制间距与字号。
+ */
 export function formatAssistantPlainHtml(text: string | undefined | null): string {
   if (!text) return ''
   const normalized = breakChineseSections(text)
-  const escaped = normalized
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return escaped.split('\n').map(formatLine).join('\n')
+  const lines = normalized.split('\n')
+  const parts: string[] = []
+  let openSec = false
+
+  const closeSec = () => {
+    if (openSec) {
+      parts.push('</div>')
+      openSec = false
+    }
+  }
+
+  for (const raw of lines) {
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+
+    // 粘连未拆净：标题 + 首条
+    const glued = /^([一二三四五六七八九十百]+[、.．][^\d]{1,20}?)(\d+[、.．].+)$/.exec(trimmed)
+    if (glued && !/[，。；;]/.test(glued[1])) {
+      closeSec()
+      parts.push('<div class="reply-sec">')
+      openSec = true
+      parts.push(formatSectionTitleHtml(glued[1].trim()))
+      parts.push(formatListItemHtml(glued[2].trim()))
+      continue
+    }
+
+    if (isSectionTitleLine(trimmed) || isNamedSectionTitle(trimmed)) {
+      closeSec()
+      parts.push('<div class="reply-sec">')
+      openSec = true
+      parts.push(formatSectionTitleHtml(trimmed))
+      continue
+    }
+
+    if (!openSec) {
+      parts.push('<div class="reply-sec">')
+      openSec = true
+    }
+    if (isListItemLine(trimmed)) {
+      parts.push(formatListItemHtml(trimmed))
+    } else {
+      parts.push(`<div class="reply-line">${enrichBodyLine(escapeHtml(trimmed))}</div>`)
+    }
+  }
+
+  closeSec()
+  return parts.join('')
 }
 
 /** 流式展示：有【回答】只显示其后；仍在【思考】时暂不铺正文；无标记则全文展示。 */

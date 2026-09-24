@@ -103,6 +103,17 @@ public class BWorkspaceTaskController {
                 SecurityUtils.requireContext().getAccountId()));
     }
 
+    /** 保存随访填单草稿（不关任务） */
+    @PostMapping("/{id}/forms/draft")
+    public ApiResult<WorkspaceTaskDetailDto> saveFormDraft(
+            @PathVariable String id, @RequestBody Map<String, Object> content) {
+        return ApiResult.ok(workspaceTaskService.saveFormDraft(
+                SecurityUtils.requireCurrentOrgId(),
+                id,
+                content,
+                SecurityUtils.requireContext().getAccountId()));
+    }
+
     public record AssignRequest(@NotBlank String staffId) {}
 
     public record ReasonRequest(@NotBlank String reason) {}

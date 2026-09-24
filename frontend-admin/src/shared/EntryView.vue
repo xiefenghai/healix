@@ -69,16 +69,16 @@ const entries = [
 
           <div class="brand-stats">
             <div class="stat">
-              <div class="stat-v">128<span class="stat-unit">家</span></div>
-              <div class="stat-k">合作机构</div>
+              <div class="stat-v">智能驾驶舱</div>
+              <div class="stat-k">今日优先 · 对话驱动</div>
             </div>
             <div class="stat">
-              <div class="stat-v">42.6<span class="stat-unit">万</span></div>
-              <div class="stat-k">服务患者</div>
+              <div class="stat-v">方案起草</div>
+              <div class="stat-k">AI 出草稿 · 人确认</div>
             </div>
             <div class="stat">
-              <div class="stat-v">96.8<span class="stat-unit">%</span></div>
-              <div class="stat-k">方案依从率</div>
+              <div class="stat-v">单据 OCR</div>
+              <div class="stat-k">预填核对 · 再入库</div>
             </div>
           </div>
         </div>
@@ -339,23 +339,18 @@ const entries = [
 }
 
 .stat-v {
-  font-size: 26px;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: -0.5px;
-}
-
-.stat-unit {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.55);
-  margin-left: 4px;
-  font-weight: 500;
+  letter-spacing: -0.2px;
+  line-height: 1.35;
 }
 
 .stat-k {
-  font-size: 11px;
+  font-size: 12px;
   color: rgba(255, 255, 255, 0.55);
-  margin-top: 6px;
-  letter-spacing: 0.3px;
+  margin-top: 8px;
+  letter-spacing: 0.2px;
+  line-height: 1.4;
 }
 
 .brand-foot {
@@ -629,7 +624,7 @@ const entries = [
     padding: 14px;
   }
   .stat-v {
-    font-size: 22px;
+    font-size: 14px;
   }
   .choose {
     padding: 40px 32px;

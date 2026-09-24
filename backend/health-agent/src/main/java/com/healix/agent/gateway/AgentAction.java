@@ -12,7 +12,7 @@ import org.springframework.util.StringUtils;
  *   <li>{@code OPEN_SHEET}：抽屉 mode（archive / followups / care-plan / …）
  *   <li>{@code NAVIGATE}：路由 path
  *   <li>{@code CALL_API}：API 键（NUDGE / CREATE_FOLLOWUP / PUBLISH_REPORT / PUBLISH_CARE_PLAN /
- *       SEND_CARE_CHAT / CLAIM_TASK），点击后调现有 B API 并回执
+ *       SEND_CARE_CHAT / CLAIM_TASK / COMPLETE_TASK），点击后调现有 B API 并回执
  *   <li>{@code TRIGGER_CAPABILITY}：会话内能力码（CARE_PLAN / REPORT_SUMMARY），点击后自动发带 hint 的消息
  * </ul>
  */
@@ -21,6 +21,10 @@ public record AgentAction(
 
     public static AgentAction navigate(String label, String path) {
         return new AgentAction("NAVIGATE", label, path, null, null);
+    }
+
+    public static AgentAction navigate(String label, String path, String peopleId) {
+        return new AgentAction("NAVIGATE", label, path, peopleId, null);
     }
 
     public static AgentAction focusPatient(String label, String peopleId) {
@@ -109,6 +113,24 @@ public record AgentAction(
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", taskId);
         return callApi(label, "CLAIM_TASK", peopleId, payload);
+    }
+
+    /**
+     * 确认办结工作台 OPEN 任务（人点按钮后执行；表单类任务带最小默认字段）。
+     *
+     * @param taskType PLAN_NUDGE / METRIC_ALERT 等
+     */
+    public static AgentAction completeTask(
+            String label, String peopleId, String taskId, String taskType, String summary) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", taskId);
+        if (StringUtils.hasText(taskType)) {
+            payload.put("taskType", taskType.trim());
+        }
+        if (StringUtils.hasText(summary)) {
+            payload.put("summary", summary.trim());
+        }
+        return callApi(label, "COMPLETE_TASK", peopleId, payload);
     }
 
     public static Map<String, Object> draftPayload(String draftContent, boolean openCreate) {

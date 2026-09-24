@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName, getStaffId, hasRole } from '../../shared/http'
 import HealthReportReviewDialog from './HealthReportReviewDialog.vue'
 import FollowupRecordDetailDialog from './FollowupRecordDetailDialog.vue'
 import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
+import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import CarePlanPreviewDialog, {
   type CarePlanPreviewData,
 } from '../../shared/CarePlanPreviewDialog.vue'
@@ -58,6 +59,7 @@ const TASK_TYPES = [
   { value: 'REPORT_REVIEW', label: '报告审阅' },
 ]
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const items = ref<WorkspaceTaskItem[]>([])
@@ -76,6 +78,8 @@ const keyword = ref('')
 
 const isAdmin = computed(() => hasRole('TENANT_ADMIN'))
 const formTaskId = ref<string | null>(null)
+const joinPeopleId = ref<string | null>(null)
+const joinPeopleName = ref<string | null>(null)
 const assignTaskId = ref<string | null>(null)
 const assignStaffId = ref('')
 const assignOpen = computed({
@@ -277,6 +281,59 @@ function highlightMetricSummary(summary?: string) {
 
 function formActionLabel(row: WorkspaceTaskItem) {
   return row.taskType === 'METRIC_ALERT' || row.taskType === 'FOLLOW_UP' ? '处理' : '填单'
+}
+
+function processActionLabel(row: WorkspaceTaskItem) {
+  switch (row.taskType) {
+    case 'TEAM_ASSIGN':
+      return '分配健管组'
+    case 'PLAN_CREATE':
+      return '制定方案'
+    case 'REPORT_REVIEW':
+      return '审阅'
+    default:
+      return '去办理'
+  }
+}
+
+function isMineOpen(row: WorkspaceTaskItem) {
+  const me = getStaffId()
+  return row.status === 'OPEN' && !!row.assigneeStaffId && !!me && row.assigneeStaffId === me
+}
+
+function canForm(row: WorkspaceTaskItem) {
+  return (
+    isMineOpen(row) &&
+    (row.taskType === 'PLAN_NUDGE' || row.taskType === 'METRIC_ALERT' || row.taskType === 'FOLLOW_UP')
+  )
+}
+
+/** 非填单类：分配健管组 / 制定方案 / 报告审阅 — 领取后主操作 */
+function canProcess(row: WorkspaceTaskItem) {
+  return (
+    isMineOpen(row) &&
+    (row.taskType === 'TEAM_ASSIGN' ||
+      row.taskType === 'PLAN_CREATE' ||
+      row.taskType === 'REPORT_REVIEW')
+  )
+}
+
+function openJoinTeam(row: WorkspaceTaskItem) {
+  joinPeopleId.value = row.peopleId
+  joinPeopleName.value = row.peopleName || null
+}
+
+async function processTask(row: WorkspaceTaskItem) {
+  if (row.taskType === 'TEAM_ASSIGN') {
+    openJoinTeam(row)
+    return
+  }
+  if (row.taskType === 'REPORT_REVIEW') {
+    await openDetail(row)
+    return
+  }
+  // PLAN_CREATE 等：跳转 deepLink
+  openPatient(row)
 }
 
 function statusLabel(status?: string) {
@@ -492,8 +549,12 @@ async function openPlanVersionPreview(peopleId: string, versionId: string) {
   void loadPlanVersionCheckins(peopleId, versionId, v.publishedAt)
 }
 
-/** 已办/待办：制定方案→方案弹窗；报告审阅→报告弹窗；随访类→随访详情；否则跳转 */
+/** 已办/待办：制定方案→方案弹窗；报告审阅→报告弹窗；随访类→随访详情；分配健管组→入组弹窗；否则跳转 */
 async function openDetail(row: WorkspaceTaskItem) {
+  if (row.status === 'OPEN' && row.taskType === 'TEAM_ASSIGN' && isMineOpen(row)) {
+    openJoinTeam(row)
+    return
+  }
   if (row.taskType === 'REPORT_REVIEW') {
     try {
       const res = await api<{ data: WorkspaceTaskDetail }>(`/api/b/v1/workspace/tasks/${row.id}`)
@@ -545,17 +606,6 @@ function canClaim(row: WorkspaceTaskItem) {
   return row.status === 'OPEN' && !row.assigneeStaffId
 }
 
-function canForm(row: WorkspaceTaskItem) {
-  const me = getStaffId()
-  return (
-    row.status === 'OPEN' &&
-    !!row.assigneeStaffId &&
-    !!me &&
-    row.assigneeStaffId === me &&
-    (row.taskType === 'PLAN_NUDGE' || row.taskType === 'METRIC_ALERT' || row.taskType === 'FOLLOW_UP')
-  )
-}
-
 function canAssignOrRelease(row: WorkspaceTaskItem) {
   return row.status === 'OPEN' && (!!row.assigneeStaffId || isAdmin.value)
 }
@@ -572,8 +622,24 @@ watch(pool, () => {
   if (pool.value !== 'ALL') status.value = ''
 })
 
+function applyRouteQuery() {
+  const q = route.query
+  const p = typeof q.pool === 'string' ? q.pool.toUpperCase() : ''
+  if (p === 'PUBLIC' || p === 'MINE' || p === 'DONE' || p === 'ALL') {
+    if (p === 'ALL' && !isAdmin.value) {
+      pool.value = 'MINE'
+    } else {
+      pool.value = p
+    }
+  }
+  if (typeof q.status === 'string' && q.status) status.value = q.status
+  if (typeof q.taskType === 'string') taskType.value = q.taskType
+  if (typeof q.careTeamId === 'string') careTeamId.value = q.careTeamId
+}
+
 onMounted(async () => {
   if (!ensureOrg()) return
+  applyRouteQuery()
   await Promise.all([loadTeams(), loadStaff(), load()])
 })
 </script>
@@ -775,7 +841,7 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column
           label="操作"
-          :width="isAdmin ? 268 : 200"
+          :width="isAdmin ? 300 : 232"
           align="right"
           class-name="col-actions"
         >
@@ -797,6 +863,14 @@ onMounted(async () => {
               >
                 {{ formActionLabel(row) }}
               </el-button>
+              <el-button
+                v-if="canProcess(row)"
+                type="primary"
+                size="small"
+                @click="processTask(row)"
+              >
+                {{ processActionLabel(row) }}
+              </el-button>
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
               <el-button
                 v-if="canAssignOrRelease(row)"
@@ -806,7 +880,10 @@ onMounted(async () => {
               >
                 分派
               </el-button>
-              <el-button v-if="canRelease(row)" link @click="release(row)">退回</el-button>
+              <span v-if="canRelease(row) || canCancel(row)" class="action-slot action-slot--release">
+                <el-button v-if="canRelease(row)" link @click="release(row)">退回</el-button>
+                <span v-else class="action-placeholder" aria-hidden="true">--</span>
+              </span>
               <el-button
                 v-if="canCancel(row)"
                 link
@@ -849,6 +926,19 @@ onMounted(async () => {
           void load()
         }
       "
+      @saved="() => void load()"
+    />
+
+    <JoinCareTeamDialog
+      :people-id="joinPeopleId"
+      :people-name="joinPeopleName"
+      @closed="
+        () => {
+          joinPeopleId = null
+          joinPeopleName = null
+        }
+      "
+      @joined="() => void load()"
     />
 
     <FollowupRecordDetailDialog
@@ -1085,6 +1175,24 @@ onMounted(async () => {
 
 .row-actions :deep(.el-button--small) {
   padding: 5px 8px;
+}
+
+.action-slot--release {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5em;
+}
+
+.action-placeholder {
+  display: inline-block;
+  min-width: 2.5em;
+  padding: 4px 4px;
+  text-align: center;
+  color: var(--el-text-color-placeholder);
+  font-size: 13px;
+  line-height: 1;
+  user-select: none;
 }
 
 /* 仅任务列做省略；标签列禁止裁切，避免「报告审阅..」 */

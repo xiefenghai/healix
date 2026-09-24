@@ -29,7 +29,7 @@
           AND status = 'ACTIVE'
           AND left_at IS NULL
           AND is_deleted = 0
-        ORDER BY id
+        ORDER BY COALESCE(joined_at, gmt_created) DESC, id DESC
     </select>
 
     <select id="countActiveInTenant" resultType="int">

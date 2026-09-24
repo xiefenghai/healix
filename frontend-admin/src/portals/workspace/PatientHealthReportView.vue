@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
 import { takeAgentDraft } from '../../shared/agent-draft-bus'
+import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import {
   formatHealthReportPeriodType,
   formatHealthReportStatus,
@@ -315,7 +316,12 @@ watch(
       :mode="detailMode"
       :ai-prefill="aiPrefill"
       @closed="onDialogClosed"
-      @changed="load"
+      @changed="
+        () => {
+          void load()
+          notifyCockpitTasksPossiblyChanged(peopleId())
+        }
+      "
       @published="emit('published')"
     />
   </div>

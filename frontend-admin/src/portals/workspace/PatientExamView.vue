@@ -20,6 +20,7 @@ import {
   loadExamOcrDraft,
   type ExamOcrDraft,
 } from '../../shared/exam-ocr'
+import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 
 interface DictItem {
   dictCode: string
@@ -403,6 +404,7 @@ async function saveQuick() {
     draft.findings = blankFindings(type)
     draft.conclusion = ''
     await loadList()
+    notifyCockpitTasksPossiblyChanged(peopleId.value)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
@@ -418,6 +420,7 @@ async function saveEdit() {
     ElMessage.success('已保存')
     backToBrowse()
     await loadList()
+    notifyCockpitTasksPossiblyChanged(peopleId.value)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {

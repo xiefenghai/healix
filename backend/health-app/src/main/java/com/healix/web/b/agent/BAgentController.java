@@ -160,7 +160,7 @@ public class BAgentController {
         CompletableFuture.runAsync(JwtAuthenticationFilter.wrapAsync(() -> {
             try {
                 staffAgentGateway.streamChat(cmd, AgentSseSupport.sseSink(emitter, response));
-                emitter.complete();
+                AgentSseSupport.completeQuietly(emitter);
             } catch (Exception ex) {
                 try {
                     emitter.send(SseEmitter.event()
@@ -170,7 +170,11 @@ public class BAgentController {
                 } catch (Exception ignored) {
                     // ignore
                 }
-                emitter.completeWithError(ex);
+                try {
+                    emitter.completeWithError(ex);
+                } catch (Exception ignored) {
+                    // already completed（客户端已断开）
+                }
             }
         }));
         return emitter;

@@ -35,12 +35,27 @@ export interface StreamHandlers {
   onResult?: (payload: unknown) => void
   onError?: (message: string) => void
   onDone?: (meta?: StreamDoneMeta) => void
+  /** 切换患者/清除焦点时传入，用于中断未完成的 SSE */
+  signal?: AbortSignal
 }
 
-/** 开发环境直连后端，避免 Vite 代理缓冲 SSE */
+export function isAbortError(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false
+  const name = (e as { name?: string }).name
+  return name === 'AbortError'
+}
+
+/**
+ * 开发环境直连后端流式接口（按当前页面 hostname，支持局域网 IP）。
+ * 不走 Vite 代理，避免 http-proxy 缓冲 SSE 导致「只有提问没有回答」。
+ */
 function sseUrl(path: string): string {
   if (import.meta.env.DEV) {
-    return `http://127.0.0.1:8080${path}`
+    const host =
+      typeof window !== 'undefined' && window.location.hostname
+        ? window.location.hostname
+        : '127.0.0.1'
+    return `http://${host}:8080${path}`
   }
   return path
 }
@@ -60,7 +75,17 @@ export async function postSse(
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  const res = await fetch(sseUrl(path), { method: 'POST', headers, body: JSON.stringify(body) })
+  const signal = handlers.signal
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError')
+  }
+
+  const res = await fetch(sseUrl(path), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     const msg = String((err as { message?: string }).message || `HTTP ${res.status}`)
@@ -89,24 +114,36 @@ export async function postSse(
     })
   }
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
 
-    let boundary = buffer.indexOf('\n\n')
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
-      const event = parseSseBlock(block)
-      if (event) handleEvent(event)
-      boundary = buffer.indexOf('\n\n')
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const block = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const event = parseSseBlock(block)
+        if (event) handleEvent(event)
+        boundary = buffer.indexOf('\n\n')
+      }
     }
-  }
 
-  if (buffer.trim()) {
-    const event = parseSseBlock(buffer)
-    if (event) handleEvent(event)
+    if (buffer.trim()) {
+      const event = parseSseBlock(buffer)
+      if (event) handleEvent(event)
+    }
+  } catch (e) {
+    if (isAbortError(e) || signal?.aborted) {
+      try {
+        await reader.cancel()
+      } catch {
+        /* ignore */
+      }
+      throw e instanceof DOMException ? e : new DOMException('Aborted', 'AbortError')
+    }
+    throw e
   }
 }
 
