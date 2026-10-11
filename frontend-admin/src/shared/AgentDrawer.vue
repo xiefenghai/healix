@@ -1033,7 +1033,7 @@ watch(
       title="原图预览"
       width="720px"
       append-to-body
-      @update:model-value="(v) => !v && closeImagePreview()"
+      @update:model-value="(v: boolean) => !v && closeImagePreview()"
     >
       <img
         v-if="imagePreviewUrl"

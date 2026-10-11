@@ -299,14 +299,43 @@ watch(tab, (name) => {
   }
 })
 
+interface FoodAllergyItem {
+  allergenName: string
+  category: string
+  allergyType: string
+  highRisk: boolean
+  effective: boolean
+}
+const allergyItems = ref<FoodAllergyItem[]>([])
+
+/** 以档案中的实时过敏史为准，再补上医护在方案里手填的回避项。 */
+const allergyReminder = computed(() => {
+  const food = allergyItems.value.filter(
+    (i) => i.effective && (i.category === 'FOOD' || i.category === 'OTHER'),
+  )
+  const avoid = food
+    .filter((i) => i.allergyType !== 'INTOLERANCE')
+    .map((i) => ({ name: i.allergenName, highRisk: i.highRisk }))
+  const intolerances = food.filter((i) => i.allergyType === 'INTOLERANCE').map((i) => i.allergenName)
+  const planAvoid = Array.isArray(diet.value.allergensAvoid) ? (diet.value.allergensAvoid as any[]) : []
+  for (const x of planAvoid) {
+    if (x?.source === 'ARCHIVE') continue
+    const name = String(typeof x === 'string' ? x : x?.label || '').trim()
+    if (name && !avoid.some((a) => a.name === name)) avoid.push({ name, highRisk: false })
+  }
+  return { avoid, intolerances, highRisk: avoid.some((a) => a.highRisk) }
+})
+
 onMounted(async () => {
   try {
-    const [t, o] = await Promise.all([
+    const [t, o, a] = await Promise.all([
       api<{ data: any }>('/api/c/v1/me/care-plan/today'),
       api<{ data: any }>('/api/c/v1/me/care-plan'),
+      api<{ data: { items: FoodAllergyItem[] } }>('/api/c/v1/me/allergies').catch(() => null),
     ])
     today.value = t.data
     overview.value = o.data
+    allergyItems.value = a?.data?.items || []
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -413,6 +442,16 @@ async function checkin(taskId: string, status: string) {
             </div>
             <div v-if="taskPending(task)" class="item-actions">
               <van-button
+                v-if="task.taskCode === 'DIET_LOG'"
+                size="small"
+                type="primary"
+                round
+                @click="router.push('/diet')"
+              >
+                去记录
+              </van-button>
+              <van-button
+                v-else
                 size="small"
                 type="primary"
                 round
@@ -552,6 +591,26 @@ async function checkin(taskId: string, status: string) {
           <!-- 饮食 -->
           <section v-else-if="overviewTab === 'diet'" class="card plan-panel">
             <div class="section-title">饮食方案</div>
+            <div
+              v-if="allergyReminder.avoid.length || allergyReminder.intolerances.length"
+              class="allergy-alert"
+              :class="{ danger: allergyReminder.highRisk }"
+            >
+              <div class="allergy-alert-title">⚠️ 过敏提醒</div>
+              <p v-if="allergyReminder.avoid.length">
+                请避免食用：
+                <span v-for="(a, i) in allergyReminder.avoid" :key="'av-' + i" class="allergy-name" :class="{ risk: a.highRisk }">
+                  {{ a.name }}<template v-if="a.highRisk">（高危）</template>
+                </span>
+                ，外出就餐、购买加工食品时注意查看配料或询问成分。
+              </p>
+              <p v-if="allergyReminder.intolerances.length">
+                不耐受：{{ allergyReminder.intolerances.join('、') }}，可少量尝试，注意食用量。
+              </p>
+              <p v-if="allergyReminder.highRisk" class="allergy-emergency">
+                如误食后出现呼吸困难、喉头发紧、全身风团或头晕，请立即就医或拨打 120。
+              </p>
+            </div>
             <template
               v-if="
                 dietPrinciples.length ||
@@ -1060,6 +1119,40 @@ async function checkin(taskId: string, status: string) {
   padding-top: 12px;
   border-top: 1px solid #f0f4f6;
 }
+.allergy-alert {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #92400e;
+}
+.allergy-alert.danger {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+.allergy-alert p {
+  margin: 4px 0 0;
+}
+.allergy-alert-title {
+  font-weight: 700;
+}
+.allergy-name + .allergy-name::before {
+  content: '、';
+}
+.allergy-name {
+  font-weight: 650;
+}
+.allergy-name.risk {
+  color: #dc2626;
+}
+.allergy-emergency {
+  font-weight: 600;
+}
+
 .plan-label {
   font-size: 12px;
   font-weight: 650;

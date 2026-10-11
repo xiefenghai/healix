@@ -13,8 +13,8 @@ import java.util.Map;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
@@ -34,8 +34,6 @@ public class ReportSummaryGenerator {
     private static final int MAX_OBSERVATIONS = 6;
 
     private final LlmClient llmClient;
-    private final ResourceLoader resourceLoader;
-
     /**
      * @param fromLlm true = LLM 生成；false = 模板降级
      */
@@ -309,7 +307,7 @@ public class ReportSummaryGenerator {
 
     private String loadSkillMarkdown() {
         try {
-            Resource res = resourceLoader.getResource("classpath:skills/report-summary/SKILL.md");
+            Resource res = new ClassPathResource("skills/report-summary/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
                 return StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8);
             }

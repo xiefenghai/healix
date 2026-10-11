@@ -36,6 +36,7 @@ import {
 
 interface TodayTask {
   id: string
+  taskCode?: string
   title: string
   category?: string
   frequency?: string
@@ -460,6 +461,13 @@ const hubs = [
     icon: 'bag-o',
     path: '/medications',
     tone: 'amber',
+  },
+  {
+    key: 'diet',
+    title: '饮食记录',
+    icon: 'fire-o',
+    path: '/diet',
+    tone: 'coral',
   },
   {
     key: 'assessments',
@@ -965,6 +973,15 @@ function checkinStatusLabel(code?: string) {
             </div>
             <div v-if="taskPending(task)" class="todo-actions">
               <button
+                v-if="task.taskCode === 'DIET_LOG'"
+                type="button"
+                class="act-btn primary"
+                @click="router.push('/diet')"
+              >
+                去记录
+              </button>
+              <button
+                v-else
                 type="button"
                 class="act-btn primary"
                 :disabled="checkinBusyId === task.id"

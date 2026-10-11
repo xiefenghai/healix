@@ -107,7 +107,7 @@ function examFindingRows() {
 
 /** 服用提示选项：含 OCR 常见「餐前/餐后」写法 */
 const timingSelectOptions = computed(() => {
-  const base = [...MED_TIMING_PRESETS]
+  const base: string[] = [...MED_TIMING_PRESETS]
   const extra = ['餐前', '餐后']
   const seen = new Set<string>(base)
   for (const t of extra) {

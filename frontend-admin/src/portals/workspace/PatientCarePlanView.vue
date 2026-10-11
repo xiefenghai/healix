@@ -35,6 +35,8 @@ interface SafetyFlag {
 interface FoodItem {
   code?: string
   label?: string
+  /** ARCHIVE：由过敏史同步，服务端每次保存/发布都会按档案重建 */
+  source?: string
 }
 
 interface WeeklyItem {
@@ -272,6 +274,7 @@ const editForm = reactive({
   dietRecommended: [] as FoodItem[],
   dietLimited: [] as FoodItem[],
   dietAllergensAvoid: [] as FoodItem[],
+  dietIntolerances: [] as FoodItem[],
   sampleDay: {
     breakfast: '',
     lunch: '',
@@ -304,6 +307,7 @@ function asFoodList(raw: any): FoodItem[] {
     return {
       code,
       label: formatCarePlanFoodItem({ code: x?.code, label: x?.label }),
+      ...(x?.source ? { source: String(x.source) } : {}),
     }
   })
 }
@@ -313,7 +317,11 @@ function normalizeFoodList(list: FoodItem[]): FoodItem[] {
     .map((f) => {
       const label = (f.label || '').trim()
       const code = (f.code || '').trim() || label.toUpperCase().replace(/\s+/g, '_').slice(0, 64)
-      return { code, label: label || formatCarePlanFoodItem({ code }) }
+      return {
+        code,
+        label: label || formatCarePlanFoodItem({ code }),
+        ...(f.source ? { source: f.source } : {}),
+      }
     })
     .filter((f) => f.label || f.code)
 }
@@ -347,6 +355,7 @@ function syncFormFromBundle() {
   editForm.dietRecommended = asFoodList(src?.diet?.recommended)
   editForm.dietLimited = asFoodList(src?.diet?.limited)
   editForm.dietAllergensAvoid = asFoodList(src?.diet?.allergensAvoid)
+  editForm.dietIntolerances = asFoodList(src?.diet?.intolerances)
   editForm.sampleDay = {
     breakfast: src?.diet?.sampleDay?.breakfast || '',
     lunch: src?.diet?.sampleDay?.lunch || '',
@@ -791,6 +800,7 @@ function buildPayload() {
       recommended: normalizeFoodList(editForm.dietRecommended),
       limited: normalizeFoodList(editForm.dietLimited),
       allergensAvoid: normalizeFoodList(editForm.dietAllergensAvoid),
+      intolerances: normalizeFoodList(editForm.dietIntolerances),
       sampleDay: { ...editForm.sampleDay },
     },
     execution: {
@@ -1439,9 +1449,14 @@ watch(
           <el-form-item label="过敏回避">
             <div class="food-list">
               <div v-for="(f, i) in editForm.dietAllergensAvoid" :key="'a' + i" class="food-row">
-                <el-input v-model="f.label" :disabled="!isDraftMode" placeholder="过敏原名称" />
+                <el-input
+                  v-model="f.label"
+                  :disabled="!isDraftMode || f.source === 'ARCHIVE'"
+                  placeholder="过敏原名称"
+                />
+                <el-tag v-if="f.source === 'ARCHIVE'" size="small" type="danger" effect="plain">来自过敏史</el-tag>
                 <el-button
-                  v-if="isDraftMode"
+                  v-else-if="isDraftMode"
                   text
                   type="danger"
                   @click="editForm.dietAllergensAvoid.splice(i, 1)"
@@ -1452,6 +1467,19 @@ watch(
               <el-button v-if="isDraftMode" size="small" @click="addFood(editForm.dietAllergensAvoid)">
                 添加过敏原
               </el-button>
+              <div class="food-hint">
+                患者过敏史中的食物过敏会自动同步到这里，推荐食物和示例食谱不得含有；如需修改请到患者档案「过敏史」。
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item v-if="editForm.dietIntolerances.length" label="不耐受">
+            <div class="food-list">
+              <div class="food-tags">
+                <el-tag v-for="(f, i) in editForm.dietIntolerances" :key="'t' + i" type="warning" effect="plain">
+                  {{ f.label }}
+                </el-tag>
+              </div>
+              <div class="food-hint">来自过敏史，可少量食用但不宜主推。</div>
             </div>
           </el-form-item>
           <el-form-item label="示例·早">
@@ -2024,8 +2052,22 @@ watch(
 .food-row {
   display: grid;
   grid-template-columns: 1fr auto;
+  align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.food-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.food-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .mt8 {

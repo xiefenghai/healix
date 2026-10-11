@@ -86,13 +86,16 @@ display_name: 管理方案生成
 | `principles` | 饮食原则数组（如低盐、控糖、高纤维） |
 | `recommended` | `{code, label}` 数组，推荐食物 |
 | `limited` | `{code, label}` 数组，限制食物 |
-| `allergensAvoid` | `{code, label}` 数组，**必须包含上下文中的过敏原** |
+| `allergensAvoid` | `{code, label}` 数组，**必须包含 `foodAllergyGuard` 中 type=ALLERGY 的过敏原** |
+| `intolerances` | `{code, label}` 数组，`foodAllergyGuard` 中 type=INTOLERANCE 的不耐受食物 |
 | `sampleDay` | `{breakfast, lunch, dinner, snacks}` 示例日 |
 | `notes` | 与用药、口味相关的补充说明 |
 
 **饮食规则**：
 
 - `recommended` 与 `allergensAvoid` 的 `code` 集合**不得相交**（服务端 ERROR）
+- `foodAllergyGuard[].keywords`（type=ALLERGY）中的任一词**不得出现**在 `recommended` 与 `sampleDay`（如鸡蛋过敏时不写「鸡蛋」「蒸蛋」，改用瘦肉/豆浆等替代）；服务端会按关键词全文检查并自动删除命中内容
+- 有食物过敏时，`notes` 中提醒患者「外出就餐注意询问菜品成分」；不耐受写入 `intolerances` 并在 `notes` 提示注意食用量，可少量但不作为主推
 - 糖尿病：控精制糖、规律三餐、增加膳食纤维
 - 高血压：低盐、限制腌制食品
 - 合并症：取保守合并原则
@@ -175,7 +178,7 @@ display_name: 管理方案生成
 生成时必须参考上下文中的：
 
 - 病种与合并症 → 决定模板倾向与安全提示
-- 过敏原 → 写入 `allergensAvoid`，且不得出现在 `recommended`
+- 过敏原 → 写入 `allergensAvoid`，且不得出现在 `recommended` 与 `sampleDay`（以 `foodAllergyGuard` 为准）
 - 最近指标（血糖、血压、体重等）→ 调整运动强度与总结表述
 - 在用药物 → `diet.notes` 与执行计划中谨慎表述
 - `contextIncomplete=true` → 文案中可提示信息有限，但不拒绝生成
@@ -185,6 +188,6 @@ display_name: 管理方案生成
 1. 输出 markdown 代码块包裹 JSON
 2. 编造检验数值或诊断
 3. 自动发布或声称「已生效」
-4. 过敏食物出现在推荐列表
+4. 过敏食物出现在推荐列表或示例食谱
 5. 卧床/骨折场景推荐剧烈运动；多轮修订时因饮食意见而丢掉既有骨折/制动限制
 6. 在总结中承诺疗效或替代就医

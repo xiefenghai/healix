@@ -2,17 +2,13 @@
 import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  ALLERGY_CATEGORY_OPTIONS,
   COMMON_VACCINES,
   SURGERY_TYPE_OPTIONS,
   clonePastHistory,
-  formatAllergyEntry,
   formatDiseaseEntry,
   formatSurgeryEntry,
   formatTransfusionEntry,
   formatVaccinationEntry,
-  type AllergyCategory,
-  type PastHistoryAllergyEntry,
   type PastHistoryDiseaseEntry,
   type PastHistoryStatus,
   type PastHistoryStructured,
@@ -27,13 +23,13 @@ interface IllnessOption {
   dictCodeDesc: string
 }
 
-type ListSectionKey = 'diseases' | 'surgeries' | 'allergies' | 'transfusions' | 'vaccinations'
+/** 过敏史已独立为「过敏史」卡片（people_allergy），不在既往史中维护 */
+type ListSectionKey = 'diseases' | 'surgeries' | 'transfusions' | 'vaccinations'
 type CategoryKey = ListSectionKey | 'medication'
 
 const CATEGORIES: Array<{ key: CategoryKey; label: string; hint: string; warning?: boolean }> = [
   { key: 'diseases', label: '疾病史', hint: '曾患急慢性、传染病等' },
   { key: 'surgeries', label: '手术及外伤', hint: '手术、外伤、意外事故' },
-  { key: 'allergies', label: '过敏史', hint: '药物、食物、环境过敏', warning: true },
   { key: 'transfusions', label: '输血史', hint: '输血及输血反应' },
   { key: 'vaccinations', label: '预防接种', hint: '疫苗接种记录' },
   { key: 'medication', label: '用药史', hint: '已停用或既往长用药说明' },
@@ -69,12 +65,6 @@ const surgeryDraft = reactive({
   note: '',
 })
 
-const allergyDraft = reactive({
-  category: 'DRUG' as AllergyCategory,
-  allergen: '',
-  reaction: '',
-})
-
 const transfusionDraft = reactive({
   date: '',
   hasReaction: false,
@@ -103,7 +93,6 @@ const displayTags = computed((): DisplayTag[] => {
       const formatters = {
         diseases: formatDiseaseEntry,
         surgeries: formatSurgeryEntry,
-        allergies: formatAllergyEntry,
         transfusions: formatTransfusionEntry,
         vaccinations: formatVaccinationEntry,
       }
@@ -117,7 +106,6 @@ const displayTags = computed((): DisplayTag[] => {
   }
   pushList('diseases')
   pushList('surgeries')
-  pushList('allergies', true)
   pushList('transfusions')
   pushList('vaccinations')
   if (model.value.medicationNote?.trim()) {
@@ -153,9 +141,6 @@ function resetDrafts() {
   surgeryDraft.date = ''
   surgeryDraft.hospital = ''
   surgeryDraft.note = ''
-  allergyDraft.category = 'DRUG'
-  allergyDraft.allergen = ''
-  allergyDraft.reaction = ''
   transfusionDraft.date = ''
   transfusionDraft.hasReaction = false
   transfusionDraft.note = ''
@@ -226,20 +211,6 @@ function confirmDialog() {
     const next = clonePastHistory(model.value)
     next.status = 'has'
     next.surgeries = [...next.surgeries, entry]
-    replaceModel(next)
-  } else if (activeCategory.value === 'allergies') {
-    if (!allergyDraft.allergen.trim()) {
-      ElMessage.warning('请填写过敏原')
-      return
-    }
-    const entry: PastHistoryAllergyEntry = {
-      category: allergyDraft.category,
-      allergen: allergyDraft.allergen.trim(),
-      reaction: allergyDraft.reaction.trim() || undefined,
-    }
-    const next = clonePastHistory(model.value)
-    next.status = 'has'
-    next.allergies = [...next.allergies, entry]
     replaceModel(next)
   } else if (activeCategory.value === 'transfusions') {
     const entry: PastHistoryTransfusionEntry = {
@@ -393,20 +364,6 @@ function confirmDialog() {
             </el-form-item>
             <el-form-item label="备注">
               <el-input v-model="surgeryDraft.note" type="textarea" :rows="2" maxlength="120" show-word-limit />
-            </el-form-item>
-          </el-form>
-
-          <el-form v-else-if="activeCategory === 'allergies'" label-width="88px" class="ph-form">
-            <el-form-item label="类别">
-              <el-select v-model="allergyDraft.category" style="width: 100%">
-                <el-option v-for="o in ALLERGY_CATEGORY_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="过敏原" required>
-              <el-input v-model="allergyDraft.allergen" maxlength="64" placeholder="如：青霉素、海鲜、花粉" />
-            </el-form-item>
-            <el-form-item label="反应">
-              <el-input v-model="allergyDraft.reaction" maxlength="64" placeholder="如：皮疹、呼吸困难" />
             </el-form-item>
           </el-form>
 

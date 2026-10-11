@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api, getToken, setToken } from '../api/http'
 import { resolveTenantId } from '../shared/tenant'
+import LegalConsent from '../shared/LegalConsent.vue'
 
 const router = useRouter()
 const loggedIn = computed(() => !!getToken())
@@ -11,6 +12,8 @@ const activationCode = ref('')
 const displayName = ref('')
 const username = ref('')
 const password = ref('')
+const agreeTerms = ref(false)
+const agreeSensitive = ref(false)
 const loading = ref(false)
 
 onMounted(() => {
@@ -19,6 +22,10 @@ onMounted(() => {
 })
 
 async function submit() {
+  if (!loggedIn.value && (!agreeTerms.value || !agreeSensitive.value)) {
+    showToast('请先阅读并勾选同意相关协议')
+    return
+  }
   loading.value = true
   try {
     const tenantId = await resolveTenantId(api)
@@ -56,6 +63,7 @@ async function submit() {
       <template v-if="!loggedIn">
         <van-field v-model="username" label="用户名" placeholder="设置登录账号" />
         <van-field v-model="password" type="password" label="密码" placeholder="设置密码" />
+        <LegalConsent v-model:terms="agreeTerms" v-model:sensitive="agreeSensitive" />
       </template>
       <van-button round block type="primary" :loading="loading" @click="submit">
         {{ loggedIn ? '绑定到当前账号' : '激活并登录' }}

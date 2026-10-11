@@ -91,13 +91,6 @@ const FH_DISEASE: Record<string, string> = {
   FH_TB: '结核病史',
 }
 
-const ALLERGY_CAT: Record<string, string> = {
-  DRUG: '药物',
-  FOOD: '食物',
-  ENVIRONMENT: '环境',
-  OTHER: '其他',
-}
-
 const SURGERY_TYPE: Record<string, string> = {
   SURGERY: '手术',
   TRAUMA: '外伤',
@@ -168,21 +161,6 @@ export function formatPastHistory(content: Record<string, unknown>): string {
         .map((s) => {
           const type = SURGERY_TYPE[asStr(s.type)] ?? asStr(s.type)
           return [type, asStr(s.name), asStr(s.date)].filter(Boolean).join(' · ')
-        })
-        .join('、')}`,
-    )
-  }
-  const allergies = Array.isArray(items.allergies)
-    ? (items.allergies as Array<Record<string, unknown>>)
-    : []
-  if (allergies.length) {
-    sections.push(
-      `【过敏史】${allergies
-        .map((a) => {
-          const cat = ALLERGY_CAT[asStr(a.category)] ?? asStr(a.category)
-          let s = `${cat}：${asStr(a.allergen)}`
-          if (asStr(a.reaction)) s += `（${asStr(a.reaction)}）`
-          return s
         })
         .join('、')}`,
     )

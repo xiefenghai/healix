@@ -13,6 +13,8 @@ public interface CarePlanTaskCheckinMapper {
 
     int update(CarePlanTaskCheckin row);
 
+    int softDelete(@Param("id") String id);
+
     CarePlanTaskCheckin findByTaskDateSlot(
             @Param("taskId") String taskId,
             @Param("checkinDate") LocalDate checkinDate,

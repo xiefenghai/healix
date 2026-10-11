@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.allergy.enums.AllergyStatusEnum;
+import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.careplan.dto.SafetyFlagDto;
+import com.healix.core.careplan.support.CarePlanAllergenGuard.Hit;
 import com.healix.core.careplan.enums.CarePlanSafetyLevelEnum;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -22,6 +25,8 @@ public class CarePlanSafetyService {
     public static final String WARN_CONTEXT = "CONTEXT_INCOMPLETE";
     public static final String WARN_NO_DISEASE = "NO_DISEASE_TAG";
     public static final String WARN_HYPO = "HYPOGLYCEMIA_RISK";
+    public static final String WARN_INTOLERANCE = "DIET_INTOLERANCE";
+    public static final String WARN_ALLERGY_UNKNOWN = "ALLERGY_UNKNOWN";
 
     public List<SafetyFlagDto> evaluate(
             JsonNode exercise,
@@ -30,6 +35,22 @@ public class CarePlanSafetyService {
             boolean contextIncomplete,
             boolean noDiseaseTag,
             boolean hypoglycemiaRisk) {
+        return evaluate(exercise, diet, execution, contextIncomplete, noDiseaseTag, hypoglycemiaRisk, List.of(), null);
+    }
+
+    /**
+     * @param foodAllergens 过敏史中的食物过敏/不耐受，用于全文命中推荐食物与示例食谱
+     * @param allergyStatus 过敏史状态；UNKNOWN（未询问）时提示医护先采集
+     */
+    public List<SafetyFlagDto> evaluate(
+            JsonNode exercise,
+            JsonNode diet,
+            JsonNode execution,
+            boolean contextIncomplete,
+            boolean noDiseaseTag,
+            boolean hypoglycemiaRisk,
+            List<FoodAllergen> foodAllergens,
+            AllergyStatusEnum allergyStatus) {
         List<SafetyFlagDto> flags = new ArrayList<>();
         if (!isExercisePresent(exercise) || !isDietPresent(diet) || !hasEnabledTask(execution)) {
             flags.add(new SafetyFlagDto(
@@ -37,9 +58,32 @@ public class CarePlanSafetyService {
                     ERR_INCOMPLETE,
                     "方案三块需完整：运动、饮食，且执行计划至少 1 条启用任务"));
         }
+        List<String> allergyHits = new ArrayList<>();
+        List<String> intoleranceHits = new ArrayList<>();
+        for (Hit hit : CarePlanAllergenGuard.conflicts(diet, foodAllergens)) {
+            String desc = hit.where() + "「" + hit.text() + "」含" + hit.allergen().name();
+            (hit.allergen().intolerance() ? intoleranceHits : allergyHits).add(desc);
+        }
         SafetyFlagDto allergen = allergenConflict(diet);
-        if (allergen != null) {
+        if (!allergyHits.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.ERROR.name(),
+                    ERR_ALLERGEN,
+                    "饮食与过敏史冲突：" + String.join("；", allergyHits)));
+        } else if (allergen != null) {
             flags.add(allergen);
+        }
+        if (!intoleranceHits.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_INTOLERANCE,
+                    "含患者不耐受食物，请确认食用量：" + String.join("；", intoleranceHits)));
+        }
+        if (allergyStatus == AllergyStatusEnum.UNKNOWN) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_ALLERGY_UNKNOWN,
+                    "患者过敏史未采集，饮食建议无法排除过敏风险，建议先在档案中确认"));
         }
         if (contextIncomplete) {
             flags.add(new SafetyFlagDto(

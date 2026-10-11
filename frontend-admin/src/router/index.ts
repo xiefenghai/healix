@@ -115,6 +115,10 @@ const router = createRouter({
               component: () => import('../portals/workspace/PatientCarePlanView.vue'),
             },
             {
+              path: 'diet',
+              component: () => import('../portals/workspace/PatientDietView.vue'),
+            },
+            {
               path: 'adherence',
               component: () => import('../portals/workspace/PatientAdherenceView.vue'),
             },

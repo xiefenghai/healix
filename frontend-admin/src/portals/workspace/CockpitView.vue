@@ -624,14 +624,6 @@ const diseaseText = computed(() => {
   return labels.slice(0, 2).join(' · ')
 })
 
-function riskLabel(level?: string) {
-  const l = (level || '').toUpperCase()
-  if (l === 'HIGH') return '高风险'
-  if (l === 'MEDIUM') return '中风险'
-  if (l === 'LOW') return '低风险'
-  return level || ''
-}
-
 function nowClock() {
   const d = new Date()
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -1210,7 +1202,7 @@ async function clearFocus() {
   }
 }
 
-function onChip(kind: ChipKind) {
+function onChip(_kind: ChipKind) {
   tab.value = 'urgent'
   void loadPriority()
 }

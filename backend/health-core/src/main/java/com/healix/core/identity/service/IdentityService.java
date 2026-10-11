@@ -180,18 +180,6 @@ public class IdentityService {
     }
 
 
-    public List<String> peopleAllergens(String peopleId) {
-        PeopleProfile profile = requirePeople(peopleId);
-        if (profile.getAllergensJson() == null || profile.getAllergensJson().isBlank()) {
-            return List.of();
-        }
-        String raw = profile.getAllergensJson().replace("[", "").replace("]", "").replace("\"", "");
-        if (raw.isBlank()) {
-            return List.of();
-        }
-        return List.of(raw.split(",")).stream().map(String::trim).filter(s -> !s.isEmpty()).toList();
-    }
-
     public int opsAccountCount() {
         return opsAccountMapper.countAll();
     }

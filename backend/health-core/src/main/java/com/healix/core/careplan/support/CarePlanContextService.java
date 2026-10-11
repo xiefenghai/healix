@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.archive.domain.PeopleDiseaseArchive;
 import com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper;
-import com.healix.core.identity.service.IdentityService;
+import com.healix.core.allergy.enums.AllergyStatusEnum;
+import com.healix.core.allergy.service.AllergyQueryService;
+import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.medication.domain.PeopleMedication;
 import com.healix.core.medication.enums.MedicationStatusEnum;
 import com.healix.core.medication.mapper.PeopleMedicationMapper;
@@ -38,7 +40,7 @@ public class CarePlanContextService {
 
     private final PeopleBasicArchiveMapper basicArchiveMapper;
     private final PeopleDiseaseArchiveMapper diseaseArchiveMapper;
-    private final IdentityService identityService;
+    private final AllergyQueryService allergyQueryService;
     private final VitalRecordMapper vitalRecordMapper;
     private final PeopleMedicationMapper medicationMapper;
     private final LabReportMapper labReportMapper;
@@ -46,7 +48,8 @@ public class CarePlanContextService {
 
     public record CarePlanContext(
             List<String> diseaseCodes,
-            List<String> allergenNames,
+            List<FoodAllergen> foodAllergens,
+            AllergyStatusEnum allergyStatus,
             List<String> activeMedications,
             List<MetricBrief> latestMetrics,
             List<LabBrief> recentLabs,
@@ -139,14 +142,21 @@ public class CarePlanContextService {
                 "done",
                 labeled.isEmpty() ? "无病种记录" : "病种: " + String.join("、", labeled));
 
-        trace(tracer, "peopleAllergens", "running", "读取过敏原");
-        List<String> allergens = identityService.peopleAllergens(peopleId);
-        if (allergens == null) {
-            allergens = List.of();
-        }
+        trace(tracer, "peopleAllergens", "running", "读取过敏史");
+        // 方案饮食「过敏原回避」只放食物类；药物/环境过敏以描述形式进快照供模型参考
+        List<FoodAllergen> allergens = allergyQueryService.foodAllergens(peopleId);
+        List<String> allergyDescriptions = allergyQueryService.describeForContext(peopleId);
+        AllergyStatusEnum allergyStatus = allergyQueryService.status(tenantId, peopleId);
+        snapshot.put("allergyStatus", allergyStatus.label());
         ArrayNode allergenArr = snapshot.putArray("allergens");
-        allergens.forEach(allergenArr::add);
-        trace(tracer, "peopleAllergens", "done", allergens.isEmpty() ? "无过敏原" : "过敏原: " + String.join(", ", allergens));
+        allergyDescriptions.forEach(allergenArr::add);
+        trace(
+                tracer,
+                "peopleAllergens",
+                "done",
+                allergyDescriptions.isEmpty()
+                        ? allergyStatus.label()
+                        : "过敏史: " + String.join("、", allergyDescriptions));
 
         trace(tracer, "PeopleMedication", "running", "读取在用药");
         List<PeopleMedication> meds =
@@ -185,6 +195,7 @@ public class CarePlanContextService {
         return new CarePlanContext(
                 new ArrayList<>(diseases),
                 allergens,
+                allergyStatus,
                 medNames,
                 metrics,
                 labs,

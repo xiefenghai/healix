@@ -298,12 +298,6 @@ function controlMetricLine(latest: Snapshot | null) {
   return rows
 }
 
-function statusLabel(status?: string) {
-  if (status === 'COMPLETE') return '完整'
-  if (status === 'INCOMPLETE') return '缺项'
-  return status || '-'
-}
-
 function formatTime(v?: string) {
   if (!v) return '-'
   return String(v).replace('T', ' ').slice(0, 16)

@@ -34,6 +34,8 @@ public enum AuditActionEnum {
     CARE_TEAM_MEMBER_ADD,
     /** 健管组移除成员 */
     CARE_TEAM_MEMBER_REMOVE,
+    /** 患者变更健管组 */
+    CARE_TEAM_MEMBER_MOVE,
     /** 机构新开医护 */
     ORG_STAFF_CREATE,
     /** 机构解绑医护 */

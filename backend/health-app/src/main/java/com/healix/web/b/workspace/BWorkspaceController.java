@@ -74,6 +74,16 @@ public class BWorkspaceController {
                 accountId));
     }
 
+    /** 将患者加入或变更到指定健管组（机构内一人仅属一组）。 */
+    @PutMapping("/patients/{peopleId}/care-team")
+    public ApiResult<OrgPatientListItem> changePatientCareTeam(
+            @PathVariable String peopleId, @RequestBody @Validated ChangePatientCareTeamRequest request) {
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        String accountId = SecurityUtils.requireContext().getAccountId();
+        return ApiResult.ok(orgWorkspaceService.changePatientCareTeam(
+                orgId, peopleId, request.careTeamId(), accountId));
+    }
+
     /** 列出当前机构可管员工（可按角色、关键字筛选；用于组队选人等）。 */
     @GetMapping("/org-staff")
     public ApiResult<List<OrgStaffItem>> listOrgStaff(
@@ -269,5 +279,8 @@ public class BWorkspaceController {
             @Size(max = 32) String educationLevel,
             @Size(max = 32) String maritalStatus,
             @Size(max = 64) String occupation) {
+    }
+
+    public record ChangePatientCareTeamRequest(@NotBlank String careTeamId) {
     }
 }

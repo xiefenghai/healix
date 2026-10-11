@@ -50,3 +50,18 @@ htmlcov/
 
 # Local data
 data/
+
+# Docker deploy artifacts
+deploy/docker/release/
+deploy/docker/certs/
+
+# Local agent / tooling
+.workbuddy/
+
+# Python
+**/__pycache__/
+*.pyc
+
+# Marketing / temp assets (not product code)
+healix-xiaohongshu*_assets/
+frontend-staff-public-tmp/

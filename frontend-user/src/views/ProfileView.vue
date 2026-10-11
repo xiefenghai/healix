@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api, clearToken } from '../api/http'
+import { PATIENT_AGENT_ENABLED } from '../shared/features'
 
 const router = useRouter()
 const displayName = ref('')
@@ -91,7 +92,9 @@ function logout() {
       <van-cell title="联系健管师团队" is-link to="/care-chat?contact=1" />
       <van-cell title="激活码添加档案" is-link to="/activate" />
       <van-cell title="邀请码入组" is-link to="/join" />
-      <van-cell title="健康助手" is-link to="/discover" />
+      <van-cell v-if="PATIENT_AGENT_ENABLED" title="健康助手" is-link to="/discover" />
+      <van-cell title="用户协议" is-link to="/legal/terms" />
+      <van-cell title="隐私政策" is-link to="/legal/privacy" />
       <van-cell title="退出登录" is-link @click="logout" />
     </section>
   </div>

@@ -37,6 +37,8 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class CarePlanCheckinService {
 
+    public static final String SYSTEM_CHECKIN_NOTE = "系统自动完成";
+
     private final CarePlanMapper carePlanMapper;
     private final CarePlanVersionMapper versionMapper;
     private final CarePlanTaskMapper taskMapper;
@@ -149,6 +151,52 @@ public class CarePlanCheckinService {
         }
         maybeClosePlanNudgeAfterCheckin(tenantId, peopleId, day, status);
         return view;
+    }
+
+    /**
+     * 业务数据驱动的系统打卡（如饮食记录满三餐 → DIET_LOG 完成）。
+     *
+     * <p>{@code done=true} 且当日无打卡时写入 DONE；{@code done=false} 时只撤销本方法写入的系统打卡，
+     * 不动患者/员工手动打卡。当日无生效任务或不在执行窗口时不做任何事。
+     */
+    @Transactional
+    public void syncSystemCheckin(String tenantId, String peopleId, String taskCode, LocalDate day, boolean done) {
+        CarePlanTodayDto today = getPatientToday(tenantId, peopleId, day);
+        CarePlanTodayTaskDto due = today.getTasks().stream()
+                .filter(t -> taskCode.equals(t.getTaskCode()))
+                .findFirst()
+                .orElse(null);
+        if (due == null) {
+            return;
+        }
+        CarePlanTask task = requireActiveTask(tenantId, peopleId, due.getId());
+        String slot = CarePlanDueSupport.resolveTimeSlot(task.getTimeSlot());
+        CarePlanTaskCheckin existing = checkinMapper.findByTaskDateSlot(task.getId(), day, slot);
+        if (done) {
+            if (existing != null) {
+                return;
+            }
+            CarePlanTaskCheckin row = new CarePlanTaskCheckin();
+            row.setTenantId(tenantId);
+            row.setPeopleId(peopleId);
+            row.setPlanId(task.getPlanId());
+            row.setPlanVersionId(task.getPlanVersionId());
+            row.setTaskId(task.getId());
+            row.setCheckinDate(day);
+            row.setTimeSlot(slot);
+            row.setStatus(CarePlanCheckinStatusEnum.DONE.name());
+            row.setNote(SYSTEM_CHECKIN_NOTE);
+            EntityMeta.onCreate(row);
+            checkinMapper.insert(row);
+            maybeClosePlanNudgeAfterCheckin(tenantId, peopleId, day, row.getStatus());
+            return;
+        }
+        if (existing != null
+                && SYSTEM_CHECKIN_NOTE.equals(existing.getNote())
+                && existing.getRecordedByPeopleId() == null
+                && existing.getRecordedByStaffId() == null) {
+            checkinMapper.softDelete(existing.getId());
+        }
     }
 
     /** 当日应打任务已全部完成/跳过时，关闭过期的打卡跟进单。 */

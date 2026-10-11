@@ -9,6 +9,7 @@ import {
 } from '../../shared/family-history-options'
 import FamilyHistoryEditor from './FamilyHistoryEditor.vue'
 import PastHistoryEditor from './PastHistoryEditor.vue'
+import AllergyPanel from './AllergyPanel.vue'
 import {
   emptyPastHistory,
   resolvePastHistoryFromContent,
@@ -508,6 +509,8 @@ function buildBasicContentObject() {
   const familyItems = familyHistoryStatus.value === 'has' ? familyHistoryEntries.value : []
   const familyHistory = familyItems.length ? serializeFamilyHistory(familyItems) : ''
   const pastSnapshot = clonePastHistory(pastHistoryStructured.value)
+  // 旧版既往史里的过敏条目已迁移到过敏史表，保存时不再写回
+  pastSnapshot.allergies = []
   const pastActive = pastSnapshot.status === 'has'
   const pastHistory =
     pastActive && pastHistoryHasContent(pastSnapshot)
@@ -1461,6 +1464,13 @@ onBeforeUnmount(() => {
             <label class="row-label">既往史</label>
             <div class="row-body">
               <PastHistoryEditor v-model="pastHistoryStructured" :illness-options="illnessOptions" />
+            </div>
+          </div>
+
+          <div v-if="peopleId" class="archive-row">
+            <label class="row-label">过敏史</label>
+            <div class="row-body">
+              <AllergyPanel :people-id="peopleId" />
             </div>
           </div>
         </el-card>

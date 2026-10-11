@@ -1,0 +1,98 @@
+# Healix 单机部署（腾讯云轻量 2C4G）：MySQL + Redis + 后端 + Nginx
+# 用法见同目录 README.md
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: healix-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: healix
+      MYSQL_USER: healix
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=256M
+      - --max-connections=100
+      - --performance-schema=OFF
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: healix-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "128mb", "--appendonly", "yes"]
+    volumes:
+      - ./data/redis:/data
+
+  backend:
+    image: eclipse-temurin:21-jre
+    container_name: healix-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    working_dir: /app
+    command: ["java", "-Xms512m", "-Xmx1g", "-XX:+UseG1GC", "-jar", "/app/healix.jar"]
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/healix?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: healix
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+      SPRING_SQL_INIT_MODE: ${SPRING_SQL_INIT_MODE:-always}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      ID_CARD_AES_KEY: ${ID_CARD_AES_KEY}
+      ID_CARD_PEPPER: ${ID_CARD_PEPPER}
+      OPS_BOOTSTRAP_USERNAME: ${OPS_BOOTSTRAP_USERNAME}
+      OPS_BOOTSTRAP_PASSWORD: ${OPS_BOOTSTRAP_PASSWORD}
+      AGENT_LLM_ENABLED: ${AGENT_LLM_ENABLED:-true}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-sk-placeholder}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_CHAT_MODEL: ${DEEPSEEK_CHAT_MODEL:-deepseek-chat}
+      AGENT_OCR_MODE: ${AGENT_OCR_MODE:-TEXT_LLM}
+      HEALIX_AGENT_PATIENT_ENABLED: ${PATIENT_AGENT_ENABLED:-false}
+      HEALIX_CORS_ALLOWED_ORIGIN_PATTERNS: ${CORS_ALLOWED_ORIGIN_PATTERNS:-http://115.159.102.24,http://115.159.102.24:*,https://m.healixapp.com,https://admin.healixapp.com,https://staff.healixapp.com}
+      INFLUX_ENABLED: "false"
+      MANAGEMENT_TRACING_ENABLED: "false"
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: ""
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health
+      SPRINGDOC_API_DOCS_ENABLED: "false"
+      SPRINGDOC_SWAGGER_UI_ENABLED: "false"
+    volumes:
+      - ./release/healix.jar:/app/healix.jar:ro
+      - ./logs:/app/logs
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: healix-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8081"
+      - "8082:8082"
+    volumes:
+      - ./nginx/${NGINX_CONF:-http-only}.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/api.inc:/etc/nginx/conf.d/api.inc:ro
+      - ./release/www/user:/usr/share/nginx/user:ro
+      - ./release/www/admin:/usr/share/nginx/admin:ro
+      - ./release/www/staff:/usr/share/nginx/staff:ro
+      - ./certs:/etc/nginx/certs:ro

@@ -52,8 +52,15 @@ public class HealthAgentService {
     @Value("${healix.agent.enabled:false}")
     private boolean agentLlmEnabled;
 
+    /** 全局关闭 C 端开放问答（与租户级 AI_PATIENT_AGENT 叠加）；不影响 B 端 AI 与 OCR */
+    @Value("${healix.agent.patient-enabled:true}")
+    private boolean patientAgentEnabled;
+
     @Transactional
     public AgentChatResponse chat(String patientId, String userMessage) {
+        if (!patientAgentEnabled) {
+            throw new BusinessException(403, "健康助手暂未开放");
+        }
         if (patientId == null) {
             throw new IllegalArgumentException("缺少患者 ID");
         }

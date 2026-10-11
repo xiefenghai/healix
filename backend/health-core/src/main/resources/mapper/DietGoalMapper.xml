@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.diet.mapper.DietGoalMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, source, goal_type, rate_kg_per_week, activity_level, disease_key,
+        basis_weight_kg, basis_height_cm, basis_age, basis_gender, bmr_kcal, tdee_kcal,
+        energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, meal_split_json, floor_applied,
+        set_by_staff_id, note, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO diet_goal(
+            id, tenant_id, people_id, source, goal_type, rate_kg_per_week, activity_level, disease_key,
+            basis_weight_kg, basis_height_cm, basis_age, basis_gender, bmr_kcal, tdee_kcal,
+            energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, meal_split_json, floor_applied,
+            set_by_staff_id, note, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{source}, #{goalType}, #{rateKgPerWeek}, #{activityLevel}, #{diseaseKey},
+            #{basisWeightKg}, #{basisHeightCm}, #{basisAge}, #{basisGender}, #{bmrKcal}, #{tdeeKcal},
+            #{energyKcal}, #{carbG}, #{proteinG}, #{fatG}, #{fiberG}, #{sodiumMg}, #{mealSplitJson}, #{floorApplied},
+            #{setByStaffId}, #{note}, #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="softDelete">
+        UPDATE diet_goal
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findCurrent" resultType="com.healix.core.diet.domain.DietGoal">
+        SELECT <include refid="cols"/>
+        FROM diet_goal
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        ORDER BY gmt_created DESC
+        LIMIT 1
+    </select>
+</mapper>

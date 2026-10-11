@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api, setToken } from '../api/http'
 import { resolveTenantId } from '../shared/tenant'
+import IcpFooter from '../shared/IcpFooter.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -51,6 +52,7 @@ async function submit() {
       <button class="link" type="button" @click="router.push('/activate')">已有建档？激活账号</button>
       <button class="link" type="button" @click="router.push('/register')">没有账号？去注册</button>
     </div>
+    <IcpFooter />
   </div>
 </template>
 

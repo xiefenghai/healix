@@ -31,7 +31,7 @@ async function join() {
     <div class="card">
       <div class="illus">🌿</div>
       <h2>加入健康管理</h2>
-      <p>输入机构发放的邀请码，开启体征记录与健康助手。</p>
+      <p>输入机构发放的邀请码，开启体征记录与健康管理服务。</p>
       <van-field v-model="inviteCode" center clearable placeholder="请输入邀请码">
         <template #button>
           <van-button size="small" type="primary" round :loading="loading" @click="join">加入</van-button>

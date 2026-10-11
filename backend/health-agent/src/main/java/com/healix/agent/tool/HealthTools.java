@@ -1,6 +1,6 @@
 package com.healix.agent.tool;
 
-import com.healix.core.identity.service.IdentityService;
+import com.healix.core.allergy.service.AllergyQueryService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,11 +14,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class HealthTools {
 
-    private final IdentityService identityService;
+    private final AllergyQueryService allergyQueryService;
 
     @Tool(description = "List patient allergen names")
     public String queryAllergens(@ToolParam(description = "Patient ID") String patientId) {
-        List<String> allergens = identityService.peopleAllergens(patientId);
+        List<String> allergens = allergyQueryService.describeForContext(patientId);
         if (allergens.isEmpty()) {
             return "No known allergens";
         }

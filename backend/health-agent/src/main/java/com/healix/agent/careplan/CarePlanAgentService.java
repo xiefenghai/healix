@@ -6,8 +6,11 @@ import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.domain.EntityMeta;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.agent.enums.AgentTypeEnum;
+import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
+import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.dto.CarePlanBundleDto;
 import com.healix.core.careplan.enums.CarePlanSourceEnum;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
@@ -24,8 +27,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StreamUtils;
@@ -45,7 +48,6 @@ public class CarePlanAgentService {
     private final CarePlanLlmGenerator carePlanLlmGenerator;
     private final CarePlanTemplateRegistry templateRegistry;
     private final AgentInteractionLogMapper interactionLogMapper;
-    private final ResourceLoader resourceLoader;
     private final LlmClient llmClient;
 
     @Lazy
@@ -195,6 +197,7 @@ public class CarePlanAgentService {
             throw new BusinessException("AI 修订失败：请换一种说法重试，或打开方案页手工编辑");
         }
         LlmPlanResult r = llmResult.get();
+        guardAllergens(ctx, r.plan().diet(), sink);
         logEntity.setDraftReply("LLM_REVISE");
         if (r.llmResponse() != null) {
             logEntity.setPromptTokens(r.llmResponse().promptTokens());
@@ -369,6 +372,7 @@ public class CarePlanAgentService {
         }
 
         CarePlanStreamSink.progress(sink, "正在进行安全校验…");
+        guardAllergens(ctx, generated.diet(), sink);
         CarePlanStreamSink.tool(sink, "safetyCheck", "done", "方案结构校验通过");
 
         if (llmMeta != null) {
@@ -393,6 +397,22 @@ public class CarePlanAgentService {
                 logEntity.getId());
         CarePlanStreamSink.tool(sink, "persistGenerated", "done", "草稿已保存");
         return bundle;
+    }
+
+    /** 按过敏史补齐回避清单，并移除模型误推荐的过敏食物（服务端兜底，不依赖模型自觉）。 */
+    private static void guardAllergens(CarePlanContext ctx, ObjectNode diet, Consumer<AgentStreamEvent> sink) {
+        List<FoodAllergen> allergens = ctx.foodAllergens();
+        CarePlanAllergenGuard.enforce(diet, allergens);
+        List<String> removed = CarePlanAllergenGuard.sanitize(diet, allergens);
+        if (allergens.isEmpty()) {
+            CarePlanStreamSink.tool(sink, "allergenGuard", "done", "无食物过敏史");
+        } else if (removed.isEmpty()) {
+            CarePlanStreamSink.tool(sink, "allergenGuard", "done", "饮食与过敏史无冲突");
+        } else {
+            log.info("[CarePlan] AI diet allergen conflicts removed: {}", removed);
+            CarePlanStreamSink.tool(
+                    sink, "allergenGuard", "done", "已移除与过敏史冲突的内容：" + String.join("、", removed));
+        }
     }
 
     private String buildPromptSnapshot(
@@ -424,7 +444,7 @@ public class CarePlanAgentService {
         String path = "classpath:skills/management-plan/SKILL.md";
         CarePlanStreamSink.progress(sink, "正在加载方案生成指引…");
         try {
-            Resource res = resourceLoader.getResource(path);
+            Resource res = new ClassPathResource("skills/management-plan/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
                 String content =
                         StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);

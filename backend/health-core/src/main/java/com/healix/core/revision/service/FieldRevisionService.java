@@ -88,6 +88,9 @@ public class FieldRevisionService {
         if (snap.has("specimenType") && !snap.get("specimenType").isNull()) {
             changes.add(new FieldChange("specimenType", snap.get("specimenType"), null));
         }
+        if (snap.has("allergenName") && !snap.get("allergenName").isNull()) {
+            changes.add(new FieldChange("allergenName", snap.get("allergenName"), null));
+        }
         persistBatch(
                 tenantId,
                 targetPeopleId,

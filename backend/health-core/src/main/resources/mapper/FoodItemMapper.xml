@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.diet.mapper.FoodItemMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, code, name, aliases_json, kind, category, sub_category,
+        energy_kcal, protein_g, fat_g, carb_g, fiber_g, sodium_mg, edible_pct, gi, gi_level,
+        units_json, tags_json, serving_grams, is_default, data_source, precision_level, needs_review,
+        seed_version, status, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="countPlatformBySeedVersion" resultType="int">
+        SELECT COUNT(1)
+        FROM food_item
+        WHERE tenant_id IS NULL
+          AND seed_version = #{seedVersion}
+          AND status = 'ACTIVE'
+          AND is_deleted = 0
+    </select>
+
+    <insert id="upsertBatch">
+        INSERT INTO food_item(
+            id, tenant_id, code, name, aliases_json, kind, category, sub_category,
+            energy_kcal, protein_g, fat_g, carb_g, fiber_g, sodium_mg, edible_pct, gi, gi_level,
+            units_json, tags_json, serving_grams, is_default, data_source, precision_level, needs_review,
+            seed_version, status, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (#{r.id}, NULL, #{r.code}, #{r.name}, #{r.aliasesJson}, #{r.kind}, #{r.category}, #{r.subCategory},
+             #{r.energyKcal}, #{r.proteinG}, #{r.fatG}, #{r.carbG}, #{r.fiberG}, #{r.sodiumMg}, #{r.ediblePct},
+             #{r.gi}, #{r.giLevel}, #{r.unitsJson}, #{r.tagsJson}, #{r.servingGrams}, #{r.isDefault},
+             #{r.dataSource}, #{r.precisionLevel}, #{r.needsReview}, #{r.seedVersion}, 'ACTIVE',
+             0, #{r.gmtCreated}, #{r.gmtModified}, #{r.gmtDeleted})
+        </foreach>
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            aliases_json = VALUES(aliases_json),
+            kind = VALUES(kind),
+            category = VALUES(category),
+            sub_category = VALUES(sub_category),
+            energy_kcal = VALUES(energy_kcal),
+            protein_g = VALUES(protein_g),
+            fat_g = VALUES(fat_g),
+            carb_g = VALUES(carb_g),
+            fiber_g = VALUES(fiber_g),
+            sodium_mg = VALUES(sodium_mg),
+            edible_pct = VALUES(edible_pct),
+            gi = VALUES(gi),
+            gi_level = VALUES(gi_level),
+            units_json = VALUES(units_json),
+            tags_json = VALUES(tags_json),
+            serving_grams = VALUES(serving_grams),
+            is_default = VALUES(is_default),
+            data_source = VALUES(data_source),
+            precision_level = VALUES(precision_level),
+            needs_review = VALUES(needs_review),
+            seed_version = VALUES(seed_version),
+            status = 'ACTIVE',
+            gmt_modified = VALUES(gmt_modified)
+    </insert>
+
+    <update id="disableStalePlatform">
+        UPDATE food_item
+        SET status = 'DISABLED',
+            gmt_modified = NOW()
+        WHERE tenant_id IS NULL
+          AND is_deleted = 0
+          AND (seed_version IS NULL OR seed_version != #{seedVersion})
+    </update>
+
+    <select id="listActivePlatform" resultType="com.healix.core.diet.domain.FoodItem">
+        SELECT <include refid="cols"/>
+        FROM food_item
+        WHERE tenant_id IS NULL
+          AND status = 'ACTIVE'
+          AND is_deleted = 0
+    </select>
+</mapper>

@@ -3,13 +3,13 @@ package com.healix.core.careplan.template;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
+import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
-import com.healix.core.careplan.support.CarePlanSafetyService;
-import java.util.LinkedHashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -68,7 +68,7 @@ public class CarePlanTemplateRegistry {
         List<String> diseaseTags = diseaseTagsOverride != null && !diseaseTagsOverride.isEmpty()
                 ? diseaseTagsOverride
                 : (ctx == null ? List.of() : ctx.diseaseCodes());
-        List<String> allergens = ctx == null ? List.of() : ctx.allergenNames();
+        List<FoodAllergen> allergens = ctx == null ? List.of() : ctx.foodAllergens();
         List<String> meds = ctx == null ? List.of() : ctx.activeMedications();
 
         ObjectNode exercise = buildExercise(templateKey, hypo);
@@ -150,7 +150,9 @@ public class CarePlanTemplateRegistry {
         return ex;
     }
 
-    private ObjectNode buildDiet(CarePlanTemplateKeyEnum key, List<String> allergenNames, List<String> meds) {
+    private ObjectNode buildDiet(CarePlanTemplateKeyEnum key, List<FoodAllergen> allergens, List<String> meds) {
+        List<FoodAllergen> all = allergens == null ? List.of() : allergens;
+        List<FoodAllergen> strict = all.stream().filter(a -> !a.intolerance()).toList();
         ObjectNode diet = JsonUtils.emptyObject();
         diet.put("calorieHint", "按身高体重与活动量个体化，避免极端节食");
         switch (key) {
@@ -161,39 +163,43 @@ public class CarePlanTemplateRegistry {
         ArrayNode recommended = diet.putArray("recommended");
         addFood(recommended, "OATS", "燕麦");
         addFood(recommended, "LEAFY_GREENS", "绿叶菜");
-        addFood(recommended, "LEAN_PROTEIN", "瘦肉/豆制品");
+        addFood(recommended, "LEAN_PROTEIN", pick(strict, "瘦肉/豆制品", "瘦肉/禽肉"));
         ArrayNode limited = diet.putArray("limited");
         limited.add(food("SUGARY_DRINK", "含糖饮料"));
         if (key == CarePlanTemplateKeyEnum.HYPERTENSION || key == CarePlanTemplateKeyEnum.DIABETES_HYPERTENSION) {
             limited.add(food("PICKLED", "高盐腌制品"));
         }
-        ArrayNode avoid = diet.putArray("allergensAvoid");
-        Set<String> seen = new LinkedHashSet<>();
-        if (allergenNames != null) {
-            for (String name : allergenNames) {
-                if (!StringUtils.hasText(name)) {
-                    continue;
-                }
-                String code = CarePlanSafetyService.normalizeCode(name);
-                if (code == null || !seen.add(code)) {
-                    continue;
-                }
-                ObjectNode a = avoid.addObject();
-                a.put("code", code);
-                a.put("label", name.trim());
+        ObjectNode sample = diet.putObject("sampleDay");
+        sample.put("breakfast", "燕麦粥 + " + pick(strict, "鸡蛋", "无糖豆浆", "瘦肉末") + " + 蔬菜");
+        sample.put("lunch", "杂粮饭 + 瘦肉 + 大量蔬菜");
+        sample.put("dinner", "清淡主食 + " + pick(strict, "鱼/豆制品", "鱼", "豆制品", "去皮禽肉") + " + 蔬菜");
+        sample.put("snacks", pick(strict, "原味坚果少量或无糖酸奶", "无糖酸奶", "原味坚果少量", "低糖水果（如苹果、柚子）"));
+        List<String> noteParts = new ArrayList<>();
+        if (meds != null && !meds.isEmpty()) {
+            noteParts.add("在用药物：" + String.join("、", meds.stream().limit(8).toList()) + "；饮食需结合药物说明。");
+        }
+        if (!strict.isEmpty()) {
+            noteParts.add("食物过敏：" + String.join("、", strict.stream().map(FoodAllergen::name).toList())
+                    + "，外出就餐注意询问菜品成分。");
+        }
+        List<String> intolerances = all.stream().filter(FoodAllergen::intolerance).map(FoodAllergen::name).toList();
+        if (!intolerances.isEmpty()) {
+            noteParts.add("不耐受：" + String.join("、", intolerances) + "，注意食用量。");
+        }
+        diet.put("notes", String.join("", noteParts));
+        CarePlanAllergenGuard.enforce(diet, all);
+        CarePlanAllergenGuard.sanitize(diet, all);
+        return diet;
+    }
+
+    /** 取第一个不含过敏原的候选；都命中时返回最后一个（随后由 sanitize 兜底）。 */
+    private static String pick(List<FoodAllergen> strict, String... options) {
+        for (String o : options) {
+            if (CarePlanAllergenGuard.firstHit(o, strict).isEmpty()) {
+                return o;
             }
         }
-        ObjectNode sample = diet.putObject("sampleDay");
-        sample.put("breakfast", "燕麦粥 + 鸡蛋 + 蔬菜");
-        sample.put("lunch", "杂粮饭 + 瘦肉 + 大量蔬菜");
-        sample.put("dinner", "清淡主食 + 鱼/豆制品 + 蔬菜");
-        sample.put("snacks", "原味坚果少量或无糖酸奶（无过敏时）");
-        String notes = "";
-        if (meds != null && !meds.isEmpty()) {
-            notes = "在用药物：" + String.join("、", meds.stream().limit(8).toList()) + "；饮食需结合药物说明。";
-        }
-        diet.put("notes", notes);
-        return diet;
+        return options[options.length - 1];
     }
 
     private ObjectNode buildExecution(CarePlanTemplateKeyEnum key, boolean hypoRisk) {

@@ -509,6 +509,92 @@ public class OrgWorkspaceService {
         return member;
     }
 
+    /**
+     * 将患者加入或变更到指定健管组（机构内一人仅属一组）。
+     *
+     * <p>已在目标组则幂等返回；从其他组迁出时不关闭待办，仅按新主责重派。
+     */
+    @Transactional
+    public OrgPatientListItem changePatientCareTeam(
+            String orgId, String peopleId, String targetTeamId, String actorAccountId) {
+        requireOrgWorkspaceAccess(orgId);
+        if (!StringUtils.hasText(peopleId) || !StringUtils.hasText(targetTeamId)) {
+            throw new BusinessException(400, "请选择患者与健管组");
+        }
+        CareTeam target = requireTeamInOrg(orgId, targetTeamId);
+        PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
+        if (membership == null || !MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
+            throw new BusinessException(400, "患者须先成为本机构有效成员");
+        }
+
+        CareTeamMember existing = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
+        if (existing != null && targetTeamId.equals(existing.getTeamId())) {
+            return getOrgPatient(orgId, peopleId);
+        }
+
+        String fromTeamId = existing == null ? null : existing.getTeamId();
+        String oldCmStaffId = null;
+        if (existing != null) {
+            CareTeam fromTeam = careTeamMapper.findById(existing.getTeamId());
+            if (fromTeam != null) {
+                oldCmStaffId = fromTeam.getPrimaryCareManagerStaffId();
+            }
+            // 不调用 onPatientLeftTeam：离组会过期全部待办，换组只需重派
+            EntityMeta.onSoftDelete(existing);
+            careTeamMemberMapper.softDelete(
+                    existing.getId(), existing.getGmtDeleted(), existing.getGmtModified());
+        }
+
+        CareTeamMember member = new CareTeamMember();
+        member.setTenantId(target.getTenantId());
+        member.setOrgId(orgId);
+        member.setTeamId(targetTeamId);
+        member.setMemberType(CareTeamMemberTypeEnum.PATIENT.name());
+        member.setPeopleId(peopleId);
+        EntityMeta.onCreate(member);
+        member.setJoinedAt(member.getGmtCreated());
+        careTeamMemberMapper.insert(member);
+        upsertCareAssignment(
+                target.getTenantId(), peopleId, orgId, target.getPrimaryCareManagerStaffId());
+
+        WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+        if (gen != null) {
+            StaffProfile actor = staffProfileMapper.findByAccountId(actorAccountId);
+            String actorStaffId = actor == null ? null : actor.getId();
+            if (fromTeamId == null) {
+                gen.onPatientJoinedTeam(
+                        target.getTenantId(),
+                        orgId,
+                        peopleId,
+                        target.getPrimaryCareManagerStaffId(),
+                        actorStaffId);
+            } else {
+                gen.onPatientMovedTeam(
+                        orgId, peopleId, oldCmStaffId, target.getPrimaryCareManagerStaffId());
+            }
+        }
+
+        auditService.record(
+                PortalEnum.B.code(),
+                actorAccountId,
+                "STAFF",
+                requireTenantId(),
+                fromTeamId == null
+                        ? AuditActionEnum.CARE_TEAM_MEMBER_ADD.name()
+                        : AuditActionEnum.CARE_TEAM_MEMBER_MOVE.name(),
+                "care_team_member",
+                String.valueOf(member.getId()),
+                peopleId,
+                AuditDetails.of(
+                        "teamId",
+                        targetTeamId,
+                        "fromTeamId",
+                        fromTeamId,
+                        "memberType",
+                        CareTeamMemberTypeEnum.PATIENT.name()));
+        return getOrgPatient(orgId, peopleId);
+    }
+
     @Transactional
     public void removeMember(String orgId, String teamId, String memberId, String actorAccountId) {
         requireOrgWorkspaceAccess(orgId);

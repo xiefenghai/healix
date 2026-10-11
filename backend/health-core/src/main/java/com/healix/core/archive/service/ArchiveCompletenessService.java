@@ -2,6 +2,8 @@ package com.healix.core.archive.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.allergy.enums.AllergyStatusEnum;
+import com.healix.core.allergy.service.AllergyQueryService;
 import com.healix.core.archive.domain.PeopleDiseaseArchive;
 import com.healix.core.archive.dto.ArchiveCompletenessDto;
 import com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper;
@@ -29,6 +31,7 @@ public class ArchiveCompletenessService {
     private final PeopleBasicArchiveMapper basicArchiveMapper;
     private final PeopleDiseaseArchiveMapper diseaseArchiveMapper;
     private final DictService dictService;
+    private final AllergyQueryService allergyQueryService;
 
     public ArchiveCompletenessDto compute(String tenantId, String peopleId) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
@@ -36,6 +39,9 @@ public class ArchiveCompletenessService {
         JsonNode basicContent = loadBasicContent(tenantId, peopleId);
         List<DictItemDto> basicFields = dictService.listFieldsForBasicArchive(tenantId);
         Score basic = ArchiveCompletenessScorer.score(basicFields, basicContent);
+        // 过敏史独立成表：已确认「无已知过敏」或有条目即计为已填
+        boolean allergyCollected = allergyQueryService.status(tenantId, peopleId) != AllergyStatusEnum.UNKNOWN;
+        basic = basic.plus(new Score(allergyCollected ? 1 : 0, 1));
 
         ArchiveCompletenessDto dto = new ArchiveCompletenessDto();
         dto.setPeopleId(peopleId);

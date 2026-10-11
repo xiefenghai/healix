@@ -168,6 +168,24 @@ public class WorkspaceTaskGenerator {
         taskMapper.reassignFromStaff(orgId, peopleId, oldStaffId, newStaffId, LocalDateTime.now(JobCronSupport.ZONE));
     }
 
+    /**
+     * 患者在机构内变更健管组：把旧主责名下待办迁到新主责，并认领公海待办。
+     * <p>不关闭已有待办（与离组 {@link #onPatientLeftTeam} 不同）。
+     */
+    @Transactional
+    public void onPatientMovedTeam(
+            String orgId, String peopleId, String oldStaffId, String newStaffId) {
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        if (StringUtils.hasText(oldStaffId)
+                && StringUtils.hasText(newStaffId)
+                && !oldStaffId.equals(newStaffId)) {
+            taskMapper.reassignFromStaff(orgId, peopleId, oldStaffId, newStaffId, now);
+        }
+        if (StringUtils.hasText(newStaffId)) {
+            taskMapper.reassignPublicToStaff(orgId, peopleId, newStaffId, now);
+        }
+    }
+
     @Transactional
     public void onPatientLeftTeam(String orgId, String peopleId) {
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);

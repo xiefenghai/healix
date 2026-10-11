@@ -39,6 +39,8 @@ export interface CarePlanPreviewData {
     notes?: string
     recommended?: Array<{ label?: string; code?: string }>
     limited?: Array<{ label?: string; code?: string }>
+    allergensAvoid?: Array<{ label?: string; code?: string }>
+    intolerances?: Array<{ label?: string; code?: string }>
     sampleDay?: Record<string, string>
   }
   execution?: {
@@ -251,6 +253,32 @@ function formatDateTime(iso?: string) {
                 size="small"
                 type="warning"
                 effect="light"
+                round
+              >
+                {{ item.label || item.code }}
+              </el-tag>
+            </div>
+            <div v-if="data.diet?.allergensAvoid?.length" class="tag-group">
+              <span class="tag-group-label">过敏回避</span>
+              <el-tag
+                v-for="(item, i) in data.diet.allergensAvoid"
+                :key="'a-' + i"
+                size="small"
+                type="danger"
+                effect="light"
+                round
+              >
+                {{ item.label || item.code }}
+              </el-tag>
+            </div>
+            <div v-if="data.diet?.intolerances?.length" class="tag-group">
+              <span class="tag-group-label">不耐受</span>
+              <el-tag
+                v-for="(item, i) in data.diet.intolerances"
+                :key="'t-' + i"
+                size="small"
+                type="warning"
+                effect="plain"
                 round
               >
                 {{ item.label || item.code }}

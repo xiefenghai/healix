@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import IcpFooter from './IcpFooter.vue'
 
 const router = useRouter()
 
@@ -17,7 +18,7 @@ const entries = [
   {
     key: 'tenant',
     title: '租户管理中心',
-    desc: '机构入驻审核、品牌配置、计费规则、子机构管理。',
+    desc: '机构配置、品牌设置、子机构与成员管理。',
     path: '/login/tenant',
     tag: 'TENANT',
     meta: '租户管理员',
@@ -27,10 +28,10 @@ const entries = [
   {
     key: 'workspace',
     title: '机构工作台',
-    desc: '健管师 / 医生日常工作：患者管理、智能驾驶舱、健康方案、依从性看板。',
+    desc: '健管师日常工作：服务对象管理、数据看板、管理方案、依从性看板。',
     path: '/login/workspace',
     tag: 'WORKSPACE',
-    meta: '健管师 · 医生 · 机构管理员',
+    meta: '健管师 · 机构管理员',
     metaExtra: '28 项核心能力',
     tone: 'workspace',
     recommend: true,
@@ -49,42 +50,43 @@ const entries = [
           </div>
           <div class="brand-meta">
             <span class="dot" />
-            <span>管理端 · 生产环境</span>
+            <span>演示环境</span>
           </div>
         </div>
 
         <div class="brand-hero">
           <div class="brand-tag">
             <span class="pulse" />
-            AI · 医疗 · 全周期健康管理
+            个人项目 · 技术演示
           </div>
           <h1>
-            让每一次<br />
-            <span>健康干预</span><br />
-            都精准及时
+            健康数据<br />
+            <span>管理系统</span><br />
+            演示
           </h1>
           <p>
-            基于多病种知识图谱与 AI 智能体，为健管师、医生、机构提供从风险识别、方案制定到随访依从的全流程工作平台。
+            基于大模型与多租户 SaaS 架构的健康数据记录与管理系统，用于个人技术学习与功能演示。
           </p>
 
           <div class="brand-stats">
             <div class="stat">
-              <div class="stat-v">智能驾驶舱</div>
+              <div class="stat-v">数据看板</div>
               <div class="stat-k">今日优先 · 对话驱动</div>
             </div>
             <div class="stat">
-              <div class="stat-v">方案起草</div>
+              <div class="stat-v">方案编辑</div>
               <div class="stat-k">AI 出草稿 · 人确认</div>
             </div>
             <div class="stat">
-              <div class="stat-v">单据 OCR</div>
+              <div class="stat-v">单据识别</div>
               <div class="stat-k">预填核对 · 再入库</div>
             </div>
           </div>
         </div>
 
         <div class="brand-foot">
-          <div>© 2026 Healix Health Tech. All rights reserved.</div>
+          <div>© 2026 Healix · 个人技术演示项目</div>
+          <IcpFooter />
         </div>
       </div>
     </section>
@@ -97,7 +99,7 @@ const entries = [
           <div class="seg" aria-hidden="true">
             <span class="on">三种身份</span>
             <span>单点登录</span>
-            <span>企业 SSO</span>
+            <span>账号密码</span>
           </div>
         </div>
 
@@ -110,7 +112,7 @@ const entries = [
             :class="[`e-${item.tone}`]"
             @click="router.push(item.path)"
           >
-            <span v-if="item.recommend" class="rec">推荐入口</span>
+            <span v-if="'recommend' in item && item.recommend" class="rec">推荐入口</span>
             <span class="ico" aria-hidden="true">
               <svg v-if="item.tone === 'ops'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -151,7 +153,7 @@ const entries = [
         <div class="choose-foot">
           <div>
             忘记账号？
-            <span class="foot-em">联系企业管理员</span>
+            <span class="foot-em">联系管理员</span>
           </div>
           <div class="links">
             <span>帮助中心</span>

@@ -10,15 +10,22 @@ const router = useRouter()
 const loading = ref(true)
 const summary = ref<any>(null)
 const diseaseLabels = ref<Record<string, string>>({})
+const allergyText = ref('')
 
 onMounted(async () => {
   try {
-    const [res, diseases] = await Promise.all([
+    const [res, diseases, allergy] = await Promise.all([
       api<{ data: any }>('/api/c/v1/me/archive/summary'),
       loadDiseaseDict().catch(() => []),
+      api<{ data: { status: string; bannerLabels: string[] } }>('/api/c/v1/me/allergies').catch(() => null),
     ])
     summary.value = res.data
     diseaseLabels.value = toLabelMap(diseases)
+    if (allergy) {
+      const a = allergy.data
+      allergyText.value =
+        a.status === 'HAS' ? a.bannerLabels.join('、') : a.status === 'NKA' ? '无过敏' : '未填写'
+    }
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -46,13 +53,14 @@ onMounted(async () => {
 
       <section class="card">
         <h3>基础档案</h3>
-        <p class="hint">由健管师维护，可在此查看；生活方式可自行更新。</p>
+        <p class="hint">由健管师维护，可在此查看；生活方式和过敏史可自行更新。</p>
         <van-cell
           title="健康信息"
           is-link
           @click="router.push('/archive/basic')"
         />
         <van-cell title="生活方式" is-link to="/archive/lifestyle" />
+        <van-cell title="过敏史" is-link :value="allergyText" to="/archive/allergies" />
       </section>
 
       <section class="card">

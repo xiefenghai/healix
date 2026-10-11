@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { PATIENT_AGENT_ENABLED } from '../shared/features'
 
 /**
  * C 端路由。
@@ -11,11 +12,17 @@ const router = createRouter({
     { path: '/login', component: () => import('../views/LoginView.vue'), meta: { public: true, hideTab: true } },
     { path: '/register', component: () => import('../views/RegisterView.vue'), meta: { public: true, hideTab: true } },
     { path: '/activate', component: () => import('../views/ActivateView.vue'), meta: { public: true, hideTab: true } },
+    {
+      path: '/legal/:doc(terms|privacy)',
+      component: () => import('../views/LegalView.vue'),
+      meta: { public: true, hideTab: true },
+    },
     { path: '/patient-cards', component: () => import('../views/PatientCardsView.vue'), meta: { hideTab: true } },
     { path: '/home', component: () => import('../views/HomeView.vue'), meta: { title: '首页' } },
     { path: '/archive', component: () => import('../views/ArchiveHubView.vue'), meta: { hideTab: true } },
     { path: '/archive/lifestyle', component: () => import('../views/ArchiveLifestyleView.vue'), meta: { hideTab: true } },
     { path: '/archive/basic', component: () => import('../views/ArchiveBasicView.vue'), meta: { hideTab: true } },
+    { path: '/archive/allergies', component: () => import('../views/AllergyView.vue'), meta: { hideTab: true } },
     {
       path: '/archive/disease/:diseaseCode',
       component: () => import('../views/ArchiveDiseaseView.vue'),
@@ -54,6 +61,9 @@ const router = createRouter({
     },
     { path: '/care-plan', component: () => import('../views/CarePlanView.vue'), meta: { hideTab: true } },
     { path: '/medications', component: () => import('../views/MedicationsView.vue'), meta: { hideTab: true } },
+    { path: '/diet', component: () => import('../views/DietView.vue'), meta: { hideTab: true } },
+    { path: '/diet/goal', component: () => import('../views/DietGoalView.vue'), meta: { hideTab: true } },
+    { path: '/diet/add', component: () => import('../views/DietAddView.vue'), meta: { hideTab: true } },
     {
       path: '/management-reports',
       component: () => import('../views/ManagementReportsView.vue'),
@@ -96,7 +106,12 @@ const router = createRouter({
     },
     { path: '/health', component: () => import('../views/HealthDataHubView.vue'), meta: { title: '健康' } },
     { path: '/health/record', component: () => import('../views/VitalsView.vue'), meta: { hideTab: true } },
-    { path: '/discover', component: () => import('../views/AgentView.vue'), meta: { title: '发现' } },
+    {
+      path: '/discover',
+      component: () => import('../views/AgentView.vue'),
+      meta: { title: '发现' },
+      beforeEnter: () => (PATIENT_AGENT_ENABLED ? true : { path: '/home', replace: true }),
+    },
     { path: '/me', component: () => import('../views/ProfileView.vue'), meta: { title: '我的' } },
     { path: '/join', component: () => import('../views/JoinView.vue'), meta: { hideTab: true } },
     { path: '/profile', redirect: '/me' },

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, clearSession, setSession, type AdminEntry } from './http'
+import IcpFooter from './IcpFooter.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -109,11 +110,11 @@ async function submit() {
         <div class="brand-hero">
           <div class="brand-tag">
             <span class="pulse" />
-            AI · 医疗 · 全周期健康管理
+            个人项目 · 技术演示
           </div>
           <h1>
             欢迎回来<br />
-            <span>继续健康干预</span>
+            <span>健康数据管理</span>
           </h1>
           <p>账号与会话按入口隔离，请确认你正在进入正确的工作台。</p>
 
@@ -124,7 +125,10 @@ async function submit() {
           </ul>
         </div>
 
-        <div class="brand-foot">© 2026 Healix Health Tech</div>
+        <div class="brand-foot">
+          <div>© 2026 Healix · 个人技术演示项目</div>
+          <IcpFooter />
+        </div>
       </div>
     </section>
 
@@ -178,7 +182,7 @@ async function submit() {
         <div class="choose-foot">
           <div>
             忘记账号？
-            <span class="foot-em">联系企业管理员</span>
+            <span class="foot-em">联系管理员</span>
           </div>
           <div class="links">
             <span>帮助中心</span>

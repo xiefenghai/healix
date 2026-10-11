@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
-import { api, setToken } from '../api/http'
+import { api, clearToken, setToken } from '../api/http'
 
 interface PatientCard {
   id: string
@@ -98,6 +98,11 @@ async function removeCard(card: PatientCard) {
   }
 }
 
+function logout() {
+  clearToken()
+  router.replace('/login')
+}
+
 onMounted(load)
 </script>
 
@@ -131,6 +136,9 @@ onMounted(load)
         <van-button block round type="primary" @click="showAdd = true">添加就诊人</van-button>
         <van-button block round plain style="margin-top: 10px" @click="router.push('/activate')">激活码添加机构档案</van-button>
       </div>
+      <div class="logout">
+        <van-button size="small" plain hairline @click="logout">退出登录</van-button>
+      </div>
     </div>
 
     <van-popup v-model:show="showAdd" position="bottom" round :style="{ padding: '16px' }">
@@ -156,6 +164,7 @@ onMounted(load)
 .body { padding: 12px 0 24px; }
 .empty-actions { display: flex; gap: 10px; justify-content: center; margin-top: 12px; }
 .actions { padding: 16px; }
+.logout { display: flex; justify-content: center; margin-top: 24px; }
 h3 { margin: 0 0 8px; }
 .tip { margin: 0 0 12px; font-size: 12px; color: var(--hx-muted); }
 </style>

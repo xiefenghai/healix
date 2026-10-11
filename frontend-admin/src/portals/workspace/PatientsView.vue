@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
 import { TABLE_COL } from '../../shared/table-columns'
+import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -78,10 +79,9 @@ const archiveForm = ref({
   attachPeopleId: null as string | null,
 })
 
-const joinVisible = ref(false)
-const joining = ref(false)
-const joinTarget = ref<OrgPatientListItem | null>(null)
-const joinTeamId = ref<string | null>(null)
+const teamDialogPeopleId = ref<string | null>(null)
+const teamDialogPeopleName = ref<string | null>(null)
+const teamDialogCurrentTeamId = ref<string | null>(null)
 
 const attachCandidates = computed(() => baselineList.value.length ? baselineList.value : list.value)
 
@@ -463,34 +463,20 @@ async function submitArchive() {
   }
 }
 
-function openJoin(row: OrgPatientListItem) {
-  joinTarget.value = row
-  joinTeamId.value = null
-  joinVisible.value = true
+function openCareTeamDialog(row: OrgPatientListItem) {
+  teamDialogPeopleId.value = row.peopleId
+  teamDialogPeopleName.value = row.displayName
+  teamDialogCurrentTeamId.value = row.careTeamId || null
 }
 
-async function submitJoin() {
-  if (!joinTarget.value || !joinTeamId.value) {
-    ElMessage.warning('请选择健管组')
-    return
-  }
-  joining.value = true
-  try {
-    await api(`/api/b/v1/care-teams/${joinTeamId.value}/members`, {
-      method: 'POST',
-      body: JSON.stringify({
-        memberType: 'PATIENT',
-        peopleId: joinTarget.value.peopleId,
-      }),
-    })
-    ElMessage.success('已加入健管组')
-    joinVisible.value = false
-    await Promise.all([load(), loadBaseline()])
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '加入失败')
-  } finally {
-    joining.value = false
-  }
+function closeCareTeamDialog() {
+  teamDialogPeopleId.value = null
+  teamDialogPeopleName.value = null
+  teamDialogCurrentTeamId.value = null
+}
+
+async function onCareTeamChanged() {
+  await Promise.all([load(), loadBaseline()])
 }
 
 onMounted(async () => {
@@ -686,13 +672,8 @@ onMounted(async () => {
             >
               详情
             </el-button>
-            <el-button
-              link
-              type="primary"
-              :disabled="!!row.careTeamId"
-              @click="openJoin(row)"
-            >
-              加入健管组
+            <el-button link type="primary" @click="openCareTeamDialog(row)">
+              {{ row.careTeamId ? '变更健管组' : '加入健管组' }}
             </el-button>
           </template>
         </el-table-column>
@@ -774,20 +755,13 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="joinVisible" title="加入健管组" width="420px">
-      <p v-if="joinTarget" class="hint">患者：{{ joinTarget.displayName }}</p>
-      <el-form label-width="80px">
-        <el-form-item label="健管组" required>
-          <el-select v-model="joinTeamId" filterable style="width: 100%">
-            <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="joinVisible = false">取消</el-button>
-        <el-button type="primary" :loading="joining" @click="submitJoin">确认</el-button>
-      </template>
-    </el-dialog>
+    <ChangeCareTeamDialog
+      :people-id="teamDialogPeopleId"
+      :people-name="teamDialogPeopleName"
+      :current-care-team-id="teamDialogCurrentTeamId"
+      @closed="closeCareTeamDialog"
+      @changed="onCareTeamChanged"
+    />
   </div>
 </template>
 

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.diet.mapper.DietMealItemMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, meal_id, food_code, food_name, amount, unit, grams, oil_level,
+        energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, precision_level, confidence,
+        grams_confirmed, sort_order, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insertBatch">
+        INSERT INTO diet_meal_item(
+            id, tenant_id, meal_id, food_code, food_name, amount, unit, grams, oil_level,
+            energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, precision_level, confidence,
+            grams_confirmed, sort_order, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (#{r.id}, #{r.tenantId}, #{r.mealId}, #{r.foodCode}, #{r.foodName}, #{r.amount}, #{r.unit}, #{r.grams},
+             #{r.oilLevel}, #{r.energyKcal}, #{r.carbG}, #{r.proteinG}, #{r.fatG}, #{r.fiberG}, #{r.sodiumMg},
+             #{r.precisionLevel}, #{r.confidence}, #{r.gramsConfirmed}, #{r.sortOrder},
+             #{r.isDeleted}, #{r.gmtCreated}, #{r.gmtModified}, #{r.gmtDeleted})
+        </foreach>
+    </insert>
+
+    <update id="softDeleteByMeal">
+        UPDATE diet_meal_item
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE meal_id = #{mealId}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listByMealIds" resultType="com.healix.core.diet.domain.DietMealItem">
+        SELECT <include refid="cols"/>
+        FROM diet_meal_item
+        WHERE is_deleted = 0
+          AND meal_id IN
+          <foreach collection="mealIds" item="mid" open="(" separator="," close=")">
+              #{mid}
+          </foreach>
+        ORDER BY meal_id, sort_order
+    </select>
+
+    <select id="listFrequent" resultType="com.healix.core.diet.mapper.DietMealItemMapper$FrequentFoodRow">
+        SELECT i.food_code AS foodCode,
+               MAX(i.food_name) AS foodName,
+               i.unit AS unit,
+               MAX(i.amount) AS amount,
+               COUNT(1) AS times
+        FROM diet_meal_item i
+        JOIN diet_meal m ON m.id = i.meal_id AND m.is_deleted = 0
+        WHERE m.tenant_id = #{tenantId}
+          AND m.people_id = #{peopleId}
+          AND m.meal_date &gt;= #{since}
+          AND i.is_deleted = 0
+          AND i.food_code IS NOT NULL
+        GROUP BY i.food_code, i.unit
+        ORDER BY times DESC, MAX(m.meal_date) DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

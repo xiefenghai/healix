@@ -7,6 +7,8 @@ import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
 import com.healix.common.context.RequestContext;
 import com.healix.common.context.RequestContextHolder;
+import com.healix.core.allergy.service.AllergyQueryService;
+import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.care.domain.CareTeam;
 import com.healix.core.care.domain.CareTeamMember;
@@ -31,6 +33,7 @@ import com.healix.core.careplan.mapper.CarePlanDraftMapper;
 import com.healix.core.careplan.mapper.CarePlanMapper;
 import com.healix.core.careplan.mapper.CarePlanTaskMapper;
 import com.healix.core.careplan.mapper.CarePlanVersionMapper;
+import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.support.CarePlanSafetyService;
@@ -91,6 +94,7 @@ public class CarePlanService {
     private final CareTeamMemberMapper careTeamMemberMapper;
     private final CareTeamMapper careTeamMapper;
     private final FeatureFlagService featureFlagService;
+    private final AllergyQueryService allergyQueryService;
 
     public CarePlanBundleDto getBundle(String tenantId, String orgId, String peopleId) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
@@ -175,10 +179,20 @@ public class CarePlanService {
         emptyDiet.putArray("recommended");
         emptyDiet.putArray("limited");
         emptyDiet.putArray("allergensAvoid");
+        List<FoodAllergen> allergens = allergyQueryService.foodAllergens(peopleId);
+        CarePlanAllergenGuard.enforce(emptyDiet, allergens);
         ObjectNode emptyExec = JsonUtils.emptyObject();
         emptyExec.put("horizonDays", 14);
         emptyExec.putArray("tasks");
-        List<SafetyFlagDto> flags = safetyService.evaluate(emptyExercise, emptyDiet, emptyExec, true, true, false);
+        List<SafetyFlagDto> flags = safetyService.evaluate(
+                emptyExercise,
+                emptyDiet,
+                emptyExec,
+                true,
+                true,
+                false,
+                allergens,
+                allergyQueryService.status(tenantId, peopleId));
         CarePlanDraft draft = newDraft(
                 plan,
                 peopleId,
@@ -244,13 +258,22 @@ public class CarePlanService {
         if (existing != null && !replaceDraft) {
             throw new BusinessException(409, "已有草稿，请确认覆盖或先丢弃");
         }
+        List<FoodAllergen> allergens = allergyQueryService.foodAllergens(peopleId);
+        CarePlanAllergenGuard.enforce(generated.diet(), allergens);
+        List<String> removed = CarePlanAllergenGuard.sanitize(generated.diet(), allergens);
+        if (!removed.isEmpty() && generated.contextSnapshot() != null) {
+            removed.forEach(generated.contextSnapshot().putArray("allergenRemoved")::add);
+            log.info("[CarePlan] removed allergen conflicts peopleId={} items={}", peopleId, removed);
+        }
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 generated.exercise(),
                 generated.diet(),
                 generated.execution(),
                 generated.contextIncomplete(),
                 generated.noDiseaseTag(),
-                generated.hypoglycemiaRisk());
+                generated.hypoglycemiaRisk(),
+                allergens,
+                allergyQueryService.status(tenantId, peopleId));
         if (existing != null) {
             draftMapper.softDelete(existing.getId());
         }
@@ -333,13 +356,18 @@ public class CarePlanService {
         }
         String oldSnap = draftContentSnap(draft);
         CarePlanContext ctx = contextService.load(tenantId, peopleId);
+        if (diet instanceof ObjectNode dietObj) {
+            CarePlanAllergenGuard.enforce(dietObj, ctx.foodAllergens());
+        }
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 exercise,
                 diet,
                 execution,
                 ctx.contextIncomplete(),
                 ctx.diseaseCodes().isEmpty(),
-                ctx.hypoglycemiaRisk());
+                ctx.hypoglycemiaRisk(),
+                ctx.foodAllergens(),
+                ctx.allergyStatus());
         draft.setExerciseJson(JsonUtils.toJson(exercise == null ? JsonUtils.emptyObject() : exercise));
         draft.setDietJson(JsonUtils.toJson(diet == null ? JsonUtils.emptyObject() : diet));
         draft.setExecutionJson(JsonUtils.toJson(execution == null ? JsonUtils.emptyObject() : execution));
@@ -476,13 +504,19 @@ public class CarePlanService {
         JsonNode diet = JsonUtils.readTree(draft.getDietJson());
         JsonNode execution = JsonUtils.readTree(draft.getExecutionJson());
         CarePlanContext ctx = contextService.load(tenantId, peopleId);
+        if (diet instanceof ObjectNode dietObj) {
+            CarePlanAllergenGuard.enforce(dietObj, ctx.foodAllergens());
+            draft.setDietJson(JsonUtils.toJson(dietObj));
+        }
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 exercise,
                 diet,
                 execution,
                 ctx.contextIncomplete(),
                 ctx.diseaseCodes().isEmpty(),
-                ctx.hypoglycemiaRisk());
+                ctx.hypoglycemiaRisk(),
+                ctx.foodAllergens(),
+                ctx.allergyStatus());
         draft.setSafetyFlagsJson(safetyService.toFlagsJson(flags));
         safetyService.assertPublishable(flags, ackWarnCodes);
 

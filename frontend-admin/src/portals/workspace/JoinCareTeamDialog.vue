@@ -60,12 +60,9 @@ async function submit() {
   }
   joining.value = true
   try {
-    await api(`/api/b/v1/care-teams/${teamId.value}/members`, {
-      method: 'POST',
-      body: JSON.stringify({
-        memberType: 'PATIENT',
-        peopleId: props.peopleId,
-      }),
+    await api(`/api/b/v1/patients/${props.peopleId}/care-team`, {
+      method: 'PUT',
+      body: JSON.stringify({ careTeamId: teamId.value }),
     })
     ElMessage.success('已加入健管组，任务将自动办结')
     emit('joined')

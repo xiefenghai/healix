@@ -16,5 +16,7 @@ public enum RevisionBizTypeEnum {
     /** 健康管理方案 */
     CARE_PLAN,
     /** 管理方案执行打卡 */
-    CARE_PLAN_CHECKIN
+    CARE_PLAN_CHECKIN,
+    /** 过敏史条目与采集状态（bizKey 为条目 id，状态变更为 {@code status}） */
+    ALLERGY
 }

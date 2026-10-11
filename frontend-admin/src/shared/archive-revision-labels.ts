@@ -111,6 +111,17 @@ const FIELD_PATH_LABELS: Record<string, string> = {
   'carePlan.diet': '饮食方案',
   'carePlan.exercise': '运动方案',
   'carePlan.execution': '执行计划',
+  category: '类别',
+  allergenName: '过敏原',
+  allergyType: '过敏类型',
+  reactions: '反应表现',
+  reactionNote: '反应补充',
+  severity: '严重程度',
+  clinicalStatus: '当前状态',
+  verification: '核实状态',
+  onsetText: '首次发生',
+  lastOccurrence: '最近发作',
+  allergyStatus: '过敏史状态',
   _created: '创建',
   _deleted: '删除',
 }
@@ -130,6 +141,29 @@ const BIZ_TYPE_LABELS: Record<string, string> = {
   LAB: '检验报告',
   EXAM: '检查报告',
   CARE_PLAN: '管理方案',
+  ALLERGY: '过敏史',
+}
+
+/** 过敏史修订字段的编码 → 中文 */
+const ALLERGY_VALUE_LABELS: Record<string, Record<string, string>> = {
+  category: { DRUG: '药物', FOOD: '食物', ENVIRONMENT: '环境', OTHER: '其他' },
+  allergyType: { ALLERGY: '过敏', INTOLERANCE: '不耐受' },
+  severity: { MILD: '轻度', MODERATE: '中度', SEVERE: '重度', UNKNOWN: '不详' },
+  clinicalStatus: { ACTIVE: '仍过敏', RESOLVED: '已消失' },
+  verification: { UNCONFIRMED: '患者自述', CONFIRMED: '已确认', REFUTED: '已排除' },
+  allergyStatus: { UNKNOWN: '未询问', NKA: '无已知过敏', HAS: '有过敏' },
+  reactions: {
+    RASH: '皮疹/荨麻疹',
+    ITCH: '瘙痒',
+    ANGIOEDEMA: '口唇/眼睑肿胀',
+    DYSPNEA: '喘息/呼吸困难',
+    ANAPHYLAXIS: '过敏性休克',
+    NAUSEA_VOMIT: '恶心呕吐',
+    ABDOMINAL: '腹痛腹泻',
+    RHINITIS: '鼻塞流涕/喷嚏',
+    EYE: '眼痒流泪',
+    OTHER: '其他',
+  },
 }
 
 const DISEASE_CODE_LABELS: Record<string, string> = {
@@ -309,6 +343,10 @@ export function summarizeRevisionChanges(
       const et = revisionFieldScalar(items, 'examType')
       return et ? `删除检查 · ${EXAM_TYPE_LABELS[et] ?? et}` : '删除检查'
     }
+    if (bizType === 'ALLERGY') {
+      const name = revisionFieldScalar(items, 'allergenName')
+      return name ? `删除过敏 · ${name}` : '删除过敏条目'
+    }
     return '删除记录'
   }
   const created = visible.find((item) => item.fieldPath === '_created')
@@ -334,6 +372,10 @@ export function summarizeRevisionChanges(
     if (bizType === 'EXAM') {
       const et = revisionFieldScalar(items, 'examType')
       return et ? `录入检查 · ${EXAM_TYPE_LABELS[et] ?? et}` : '录入检查'
+    }
+    if (bizType === 'ALLERGY') {
+      const name = revisionFieldScalar(items, 'allergenName')
+      return name ? `添加过敏 · ${name}` : '添加过敏条目'
     }
     return '创建档案'
   }
@@ -368,6 +410,18 @@ export function summarizeRevisionChanges(
   if (bizType === 'EXAM') {
     const et = revisionFieldScalar(items, 'examType')
     return et ? `更新检查 · ${EXAM_TYPE_LABELS[et] ?? et}` : '更新检查'
+  }
+  if (bizType === 'ALLERGY') {
+    if (bizKey === 'status') {
+      const s = revisionFieldScalar(items, 'allergyStatus')
+      return s ? `过敏史设为「${ALLERGY_VALUE_LABELS.allergyStatus[s] ?? s}」` : '更新过敏史状态'
+    }
+    const name = revisionFieldScalar(items, 'allergenName')
+    const v = visible.find((i) => i.fieldPath === 'verification')
+    const vNew = v ? parseStoredScalar(v.newValue) : null
+    if (vNew === 'CONFIRMED') return name ? `确认过敏 · ${name}` : '确认过敏条目'
+    if (vNew === 'REFUTED') return name ? `排除过敏 · ${name}` : '排除过敏条目'
+    return name ? `更新过敏 · ${name}` : '更新过敏条目'
   }
   const labels = visible.map((item) => formatFieldPathLabel(item.fieldPath, bizKey))
   if (labels.length === 1) return `更新 ${labels[0]}`
@@ -468,6 +522,14 @@ function formatParsedValue(
   }
 
   if (value == null || value === '') return '空'
+
+  if (bizType === 'ALLERGY' && ALLERGY_VALUE_LABELS[fieldPath]) {
+    const map = ALLERGY_VALUE_LABELS[fieldPath]
+    if (Array.isArray(value)) {
+      return value.length ? value.map((c) => map[String(c)] ?? String(c)).join('、') : '空'
+    }
+    if (typeof value === 'string') return map[value] ?? value
+  }
 
   if (fieldPath === 'presentIllness' && Array.isArray(value)) {
     const labels = value.map((c) => optionLabel(optionMaps, fieldPath, String(c)))

@@ -16,8 +16,8 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
@@ -39,7 +39,6 @@ public class OcrRunner {
 
     private final LlmClient llmClient;
     private final OcrTextProvider ocrTextProvider;
-    private final ResourceLoader resourceLoader;
     private final AiUsageGuard aiUsageGuard;
 
     @Value("${healix.agent.ocr.mode:TEXT_LLM}")
@@ -154,7 +153,7 @@ public class OcrRunner {
 
     private String loadSkillPrompt(String skill, String fallback) {
         try {
-            Resource res = resourceLoader.getResource("classpath:skills/" + skill + "/SKILL.md");
+            Resource res = new ClassPathResource("skills/" + skill + "/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
                 return StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8);
             }

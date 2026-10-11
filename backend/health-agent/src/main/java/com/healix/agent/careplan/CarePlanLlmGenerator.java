@@ -7,6 +7,7 @@ import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
+import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry.GeneratedPlan;
 import java.util.ArrayList;
@@ -16,8 +17,8 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
@@ -28,8 +29,6 @@ import org.springframework.util.StringUtils;
 public class CarePlanLlmGenerator {
 
     private final LlmClient llmClient;
-    private final ResourceLoader resourceLoader;
-
     public record LlmPlanResult(
             GeneratedPlan plan, String summary, String goalSummary, LlmResponse llmResponse) {}
 
@@ -252,6 +251,7 @@ public class CarePlanLlmGenerator {
             payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(diseaseCodes));
         }
         payload.set("patientContext", ctx == null ? JsonUtils.emptyObject() : ctx.snapshot());
+        putAllergyGuard(payload, ctx);
         return """
                 请根据以下输入生成完整管理方案 JSON。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
@@ -260,6 +260,13 @@ public class CarePlanLlmGenerator {
                 %s
                 """
                 .formatted(JsonUtils.toJson(payload));
+    }
+
+    private static void putAllergyGuard(ObjectNode payload, CarePlanContext ctx) {
+        if (ctx == null || ctx.foodAllergens() == null || ctx.foodAllergens().isEmpty()) {
+            return;
+        }
+        payload.set("foodAllergyGuard", CarePlanAllergenGuard.promptGuard(ctx.foodAllergens()));
     }
 
     private String buildReviseUserMessage(
@@ -281,6 +288,7 @@ public class CarePlanLlmGenerator {
             payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(diseaseCodes));
         }
         payload.set("patientContext", ctx == null ? JsonUtils.emptyObject() : ctx.snapshot());
+        putAllergyGuard(payload, ctx);
         ObjectNode draft = JsonUtils.emptyObject();
         draft.set("exercise", currentExercise == null ? JsonUtils.emptyObject() : currentExercise);
         draft.set("diet", currentDiet == null ? JsonUtils.emptyObject() : currentDiet);
@@ -401,7 +409,7 @@ public class CarePlanLlmGenerator {
 
     private String loadSkillMarkdown() {
         try {
-            Resource res = resourceLoader.getResource("classpath:skills/management-plan/SKILL.md");
+            Resource res = new ClassPathResource("skills/management-plan/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
                 return StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
             }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 启动本地 C 端 (5173) + B 端管理端前端 (5174)，释放旧端口后重启，并打开浏览器
+# 启动本地 C 端 (5173) + B 端管理端 (5174) + 健管师手机工作台 (5175)
+# 释放旧端口后重启，并打开浏览器
 # 后端请自行在 IDE / 终端启动（默认 http://localhost:8080）
 set -euo pipefail
 
@@ -7,18 +8,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 USER_DIR="$ROOT/frontend-user"
 ADMIN_DIR="$ROOT/frontend-admin"
+STAFF_DIR="$ROOT/frontend-staff"
 
 USER_PORT=5173
 ADMIN_PORT=5174
+STAFF_PORT=5175
 BACKEND_PORT=8080
 # 0.0.0.0：本机 + 局域网（如 http://172.28.33.88:5174）；勿用 127.0.0.1，否则同事同 Wi‑Fi 访问不了
 DEV_HOST="0.0.0.0"
 USER_URL="http://localhost:${USER_PORT}"
 ADMIN_URL="http://localhost:${ADMIN_PORT}"
+STAFF_URL="http://localhost:${STAFF_PORT}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}"
 
 USER_PID=""
 ADMIN_PID=""
+STAFF_PID=""
 
 lan_ip() {
   # 优先取常见局域网网卡地址，失败则空
@@ -121,8 +126,9 @@ cleanup() {
   echo "正在停止前端..."
   [[ -n "$USER_PID" ]] && kill "$USER_PID" 2>/dev/null || true
   [[ -n "$ADMIN_PID" ]] && kill "$ADMIN_PID" 2>/dev/null || true
+  [[ -n "$STAFF_PID" ]] && kill "$STAFF_PID" 2>/dev/null || true
   local pids
-  for port in "$USER_PORT" "$ADMIN_PORT"; do
+  for port in "$USER_PORT" "$ADMIN_PORT" "$STAFF_PORT"; do
     pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
     if [[ -n "$pids" ]]; then
       # shellcheck disable=SC2086
@@ -135,6 +141,7 @@ trap cleanup EXIT INT TERM
 echo "======== 释放前端端口 ========"
 kill_port "$USER_PORT"
 kill_port "$ADMIN_PORT"
+kill_port "$STAFF_PORT"
 
 echo ""
 echo "======== 检查后端（不启动） ========"
@@ -151,28 +158,37 @@ start_frontend "$ADMIN_DIR" "$ADMIN_PORT" "管理端" &
 ADMIN_PID=$!
 
 echo ""
+echo "======== 启动手机工作台前端 ========"
+start_frontend "$STAFF_DIR" "$STAFF_PORT" "手机工作台" &
+STAFF_PID=$!
+
+echo ""
 echo "等待前端就绪..."
 wait_port "$USER_PORT" "C 端前端" 60
 wait_port "$ADMIN_PORT" "管理端前端" 60
+wait_port "$STAFF_PORT" "手机工作台" 60
 
 open "$USER_URL"
 open "$ADMIN_URL"
+open "$STAFF_URL"
 LAN_IP="$(lan_ip)"
 echo ""
 echo "已在浏览器打开:"
-echo "  C 端:   ${USER_URL}"
-echo "  管理端: ${ADMIN_URL}"
-echo "  后端:   ${BACKEND_URL}（请自行启动）"
+echo "  C 端:       ${USER_URL}"
+echo "  管理端:     ${ADMIN_URL}"
+echo "  手机工作台: ${STAFF_URL}"
+echo "  后端:       ${BACKEND_URL}（请自行启动）"
 if [[ -n "$LAN_IP" ]]; then
   echo ""
   echo "局域网（同事同 Wi‑Fi）:"
-  echo "  C 端:   http://${LAN_IP}:${USER_PORT}"
-  echo "  管理端: http://${LAN_IP}:${ADMIN_PORT}/entry"
+  echo "  C 端:       http://${LAN_IP}:${USER_PORT}"
+  echo "  管理端:     http://${LAN_IP}:${ADMIN_PORT}/entry"
+  echo "  手机工作台: http://${LAN_IP}:${STAFF_PORT}"
 fi
 echo "按 Ctrl+C 停止前端"
 echo ""
 
-while kill -0 "$USER_PID" 2>/dev/null || kill -0 "$ADMIN_PID" 2>/dev/null; do
+while kill -0 "$USER_PID" 2>/dev/null || kill -0 "$ADMIN_PID" 2>/dev/null || kill -0 "$STAFF_PID" 2>/dev/null; do
   sleep 1
 done
 echo "前端进程已退出" >&2

@@ -9,12 +9,15 @@ import { setArchiveCompletenessRefresh } from '../../shared/archive-completeness
 import PatientBasicInfoEditor, {
   type PatientBasicInfo,
 } from '../../shared/PatientBasicInfoEditor.vue'
+import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
+import { allergyTick, fetchAllergySummary, type AllergySummary } from '../../shared/allergy'
 
 interface OrgPatientListItem {
   peopleId: string
   displayName: string
   gender?: string
   birthday?: string
+  careTeamId?: string | null
   careTeamName?: string | null
   clientLinked?: boolean
   clientCardCount?: number
@@ -91,10 +94,48 @@ const issuing = ref(false)
 const watching = ref(false)
 const basicInfoEditorRef = ref<{ openEdit: () => void } | null>(null)
 const revealMobile = ref(false)
+const careTeamDialogOpen = ref(false)
+const allergy = ref<AllergySummary | null>(null)
 
-const activeTab = computed(() => {
+const allergyTag = computed(() => {
+  const a = allergy.value
+  if (!a) return null
+  if (a.status === 'HAS') {
+    const names = a.bannerLabels.slice(0, 3).join('、') + (a.bannerLabels.length > 3 ? ` 等 ${a.bannerLabels.length} 项` : '')
+    return {
+      tone: 'rose',
+      text: `过敏：${names}`,
+      extra: a.pendingCount ? `${a.pendingCount} 条待确认` : '',
+      title: a.highRisk ? '含高危过敏，用药与饮食需特别注意' : '点击查看过敏史',
+    }
+  }
+  if (a.status === 'NKA') return { tone: 'teal', text: '无已知过敏', extra: '', title: '已确认无已知过敏' }
+  return { tone: 'muted', text: '过敏史未采集', extra: '', title: '点击去档案记录过敏史' }
+})
+
+function goAllergy() {
+  if (activeTab.value !== 'archive') void onNavClick('archive')
+}
+
+const NAV_ITEMS = [
+  { name: 'archive', label: '患者档案' },
+  { name: 'observations', label: '指标检验' },
+  { name: 'care-plan', label: '管理方案' },
+  { name: 'medications', label: '用药管理' },
+  { name: 'diet', label: '饮食记录' },
+  { name: 'assessments', label: '风险评估' },
+  { name: 'followups', label: '随访管理' },
+  { name: 'health-reports', label: '健康报告' },
+  { name: 'adherence', label: '依从性分析' },
+  { name: 'revisions', label: '修订审计' },
+] as const
+
+type NavName = (typeof NAV_ITEMS)[number]['name'] | 'chat'
+
+const activeTab = computed<NavName>(() => {
   const path = route.path
   if (path.includes('/medications')) return 'medications'
+  if (path.includes('/diet')) return 'diet'
   if (path.includes('/care-plan')) return 'care-plan'
   if (path.includes('/observations')) return 'observations'
   if (path.includes('/revisions')) return 'revisions'
@@ -102,8 +143,41 @@ const activeTab = computed(() => {
   if (path.includes('/followups')) return 'followups'
   if (path.includes('/health-reports')) return 'health-reports'
   if (path.includes('/assessments')) return 'assessments'
+  if (path.includes('/chat')) return 'chat'
   return 'archive'
 })
+
+interface LatestSlot {
+  slotKey: string
+  metricType: string
+  bpContext?: string
+  mealContext?: string
+  value?: number | null
+  unit?: string
+  recordedAt?: string
+  extra?: Record<string, unknown>
+}
+
+interface MetricRow {
+  id: string
+  metricType: string
+  value?: number | null
+  unit?: string
+  recordedAt?: string
+  extra?: Record<string, unknown>
+}
+
+interface MetricSparkCard {
+  key: string
+  label: string
+  display: string
+  hint: string
+  tone: 'good' | 'fair' | 'poor' | 'empty'
+  points: Array<number | null>
+}
+
+const latestSlots = ref<LatestSlot[]>([])
+const recentMetrics = ref<MetricRow[]>([])
 
 const patientAge = computed(() => {
   const birthday = patient.value?.birthday
@@ -162,6 +236,7 @@ const cLinkLabel = computed(() => {
 const completenessPercent = computed(() => completeness.value?.percent ?? 0)
 
 const completenessTone = computed(() => {
+  if (!completeness.value) return 'empty'
   const p = completenessPercent.value
   if (p >= 80) return 'good'
   if (p >= 50) return 'fair'
@@ -319,6 +394,186 @@ function prefixedAssessmentLabel(title: string, label: string) {
 
 const evalTagsAlert = computed(() => evalTags.value.some((t) => t.tone === 'danger'))
 
+const riskLevel = computed(() => adherence.value?.riskLevel || '')
+
+const riskLabel = computed(() => {
+  const r = riskLevel.value
+  if (r === 'HIGH') return '高风险'
+  if (r === 'MEDIUM') return '中风险'
+  if (r === 'LOW') return '低风险'
+  return '未评估'
+})
+
+const riskTone = computed(() => {
+  const r = riskLevel.value
+  if (r === 'HIGH') return 'poor'
+  if (r === 'MEDIUM') return 'fair'
+  if (r === 'LOW') return 'good'
+  return 'empty'
+})
+
+function isoDay(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function lastNDaysSeries(
+  days: number,
+  predicate: (m: MetricRow) => boolean,
+  pick: (m: MetricRow) => number | null,
+): Array<number | null> {
+  const best = new Map<string, { at: string; v: number }>()
+  for (const m of recentMetrics.value) {
+    if (!predicate(m) || !m.recordedAt) continue
+    const v = pick(m)
+    if (v == null || Number.isNaN(v)) continue
+    const day = String(m.recordedAt).slice(0, 10)
+    const at = String(m.recordedAt)
+    const cur = best.get(day)
+    if (!cur || at > cur.at) best.set(day, { at, v })
+  }
+  const out: Array<number | null> = []
+  const base = new Date()
+  base.setHours(0, 0, 0, 0)
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(base)
+    d.setDate(base.getDate() - i)
+    out.push(best.get(isoDay(d))?.v ?? null)
+  }
+  return out
+}
+
+function sparkPath(points: Array<number | null>, w = 72, h = 28): string {
+  const vals = points.filter((p): p is number => p != null && !Number.isNaN(p))
+  if (vals.length < 2) return ''
+  const min = Math.min(...vals)
+  const max = Math.max(...vals)
+  const span = max - min || 1
+  const step = w / Math.max(points.length - 1, 1)
+  const parts: string[] = []
+  points.forEach((p, i) => {
+    if (p == null || Number.isNaN(p)) return
+    const x = i * step
+    const y = h - ((p - min) / span) * (h - 4) - 2
+    parts.push(`${parts.length ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`)
+  })
+  return parts.join(' ')
+}
+
+function findSlot(...types: string[]) {
+  return latestSlots.value.find((s) => types.includes(s.metricType))
+}
+
+function formatSlotTime(iso?: string) {
+  if (!iso) return ''
+  return String(iso).replace('T', ' ').slice(5, 16)
+}
+
+const metricCards = computed<MetricSparkCard[]>(() => {
+  const cards: MetricSparkCard[] = []
+  const sys = findSlot('BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE', 'BP_SYS')
+  const dia = findSlot('BLOOD_PRESSURE_DIA', 'BP_DIA')
+  const glucose = findSlot('BLOOD_GLUCOSE', 'GLUCOSE')
+  const hr = findSlot('HEART_RATE', 'HR')
+  const weight = findSlot('WEIGHT')
+
+  if (sys || dia) {
+    const sysV = sys?.value ?? (sys?.extra?.sys != null ? Number(sys.extra.sys) : null)
+    const diaV = dia?.value ?? (sys?.extra?.dia != null ? Number(sys.extra.dia) : null)
+    let display = '—'
+    if (sysV != null && diaV != null) display = `${sysV}/${diaV}`
+    else if (sysV != null) display = String(sysV)
+    let tone: MetricSparkCard['tone'] = 'empty'
+    if (sysV != null) {
+      if (sysV >= 140 || (diaV != null && diaV >= 90)) tone = 'poor'
+      else if (sysV >= 130 || (diaV != null && diaV >= 85)) tone = 'fair'
+      else tone = 'good'
+    }
+    cards.push({
+      key: 'bp',
+      label: '血压',
+      display,
+      hint: formatSlotTime(sys?.recordedAt || dia?.recordedAt) || '近7日',
+      tone,
+      points: lastNDaysSeries(
+        7,
+        (m) =>
+          m.metricType === 'BLOOD_PRESSURE_SYS'
+          || m.metricType === 'BLOOD_PRESSURE'
+          || m.metricType === 'BP_SYS',
+        (m) => {
+          if (m.extra?.sys != null) return Number(m.extra.sys)
+          return m.value == null ? null : Number(m.value)
+        },
+      ),
+    })
+  }
+
+  if (glucose) {
+    const v = glucose.value == null ? null : Number(glucose.value)
+    let tone: MetricSparkCard['tone'] = 'empty'
+    if (v != null) {
+      if (v >= 11.1 || v < 3.9) tone = 'poor'
+      else if (v >= 7.0) tone = 'fair'
+      else tone = 'good'
+    }
+    cards.push({
+      key: 'glu',
+      label: '血糖',
+      display: v == null ? '—' : String(v),
+      hint: formatSlotTime(glucose.recordedAt) || (glucose.unit || 'mmol/L'),
+      tone,
+      points: lastNDaysSeries(
+        7,
+        (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
+        (m) => (m.value == null ? null : Number(m.value)),
+      ),
+    })
+  }
+
+  if (hr) {
+    const v = hr.value == null ? null : Number(hr.value)
+    let tone: MetricSparkCard['tone'] = 'empty'
+    if (v != null) {
+      if (v > 100 || v < 50) tone = 'poor'
+      else if (v > 90 || v < 55) tone = 'fair'
+      else tone = 'good'
+    }
+    cards.push({
+      key: 'hr',
+      label: '心率',
+      display: v == null ? '—' : String(v),
+      hint: formatSlotTime(hr.recordedAt) || 'bpm',
+      tone,
+      points: lastNDaysSeries(
+        7,
+        (m) => m.metricType === 'HEART_RATE' || m.metricType === 'HR',
+        (m) => (m.value == null ? null : Number(m.value)),
+      ),
+    })
+  }
+
+  if (weight && cards.length < 4) {
+    const v = weight.value == null ? null : Number(weight.value)
+    cards.push({
+      key: 'wt',
+      label: '体重',
+      display: v == null ? '—' : String(v),
+      hint: formatSlotTime(weight.recordedAt) || (weight.unit || 'kg'),
+      tone: v == null ? 'empty' : 'good',
+      points: lastNDaysSeries(
+        7,
+        (m) => m.metricType === 'WEIGHT',
+        (m) => (m.value == null ? null : Number(m.value)),
+      ),
+    })
+  }
+
+  return cards.slice(0, 4)
+})
+
 const heroMeta = computed(() => {
   const parts: string[] = []
   if (patientAge.value && patientAge.value !== '-') parts.push(patientAge.value)
@@ -373,6 +628,30 @@ async function loadAssessmentSummary() {
     assessmentOverview.value = res.data
   } catch {
     assessmentOverview.value = null
+  }
+}
+
+async function loadMetricSummary() {
+  if (!peopleId.value) return
+  try {
+    const to = new Date()
+    const from = new Date()
+    from.setHours(0, 0, 0, 0)
+    from.setDate(from.getDate() - 6)
+    const qs = new URLSearchParams({
+      from: from.toISOString().slice(0, 19),
+      to: to.toISOString().slice(0, 19),
+      limit: '200',
+    })
+    const [latestRes, histRes] = await Promise.all([
+      api<{ data: LatestSlot[] }>(`/api/b/v1/patients/${peopleId.value}/metrics/latest`),
+      api<{ data: MetricRow[] }>(`/api/b/v1/patients/${peopleId.value}/metrics?${qs}`),
+    ])
+    latestSlots.value = latestRes.data || []
+    recentMetrics.value = histRes.data || []
+  } catch {
+    latestSlots.value = []
+    recentMetrics.value = []
   }
 }
 
@@ -447,6 +726,15 @@ function openBasicInfoEdit() {
   basicInfoEditorRef.value?.openEdit()
 }
 
+function openCareTeamDialog() {
+  if (!patient.value) return
+  careTeamDialogOpen.value = true
+}
+
+async function onCareTeamChanged() {
+  await loadPatient()
+}
+
 function onBasicInfoUpdated(info: PatientBasicInfo) {
   if (!patient.value) return
   revealMobile.value = false
@@ -461,9 +749,13 @@ function onBasicInfoUpdated(info: PatientBasicInfo) {
   }
 }
 
-async function onPatientTabBeforeLeave(newName: string | number, oldName: string | number) {
-  if (String(oldName) !== 'archive' || String(newName) === 'archive') return true
-  return confirmLeaveBasicArchive()
+async function onNavClick(name: Exclude<NavName, 'chat'> | 'chat') {
+  if (name === activeTab.value) return
+  if (activeTab.value === 'archive' && name !== 'archive') {
+    const ok = await confirmLeaveBasicArchive()
+    if (!ok) return
+  }
+  switchTab(name)
 }
 
 function switchTab(name: string | number) {
@@ -471,6 +763,8 @@ function switchTab(name: string | number) {
   const query = route.query
   if (name === 'medications') {
     router.push({ path: `${base}/medications`, query })
+  } else if (name === 'diet') {
+    router.push({ path: `${base}/diet`, query })
   } else if (name === 'care-plan') {
     router.push({ path: `${base}/care-plan`, query })
   } else if (name === 'observations') {
@@ -485,17 +779,44 @@ function switchTab(name: string | number) {
     router.push({ path: `${base}/health-reports`, query })
   } else if (name === 'assessments') {
     router.push({ path: `${base}/assessments`, query })
+  } else if (name === 'chat') {
+    router.push({ path: `${base}/chat`, query })
   } else {
     router.push({ path: `${base}/archive`, query })
   }
 }
 
+function goChat() {
+  void onNavClick('chat')
+}
+
+async function loadAllergy() {
+  if (!peopleId.value) return
+  try {
+    allergy.value = await fetchAllergySummary(peopleId.value)
+  } catch {
+    allergy.value = null
+  }
+}
+
+watch(allergyTick, () => {
+  void loadAllergy()
+  void loadCompleteness()
+})
+
 watch(
   peopleId,
   async () => {
+    allergy.value = null
     await loadPatient()
     await loadInvites()
-    await Promise.all([loadCompleteness(), loadAdherenceSummary(), loadAssessmentSummary()])
+    await Promise.all([
+      loadCompleteness(),
+      loadAdherenceSummary(),
+      loadAssessmentSummary(),
+      loadMetricSummary(),
+      loadAllergy(),
+    ])
   },
   { immediate: false },
 )
@@ -503,6 +824,9 @@ watch(
 watch(activeTab, (tab, prev) => {
   if (prev === 'assessments' && tab !== 'assessments') {
     void loadAssessmentSummary()
+  }
+  if (prev === 'observations' && tab !== 'observations') {
+    void loadMetricSummary()
   }
 })
 
@@ -512,7 +836,13 @@ onMounted(async () => {
   })
   await loadPatient()
   await loadInvites()
-  await Promise.all([loadCompleteness(), loadAdherenceSummary(), loadAssessmentSummary()])
+  await Promise.all([
+    loadCompleteness(),
+    loadAdherenceSummary(),
+    loadAssessmentSummary(),
+    loadMetricSummary(),
+    loadAllergy(),
+  ])
 })
 
 onBeforeUnmount(() => {
@@ -555,21 +885,33 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="hero-tags">
-            <span v-if="patient?.careTeamName" class="tag brand">
+            <button
+              type="button"
+              class="tag brand is-btn"
+              :disabled="!patient"
+              :title="patient?.careTeamName ? '变更健管组' : '加入健管组'"
+              @click="openCareTeamDialog"
+            >
               <span class="dot" aria-hidden="true" />
-              {{ patient.careTeamName }}
-            </span>
+              {{ patient?.careTeamName || '未入组' }}
+              <span class="tag-action">{{ patient?.careTeamName ? '变更' : '加入' }}</span>
+            </button>
             <span class="tag" :class="patient?.clientLinked ? 'teal' : 'muted'">
               <span class="dot" aria-hidden="true" />
               {{ cLinkLabel }}
             </span>
-            <span
-              v-if="completeness"
-              class="tag"
-              :class="completenessTone === 'good' ? 'teal' : completenessTone === 'fair' ? 'amber' : 'rose'"
+            <button
+              v-if="allergyTag"
+              type="button"
+              class="tag is-btn"
+              :class="[allergyTag.tone, { 'allergy-risk': allergy?.highRisk }]"
+              :title="allergyTag.title"
+              @click="goAllergy"
             >
-              档案完整度 {{ completenessPercent }}%
-            </span>
+              <span class="dot" aria-hidden="true" />
+              {{ allergyTag.text }}
+              <span v-if="allergyTag.extra" class="tag-action">{{ allergyTag.extra }}</span>
+            </button>
           </div>
 
           <div v-if="evalTags.length" class="eval-row">
@@ -595,6 +937,12 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="hero-actions">
+          <button type="button" class="btn primary" :disabled="!patient" @click="goChat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            沟通
+          </button>
           <button
             type="button"
             class="btn ghost"
@@ -618,7 +966,7 @@ onBeforeUnmount(() => {
           <button
             v-if="latestInvite?.active"
             type="button"
-            class="btn primary"
+            class="btn ghost"
             @click="copyCode"
           >
             复制激活码
@@ -626,38 +974,77 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="completeness || adherence" class="hero-kpis">
-        <div
-          v-if="completeness"
-          class="hero-kpi"
-          :class="completenessTone"
-          :title="completenessHint"
+      <div class="summary-strip">
+        <button
+          type="button"
+          class="summary-card"
+          :class="riskTone"
+          @click="onNavClick('assessments')"
         >
-          <div class="label">档案完整度</div>
-          <div class="val">
-            {{ completenessPercent }}<small>%</small>
-          </div>
-          <div class="trend" :class="completenessTone">{{ completenessHint }}</div>
-          <div class="kpi-bar" aria-hidden="true">
-            <i :style="{ width: `${completenessPercent}%` }" />
-          </div>
-        </div>
-
-        <div
-          v-if="adherence"
-          class="hero-kpi"
+          <span class="summary-label">风险</span>
+          <strong class="summary-val">{{ riskLabel }}</strong>
+          <span class="summary-hint">点进评估详情</span>
+        </button>
+        <button
+          type="button"
+          class="summary-card"
           :class="adherenceTone"
-          :title="adherenceHint"
+          @click="onNavClick('adherence')"
         >
-          <div class="label">近7日依从率</div>
-          <div class="val">
-            {{ adherenceDisplay }}
-            <small v-if="adherencePercent != null">%</small>
-          </div>
-          <div class="trend" :class="adherenceTone">{{ adherenceHint }}</div>
-          <div class="kpi-bar" aria-hidden="true">
+          <span class="summary-label">近 7 日依从</span>
+          <strong class="summary-val">
+            {{ adherenceDisplay }}<small v-if="adherencePercent != null">%</small>
+          </strong>
+          <span class="summary-hint">{{ adherenceHint }}</span>
+          <span class="summary-bar" aria-hidden="true">
             <i :style="{ width: `${adherencePercent ?? 0}%` }" />
-          </div>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="summary-card"
+          :class="completenessTone"
+          @click="onNavClick('archive')"
+        >
+          <span class="summary-label">档案完整度</span>
+          <strong class="summary-val">
+            {{ completeness ? completenessPercent : '—' }}<small v-if="completeness">%</small>
+          </strong>
+          <span class="summary-hint">{{ completenessHint }}</span>
+          <span class="summary-bar" aria-hidden="true">
+            <i :style="{ width: `${completenessPercent}%` }" />
+          </span>
+        </button>
+      </div>
+
+      <div v-if="metricCards.length" class="metric-strip">
+        <div class="metric-strip-head">
+          <h3>最新指标</h3>
+          <button type="button" class="text-btn" @click="onNavClick('observations')">查看全部</button>
+        </div>
+        <div class="metric-grid">
+          <button
+            v-for="card in metricCards"
+            :key="card.key"
+            type="button"
+            class="metric-card"
+            :class="card.tone"
+            @click="onNavClick('observations')"
+          >
+            <div class="metric-top">
+              <span class="metric-label">{{ card.label }}</span>
+              <svg
+                v-if="sparkPath(card.points)"
+                class="spark"
+                viewBox="0 0 72 28"
+                aria-hidden="true"
+              >
+                <path :d="sparkPath(card.points)" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+            <div class="metric-val">{{ card.display }}</div>
+            <div class="metric-hint">{{ card.hint }}</div>
+          </button>
         </div>
       </div>
 
@@ -670,26 +1057,28 @@ onBeforeUnmount(() => {
       />
     </section>
 
-    <div class="tabs-bar">
-      <el-tabs
-        :model-value="activeTab"
-        class="detail-tabs"
-        :before-leave="onPatientTabBeforeLeave"
-        @tab-change="switchTab"
+    <nav class="pill-nav" aria-label="患者详情分段">
+      <button
+        v-for="item in NAV_ITEMS"
+        :key="item.name"
+        type="button"
+        class="pill"
+        :class="{ active: activeTab === item.name }"
+        @click="onNavClick(item.name)"
       >
-        <el-tab-pane label="健康档案" name="archive" />
-        <el-tab-pane label="健康数据" name="observations" />
-        <el-tab-pane label="健康方案" name="care-plan" />
-        <el-tab-pane label="用药管理" name="medications" />
-        <el-tab-pane label="疾病评估" name="assessments" />
-        <el-tab-pane label="随访管理" name="followups" />
-        <el-tab-pane label="健康报告" name="health-reports" />
-        <el-tab-pane label="依从性分析" name="adherence" />
-        <el-tab-pane label="修订审计" name="revisions" />
-      </el-tabs>
-    </div>
+        {{ item.label }}
+      </button>
+    </nav>
 
     <router-view />
+
+    <ChangeCareTeamDialog
+      :people-id="careTeamDialogOpen ? peopleId : null"
+      :people-name="patient?.displayName"
+      :current-care-team-id="patient?.careTeamId"
+      @closed="careTeamDialogOpen = false"
+      @changed="onCareTeamChanged"
+    />
   </div>
 </template>
 
@@ -834,6 +1223,30 @@ onBeforeUnmount(() => {
   color: var(--brand-600);
 }
 
+.tag.is-btn {
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.tag.is-btn:hover:not(:disabled) {
+  filter: brightness(0.97);
+  transform: translateY(-1px);
+}
+
+.tag.is-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.tag-action {
+  margin-left: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.75;
+}
+
 .tag.teal {
   background: var(--teal-50);
   color: #0f766e;
@@ -852,6 +1265,12 @@ onBeforeUnmount(() => {
 .tag.muted {
   background: var(--ink-100);
   color: var(--ink-500);
+}
+
+.tag.allergy-risk {
+  background: #dc2626;
+  color: #fff;
+  font-weight: 600;
 }
 
 .eval-row {
@@ -1042,83 +1461,66 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
-/* ── KPI strip ────────────────────────────────────── */
-.hero-kpis {
+/* ── Summary strip ────────────────────────────────── */
+.summary-strip {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
-.hero-kpi {
-  background: #fff;
-  border: 1px solid var(--ink-200);
-  border-radius: 10px;
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ink-200);
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-.hero-kpi .label {
+.summary-card:hover {
+  border-color: rgba(44, 126, 248, 0.35);
+  box-shadow: 0 8px 20px -12px rgba(15, 23, 42, 0.18);
+  transform: translateY(-1px);
+}
+
+.summary-label {
   font-size: 11.5px;
-  color: var(--ink-500);
-  margin-bottom: 4px;
-}
-
-.hero-kpi .val {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--ink-900);
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.03em;
-}
-
-.hero-kpi .val small {
-  font-size: 11px;
-  color: var(--ink-400);
-  font-weight: 500;
-  margin-left: 2px;
-}
-
-.hero-kpi .trend {
-  font-size: 11px;
-  margin-top: 3px;
   font-weight: 600;
+  color: var(--ink-500);
+}
+
+.summary-val {
+  font-size: 22px;
+  font-weight: 750;
+  color: var(--ink-900);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.summary-val small {
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 2px;
   color: var(--ink-400);
 }
 
-.hero-kpi .trend.good {
-  color: #10b981;
-}
-
-.hero-kpi .trend.fair {
-  color: var(--amber-500, #f59e0b);
-}
-
-.hero-kpi .trend.poor {
-  color: var(--rose-500, #ef4444);
-}
-
-.hero-kpi .trend.empty {
+.summary-hint {
+  font-size: 11px;
   color: var(--ink-400);
+  font-weight: 550;
 }
 
-.hero-kpi.good .val {
-  color: #047857;
-}
-
-.hero-kpi.fair .val {
-  color: #92400e;
-}
-
-.hero-kpi.poor .val {
-  color: #b91c1c;
-}
-
-.hero-kpi.empty .val {
-  color: var(--ink-400);
-}
-
-.kpi-bar {
+.summary-bar {
+  display: block;
+  width: 100%;
   margin-top: 8px;
   height: 4px;
   border-radius: 999px;
@@ -1126,77 +1528,140 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.kpi-bar i {
+.summary-bar i {
   display: block;
   height: 100%;
   border-radius: inherit;
+  background: var(--ink-300);
   transition: width 240ms ease;
 }
 
-.hero-kpi.good .kpi-bar i {
-  background: #10b981;
+.summary-card.good .summary-val { color: #047857; }
+.summary-card.fair .summary-val { color: #92400e; }
+.summary-card.poor .summary-val { color: #b91c1c; }
+.summary-card.empty .summary-val { color: var(--ink-400); }
+.summary-card.good .summary-bar i { background: #10b981; }
+.summary-card.fair .summary-bar i { background: #f59e0b; }
+.summary-card.poor .summary-bar i { background: #ef4444; }
+
+/* ── Metric sparklines ────────────────────────────── */
+.metric-strip {
+  position: relative;
+  margin-top: 2px;
 }
 
-.hero-kpi.fair .kpi-bar i {
-  background: var(--amber-500, #f59e0b);
+.metric-strip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
-.hero-kpi.poor .kpi-bar i {
-  background: var(--rose-500, #ef4444);
-}
-
-.hero-kpi.empty .kpi-bar i {
-  background: var(--ink-300);
-}
-
-/* ── Tabs ─────────────────────────────────────────── */
-.tabs-bar {
-  background: #fff;
-  border: 1px solid var(--ink-200);
-  border-radius: 12px;
-  padding: 0 6px;
-  margin-bottom: 16px;
-  overflow-x: auto;
-}
-
-.detail-tabs :deep(.el-tabs__header) {
+.metric-strip-head h3 {
   margin: 0;
-}
-
-.detail-tabs :deep(.el-tabs__nav-wrap::after) {
-  display: none;
-}
-
-.detail-tabs :deep(.el-tabs__nav-wrap) {
-  margin-bottom: 0;
-}
-
-.detail-tabs :deep(.el-tabs__item) {
-  height: auto;
-  padding: 14px 18px;
-  font-size: 13.5px;
-  font-weight: 500;
-  color: var(--ink-500);
-  border-bottom: 2px solid transparent !important;
-}
-
-.detail-tabs :deep(.el-tabs__item:hover) {
+  font-size: 13px;
+  font-weight: 700;
   color: var(--ink-800);
 }
 
-.detail-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--brand-600);
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--ink-200);
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.metric-card:hover {
+  border-color: rgba(44, 126, 248, 0.35);
+  transform: translateY(-1px);
+}
+
+.metric-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.metric-label {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--ink-500);
+}
+
+.spark {
+  width: 56px;
+  height: 22px;
+  opacity: 0.85;
+}
+
+.metric-val {
+  font-size: 18px;
+  font-weight: 750;
+  color: var(--ink-900);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.metric-hint {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+
+.metric-card.good .spark,
+.metric-card.good .metric-val { color: #047857; }
+.metric-card.fair .spark,
+.metric-card.fair .metric-val { color: #b45309; }
+.metric-card.poor .spark,
+.metric-card.poor .metric-val { color: #b91c1c; }
+.metric-card.empty .metric-val { color: var(--ink-400); }
+
+/* ── Pill nav ─────────────────────────────────────── */
+.pill-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--ink-200);
+  border-radius: 14px;
+}
+
+.pill {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--ink-50, #f8fafc);
+  color: var(--ink-600);
+  font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
-.detail-tabs :deep(.el-tabs__active-bar) {
-  height: 2px;
-  border-radius: 2px;
-  background: var(--brand-500);
+.pill:hover {
+  color: var(--ink-900);
+  background: #eef2ff;
 }
 
-.detail-tabs :deep(.el-tabs__content) {
-  display: none;
+.pill.active {
+  color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 6px 14px -6px rgba(37, 99, 235, 0.55);
 }
 
 @media (max-width: 960px) {
@@ -1207,10 +1672,15 @@ onBeforeUnmount(() => {
   .hero-actions {
     width: 100%;
     justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .patient-hero {
     padding: 18px;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1225,8 +1695,21 @@ onBeforeUnmount(() => {
     font-size: 20px;
   }
 
-  .hero-kpis {
+  .summary-strip {
     grid-template-columns: 1fr;
+  }
+
+  .metric-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pill-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .pill {
+    flex: 0 0 auto;
   }
 }
 </style>
