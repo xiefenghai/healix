@@ -16,7 +16,9 @@ export const TABLE_COL = {
     className: 'col-biz-id',
   },
   datetime: {
-    width: 170,
+    width: 168,
+    className: 'col-datetime',
+    showOverflowTooltip: true,
   },
   status: {
     width: 90,
@@ -32,7 +34,7 @@ export const TABLE_COL = {
     fixed: 'right' as const,
   },
   actionsLg: {
-    width: 240,
+    width: 220,
     align: 'right' as const,
     fixed: 'right' as const,
   },

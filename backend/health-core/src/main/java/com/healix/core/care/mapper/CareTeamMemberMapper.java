@@ -17,6 +17,8 @@ public interface CareTeamMemberMapper {
 
     CareTeamMember findPeopleInOrg(@Param("orgId") String orgId, @Param("peopleId") String peopleId);
 
+    List<CareTeamMember> listPatientsByOrg(@Param("orgId") String orgId);
+
     int countActiveByTeam(@Param("teamId") String teamId);
 
     int insert(CareTeamMember member);

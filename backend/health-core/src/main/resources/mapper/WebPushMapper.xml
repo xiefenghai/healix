@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.notify.webpush.WebPushMapper">
+
+    <sql id="cols">
+        pk_id, id, account_id, endpoint, endpoint_hash, p256dh, auth, user_agent, fail_count, last_success_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="upsert">
+        INSERT INTO web_push_subscription(
+            id, account_id, endpoint, endpoint_hash, p256dh, auth, user_agent, fail_count,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{accountId}, #{endpoint}, #{endpointHash}, #{p256dh}, #{auth}, #{userAgent}, 0,
+            0, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+        ON DUPLICATE KEY UPDATE
+            account_id = VALUES(account_id),
+            endpoint = VALUES(endpoint),
+            p256dh = VALUES(p256dh),
+            auth = VALUES(auth),
+            user_agent = VALUES(user_agent),
+            fail_count = 0,
+            gmt_modified = VALUES(gmt_modified)
+    </insert>
+
+    <select id="listByAccount" resultType="com.healix.core.notify.webpush.WebPushSubscription">
+        SELECT <include refid="cols"/>
+        FROM web_push_subscription
+        WHERE account_id = #{accountId}
+        ORDER BY gmt_modified DESC
+    </select>
+
+    <select id="countByAccount" resultType="int">
+        SELECT COUNT(1) FROM web_push_subscription WHERE account_id = #{accountId}
+    </select>
+
+    <delete id="deleteByEndpointHash">
+        DELETE FROM web_push_subscription WHERE endpoint_hash = #{endpointHash}
+    </delete>
+
+    <delete id="deleteByAccountAndHash">
+        DELETE FROM web_push_subscription WHERE account_id = #{accountId} AND endpoint_hash = #{endpointHash}
+    </delete>
+
+    <update id="markSuccess">
+        UPDATE web_push_subscription
+        SET fail_count = 0, last_success_at = NOW(), gmt_modified = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <update id="markFailure">
+        UPDATE web_push_subscription
+        SET fail_count = fail_count + 1, gmt_modified = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <resultMap id="vapid" type="com.healix.core.notify.webpush.WebPushMapper$VapidRow">
+        <constructor>
+            <arg column="public_key" javaType="java.lang.String"/>
+            <arg column="private_key" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findVapid" resultMap="vapid">
+        SELECT public_key, private_key FROM web_push_vapid ORDER BY pk_id LIMIT 1
+    </select>
+
+    <insert id="insertVapid">
+        INSERT INTO web_push_vapid(id, public_key, private_key) VALUES (#{id}, #{publicKey}, #{privateKey})
+    </insert>
+</mapper>

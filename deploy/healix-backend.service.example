@@ -1,0 +1,21 @@
+[Unit]
+Description=Healix health-app backend
+After=network.target
+
+[Service]
+Type=simple
+User=healix
+Group=healix
+WorkingDirectory=/opt/healix/app
+EnvironmentFile=/opt/healix/app/healix.env
+ExecStart=/usr/bin/java -Xms512m -Xmx1024m -jar /opt/healix/app/healix.jar
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+
+# 日志可改 journal 或额外重定向
+StandardOutput=append:/opt/healix/logs/backend.out.log
+StandardError=append:/opt/healix/logs/backend.err.log
+
+[Install]
+WantedBy=multi-user.target

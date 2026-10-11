@@ -149,7 +149,7 @@ onMounted(load)
       <el-button @click="router.push('/workspace/orgs')">切换机构</el-button>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-input
           v-model="keyword"
@@ -170,8 +170,10 @@ onMounted(load)
         <div class="spacer" />
         <el-button type="primary" @click="openCreate">新开医护</el-button>
       </div>
+    </el-card>
 
-      <el-table v-loading="loading" :data="list" stripe border>
+    <el-card shadow="never">
+      <el-table v-loading="loading" :data="list" stripe>
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="displayName" label="姓名" min-width="110" />
         <el-table-column label="角色" min-width="140">
@@ -241,17 +243,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-  gap: 12px;
-}
-.page-title h1 { margin: 0; font-size: 16px; }
-.page-title p { margin: 6px 0 0; color: var(--admin-muted); font-size: 12px; }
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
-.spacer { flex: 1; }
 .role-tag { margin-right: 4px; }
 .muted { color: var(--admin-muted); font-size: 12px; }
 </style>

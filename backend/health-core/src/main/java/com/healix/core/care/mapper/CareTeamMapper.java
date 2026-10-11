@@ -13,6 +13,10 @@ public interface CareTeamMapper {
 
     List<CareTeam> listByOrg(@Param("orgId") String orgId, @Param("keyword") String keyword);
 
+    /** 当前员工作为主责健管师的健管组。 */
+    List<CareTeam> listByPrimaryCareManager(
+            @Param("orgId") String orgId, @Param("staffId") String staffId);
+
     int insert(CareTeam team);
 
     int update(CareTeam team);

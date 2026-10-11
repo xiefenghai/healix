@@ -7,6 +7,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * 时序库 Bean 预留；当前无业务写入，仅在 healix.influx.enabled=true 时装配。
+ */
 @Configuration
 @ConditionalOnProperty(prefix = "healix.influx", name = "enabled", havingValue = "true")
 public class InfluxConfig {

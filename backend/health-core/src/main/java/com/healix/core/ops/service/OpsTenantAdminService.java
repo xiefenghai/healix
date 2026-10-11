@@ -1,6 +1,8 @@
 package com.healix.core.ops.service;
 
 import com.healix.core.audit.enums.AuditActionEnum;
+import com.healix.core.govern.enums.QuotaKeyEnum;
+import com.healix.core.govern.service.QuotaService;
 import com.healix.core.identity.enums.EnableStatusEnum;
 import com.healix.core.identity.enums.OpsRoleEnum;
 import com.healix.core.portal.enums.PortalEnum;
@@ -53,6 +55,7 @@ public class OpsTenantAdminService {
     private final StaffRoleBindingMapper staffRoleBindingMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
+    private final QuotaService quotaService;
 
     @Transactional
     public ProvisionResult provisionTenant(ProvisionTenantCommand cmd, String opsAccountId) {
@@ -257,6 +260,7 @@ public class OpsTenantAdminService {
             String mobile,
             String title,
             String bindDefaultOrgId) {
+        quotaService.assertAvailable(tenantId, QuotaKeyEnum.STAFF_TOTAL, 1);
         StaffAccount account = new StaffAccount();
         account.setUsername(username);
         account.setPasswordHash(passwordEncoder.encode(password));

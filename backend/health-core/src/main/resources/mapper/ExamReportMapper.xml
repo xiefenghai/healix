@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.observation.mapper.ExamReportMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, org_id, exam_type, examined_at, conclusion, findings_json,
+        source, created_by_staff_id, updated_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO exam_report(
+            id, tenant_id, people_id, org_id, exam_type, examined_at, conclusion, findings_json,
+            source, created_by_staff_id, updated_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{examType}, #{examinedAt}, #{conclusion}, #{findingsJson},
+            #{source}, #{createdByStaffId}, #{updatedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE exam_report
+        SET org_id = #{orgId},
+            exam_type = #{examType},
+            examined_at = #{examinedAt},
+            conclusion = #{conclusion},
+            findings_json = #{findingsJson},
+            source = #{source},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE exam_report
+        SET is_deleted = 1,
+            updated_by_staff_id = #{staffId},
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.observation.domain.ExamReport">
+        SELECT <include refid="cols"/>
+        FROM exam_report
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.observation.domain.ExamReport">
+        SELECT <include refid="cols"/>
+        FROM exam_report
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="examType != null and examType != ''">
+          AND exam_type = #{examType}
+        </if>
+        ORDER BY examined_at DESC
+    </select>
+</mapper>

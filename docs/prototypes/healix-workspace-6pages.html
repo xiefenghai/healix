@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Healix 机构工作台 · 六页 UI 原型</title>
+<style>
+:root{--sider:#062a5f;--active:#1677ff;--blue:#1677ff;--text:#1f2937;--muted:#8c8c8c;--border:#e8e8e8;--bg:#f3f5f9;--danger:#ff4d4f;--warn:#fa8c16}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:var(--bg);color:var(--text)}
+.app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+.sider{background:linear-gradient(180deg,#062a5f,#041f47);color:#fff;display:flex;flex-direction:column;padding:18px 0 12px}
+.brand{padding:0 18px 20px;display:flex;gap:10px;align-items:center}
+.brand .mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#69b1ff,#1677ff);display:grid;place-items:center;font-weight:800}
+.brand b{display:block;font-size:14px}.brand small{opacity:.65;font-size:11px}
+.nav-item{width:calc(100% - 16px);margin:3px 8px;border:0;background:transparent;color:rgba(255,255,255,.88);border-radius:10px;padding:11px 14px;text-align:left;cursor:pointer;font-size:13px}
+.nav-item:hover{background:rgba(255,255,255,.08)}.nav-item.active{background:var(--active);font-weight:600;box-shadow:0 6px 16px rgba(22,119,255,.35)}
+.sider-user{margin:auto 12px 8px;padding:12px;border-radius:12px;background:rgba(255,255,255,.06);display:flex;gap:10px;align-items:center;font-size:12px}
+.avatar{width:36px;height:36px;border-radius:50%;background:#3b82f6;display:grid;place-items:center;font-weight:700}
+.main{min-width:0;display:flex;flex-direction:column}
+.top{height:56px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 16px}
+.title{font-weight:600;font-size:14px}
+.org,.chip,.search,.iconbtn,.btn{border:1px solid var(--border);background:#fff;border-radius:10px;padding:7px 12px;font-size:12px;cursor:pointer}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.link{border:0;background:none;color:var(--blue);padding:0 8px 0 0;font-size:13px}
+.chips{display:flex;gap:8px}.chip strong{color:var(--text)}
+.chip.danger{background:#fff1f0;border-color:#ffccc7;color:#cf1322}.chip.danger strong{color:#cf1322}
+.chip.warn{background:#fff7e6;border-color:#ffd591;color:#d46b08}.chip.warn strong{color:#d46b08}
+.spacer{flex:1}.search{width:220px;cursor:text}
+.content{padding:12px;flex:1;min-height:0}.page{display:none}.page.on{display:block}
+.panel{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.page-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+.page-h h1{margin:0;font-size:18px}.page-h p{margin:4px 0 0;font-size:12px;color:var(--muted)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+input,select{border:1px solid var(--border);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;background:#fff}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+th{color:var(--muted);font-weight:600;font-size:12px}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:#f5f5f5}
+.tag.red{background:#fff1f0;color:#cf1322}.tag.orange{background:#fff7e6;color:#d46b08}.tag.green{background:#f6ffed;color:#389e0d}.tag.blue{background:#e6f4ff;color:#1677ff}.tag.purple{background:#f9f0ff;color:#722ed1}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
+.kpi{background:#fafafa;border:1px solid var(--border);border-radius:12px;padding:12px}.kpi .l{font-size:12px;color:var(--muted)}.kpi .v{font-size:22px;font-weight:700;margin-top:4px}
+.cards3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+.scard{border:1px solid var(--border);border-radius:12px;padding:12px;cursor:pointer}.scard.on{border-color:var(--blue);background:#e6f4ff}
+.scard .l{font-size:12px;color:var(--muted)}.scard .v{font-size:22px;font-weight:700}
+.split{display:grid;grid-template-columns:1fr 300px;gap:12px}
+.detail{border:1px solid var(--border);border-radius:12px;padding:14px;background:#fafcff}
+.detail h3{margin:0 0 10px;font-size:15px}.kv{font-size:12px;color:var(--muted);margin:6px 0}.kv b{color:var(--text)}
+.stack{display:grid;gap:8px;margin-top:12px}
+.toast{position:fixed;right:20px;bottom:20px;background:#111;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;opacity:0;transform:translateY(8px);transition:.2s;z-index:50}
+.toast.show{opacity:1;transform:none}
+.cockpit{height:calc(100vh - 56px - 24px);display:flex;flex-direction:column;gap:10px}
+.board{flex:1;min-height:0;display:grid;grid-template-columns:290px minmax(0,1fr) 300px;gap:12px}
+.col{background:#fff;border:1px solid var(--border);border-radius:14px;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.col-head{display:flex;align-items:center;gap:6px;padding:12px 14px 8px}.col-head h2{margin:0;font-size:15px}.spark{color:var(--blue)}
+.tabs{display:flex;border-bottom:1px solid var(--border);padding:0 8px}
+.tab{flex:1;border:0;background:0;padding:10px 4px;font-size:12px;color:var(--muted);cursor:pointer;position:relative}
+.tab.on{color:var(--blue);font-weight:600}.tab.on::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;background:var(--blue)}
+.list{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.pcard{text-align:left;border:1px solid var(--border);border-radius:12px;padding:12px;cursor:pointer;background:#fff}
+.pcard.on{border-color:#69b1ff;background:#f0f7ff}
+.chat{flex:1;overflow:auto;padding:14px;background:#f7fbff}
+.bubble{background:#fff;border:1px solid var(--border);border-radius:14px;padding:12px;max-width:92%}
+.chipbtn{border:1px solid #91caff;background:#e6f4ff;color:var(--blue);border-radius:999px;padding:5px 11px;font-size:12px;cursor:pointer;margin:4px 4px 0 0}
+.composer{border-top:1px solid var(--border);padding:10px;display:flex;gap:8px;align-items:flex-end}
+.composer textarea{flex:1;border:1px solid var(--border);border-radius:10px;padding:8px;font:inherit;resize:none}
+.dock{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.dock button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:11px;cursor:pointer;font-size:12px}
+.snapg{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px}.snap{background:#fafafa;border-radius:10px;padding:10px;font-size:12px}.snap b{display:block;font-size:14px;margin-top:4px}
+.bot{width:28px;height:28px;border-radius:50%;background:var(--blue);display:grid;place-items:center;flex-shrink:0}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="sider">
+  <div class="brand"><div class="mark">♥</div><div><b>Healix 健管智能体</b><small>机构工作台</small></div></div>
+  <button class="nav-item active" data-p="cockpit">智能驾驶舱</button>
+  <button class="nav-item" data-p="tasks">工作台</button>
+  <button class="nav-item" data-p="patients">患者管理</button>
+  <button class="nav-item" data-p="adherence">依从性看板</button>
+  <button class="nav-item" data-p="teams">健管组</button>
+  <button class="nav-item" data-p="staff">成员管理</button>
+  <div class="sider-user"><div class="avatar">管</div><div><b>管理员</b><div style="opacity:.75">健管师 · 阳光健管中心</div></div></div>
+</aside>
+<div class="main">
+<header class="top">
+  <div class="title" id="topTitle">Healix 健管智能体 | 智能驾驶舱</div>
+  <button class="org" onclick="toast('切换机构')">阳光健管中心 ▾</button>
+  <div class="chips" id="chips">
+    <button class="chip">待办 <strong>12</strong></button>
+    <button class="chip danger">红人 <strong>5</strong></button>
+    <button class="chip warn">超期 <strong>2</strong></button>
+  </div>
+  <div class="spacer"></div>
+  <input class="search" placeholder="搜索患者 / 任务 / 成员"/>
+  <button class="iconbtn">🔔</button>
+</header>
+<div class="content">
+
+<section class="page on" id="p-cockpit">
+<div class="cockpit">
+  <div class="board">
+    <div class="col">
+      <div class="col-head"><span class="spark">✦✦</span><h2>今日优先</h2></div>
+      <div class="tabs"><button class="tab on">须立即处理</button><button class="tab">今日关注</button><button class="tab">我的在办</button></div>
+      <div class="list" id="plist"></div>
+      <button class="btn link" style="padding:12px;text-align:left;width:100%" onclick="go('tasks')">查看全部优先患者 →</button>
+    </div>
+    <div class="col">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-weight:700">🤖 健管智能体 <span id="ctx" style="font-weight:500;color:var(--muted);font-size:12px">机构级会话</span></div>
+      <div class="chat" id="chat"></div>
+      <div class="composer"><button class="btn" onclick="toast('上传检验OCR')">📎</button><textarea id="inp" rows="1" placeholder="问我任何关于患者或今日工作的问题…"></textarea><button class="btn primary" onclick="send()">发送</button></div>
+    </div>
+    <div class="col" id="right">
+      <div id="emptyR" style="margin:auto;color:var(--muted);text-align:center;padding:24px">点左侧优先对象查看详情</div>
+      <div id="focusBox" style="display:none;flex-direction:column;height:100%"></div>
+    </div>
+  </div>
+  <div class="dock">
+    <button onclick="need('新建随访')">📅 新建随访</button>
+    <button onclick="need('上传检验OCR')">🧾 上传检验OCR</button>
+    <button onclick="need('生成/调整方案')">📋 生成/调整方案</button>
+    <button onclick="need('管理报告')">📊 管理报告</button>
+  </div>
+</div>
+</section>
+
+<section class="page" id="p-tasks">
+  <div class="panel">
+    <div class="page-h"><div><h1>工作台任务</h1><p>统一接收驾驶舱/系统开出的待办 · 公共池 / 我的待办 / 今日已办</p></div><button class="btn" onclick="toast('刷新')">刷新</button></div>
+    <div class="cards3">
+      <div class="scard on" data-pool="PUBLIC" onclick="setPool(this,'PUBLIC')"><div class="l">公共池</div><div class="v">5</div><div class="l">待领取</div></div>
+      <div class="scard" data-pool="MINE" onclick="setPool(this,'MINE')"><div class="l">我的待办</div><div class="v">4</div><div class="l">已领取未办结</div></div>
+      <div class="scard" data-pool="DONE" onclick="setPool(this,'DONE')"><div class="l">今日已办</div><div class="v">3</div><div class="l">本人今日办结</div></div>
+    </div>
+    <div class="toolbar">
+      <select><option>全部类型</option><option>分配健管组</option><option>制定方案</option><option>打卡跟进</option><option>指标异常</option><option>定期随访</option><option>报告审阅</option></select>
+      <select><option>待处理</option><option>已完成</option><option>已取消</option><option>已过期</option></select>
+      <select><option>全部健管组</option><option>健管一组</option><option>健管二组</option></select>
+      <button class="btn primary" onclick="toast('查询')">查询</button>
+    </div>
+    <div class="split">
+      <div style="overflow:auto"><table><thead><tr><th>患者</th><th>健管组</th><th>类型</th><th>摘要</th><th>归属</th><th>开单时间</th><th>操作</th></tr></thead><tbody id="taskBody"></tbody></table></div>
+      <div class="detail" id="taskDetail"><h3>任务详情</h3><p style="color:var(--muted);font-size:13px">点「详情」查看</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="page" id="p-patients">
+  <div class="panel">
+    <div class="page-h"><div><h1>患者管理</h1><p>当前机构：阳光健管中心 · 建档、入组与机构患者列表</p></div>
+      <div><button class="btn" onclick="toast('切换机构')">切换机构</button> <button class="btn primary" onclick="toast('患者建档')">患者建档</button></div></div>
+    <div class="toolbar">
+      <input placeholder="姓名"/><select><option>健管组</option><option>健管一组</option></select><select><option>依从性</option><option>偏低</option><option>正常</option></select>
+      <button class="btn" onclick="toast('查询')">查询</button>
+    </div>
+    <table>
+      <thead><tr><th>患者ID</th><th>姓名</th><th>性别</th><th>年龄</th><th>证件</th><th>健管组</th><th>入机构时间</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr><td>P10021</td><td>张敏</td><td>女</td><td>58</td><td>身份证 ·••••1234</td><td>健管一组</td><td>2026-03-12</td><td><button class="btn link" onclick="toast('详情/档案')">详情</button><button class="btn link" onclick="toast('加入健管组')">加入健管组</button></td></tr>
+        <tr><td>P10022</td><td>李强</td><td>男</td><td>61</td><td>身份证 ·••••5678</td><td>健管一组</td><td>2026-04-02</td><td><button class="btn link" onclick="toast('详情/档案')">详情</button><button class="btn link" onclick="toast('加入健管组')">加入健管组</button></td></tr>
+        <tr><td>P10023</td><td>王芳</td><td>女</td><td>49</td><td>身份证 ·••••9012</td><td>健管二组</td><td>2026-05-18</td><td><button class="btn link">详情</button><button class="btn link">加入健管组</button></td></tr>
+        <tr><td>P10024</td><td>赵磊</td><td>男</td><td>66</td><td>身份证 ·••••3456</td><td>健管一组</td><td>2026-02-08</td><td><button class="btn link">详情</button><button class="btn link">加入健管组</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="page" id="p-adherence">
+  <div class="panel">
+    <div class="page-h"><div><h1>依从性看板</h1><p>早班默认看昨天 · 发现红人后可催办 / 提醒患者</p></div><button class="btn" onclick="toast('刷新')">刷新</button></div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">连续≥3天</div><div class="v" style="color:var(--danger)">5</div></div>
+      <div class="kpi"><div class="l">昨天方案未完成</div><div class="v">8</div></div>
+      <div class="kpi"><div class="l">昨天用药未完成</div><div class="v">6</div></div>
+      <div class="kpi"><div class="l">昨天待跟进</div><div class="v" style="color:var(--warn)">5</div></div>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary">昨天</button><button class="btn">今天</button>
+      <select><option>健管组</option><option>健管一组</option></select>
+      <input placeholder="姓名"/><button class="btn primary" onclick="toast('查询')">查询</button>
+    </div>
+    <table>
+      <thead><tr><th>风险</th><th>姓名</th><th>健管组</th><th>昨天方案</th><th>昨天用药</th><th>连续未执行</th><th>C端</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag red">高</span></td><td>张敏</td><td>健管一组</td><td><span class="tag orange">未完成</span></td><td><span class="tag red">未完成</span></td><td>3天</td><td><span class="tag green">已激活</span></td>
+          <td><button class="btn link" onclick="toast('依从')">依从</button><button class="btn link" onclick="toast('方案')">方案</button><button class="btn link" onclick="toast('用药')">用药</button><button class="btn link" onclick="toast('一键催办')">催办</button><button class="btn link" onclick="toast('提醒患者')">提醒患者</button></td></tr>
+        <tr><td><span class="tag orange">中</span></td><td>赵磊</td><td>健管一组</td><td><span class="tag green">完成</span></td><td><span class="tag orange">未完成</span></td><td>2天</td><td><span class="tag green">已激活</span></td>
+          <td><button class="btn link">依从</button><button class="btn link">方案</button><button class="btn link">用药</button><button class="btn link" onclick="toast('催办')">催办</button><button class="btn link" onclick="toast('提醒患者')">提醒患者</button></td></tr>
+        <tr><td><span class="tag orange">中</span></td><td>李强</td><td>健管一组</td><td><span class="tag orange">未完成</span></td><td><span class="tag green">完成</span></td><td>1天</td><td><span class="tag green">已激活</span></td>
+          <td><button class="btn link">依从</button><button class="btn link">方案</button><button class="btn link">用药</button><button class="btn link">催办</button><button class="btn link">提醒患者</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="page" id="p-teams">
+  <div class="panel">
+    <div class="page-h"><div><h1>健管组</h1><p>当前机构：阳光健管中心 · 网格化管理医护与患者</p></div>
+      <div><button class="btn" onclick="toast('切换机构')">切换机构</button> <button class="btn primary" onclick="toast('新建健管组')">新建健管组</button></div></div>
+    <div class="toolbar"><input placeholder="组名 / 编码"/><button class="btn" onclick="toast('查询')">查询</button></div>
+    <table>
+      <thead><tr><th>编码</th><th>名称</th><th>主责健管师</th><th>主责医生</th><th>成员数</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr><td>CT-001</td><td>健管一组</td><td>林护士</td><td>张医生</td><td>6</td><td>2026-01-10</td><td><button class="btn link" onclick="toast('详情')">详情</button><button class="btn link" onclick="toast('删除健管组')">删除</button></td></tr>
+        <tr><td>CT-002</td><td>健管二组</td><td>陈护士</td><td>王医生</td><td>4</td><td>2026-02-18</td><td><button class="btn link">详情</button><button class="btn link" onclick="toast('删除健管组')">删除</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="page" id="p-staff">
+  <div class="panel">
+    <div class="page-h"><div><h1>成员管理</h1><p>当前机构：阳光健管中心 · 本机构健管师与医生账号</p></div>
+      <div><button class="btn" onclick="toast('切换机构')">切换机构</button> <button class="btn primary" onclick="toast('新开医护')">新开医护</button></div></div>
+    <div class="toolbar">
+      <input placeholder="用户名 / 姓名"/>
+      <select><option>角色</option><option>CARE_MANAGER 健管师</option><option>DOCTOR 医生</option></select>
+      <button class="btn" onclick="toast('查询')">查询</button>
+    </div>
+    <table>
+      <thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>手机</th><th>职务</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr><td>lin.hushi</td><td>林护士</td><td><span class="tag blue">健管师</span></td><td>138****2211</td><td>个案管理</td><td><span class="tag green">启用</span></td><td>2026-01-10</td><td><button class="btn link" onclick="toast('解绑')">解绑</button></td></tr>
+        <tr><td>zhang.ys</td><td>张医生</td><td><span class="tag purple">医生</span></td><td>139****8899</td><td>主治医师</td><td><span class="tag green">启用</span></td><td>2026-01-10</td><td><button class="btn link" onclick="toast('解绑')">解绑</button></td></tr>
+        <tr><td>chen.hushi</td><td>陈护士</td><td><span class="tag blue">健管师</span></td><td>137****5566</td><td>健管师</td><td><span class="tag green">启用</span></td><td>2026-02-18</td><td><button class="btn link" onclick="toast('解绑')">解绑</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</div></div></div>
+<div class="toast" id="toast"></div>
+<script>
+const titles={cockpit:'智能驾驶舱',tasks:'工作台',patients:'患者管理',adherence:'依从性看板',teams:'健管组',staff:'成员管理'};
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(window.__t);window.__t=setTimeout(()=>t.classList.remove('show'),2000)}
+function go(p){
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('on'));
+  document.getElementById('p-'+p).classList.add('on');
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.p===p));
+  document.getElementById('topTitle').textContent='Healix 健管智能体 | '+titles[p];
+  document.getElementById('chips').style.display=p==='cockpit'?'flex':'none';
+}
+document.querySelectorAll('.nav-item').forEach(b=>b.onclick=()=>go(b.dataset.p));
+
+const people=[
+ {id:'p1',name:'张敏',badge:'用药未打卡×3',tone:'red',note:'连续3日用药未打卡',rate:'62%',bp:'138/86',disease:'2型糖尿病'},
+ {id:'p2',name:'李强',badge:'申请回访',tone:'orange',note:'患者申请回访',rate:'78%',bp:'148/92',disease:'高血压'},
+ {id:'p3',name:'王芳',badge:'方案待发布',tone:'purple',note:'AI方案草稿待确认',rate:'81%',bp:'128/78',disease:'血脂异常'},
+ {id:'p4',name:'赵磊',badge:'指标异常',tone:'red',note:'血压偏高待跟进',rate:'55%',bp:'156/98',disease:'高血压'},
+];
+let focus=null;
+function toneTag(t){return t==='red'?'red':t==='orange'?'orange':'purple'}
+function renderP(){
+  document.getElementById('plist').innerHTML=people.map(p=>`<button class="pcard ${focus===p.id?'on':''}" onclick="sel('${p.id}')"><div style="display:flex;justify-content:space-between;gap:8px"><b>${p.name}</b><span class="tag ${toneTag(p.tone)}">${p.badge}</span></div><div style="margin-top:8px;font-size:12px;color:var(--muted)">${p.note}</div></button>`).join('');
+}
+function sel(id){
+  focus=id;const p=people.find(x=>x.id===id);renderP();
+  document.getElementById('emptyR').style.display='none';
+  const box=document.getElementById('focusBox'); box.style.display='flex';
+  document.getElementById('ctx').textContent='当前：'+p.name;
+  box.innerHTML=`<div style="padding:12px 14px;border-bottom:1px solid var(--border)"><b>当前：${p.name}</b> <span class="tag green">C端</span><div style="font-size:12px;color:var(--muted);margin-top:4px">${p.disease}</div></div>
+  <div class="snapg"><div class="snap">依从率<b style="color:var(--warn)">${p.rate}</b></div><div class="snap">血压<b>${p.bp}</b></div></div>
+  <div style="padding:0 12px"><div style="font-size:12px;font-weight:600;margin-bottom:8px">待确认草稿</div>
+  <div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;gap:8px"><div><b>方案/待办</b><div style="font-size:12px;color:var(--muted)">${p.note}</div></div><button class="btn primary" onclick="toast('确认')">确认</button></div></div>
+  <div class="stack" style="padding:12px"><button class="btn primary" onclick="toast('查看完整档案')">查看完整档案</button><button class="btn" onclick="toast('应用到方案')">应用到方案</button><button class="btn" onclick="toast('写入点评')">写入点评</button></div>`;
+  addA('已选择「'+p.name+'」。建议提醒补打卡，必要时开随访；右侧草稿请人审确认。');
+}
+function addA(t){
+  document.getElementById('chat').insertAdjacentHTML('beforeend',`<div style="display:flex;gap:8px;margin-bottom:10px"><div class="bot">🤖</div><div class="bubble"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">健管智能体</div><div style="font-size:13px;line-height:1.5">${t}</div>
+  <div><button class="chipbtn" onclick="toast('提醒患者')">提醒患者</button><button class="chipbtn" onclick="toast('开用药随访')">开用药随访</button><button class="chipbtn" onclick="toast('生成方案草稿')">生成方案草稿</button></div></div></div>`);
+  document.getElementById('chat').scrollTop=99999;
+}
+function boot(){
+  document.getElementById('chat').innerHTML=`<div style="display:flex;gap:8px;margin-bottom:10px"><div class="bot">🤖</div><div class="bubble"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">今日简报</div><div style="font-size:13px;line-height:1.5">今天建议优先：张敏（用药未打卡）、李强（申请回访）、王芳（方案待发布）。</div>
+  <div><button class="chipbtn" onclick="sel('p1')">处理张敏</button><button class="chipbtn" onclick="sel('p2')">处理李强</button><button class="chipbtn" onclick="sel('p3')">处理王芳</button></div></div></div>`;
+}
+function send(){const v=document.getElementById('inp').value.trim();if(!v)return;document.getElementById('chat').insertAdjacentHTML('beforeend',`<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><div class="bubble" style="background:var(--blue);color:#fff;border-color:var(--blue)">${v}</div></div>`);document.getElementById('inp').value='';addA('（原型）此处对接 /api/b/v1/agent/chat/stream。')}
+function need(m){if(!focus){toast('请先从左侧选择一位患者');return}toast(m)}
+
+const tasks=[
+ {people:'张敏',team:'健管一组',type:'打卡跟进',code:'PLAN_NUDGE',sum:'用药连续3日未打卡',own:'公共池',pool:'PUBLIC',form:'填写随访',t:'05-20 08:30'},
+ {people:'李强',team:'健管一组',type:'定期随访',code:'FOLLOW_UP',sum:'患者申请回访',own:'公共池',pool:'PUBLIC',form:'填写随访',t:'05-20 09:15'},
+ {people:'王芳',team:'健管二组',type:'制定方案',code:'PLAN_CREATE',sum:'三月报建议调方案',own:'我',pool:'MINE',form:'办理',t:'05-19 16:20'},
+ {people:'赵磊',team:'健管一组',type:'指标异常',code:'METRIC_ALERT',sum:'血压异常',own:'我',pool:'MINE',form:'填写随访',t:'05-19 11:02'},
+ {people:'陈静',team:'健管二组',type:'报告审阅',code:'REPORT_REVIEW',sum:'周报待审阅',own:'我',pool:'DONE',form:'办理',t:'05-18 10:00'},
+];
+let pool='PUBLIC';
+function setPool(el,p){pool=p;document.querySelectorAll('.scard').forEach(c=>c.classList.toggle('on',c.dataset.pool===p));renderTasks()}
+function renderTasks(){
+  const rows=tasks.filter(t=>t.pool===pool);
+  document.getElementById('taskBody').innerHTML=rows.map(t=>`<tr><td>${t.people}</td><td>${t.team}</td><td><span class="tag blue">${t.type}</span></td><td>${t.sum}</td><td>${t.own}</td><td>${t.t}</td><td>
+  <button class="btn link" onclick='showT(${JSON.stringify(t)})'>详情</button>
+  ${t.pool==='PUBLIC'?'<button class="btn link" onclick="toast(\'领取\')">领取</button>':''}
+  ${t.pool!=='DONE'?`<button class="btn link" onclick="toast('${t.form}')">${t.form}</button>`:''}
+  ${t.pool==='MINE'?'<button class="btn link" onclick="toast(\'分派\')">分派</button><button class="btn link" onclick="toast(\'退回\')">退回</button>':''}
+  <button class="btn link" onclick="toast('取消')">取消</button></td></tr>`).join('')||'<tr><td colspan="7" style="color:var(--muted)">暂无任务</td></tr>';
+}
+function showT(t){
+  document.getElementById('taskDetail').innerHTML=`<h3>任务详情 · ${t.code}</h3>
+  <div class="kv">患者：<b>${t.people}</b></div><div class="kv">类型：<b>${t.type}</b></div><div class="kv">摘要：<b>${t.sum}</b></div>
+  <div class="stack">${t.pool==='PUBLIC'?'<button class="btn primary" onclick="toast(\'领取任务\')">领取任务</button>':''}
+  <button class="btn" onclick="toast('${t.form}')">${t.form}</button><button class="btn" onclick="toast('分派')">分派</button>
+  <button class="btn" onclick="toast('退回')">退回</button><button class="btn" onclick="go('cockpit')">进入驾驶舱</button></div>`;
+}
+renderP();boot();renderTasks();
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+</script>
+</body>
+</html>

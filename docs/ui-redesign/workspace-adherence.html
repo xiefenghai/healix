@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Healix · 依从性看板</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --brand-500:#2C7EF8; --brand-600:#1E63D9; --brand-50:#EAF2FF; --brand-100:#D6E6FF;
+    --teal-500:#00B8A9; --teal-50:#E6FAF7;
+    --amber-500:#F59E0B; --amber-50:#FEF6E2;
+    --rose-500:#EF4444; --rose-50:#FEE9E7;
+    --violet-500:#8B5CF6; --violet-50:#F1ECFE;
+    --ink-900:#0F172A; --ink-800:#1E293B; --ink-700:#334155; --ink-500:#64748B;
+    --ink-400:#94A3B8; --ink-300:#CBD5E1; --ink-200:#E2E8F0; --ink-100:#F1F5F9; --ink-50:#F8FAFC;
+    --bg:#F5F7FB; --surface:#FFFFFF;
+    --radius:12px; --radius-sm:8px;
+    --transition:180ms cubic-bezier(.4,0,.2,1);
+  }
+  *{box-sizing:border-box;}body{margin:0;font-family:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;color:var(--ink-800);background:var(--bg);-webkit-font-smoothing:antialiased;}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;}a{color:inherit;text-decoration:none;}
+
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh;}
+  .sidebar{background:linear-gradient(180deg,#0F172A 0%,#131C30 100%);color:#94A3B8;padding:20px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 22px;color:#fff;}
+  .brand-logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2C7EF8,#00B8A9);display:grid;place-items:center;}
+  .brand-logo svg{width:22px;height:22px;}
+  .brand-name{font-weight:700;font-size:16px;}.brand-name small{display:block;font-weight:500;font-size:11px;color:#94A3B8;margin-top:2px;}
+  .nav-section{margin-top:14px;}
+  .nav-title{font-size:11px;font-weight:600;letter-spacing:1.2px;color:#64748B;text-transform:uppercase;padding:12px 12px 8px;}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:8px;color:#94A3B8;font-size:13.5px;font-weight:500;transition:180ms;margin-bottom:2px;cursor:pointer;position:relative;}
+  .nav-item:hover{background:rgba(255,255,255,.05);color:#fff;}
+  .nav-item.active{background:linear-gradient(90deg,rgba(44,126,248,.18),rgba(44,126,248,.04));color:#fff;}
+  .nav-item.active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;background:#2C7EF8;border-radius:0 3px 3px 0;}
+  .nav-item svg{width:18px;height:18px;flex-shrink:0;opacity:.85;}
+  .nav-badge{margin-left:auto;font-size:11px;background:#EF4444;color:#fff;padding:2px 7px;border-radius:999px;font-weight:600;}
+
+  .main{display:flex;flex-direction:column;min-width:0;}
+  .topbar{height:60px;background:#fff;border-bottom:1px solid #E2E8F0;display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:10;}
+  .crumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748B;}.crumbs strong{color:#1E293B;font-weight:600;}
+  .crumbs svg{width:14px;height:14px;opacity:.5;}
+  .search{flex:1;max-width:380px;position:relative;}
+  .search input{width:100%;height:36px;padding:0 14px 0 36px;border-radius:8px;border:1px solid #E2E8F0;background:#F8FAFC;font-size:13px;}
+  .search input:focus{outline:none;background:#fff;border-color:#2C7EF8;box-shadow:0 0 0 3px rgba(44,126,248,.12);}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:#94A3B8;}
+  .topbar-right{display:flex;align-items:center;gap:6px;margin-left:auto;}
+  .icon-btn{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:#64748B;transition:180ms;}
+  .icon-btn:hover{background:#F1F5F9;color:#1E293B;}.icon-btn svg{width:18px;height:18px;}
+  .org-switch{display:flex;align-items:center;gap:10px;padding:3px 10px 3px 3px;border-radius:999px;background:#F8FAFC;border:1px solid #E2E8F0;margin:0 8px;cursor:pointer;}
+  .org-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#EF4444);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600;}
+  .org-meta .name{font-size:13px;font-weight:600;color:#1E293B;line-height:1.2;}.org-meta .role{font-size:11px;color:#64748B;}
+  .user-avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#2C7EF8);display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;}
+
+  .content{padding:24px 32px 40px;flex:1;}
+
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:20px;flex-wrap:wrap;}
+  .page-head h1{font-size:22px;font-weight:700;margin:0 0 4px;color:#0F172A;letter-spacing:-.3px;}
+  .page-head p{margin:0;color:#64748B;font-size:13.5px;}
+  .head-actions{display:flex;gap:10px;align-items:center;}
+  .date-pills{display:inline-flex;background:#F1F5F9;border-radius:8px;padding:3px;gap:2px;}
+  .date-pills button{padding:6px 12px;font-size:12.5px;border-radius:6px;color:#64748B;font-weight:500;}
+  .date-pills button.active{background:#fff;color:#1E293B;box-shadow:0 1px 2px rgba(15,23,42,.06);}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:8px;font-size:13px;font-weight:600;transition:180ms;border:1px solid transparent;}
+  .btn svg{width:15px;height:15px;}
+  .btn-primary{background:#2C7EF8;color:#fff;box-shadow:0 4px 10px -2px rgba(44,126,248,.4);}
+  .btn-primary:hover{background:#1E63D9;}
+  .btn-ghost{background:#fff;color:#334155;border-color:#E2E8F0;}
+  .btn-ghost:hover{background:#F8FAFC;}
+
+  /* KPI Grid */
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+  .kpi{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;cursor:pointer;transition:180ms;position:relative;overflow:hidden;}
+  .kpi:hover{box-shadow:0 1px 3px rgba(15,23,42,.06),0 8px 24px -8px rgba(15,23,42,.08);transform:translateY(-1px);}
+  .kpi.active{border-color:#2C7EF8;background:linear-gradient(180deg,#F8FBFF,#fff);}
+  .kpi.active::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#2C7EF8;}
+  .kpi-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .kpi-label{font-size:12.5px;color:#64748B;font-weight:500;}
+  .kpi-icon{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;}
+  .kpi-icon svg{width:17px;height:17px;}
+  .kpi-val{font-size:28px;font-weight:700;color:#0F172A;letter-spacing:-.5px;line-height:1.1;}
+  .kpi-foot{font-size:11.5px;color:#94A3B8;margin-top:6px;}
+  .kpi-foot .warn{color:var(--rose-500);font-weight:600;}
+
+  /* Card */
+  .card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;}
+  .card-head{padding:16px 20px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between;}
+  .card-head h3{margin:0;font-size:14.5px;font-weight:600;color:#1E293B;}
+  .card-head .sub{margin:2px 0 0;font-size:12px;color:#64748B;}
+  .row{display:grid;gap:16px;margin-bottom:16px;}
+  .row.cols-2{grid-template-columns:1fr 1fr;}
+  .chart{height:280px;}
+
+  /* Table */
+  .table-card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;overflow:hidden;}
+  table{width:100%;border-collapse:collapse;}
+  th{text-align:left;font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.8px;padding:12px 14px;background:#F8FAFC;border-bottom:1px solid #F1F5F9;}
+  td{padding:14px;font-size:13px;border-bottom:1px solid #F1F5F9;vertical-align:middle;}
+  tr:hover td{background:#FBFCFE;}tr:last-child td{border-bottom:0;}
+  .patient{display:flex;align-items:center;gap:10px;}
+  .patient .av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;}
+  .patient .name{font-weight:600;color:#1E293B;line-height:1.3;}
+  .patient .meta{font-size:11.5px;color:#94A3B8;margin-top:2px;}
+  .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;}
+  .tag.brand{background:#EAF2FF;color:#1E63D9;}.tag.teal{background:#E6FAF7;color:#0F766E;}
+  .tag.amber{background:#FEF6E2;color:#B45309;}.tag.rose{background:#FEE9E7;color:#EF4444;}
+  .progress{display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;}
+  .progress .bar{flex:1;height:5px;background:#F1F5F9;border-radius:3px;overflow:hidden;min-width:60px;}
+  .progress .fill{height:100%;border-radius:3px;}
+  .progress .fill.high{background:linear-gradient(90deg,#10B981,#0F766E);}
+  .progress .fill.mid{background:linear-gradient(90deg,#F59E0B,#EA580C);}
+  .progress .fill.low{background:linear-gradient(90deg,#EF4444,#BE123C);}
+  .progress .pct{font-weight:600;min-width:32px;text-align:right;color:#0F172A;}
+  .row-actions button{height:28px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:500;color:#475569;display:inline-flex;align-items:center;gap:4px;margin-right:4px;transition:180ms;}
+  .row-actions button:hover{background:#F1F5F9;color:#1E293B;}
+  .row-actions button.primary{background:#2C7EF8;color:#fff;}
+  .row-actions button.primary:hover{background:#1E63D9;}
+  .row-actions svg{width:13px;height:13px;}
+
+  .pager{padding:14px 20px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #F1F5F9;}
+  .pager-info{font-size:12.5px;color:#64748B;}
+
+  @media(max-width:1280px){.kpi-grid{grid-template-columns:repeat(2,1fr);}.row.cols-2{grid-template-columns:1fr;}}
+  @media(max-width:960px){.app{grid-template-columns:1fr;}.sidebar{display:none;}.content{padding:16px;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+      <div class="brand-name">Healix<small>机构工作台 · v3.20</small></div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">主导航</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>智能驾驶舱</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/></svg>工作台任务<span class="nav-badge">12</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>患者管理</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>依从性看板</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">协作</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>健管组</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>健康方案库<span class="nav-badge muted">86</span></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs">
+        <span>主导航</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <strong>依从性看板</strong>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="搜索…" />
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></button>
+        <div class="org-switch"><div class="org-avatar">沪</div><div class="org-meta"><div class="name">上海仁济健管中心</div><div class="role">健管师 · 李医生</div></div></div>
+        <div class="user-avatar">LF</div>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <section class="page-head">
+        <div>
+          <h1>依从性看板</h1>
+          <p>共 1,089 位患者数据 · 数据日期 <strong style="color:var(--ink-800)">2026-09-08</strong> · 昨日</p>
+        </div>
+        <div class="head-actions">
+          <div class="date-pills">
+            <button>昨天</button>
+            <button class="active">今天</button>
+            <button>近 7 天</button>
+            <button>近 30 天</button>
+          </div>
+          <button class="btn btn-ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/></svg>
+            导出
+          </button>
+        </div>
+      </section>
+
+      <!-- KPI -->
+      <section class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-head">
+            <span class="kpi-label">连续打卡 ≥ 3 天</span>
+            <div class="kpi-icon" style="background:#E6FAF7;color:#0F766E;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div>
+          </div>
+          <div class="kpi-val" style="color:var(--teal-500);">682</div>
+          <div class="kpi-foot">占比 62.6% · 优秀</div>
+        </div>
+        <div class="kpi active">
+          <div class="kpi-head">
+            <span class="kpi-label">方案未完成</span>
+            <div class="kpi-icon" style="background:#FEF6E2;color:#B45309;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+          </div>
+          <div class="kpi-val" style="color:var(--amber-500);">186</div>
+          <div class="kpi-foot"><span class="warn">+23 较昨日</span> · 需提醒</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-head">
+            <span class="kpi-label">用药未完成</span>
+            <div class="kpi-icon" style="background:#FEE9E7;color:#EF4444;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.5 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7l5 5v3"/><circle cx="13" cy="13" r="2"/></svg></div>
+          </div>
+          <div class="kpi-val" style="color:var(--rose-500);">94</div>
+          <div class="kpi-foot"><span class="warn">+12 较昨日</span> · 高优</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-head">
+            <span class="kpi-label">待跟进</span>
+            <div class="kpi-icon" style="background:#F1ECFE;color:#6D28D9;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+          </div>
+          <div class="kpi-val">68</div>
+          <div class="kpi-foot">平均响应 2.4 小时</div>
+        </div>
+      </section>
+
+      <!-- Charts Row -->
+      <section class="row cols-2">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>依从率趋势</h3>
+              <p class="sub">近 14 天 · 方案完成率 / 用药达标率 / 待跟进人数</p>
+            </div>
+            <div style="display:flex;gap:12px;font-size:12px;color:#64748B;">
+              <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#2C7EF8;"></span>方案完成</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#00B8A9;"></span>用药达标</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;"></span>待跟进</span>
+            </div>
+          </div>
+          <div class="card-pad" style="padding:16px 20px 20px;"><div id="trendChart" class="chart"></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>健管组依从率排行</h3>
+              <p class="sub">8 个组 · 近 7 天平均</p>
+            </div>
+          </div>
+          <div class="card-pad" style="padding:16px 20px 20px;"><div id="teamChart" class="chart"></div></div>
+        </div>
+      </section>
+
+      <!-- Patient list -->
+      <div class="table-card">
+        <div class="card-head">
+          <div>
+            <h3>待跟进患者名单 <span style="color:#94A3B8;font-weight:500;margin-left:6px;">· 68 位 · 按优先级排序</span></h3>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" style="height:32px;font-size:12px;">批量站内信</button>
+            <button class="btn btn-ghost" style="height:32px;font-size:12px;">批量电话催办</button>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>患者</th>
+              <th>所属健管组</th>
+              <th>风险</th>
+              <th>方案完成</th>
+              <th>用药完成</th>
+              <th>7 天依从率</th>
+              <th>最近未完成</th>
+              <th style="width:240px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><div class="patient"><div class="av" style="background:linear-gradient(135deg,#3B82F6,#1D4ED8)">张</div><div><div class="name">张建国</div><div class="meta">62 岁 · 男</div></div></div></td>
+              <td><span class="tag brand">控糖先锋组</span></td>
+              <td><span class="tag rose">高</span></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:71%"></div></div><div class="pct">71%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:78%"></div></div><div class="pct">78%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:74%"></div></div><div class="pct">74%</div></div></td>
+              <td style="color:var(--rose-500);font-weight:600;">运动打卡 5 天未完成</td>
+              <td><div class="row-actions"><button class="primary">去随访</button><button>站内信</button><button>查看</button></div></td>
+            </tr>
+            <tr>
+              <td><div class="patient"><div class="av" style="background:linear-gradient(135deg,#8B5CF6,#6D28D9)">陈</div><div><div class="name">陈晓宇</div><div class="meta">48 岁 · 男</div></div></div></td>
+              <td><span class="tag brand">心脑血管组</span></td>
+              <td><span class="tag amber">中</span></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:62%"></div></div><div class="pct">62%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill low" style="width:54%"></div></div><div class="pct">54%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill low" style="width:58%"></div></div><div class="pct">58%</div></div></td>
+              <td style="color:var(--rose-500);font-weight:600;">二甲双胍 2 天漏服</td>
+              <td><div class="row-actions"><button class="primary">去随访</button><button>站内信</button><button>查看</button></div></td>
+            </tr>
+            <tr>
+              <td><div class="patient"><div class="av" style="background:linear-gradient(135deg,#EC4899,#BE185D)">赵</div><div><div class="name">赵志强</div><div class="meta">59 岁 · 男</div></div></div></td>
+              <td><span class="tag brand">控糖先锋组</span></td>
+              <td><span class="tag rose">高</span></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:58%"></div></div><div class="pct">58%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:65%"></div></div><div class="pct">65%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill low" style="width:54%"></div></div><div class="pct">54%</div></div></td>
+              <td style="color:var(--rose-500);font-weight:600;">血糖测量 4 天未上报</td>
+              <td><div class="row-actions"><button class="primary">去随访</button><button>站内信</button><button>查看</button></div></td>
+            </tr>
+            <tr>
+              <td><div class="patient"><div class="av" style="background:linear-gradient(135deg,#F59E0B,#EA580C)">王</div><div><div class="name">王秀英</div><div class="meta">67 岁 · 女</div></div></div></td>
+              <td><span class="tag brand">老年慢病组</span></td>
+              <td><span class="tag amber">中</span></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:68%"></div></div><div class="pct">68%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill high" style="width:88%"></div></div><div class="pct">88%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:78%"></div></div><div class="pct">78%</div></div></td>
+              <td style="color:var(--amber-500);font-weight:600;">血压测量 3 天未完成</td>
+              <td><div class="row-actions"><button class="primary">去随访</button><button>站内信</button><button>查看</button></div></td>
+            </tr>
+            <tr>
+              <td><div class="patient"><div class="av" style="background:linear-gradient(135deg,#06B6D4,#0E7490)">孙</div><div><div class="name">孙建华</div><div class="meta">71 岁 · 男</div></div></div></td>
+              <td><span class="tag brand">老年慢病组</span></td>
+              <td><span class="tag rose">高</span></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:64%"></div></div><div class="pct">64%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:74%"></div></div><div class="pct">74%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill mid" style="width:69%"></div></div><div class="pct">69%</div></div></td>
+              <td style="color:var(--rose-500);font-weight:600;">心率监测 5 天漏报</td>
+              <td><div class="row-actions"><button class="primary">去随访</button><button>站内信</button><button>查看</button></div></td>
+            </tr>
+            <tr>
+              <td><div class="patient"><div class="av" style="background:linear-gradient(135deg,#84CC16,#3F6212)">吴</div><div><div class="name">吴志强</div><div class="meta">52 岁 · 男</div></div></div></td>
+              <td><span class="tag muted">未入组</span></td>
+              <td><span class="tag amber">中</span></td>
+              <td><div class="progress"><div class="bar"><div class="fill low" style="width:42%"></div></div><div class="pct">42%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill low" style="width:48%"></div></div><div class="pct">48%</div></div></td>
+              <td><div class="progress"><div class="bar"><div class="fill low" style="width:45%"></div></div><div class="pct">45%</div></div></td>
+              <td style="color:var(--rose-500);font-weight:600;">C 端未激活 · 数据为空</td>
+              <td><div class="row-actions"><button class="primary">去激活</button><button>建档</button><button>查看</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div class="pager-info">显示 <strong style="color:var(--ink-800)">1-6</strong> 条 / 共 68 条</div>
+          <div style="display:flex;gap:4px;">
+            <button style="width:30px;height:30px;border-radius:6px;color:#475569;">‹</button>
+            <button style="width:30px;height:30px;border-radius:6px;background:#2C7EF8;color:#fff;">1</button>
+            <button style="width:30px;height:30px;border-radius:6px;color:#475569;">2</button>
+            <button style="width:30px;height:30px;border-radius:6px;color:#475569;">…</button>
+            <button style="width:30px;height:30px;border-radius:6px;color:#475569;">12</button>
+            <button style="width:30px;height:30px;border-radius:6px;color:#475569;">›</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+  const days14 = Array.from({length:14}, (_, i) => `9/${26+i>30?(i-4):26+i}`.replace('9/','9/'));
+  const tLabels = ['8/26','8/27','8/28','8/29','8/30','8/31','9/1','9/2','9/3','9/4','9/5','9/6','9/7','9/8'];
+
+  const trendChart = echarts.init(document.getElementById('trendChart'));
+  trendChart.setOption({
+    grid:{left:30,right:20,top:20,bottom:30},
+    tooltip:{trigger:'axis',backgroundColor:'#fff',borderColor:'#E2E8F0',textStyle:{color:'#1E293B',fontSize:12}},
+    xAxis:{type:'category',data:tLabels,axisLine:{lineStyle:{color:'#E2E8F0'}},axisTick:{show:false},axisLabel:{color:'#64748B',fontSize:11}},
+    yAxis:{type:'value',axisLine:{show:false},axisTick:{show:false},splitLine:{lineStyle:{color:'#F1F5F9',type:'dashed'}},axisLabel:{color:'#64748B',fontSize:11,formatter:'{value}%'}},
+    series:[
+      {name:'方案完成率',type:'line',smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2.5,color:'#2C7EF8'},itemStyle:{color:'#2C7EF8',borderColor:'#fff',borderWidth:2},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(44,126,248,.25)'},{offset:1,color:'rgba(44,126,248,0)'}]}},data:[78,80,82,81,83,82,84,85,83,82,80,79,78,76]},
+      {name:'用药达标率',type:'line',smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2.5,color:'#00B8A9'},itemStyle:{color:'#00B8A9',borderColor:'#fff',borderWidth:2},data:[88,89,90,91,90,92,93,91,90,89,88,87,86,85]},
+      {name:'待跟进人数',type:'line',smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2,type:'dashed',color:'#F59E0B'},itemStyle:{color:'#F59E0B',borderColor:'#fff',borderWidth:2},data:[45,48,42,50,52,48,55,58,62,60,65,68,66,68]}
+    ]
+  });
+
+  const teamChart = echarts.init(document.getElementById('teamChart'));
+  teamChart.setOption({
+    grid:{left:90,right:50,top:10,bottom:20},
+    tooltip:{trigger:'axis',backgroundColor:'#fff',borderColor:'#E2E8F0',textStyle:{color:'#1E293B',fontSize:12}},
+    xAxis:{type:'value',show:false,max:100},
+    yAxis:{type:'category',data:['高危早期干预组','控糖先锋组','术后康复组','心脑血管组','减重干预组','老年慢病组','亚健康调理组','呼吸慢病组'],axisLine:{show:false},axisTick:{show:false},axisLabel:{color:'#334155',fontSize:12}},
+    series:[{
+      type:'bar',
+      data:[94,91,88,86,82,78,76,72],
+      barWidth:14,
+      itemStyle:{
+        color:(p)=>{
+          const colors=['#EF4444','#3B82F6','#10B981','#8B5CF6','#0F766E','#F59E0B','#06B6D4','#84CC16'];
+          return colors[p.dataIndex];
+        },
+        borderRadius:[0,7,7,0]
+      },
+      label:{show:true,position:'right',color:'#475569',fontSize:11,fontWeight:600,formatter:'{c}%'}
+    }]
+  });
+
+  window.addEventListener('resize',()=>{trendChart.resize();teamChart.resize();});
+</script>
+</body>
+</html>

@@ -25,6 +25,15 @@
         ORDER BY id DESC
     </select>
 
+    <select id="listByPrimaryCareManager" resultType="com.healix.core.care.domain.CareTeam">
+        SELECT <include refid="cols"/>
+        FROM care_team
+        WHERE org_id = #{orgId}
+          AND is_deleted = 0
+          AND primary_care_manager_staff_id = #{staffId}
+        ORDER BY name ASC, id ASC
+    </select>
+
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO care_team(
             id, tenant_id, org_id, team_code, name,

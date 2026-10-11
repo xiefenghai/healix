@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.assessment.mapper.PeopleAssessmentSnapshotMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, kind, engine_code, disease_code,
+        rule_pack_version, status, level, score, probability,
+        result_json, input_snapshot_json, trigger_source,
+        assessed_at, assessed_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_assessment_snapshot(
+            id, tenant_id, people_id, kind, engine_code, disease_code,
+            rule_pack_version, status, level, score, probability,
+            result_json, input_snapshot_json, trigger_source,
+            assessed_at, assessed_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{kind}, #{engineCode}, #{diseaseCode},
+            #{rulePackVersion}, #{status}, #{level}, #{score}, #{probability},
+            #{resultJson}, #{inputSnapshotJson}, #{triggerSource},
+            #{assessedAt}, #{assessedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="findById" resultType="com.healix.core.assessment.domain.PeopleAssessmentSnapshot">
+        SELECT <include refid="cols"/>
+        FROM people_assessment_snapshot
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <!-- 各 engine 最新一条：MySQL 8 窗口；若环境无窗口可用则应用层分组亦可 -->
+    <select id="listLatestByPeople" resultType="com.healix.core.assessment.domain.PeopleAssessmentSnapshot">
+        SELECT <include refid="cols"/>
+        FROM (
+            SELECT t.*,
+                   ROW_NUMBER() OVER (PARTITION BY engine_code ORDER BY assessed_at DESC, pk_id DESC) AS rn
+            FROM people_assessment_snapshot t
+            WHERE t.tenant_id = #{tenantId}
+              AND t.people_id = #{peopleId}
+              AND t.is_deleted = 0
+        ) x
+        WHERE x.rn = 1
+        ORDER BY x.engine_code
+    </select>
+
+    <select id="listHistory" resultType="com.healix.core.assessment.domain.PeopleAssessmentSnapshot">
+        SELECT <include refid="cols"/>
+        FROM people_assessment_snapshot
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="engineCode != null and engineCode != ''">
+          AND engine_code = #{engineCode}
+        </if>
+        ORDER BY assessed_at DESC, pk_id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countHistory" resultType="long">
+        SELECT COUNT(1)
+        FROM people_assessment_snapshot
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="engineCode != null and engineCode != ''">
+          AND engine_code = #{engineCode}
+        </if>
+    </select>
+</mapper>

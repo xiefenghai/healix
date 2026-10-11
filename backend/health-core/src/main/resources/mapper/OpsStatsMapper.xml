@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.opsstats.mapper.OpsStatsMapper">
+
+    <!-- 办结归属人：优先 done_by，否则 assignee -->
+    <sql id="doneOwnerExpr">
+        COALESCE(t.done_by_staff_id, t.assignee_staff_id)
+    </sql>
+
+    <sql id="staffInTeam">
+        SELECT ctm.staff_id
+        FROM care_team_member ctm
+        WHERE ctm.team_id = #{careTeamId}
+          AND ctm.member_type = 'STAFF'
+          AND ctm.is_deleted = 0
+          AND ctm.staff_id IS NOT NULL
+    </sql>
+
+    <sql id="doneOwnerFilter">
+        <if test="careTeamId != null and careTeamId != ''">
+            AND <include refid="doneOwnerExpr"/> IN (<include refid="staffInTeam"/>)
+        </if>
+        <if test="staffId != null and staffId != ''">
+            AND <include refid="doneOwnerExpr"/> = #{staffId}
+        </if>
+    </sql>
+
+    <sql id="openAssigneeFilter">
+        <if test="careTeamId != null and careTeamId != ''">
+            AND t.assignee_staff_id IN (<include refid="staffInTeam"/>)
+        </if>
+        <if test="staffId != null and staffId != ''">
+            AND t.assignee_staff_id = #{staffId}
+        </if>
+    </sql>
+
+    <select id="aggregateTasks" resultType="com.healix.core.opsstats.dto.OpsStatsTaskAggRow">
+        SELECT
+            COALESCE(SUM(CASE
+                WHEN t.status = 'DONE' AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to}
+                     <include refid="doneOwnerFilter"/>
+                THEN 1 ELSE 0 END), 0) AS doneCount,
+            COALESCE(SUM(CASE
+                WHEN t.status = 'DONE' AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to}
+                     AND t.due_at IS NOT NULL
+                     <include refid="doneOwnerFilter"/>
+                THEN 1 ELSE 0 END), 0) AS doneWithDueCount,
+            COALESCE(SUM(CASE
+                WHEN t.status = 'DONE' AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to}
+                     AND t.due_at IS NOT NULL AND t.done_at &lt;= t.due_at
+                     <include refid="doneOwnerFilter"/>
+                THEN 1 ELSE 0 END), 0) AS onTimeCount,
+            COALESCE(SUM(CASE
+                WHEN t.status = 'DONE' AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to}
+                     AND t.due_at IS NULL
+                     <include refid="doneOwnerFilter"/>
+                THEN 1 ELSE 0 END), 0) AS doneNoDueCount,
+            COALESCE(SUM(CASE
+                WHEN t.status = 'DONE' AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to}
+                     AND t.due_at IS NOT NULL AND t.done_at &gt; t.due_at
+                     <include refid="doneOwnerFilter"/>
+                THEN 1 ELSE 0 END), 0) AS lateDoneCount,
+            COALESCE(SUM(CASE
+                WHEN t.status = 'OPEN'
+                     <include refid="openAssigneeFilter"/>
+                THEN 1 ELSE 0 END), 0) AS openCount,
+            COALESCE(SUM(CASE
+                WHEN t.status = 'OPEN' AND t.due_at IS NOT NULL AND t.due_at &lt; #{now}
+                     <include refid="openAssigneeFilter"/>
+                THEN 1 ELSE 0 END), 0) AS overdueOpenCount,
+            COALESCE(SUM(CASE
+                WHEN t.status IN ('CANCELLED', 'EXPIRED')
+                     AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to}
+                     <include refid="doneOwnerFilter"/>
+                THEN 1 ELSE 0 END), 0) AS cancelledOrExpiredCount
+        FROM workspace_task t
+        WHERE t.org_id = #{orgId}
+          AND t.is_deleted = 0
+          AND (
+                t.status = 'OPEN'
+             OR (t.status = 'DONE' AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to})
+             OR (t.status IN ('CANCELLED', 'EXPIRED') AND t.done_at &gt;= #{from} AND t.done_at &lt; #{to})
+          )
+    </select>
+
+    <select id="seriesByDay" resultType="com.healix.core.opsstats.dto.OpsStatsDayAggRow">
+        SELECT
+            DATE(t.done_at) AS statsDay,
+            COUNT(1) AS doneCount,
+            SUM(CASE WHEN t.due_at IS NOT NULL THEN 1 ELSE 0 END) AS doneWithDueCount,
+            SUM(CASE WHEN t.due_at IS NOT NULL AND t.done_at &lt;= t.due_at THEN 1 ELSE 0 END) AS onTimeCount
+        FROM workspace_task t
+        WHERE t.org_id = #{orgId}
+          AND t.is_deleted = 0
+          AND t.status = 'DONE'
+          AND t.done_at &gt;= #{from}
+          AND t.done_at &lt; #{to}
+          <include refid="doneOwnerFilter"/>
+        GROUP BY DATE(t.done_at)
+        ORDER BY statsDay ASC
+    </select>
+
+    <select id="doneByType" resultType="com.healix.core.opsstats.dto.OpsStatsTypeSliceDto">
+        SELECT
+            t.task_type AS taskType,
+            COUNT(1) AS doneCount
+        FROM workspace_task t
+        WHERE t.org_id = #{orgId}
+          AND t.is_deleted = 0
+          AND t.status = 'DONE'
+          AND t.done_at &gt;= #{from}
+          AND t.done_at &lt; #{to}
+          <include refid="doneOwnerFilter"/>
+        GROUP BY t.task_type
+        ORDER BY doneCount DESC, t.task_type ASC
+    </select>
+
+    <select id="doneByStaff" resultType="com.healix.core.opsstats.dto.OpsStatsStaffAggRow">
+        SELECT
+            <include refid="doneOwnerExpr"/> AS staffId,
+            MAX(sp.display_name) AS staffName,
+            COUNT(1) AS doneCount,
+            SUM(CASE WHEN t.due_at IS NOT NULL THEN 1 ELSE 0 END) AS doneWithDueCount,
+            SUM(CASE WHEN t.due_at IS NOT NULL AND t.done_at &lt;= t.due_at THEN 1 ELSE 0 END) AS onTimeCount,
+            0 AS overdueOpenCount,
+            0 AS followupDoneCount
+        FROM workspace_task t
+        LEFT JOIN staff_profile sp ON sp.id = <include refid="doneOwnerExpr"/> AND sp.is_deleted = 0
+        WHERE t.org_id = #{orgId}
+          AND t.is_deleted = 0
+          AND t.status = 'DONE'
+          AND t.done_at &gt;= #{from}
+          AND t.done_at &lt; #{to}
+          AND <include refid="doneOwnerExpr"/> IS NOT NULL
+          <if test="careTeamId != null and careTeamId != ''">
+              AND <include refid="doneOwnerExpr"/> IN (<include refid="staffInTeam"/>)
+          </if>
+        GROUP BY <include refid="doneOwnerExpr"/>
+        ORDER BY doneCount DESC, staffId ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="overdueByStaff" resultType="com.healix.core.opsstats.dto.OpsStatsStaffAggRow">
+        SELECT
+            t.assignee_staff_id AS staffId,
+            MAX(sp.display_name) AS staffName,
+            0 AS doneCount,
+            0 AS doneWithDueCount,
+            0 AS onTimeCount,
+            COUNT(1) AS overdueOpenCount,
+            0 AS followupDoneCount
+        FROM workspace_task t
+        LEFT JOIN staff_profile sp ON sp.id = t.assignee_staff_id AND sp.is_deleted = 0
+        WHERE t.org_id = #{orgId}
+          AND t.is_deleted = 0
+          AND t.status = 'OPEN'
+          AND t.due_at IS NOT NULL
+          AND t.due_at &lt; #{now}
+          AND t.assignee_staff_id IS NOT NULL
+          <if test="careTeamId != null and careTeamId != ''">
+              AND t.assignee_staff_id IN (<include refid="staffInTeam"/>)
+          </if>
+        GROUP BY t.assignee_staff_id
+    </select>
+
+    <select id="overdueUnassigned" resultType="long">
+        SELECT COUNT(1)
+        FROM workspace_task t
+        WHERE t.org_id = #{orgId}
+          AND t.is_deleted = 0
+          AND t.status = 'OPEN'
+          AND t.due_at IS NOT NULL
+          AND t.due_at &lt; #{now}
+          AND t.assignee_staff_id IS NULL
+          <if test="careTeamId != null and careTeamId != ''">
+              AND 1 = 0
+          </if>
+    </select>
+
+    <select id="followupDoneByStaff" resultType="com.healix.core.opsstats.dto.OpsStatsStaffAggRow">
+        SELECT
+            f.completed_by_staff_id AS staffId,
+            MAX(sp.display_name) AS staffName,
+            0 AS doneCount,
+            0 AS doneWithDueCount,
+            0 AS onTimeCount,
+            0 AS overdueOpenCount,
+            COUNT(1) AS followupDoneCount
+        FROM followup_record f
+        LEFT JOIN staff_profile sp ON sp.id = f.completed_by_staff_id AND sp.is_deleted = 0
+        WHERE f.org_id = #{orgId}
+          AND f.is_deleted = 0
+          AND f.status = 'DONE'
+          AND f.completed_at &gt;= #{from}
+          AND f.completed_at &lt; #{to}
+          AND f.completed_by_staff_id IS NOT NULL
+          <if test="careTeamId != null and careTeamId != ''">
+              AND f.completed_by_staff_id IN (
+                  SELECT ctm.staff_id FROM care_team_member ctm
+                  WHERE ctm.team_id = #{careTeamId}
+                    AND ctm.member_type = 'STAFF'
+                    AND ctm.is_deleted = 0
+                    AND ctm.staff_id IS NOT NULL
+              )
+          </if>
+        GROUP BY f.completed_by_staff_id
+    </select>
+
+    <select id="countFollowupDone" resultType="long">
+        SELECT COUNT(1)
+        FROM followup_record f
+        WHERE f.org_id = #{orgId}
+          AND f.is_deleted = 0
+          AND f.status = 'DONE'
+          AND f.completed_at &gt;= #{from}
+          AND f.completed_at &lt; #{to}
+          <if test="careTeamId != null and careTeamId != ''">
+              AND f.completed_by_staff_id IN (
+                  SELECT ctm.staff_id FROM care_team_member ctm
+                  WHERE ctm.team_id = #{careTeamId}
+                    AND ctm.member_type = 'STAFF'
+                    AND ctm.is_deleted = 0
+                    AND ctm.staff_id IS NOT NULL
+              )
+          </if>
+          <if test="staffId != null and staffId != ''">
+              AND f.completed_by_staff_id = #{staffId}
+          </if>
+    </select>
+
+    <select id="countPatientRequestFollowup" resultType="long">
+        SELECT COUNT(1)
+        FROM followup_record f
+        WHERE f.org_id = #{orgId}
+          AND f.is_deleted = 0
+          AND f.source = 'PATIENT_REQUEST'
+          AND (
+                (f.status = 'DONE' AND f.completed_at &gt;= #{from} AND f.completed_at &lt; #{to})
+             OR (f.status = 'OPEN' AND f.gmt_created &gt;= #{from} AND f.gmt_created &lt; #{to})
+          )
+          <if test="careTeamId != null and careTeamId != ''">
+              AND COALESCE(f.completed_by_staff_id, f.assignee_staff_id) IN (
+                  SELECT ctm.staff_id FROM care_team_member ctm
+                  WHERE ctm.team_id = #{careTeamId}
+                    AND ctm.member_type = 'STAFF'
+                    AND ctm.is_deleted = 0
+                    AND ctm.staff_id IS NOT NULL
+              )
+          </if>
+          <if test="staffId != null and staffId != ''">
+              AND COALESCE(f.completed_by_staff_id, f.assignee_staff_id) = #{staffId}
+          </if>
+    </select>
+
+    <select id="countReportPublished" resultType="long">
+        SELECT COUNT(1)
+        FROM health_report r
+        WHERE r.org_id = #{orgId}
+          AND r.is_deleted = 0
+          AND r.status = 'PUBLISHED'
+          AND r.published_at &gt;= #{from}
+          AND r.published_at &lt; #{to}
+          <if test="careTeamId != null and careTeamId != ''">
+              AND r.published_by_staff_id IN (
+                  SELECT ctm.staff_id FROM care_team_member ctm
+                  WHERE ctm.team_id = #{careTeamId}
+                    AND ctm.member_type = 'STAFF'
+                    AND ctm.is_deleted = 0
+                    AND ctm.staff_id IS NOT NULL
+              )
+          </if>
+          <if test="staffId != null and staffId != ''">
+              AND r.published_by_staff_id = #{staffId}
+          </if>
+    </select>
+
+    <select id="listStaffIdsInCareTeam" resultType="string">
+        SELECT ctm.staff_id
+        FROM care_team_member ctm
+        WHERE ctm.team_id = #{careTeamId}
+          AND ctm.member_type = 'STAFF'
+          AND ctm.is_deleted = 0
+          AND ctm.staff_id IS NOT NULL
+    </select>
+
+    <select id="listCareTeamIdsForStaff" resultType="string">
+        SELECT DISTINCT ctm.team_id
+        FROM care_team_member ctm
+        WHERE ctm.org_id = #{orgId}
+          AND ctm.staff_id = #{staffId}
+          AND ctm.member_type = 'STAFF'
+          AND ctm.is_deleted = 0
+    </select>
+</mapper>

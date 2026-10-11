@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.diet.mapper.DietMealMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, meal_date, meal_type, eaten_at, source,
+        energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, estimated_kcal_ratio,
+        quality_level, flags_json, note, staff_comment, comment_staff_id, commented_at,
+        recorded_by_people_id, recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO diet_meal(
+            id, tenant_id, people_id, meal_date, meal_type, eaten_at, source,
+            energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, estimated_kcal_ratio,
+            quality_level, flags_json, note, recorded_by_people_id, recorded_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{mealDate}, #{mealType}, #{eatenAt}, #{source},
+            #{energyKcal}, #{carbG}, #{proteinG}, #{fatG}, #{fiberG}, #{sodiumMg}, #{estimatedKcalRatio},
+            #{qualityLevel}, #{flagsJson}, #{note}, #{recordedByPeopleId}, #{recordedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE diet_meal
+        SET meal_date = #{mealDate},
+            meal_type = #{mealType},
+            eaten_at = #{eatenAt},
+            source = #{source},
+            energy_kcal = #{energyKcal},
+            carb_g = #{carbG},
+            protein_g = #{proteinG},
+            fat_g = #{fatG},
+            fiber_g = #{fiberG},
+            sodium_mg = #{sodiumMg},
+            estimated_kcal_ratio = #{estimatedKcalRatio},
+            quality_level = #{qualityLevel},
+            flags_json = #{flagsJson},
+            note = #{note},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateComment">
+        UPDATE diet_meal
+        SET staff_comment = #{staffComment},
+            comment_staff_id = #{commentStaffId},
+            commented_at = #{commentedAt},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE diet_meal
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.diet.domain.DietMeal">
+        SELECT <include refid="cols"/>
+        FROM diet_meal
+        WHERE id = #{id}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleRange" resultType="com.healix.core.diet.domain.DietMeal">
+        SELECT <include refid="cols"/>
+        FROM diet_meal
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND meal_date &gt;= #{from}
+          AND meal_date &lt;= #{to}
+          AND is_deleted = 0
+        ORDER BY meal_date ASC,
+                 FIELD(meal_type, 'BREAKFAST', 'LUNCH', 'DINNER', 'SNACK'),
+                 eaten_at ASC,
+                 gmt_created ASC
+    </select>
+</mapper>

@@ -83,16 +83,6 @@ public class OrganizationService {
         return invite;
     }
 
-    public OrgInviteCode requireValidInvite(String code) {
-        OrgInviteCode invite = orgInviteCodeMapper.findByCode(code.trim().toUpperCase(Locale.ROOT));
-        if (invite == null || invite.getEnabled() == null || invite.getEnabled() != 1) {
-            throw new BusinessException("邀请码无效");
-        }
-        if (invite.getExpireAt() != null && invite.getExpireAt().isBefore(LocalDateTime.now())) {
-            throw new BusinessException("邀请码已过期");
-        }
-        return invite;
-    }
 
     private String generateCode() {
         StringBuilder sb = new StringBuilder(8);

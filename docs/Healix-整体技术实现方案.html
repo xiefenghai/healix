@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Healix · 整体技术实现方案</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0c1218;
+      --bg-elev: #131c26;
+      --ink: #e8eef4;
+      --muted: #8b9aab;
+      --line: rgba(232, 238, 244, 0.1);
+      --accent: #2ec4a6;
+      --accent-dim: rgba(46, 196, 166, 0.14);
+      --warn: #f0b429;
+      --card: #182330;
+      --radius: 14px;
+      --font: "Outfit", system-ui, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+      --sidebar: 240px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background:
+        radial-gradient(1100px 600px at 8% -6%, rgba(46, 196, 166, 0.11), transparent 55%),
+        radial-gradient(900px 520px at 100% 40%, rgba(56, 120, 200, 0.08), transparent 50%),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--font);
+      line-height: 1.55;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      max-width: 1280px;
+      margin: 0 auto;
+      min-height: 100vh;
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .toc { display: none; }
+    }
+
+    .toc {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow: auto;
+      padding: 1.5rem 1rem 2rem 1.25rem;
+      border-right: 1px solid var(--line);
+      background: rgba(12, 18, 24, 0.72);
+      backdrop-filter: blur(8px);
+    }
+    .toc .brand {
+      font-size: .72rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: .4rem;
+    }
+    .toc h1 {
+      font-size: 1.05rem;
+      font-weight: 650;
+      letter-spacing: -.02em;
+      margin-bottom: 1.1rem;
+      line-height: 1.3;
+    }
+    .toc nav { display: grid; gap: .15rem; }
+    .toc a {
+      color: var(--muted);
+      font-size: .82rem;
+      padding: .35rem .5rem;
+      border-radius: 8px;
+      display: block;
+      text-decoration: none;
+    }
+    .toc a:hover, .toc a.active {
+      color: var(--ink);
+      background: var(--accent-dim);
+      text-decoration: none;
+    }
+    .toc .meta {
+      margin-top: 1.25rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      font-size: .75rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      line-height: 1.6;
+    }
+
+    .main {
+      padding: clamp(1.5rem, 3.5vw, 2.75rem) clamp(1.25rem, 4vw, 3rem) 4rem;
+      max-width: 920px;
+    }
+
+    .hero {
+      margin-bottom: 2.25rem;
+      padding-bottom: 1.75rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero .brand {
+      font-size: .8rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: .65rem;
+    }
+    .hero h1 {
+      font-size: clamp(1.85rem, 3.8vw, 2.65rem);
+      font-weight: 700;
+      letter-spacing: -.02em;
+      line-height: 1.15;
+      max-width: 18ch;
+    }
+    .hero .lead {
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 48ch;
+    }
+    .pill-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.2rem; }
+    .pill {
+      border: 1px solid var(--line);
+      background: var(--accent-dim);
+      padding: .35rem .75rem;
+      border-radius: 999px;
+      font-size: .85rem;
+    }
+
+    .meta-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1.25rem;
+      font-size: .88rem;
+    }
+    .meta-table th, .meta-table td {
+      text-align: left;
+      padding: .55rem .7rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    .meta-table th {
+      width: 5.5rem;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: .75rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .note {
+      margin-top: 1.1rem;
+      padding: .85rem 1rem;
+      border-left: 3px solid var(--accent);
+      background: var(--card);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      color: var(--muted);
+      font-size: .9rem;
+    }
+
+    section.doc {
+      margin-top: 2.5rem;
+      scroll-margin-top: 1.25rem;
+    }
+    section.doc > h2 {
+      font-size: clamp(1.35rem, 2.5vw, 1.75rem);
+      font-weight: 650;
+      letter-spacing: -.02em;
+      margin-bottom: 1rem;
+      padding-bottom: .55rem;
+      border-bottom: 1px solid var(--line);
+    }
+    h3 {
+      font-size: 1.08rem;
+      font-weight: 600;
+      margin: 1.5rem 0 .65rem;
+    }
+    h4 {
+      font-size: .95rem;
+      font-weight: 600;
+      margin: 1.15rem 0 .45rem;
+      color: var(--ink);
+    }
+    p { color: var(--muted); margin: .55rem 0; font-size: .95rem; }
+    ul, ol {
+      color: var(--muted);
+      margin: .45rem 0 .7rem 1.15rem;
+      font-size: .95rem;
+    }
+    li { margin: .28rem 0; }
+    li::marker { color: var(--accent); }
+    strong { color: var(--ink); font-weight: 600; }
+    code {
+      font-family: var(--mono);
+      font-size: .82em;
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: .08rem .35rem;
+      border-radius: 5px;
+    }
+
+    table.data {
+      width: 100%;
+      border-collapse: collapse;
+      margin: .7rem 0 1rem;
+      font-size: .88rem;
+    }
+    table.data th, table.data td {
+      text-align: left;
+      padding: .58rem .7rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    table.data th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: .74rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      background: rgba(24, 35, 48, 0.55);
+    }
+    table.data td strong { color: var(--ink); }
+    .tag {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: .72rem;
+      padding: .1rem .38rem;
+      border-radius: 5px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .arch, .flow-box {
+      font-family: var(--mono);
+      font-size: clamp(.68rem, 1.15vw, .82rem);
+      line-height: 1.55;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.05rem 1.15rem;
+      white-space: pre;
+      overflow: auto;
+      color: #c9d6e2;
+      margin: .7rem 0 1rem;
+    }
+    .arch .hi { color: var(--accent); }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .85rem;
+      margin: .8rem 0;
+    }
+    @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+    }
+    .card h3 { margin-top: 0; font-size: 1rem; }
+    .card p, .card li { font-size: .88rem; }
+    .card ul { list-style: none; margin-left: 0; }
+    .card li::before { content: "·"; color: var(--accent); margin-right: .4rem; font-weight: 700; }
+
+    .kicker {
+      color: var(--warn);
+      font-size: .8rem;
+      font-weight: 500;
+      margin-bottom: .25rem;
+    }
+
+    /* —— 整体架构图 —— */
+    .arch-diagram {
+      margin: .85rem 0 1.35rem;
+      padding: 1.1rem 1rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: auto;
+    }
+    .arch-diagram .caption {
+      font-size: .78rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-bottom: .85rem;
+      letter-spacing: .02em;
+    }
+    .arch-layer {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: .7rem .75rem .8rem;
+      margin-bottom: .45rem;
+      background: rgba(19, 28, 38, 0.65);
+    }
+    .arch-layer.accent {
+      border-color: rgba(46, 196, 166, 0.35);
+      background: rgba(46, 196, 166, 0.06);
+    }
+    .arch-layer .layer-label {
+      font-size: .68rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: .55rem;
+    }
+    .arch-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      align-items: stretch;
+    }
+    .arch-node {
+      flex: 1 1 140px;
+      min-width: 120px;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: .55rem .7rem;
+    }
+    .arch-node.wide { flex: 1 1 100%; }
+    .arch-node.hi {
+      border-color: rgba(46, 196, 166, 0.4);
+      background: var(--accent-dim);
+    }
+    .arch-node .title {
+      font-size: .9rem;
+      font-weight: 600;
+      color: var(--ink);
+      line-height: 1.3;
+    }
+    .arch-node .sub {
+      margin-top: .28rem;
+      font-size: .75rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      line-height: 1.4;
+    }
+    .arch-node ul {
+      list-style: none;
+      margin: .35rem 0 0;
+      padding: 0;
+      font-size: .78rem;
+      color: var(--muted);
+    }
+    .arch-node li { margin: .15rem 0; }
+    .arch-node li::before {
+      content: "·";
+      color: var(--accent);
+      margin-right: .3rem;
+      font-weight: 700;
+    }
+    .arch-arrow {
+      display: flex;
+      justify-content: center;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: .85rem;
+      line-height: 1;
+      padding: .15rem 0 .35rem;
+      opacity: .85;
+    }
+    .arch-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .5rem;
+    }
+    @media (max-width: 640px) {
+      .arch-split { grid-template-columns: 1fr; }
+    }
+    .arch-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .55rem 1rem;
+      margin-top: .75rem;
+      padding-top: .7rem;
+      border-top: 1px solid var(--line);
+      font-size: .78rem;
+      color: var(--muted);
+    }
+    .arch-legend span::before {
+      content: "";
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      margin-right: .4rem;
+      vertical-align: middle;
+      background: var(--accent);
+    }
+    .arch-legend .muted::before { background: var(--muted); opacity: .5; }
+
+    footer.doc-foot {
+      margin-top: 3rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .82rem;
+      font-family: var(--mono);
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="toc">
+      <div class="brand">Healix Docs</div>
+      <h1>整体技术实现方案</h1>
+      <nav>
+        <a href="#s0">0 · 摘要</a>
+        <a href="#s1">1 · 整体架构</a>
+        <a href="#s2">2 · 数据库设计</a>
+        <a href="#s3">3 · Agent 架构</a>
+        <a href="#s4">4 · 业务闭环</a>
+        <a href="#s5">5 · 部署配置</a>
+        <a href="#s6">6 · 演进建议</a>
+        <a href="#s7">7 · 相关文档</a>
+        <a href="#s8">8 · 修订记录</a>
+      </nav>
+      <div class="meta">v1.0 · 2026-09-24<br />组内研发 / 技术评审</div>
+    </aside>
+
+    <main class="main">
+      <header class="hero">
+        <div class="brand">Architecture · Database · Agent</div>
+        <h1>整体技术实现方案</h1>
+        <p class="lead">当前仓库落地口径：Modulith 单体、行级多租户、CARE_COPILOT 人在环。</p>
+        <div class="pill-row">
+          <span class="pill">整体架构</span>
+          <span class="pill">数据库设计</span>
+          <span class="pill">Agent 实现</span>
+        </div>
+        <table class="meta-table">
+          <tr><th>版本</th><td><strong>v1.0</strong></td></tr>
+          <tr><th>日期</th><td>2026-09-24</td></tr>
+          <tr><th>依据</th><td>落地代码 + <code>SaaS架构.md</code> / <code>数据模型.md</code> / Agent 专项文档</td></tr>
+          <tr><th>范围</th><td>整体架构 · 数据库设计 · Agent 架构与实现</td></tr>
+          <tr><th>读者</th><td>组内研发 / 技术评审</td></tr>
+        </table>
+        <p class="note">描述<strong>当前已落地</strong>的实现口径，不是远期愿望清单。产品演示见 <a href="./Healix-产品与技术介绍.html">Healix-产品与技术介绍.html</a>。</p>
+      </header>
+
+      <!-- 0 -->
+      <section class="doc" id="s0">
+        <h2>0. 摘要</h2>
+        <p>Healix 是面向医疗机构的多租户健管 SaaS：</p>
+        <ul>
+          <li><strong>三角色</strong>：C 患者 / B 健管（含租户管理）/ Ops 平台，分入口、分 JWT <code>aud</code>。</li>
+          <li><strong>后端形态</strong>：Spring Boot <strong>Modulith 单体</strong>（<code>health-app</code> 统一暴露 API），领域与智能体分模块。</li>
+          <li><strong>B 端主入口</strong>：智能驾驶舱（对话驱动）+ 传统菜单底座。</li>
+          <li><strong>AI 原则</strong>：起草与预填；人确认后才写业务库（方案 publish、OCR 确认入库、任务/随访提交）。</li>
+        </ul>
+        <pre class="arch"><span class="hi">多租户 SaaS</span>
+ ├── C    aud=c     frontend-user
+ ├── B    aud=b     frontend-admin
+ └── Ops  aud=ops   （同壳分菜单）
+          │
+          ▼
+ Spring Boot 3.3 / Java 21 · health-app
+ ├── health-common   JWT · 证件加密 · 工具
+ ├── health-core     档案·任务·随访·方案·观测…
+ └── health-agent    CARE_COPILOT · Skill · SSE
+          │
+          ▼
+ MySQL · Redis · DeepSeek（Spring AI）</pre>
+      </section>
+
+      <!-- 1 -->
+      <section class="doc" id="s1">
+        <h2>1. 整体架构设计</h2>
+
+        <h3>1.0 架构总览</h3>
+        <p>自上而下：三角色客户端 → 分 aud 的统一 API → Modulith 单体（app / agent / core / common）→ 数据与模型基础设施。</p>
+
+        <figure class="arch-diagram" aria-label="Healix 整体架构图">
+          <div class="caption">Healix · Modulith 整体架构</div>
+
+          <div class="arch-layer">
+            <div class="layer-label">Clients · 三角色入口</div>
+            <div class="arch-row">
+              <div class="arch-node">
+                <div class="title">C · 患者</div>
+                <div class="sub">frontend-user · H5</div>
+                <ul>
+                  <li>激活入组 / 档案</li>
+                  <li>体征与健康数据</li>
+                  <li>Patient Agent（另线）</li>
+                </ul>
+              </div>
+              <div class="arch-node hi">
+                <div class="title">B · 健管 / 租户</div>
+                <div class="sub">frontend-admin · Vue</div>
+                <ul>
+                  <li>智能驾驶舱（主入口）</li>
+                  <li>任务 / 随访 / 方案</li>
+                  <li>租户管理建机构</li>
+                </ul>
+              </div>
+              <div class="arch-node">
+                <div class="title">Ops · 平台</div>
+                <div class="sub">同壳分菜单</div>
+                <ul>
+                  <li>开租户 / 配额</li>
+                  <li>审计与检索</li>
+                  <li>aud=ops JWT</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-arrow">▼ HTTPS · JWT</div>
+
+          <div class="arch-layer">
+            <div class="layer-label">API · 统一入口 · 分 aud</div>
+            <div class="arch-row">
+              <div class="arch-node">
+                <div class="title">/api/c/v1/**</div>
+                <div class="sub">aud=c</div>
+              </div>
+              <div class="arch-node hi">
+                <div class="title">/api/b/v1/**</div>
+                <div class="sub">aud=b · tenant / org / staff</div>
+              </div>
+              <div class="arch-node">
+                <div class="title">/api/ops/v1/**</div>
+                <div class="sub">aud=ops</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-arrow">▼</div>
+
+          <div class="arch-layer accent">
+            <div class="layer-label">health-app · Spring Boot 3.3 / Java 21</div>
+            <div class="arch-row">
+              <div class="arch-node wide">
+                <div class="title">Controller · Security · SchemaEnsure</div>
+                <div class="sub">JWT 解析 · aud 校验 · 当前租户/机构/员工注入 · SSE 写出</div>
+              </div>
+            </div>
+            <div class="arch-arrow" style="padding:.45rem 0 .35rem">▼ 模块调用</div>
+            <div class="arch-split">
+              <div class="arch-node hi">
+                <div class="title">health-agent</div>
+                <div class="sub">CARE_COPILOT</div>
+                <ul>
+                  <li>StaffAgentGateway</li>
+                  <li>Skill 路由 · SSE</li>
+                  <li>LLM / OCR / 动作卡</li>
+                  <li>会话记忆（不写业务库）</li>
+                </ul>
+              </div>
+              <div class="arch-node hi">
+                <div class="title">health-core</div>
+                <div class="sub">领域权威写入</div>
+                <ul>
+                  <li>档案 · 观测 · 方案</li>
+                  <li>任务 · 随访 · 报告</li>
+                  <li>驾驶舱 · 沟通</li>
+                  <li>publish / 确认入库 / 办结</li>
+                </ul>
+              </div>
+            </div>
+            <div class="arch-arrow" style="padding:.45rem 0 .35rem">▼</div>
+            <div class="arch-row">
+              <div class="arch-node wide">
+                <div class="title">health-common</div>
+                <div class="sub">EntityMeta · JWT · IdCard 加解密 · 通用模型 / 异常</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-arrow">▼</div>
+
+          <div class="arch-layer">
+            <div class="layer-label">Infrastructure</div>
+            <div class="arch-row">
+              <div class="arch-node">
+                <div class="title">MySQL 8</div>
+                <div class="sub">业务库 · 行级 tenant_id</div>
+              </div>
+              <div class="arch-node">
+                <div class="title">Redis</div>
+                <div class="sub">会话 / 锁 / 缓存</div>
+              </div>
+              <div class="arch-node">
+                <div class="title">DeepSeek · Vision</div>
+                <div class="sub">Spring AI · OCR</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-legend">
+            <span>高亮：B 主路径与 Agent / Core 落库闸门</span>
+            <span class="muted">原则：LLM 起草 → 人确认 → core 写库</span>
+          </div>
+        </figure>
+
+        <h3>1.1 设计目标</h3>
+        <table class="data">
+          <thead><tr><th>#</th><th>目标</th><th>落地方式</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>多租户可运营</td><td>行级 <code>tenant_id</code> + 机构工作上下文</td></tr>
+            <tr><td>2</td><td>账号与权限隔离</td><td>C/B/Ops 三套账号 + JWT <code>aud</code></td></tr>
+            <tr><td>3</td><td>业务可演进</td><td>Modulith 模块边界，先单体后按需拆</td></tr>
+            <tr><td>4</td><td>AI 可追责</td><td>模型不直写业务表；动作卡调现有 B API</td></tr>
+            <tr><td>5</td><td>对话即工作台</td><td>驾驶舱 SSE + Skill 路由 + 动作卡</td></tr>
+          </tbody>
+        </table>
+
+        <h3>1.2 仓库与模块</h3>
+        <table class="data">
+          <thead><tr><th>路径</th><th>职责</th></tr></thead>
+          <tbody>
+            <tr><td><code>backend/health-common</code></td><td>通用模型、<code>EntityMeta</code>、JWT、身份证加解密、<code>IdCardUtil</code></td></tr>
+            <tr><td><code>backend/health-core</code></td><td><strong>领域核心</strong>：租户/机构/员工、档案、观测、方案、任务、随访、报告、沟通、驾驶舱…</td></tr>
+            <tr><td><code>backend/health-agent</code></td><td><strong>智能体</strong>：Gateway、Skill、LLM、OCR、会话记忆、SSE</td></tr>
+            <tr><td><code>backend/health-app</code></td><td>Boot 启动、Controller、Schema 保障、安全过滤器</td></tr>
+            <tr><td><code>frontend-admin</code></td><td>B + Ops 同壳（Vue）</td></tr>
+            <tr><td><code>frontend-user</code></td><td>C 端 H5</td></tr>
+          </tbody>
+        </table>
+        <p><strong>技术栈：</strong> Java 21 · Spring Boot 3.3 · MyBatis · JWT · Spring AI / DeepSeek · Redis · Vue 管理端。</p>
+
+        <h3>1.3 运行时分层</h3>
+        <pre class="arch">┌─────────────────────────────────────────────────────────────┐
+│  Controller（health-app）                                     │
+│  BAgentController / BWorkspace* / BFollowup* / …            │
+├─────────────────────────────────────────────────────────────┤
+│  Security：JWT 解析 · aud 校验 · 当前租户/机构/员工注入        │
+├─────────────────────────────────────────────────────────────┤
+│  Agent 网关（可选）          │  领域服务（health-core）         │
+│  StaffAgentGateway          │  OrgWorkspace / WorkspaceTask │
+│  Skills + LlmClient         │  Followup / CarePlan / Lab…   │
+├─────────────────────────────┴───────────────────────────────┤
+│  Mapper / MyBatis XML · Redis · 外部 LLM / Vision           │
+└─────────────────────────────────────────────────────────────┘</pre>
+
+        <h3>1.4 多租户与机构模型</h3>
+        <table class="data">
+          <thead><tr><th>概念</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><strong>租户 tenant</strong></td><td>SaaS 客户边界；患者 <code>people</code> 归属单租户</td></tr>
+            <tr><td><strong>机构 organization</strong></td><td>B 端工作边界；员工切换 <code>currentOrgId</code></td></tr>
+            <tr><td><strong>健管组 care_team</strong></td><td>机构内网格；成员含 STAFF / PATIENT</td></tr>
+            <tr><td><strong>入组 membership</strong></td><td><code>people_org_membership</code>；ACTIVE 才在机构患者列表可见</td></tr>
+          </tbody>
+        </table>
+        <h4>隔离约定</h4>
+        <table class="data">
+          <thead><tr><th>数据类型</th><th>隔离</th></tr></thead>
+          <tbody>
+            <tr><td>体征 / 检验 / 检查报告</td><td><strong>租户共享</strong>（同租户机构可见历史）</td></tr>
+            <tr><td>工作台任务 / 随访记录</td><td><strong>机构隔离</strong>（<code>org_id</code>）</td></tr>
+            <tr><td>Agent 会话（B 健管）</td><td>租户 + 员工 +（可选）患者 / 机构会话</td></tr>
+            <tr><td>C 端患者私聊</td><td>与 CARE_COPILOT <strong>记忆隔离</strong>（双 Agent）</td></tr>
+          </tbody>
+        </table>
+
+        <h3>1.5 认证与 API 分区</h3>
+        <table class="data">
+          <thead><tr><th>入口</th><th>前缀</th><th>Token</th></tr></thead>
+          <tbody>
+            <tr><td>C</td><td><code>/api/c/v1/**</code></td><td><code>aud=c</code></td></tr>
+            <tr><td>B</td><td><code>/api/b/v1/**</code></td><td><code>aud=b</code>，带 tenantId / staffId / currentOrgId</td></tr>
+            <tr><td>Ops</td><td><code>/api/ops/v1/**</code></td><td><code>aud=ops</code></td></tr>
+            <tr><td>公开</td><td><code>/api/public/v1/**</code></td><td>极少</td></tr>
+          </tbody>
+        </table>
+        <p>管理端登录三分入口：<strong>平台超管 / 租户管理 / 机构工作台</strong>——菜单与 aud、角色绑定，互不串用。</p>
+
+        <h3>1.6 B 端主链路：智能驾驶舱</h3>
+        <pre class="flow-box">今日优先（CockpitService）
+    → 选患者 focus（档案完整度 / 依从 / OPEN 任务 / 待确认草稿）
+    → POST /api/b/v1/agent/chat/stream  （SSE）
+    → StaffAgentGateway 路由 Capability
+    → Skill 执行（可带 LLM / OCR / 工具）
+    → 回复 + AgentAction[] 落会话
+    → 前端动作卡 → 现有 B API 或 WorkspaceTaskFormDialog
+    → 人确认 → 业务表</pre>
+        <table class="data">
+          <thead><tr><th>会话</th><th>peopleId</th><th>能力约束</th></tr></thead>
+          <tbody>
+            <tr><td><strong>机构会话</strong></td><td>空</td><td>强制偏 <code>GENERAL_CHAT</code>；引导点人；不可直接方案/OCR 写库路径</td></tr>
+            <tr><td><strong>患者会话</strong></td><td>有</td><td>可方案 / OCR / 办结 / 报告点评</td></tr>
+          </tbody>
+        </table>
+
+        <h3>1.7 前端结构（B）</h3>
+        <ul>
+          <li>布局：<code>WorkspaceLayout</code> 侧栏（驾驶舱、工作台、患者管理、沟通、依从、报告、运营统计…）</li>
+          <li>驾驶舱：<code>CockpitView</code> 三栏 + Sheet 抽屉复用患者详情</li>
+          <li>代理：Vite 将 <code>/api</code> 转到后端 <code>8080</code></li>
+        </ul>
+
+        <h3>1.8 为何 Modulith 不先拆微服务</h3>
+        <ul>
+          <li>用模块表达边界（core / agent / app），降低运维成本</li>
+          <li>Agent 强依赖领域服务与同一事务边界（办结、确认入库）</li>
+          <li>边界清晰后再按调用热点拆（例如 OCR/LLM 异步 worker）</li>
+        </ul>
+      </section>
+
+      <!-- 2 -->
+      <section class="doc" id="s2">
+        <h2>2. 数据库设计</h2>
+
+        <h3>2.1 通用约定</h3>
+        <table class="data">
+          <thead><tr><th>约定</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>库</td><td>MySQL 8.0 / <code>utf8mb4</code></td></tr>
+            <tr><td>双主键</td><td><code>pk_id</code> BIGINT 自增；<code>id</code> VARCHAR(32) 雪花业务主键（UK）</td></tr>
+            <tr><td>外联</td><td><code>tenant_id</code> / <code>org_id</code> / <code>people_id</code> 等指向对方 <code>id</code></td></tr>
+            <tr><td>软删</td><td><code>is_deleted</code> + <code>gmt_deleted</code>（未删默认 <code>9999-12-31 23:59:59</code>）</td></tr>
+            <tr><td>时间</td><td><code>gmt_created</code> / <code>gmt_modified</code>；业务时刻 DATETIME</td></tr>
+            <tr><td>写入</td><td><code>EntityMeta.onCreate</code> / <code>onUpdate</code> / <code>onSoftDelete</code></td></tr>
+            <tr><td>Schema</td><td>主 DDL + <code>SchemaEnsureRunner</code> 启动保障</td></tr>
+          </tbody>
+        </table>
+
+        <h3>2.2 逻辑 ER（核心）</h3>
+        <pre class="arch">tenant 1───* organization
+                ├──* staff_org_binding *── staff_profile ── staff_account
+                ├──* care_team ──* care_team_member
+                └──* people_org_membership *── people_profile
+                            │                      ├──* people_identity
+                            │                      ├── people_basic_archive / disease_archive
+                            │                      └── people_care_assignment
+
+people_profile
+    ├──* vital_record / lab_report / exam_report / people_medication
+    ├──* care_plan ──* care_plan_version ──* care_plan_task
+    ├──* workspace_task ◄──► followup_record
+    ├──* health_report
+    ├──* care_chat_thread ──* care_chat_message
+    └──* agent_session ──* agent_message</pre>
+
+        <h3>2.3 域分组与关键表</h3>
+
+        <h4>（1）租户 / 组织 / 账号</h4>
+        <table class="data">
+          <thead><tr><th>表</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>tenant</code></td><td>租户</td></tr>
+            <tr><td><code>organization</code></td><td>机构</td></tr>
+            <tr><td><code>org_invite_code</code></td><td>机构邀请码</td></tr>
+            <tr><td><code>ops_account</code></td><td>Ops 登录</td></tr>
+            <tr><td><code>staff_account</code> / <code>staff_profile</code></td><td>B 登录与档案</td></tr>
+            <tr><td><code>staff_org_binding</code> / <code>staff_role_binding</code></td><td>机构范围 / 功能角色</td></tr>
+            <tr><td><code>people_account</code> / <code>people_profile</code></td><td>C 登录与患者主档</td></tr>
+            <tr><td><code>people_identity</code></td><td>证件（哈希 + 密文 + 脱敏）</td></tr>
+          </tbody>
+        </table>
+
+        <h4>（2）入组与健管网格</h4>
+        <table class="data">
+          <thead><tr><th>表</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>people_org_membership</code></td><td>入组；患者列表按 <code>joined_at</code> 倒序</td></tr>
+            <tr><td><code>people_care_assignment</code></td><td>主管机构 / 主管健管师</td></tr>
+            <tr><td><code>care_team</code> / <code>care_team_member</code></td><td>健管组</td></tr>
+            <tr><td><code>staff_patient_watch</code></td><td>员工重点关注</td></tr>
+          </tbody>
+        </table>
+
+        <h4>（3）档案与观测</h4>
+        <table class="data">
+          <thead><tr><th>表</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>people_basic_archive</code> / <code>people_disease_archive</code></td><td>基础/病种档案 JSON</td></tr>
+            <tr><td><code>vital_record</code></td><td>体征时序</td></tr>
+            <tr><td><code>lab_report</code> + <code>lab_result_item</code></td><td>检验</td></tr>
+            <tr><td><code>exam_report</code></td><td>检查</td></tr>
+            <tr><td><code>people_medication</code></td><td>用药与打卡</td></tr>
+            <tr><td><code>sys_dict</code> 等</td><td>字典（档案字段、检验项、药品…）</td></tr>
+          </tbody>
+        </table>
+
+        <h4>（4）管理方案</h4>
+        <table class="data">
+          <thead><tr><th>表</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>care_plan</code></td><td>方案头；ACTIVE 唯一语义在应用层保障</td></tr>
+            <tr><td><code>care_plan_draft</code></td><td>编辑中草稿</td></tr>
+            <tr><td><code>care_plan_version</code></td><td>版本；source 含 LLM / TEMPLATE</td></tr>
+            <tr><td><code>care_plan_task</code> / checkin</td><td>执行任务与打卡</td></tr>
+          </tbody>
+        </table>
+        <p class="note">生效闸门：AI/模板生成 → draft/version → <strong>员工 publish</strong> 才 ACTIVE。</p>
+
+        <h4>（5）工作台任务与随访</h4>
+        <div class="grid-2">
+          <div class="card">
+            <h3><code>workspace_task</code></h3>
+            <ul>
+              <li><code>task_type</code>：FOLLOW_UP / METRIC_ALERT / PLAN_NUDGE / …</li>
+              <li><code>biz_key</code> + 生成列 <code>open_dedup_key</code></li>
+              <li>OPEN 去重：同租户机构不重复</li>
+              <li>assignee 空=公共池；有值=个人池</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3><code>followup_record</code></h3>
+            <ul>
+              <li><code>record_type</code>：PERIODIC / METRIC_REVIEW / PLAN_NUDGE</li>
+              <li>OPEN（草稿）/ DONE / CANCELLED</li>
+              <li>关联 <code>workspace_task_id</code></li>
+              <li><code>content_json</code> 填单内容</li>
+            </ul>
+          </div>
+        </div>
+        <pre class="flow-box">创建/排期 → OPEN 任务 ↔ OPEN 随访
+   ├─ 填单「保存」→ 更新 content_json，状态仍 OPEN
+   ├─ 填单「提交」→ 随访 DONE + 任务 DONE
+   └─ 当场办结 → DONE，并关闭同人同 followupType 的 OPEN FOLLOW_UP</pre>
+
+        <h4>（6）报告 / 沟通 / 通知 / 评估</h4>
+        <table class="data">
+          <thead><tr><th>表</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>health_report</code></td><td>管理报告草稿/发布</td></tr>
+            <tr><td><code>care_chat_thread</code> / message</td><td>B↔C 沟通</td></tr>
+            <tr><td><code>notify_message</code> / delivery</td><td>站内提醒投递</td></tr>
+            <tr><td><code>people_assessment_snapshot</code></td><td>评估标签快照</td></tr>
+            <tr><td><code>adherence_daily_snapshot</code></td><td>依从日快照</td></tr>
+          </tbody>
+        </table>
+
+        <h4>（7）Agent 与审计</h4>
+        <table class="data">
+          <thead><tr><th>表</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>agent_session</code></td><td>agent_type：CARE_COPILOT / PATIENT</td></tr>
+            <tr><td><code>agent_message</code></td><td>轮次消息；助手可带 actions JSON</td></tr>
+            <tr><td><code>agent_interaction_log</code></td><td>交互审计摘要</td></tr>
+            <tr><td><code>audit_log</code></td><td>系统审计</td></tr>
+          </tbody>
+        </table>
+
+        <h4>（8）基础设施作业</h4>
+        <p><code>sys_job_def</code> / <code>sys_job_run</code> — 随访排期、依从扫描等。</p>
+
+        <h3>2.4 索引与去重要点</h3>
+        <ul>
+          <li>工作台 OPEN：<code>uk_workspace_task_open (tenant_id, org_id, open_dedup_key, gmt_deleted)</code></li>
+          <li>任务查询：org + status + assignee / people；opened_at / done_at</li>
+          <li>证件：租户内 identity_type + hash 唯一</li>
+          <li>患者列表：ACTIVE membership，按 <code>COALESCE(joined_at, gmt_created) DESC</code></li>
+        </ul>
+
+        <h3>2.5 敏感数据</h3>
+        <table class="data">
+          <thead><tr><th>数据</th><th>策略</th></tr></thead>
+          <tbody>
+            <tr><td>身份证号</td><td>规范化校验 → 哈希查询 + AES 密文 + 脱敏展示</td></tr>
+            <tr><td>OCR 原图</td><td>请求内短暂使用；不落业务表、不进模型日志正文</td></tr>
+            <tr><td>Ops 明文检索</td><td>走审计（如 <code>OPS_PHI_VIEW</code>）</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- 3 -->
+      <section class="doc" id="s3">
+        <h2>3. Agent 架构与技术实现</h2>
+
+        <h3>3.1 定位</h3>
+        <table class="data">
+          <thead><tr><th>项</th><th>口径</th></tr></thead>
+          <tbody>
+            <tr><td>Agent 名</td><td>B 端 <strong>CARE_COPILOT</strong>（灵犀 / 健管智能体）</td></tr>
+            <tr><td>入口</td><td>驾驶舱对话、（历史）侧栏 Agent Drawer</td></tr>
+            <tr><td>非目标</td><td>替代诊疗；自动写业务库；机构会话无患者上下文出方案落库</td></tr>
+          </tbody>
+        </table>
+        <p>C 端 <strong>PATIENT</strong> Agent 与 CARE_COPILOT <strong>会话记忆隔离</strong>（<code>agent_type</code> 区分）。</p>
+
+        <h3>3.2 包结构（health-agent）</h3>
+        <pre class="arch">com.healix.agent
+├── gateway/          StaffAgentGateway · AgentCapability · AgentAction
+├── skill/            GeneralChat / CarePlan / ReportSummary / Ocr*
+├── stream/           AgentStreamEvent（SSE）
+├── memory/           Session / Message · ConversationService · SessionStore
+├── llm/              LlmClient · DeepSeekChatCompletionsClient
+├── careplan/         CarePlanAgentService · 流式生成
+├── ocr/              Lab/Exam/Med 识别 · Vision · Ingest
+├── cockpit/          CockpitBriefingService
+├── tool/             StaffBizTools
+├── safety/           安全链（可扩展）
+└── config/           AgentLlmConfig · ModuleConfig</pre>
+
+        <h3>3.3 请求链路（SSE）</h3>
+        <p><strong>HTTP：</strong> <code>POST /api/b/v1/agent/chat/stream</code> → <code>TEXT_EVENT_STREAM</code></p>
+        <pre class="flow-box">BAgentController
+  → 组装 AgentChatCommand
+  → StaffAgentGateway.streamChat(cmd, sink)
+       1. ensureSession + 加载 history
+       2. route(capabilityHint / 话术 / 是否带图)
+       3. 机构会话：非 GENERAL_CHAT 降级为 GENERAL_CHAT
+       4. 执行对应 Skill（流式或同步）
+       5. 有有效 reply 才成对落库（防半截气泡）
+       6. emit result + done
+  → AgentSseSupport 写 SSE</pre>
+        <p>典型事件：<span class="tag">skill</span> <span class="tag">progress</span> <span class="tag">thinking*</span> <span class="tag">tool</span> <span class="tag">token</span> <span class="tag">result</span> <span class="tag">done</span></p>
+
+        <h3>3.4 Capability 路由</h3>
+        <table class="data">
+          <thead><tr><th>Capability</th><th>Skill</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag">GENERAL_CHAT</span></td><td>GeneralChatSkill</td><td>建议、办结引导、机构简报；可附 AgentAction</td></tr>
+            <tr><td><span class="tag">CARE_PLAN</span></td><td>CarePlanSkill</td><td>方案草稿流式生成</td></tr>
+            <tr><td><span class="tag">REPORT_SUMMARY</span></td><td>ReportSummarySkill</td><td>管理报告点评草稿</td></tr>
+            <tr><td><span class="tag">OCR_LAB</span> / EXAM / MED</td><td>Ocr*Skill</td><td>识别结构化预填</td></tr>
+            <tr><td>（自动）带图 + GENERAL_CHAT + 有患者</td><td>OCR 自动分类</td><td>先分类再进 LAB/EXAM/MED</td></tr>
+          </tbody>
+        </table>
+        <p>前端芯片：今日建议 / 生成方案 / 报告点评 / 单据录入 / 完成待办。</p>
+
+        <h3>3.5 动作卡（AgentAction）</h3>
+        <p>动作是<strong>确定性协议</strong>，不依赖模型编造 path：</p>
+        <table class="data">
+          <thead><tr><th>type</th><th>含义</th><th>前端行为</th></tr></thead>
+          <tbody>
+            <tr><td><code>FOCUS_PATIENT</code></td><td>点人</td><td>selectPatient</td></tr>
+            <tr><td><code>OPEN_SHEET</code></td><td>打开抽屉</td><td>archive / care-plan / followups…</td></tr>
+            <tr><td><code>CALL_API</code></td><td>调 B API</td><td>NUDGE / COMPLETE_TASK / PUBLISH_*…</td></tr>
+            <tr><td><code>TRIGGER_CAPABILITY</code></td><td>再发一轮</td><td>带 capabilityHint</td></tr>
+            <tr><td><code>REFRESH</code> / <code>NAVIGATE</code></td><td>刷新或跳转</td><td>—</td></tr>
+          </tbody>
+        </table>
+        <p><strong>办结：</strong> <code>COMPLETE_TASK</code> → 与工作台同一 <code>WorkspaceTaskFormDialog</code>；公共池未领则静默 claim。去重含 <code>payload.taskId</code>。</p>
+
+        <h3>3.6 Skill 与 LLM · 人在环</h3>
+        <table class="data">
+          <thead><tr><th>能力</th><th>LLM</th><th>失败策略</th></tr></thead>
+          <tbody>
+            <tr><td>GENERAL_CHAT</td><td>DeepSeek 流式（可关）</td><td>模板/降级文案</td></tr>
+            <tr><td>CARE_PLAN</td><td>要求 LLM</td><td>失败显式报错</td></tr>
+            <tr><td>OCR</td><td>Vision / TEXT_LLM</td><td>识别失败提示；不落库</td></tr>
+            <tr><td>REPORT_SUMMARY</td><td>LLM</td><td>草稿级，发布另接口</td></tr>
+          </tbody>
+        </table>
+        <table class="data">
+          <thead><tr><th>产出</th><th>持久化时机</th></tr></thead>
+          <tbody>
+            <tr><td>对话回复 / actions</td><td>会话表（非业务主数据）</td></tr>
+            <tr><td>方案结构</td><td>draft/version；<strong>publish</strong> 生效</td></tr>
+            <tr><td>OCR extracted</td><td>前端预填；<strong>确认入库</strong> 写业务表</td></tr>
+            <tr><td>任务填单</td><td><strong>保存</strong>=OPEN 草稿；<strong>提交</strong>=DONE+关任务</td></tr>
+          </tbody>
+        </table>
+
+        <h3>3.7 会话记忆</h3>
+        <ul>
+          <li><code>AgentConversationService.ensureSession</code>：按员工 + 机构/患者会话复用或创建</li>
+          <li><code>StaffSessionStore</code>：最近轮次供 LLM history</li>
+          <li>仅当助手有有效内容才落成对消息，避免刷新后「用户气泡墙」</li>
+        </ul>
+
+        <h3>3.8 与领域服务的边界</h3>
+        <pre class="arch"><span class="hi">health-agent</span>                          <span class="hi">health-core</span>
+────────────                          ───────────
+读：CockpitService.focus / topUrgent  权威业务写入
+读：档案/方案上下文摘要               WorkspaceTaskService.submitForm / saveFormDraft
+写：仅 agent_session/message/log      FollowupService.complete / createPeriodic
+                                      CarePlan publish
+                                      Lab/Exam/Med 确认入库</pre>
+        <p class="note"><strong>原则：</strong> Agent 不直接 UPDATE 业务主表；通过动作卡或确认 API 进入 core。</p>
+
+        <h3>3.9 安全与配额</h3>
+        <ul>
+          <li><code>safety</code> 责任链：过敏、运动-血糖等（可插拔）</li>
+          <li><code>AiUsageGuard</code>：用量护栏位</li>
+          <li>启动日志打印 llm/vision 是否配置，便于演示排查</li>
+        </ul>
+      </section>
+
+      <!-- 4 -->
+      <section class="doc" id="s4">
+        <h2>4. 关键业务闭环</h2>
+        <div class="grid-2">
+          <div class="card">
+            <div class="kicker">方案</div>
+            <h3>CARE_PLAN</h3>
+            <p>芯片生成 → SSE → draft/version → 审阅 → publish → ACTIVE</p>
+          </div>
+          <div class="card">
+            <div class="kicker">OCR</div>
+            <h3>单据识别</h3>
+            <p>上传图 → Skill 预填卡 → 人改 → 确认入库 → lab/exam/med</p>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.85rem">
+          <div class="kicker">任务与随访</div>
+          <h3>双入口闭环</h3>
+          <p>排期/手动 → OPEN 任务↔随访 → 驾驶舱办结 / 工作台处理 / 详情当场办结 → 保存草稿或提交 DONE</p>
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section class="doc" id="s5">
+        <h2>5. 部署与配置要点</h2>
+        <table class="data">
+          <thead><tr><th>项</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>进程</td><td>单体 <code>health-app</code>；前端静态或 Vite 反代</td></tr>
+            <tr><td>配置</td><td><code>healix.agent.enabled</code>、<code>spring.ai.openai.*</code>、<code>healix.agent.vision.*</code></td></tr>
+            <tr><td>数据</td><td>MySQL；Redis（会话/锁/缓存按现网）</td></tr>
+            <tr><td>参考</td><td><code>docs/部署手册.md</code>、<code>deploy/*.example</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- 6 -->
+      <section class="doc" id="s6">
+        <h2>6. 演进建议（非本期承诺）</h2>
+        <ol>
+          <li>OCR/LLM 异步化与队列，隔离长耗时</li>
+          <li>识别质量评测集与字段映射运营台</li>
+          <li>模块稳定后按需拆 Agent Worker</li>
+          <li>C 端 PATIENT Agent 与 B 端能力对齐（另线）</li>
+        </ol>
+      </section>
+
+      <!-- 7 -->
+      <section class="doc" id="s7">
+        <h2>7. 相关文档</h2>
+        <table class="data">
+          <thead><tr><th>文档</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td><code>SaaS架构.md</code></td><td>租户/角色/隔离总纲</td></tr>
+            <tr><td><code>数据模型.md</code></td><td>表级细节与演进史</td></tr>
+            <tr><td><code>健康管理方案-Agent技术方案.md</code></td><td>方案 Skill / SSE</td></tr>
+            <tr><td><code>检验单OCR-Agent技术方案.md</code></td><td>OCR 人机闭环</td></tr>
+            <tr><td><code>工作台任务-技术方案.md</code></td><td>任务类型与关单</td></tr>
+            <tr><td><code>随访-产品与技术方案.md</code></td><td>随访状态机</td></tr>
+            <tr><td><code>智能驾驶舱-信息架构.md</code></td><td>驾驶舱 IA</td></tr>
+            <tr><td><a href="./组内技术分享-Healix.html">组内技术分享-Healix.html</a></td><td>分享投影</td></tr>
+            <tr><td><a href="./Healix-产品与技术介绍.html">Healix-产品与技术介绍.html</a></td><td>产品与技术介绍投影</td></tr>
+            <tr><td><code>Healix-整体技术实现方案.md</code></td><td>本文 Markdown 源</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- 8 -->
+      <section class="doc" id="s8">
+        <h2>8. 修订记录</h2>
+        <table class="data">
+          <thead><tr><th>版本</th><th>日期</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>v1.0</td><td>2026-09-24</td><td>首版：整体架构 + 库表域模型 + Agent 实现（对齐当前代码）</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <footer class="doc-foot">
+        Healix · 整体技术实现方案 · v1.0 · 浏览器直接打开本页即可阅读
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const links = [...document.querySelectorAll(".toc nav a")];
+    const sections = links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        const id = "#" + visible.target.id;
+        links.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === id));
+      },
+      { rootMargin: "-20% 0px -60% 0px", threshold: [0, 0.2, 0.5] }
+    );
+    sections.forEach((s) => io.observe(s));
+  </script>
+</body>
+</html>

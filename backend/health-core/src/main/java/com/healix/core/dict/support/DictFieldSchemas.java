@@ -18,6 +18,22 @@ public final class DictFieldSchemas {
         return JsonUtils.toJson(root);
     }
 
+    public static String numberField(MetaDataCodeEnum metadataCode, String label) {
+        ObjectNode root = JsonUtils.emptyObject();
+        root.put("metadataCode", metadataCode.getCode());
+        root.put("label", label);
+        root.put("widget", "NUMBER");
+        return JsonUtils.toJson(root);
+    }
+
+    public static String booleanField(MetaDataCodeEnum metadataCode, String label) {
+        ObjectNode root = JsonUtils.emptyObject();
+        root.put("metadataCode", metadataCode.getCode());
+        root.put("label", label);
+        root.put("widget", "BOOLEAN");
+        return JsonUtils.toJson(root);
+    }
+
     public static String selectField(MetaDataCodeEnum metadataCode, String label, String optionParentCode) {
         ObjectNode root = JsonUtils.emptyObject();
         root.put("metadataCode", metadataCode.getCode());

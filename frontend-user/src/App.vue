@@ -1,9 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { getToken } from './api/http'
+import { startCareChatRealtime, stopCareChatRealtime } from './shared/care-chat-realtime'
+import { PATIENT_AGENT_ENABLED } from './shared/features'
 
 const route = useRoute()
 const showTab = computed(() => !route.meta.hideTab && !route.meta.public)
+
+function syncCareChatRealtime() {
+  if (route.meta.public || !getToken()) {
+    stopCareChatRealtime()
+    return
+  }
+  startCareChatRealtime()
+}
+
+onMounted(() => syncCareChatRealtime())
+watch(
+  () => [route.path, !!route.meta.public] as const,
+  () => syncCareChatRealtime(),
+)
 </script>
 
 <template>
@@ -14,7 +31,7 @@ const showTab = computed(() => !route.meta.hideTab && !route.meta.public)
     <van-tabbar v-if="showTab" route safe-area-inset-bottom placeholder>
       <van-tabbar-item replace to="/home" icon="home-o">首页</van-tabbar-item>
       <van-tabbar-item replace to="/health" icon="chart-trending-o">健康</van-tabbar-item>
-      <van-tabbar-item replace to="/discover" icon="chat-o">发现</van-tabbar-item>
+      <van-tabbar-item v-if="PATIENT_AGENT_ENABLED" replace to="/discover" icon="chat-o">发现</van-tabbar-item>
       <van-tabbar-item replace to="/me" icon="user-o">我的</van-tabbar-item>
     </van-tabbar>
   </div>

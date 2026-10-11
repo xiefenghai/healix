@@ -1,0 +1,493 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { showToast } from 'vant'
+import { api } from '../api/http'
+import { ymd } from '../shared/diet'
+import {
+  hhmm,
+  INTENSITY_LABELS,
+  WEEKDAY_LABELS,
+  type ExerciseFlag,
+  type ExerciseSession,
+  type ExerciseTaskItem,
+  type ExerciseToday,
+  type ExerciseWeek,
+} from '../shared/exercise'
+
+const router = useRouter()
+const today = ymd(new Date())
+const loading = ref(true)
+const day = ref<ExerciseToday | null>(null)
+const week = ref<ExerciseWeek | null>(null)
+
+const RING_R = 54
+const RING_C = 2 * Math.PI * RING_R
+
+const planState = computed(() => day.value?.planState ?? 'NONE')
+const ringPct = computed(() => {
+  const w = week.value
+  if (!w || !w.dueCount) return 0
+  return Math.min(1, w.doneCount / w.dueCount)
+})
+const ringMuted = computed(() => planState.value !== 'ACTIVE' || !week.value?.dueCount)
+
+const todaySteps = computed(() => week.value?.days.find((d) => d.date === today)?.steps ?? null)
+const maxDayMin = computed(() => Math.max(30, ...(week.value?.days.map((d) => d.totalMin) ?? [0])))
+
+function taskDone(t: ExerciseTaskItem) {
+  return t.checkinStatus === 'DONE'
+}
+
+function dayClass(d: ExerciseWeek['days'][number]) {
+  if (d.date > today) return 'future'
+  if (d.dueCount > 0 && d.doneCount >= d.dueCount) return 'done'
+  if (d.totalMin > 0) return 'partial'
+  return ''
+}
+
+function flagClass(f: ExerciseFlag) {
+  return f.level === 'RED' ? 'red' : f.level === 'YELLOW' ? 'yellow' : 'info'
+}
+
+async function load() {
+  loading.value = true
+  try {
+    const [d, w] = await Promise.all([
+      api<{ data: ExerciseToday }>('/api/c/v1/me/exercise/today'),
+      api<{ data: ExerciseWeek }>('/api/c/v1/me/exercise/week'),
+    ])
+    day.value = d.data
+    week.value = w.data
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '加载失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+function recordTask(t: ExerciseTaskItem) {
+  router.push({
+    path: '/exercise/add',
+    query: {
+      taskId: t.taskId,
+      typeCode: t.typeCode || undefined,
+      durationMin: String(Math.max(1, t.targetMin - t.doneMin)),
+      intensity: t.intensity,
+    },
+  })
+}
+
+function openSession(s: ExerciseSession) {
+  router.push({ path: '/exercise/add', query: { id: s.id } })
+}
+
+onMounted(load)
+</script>
+
+<template>
+  <div class="page">
+    <van-nav-bar title="运动记录" left-arrow fixed placeholder :border="false" @click-left="router.back()" />
+
+    <van-loading v-if="loading && !day" vertical class="loading">加载中</van-loading>
+
+    <template v-else-if="day && week">
+      <section class="card summary">
+        <div class="ring-wrap">
+          <svg viewBox="0 0 132 132" class="ring">
+            <circle cx="66" cy="66" :r="RING_R" class="ring-bg" />
+            <circle
+              cx="66"
+              cy="66"
+              :r="RING_R"
+              class="ring-fg"
+              :class="{ muted: ringMuted }"
+              :stroke-dasharray="RING_C"
+              :stroke-dashoffset="RING_C * (1 - ringPct)"
+            />
+          </svg>
+          <div class="ring-text">
+            <span class="ring-label">本周计划完成</span>
+            <strong v-if="week.dueCount">{{ week.doneCount }}<small>/{{ week.dueCount }}</small></strong>
+            <strong v-else class="muted-num">—</strong>
+            <span class="ring-unit">次</span>
+          </div>
+        </div>
+        <div class="stat-row">
+          <div>
+            <span>本周活跃</span>
+            <strong>{{ week.activeMin }}<template v-if="week.weeklyActiveMinTarget">/{{ week.weeklyActiveMinTarget }}</template></strong>
+            <em>分钟</em>
+          </div>
+          <div>
+            <span>本周运动</span>
+            <strong>{{ week.totalMin }}</strong>
+            <em>分钟</em>
+          </div>
+          <div v-if="week.hasSteps">
+            <span>今日步数</span>
+            <strong>{{ todaySteps ?? '—' }}</strong>
+            <em>步</em>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sec-head">
+          <strong>今日运动计划</strong>
+        </div>
+        <p v-if="planState === 'EXPIRED'" class="notice">运动计划已到期，请联系健管师更新。您仍可以记录运动。</p>
+        <p v-else-if="planState === 'NONE'" class="notice">暂无运动计划，可以先自由记录运动。</p>
+        <p v-else-if="!day.tasks.length" class="muted">今天没有运动任务，适当活动即可。</p>
+        <div v-for="t in day.tasks" :key="t.taskId" class="task" :class="{ done: taskDone(t) }">
+          <div class="task-main">
+            <strong>{{ t.title }}</strong>
+            <span class="muted">
+              目标 {{ t.targetMin }} 分钟 · 强度{{ INTENSITY_LABELS[t.intensity] }} · 今日已累计 {{ t.doneMin }} 分钟
+            </span>
+            <div class="bar">
+              <div class="bar-fill" :style="{ width: Math.min(100, (t.doneMin / t.targetMin) * 100) + '%' }" />
+            </div>
+          </div>
+          <span v-if="taskDone(t)" class="done-tag"><van-icon name="success" /> 已完成</span>
+          <button v-else type="button" class="add-btn" @click="recordTask(t)">完成了</button>
+        </div>
+        <div v-if="day.contraindications.length || day.precautions.length" class="tips">
+          <p v-if="day.contraindications.length"><b>禁忌：</b>{{ day.contraindications.join('；') }}</p>
+          <p v-if="day.precautions.length"><b>注意：</b>{{ day.precautions.join('；') }}</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sec-head">
+          <strong>今日记录</strong>
+          <button type="button" class="add-btn" @click="router.push('/exercise/add')">
+            <van-icon name="plus" /> 记录运动
+          </button>
+        </div>
+        <p v-if="!day.sessions.length" class="muted">还没有记录</p>
+        <div v-for="s in day.sessions" :key="s.id" class="rec" @click="openSession(s)">
+          <div class="rec-main">
+            <strong>{{ s.typeName }}</strong>
+            <span class="muted">{{ hhmm(s.startedAt) }} · {{ s.durationMin }} 分钟 · {{ INTENSITY_LABELS[s.intensity] }}</span>
+          </div>
+          <span v-if="s.level !== 'GREEN'" class="dot" :class="s.level.toLowerCase()" />
+          <van-icon name="arrow" class="muted" />
+          <p
+            v-for="f in s.flags.filter((x) => x.level !== 'INFO')"
+            :key="f.code"
+            class="flag small"
+            :class="flagClass(f)"
+          >
+            {{ f.message }}
+          </p>
+          <p v-if="s.recordedByStaff" class="muted tiny">健管师代录</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sec-head"><strong>本周</strong></div>
+        <div class="week">
+          <div v-for="(d, i) in week.days" :key="d.date" class="wd" :class="dayClass(d)">
+            <div class="col">
+              <div class="col-fill" :style="{ height: Math.round((d.totalMin / maxDayMin) * 100) + '%' }" />
+            </div>
+            <span class="wd-min">{{ d.totalMin || '' }}</span>
+            <span class="wd-label" :class="{ today: d.date === today }">{{ WEEKDAY_LABELS[i] }}</span>
+          </div>
+        </div>
+        <p class="muted legend">柱高为运动分钟；绿色表示当天计划已完成</p>
+      </section>
+
+      <p class="disclaimer">活跃分钟按世界卫生组织口径：中等强度 1 分钟计 1，较累计 2，轻松不计。</p>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% -8%, rgba(92, 184, 184, 0.22), transparent 40%),
+    radial-gradient(circle at 92% 4%, rgba(245, 166, 35, 0.12), transparent 34%),
+    var(--hx-bg);
+  padding-bottom: 32px;
+}
+:deep(.van-nav-bar) {
+  background: rgba(247, 249, 252, 0.88);
+  backdrop-filter: blur(10px);
+}
+:deep(.van-nav-bar__title) {
+  font-weight: 650;
+  color: var(--hx-text);
+}
+:deep(.van-nav-bar .van-icon) {
+  color: var(--hx-teal);
+}
+.loading {
+  padding: 48px 0;
+}
+.muted {
+  color: var(--hx-muted);
+  font-size: 12px;
+}
+.tiny {
+  margin: 4px 0 0;
+  font-size: 11px;
+  width: 100%;
+}
+.card {
+  margin: 12px 16px 0;
+  padding: 16px;
+  border-radius: var(--hx-radius);
+  background: var(--hx-card);
+  box-shadow: var(--hx-shadow);
+}
+.summary {
+  text-align: center;
+}
+.ring-wrap {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  margin: 0 auto;
+}
+.ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.ring-bg {
+  fill: none;
+  stroke: #eef4f4;
+  stroke-width: 12;
+}
+.ring-fg {
+  fill: none;
+  stroke: var(--hx-teal);
+  stroke-width: 12;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease;
+}
+.ring-fg.muted {
+  stroke: #c8d2d8;
+}
+.ring-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.ring-label,
+.ring-unit {
+  font-size: 12px;
+  color: var(--hx-muted);
+}
+.ring-text strong {
+  font-size: 30px;
+  font-weight: 750;
+}
+.ring-text small {
+  font-size: 16px;
+  color: var(--hx-muted);
+}
+.muted-num {
+  color: #c8d2d8;
+}
+.stat-row {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  margin-top: 8px;
+}
+.stat-row div {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--hx-muted);
+}
+.stat-row strong {
+  font-size: 16px;
+  color: var(--hx-text);
+}
+.stat-row em {
+  font-style: normal;
+  font-size: 11px;
+}
+.sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sec-head strong {
+  font-size: 16px;
+}
+.notice {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #a16207;
+  background: var(--hx-orange-soft);
+}
+.task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px dashed #e6eef0;
+}
+.task:first-of-type {
+  border-top: 0;
+}
+.task-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.task.done .task-main strong {
+  color: var(--hx-muted);
+}
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: #eef4f4;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--hx-teal-soft);
+}
+.done-tag {
+  font-size: 13px;
+  color: var(--hx-teal);
+  white-space: nowrap;
+}
+.add-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--hx-teal-light);
+  color: var(--hx-teal);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tips {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f5f8fa;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--hx-text);
+}
+.tips p {
+  margin: 0;
+}
+.rec {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px dashed #e6eef0;
+}
+.rec:first-of-type {
+  border-top: 0;
+}
+.rec-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot.red {
+  background: #e8743b;
+}
+.dot.yellow {
+  background: var(--hx-orange);
+}
+.flag {
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.flag.red {
+  color: #c2410c;
+  background: #fff1ec;
+}
+.flag.yellow {
+  color: #a16207;
+  background: var(--hx-orange-soft);
+}
+.week {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+.wd {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.col {
+  position: relative;
+  width: 100%;
+  max-width: 24px;
+  height: 72px;
+  border-radius: 6px;
+  background: #f1f5f7;
+  overflow: hidden;
+}
+.col-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #c8d2d8;
+}
+.wd.partial .col-fill {
+  background: var(--hx-orange);
+}
+.wd.done .col-fill {
+  background: var(--hx-teal-soft);
+}
+.wd-min {
+  min-height: 14px;
+  font-size: 11px;
+  color: var(--hx-muted);
+}
+.wd-label {
+  font-size: 12px;
+  color: var(--hx-muted);
+}
+.wd-label.today {
+  color: var(--hx-teal);
+  font-weight: 700;
+}
+.legend {
+  margin: 8px 0 0;
+}
+.disclaimer {
+  margin: 16px 24px 0;
+  font-size: 11px;
+  color: var(--hx-muted);
+  text-align: center;
+}
+</style>

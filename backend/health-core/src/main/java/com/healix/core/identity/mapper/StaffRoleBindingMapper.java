@@ -15,6 +15,9 @@ public interface StaffRoleBindingMapper {
 
     StaffRoleBinding findTenantAdminByStaff(@Param("staffId") String staffId);
 
+    List<String> listStaffIdsByTenantAndRole(
+            @Param("tenantId") String tenantId, @Param("roleCode") String roleCode);
+
     int insert(StaffRoleBinding binding);
 
     int softDeleteAssignableByStaff(

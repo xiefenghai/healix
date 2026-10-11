@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.carechat.mapper.CareChatMessageMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, thread_id, sender_type,
+        sender_staff_id, sender_account_id, content_type, content, client_msg_id, recalled_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="findById" resultType="com.healix.core.carechat.domain.CareChatMessage">
+        SELECT <include refid="cols"/>
+        FROM care_chat_message
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByClientMsgId" resultType="com.healix.core.carechat.domain.CareChatMessage">
+        SELECT <include refid="cols"/>
+        FROM care_chat_message
+        WHERE thread_id = #{threadId}
+          AND client_msg_id = #{clientMsgId}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listHistory" resultType="com.healix.core.carechat.domain.CareChatMessage">
+        SELECT <include refid="cols"/>
+        FROM care_chat_message
+        WHERE thread_id = #{threadId}
+          AND is_deleted = 0
+          <if test="beforeAt != null and beforeId != null">
+              AND (
+                  gmt_created &lt; #{beforeAt}
+                  OR (gmt_created = #{beforeAt} AND id &lt; #{beforeId})
+              )
+          </if>
+        ORDER BY gmt_created DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listAfter" resultType="com.healix.core.carechat.domain.CareChatMessage">
+        SELECT <include refid="cols"/>
+        FROM care_chat_message
+        WHERE thread_id = #{threadId}
+          AND is_deleted = 0
+          <if test="afterAt != null and afterId != null">
+              AND (
+                  gmt_created &gt; #{afterAt}
+                  OR (gmt_created = #{afterAt} AND id &gt; #{afterId})
+              )
+          </if>
+        ORDER BY gmt_created ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO care_chat_message(
+            id, tenant_id, thread_id, sender_type,
+            sender_staff_id, sender_account_id, content_type, content, client_msg_id, recalled_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{threadId}, #{senderType},
+            #{senderStaffId}, #{senderAccountId}, #{contentType}, #{content}, #{clientMsgId}, #{recalledAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+</mapper>

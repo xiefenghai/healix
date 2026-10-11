@@ -128,6 +128,37 @@ export function formatGender(gender: string | null | undefined) {
   return GENDER_LABELS[gender] ?? gender
 }
 
+/** 文化程度（与 EducationLevelEnum 对齐） */
+export const EDUCATION_LEVEL_OPTIONS = [
+  { value: 'ILLITERATE', label: '文盲或半文盲' },
+  { value: 'PRIMARY', label: '小学' },
+  { value: 'JUNIOR', label: '初中' },
+  { value: 'SENIOR', label: '高中/中专' },
+  { value: 'COLLEGE', label: '大专' },
+  { value: 'BACHELOR', label: '本科' },
+  { value: 'MASTER_PLUS', label: '硕士及以上' },
+  { value: 'OTHER', label: '其他' },
+] as const
+
+/** 婚姻状况（与 MaritalStatusEnum 对齐） */
+export const MARITAL_STATUS_OPTIONS = [
+  { value: 'UNMARRIED', label: '未婚' },
+  { value: 'MARRIED', label: '已婚' },
+  { value: 'DIVORCED', label: '离异' },
+  { value: 'WIDOWED', label: '丧偶' },
+  { value: 'OTHER', label: '其他' },
+] as const
+
+export function formatEducationLevel(code: string | null | undefined) {
+  if (!code) return '-'
+  return EDUCATION_LEVEL_OPTIONS.find((o) => o.value === code)?.label ?? code
+}
+
+export function formatMaritalStatus(code: string | null | undefined) {
+  if (!code) return '-'
+  return MARITAL_STATUS_OPTIONS.find((o) => o.value === code)?.label ?? code
+}
+
 /** 账号列表筛选（含管理员） */
 export const STAFF_ROLE_FILTER_OPTIONS = [
   ...ASSIGNABLE_STAFF_ROLE_OPTIONS,

@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>观测数据 · 患者 360</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+:root{
+  --primary:#2C7EF8; --primary-light:#EFF6FF; --primary-dark:#1F5DC9;
+  --teal:#00B8A9; --teal-light:#CCFBF1;
+  --amber:#F59E0B; --amber-light:#FEF3C7;
+  --rose:#EF4444; --rose-light:#FEE2E2;
+  --violet:#8B5CF6; --violet-light:#EDE9FE;
+  --sky:#0EA5E9; --sky-light:#E0F2FE;
+  --green:#10B981; --green-light:#D1FAE5;
+  --bg:#F8FAFC; --surface:#FFFFFF;
+  --text:#0F172A; --text-2:#475569; --text-3:#94A3B8;
+  --border:#E2E8F0; --border-light:#F1F5F9;
+  --radius:8px; --radius-lg:12px; --radius-xl:16px;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+  --shadow:0 4px 12px rgba(15,23,42,.06), 0 2px 4px rgba(15,23,42,.04);
+  --shadow-lg:0 20px 40px -12px rgba(15,23,42,.12), 0 8px 16px -4px rgba(15,23,42,.06);
+  --sidebar-w:240px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter','PingFang SC',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--text);background:var(--bg);font-size:14px;line-height:1.5}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+
+.layout{display:grid;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh}
+.sidebar{background:#0F172A;color:#CBD5E1;padding:18px 14px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.s-logo{display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:18px}
+.s-logo .m{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--teal));display:grid;place-items:center;color:#fff;font-weight:800;font-size:14px}
+.s-logo .t{font-weight:700;color:#fff;font-size:16px;letter-spacing:-.2px}
+.s-group{margin-top:18px}
+.s-group-title{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#475569;padding:6px 10px;font-weight:600}
+.s-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13px;color:#94A3B8;cursor:pointer;transition:.15s;position:relative}
+.s-item:hover{background:#1E293B;color:#E2E8F0}
+.s-item.active{background:rgba(44,126,248,.15);color:#fff;font-weight:500}
+.s-item.active::before{content:"";position:absolute;left:0;width:3px;height:18px;background:var(--primary);border-radius:0 2px 2px 0}
+.s-item svg{width:16px;height:16px;opacity:.8;flex-shrink:0}
+.s-foot{position:absolute;bottom:18px;left:14px;right:14px;padding:12px;background:linear-gradient(135deg,#1E293B,#334155);border-radius:10px;font-size:11px;color:#94A3B8}
+.s-foot .t{color:#fff;font-weight:600;font-size:12px;margin-bottom:4px}
+
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{height:60px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:10}
+.crumbs{font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px}
+.crumbs a{color:var(--text-2)}
+.crumbs a:hover{color:var(--primary)}
+.crumbs svg{width:14px;height:14px;opacity:.5}
+.crumbs .now{color:var(--text);font-weight:500}
+.top-search{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);padding:7px 12px;border-radius:8px;width:280px;color:var(--text-3);font-size:12px}
+.top-search kbd{font-family:inherit;font-size:11px;background:#fff;border:1px solid var(--border);padding:1px 6px;border-radius:4px;color:var(--text-3)}
+.top-search input{background:none;border:none;outline:none;flex:1;color:var(--text)}
+.top-actions{display:flex;align-items:center;gap:14px}
+.icon-btn{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--text-2);position:relative;transition:.15s}
+.icon-btn:hover{background:var(--bg);color:var(--text)}
+.icon-btn svg{width:18px;height:18px}
+.icon-btn .dot{position:absolute;top:8px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--rose);border:2px solid #fff}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#F59E0B,#EF4444);color:#fff;display:grid;place-items:center;font-weight:600;font-size:12px}
+
+.hero{padding:20px 24px;background:#fff;border-bottom:1px solid var(--border)}
+.hero-row{display:flex;align-items:flex-start;gap:18px}
+.hero-pic{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#60A5FA,#34D399);color:#fff;display:grid;place-items:center;font-weight:700;font-size:22px;flex-shrink:0;position:relative}
+.hero-pic .online{position:absolute;bottom:2px;right:2px;width:14px;height:14px;border-radius:50%;background:var(--teal);border:2px solid #fff}
+.hero-info{flex:1;min-width:0}
+.hero-info h1{font-size:20px;font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:10px}
+.hero-info .id{font-size:12px;color:var(--text-3);font-weight:400;font-family:ui-monospace,Menlo,monospace}
+.hero-meta{margin-top:6px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-2);flex-wrap:wrap}
+.hero-meta .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text-2)}
+.hero-meta .chip.danger{background:var(--rose-light);border-color:#FCA5A5;color:#B91C1C}
+.hero-actions{display:flex;gap:8px;flex-shrink:0}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;transition:.15s;white-space:nowrap}
+.btn svg{width:14px;height:14px}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-dark)}
+.btn-ghost{background:#fff;color:var(--text-2);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--bg);color:var(--text)}
+
+.tabs{display:flex;align-items:center;gap:4px;padding:0 24px;background:#fff;border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{padding:14px 16px;font-size:13px;color:var(--text-2);border-bottom:2px solid transparent;cursor:pointer;font-weight:500;white-space:nowrap;transition:.15s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.tab .pill{margin-left:6px;font-size:10px;padding:1px 6px;background:var(--bg);color:var(--text-3);border-radius:10px;font-weight:600}
+.tab.active .pill{background:var(--primary-light);color:var(--primary)}
+
+.content{padding:24px;flex:1}
+
+/* ===== 子 Tab ===== */
+.sub-tabs{display:flex;gap:6px;margin-bottom:20px;background:#fff;padding:6px;border-radius:10px;width:fit-content;border:1px solid var(--border);box-shadow:var(--shadow-sm)}
+.sub-tab{padding:8px 16px;border-radius:7px;font-size:13px;color:var(--text-2);cursor:pointer;font-weight:500;transition:.15s;display:flex;align-items:center;gap:6px}
+.sub-tab:hover{color:var(--text)}
+.sub-tab.active{background:var(--primary);color:#fff;box-shadow:0 4px 8px rgba(44,126,248,.25)}
+.sub-tab svg{width:14px;height:14px}
+.sub-tab .pill{margin-left:4px;font-size:10px;padding:1px 6px;background:rgba(255,255,255,.25);color:inherit;border-radius:10px;font-weight:600}
+.sub-tab:not(.active) .pill{background:var(--bg);color:var(--text-3)}
+
+.panel{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.panel-head{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.panel-head h3{font-size:14px;font-weight:600;letter-spacing:-.1px;display:flex;align-items:center;gap:8px}
+.panel-head .sub{font-size:12px;color:var(--text-3);font-weight:400;margin-left:4px}
+
+/* ===== KPI Strip ===== */
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.kpi{padding:18px 20px;background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);position:relative;overflow:hidden}
+.kpi::after{content:"";position:absolute;top:0;right:0;width:80px;height:80px;background:radial-gradient(circle,var(--c) 0%,transparent 70%);opacity:.15;border-radius:50%;transform:translate(30%,-30%)}
+.kpi .lbl{font-size:11px;color:var(--text-3);letter-spacing:.3px;text-transform:uppercase;font-weight:500}
+.kpi .v{font-size:26px;font-weight:700;letter-spacing:-.6px;margin-top:6px;font-variant-numeric:tabular-nums}
+.kpi .u{font-size:13px;color:var(--text-3);font-weight:400;margin-left:2px}
+.kpi .meta{margin-top:8px;font-size:11px;color:var(--text-2);display:flex;align-items:center;gap:8px}
+.kpi .trend{font-weight:600;font-variant-numeric:tabular-nums}
+.kpi .trend.up{color:var(--rose)}
+.kpi .trend.down{color:var(--teal)}
+.kpi .ico{position:absolute;top:16px;right:18px;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--c);background:var(--bg);z-index:1}
+.kpi .ico svg{width:18px;height:18px}
+
+/* ===== 录入页 ===== */
+.entry-layout{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+
+/* 表单卡 */
+.form-card{padding:20px}
+.form-row{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field.full{grid-column:1/-1}
+.field label{font-size:12px;color:var(--text-2);font-weight:500;display:flex;align-items:center;gap:6px}
+.field label .req{color:var(--rose)}
+.field label .tip{font-size:10px;color:var(--text-3);font-weight:400;margin-left:auto}
+.field input,.field select,.field textarea{padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;outline:none;transition:.15s;color:var(--text)}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(44,126,248,.1)}
+.field textarea{min-height:80px;resize:vertical;font-family:inherit}
+.field .with-suffix{position:relative}
+.field .with-suffix input{padding-right:42px}
+.field .with-suffix .suf{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text-3);background:#fff;padding-left:8px;border-left:1px solid var(--border)}
+
+.metric-quick{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.metric-quick span{font-size:11px;padding:4px 9px;background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--text-2);transition:.15s}
+.metric-quick span:hover{background:var(--primary-light);color:var(--primary);border-color:var(--primary)}
+.metric-quick span.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+.form-foot{padding-top:14px;border-top:1px solid var(--border-light);margin-top:14px;display:flex;justify-content:space-between;align-items:center}
+.form-foot .l{font-size:11px;color:var(--text-3)}
+.form-foot .r{display:flex;gap:8px}
+
+/* 最近录入 */
+.recent{padding:0}
+.recent-list{padding:6px 0;max-height:480px;overflow-y:auto}
+.rec-row{display:grid;grid-template-columns:90px 1fr auto auto;gap:14px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--border-light);transition:.15s}
+.rec-row:hover{background:var(--bg)}
+.rec-row:last-child{border-bottom:none}
+.rec-time{font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.rec-time .d{font-weight:600;color:var(--text)}
+.rec-time .m{font-size:10px;color:var(--text-3);display:block;margin-top:2px}
+.rec-main{font-size:13px;color:var(--text)}
+.rec-main .nm{font-weight:600;margin-right:6px}
+.rec-main .vl{font-variant-numeric:tabular-nums;font-weight:600}
+.rec-main .un{color:var(--text-3);font-weight:400;margin-left:2px}
+.rec-status{font-size:11px;font-weight:500;padding:3px 8px;border-radius:5px}
+.rec-status.normal{background:var(--teal-light);color:#0F766E}
+.rec-status.warn{background:var(--amber-light);color:#B45309}
+.rec-status.risk{background:var(--rose-light);color:#B91C1C}
+.rec-src{font-size:10px;color:var(--text-3);letter-spacing:.3px;text-transform:uppercase}
+
+/* ===== 趋势页 ===== */
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.chart-card .panel-head{padding:14px 18px}
+.chart-card .panel-head h3{font-size:13px}
+.chart-card .body{padding:14px 18px 18px}
+.chart{height:240px}
+
+.legend{display:flex;gap:14px;font-size:11px;color:var(--text-2);margin-left:auto}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+/* ===== 化验页 ===== */
+.lab-list{display:flex;flex-direction:column}
+.lab-item{padding:16px 20px;border-bottom:1px solid var(--border-light);transition:.15s;cursor:pointer}
+.lab-item:hover{background:var(--bg)}
+.lab-item:last-child{border-bottom:none}
+.lab-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.lab-head .t{font-size:14px;font-weight:600;color:var(--text)}
+.lab-head .m{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.lab-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.lab-cell{padding:8px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border-light)}
+.lab-cell.abnormal{background:var(--rose-light);border-color:#FCA5A5}
+.lab-cell.warn{background:var(--amber-light);border-color:#FCD34D}
+.lab-cell .nm{font-size:10px;color:var(--text-3);margin-bottom:3px;letter-spacing:.2px}
+.lab-cell .vl{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.lab-cell.abnormal .vl{color:#B91C1C}
+.lab-cell.warn .vl{color:#B45309}
+.lab-cell .rg{font-size:10px;color:var(--text-3);margin-top:2px;font-variant-numeric:tabular-nums}
+
+.ai-summary{margin-top:12px;padding:10px 12px;background:linear-gradient(135deg,#EFF6FF,#F0FDFA);border-radius:8px;border:1px solid #BFDBFE;font-size:12px;color:var(--text);display:flex;gap:10px;align-items:flex-start}
+.ai-summary .ic{width:20px;height:20px;border-radius:5px;background:linear-gradient(135deg,var(--primary),var(--violet));color:#fff;display:grid;place-items:center;flex-shrink:0;font-size:10px;font-weight:700}
+.ai-summary b{color:var(--primary)}
+
+/* ===== 检查页 ===== */
+.check-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.check-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;transition:.15s;cursor:pointer}
+.check-card:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.check-thumb{height:140px;background:linear-gradient(135deg,#1E293B,#334155);position:relative;display:grid;place-items:center;color:#94A3B8}
+.check-thumb .badge{position:absolute;top:10px;left:10px;font-size:10px;font-weight:600;padding:3px 8px;border-radius:5px;background:rgba(255,255,255,.92);color:var(--text);letter-spacing:.3px}
+.check-thumb .date{position:absolute;top:10px;right:10px;font-size:10px;color:rgba(255,255,255,.7);font-variant-numeric:tabular-nums}
+.check-thumb svg{width:54px;height:54px;opacity:.4}
+.check-body{padding:14px}
+.check-body .t{font-size:13px;font-weight:600;color:var(--text)}
+.check-body .s{font-size:11px;color:var(--text-2);margin-top:4px;line-height:1.5}
+.check-body .foot{margin-top:8px;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--text-3)}
+
+/* ===== 表格组件 ===== */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl thead th{background:var(--bg);color:var(--text-2);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:10px 14px;text-align:left;border-bottom:1px solid var(--border)}
+.tbl tbody td{padding:14px;border-bottom:1px solid var(--border-light)}
+.tbl tbody tr{transition:.15s}
+.tbl tbody tr:hover{background:var(--bg)}
+.tbl .num{font-variant-numeric:tabular-nums;font-weight:600}
+
+@media (max-width:1280px){
+  .chart-grid,.entry-layout{grid-template-columns:1fr}
+  .kpi-strip{grid-template-columns:repeat(2,1fr)}
+  .check-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="s-logo"><div class="m">H</div><div class="t">Healix</div></div>
+    <div class="s-group">
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>总览</div>
+    </div>
+    <div class="s-group">
+      <div class="s-group-title">智能体</div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6"/></svg>智能驾驶舱</div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>工作台任务</div>
+    </div>
+    <div class="s-group">
+      <div class="s-group-title">患者管理</div>
+      <div class="s-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>患者列表</div>
+      <div class="s-item" style="background:#1E293B;color:#E2E8F0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>患者 360</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">档案</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">用药</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">健康方案</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">依从性</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">随访</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">健康报告</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px;background:rgba(44,126,248,.18);color:#fff;border-radius:6px">观测数据</div>
+      <div class="s-item" style="padding-left:34px;font-size:12px">修订审计</div>
+    </div>
+    <div class="s-foot">
+      <div class="t">📈 Healix Pro</div>
+      <div>解锁 AI 风险预测、自动方案、批量随访</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="crumbs">
+        <a href="workspace-patients.html">患者管理</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <a href="patient-detail.html">张建国</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="now">观测数据</span>
+      </div>
+      <div class="top-search">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="搜索指标、化验、检查…">
+        <kbd>⌘ K</kbd>
+      </div>
+      <div class="top-actions">
+        <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/></svg><span class="dot"></span></button>
+        <div class="avatar">王</div>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-row">
+        <div class="hero-pic">张<span class="online"></span></div>
+        <div class="hero-info">
+          <h1>张建国 <span class="id">#P20260308-0447</span>
+            <span class="chip danger" style="background:#FEE2E2;border-color:#FCA5A5;color:#B91C1C">⚠ 高风险</span>
+          </h1>
+          <div class="hero-meta">
+            <span class="chip">男 · 58 岁</span>
+            <span class="chip">糖尿病 · 高血压 · 高血脂</span>
+            <span class="chip">签约：微医集团 · 三甲合作机构</span>
+            <span class="chip">健管师：王晓琳</span>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>生成报告</button>
+          <button class="btn btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>导出</button>
+          <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>录入数据</button>
+        </div>
+      </div>
+    </section>
+
+    <nav class="tabs">
+      <div class="tab">档案</div>
+      <div class="tab">用药</div>
+      <div class="tab">健康方案</div>
+      <div class="tab">依从性</div>
+      <div class="tab">随访</div>
+      <div class="tab">健康报告</div>
+      <div class="tab active">观测数据 <span class="pill">847</span></div>
+      <div class="tab">修订审计</div>
+    </nav>
+
+    <div class="content">
+
+      <!-- 子 Tab 切换 -->
+      <div class="sub-tabs">
+        <div class="sub-tab active" data-tab="entry">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          指标录入
+        </div>
+        <div class="sub-tab" data-tab="trend">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          趋势分析
+        </div>
+        <div class="sub-tab" data-tab="lab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6l-7 12a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L15 8V2"/><line x1="9" y1="2" x2="15" y2="2"/></svg>
+          化验报告 <span class="pill">12</span>
+        </div>
+        <div class="sub-tab" data-tab="exam">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          检查记录 <span class="pill">8</span>
+        </div>
+      </div>
+
+      <!-- ===== KPI Strip ===== -->
+      <div class="kpi-strip">
+        <div class="kpi" style="--c:var(--rose)">
+          <div class="ico" style="color:var(--rose)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+          <div class="lbl">收缩压（均值）</div>
+          <div class="v">142<span class="u">mmHg</span></div>
+          <div class="meta"><span class="trend up">↑ +4.2</span> · 较 7 天前 · <span style="color:var(--rose)">异常</span></div>
+        </div>
+        <div class="kpi" style="--c:var(--amber)">
+          <div class="ico" style="color:var(--amber)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+          <div class="lbl">空腹血糖</div>
+          <div class="v">8.6<span class="u">mmol/L</span></div>
+          <div class="meta"><span class="trend up">↑ +0.8</span> · 较昨日 · <span style="color:var(--amber)">偏高</span></div>
+        </div>
+        <div class="kpi" style="--c:var(--teal)">
+          <div class="ico" style="color:var(--teal)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg></div>
+          <div class="lbl">HbA1c</div>
+          <div class="v">6.8<span class="u">%</span></div>
+          <div class="meta"><span class="trend down">↓ -0.2</span> · 较 3 月前 · <span style="color:var(--teal)">达标</span></div>
+        </div>
+        <div class="kpi" style="--c:var(--primary)">
+          <div class="ico" style="color:var(--primary)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="8 12 11 15 16 9"/></svg></div>
+          <div class="lbl">体重 / BMI</div>
+          <div class="v">78.5<span class="u">kg</span></div>
+          <div class="meta">BMI 27.3 · <span style="color:var(--rose)">超重</span></div>
+        </div>
+      </div>
+
+      <!-- ===== Tab 内容容器 ===== -->
+
+      <!-- === 1. 指标录入 === -->
+      <div class="tab-pane" data-pane="entry">
+        <div class="entry-layout">
+          <!-- 录入表单 -->
+          <div class="panel">
+            <div class="panel-head">
+              <h3>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                手动录入指标
+              </h3>
+              <div style="display:flex;gap:6px">
+                <button class="mini-btn" style="padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text-2)">📱 扫码录入</button>
+                <button class="mini-btn" style="padding:5px 10px;background:var(--primary-light);border:1px solid #BFDBFE;border-radius:6px;font-size:12px;color:var(--primary);font-weight:500">⌚ 同步设备</button>
+              </div>
+            </div>
+            <div class="form-card">
+              <div style="margin-bottom:16px">
+                <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;letter-spacing:.3px;text-transform:uppercase">选择指标类型</div>
+                <div class="metric-quick">
+                  <span class="active">血压</span>
+                  <span>心率</span>
+                  <span>血糖</span>
+                  <span>体重</span>
+                  <span>体温</span>
+                  <span>血氧</span>
+                  <span>步数</span>
+                  <span>睡眠</span>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="field">
+                  <label>收缩压 <span class="req">*</span> <span class="tip">SBP</span></label>
+                  <div class="with-suffix">
+                    <input type="number" value="142">
+                    <span class="suf">mmHg</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>舒张压 <span class="req">*</span> <span class="tip">DBP</span></label>
+                  <div class="with-suffix">
+                    <input type="number" value="88">
+                    <span class="suf">mmHg</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>心率 <span class="req">*</span></label>
+                  <div class="with-suffix">
+                    <input type="number" value="78">
+                    <span class="suf">bpm</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>测量时间 <span class="req">*</span></label>
+                  <input type="datetime-local" value="2026-09-09T08:30">
+                </div>
+                <div class="field">
+                  <label>测量场景</label>
+                  <select>
+                    <option>晨起 · 空腹</option>
+                    <option>餐后 2 小时</option>
+                    <option>睡前</option>
+                    <option>运动后</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>测量设备</label>
+                  <select>
+                    <option>欧姆龙 HEM-7312</option>
+                    <option>鱼跃 YE670A</option>
+                    <option>Apple Watch</option>
+                    <option>手动录入</option>
+                  </select>
+                </div>
+                <div class="field full">
+                  <label>备注</label>
+                  <textarea placeholder="如有异常感受或特殊情况请填写...">晨起自测血压偏高，可能是昨晚睡眠不佳。</textarea>
+                </div>
+              </div>
+              <div class="form-foot">
+                <div class="l">💡 AI 已检测：收缩压 142 处于「偏高」区间，建议关注</div>
+                <div class="r">
+                  <button class="btn btn-ghost">取消</button>
+                  <button class="btn btn-primary">保存并分析</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 最近录入 -->
+          <div class="panel recent">
+            <div class="panel-head">
+              <h3>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                最近 7 天录入 <span class="sub">共 38 条</span>
+              </h3>
+              <div style="display:flex;gap:8px;align-items:center">
+                <select style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+                  <option>全部指标</option><option>血压</option><option>血糖</option><option>体重</option>
+                </select>
+                <button class="btn btn-ghost" style="padding:5px 10px;font-size:12px">查看全部</button>
+              </div>
+            </div>
+            <div class="recent-list">
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">142/88</span><span class="m">09-09 08:30</span></div>
+                <div class="rec-main"><span class="nm">血压</span><span class="vl">142</span><span class="un">/88 mmHg</span></div>
+                <span class="rec-status warn">偏高</span>
+                <span class="rec-src">欧姆龙</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">139/86</span><span class="m">09-08 19:15</span></div>
+                <div class="rec-main"><span class="nm">血压</span><span class="vl">139</span><span class="un">/86 mmHg</span></div>
+                <span class="rec-status warn">偏高</span>
+                <span class="rec-src">手动</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">8.6</span><span class="m">09-08 07:45</span></div>
+                <div class="rec-main"><span class="nm">空腹血糖</span><span class="vl">8.6</span><span class="un">mmol/L</span></div>
+                <span class="rec-status warn">偏高</span>
+                <span class="rec-src">三诺</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">136/84</span><span class="m">09-08 07:30</span></div>
+                <div class="rec-main"><span class="nm">血压</span><span class="vl">136</span><span class="un">/84 mmHg</span></div>
+                <span class="rec-status warn">偏高</span>
+                <span class="rec-src">欧姆龙</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">78.5</span><span class="m">09-07 06:00</span></div>
+                <div class="rec-main"><span class="nm">体重</span><span class="vl">78.5</span><span class="un">kg · BMI 27.3</span></div>
+                <span class="rec-status warn">超重</span>
+                <span class="rec-src">云麦</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">132/82</span><span class="m">09-07 08:20</span></div>
+                <div class="rec-main"><span class="nm">血压</span><span class="vl">132</span><span class="un">/82 mmHg</span></div>
+                <span class="rec-status normal">正常</span>
+                <span class="rec-src">欧姆龙</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">7.9</span><span class="m">09-07 07:30</span></div>
+                <div class="rec-main"><span class="nm">空腹血糖</span><span class="vl">7.9</span><span class="un">mmol/L</span></div>
+                <span class="rec-status normal">正常</span>
+                <span class="rec-src">三诺</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">145/92</span><span class="m">09-06 19:45</span></div>
+                <div class="rec-main"><span class="nm">血压</span><span class="vl">145</span><span class="un">/92 mmHg</span></div>
+                <span class="rec-status risk">异常</span>
+                <span class="rec-src">手动</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">6.5</span><span class="m">09-06 12:00</span></div>
+                <div class="rec-main"><span class="nm">餐后血糖</span><span class="vl">6.5</span><span class="un">mmol/L</span></div>
+                <span class="rec-status normal">正常</span>
+                <span class="rec-src">三诺</span>
+              </div>
+              <div class="rec-row">
+                <div class="rec-time"><span class="d">76</span><span class="m">09-06 08:15</span></div>
+                <div class="rec-main"><span class="nm">心率</span><span class="vl">76</span><span class="un">bpm</span></div>
+                <span class="rec-status normal">正常</span>
+                <span class="rec-src">Watch</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- === 2. 趋势分析 === -->
+      <div class="tab-pane" data-pane="trend" style="display:none">
+        <div class="chart-grid">
+          <div class="panel chart-card">
+            <div class="panel-head">
+              <h3>血压趋势 · 近 30 天</h3>
+              <div class="legend">
+                <i style="background:var(--rose)"></i>收缩压
+                <i style="background:var(--primary)"></i>舒张压
+                <i style="background:#94A3B8;height:1px;margin-bottom:0"></i>目标线
+              </div>
+            </div>
+            <div class="body"><div class="chart" id="chart-bp"></div></div>
+          </div>
+          <div class="panel chart-card">
+            <div class="panel-head">
+              <h3>血糖趋势 · 近 30 天</h3>
+              <div class="legend">
+                <i style="background:var(--amber)"></i>空腹血糖
+                <i style="background:#94A3B8;height:1px;margin-bottom:0"></i>目标线
+              </div>
+            </div>
+            <div class="body"><div class="chart" id="chart-glu"></div></div>
+          </div>
+          <div class="panel chart-card">
+            <div class="panel-head">
+              <h3>体重变化 · 近 90 天</h3>
+              <div class="legend">
+                <i style="background:var(--teal)"></i>体重
+                <i style="background:#94A3B8;height:1px;margin-bottom:0"></i>目标
+              </div>
+            </div>
+            <div class="body"><div class="chart" id="chart-weight"></div></div>
+          </div>
+          <div class="panel chart-card">
+            <div class="panel-head">
+              <h3>运动步数 · 近 7 天</h3>
+              <div class="legend"><i style="background:var(--primary)"></i>步数</div>
+            </div>
+            <div class="body"><div class="chart" id="chart-steps"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- === 3. 化验报告 === -->
+      <div class="tab-pane" data-pane="lab" style="display:none">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>化验报告列表 <span class="sub">共 12 份 · 来自第三方医院</span></h3>
+            <div style="display:flex;gap:8px">
+              <select style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff"><option>全部类型</option><option>血常规</option><option>生化全项</option><option>糖化</option></select>
+              <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>导出</button>
+            </div>
+          </div>
+          <div class="lab-list">
+            <div class="lab-item">
+              <div class="lab-head"><div class="t">生化全项 + 糖化血红蛋白</div><div class="m">2026-09-05 · 浙江省人民医院</div></div>
+              <div class="lab-grid">
+                <div class="lab-cell"><div class="nm">HbA1c 糖化血红蛋白</div><div class="vl">6.8 %</div><div class="rg">4.0-6.0</div></div>
+                <div class="lab-cell warn"><div class="nm">FBG 空腹血糖</div><div class="vl">8.6 mmol/L</div><div class="rg">3.9-6.1</div></div>
+                <div class="lab-cell warn"><div class="nm">TG 甘油三酯</div><div class="vl">2.31 mmol/L</div><div class="rg">&lt; 1.7</div></div>
+                <div class="lab-cell abnormal"><div class="nm">LDL-C 低密度脂蛋白</div><div class="vl">4.12 mmol/L</div><div class="rg">&lt; 3.4</div></div>
+                <div class="lab-cell"><div class="nm">HDL-C 高密度脂蛋白</div><div class="vl">1.05 mmol/L</div><div class="rg">&gt; 1.0</div></div>
+                <div class="lab-cell"><div class="nm">ALT 谷丙转氨酶</div><div class="vl">28 U/L</div><div class="rg">&lt; 40</div></div>
+                <div class="lab-cell"><div class="nm">AST 谷草转氨酶</div><div class="vl">22 U/L</div><div class="rg">&lt; 40</div></div>
+                <div class="lab-cell abnormal"><div class="nm">UA 尿酸</div><div class="vl">476 μmol/L</div><div class="rg">210-420</div></div>
+              </div>
+              <div class="ai-summary">
+                <div class="ic">AI</div>
+                <div><b>AI 解读：</b>本次生化显示糖尿病控制尚可但血脂代谢异常（LDL-C 4.12 偏高），尿酸亦超标。考虑在原降糖方案基础上加强调脂治疗，建议加用他汀类药物并复查。</div>
+              </div>
+            </div>
+            <div class="lab-item">
+              <div class="lab-head"><div class="t">血常规（五分类）</div><div class="m">2026-09-05 · 浙江省人民医院</div></div>
+              <div class="lab-grid">
+                <div class="lab-cell"><div class="nm">WBC 白细胞</div><div class="vl">6.8 ×10⁹/L</div><div class="rg">4.0-10.0</div></div>
+                <div class="lab-cell"><div class="nm">RBC 红细胞</div><div class="vl">4.92 ×10¹²/L</div><div class="rg">4.3-5.8</div></div>
+                <div class="lab-cell"><div class="nm">HGB 血红蛋白</div><div class="vl">146 g/L</div><div class="rg">130-175</div></div>
+                <div class="lab-cell"><div class="nm">PLT 血小板</div><div class="vl">228 ×10⁹/L</div><div class="rg">125-350</div></div>
+              </div>
+              <div class="ai-summary">
+                <div class="ic">AI</div>
+                <div><b>AI 解读：</b>血常规各项指标均在正常范围内，未见明显感染或血液系统异常。</div>
+              </div>
+            </div>
+            <div class="lab-item">
+              <div class="lab-head"><div class="t">尿常规</div><div class="m">2026-08-12 · 微医互联网医院</div></div>
+              <div class="lab-grid">
+                <div class="lab-cell"><div class="nm">尿蛋白</div><div class="vl">阴性</div><div class="rg">阴性</div></div>
+                <div class="lab-cell warn"><div class="nm">尿糖</div><div class="vl">+</div><div class="rg">阴性</div></div>
+                <div class="lab-cell"><div class="nm">尿酮体</div><div class="vl">阴性</div><div class="rg">阴性</div></div>
+                <div class="lab-cell"><div class="nm">尿微量白蛋白</div><div class="vl">18 mg/L</div><div class="rg">&lt; 20</div></div>
+              </div>
+              <div class="ai-summary">
+                <div class="ic">AI</div>
+                <div><b>AI 解读：</b>尿糖阳性提示血糖控制有待加强，微量白蛋白处于临界值，建议 3 个月内复查。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- === 4. 检查记录 === -->
+      <div class="tab-pane" data-pane="exam" style="display:none">
+        <div class="check-grid">
+          <div class="check-card">
+            <div class="check-thumb">
+              <span class="badge">心电图</span>
+              <span class="date">2026-09-05</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+            </div>
+            <div class="check-body">
+              <div class="t">常规心电图</div>
+              <div class="s">窦性心律，心率 76bpm，未见明显 ST-T 改变。</div>
+              <div class="foot"><span>浙江省人民医院</span><span style="color:var(--primary)">查看 →</span></div>
+            </div>
+          </div>
+          <div class="check-card">
+            <div class="check-thumb" style="background:linear-gradient(135deg,#1E293B,#475569)">
+              <span class="badge">CT</span>
+              <span class="date">2026-08-20</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
+            </div>
+            <div class="check-body">
+              <div class="t">胸部 CT 平扫</div>
+              <div class="s">双肺纹理清晰，未见明显实质性病变。冠脉钙化积分 32 分（轻度）。</div>
+              <div class="foot"><span>邵逸夫医院</span><span style="color:var(--primary)">查看 →</span></div>
+            </div>
+          </div>
+          <div class="check-card">
+            <div class="check-thumb" style="background:linear-gradient(135deg,#0F172A,#1E40AF)">
+              <span class="badge" style="background:#FEE2E2;color:#B91C1C">⚠ 异常</span>
+              <span class="date">2026-08-15</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="3" x2="12" y2="6"/><line x1="3" y1="12" x2="6" y2="12"/><line x1="12" y1="21" x2="12" y2="18"/></svg>
+            </div>
+            <div class="check-body">
+              <div class="t">颈动脉血管超声</div>
+              <div class="s">右侧颈总动脉内中膜增厚 1.4mm，斑块形成（4.2×1.8mm）。</div>
+              <div class="foot"><span>邵逸夫医院</span><span style="color:var(--rose)">异常 ⚠</span></div>
+            </div>
+          </div>
+          <div class="check-card">
+            <div class="check-thumb" style="background:linear-gradient(135deg,#312E81,#5B21B6)">
+              <span class="badge">B超</span>
+              <span class="date">2026-07-28</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>
+            </div>
+            <div class="check-body">
+              <div class="t">腹部 B 超</div>
+              <div class="s">肝脏大小正常，胆囊壁欠光滑，脂肪肝倾向（中度）。</div>
+              <div class="foot"><span>微医互联网医院</span><span style="color:var(--primary)">查看 →</span></div>
+            </div>
+          </div>
+          <div class="check-card">
+            <div class="check-thumb">
+              <span class="badge">超声</span>
+              <span class="date">2026-06-10</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <div class="check-body">
+              <div class="t">心脏彩超</div>
+              <div class="s">左室舒张功能减退，EF 58%。二尖瓣、三尖瓣轻度反流。</div>
+              <div class="foot"><span>浙江省人民医院</span><span style="color:var(--primary)">查看 →</span></div>
+            </div>
+          </div>
+          <div class="check-card" style="display:grid;place-items:center;text-align:center;padding:24px;color:var(--text-3);font-size:13px;background:#fff">
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+            <div style="margin-top:8px">上传检查报告</div>
+            <div style="font-size:11px;margin-top:4px">支持 DICOM / JPG / PDF</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+// 子 Tab 切换
+document.querySelectorAll('.sub-tab').forEach(t=>{
+  t.addEventListener('click',function(){
+    document.querySelectorAll('.sub-tab').forEach(x=>x.classList.remove('active'));
+    this.classList.add('active');
+    const tab=this.dataset.tab;
+    document.querySelectorAll('.tab-pane').forEach(p=>p.style.display=p.dataset.pane===tab?'block':'none');
+    if(tab==='trend') setTimeout(renderCharts,50);
+  });
+});
+
+// 趋势图渲染
+function renderCharts(){
+  const baseOpt={grid:{left:30,right:14,top:14,bottom:24},tooltip:{trigger:'axis',backgroundColor:'#0F172A',borderColor:'#0F172A',textStyle:{color:'#fff',fontSize:11}},xAxis:{type:'category',axisLine:{lineStyle:{color:'#E2E8F0'}},axisLabel:{color:'#94A3B8',fontSize:10},axisTick:{show:false}},yAxis:{type:'value',splitLine:{lineStyle:{color:'#F1F5F9'}},axisLabel:{color:'#94A3B8',fontSize:10}}};
+
+  // 血压
+  const dates=Array.from({length:30},(_,i)=>`${i+1}日`);
+  const sbp=[138,135,142,140,138,135,142,139,145,136,132,138,140,142,145,143,140,138,135,136,132,138,140,142,139,142,145,139,138,142];
+  const dbp=[86,84,88,86,85,84,88,86,92,84,82,86,86,88,92,88,86,86,84,84,82,86,86,88,86,88,92,86,86,88];
+  echarts.init(document.getElementById('chart-bp')).setOption({
+    ...baseOpt,
+    xAxis:{...baseOpt.xAxis,data:dates},
+    series:[
+      {name:'收缩压',type:'line',data:sbp,smooth:true,symbol:'none',lineStyle:{color:'#EF4444',width:2},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(239,68,68,.25)'},{offset:1,color:'rgba(239,68,68,0)'}]}},markLine:{data:[{yAxis:130,label:{formatter:'目标 SBP',color:'#64748B',fontSize:10},lineStyle:{color:'#94A3B8',type:'dashed'}}]}},
+      {name:'舒张压',type:'line',data:dbp,smooth:true,symbol:'none',lineStyle:{color:'#2C7EF8',width:2},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(44,126,248,.2)'},{offset:1,color:'rgba(44,126,248,0)'}]}},markLine:{data:[{yAxis:80,label:{formatter:'目标 DBP',color:'#64748B',fontSize:10},lineStyle:{color:'#94A3B8',type:'dashed'}}]}}
+    ]
+  });
+
+  // 血糖
+  echarts.init(document.getElementById('chart-glu')).setOption({
+    ...baseOpt,
+    xAxis:{...baseOpt.xAxis,data:dates},
+    series:[
+      {name:'空腹血糖',type:'line',data:Array.from({length:30},(_,i)=>7.5+Math.sin(i/3)*0.8+(i>20?0.5:0)),smooth:true,symbol:'circle',symbolSize:5,lineStyle:{color:'#F59E0B',width:2},itemStyle:{color:'#F59E0B'},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(245,158,11,.25)'},{offset:1,color:'rgba(245,158,11,0)'}]}},markLine:{data:[{yAxis:7,label:{formatter:'目标上限',color:'#64748B',fontSize:10},lineStyle:{color:'#94A3B8',type:'dashed'}}]}}
+    ]
+  });
+
+  // 体重
+  const wdates=['6月','6月中','7月','7月中','8月','8月中','9月'];
+  echarts.init(document.getElementById('chart-weight')).setOption({
+    ...baseOpt,
+    xAxis:{...baseOpt.xAxis,data:wdates},
+    series:[
+      {name:'体重',type:'line',data:[81.2,80.5,80.1,79.8,79.2,78.8,78.5],smooth:true,symbol:'circle',symbolSize:6,lineStyle:{color:'#00B8A9',width:2},itemStyle:{color:'#00B8A9'},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(0,184,169,.25)'},{offset:1,color:'rgba(0,184,169,0)'}]}},markLine:{data:[{yAxis:72,label:{formatter:'目标 72kg',color:'#64748B',fontSize:10},lineStyle:{color:'#94A3B8',type:'dashed'}}]}}
+    ]
+  });
+
+  // 步数
+  const days=['周一','周二','周三','周四','周五','周六','周日'];
+  echarts.init(document.getElementById('chart-steps')).setOption({
+    ...baseOpt,
+    xAxis:{...baseOpt.xAxis,data:days},
+    series:[
+      {name:'步数',type:'bar',data:[4820,5240,6100,4920,7860,8950,7240],itemStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'#60A5FA'},{offset:1,color:'#2C7EF8'}]},borderRadius:[6,6,0,0]},barWidth:'45%'}
+    ]
+  });
+}
+</script>
+
+</body>
+</html>

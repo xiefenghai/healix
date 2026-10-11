@@ -61,5 +61,11 @@ npm run dev     # http://localhost:5174
 
 - `docs/SaaS架构.md` — 业务与技术架构 v0.3
 - `docs/数据模型.md` — 数据模型
+- `docs/Healix-整体技术实现方案.md` — 整体架构 / 数据库 / Agent 实现（当前落地）
+- `docs/Healix-整体技术实现方案.html` — 同上，浏览器可读版
+- `docs/健管智能体-演示脚本.md` — 领导内部演示口径
+- `docs/组内技术分享-Healix健管智能体.md` — 组内研发分享（演示 + 技术）
+- `docs/Healix-产品与技术介绍.html` — 产品与技术投影介绍页
 - `docs/租户管理-超级管理员权限.md` — Ops 超管租户/账号方案 v0.2
 - `docs/租户管理员.md` — B 端租户管理员方案 v0.2（已定稿）
+- `docs/部署手册.md` — 线上部署（ECS + RDS + Redis + Nginx，B + C）

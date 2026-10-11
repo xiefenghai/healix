@@ -1,6 +1,6 @@
 package com.healix.agent.safety.chain;
 
-import com.healix.core.identity.service.IdentityService;
+import com.healix.core.allergy.service.AllergyQueryService;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class AllergenSafetyHandler extends SafetyHandler {
 
-    private final IdentityService identityService;
+    private final AllergyQueryService allergyQueryService;
 
     @Override
     protected void doHandle(SafetyContext context) {
@@ -20,7 +20,7 @@ public class AllergenSafetyHandler extends SafetyHandler {
         if (reply == null || context.getPatientId() == null) {
             return;
         }
-        List<String> allergens = identityService.patientAllergens(context.getPatientId());
+        List<String> allergens = allergyQueryService.safetyKeywords(context.getPatientId());
         if (allergens.isEmpty()) {
             return;
         }

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.allergy.mapper.PeopleAllergyMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, category, allergen_code, allergen_name, allergy_type,
+        reactions_json, reaction_note, severity, high_risk, clinical_status, verification,
+        onset_text, last_occurrence, source, note, verified_by_staff_id, verified_at,
+        created_by_type, created_by_id, updated_by_type, updated_by_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_allergy(
+            id, tenant_id, people_id, category, allergen_code, allergen_name, allergy_type,
+            reactions_json, reaction_note, severity, high_risk, clinical_status, verification,
+            onset_text, last_occurrence, source, note, verified_by_staff_id, verified_at,
+            created_by_type, created_by_id, updated_by_type, updated_by_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{category}, #{allergenCode}, #{allergenName}, #{allergyType},
+            #{reactionsJson}, #{reactionNote}, #{severity}, #{highRisk}, #{clinicalStatus}, #{verification},
+            #{onsetText}, #{lastOccurrence}, #{source}, #{note}, #{verifiedByStaffId}, #{verifiedAt},
+            #{createdByType}, #{createdById}, #{updatedByType}, #{updatedById},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE people_allergy
+        SET category = #{category},
+            allergen_code = #{allergenCode},
+            allergen_name = #{allergenName},
+            allergy_type = #{allergyType},
+            reactions_json = #{reactionsJson},
+            reaction_note = #{reactionNote},
+            severity = #{severity},
+            high_risk = #{highRisk},
+            clinical_status = #{clinicalStatus},
+            verification = #{verification},
+            onset_text = #{onsetText},
+            last_occurrence = #{lastOccurrence},
+            note = #{note},
+            verified_by_staff_id = #{verifiedByStaffId},
+            verified_at = #{verifiedAt},
+            updated_by_type = #{updatedByType},
+            updated_by_id = #{updatedById},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE people_allergy
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.allergy.domain.PeopleAllergy">
+        SELECT <include refid="cols"/>
+        FROM people_allergy
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.allergy.domain.PeopleAllergy">
+        SELECT <include refid="cols"/>
+        FROM people_allergy
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY high_risk DESC, gmt_created ASC
+    </select>
+
+    <select id="listByPeopleId" resultType="com.healix.core.allergy.domain.PeopleAllergy">
+        SELECT <include refid="cols"/>
+        FROM people_allergy
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY high_risk DESC, gmt_created ASC
+    </select>
+
+    <select id="listLegacyArchives" resultType="com.healix.core.people.domain.PeopleBasicArchive">
+        SELECT b.id, b.tenant_id, b.people_id, b.content_json
+        FROM people_basic_archive b
+        WHERE b.is_deleted = 0
+          AND JSON_LENGTH(b.content_json, '$.pastHistoryItems.allergies') > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM people_allergy_profile p
+              WHERE p.tenant_id = b.tenant_id AND p.people_id = b.people_id AND p.is_deleted = 0
+          )
+    </select>
+</mapper>

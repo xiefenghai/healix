@@ -36,6 +36,7 @@
         <influxdb-client.version>7.2.0</influxdb-client.version>
         <springdoc.version>2.6.0</springdoc.version>
         <mybatis-spring-boot.version>3.0.3</mybatis-spring-boot.version>
+        <shedlock.version>5.16.0</shedlock.version>
     </properties>
 
     <dependencyManagement>
@@ -112,6 +113,18 @@
                 <artifactId>mybatis-spring-boot-starter</artifactId>
                 <version>${mybatis-spring-boot.version}</version>
             </dependency>
+
+            <!-- ShedLock -->
+            <dependency>
+                <groupId>net.javacrumbs.shedlock</groupId>
+                <artifactId>shedlock-spring</artifactId>
+                <version>${shedlock.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.javacrumbs.shedlock</groupId>
+                <artifactId>shedlock-provider-redis-spring</artifactId>
+                <version>${shedlock.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -124,11 +137,25 @@
     </repositories>
 
     <build>
+        <plugins>
+            <!-- Library modules skip repackage/run; health-app overrides with skip=false -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <inherited>true</inherited>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+        </plugins>
         <pluginManagement>
             <plugins>
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <skip>true</skip>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>

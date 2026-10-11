@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.observation.mapper.LabReportMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, org_id, specimen_type, sampled_at, reported_at, source, note,
+        created_by_staff_id, updated_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO lab_report(
+            id, tenant_id, people_id, org_id, specimen_type, sampled_at, reported_at, source, note,
+            created_by_staff_id, updated_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{specimenType}, #{sampledAt}, #{reportedAt}, #{source}, #{note},
+            #{createdByStaffId}, #{updatedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE lab_report
+        SET org_id = #{orgId},
+            specimen_type = #{specimenType},
+            sampled_at = #{sampledAt},
+            reported_at = #{reportedAt},
+            source = #{source},
+            note = #{note},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE lab_report
+        SET is_deleted = 1,
+            updated_by_staff_id = #{staffId},
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.observation.domain.LabReport">
+        SELECT <include refid="cols"/>
+        FROM lab_report
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.observation.domain.LabReport">
+        SELECT <include refid="cols"/>
+        FROM lab_report
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        ORDER BY COALESCE(reported_at, sampled_at, gmt_created) DESC
+    </select>
+</mapper>

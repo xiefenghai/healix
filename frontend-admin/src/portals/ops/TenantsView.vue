@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, isOpsSuperAdmin } from '../../shared/http'
 import type { PageResult, TenantListItem } from './types'
-import { formatTenantStatus, tenantStatusTagType } from './labels'
+import { formatTenantStatus, tenantStatusTagType } from '../../shared/enums'
 import { TABLE_COL } from '../../shared/table-columns'
 
 const router = useRouter()
@@ -125,11 +125,13 @@ onMounted(() => {
 <template>
   <div>
     <div class="page-title">
-      <h1>租户管理</h1>
-      <p>查看租户列表；未配置租户管理员时将标红提醒</p>
+      <div>
+        <h1>租户管理</h1>
+        <p>查看租户列表；未配置租户管理员时将标红提醒</p>
+      </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-input
           v-model="keyword"
@@ -143,8 +145,10 @@ onMounted(() => {
         <el-button v-if="canWrite" type="primary" @click="openCreate('quick')">快捷开通</el-button>
         <el-button v-if="canWrite" @click="openCreate('empty')">仅开租户</el-button>
       </div>
+    </el-card>
 
-      <el-table v-loading="loading" :data="list" stripe border @row-click="goDetail">
+    <el-card shadow="never">
+      <el-table v-loading="loading" :data="list" stripe @row-click="goDetail">
         <el-table-column prop="tenantId" label="ID" v-bind="TABLE_COL.bizId" />
         <el-table-column prop="code" label="租户编码" min-width="140" />
         <el-table-column prop="name" label="租户名称" min-width="160" />
@@ -223,10 +227,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page-title { margin-bottom: 16px; }
-.page-title h1 { margin: 0; font-size: 16px; }
-.page-title p { margin: 6px 0 0; color: var(--admin-muted); font-size: 12px; }
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .spacer { flex: 1; }
 .pager { margin-top: 12px; display: flex; justify-content: flex-end; }
 :deep(.el-table__row) { cursor: pointer; }

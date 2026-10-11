@@ -1,41 +1,80 @@
 :root {
-  /* 医疗管理端：青绿主色 + 深灰侧栏，避免 Element 默认亮蓝 */
-  --admin-primary: #0d9488;
-  --admin-primary-hover: #0f766e;
-  --admin-primary-light: #ccfbf1;
-  --admin-primary-muted: rgba(13, 148, 136, 0.12);
+  /* Healix B 端 · docs/ui-redesign 设计系统 */
+  --brand-50: #eaf2ff;
+  --brand-100: #d6e6ff;
+  --brand-300: #7ba9fb;
+  --brand-500: #2c7ef8;
+  --brand-600: #1e63d9;
+  --brand-700: #174db0;
 
-  --admin-sidebar-bg: #1e293b;
-  --admin-sidebar-hover: rgba(255, 255, 255, 0.06);
-  --admin-sidebar-active: rgba(13, 148, 136, 0.18);
+  --teal-500: #00b8a9;
+  --teal-50: #e6faf7;
+  --amber-500: #f59e0b;
+  --amber-50: #fef6e2;
+  --rose-500: #ef4444;
+  --rose-50: #fee9e7;
+  --violet-500: #8b5cf6;
+  --violet-50: #f1ecfe;
+
+  --ink-900: #0f172a;
+  --ink-800: #1e293b;
+  --ink-700: #334155;
+  --ink-600: #475569;
+  --ink-500: #64748b;
+  --ink-400: #94a3b8;
+  --ink-300: #cbd5e1;
+  --ink-200: #e2e8f0;
+  --ink-100: #f1f5f9;
+  --ink-50: #f8fafc;
+
+  --admin-primary: var(--brand-500);
+  --admin-primary-hover: var(--brand-600);
+  --admin-primary-light: var(--brand-50);
+  --admin-primary-muted: rgba(44, 126, 248, 0.12);
+
+  --admin-sidebar-bg: #0f172a;
+  --admin-sidebar-bg-end: #131c30;
+  --admin-sidebar-hover: rgba(255, 255, 255, 0.05);
+  --admin-sidebar-active: linear-gradient(90deg, rgba(44, 126, 248, 0.18), rgba(44, 126, 248, 0.04));
   --admin-sidebar-text: #94a3b8;
-  --admin-sidebar-text-active: #f8fafc;
+  --admin-sidebar-text-active: #ffffff;
+  --admin-sidebar-border: rgba(255, 255, 255, 0.04);
 
   --admin-topbar-bg: #ffffff;
-  --admin-topbar-border: #e2e8f0;
+  --admin-topbar-border: var(--ink-200);
 
-  --admin-bg: #f1f5f9;
+  --admin-bg: #f5f7fb;
   --admin-card: #ffffff;
-  --admin-text: #0f172a;
-  --admin-text-secondary: #475569;
-  --admin-muted: #64748b;
-  --admin-border: #e2e8f0;
+  --admin-text: var(--ink-800);
+  --admin-text-secondary: var(--ink-700);
+  --admin-muted: var(--ink-500);
+  --admin-border: var(--ink-200);
 
-  --admin-warning: #d97706;
-  --admin-success: #059669;
-  --admin-danger: #dc2626;
-  --admin-radius: 10px;
-  --admin-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-  --admin-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --admin-warning: var(--amber-500);
+  --admin-success: #10b981;
+  --admin-danger: var(--rose-500);
+  --admin-radius: 12px;
+  --admin-radius-sm: 8px;
+  --admin-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --admin-shadow-md: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
+  --admin-transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  --el-color-primary: #0d9488;
-  --el-color-primary-light-3: #5eead4;
-  --el-color-primary-light-5: #99f6e4;
-  --el-color-primary-light-7: #ccfbf1;
-  --el-color-primary-light-8: #e6fffa;
-  --el-color-primary-light-9: #f0fdfa;
-  --el-color-primary-dark-2: #0f766e;
+  --el-color-primary: #2c7ef8;
+  --el-color-primary-light-3: #7ba9fb;
+  --el-color-primary-light-5: #a8c8fc;
+  --el-color-primary-light-7: #d6e6ff;
+  --el-color-primary-light-8: #eaf2ff;
+  --el-color-primary-light-9: #f3f8ff;
+  --el-color-primary-dark-2: #1e63d9;
   --el-border-radius-base: 8px;
+  --el-border-color: var(--ink-200);
+  --el-border-color-light: var(--ink-100);
+  --el-text-color-primary: var(--ink-800);
+  --el-text-color-regular: var(--ink-700);
+  --el-text-color-secondary: var(--ink-500);
+  --el-fill-color-blank: #fff;
+  --el-bg-color: #fff;
+  --el-bg-color-page: var(--admin-bg);
 }
 
 * {
@@ -49,7 +88,8 @@ body,
   min-height: 100%;
   background: var(--admin-bg);
   color: var(--admin-text);
-  font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  font-family: Inter, -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -62,74 +102,286 @@ a:hover {
   color: var(--admin-primary-hover);
 }
 
-/* 卡片：统一圆角与轻阴影 */
+.muted {
+  color: var(--ink-400);
+}
+
+/* —— Element Plus：卡片 / 表格 / 表单 / 对话框 —— */
 .el-card {
   border: 1px solid var(--admin-border) !important;
   border-radius: var(--admin-radius) !important;
   box-shadow: var(--admin-shadow) !important;
+  background: var(--admin-card) !important;
 }
 
 .el-card__header {
   font-weight: 600;
-  color: var(--admin-text);
-  border-bottom-color: var(--admin-border) !important;
+  font-size: 14px;
+  color: var(--ink-800);
+  border-bottom-color: var(--ink-100) !important;
+  padding: 14px 18px !important;
 }
 
-/* 表格：表头浅灰、行距舒适 */
+.el-card__body {
+  padding: 16px 18px !important;
+}
+
 .el-table {
-  --el-table-header-bg-color: #f8fafc;
-  --el-table-header-text-color: var(--admin-text-secondary);
-  --el-table-border-color: var(--admin-border);
-  border-radius: var(--admin-radius);
+  --el-table-header-bg-color: var(--ink-50);
+  --el-table-header-text-color: var(--ink-500);
+  --el-table-border-color: var(--ink-100);
+  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  border-radius: var(--admin-radius-sm);
+  overflow: hidden;
 }
 
 .el-table th.el-table__cell {
   font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-500) !important;
+}
+
+.el-table td.el-table__cell {
   font-size: 13px;
+  color: var(--ink-800);
 }
 
-/* 主按钮 */
+.el-table--border::after,
+.el-table--border::before,
+.el-table__inner-wrapper::before {
+  display: none;
+}
+
+.el-table--border .el-table__cell {
+  border-right: none !important;
+}
+
+.el-button {
+  font-weight: 600;
+}
+
 .el-button--primary {
-  --el-button-bg-color: var(--admin-primary);
-  --el-button-border-color: var(--admin-primary);
-  --el-button-hover-bg-color: var(--admin-primary-hover);
-  --el-button-hover-border-color: var(--admin-primary-hover);
-  --el-button-active-bg-color: var(--admin-primary-hover);
-  --el-button-active-border-color: var(--admin-primary-hover);
+  --el-button-bg-color: var(--brand-500);
+  --el-button-border-color: var(--brand-500);
+  --el-button-hover-bg-color: var(--brand-600);
+  --el-button-hover-border-color: var(--brand-600);
+  --el-button-active-bg-color: var(--brand-600);
+  --el-button-active-border-color: var(--brand-600);
 }
 
-/* 分页、输入框聚焦色 */
+.el-button--default {
+  --el-button-hover-text-color: var(--brand-600);
+  --el-button-hover-border-color: var(--brand-300);
+  --el-button-hover-bg-color: var(--brand-50);
+}
+
 .el-pagination.is-background .el-pager li.is-active {
-  background-color: var(--admin-primary) !important;
+  background-color: var(--brand-500) !important;
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: 8px !important;
 }
 
 .el-input__wrapper:focus-within,
 .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px var(--admin-primary) inset !important;
+  box-shadow: 0 0 0 1px var(--brand-500), 0 0 0 3px rgba(44, 126, 248, 0.12) !important;
+}
+
+.el-dialog {
+  border-radius: 14px !important;
+  overflow: hidden;
+}
+
+.el-dialog__header {
+  padding: 18px 20px 12px !important;
+  margin-right: 0 !important;
+}
+
+.el-dialog__title {
+  font-weight: 700 !important;
+  color: var(--ink-900) !important;
+}
+
+.el-dialog__body {
+  padding: 8px 20px 20px !important;
+  color: var(--ink-700);
+}
+
+.el-dialog__footer {
+  padding: 12px 20px 18px !important;
+  border-top: 1px solid var(--ink-100);
+}
+
+.el-tabs__item {
+  font-weight: 500;
+  color: var(--ink-500);
 }
 
 .el-tabs__item.is-active {
-  color: var(--admin-primary);
+  color: var(--brand-600);
+  font-weight: 650;
 }
 
 .el-tabs__active-bar {
-  background-color: var(--admin-primary);
+  background-color: var(--brand-500);
 }
 
-/* 页面标题区（各 View 可复用 class） */
-.page-title h1 {
-  color: var(--admin-text);
+.el-tag {
+  border-radius: 6px;
   font-weight: 600;
 }
 
-.page-title p {
-  color: var(--admin-muted);
+.el-tag--primary {
+  --el-tag-bg-color: var(--brand-50);
+  --el-tag-border-color: var(--brand-100);
+  --el-tag-text-color: var(--brand-600);
 }
 
-/* 表格：32 位业务 ID / 编码列 */
+.el-form-item__label {
+  color: var(--ink-600) !important;
+  font-weight: 560 !important;
+}
+
+/* —— 统一页面骨架 —— */
+.page-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px 20px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.page-title h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink-900);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.page-title p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-500);
+  line-height: 1.45;
+}
+
+.page-title .actions,
+.page-title > .el-button,
+.page-title > .el-button-group {
+  flex-shrink: 0;
+}
+
+.filter-card {
+  margin-bottom: 14px;
+}
+
+.filter-card .el-card__body {
+  padding: 12px 16px !important;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.toolbar .spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+/* KPI / 摘要卡 */
+.summary-row {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.summary-card {
+  margin: 0;
+  padding: 16px 18px;
+  text-align: left;
+  border: 1px solid var(--ink-200);
+  border-radius: var(--admin-radius);
+  background: var(--admin-card);
+  box-shadow: var(--admin-shadow);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition:
+    border-color var(--admin-transition),
+    box-shadow var(--admin-transition),
+    transform var(--admin-transition),
+    background var(--admin-transition);
+}
+
+.summary-card:hover {
+  box-shadow: var(--admin-shadow-md);
+  transform: translateY(-1px);
+}
+
+.summary-card.is-active {
+  border-color: var(--brand-500);
+  background: linear-gradient(180deg, #f8fbff, #fff);
+}
+
+.summary-card.is-active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--brand-500);
+}
+
+.summary-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  color: var(--ink-900);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-card.is-active .summary-value {
+  color: var(--brand-600);
+}
+
+.summary-label {
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--ink-500);
+}
+
+.summary-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--ink-400);
+}
+
+.panel {
+  background: var(--admin-card);
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius);
+  box-shadow: var(--admin-shadow);
+}
+
 .el-table .col-biz-id .cell {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   white-space: nowrap;
-  color: var(--admin-text-secondary);
+  color: var(--ink-500);
 }

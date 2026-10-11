@@ -3,6 +3,7 @@ import AdminShell from '../../shared/AdminShell.vue'
 
 const menus = [
   { path: '/ops/tenants', label: '租户管理', icon: 'office' },
+  { path: '/ops/jobs', label: '平台任务', icon: 'timer' },
   { path: '/ops/patients', label: '用户检索', icon: 'user' },
 ]
 </script>

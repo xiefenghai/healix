@@ -8,6 +8,7 @@ public class RequestContext {
     private String portal;
     private String accountId;
     private String patientId;
+    private String activePatientCardId;
     private String staffId;
     private String homeTenantId;
     private String tenantId;
@@ -36,6 +37,14 @@ public class RequestContext {
 
     public void setPatientId(String patientId) {
         this.patientId = patientId;
+    }
+
+    public String getActivePatientCardId() {
+        return activePatientCardId;
+    }
+
+    public void setActivePatientCardId(String activePatientCardId) {
+        this.activePatientCardId = activePatientCardId;
     }
 
     public String getStaffId() {
