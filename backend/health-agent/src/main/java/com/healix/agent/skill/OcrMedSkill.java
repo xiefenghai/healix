@@ -42,7 +42,7 @@ public class OcrMedSkill implements AgentSkill {
                     ctx.sessionId(),
                     AgentCapability.OCR_MED.name(),
                     "OCR_MED",
-                    "请在对话框上传用药单/处方图片（JPG/PNG/WEBP，≤5MB）后识别；识别结果可在气泡内核对写入用药清单。",
+                    "请在对话框上传用药单图片（JPG/PNG/WEBP，≤5MB）后识别；识别结果可在气泡内核对写入用药清单。",
                     List.of(AgentAction.openSheet("打开用药管理（手工录入）", "medications", cmd.peopleId())),
                     List.of(),
                     null);

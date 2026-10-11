@@ -318,7 +318,7 @@ export function formatDiseaseRows(
     return arr.map((c) => labels[mapKey]?.[c] ?? c).join('、')
   }
 
-  push('确诊时间', dash(asStr(content.diagnosisDate)))
+  push('患病时间', dash(asStr(content.diagnosisDate)))
 
   if (diseaseCode === 'diabetes') {
     push('糖尿病类型', dash(labels.diabetesType?.[asStr(content.diabetesType)] ?? asStr(content.diabetesType)))

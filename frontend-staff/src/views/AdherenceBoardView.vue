@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../shared/http'
 
-type BoardFilter = '' | 'STREAK_GE_3' | 'PLAN_INCOMPLETE' | 'MED_INCOMPLETE'
+type BoardFilter = '' | 'STREAK_GE_3' | 'PLAN_INCOMPLETE' | 'MED_INCOMPLETE' | 'LIFESTYLE_INACTIVE'
 
 interface AdherenceOverview {
   date: string
@@ -13,6 +13,7 @@ interface AdherenceOverview {
   planIncompleteCount: number
   medIncompleteCount: number
   streakGe3Count: number
+  lifestyleInactiveCount?: number
 }
 
 interface AdherencePatientItem {
@@ -28,6 +29,10 @@ interface AdherencePatientItem {
   }
   med?: {
     todayIncomplete?: boolean
+  }
+  lifestyle?: {
+    dietDays7d?: number
+    exerciseDays7d?: number
   }
 }
 
@@ -55,7 +60,11 @@ const cards = computed(() => [
   { key: 'STREAK_GE_3' as const, label: '连续≥3天', value: overview.value?.streakGe3Count ?? 0 },
   { key: 'PLAN_INCOMPLETE' as const, label: '方案未完成', value: overview.value?.planIncompleteCount ?? 0 },
   { key: 'MED_INCOMPLETE' as const, label: '用药未完成', value: overview.value?.medIncompleteCount ?? 0 },
-  { key: '' as const, label: '纳入人数', value: overview.value?.universeCount ?? 0 },
+  {
+    key: 'LIFESTYLE_INACTIVE' as const,
+    label: '7天饮食运动无记录',
+    value: overview.value?.lifestyleInactiveCount ?? 0,
+  },
 ])
 
 function hint(row: AdherencePatientItem) {
@@ -63,6 +72,8 @@ function hint(row: AdherencePatientItem) {
   if (row.plan?.todayIncomplete) return '昨日方案未完成'
   if (row.med?.todayIncomplete) return '昨日用药未完成'
   if (!row.clientLinked) return 'C 端未关联'
+  const ls = row.lifestyle
+  if (ls) return `7天饮食 ${ls.dietDays7d ?? 0} 天 · 运动 ${ls.exerciseDays7d ?? 0} 天`
   return '—'
 }
 
@@ -100,7 +111,7 @@ async function onRefresh() {
 }
 
 function selectFilter(key: BoardFilter) {
-  filter.value = key
+  filter.value = filter.value === key ? '' : key
   void load()
 }
 
@@ -130,12 +141,14 @@ onMounted(load)
 <template>
   <div class="hx-page">
     <van-nav-bar title="依从看板" left-arrow @click-left="router.back()" />
-    <p class="sub hx-muted">统计日 {{ date }}（默认看昨日缺口）</p>
+    <p class="sub hx-muted">
+      统计日 {{ date }}（默认看昨日缺口）<template v-if="overview"> · 纳入 {{ overview.universeCount }} 人</template>
+    </p>
     <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
       <div class="cards">
         <button
           v-for="c in cards"
-          :key="c.key || 'all'"
+          :key="c.key"
           type="button"
           class="card"
           :class="{ active: filter === c.key }"

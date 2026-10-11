@@ -34,6 +34,7 @@ export const FOLLOWUP_RECORD_TYPE_OPTIONS = [
   { label: '定期随访', value: 'PERIODIC' },
   { label: '指标异常处理', value: 'METRIC_REVIEW' },
   { label: '打卡跟进', value: 'PLAN_NUDGE' },
+  { label: '运动不适处理', value: 'EXERCISE_REVIEW' },
 ] as const
 
 export const ONBOARDING_NEXT_ACTION_OPTIONS = [

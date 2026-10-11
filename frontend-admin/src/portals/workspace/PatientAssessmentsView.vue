@@ -188,7 +188,7 @@ const controlCard = computed(() => {
     engineLabel: engineMeta?.engineLabel || latest?.engineLabel || CONTROL_ENGINE.fallbackLabel,
     available,
     latest,
-    blockedReason: available ? '' : '仅确诊糖尿病患者适用',
+    blockedReason: available ? '' : '仅适用于已患糖尿病人群',
   }
 })
 
@@ -438,7 +438,7 @@ watch(
       <div>
         <h3>疾病评估</h3>
         <p class="hint">
-          已确诊糖尿病看<strong>血糖控制分标</strong>；未确诊看糖尿病 / 高血压 / 肥胖
+          已患糖尿病看<strong>血糖控制分标</strong>；未患病看糖尿病 / 高血压 / 肥胖
           <strong>发病风险</strong>。结论供健管参考，不构成诊断。
         </p>
       </div>
@@ -458,7 +458,7 @@ watch(
       show-icon
     />
 
-    <!-- 控制分标（确诊糖尿病） -->
+    <!-- 控制分标（已患糖尿病） -->
     <section v-if="controlCard" class="summary control-summary">
       <div class="summary-head">
         <strong>血糖控制分标</strong>

@@ -49,7 +49,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-/** 构建管理报告 content_json 快照（按日切片方案 due + 用药日 + 指标 + 随访）。 */
+/** 构建管理报告 content_json 快照（按日切片方案 due + 用药日 + 指标 + 饮食运动 + 随访）。 */
 @Service
 @RequiredArgsConstructor
 public class HealthReportContentBuilder {
@@ -72,6 +72,7 @@ public class HealthReportContentBuilder {
     private final MetricAbnormalEvaluator metricAbnormalEvaluator;
     private final LabReportMapper labReportMapper;
     private final ExamReportMapper examReportMapper;
+    private final HealthReportLifestyleBuilder lifestyleBuilder;
 
     public BuildResult build(
             String tenantId, String peopleId, LocalDate periodStart, LocalDate periodEnd, String periodType) {
@@ -95,6 +96,7 @@ public class HealthReportContentBuilder {
         root.put("adherence", adherence);
 
         root.put("metrics", buildMetrics(tenantId, peopleId, periodStart, periodEnd));
+        root.put("lifestyle", lifestyleBuilder.build(tenantId, peopleId, periodStart, periodEnd));
 
         List<Map<String, Object>> followups = buildFollowups(tenantId, peopleId, periodStart, periodEnd);
         Map<String, Object> interventions = new LinkedHashMap<>();

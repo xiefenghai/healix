@@ -33,6 +33,26 @@ interface TaskDetail {
 
 type MetricHit = Record<string, unknown>
 
+interface ExerciseEvent {
+  sessionId?: string
+  symptomLabels?: string[]
+  typeName?: string
+  startedAt?: string
+  durationMin?: number
+  intensity?: string
+  recordedByStaff?: boolean
+  reportedAt?: string
+  deleted?: boolean
+}
+
+const EXERCISE_DISPOSITION_OPTIONS = [
+  { value: 'CONTACTED', label: '已电话联系' },
+  { value: 'ADVISED_VISIT', label: '建议就医' },
+  { value: 'VISITED', label: '已就医' },
+  { value: 'FALSE_ALARM', label: '误报' },
+]
+const EXERCISE_INTENSITY_LABELS: Record<string, string> = { LIGHT: '轻松', MODERATE: '中等', VIGOROUS: '较累' }
+
 const props = defineProps<{ taskId: string | null }>()
 const emit = defineEmits<{ closed: []; submitted: []; saved: [] }>()
 
@@ -55,6 +75,9 @@ const guidance = ref('')
 const followupType = ref('ROUTINE')
 const followupSection = ref<FollowupSection>(emptyFollowupSection())
 const suggestPlanAdjust = ref(false)
+/** 运动不适 */
+const disposition = ref('')
+const exerciseChannel = ref('')
 
 const open = computed({
   get: () => !!props.taskId,
@@ -66,9 +89,11 @@ const open = computed({
 const isNudge = computed(() => task.value?.taskType === 'PLAN_NUDGE')
 const isAlert = computed(() => task.value?.taskType === 'METRIC_ALERT')
 const isFollowUp = computed(() => task.value?.taskType === 'FOLLOW_UP')
+const isExercise = computed(() => task.value?.taskType === 'EXERCISE_ALERT')
 const isOnboardingFollowUp = computed(() => isFollowUp.value && followupType.value === 'ONBOARDING')
 const dialogTitle = computed(() => {
   if (isAlert.value) return '指标异常处理'
+  if (isExercise.value) return '运动不适处理'
   if (isFollowUp.value) return '定期随访'
   return task.value?.taskTypeLabel || '填单'
 })
@@ -86,6 +111,18 @@ const alertHits = computed<MetricHit[]>(() => {
   }
   return []
 })
+
+const exerciseEvents = computed<ExerciseEvent[]>(() => {
+  const events = task.value?.payload?.events
+  return Array.isArray(events) ? (events as ExerciseEvent[]) : []
+})
+
+function exerciseEventText(e: ExerciseEvent) {
+  const parts = [e.typeName || '运动']
+  if (e.durationMin) parts.push(`${e.durationMin} 分钟`)
+  if (e.intensity) parts.push(EXERCISE_INTENSITY_LABELS[e.intensity] || e.intensity)
+  return `${parts.join(' · ')}：${(e.symptomLabels || []).join('、') || '不适'}`
+}
 
 function escapeHtml(text: string) {
   return text
@@ -142,6 +179,8 @@ watch(
     followupType.value = 'ROUTINE'
     followupSection.value = emptyFollowupSection()
     suggestPlanAdjust.value = false
+    disposition.value = ''
+    exerciseChannel.value = ''
     if (!id) return
     loading.value = true
     try {
@@ -295,10 +334,20 @@ async function submit() {
       return
     }
   }
+  if (isExercise.value && !disposition.value) {
+    ElMessage.warning('请选择处理方式')
+    return
+  }
   submitting.value = true
   try {
     let body: Record<string, unknown>
-    if (isNudge.value) {
+    if (isExercise.value) {
+      body = {
+        disposition: disposition.value,
+        contactChannel: exerciseChannel.value || undefined,
+        note: note.value.trim() || undefined,
+      }
+    } else if (isNudge.value) {
       body = buildNudgeBody()
     } else if (isFollowUp.value) {
       if (followupType.value === 'ONBOARDING') {
@@ -376,7 +425,46 @@ async function submit() {
         </div>
       </div>
 
-      <el-form v-if="isNudge" label-width="96px" class="task-form">
+      <div v-if="isExercise && exerciseEvents.length" class="hits">
+        <div class="hits-head">
+          <span class="hits-title">不适上报</span>
+          <span class="hits-count">{{ exerciseEvents.length }} 次</span>
+          <span class="hits-hint">提交后一并关闭</span>
+        </div>
+        <div class="hits-list">
+          <div v-for="(e, idx) in exerciseEvents" :key="e.sessionId || idx" class="hit-row">
+            <span class="hit-main" :class="{ 'event-deleted': e.deleted }">
+              {{ exerciseEventText(e) }}
+              <el-tag v-if="e.recordedByStaff" size="small" effect="plain">代录</el-tag>
+              <el-tag v-if="e.deleted" size="small" type="info">患者已删除该记录</el-tag>
+            </span>
+            <span v-if="e.startedAt" class="hit-time">{{ String(e.startedAt).replace('T', ' ').slice(5, 16) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <el-form v-if="isExercise" label-position="top" class="task-form alert-form">
+        <el-form-item label="处理方式" required>
+          <el-radio-group v-model="disposition">
+            <el-radio-button v-for="o in EXERCISE_DISPOSITION_OPTIONS" :key="o.value" :value="o.value">
+              {{ o.label }}
+            </el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="联系渠道">
+          <el-select v-model="exerciseChannel" clearable placeholder="选填" style="width: 100%">
+            <el-option label="电话" value="PHONE" />
+            <el-option label="企微" value="WECOM" />
+            <el-option label="当面" value="IN_PERSON" />
+            <el-option label="其他" value="OTHER" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="note" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="选填，如患者当前状况、给出的建议" />
+        </el-form-item>
+      </el-form>
+
+      <el-form v-else-if="isNudge" label-width="96px" class="task-form">
         <el-form-item label="联系渠道" required>
           <el-select v-model="contactChannel" style="width: 100%">
             <el-option label="电话" value="PHONE" />
@@ -647,6 +735,10 @@ async function submit() {
 .switch-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.event-deleted {
+  color: var(--el-text-color-secondary);
+  text-decoration: line-through;
 }
 .metric-text :deep(.metric-abnormal) {
   color: var(--el-color-danger);

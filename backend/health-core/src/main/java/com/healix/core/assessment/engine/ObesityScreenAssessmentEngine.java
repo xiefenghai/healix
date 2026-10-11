@@ -17,7 +17,7 @@ import org.springframework.util.StringUtils;
 /**
  * 肥胖症筛查/分层（《肥胖症诊疗指南（2024年版）》）。
  *
- * <p>并列输出：BMI 诊断（正常/超重/肥胖症）+ 肥胖严重度分层 + 中心性肥胖独立标记。
+ * <p>并列输出：BMI 判定（正常/超重/肥胖症）+ 肥胖严重度分层 + 中心性肥胖独立标记。
  */
 @Component
 public class ObesityScreenAssessmentEngine implements AssessmentEngine {
@@ -84,7 +84,7 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
                     .rulePackVersion(RULE_PACK)
                     .extras(Map.of(
                             "guidelineRef", "《肥胖症诊疗指南（2024年版）》",
-                            "note", "中国成人 BMI≥28 诊断肥胖症（严于 WHO≥30）"))
+                            "note", "中国成人 BMI≥28 判定为肥胖（严于 WHO≥30）"))
                     .build();
         }
 
@@ -101,7 +101,7 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
             central = isCentralObesity(male, ctx.getWaistCm());
             waistBand = waistBand(male, ctx.getWaistCm());
         }
-        unchecked.add("体脂率（档案/指标未结构化；男>25% / 女>30% 可辅助诊断）");
+        unchecked.add("体脂率（档案/指标未结构化；男>25% / 女>30% 可辅助判定）");
 
         List<AssessmentItem> items = new ArrayList<>();
         items.add(AssessmentItem.builder()
@@ -113,14 +113,14 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
                 .build());
         items.add(AssessmentItem.builder()
                 .code("DIAGNOSIS")
-                .label("BMI 诊断")
+                .label("BMI 判定")
                 .inputValue(diagnosisLabel(diagnosis))
                 .points(null)
                 .rationale(DIAG_OBESITY.equals(diagnosis)
-                        ? "BMI≥28 诊断为肥胖症（中国标准）"
+                        ? "BMI≥28 判定为肥胖（中国标准）"
                         : DIAG_OVERWEIGHT.equals(diagnosis)
                                 ? "BMI 24.0–<28.0 为超重"
-                                : "未达肥胖症诊断阈值")
+                                : "未达肥胖判定标准")
                 .build());
         if (DIAG_OBESITY.equals(diagnosis)) {
             items.add(AssessmentItem.builder()
@@ -168,7 +168,7 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
                 List.of(
                         Map.of(
                                 "code", "DIAGNOSIS",
-                                "label", "BMI 诊断",
+                                "label", "BMI 判定",
                                 "value", diagnosisLabel(diagnosis),
                                 "hint", "全身性肥胖主标准（中国成人）"),
                         Map.of(
@@ -178,7 +178,7 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
                                         DIAG_OBESITY.equals(diagnosis)
                                                 ? severityLabel(severity)
                                                 : "—",
-                                "hint", "确诊肥胖后的分层干预依据"),
+                                "hint", "肥胖人群的分层干预依据"),
                         Map.of(
                                 "code",
                                 "CENTRAL",
@@ -187,11 +187,11 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
                                 "value",
                                 central == null ? "未测" : (central ? "是" : "否"),
                                 "hint",
-                                "与 BMI 诊断可并存的独立标记")));
+                                "与 BMI 判定可并存的独立标记")));
 
         String advice = buildAdvice(diagnosis, severity, central);
 
-        // level 用细分层级，便于标签着色；诊断结论在 extras.diagnosis
+        // level 用细分层级，便于标签着色；判定结论在 extras.diagnosis
         return AssessmentResult.builder()
                 .status(AssessmentStatus.COMPLETE)
                 .level(severity)
@@ -204,7 +204,7 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
                 .build();
     }
 
-    /** 产品主诊断：正常 / 超重 / 肥胖症（另保留偏瘦）。 */
+    /** 产品主判定：正常 / 超重 / 肥胖症（另保留偏瘦）。 */
     static String diagnoseByBmi(BigDecimal bmi) {
         double v = bmi.doubleValue();
         if (v < 18.5) {
@@ -305,7 +305,7 @@ public class ObesityScreenAssessmentEngine implements AssessmentEngine {
     private static String buildAdvice(String diagnosis, String severity, Boolean central) {
         boolean centralYes = Boolean.TRUE.equals(central);
         if (DIAG_OBESITY.equals(diagnosis)) {
-            String base = "BMI 达肥胖症诊断标准（≥28），严重度：" + severityLabel(severity) + "。";
+            String base = "BMI 达肥胖判定标准（≥28），严重度：" + severityLabel(severity) + "。";
             if (centralYes) {
                 return base + "同时存在中心性肥胖，代谢风险更高，建议结合临床评估制定减重与代谢管理计划";
             }

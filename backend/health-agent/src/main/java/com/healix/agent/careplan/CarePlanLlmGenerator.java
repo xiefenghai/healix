@@ -1,6 +1,7 @@
 package com.healix.agent.careplan;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
@@ -10,7 +11,9 @@ import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry.GeneratedPlan;
+import com.healix.core.compliance.ComplianceText;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -230,11 +233,43 @@ public class CarePlanLlmGenerator {
                 trimmed = trimmed.substring(start, end + 1);
             }
         }
+        JsonNode root;
         try {
-            return JsonUtils.mapper().readTree(trimmed);
+            root = JsonUtils.mapper().readTree(trimmed);
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid care plan JSON", e);
         }
+        filterTexts(root);
+        return root;
+    }
+
+    /** 方案里的文案（标题、总结、任务名、建议）都会给患者看，统一过合规用语替换。 */
+    private static void filterTexts(JsonNode node) {
+        if (node instanceof ObjectNode obj) {
+            for (String name : iterable(obj.fieldNames())) {
+                JsonNode v = obj.get(name);
+                if (v.isTextual()) {
+                    obj.put(name, ComplianceText.filter(v.asText()));
+                } else {
+                    filterTexts(v);
+                }
+            }
+        } else if (node instanceof ArrayNode arr) {
+            for (int i = 0; i < arr.size(); i++) {
+                JsonNode v = arr.get(i);
+                if (v.isTextual()) {
+                    arr.set(i, ComplianceText.filter(v.asText()));
+                } else {
+                    filterTexts(v);
+                }
+            }
+        }
+    }
+
+    private static List<String> iterable(Iterator<String> it) {
+        List<String> out = new ArrayList<>();
+        it.forEachRemaining(out::add);
+        return out;
     }
 
     private String buildUserMessage(

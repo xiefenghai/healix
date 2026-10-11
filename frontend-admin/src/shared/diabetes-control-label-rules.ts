@@ -1,7 +1,7 @@
 export const DM_LABEL_GUIDELINE = '糖尿病血糖控制分标管理规则 · DM-LABEL-2024.1'
 
 export const DM_LABEL_PRIORITY =
-  '判定优先级：无标 → 红标 → 黄标 → 绿标 → 准绿标（仅对已确诊糖尿病患者）'
+  '判定优先级：无标 → 红标 → 黄标 → 绿标 → 准绿标（仅对已患糖尿病人群）'
 
 export const DM_LABEL_RED_RULES = [
   '近14天低血糖次数 ≥2（血糖 <4.0 mmol/L；无监测时可用档案低血糖自填兜底）',
@@ -35,7 +35,7 @@ export const DM_LABEL_TARGET_GROUPS = [
 
 export const DM_LABEL_ADVICE: Record<string, string> = {
   RED: '立即就医，紧急干预',
-  YELLOW: '调整治疗方案，加强监测',
+  YELLOW: '建议就医复评，加强监测',
   GREEN: '维持当前管理，定期复查',
   NEAR_GREEN: '补充缺失数据，确认达标状态',
   NONE: '联系患者，恢复数据采集',

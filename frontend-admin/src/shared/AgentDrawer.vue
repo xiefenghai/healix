@@ -548,7 +548,7 @@ async function confirmOcr(msg: ChatMessage) {
   const review = msg.ocrReview
   if (!review || review.status !== 'pending' || !review.peopleId) return
   const kindLabel =
-    review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药处方' : '检查报告'
+    review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药单' : '检查报告'
   const timeHint =
     review.kind === 'LAB'
       ? `采样 ${formatOcrDt(review.lab?.sampledAt)}，报告 ${formatOcrDt(review.lab?.reportedAt)}`

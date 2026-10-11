@@ -37,6 +37,7 @@ const router = createRouter({
         { path: '', redirect: '/tenant/orgs' },
         { path: 'orgs', component: () => import('../portals/tenant/TenantOrgsView.vue') },
         { path: 'staff', component: () => import('../portals/tenant/TenantStaffView.vue') },
+        { path: 'patient-merge', component: () => import('../portals/tenant/TenantPatientMergeView.vue') },
         { path: 'security', component: () => import('../shared/SecuritySettingsView.vue') },
       ],
     },
@@ -117,6 +118,10 @@ const router = createRouter({
             {
               path: 'diet',
               component: () => import('../portals/workspace/PatientDietView.vue'),
+            },
+            {
+              path: 'exercise',
+              component: () => import('../portals/workspace/PatientExerciseView.vue'),
             },
             {
               path: 'adherence',

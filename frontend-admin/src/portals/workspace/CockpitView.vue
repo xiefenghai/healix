@@ -152,7 +152,7 @@ type TabKey = 'urgent' | 'watch' | 'mine'
 type ChipKind = 'tasks' | 'overdue'
 
 /** 需跳转方案/报告审阅页的任务类型 */
-const FORM_CLOSE_TASK_TYPES = new Set(['PLAN_NUDGE', 'METRIC_ALERT', 'FOLLOW_UP'])
+const FORM_CLOSE_TASK_TYPES = new Set(['PLAN_NUDGE', 'METRIC_ALERT', 'EXERCISE_ALERT', 'FOLLOW_UP'])
 const DRAFT_TASK_TYPES = new Set(['PLAN_CREATE', 'PLAN_REVIEW', 'REPORT_REVIEW'])
 
 const AVATAR_TONES = [
@@ -662,7 +662,7 @@ function riskBadge(card: PriorityCard) {
   if (badges.includes('PLAN_CREATE') || badges.includes('PLAN_REVIEW') || badges.includes('REPORT_REVIEW')) {
     return { text: 'AI 草稿', tone: 'ai' }
   }
-  if (level === 'HIGH' || badges.includes('OVERDUE') || badges.includes('METRIC_ALERT')) {
+  if (level === 'HIGH' || badges.includes('OVERDUE') || badges.includes('METRIC_ALERT') || badges.includes('EXERCISE_ALERT')) {
     return { text: '高风险', tone: 'high' }
   }
   if (level === 'MEDIUM' || badges.includes('PLAN_NUDGE') || badges.includes('FOLLOW_UP') || badges.includes('PATIENT_REQUEST')) {
@@ -707,6 +707,7 @@ function cardTags(card: PriorityCard) {
       'FOLLOW_UP',
       'PLAN_CREATE',
       'METRIC_ALERT',
+      'EXERCISE_ALERT',
       'REPORT_REVIEW',
       'TEAM_ASSIGN',
       'PLAN_REVIEW',
@@ -2091,7 +2092,7 @@ async function confirmOcr(msg: ChatMessage) {
   if (!review || review.status !== 'pending' || !review.peopleId) return
 
   const kindLabel =
-    review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药处方' : '检查报告'
+    review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药单' : '检查报告'
   const timeHint =
     review.kind === 'LAB'
       ? `采样 ${formatOcrDt(review.lab?.sampledAt)}，报告 ${formatOcrDt(review.lab?.reportedAt)}`

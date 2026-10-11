@@ -15,6 +15,9 @@ public interface CarePlanTaskCheckinMapper {
 
     int softDelete(@Param("id") String id);
 
+    /** 系统打卡是记录派生数据，撤销时物理删除：软删的 gmt_deleted 只到秒，同秒内反复撤销会撞唯一键。 */
+    int deleteSystemCheckin(@Param("id") String id, @Param("systemNote") String systemNote);
+
     CarePlanTaskCheckin findByTaskDateSlot(
             @Param("taskId") String taskId,
             @Param("checkinDate") LocalDate checkinDate,

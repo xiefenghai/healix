@@ -234,7 +234,7 @@ public class MedicationService {
             String staffId,
             List<MedicationCommand> items) {
         if (items == null || items.isEmpty()) {
-            throw new BusinessException("处方药品不能为空");
+            throw new BusinessException("药品不能为空");
         }
         String groupId = SnowflakeId.nextBizId();
         List<MedicationViewDto> out = new ArrayList<>();

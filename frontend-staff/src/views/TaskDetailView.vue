@@ -6,6 +6,7 @@ import { api, getStaffId } from '../shared/http'
 import { formatDateTime, isOverdue } from '../shared/format'
 import { submitWithRetry } from '../shared/retry'
 import {
+  EXERCISE_DISPOSITION_OPTIONS,
   FOLLOWUP_CONTACT_TARGET_OPTIONS,
   FOLLOWUP_METHOD_OPTIONS,
   LIFESTYLE_LEVEL_OPTIONS,
@@ -40,6 +41,16 @@ interface OrgStaffItem {
 
 type MetricHit = Record<string, unknown>
 
+interface ExerciseEvent {
+  sessionId?: string
+  symptomLabels?: string[]
+  typeName?: string
+  startedAt?: string
+  durationMin?: number
+  recordedByStaff?: boolean
+  deleted?: boolean
+}
+
 const route = useRoute()
 const router = useRouter()
 const taskId = computed(() => String(route.params.taskId || ''))
@@ -70,11 +81,20 @@ const canAssign = computed(() => task.value?.status === 'OPEN')
 const isNudge = computed(() => task.value?.taskType === 'PLAN_NUDGE')
 const isAlert = computed(() => task.value?.taskType === 'METRIC_ALERT')
 const isFollowUp = computed(() => task.value?.taskType === 'FOLLOW_UP')
+const isExercise = computed(() => task.value?.taskType === 'EXERCISE_ALERT')
 const isTeamAssign = computed(() => task.value?.taskType === 'TEAM_ASSIGN')
 const isPlanCreate = computed(() => task.value?.taskType === 'PLAN_CREATE')
 const isReportReview = computed(() => task.value?.taskType === 'REPORT_REVIEW')
 const isPlanReview = computed(() => task.value?.taskType === 'PLAN_REVIEW')
-const canFillForm = computed(() => isMineOpen.value && (isNudge.value || isAlert.value || isFollowUp.value))
+const canFillForm = computed(
+  () => isMineOpen.value && (isNudge.value || isAlert.value || isFollowUp.value || isExercise.value),
+)
+const formTitle = computed(() => {
+  if (isNudge.value) return '打卡跟进'
+  if (isAlert.value) return '指标异常处理'
+  if (isExercise.value) return '运动不适处理'
+  return '定期随访'
+})
 const canProcessFlow = computed(
   () =>
     isMineOpen.value &&
@@ -96,6 +116,14 @@ const alertHits = computed<MetricHit[]>(() => {
   if (payload.sourceRecordId || payload.family) return [payload]
   return []
 })
+
+const exerciseEvents = computed<ExerciseEvent[]>(() => {
+  const events = task.value?.payload?.events
+  return Array.isArray(events) ? (events as ExerciseEvent[]) : []
+})
+
+/** EXERCISE_ALERT */
+const disposition = ref('')
 
 /** PLAN_NUDGE */
 const contactChannel = ref('PHONE')
@@ -122,6 +150,7 @@ type PickerField =
   | 'followupMethod'
   | 'lifestyleLevel'
   | 'planSatisfaction'
+  | 'disposition'
 
 const showPicker = ref(false)
 const picker = ref<{
@@ -148,6 +177,9 @@ const fieldSetters: Record<PickerField, (v: string) => void> = {
   },
   planSatisfaction: (v) => {
     planSatisfaction.value = v
+  },
+  disposition: (v) => {
+    disposition.value = v
   },
 }
 
@@ -206,6 +238,17 @@ function hydrateFromContent(content: Record<string, unknown>) {
 }
 
 function buildBody(): Record<string, unknown> | null {
+  if (isExercise.value) {
+    if (!disposition.value) {
+      showToast('请选择处理方式')
+      return null
+    }
+    return {
+      disposition: disposition.value,
+      contactChannel: contactChannel.value || undefined,
+      note: note.value.trim() || undefined,
+    }
+  }
   if (isNudge.value) {
     return {
       contactChannel: contactChannel.value,
@@ -446,6 +489,22 @@ onMounted(load)
         </div>
       </section>
 
+      <section v-if="isExercise && exerciseEvents.length" class="hits hx-surface">
+        <h3>不适上报（{{ exerciseEvents.length }} 次）</h3>
+        <div v-for="(e, i) in exerciseEvents" :key="e.sessionId || i" class="hit">
+          <strong :class="{ deleted: e.deleted }">
+            {{ e.typeName || '运动' }}<template v-if="e.durationMin"> · {{ e.durationMin }} 分钟</template>：{{
+              (e.symptomLabels || []).join('、') || '不适'
+            }}
+          </strong>
+          <span class="hx-muted">
+            <template v-if="e.startedAt">{{ String(e.startedAt).replace('T', ' ').slice(5, 16) }}</template>
+            <template v-if="e.recordedByStaff"> · 代录</template>
+            <template v-if="e.deleted"> · 患者已删除该记录</template>
+          </span>
+        </div>
+      </section>
+
       <div v-if="canClaim" class="actions">
         <van-button block type="primary" round :loading="claiming" @click="claim">领取任务</van-button>
       </div>
@@ -464,9 +523,26 @@ onMounted(load)
       </div>
 
       <section v-if="canFillForm" class="form hx-surface">
-        <h3>{{ isNudge ? '打卡跟进' : isAlert ? '指标异常处理' : '定期随访' }}</h3>
+        <h3>{{ formTitle }}</h3>
 
-        <template v-if="isNudge">
+        <template v-if="isExercise">
+          <van-cell
+            title="处理方式"
+            is-link
+            required
+            :value="disposition ? optionLabel(EXERCISE_DISPOSITION_OPTIONS, disposition) : '请选择'"
+            @click="openPicker('disposition', '处理方式', EXERCISE_DISPOSITION_OPTIONS)"
+          />
+          <van-cell
+            title="联系渠道"
+            is-link
+            :value="optionLabel(NUDGE_CHANNEL_OPTIONS, contactChannel)"
+            @click="openPicker('contactChannel', '联系渠道', NUDGE_CHANNEL_OPTIONS)"
+          />
+          <van-field v-model="note" rows="2" autosize type="textarea" label="备注" maxlength="500" />
+        </template>
+
+        <template v-else-if="isNudge">
           <van-cell
             title="联系渠道"
             is-link
@@ -563,7 +639,15 @@ onMounted(load)
         </template>
 
         <div class="form-actions">
-          <van-button block round plain type="primary" :loading="savingDraft" @click="saveDraft">
+          <van-button
+            v-if="!isExercise"
+            block
+            round
+            plain
+            type="primary"
+            :loading="savingDraft"
+            @click="saveDraft"
+          >
             保存草稿
           </van-button>
           <van-button block type="primary" round :loading="submitting" @click="submitForm">
@@ -677,6 +761,10 @@ onMounted(load)
 .hit strong {
   color: var(--hx-danger);
   font-weight: 650;
+}
+.hit strong.deleted {
+  color: var(--hx-muted, #8a97a5);
+  text-decoration: line-through;
 }
 .actions {
   padding: 0 16px 12px;

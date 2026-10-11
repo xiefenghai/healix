@@ -1,5 +1,6 @@
 package com.healix.agent.support;
 
+import com.healix.core.compliance.ComplianceText;
 import org.springframework.util.StringUtils;
 
 /**
@@ -41,7 +42,7 @@ public final class AgentReplyPlainText {
         s = localizeDiseaseCodes(s);
         // 压缩空行：条目紧凑，仅分节标题前留一行
         s = tightenBlankLines(s);
-        return s.trim();
+        return ComplianceText.filter(s.trim());
     }
 
     /**

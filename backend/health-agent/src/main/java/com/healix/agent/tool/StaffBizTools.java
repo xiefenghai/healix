@@ -22,6 +22,7 @@ import org.springframework.util.StringUtils;
 public class StaffBizTools {
 
     private final CockpitService cockpitService;
+    private final PatientBizTools patientBizTools;
 
     public record FocusBundle(CockpitFocusDto focus, String text) {}
 
@@ -31,6 +32,9 @@ public class StaffBizTools {
     public FocusBundle loadFocusContext(String tenantId, String orgId, String peopleId) {
         try {
             CockpitFocusDto focus = cockpitService.focus(tenantId, orgId, peopleId);
+            if (focus != null) {
+                focus.setLifestyleSummary(lifestyleText(tenantId, peopleId));
+            }
             return new FocusBundle(focus, formatFocus(focus));
         } catch (Exception e) {
             log.debug("loadFocusContext failed people={}", peopleId, e);
@@ -342,6 +346,18 @@ public class StaffBizTools {
                 "出报告");
     }
 
+    private String lifestyleText(String tenantId, String peopleId) {
+        List<String> parts = new ArrayList<>();
+        for (PatientBizTools.ToolOutput out : List.of(
+                patientBizTools.recentMeals(tenantId, peopleId),
+                patientBizTools.recentExercise(tenantId, peopleId))) {
+            if (StringUtils.hasText(out.text())) {
+                parts.add(out.text());
+            }
+        }
+        return String.join("；", parts);
+    }
+
     private static String formatFocus(CockpitFocusDto f) {
         if (f == null) {
             return "";
@@ -368,6 +384,9 @@ public class StaffBizTools {
         }
         if (StringUtils.hasText(f.getBloodPressure())) {
             sb.append("；血压：").append(f.getBloodPressure());
+        }
+        if (StringUtils.hasText(f.getLifestyleSummary())) {
+            sb.append("；").append(f.getLifestyleSummary());
         }
         if (f.getAssessmentTags() != null && !f.getAssessmentTags().isEmpty()) {
             List<String> tags = new ArrayList<>();

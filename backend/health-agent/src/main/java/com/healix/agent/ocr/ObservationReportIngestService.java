@@ -134,7 +134,7 @@ public class ObservationReportIngestService {
     }
 
     private ObservationOcrPreviewDto medPreview(MedOcrPrefillDto med) {
-        return new ObservationOcrPreviewDto("MED", "用药处方", warnings(med.warnings()), null, null, med);
+        return new ObservationOcrPreviewDto("MED", "用药单", warnings(med.warnings()), null, null, med);
     }
 
     private ObservationOcrIngestDto saveLab(
@@ -214,7 +214,7 @@ public class ObservationReportIngestService {
         return new ObservationOcrIngestDto(
                 "MED",
                 groupId,
-                "用药处方",
+                "用药单",
                 "已确认写入用药清单，共 " + saved.size() + " 种药品。请到用药管理中继续核对。",
                 warnings(prefill.warnings()));
     }

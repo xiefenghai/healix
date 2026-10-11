@@ -1,0 +1,711 @@
+{
+  "version": "2026-10-11",
+  "source": "MET 取值参照 2024 Adult Compendium of Physical Activities，按低/中/高强度取代表值",
+  "types": [
+    {
+      "code": "WALKING",
+      "name": "散步",
+      "aliases": [
+        "走路",
+        "步行",
+        "遛弯",
+        "饭后走"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.8,
+        "MODERATE": 3.5,
+        "VIGOROUS": 4.3
+      },
+      "tags": []
+    },
+    {
+      "code": "BRISK_WALKING",
+      "name": "快走",
+      "aliases": [
+        "健步走",
+        "暴走"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.5,
+        "MODERATE": 4.3,
+        "VIGOROUS": 5.0
+      },
+      "tags": []
+    },
+    {
+      "code": "NORDIC_WALKING",
+      "name": "北欧式健走",
+      "aliases": [
+        "徒步杖",
+        "健走杖"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.5,
+        "MODERATE": 4.8,
+        "VIGOROUS": 6.0
+      },
+      "tags": []
+    },
+    {
+      "code": "JOGGING",
+      "name": "慢跑",
+      "aliases": [
+        "跑步慢"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "VIGOROUS",
+      "met": {
+        "LIGHT": 6.0,
+        "MODERATE": 7.0,
+        "VIGOROUS": 8.3
+      },
+      "tags": [
+        "HIGH_IMPACT"
+      ]
+    },
+    {
+      "code": "RUNNING",
+      "name": "跑步",
+      "aliases": [
+        "长跑",
+        "夜跑",
+        "晨跑"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "VIGOROUS",
+      "met": {
+        "LIGHT": 7.0,
+        "MODERATE": 8.3,
+        "VIGOROUS": 9.8
+      },
+      "tags": [
+        "HIGH_IMPACT"
+      ]
+    },
+    {
+      "code": "STAIRS",
+      "name": "爬楼梯",
+      "aliases": [
+        "上楼梯",
+        "爬楼"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 4.0,
+        "MODERATE": 5.0,
+        "VIGOROUS": 8.8
+      },
+      "tags": []
+    },
+    {
+      "code": "HIKING",
+      "name": "爬山 / 徒步",
+      "aliases": [
+        "登山",
+        "爬山",
+        "徒步"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 5.3,
+        "MODERATE": 6.0,
+        "VIGOROUS": 7.8
+      },
+      "tags": [
+        "FALL_RISK"
+      ]
+    },
+    {
+      "code": "CYCLING",
+      "name": "骑自行车",
+      "aliases": [
+        "骑车",
+        "单车",
+        "骑行"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 4.0,
+        "MODERATE": 6.8,
+        "VIGOROUS": 8.0
+      },
+      "tags": [
+        "FALL_RISK"
+      ]
+    },
+    {
+      "code": "STATIONARY_BIKE",
+      "name": "健身车 / 动感单车",
+      "aliases": [
+        "动感单车",
+        "室内单车",
+        "健身车"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.5,
+        "MODERATE": 6.8,
+        "VIGOROUS": 8.8
+      },
+      "tags": []
+    },
+    {
+      "code": "ELLIPTICAL",
+      "name": "椭圆机",
+      "aliases": [
+        "漫步机"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 4.0,
+        "MODERATE": 5.0,
+        "VIGOROUS": 6.5
+      },
+      "tags": []
+    },
+    {
+      "code": "ROWING",
+      "name": "划船机",
+      "aliases": [
+        "划船"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 4.8,
+        "MODERATE": 7.0,
+        "VIGOROUS": 8.5
+      },
+      "tags": []
+    },
+    {
+      "code": "SWIMMING",
+      "name": "游泳",
+      "aliases": [
+        "蛙泳",
+        "自由泳"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 4.8,
+        "MODERATE": 5.8,
+        "VIGOROUS": 9.8
+      },
+      "tags": [
+        "WATER"
+      ]
+    },
+    {
+      "code": "WATER_AEROBICS",
+      "name": "水中健身",
+      "aliases": [
+        "水中行走",
+        "水中有氧"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 2.5,
+        "MODERATE": 5.3,
+        "VIGOROUS": 5.5
+      },
+      "tags": [
+        "WATER"
+      ]
+    },
+    {
+      "code": "SQUARE_DANCE",
+      "name": "广场舞",
+      "aliases": [
+        "跳广场舞"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.0,
+        "MODERATE": 4.5,
+        "VIGOROUS": 5.5
+      },
+      "tags": []
+    },
+    {
+      "code": "DANCING",
+      "name": "跳舞",
+      "aliases": [
+        "交谊舞",
+        "民族舞",
+        "拉丁舞"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.0,
+        "MODERATE": 4.5,
+        "VIGOROUS": 7.3
+      },
+      "tags": []
+    },
+    {
+      "code": "AEROBICS",
+      "name": "健身操",
+      "aliases": [
+        "有氧操",
+        "跳操",
+        "健美操"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 4.0,
+        "MODERATE": 5.0,
+        "VIGOROUS": 7.3
+      },
+      "tags": []
+    },
+    {
+      "code": "TAICHI",
+      "name": "太极拳",
+      "aliases": [
+        "太极",
+        "太极剑"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.5,
+        "MODERATE": 3.0,
+        "VIGOROUS": 4.0
+      },
+      "tags": []
+    },
+    {
+      "code": "BADUANJIN",
+      "name": "八段锦",
+      "aliases": [],
+      "category": "AEROBIC",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.5,
+        "MODERATE": 3.0,
+        "VIGOROUS": 3.5
+      },
+      "tags": []
+    },
+    {
+      "code": "WUQINXI",
+      "name": "五禽戏 / 易筋经",
+      "aliases": [
+        "五禽戏",
+        "易筋经",
+        "气功"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.5,
+        "MODERATE": 3.0,
+        "VIGOROUS": 3.5
+      },
+      "tags": []
+    },
+    {
+      "code": "BADMINTON",
+      "name": "羽毛球",
+      "aliases": [],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 4.5,
+        "MODERATE": 5.5,
+        "VIGOROUS": 7.0
+      },
+      "tags": []
+    },
+    {
+      "code": "TABLE_TENNIS",
+      "name": "乒乓球",
+      "aliases": [],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.0,
+        "MODERATE": 4.0,
+        "VIGOROUS": 5.0
+      },
+      "tags": []
+    },
+    {
+      "code": "TENNIS",
+      "name": "网球",
+      "aliases": [],
+      "category": "AEROBIC",
+      "defaultIntensity": "VIGOROUS",
+      "met": {
+        "LIGHT": 5.0,
+        "MODERATE": 6.8,
+        "VIGOROUS": 8.0
+      },
+      "tags": []
+    },
+    {
+      "code": "BASKETBALL",
+      "name": "篮球",
+      "aliases": [
+        "打篮球"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "VIGOROUS",
+      "met": {
+        "LIGHT": 4.5,
+        "MODERATE": 6.5,
+        "VIGOROUS": 8.0
+      },
+      "tags": [
+        "HIGH_IMPACT"
+      ]
+    },
+    {
+      "code": "FOOTBALL",
+      "name": "足球",
+      "aliases": [
+        "踢球"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "VIGOROUS",
+      "met": {
+        "LIGHT": 5.0,
+        "MODERATE": 7.0,
+        "VIGOROUS": 10.0
+      },
+      "tags": [
+        "HIGH_IMPACT"
+      ]
+    },
+    {
+      "code": "VOLLEYBALL",
+      "name": "排球 / 气排球",
+      "aliases": [
+        "气排球",
+        "排球"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.0,
+        "MODERATE": 4.0,
+        "VIGOROUS": 6.0
+      },
+      "tags": []
+    },
+    {
+      "code": "GATEBALL",
+      "name": "门球 / 地掷球",
+      "aliases": [
+        "门球",
+        "地掷球",
+        "柔力球"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.5,
+        "MODERATE": 3.0,
+        "VIGOROUS": 3.5
+      },
+      "tags": []
+    },
+    {
+      "code": "GOLF",
+      "name": "高尔夫",
+      "aliases": [],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.5,
+        "MODERATE": 4.8,
+        "VIGOROUS": 5.3
+      },
+      "tags": []
+    },
+    {
+      "code": "ROPE_SKIPPING",
+      "name": "跳绳",
+      "aliases": [],
+      "category": "AEROBIC",
+      "defaultIntensity": "VIGOROUS",
+      "met": {
+        "LIGHT": 8.3,
+        "MODERATE": 8.8,
+        "VIGOROUS": 12.3
+      },
+      "tags": [
+        "HIGH_IMPACT"
+      ]
+    },
+    {
+      "code": "SHUTTLECOCK",
+      "name": "踢毽子",
+      "aliases": [
+        "毽子"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.0,
+        "MODERATE": 4.0,
+        "VIGOROUS": 5.0
+      },
+      "tags": []
+    },
+    {
+      "code": "ELASTIC_BAND",
+      "name": "弹力带训练",
+      "aliases": [
+        "弹力带",
+        "拉力带"
+      ],
+      "category": "RESISTANCE",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 2.8,
+        "MODERATE": 3.5,
+        "VIGOROUS": 5.0
+      },
+      "tags": []
+    },
+    {
+      "code": "BODYWEIGHT",
+      "name": "徒手力量",
+      "aliases": [
+        "深蹲",
+        "俯卧撑",
+        "仰卧起坐",
+        "靠墙静蹲"
+      ],
+      "category": "RESISTANCE",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 2.8,
+        "MODERATE": 3.8,
+        "VIGOROUS": 8.0
+      },
+      "tags": []
+    },
+    {
+      "code": "MACHINE_STRENGTH",
+      "name": "哑铃 / 器械力量",
+      "aliases": [
+        "哑铃",
+        "杠铃",
+        "器械",
+        "举重",
+        "撸铁"
+      ],
+      "category": "RESISTANCE",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 3.5,
+        "MODERATE": 5.0,
+        "VIGOROUS": 6.0
+      },
+      "tags": [
+        "BREATH_HOLD"
+      ]
+    },
+    {
+      "code": "PLANK",
+      "name": "平板支撑",
+      "aliases": [
+        "核心训练"
+      ],
+      "category": "RESISTANCE",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 2.8,
+        "MODERATE": 3.8,
+        "VIGOROUS": 4.5
+      },
+      "tags": [
+        "BREATH_HOLD"
+      ]
+    },
+    {
+      "code": "YOGA",
+      "name": "瑜伽",
+      "aliases": [],
+      "category": "FLEXIBILITY",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.3,
+        "MODERATE": 3.0,
+        "VIGOROUS": 4.0
+      },
+      "tags": []
+    },
+    {
+      "code": "STRETCHING",
+      "name": "拉伸",
+      "aliases": [
+        "伸展",
+        "柔韧"
+      ],
+      "category": "FLEXIBILITY",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.3,
+        "MODERATE": 2.5,
+        "VIGOROUS": 2.8
+      },
+      "tags": []
+    },
+    {
+      "code": "PILATES",
+      "name": "普拉提",
+      "aliases": [],
+      "category": "FLEXIBILITY",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 2.8,
+        "MODERATE": 3.0,
+        "VIGOROUS": 3.8
+      },
+      "tags": []
+    },
+    {
+      "code": "BALANCE_TRAINING",
+      "name": "平衡训练",
+      "aliases": [
+        "单脚站",
+        "平衡"
+      ],
+      "category": "BALANCE",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.0,
+        "MODERATE": 2.5,
+        "VIGOROUS": 3.0
+      },
+      "tags": []
+    },
+    {
+      "code": "HOUSEWORK",
+      "name": "家务劳动",
+      "aliases": [
+        "拖地",
+        "打扫",
+        "做家务"
+      ],
+      "category": "DAILY",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 2.5,
+        "MODERATE": 3.3,
+        "VIGOROUS": 4.0
+      },
+      "tags": []
+    },
+    {
+      "code": "GARDENING",
+      "name": "园艺 / 种菜",
+      "aliases": [
+        "种菜",
+        "浇花",
+        "除草"
+      ],
+      "category": "DAILY",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 3.0,
+        "MODERATE": 3.8,
+        "VIGOROUS": 4.5
+      },
+      "tags": []
+    },
+    {
+      "code": "ANKLE_PUMP",
+      "name": "踝泵运动",
+      "aliases": [
+        "踝泵",
+        "勾脚",
+        "床旁踝泵"
+      ],
+      "category": "FLEXIBILITY",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 1.8,
+        "MODERATE": 2.0,
+        "VIGOROUS": 2.3
+      },
+      "tags": []
+    },
+    {
+      "code": "BREATHING",
+      "name": "呼吸训练",
+      "aliases": [
+        "腹式呼吸",
+        "缩唇呼吸",
+        "呼吸操"
+      ],
+      "category": "FLEXIBILITY",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 1.5,
+        "MODERATE": 1.8,
+        "VIGOROUS": 2.0
+      },
+      "tags": []
+    },
+    {
+      "code": "SEATED_ACTIVITY",
+      "name": "坐位 / 床旁活动",
+      "aliases": [
+        "坐位操",
+        "床旁活动",
+        "坐着活动"
+      ],
+      "category": "DAILY",
+      "defaultIntensity": "LIGHT",
+      "met": {
+        "LIGHT": 1.8,
+        "MODERATE": 2.3,
+        "VIGOROUS": 2.8
+      },
+      "tags": []
+    },
+    {
+      "code": "OTHER",
+      "name": "其他运动",
+      "aliases": [
+        "其他"
+      ],
+      "category": "AEROBIC",
+      "defaultIntensity": "MODERATE",
+      "met": {
+        "LIGHT": 2.5,
+        "MODERATE": 4.0,
+        "VIGOROUS": 6.0
+      },
+      "tags": []
+    }
+  ],
+  "codeAliases": {
+    "BEDSIDE_ANKLE_PUMP": "ANKLE_PUMP",
+    "BREATHING_TRAINING": "BREATHING",
+    "STRENGTH": "BODYWEIGHT",
+    "STRETCH": "STRETCHING",
+    "BRISK_WALK": "BRISK_WALKING",
+    "WALK": "WALKING"
+  }
+}

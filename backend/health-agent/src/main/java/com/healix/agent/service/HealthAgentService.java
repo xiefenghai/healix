@@ -141,18 +141,20 @@ public class HealthAgentService {
             case QUERY_REPORT, WEEKLY_REPORT -> {
                 parts.add(patientBizTools.latestReport(tenantId, patientId));
                 parts.add(patientBizTools.recentMetrics(tenantId, patientId, 30));
+                parts.add(patientBizTools.recentMeals(tenantId, patientId));
+                parts.add(patientBizTools.recentExercise(tenantId, patientId));
             }
             case SET_REMINDER -> {
                 parts.add(patientBizTools.todayPlan(tenantId, patientId));
                 parts.add(patientBizTools.medicationToday(tenantId, patientId));
             }
             case DIET_PLAN -> {
+                parts.add(patientBizTools.recentMeals(tenantId, patientId));
                 parts.add(new PatientBizTools.ToolOutput(healthTools.queryAllergens(patientId), List.of()));
-                parts.add(patientBizTools.todayPlan(tenantId, patientId));
                 parts.add(patientBizTools.recentMetrics(tenantId, patientId, 7));
             }
             case EXERCISE_PLAN -> {
-                parts.add(patientBizTools.todayPlan(tenantId, patientId));
+                parts.add(patientBizTools.recentExercise(tenantId, patientId));
                 parts.add(patientBizTools.recentMetrics(tenantId, patientId, 7));
             }
             default -> {

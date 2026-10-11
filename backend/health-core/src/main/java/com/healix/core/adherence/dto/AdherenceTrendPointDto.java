@@ -16,4 +16,8 @@ public class AdherenceTrendPointDto {
     private Double planRate;
     /** 用药按次达标率（0–1），当日无应服次数时为空 */
     private Double medRate;
+    /** 当日有饮食记录的人数 */
+    private int dietLoggedCount;
+    /** 当日有运动记录的人数 */
+    private int exerciseLoggedCount;
 }

@@ -7,7 +7,9 @@ public enum FollowupRecordType {
     /** 指标异常处理（原 METRIC_REVIEW） */
     METRIC_REVIEW,
     /** 定期/临床随访 */
-    PERIODIC;
+    PERIODIC,
+    /** 运动不适处理（EXERCISE_ALERT 关单） */
+    EXERCISE_REVIEW;
 
     public boolean matches(String value) {
         return name().equals(value);
@@ -18,6 +20,7 @@ public enum FollowupRecordType {
             case PLAN_NUDGE -> "打卡跟进";
             case METRIC_REVIEW -> "指标异常处理";
             case PERIODIC -> "定期随访";
+            case EXERCISE_REVIEW -> "运动不适处理";
         };
     }
 
@@ -38,6 +41,9 @@ public enum FollowupRecordType {
         }
         if ("FOLLOW_UP".equals(taskType)) {
             return PERIODIC;
+        }
+        if ("EXERCISE_ALERT".equals(taskType)) {
+            return EXERCISE_REVIEW;
         }
         throw new IllegalArgumentException("该任务类型不通过随访关单: " + taskType);
     }

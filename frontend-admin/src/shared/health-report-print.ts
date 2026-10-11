@@ -10,6 +10,7 @@ import {
   formatReportDateTime,
   resolveDisplayComment,
 } from './health-report-labels'
+import { lifestyleSections } from './report-lifestyle'
 
 export interface PrintableReport {
   id: string
@@ -107,6 +108,27 @@ function buildMetrics(content: Record<string, unknown>): string {
     <thead><tr><th>指标</th><th>最近值</th><th>记录时间</th><th>异常次数</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`
+}
+
+function buildLifestyle(content: Record<string, unknown>): string {
+  const sections = lifestyleSections(content)
+  if (!sections.length) return ''
+  const rows = sections
+    .map((sec) => {
+      if (sec.empty) {
+        return `<tr><th>${esc(sec.title)}</th><td colspan="4" class="empty">${esc(sec.empty)}</td></tr>`
+      }
+      const cells = sec.stats
+        .map(
+          (s) =>
+            `<td><div>${esc(s.label)}</div><div class="${s.warn ? 'warn' : ''}">${esc(s.value)}</div>` +
+            `${s.sub ? `<div class="empty">${esc(s.sub)}</div>` : ''}</td>`,
+        )
+        .join('')
+      return `<tr><th>${esc(sec.title)}</th>${cells}</tr>`
+    })
+    .join('')
+  return `<table class="grid">${rows}</table>`
 }
 
 function buildFollowups(content: Record<string, unknown>): string {
@@ -235,6 +257,7 @@ export function buildReportPrintHtml(report: PrintableReport): string {
   ${section('基本信息', kvTable(head))}
   ${section('依从性', buildAdherence(content))}
   ${section('指标概览', buildMetrics(content))}
+  ${section('饮食与运动', buildLifestyle(content))}
   ${section('本周期随访', buildFollowups(content))}
   ${section('检验与检查', buildObservations(content))}
   ${section('管理小结', buildNarrative(report, content))}

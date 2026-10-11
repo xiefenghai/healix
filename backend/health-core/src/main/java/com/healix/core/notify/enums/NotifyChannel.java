@@ -5,7 +5,9 @@ public enum NotifyChannel {
     IN_APP,
     SMS,
     MP_SUBSCRIBE,
-    OA_TEMPLATE;
+    OA_TEMPLATE,
+    /** 浏览器 / PWA 推送（VAPID） */
+    WEB_PUSH;
 
     public boolean matches(String value) {
         return name().equals(value);

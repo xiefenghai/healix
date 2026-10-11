@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.adherence.mapper.LifestyleActivityMapper">
+
+    <resultMap id="peopleDay" type="com.healix.core.adherence.mapper.LifestyleActivityMapper$PeopleDayRow">
+        <constructor>
+            <arg column="people_id" javaType="java.lang.String"/>
+            <arg column="day" javaType="java.time.LocalDate"/>
+            <arg column="minutes" javaType="_int"/>
+        </constructor>
+    </resultMap>
+
+    <select id="listDietDays" resultMap="peopleDay">
+        SELECT people_id, meal_date AS day, 0 AS minutes
+        FROM diet_meal
+        WHERE tenant_id = #{tenantId}
+          AND people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">#{pid}</foreach>
+          AND meal_date &gt;= #{from}
+          AND meal_date &lt;= #{to}
+          AND is_deleted = 0
+        GROUP BY people_id, meal_date
+    </select>
+
+    <select id="listExerciseDays" resultMap="peopleDay">
+        SELECT people_id, exercise_date AS day, COALESCE(SUM(active_min), 0) AS minutes
+        FROM exercise_session
+        WHERE tenant_id = #{tenantId}
+          AND people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">#{pid}</foreach>
+          AND exercise_date &gt;= #{from}
+          AND exercise_date &lt;= #{to}
+          AND is_deleted = 0
+        GROUP BY people_id, exercise_date
+    </select>
+</mapper>

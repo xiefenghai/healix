@@ -17,6 +17,7 @@ import {
   healthReportStatusTagType,
   resolveDisplayComment,
 } from './health-report-labels'
+import { lifestyleSections } from './report-lifestyle'
 
 echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
@@ -68,6 +69,8 @@ const metrics = computed(() => {
   const m = content.value?.metrics
   return Array.isArray(m) ? (m as Array<Record<string, unknown>>) : []
 })
+
+const lifestyle = computed(() => lifestyleSections(content.value))
 
 const followups = computed(() => {
   const i = content.value?.interventions as { followups?: Array<Record<string, unknown>> } | undefined
@@ -289,6 +292,18 @@ onBeforeUnmount(() => disposeCharts())
       </div>
     </div>
 
+    <div v-for="sec in lifestyle" :key="sec.key" class="hr-section">
+      <div class="hr-section-title">{{ sec.title }}</div>
+      <p v-if="sec.empty" class="muted">{{ sec.empty }}</p>
+      <div v-else class="hr-stats hr-stats--4">
+        <div v-for="s in sec.stats" :key="s.label" class="stat">
+          <div class="stat-label">{{ s.label }}</div>
+          <div class="stat-value stat-value--sm" :class="{ warn: s.warn }">{{ s.value }}</div>
+          <div v-if="s.sub" class="stat-sub">{{ s.sub }}</div>
+        </div>
+      </div>
+    </div>
+
     <div v-if="followups.length" class="hr-section">
       <div class="hr-section-title">随访与干预</div>
       <ul class="fu-list">
@@ -398,6 +413,17 @@ onBeforeUnmount(() => disposeCharts())
   font-size: 12px;
   color: var(--el-text-color-regular);
 }
+.hr-stats--4 {
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 0;
+}
+.stat-value--sm {
+  font-size: 18px;
+}
+.stat-value.warn {
+  font-size: 18px;
+  color: var(--el-color-danger);
+}
 .chart {
   width: 100%;
   height: 220px;
@@ -462,6 +488,9 @@ onBeforeUnmount(() => disposeCharts())
 @media (max-width: 640px) {
   .hr-stats {
     grid-template-columns: 1fr;
+  }
+  .hr-stats--4 {
+    grid-template-columns: 1fr 1fr;
   }
   .fu-list li {
     grid-template-columns: 1fr;

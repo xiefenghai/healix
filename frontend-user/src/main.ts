@@ -60,3 +60,7 @@ const app = createApp(App)
   TimePicker,
 ].forEach((c) => app.use(c))
 app.use(router).mount('#app')
+
+if (import.meta.env.PROD) {
+  void import('./shared/web-push').then((m) => m.registerServiceWorker())
+}

@@ -287,7 +287,7 @@ public class GeneralChatSkill implements AgentSkill {
                         """
                         : """
                         你是健管师沟通助手。根据患者摘要，写一段发给患者的沟通草稿（80～160字，语气专业温和）。
-                        不要 Markdown，不要诊断或处方，提醒遵医嘱与按时打卡即可。
+                        不要 Markdown，不要诊断或处方，提醒按时用药与打卡即可。
                         """;
         String user = "患者摘要：\n"
                 + (focus == null ? cmd.peopleId() : JsonUtils.toJson(briefFocus(focus)))
@@ -306,6 +306,7 @@ public class GeneralChatSkill implements AgentSkill {
         m.put("archiveCompletenessPercent", focus.getArchiveCompletenessPercent());
         m.put("planRate7d", focus.getPlanRate7d());
         m.put("bloodPressure", focus.getBloodPressure());
+        m.put("lifestyle", focus.getLifestyleSummary());
         if (focus.getAssessmentTags() != null) {
             m.put(
                     "assessmentTags",

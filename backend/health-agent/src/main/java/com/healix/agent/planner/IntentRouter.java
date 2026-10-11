@@ -34,10 +34,10 @@ public class IntentRouter {
         if (containsAny(msg, "提醒", "闹钟", "remind")) {
             return IntentType.SET_REMINDER;
         }
-        if (containsAny(msg, "饮食", "食谱", "吃什么", "diet", "meal")) {
+        if (containsAny(msg, "饮食", "食谱", "吃什么", "早餐", "午餐", "晚餐", "热量", "卡路里", "diet", "meal")) {
             return IntentType.DIET_PLAN;
         }
-        if (containsAny(msg, "运动", "锻炼", "健身", "exercise", "workout")) {
+        if (containsAny(msg, "运动", "锻炼", "健身", "快走", "跑步", "散步", "活动分钟", "exercise", "workout")) {
             return IntentType.EXERCISE_PLAN;
         }
         if (containsAny(msg, "周报", "weekly", "总结")) {

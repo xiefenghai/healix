@@ -15,6 +15,7 @@ import com.healix.core.notify.enums.NotifyDuplicatePolicy;
 import com.healix.core.notify.mapper.NotifyDeliveryMapper;
 import com.healix.core.notify.mapper.NotifyMessageMapper;
 import com.healix.core.notify.service.NotifyRecipientResolver.Recipient;
+import com.healix.core.notify.webpush.WebPushService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +38,7 @@ public class NotifyFacade {
     private final NotifyDeliveryMapper deliveryMapper;
     private final NotifyRecipientResolver recipientResolver;
     private final NotifyChannelRouter channelRouter;
+    private final WebPushService webPushService;
 
     @Transactional
     public NotifyPublishResult publish(NotifyPublishCommand cmd) {
@@ -114,6 +116,9 @@ public class NotifyFacade {
             row.setPriority(StringUtils.hasText(cmd.getPriority()) ? cmd.getPriority() : "NORMAL");
             messageMapper.insert(row);
             ensureInAppDelivery(row, channels);
+            if (channels.contains(NotifyChannel.WEB_PUSH)) {
+                webPushService.dispatchAfterCommit(row);
+            }
             result.addCreated(row.getId());
         }
         return result;

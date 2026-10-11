@@ -21,6 +21,19 @@
         )
     </insert>
 
+    <update id="updateResult">
+        UPDATE notify_delivery
+        SET status = #{status},
+            attempt_count = attempt_count + 1,
+            provider = #{provider},
+            endpoint_snapshot = #{endpointSnapshot},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            sent_at = #{sentAt},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+    </update>
+
     <select id="findByMessageAndChannel" resultType="com.healix.core.notify.domain.NotifyDelivery">
         SELECT <include refid="cols"/>
         FROM notify_delivery

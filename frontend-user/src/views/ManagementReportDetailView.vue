@@ -16,6 +16,7 @@ import {
   type TemplateTier,
 } from '../shared/management-report-labels'
 import { printReport } from '../shared/management-report-print'
+import { lifestyleSections } from '../shared/report-lifestyle'
 
 echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
@@ -70,6 +71,8 @@ const metrics = computed(() => {
   const m = report.value?.content?.metrics
   return Array.isArray(m) ? (m as Array<Record<string, unknown>>) : []
 })
+
+const lifestyle = computed(() => lifestyleSections(report.value?.content))
 
 const followups = computed(() => {
   const i = report.value?.content?.interventions as
@@ -459,6 +462,20 @@ onBeforeUnmount(() => disposeCharts())
         </div>
       </section>
 
+      <section v-for="sec in lifestyle" :key="sec.key" class="card">
+        <div class="card-head">
+          <h2>{{ sec.title }}</h2>
+        </div>
+        <p v-if="sec.empty" class="muted empty-line">{{ sec.empty }}</p>
+        <div v-else class="ls-grid">
+          <div v-for="s in sec.stats" :key="s.label" class="ls-box">
+            <div class="ls-label">{{ s.label }}</div>
+            <div class="ls-value" :class="{ 'ls-warn': s.warn }">{{ s.value }}</div>
+            <div v-if="s.sub" class="ls-sub">{{ s.sub }}</div>
+          </div>
+        </div>
+      </section>
+
       <section v-if="followups.length" class="card">
         <div class="card-head">
           <h2>随访与干预</h2>
@@ -704,6 +721,30 @@ onBeforeUnmount(() => disposeCharts())
 }
 .empty-line {
   margin: 8px 0 0;
+}
+.ls-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.ls-box {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--hx-bg, #f6f7f9);
+}
+.ls-label,
+.ls-sub {
+  font-size: 12px;
+  color: var(--hx-muted);
+}
+.ls-value {
+  margin: 2px 0;
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--hx-text);
+}
+.ls-value.ls-warn {
+  color: #c44545;
 }
 .warn-pill {
   font-size: 11px;

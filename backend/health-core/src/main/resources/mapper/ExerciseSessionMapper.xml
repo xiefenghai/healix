@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.exercise.mapper.ExerciseSessionMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, exercise_date, started_at, duration_min, type_code, type_name,
+        category, intensity, avg_hr, distance_m, met_value, active_min, energy_kcal, weight_estimated,
+        symptoms_json, symptom_level, flags_json, level, alert_task_id, care_plan_task_id, source,
+        device_vendor, external_id, note, recorded_by_people_id, recorded_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO exercise_session(
+            id, tenant_id, people_id, exercise_date, started_at, duration_min, type_code, type_name,
+            category, intensity, avg_hr, distance_m, met_value, active_min, energy_kcal, weight_estimated,
+            symptoms_json, symptom_level, flags_json, level, alert_task_id, care_plan_task_id, source,
+            device_vendor, external_id, note, recorded_by_people_id, recorded_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{exerciseDate}, #{startedAt}, #{durationMin}, #{typeCode}, #{typeName},
+            #{category}, #{intensity}, #{avgHr}, #{distanceM}, #{metValue}, #{activeMin}, #{energyKcal}, #{weightEstimated},
+            #{symptomsJson}, #{symptomLevel}, #{flagsJson}, #{level}, #{alertTaskId}, #{carePlanTaskId}, #{source},
+            #{deviceVendor}, #{externalId}, #{note}, #{recordedByPeopleId}, #{recordedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE exercise_session
+        SET exercise_date = #{exerciseDate},
+            started_at = #{startedAt},
+            duration_min = #{durationMin},
+            type_code = #{typeCode},
+            type_name = #{typeName},
+            category = #{category},
+            intensity = #{intensity},
+            avg_hr = #{avgHr},
+            distance_m = #{distanceM},
+            met_value = #{metValue},
+            active_min = #{activeMin},
+            energy_kcal = #{energyKcal},
+            weight_estimated = #{weightEstimated},
+            symptoms_json = #{symptomsJson},
+            symptom_level = #{symptomLevel},
+            flags_json = #{flagsJson},
+            level = #{level},
+            care_plan_task_id = #{carePlanTaskId},
+            note = #{note},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateAlertTask">
+        UPDATE exercise_session
+        SET alert_task_id = #{alertTaskId},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE exercise_session
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.exercise.domain.ExerciseSession">
+        SELECT <include refid="cols"/>
+        FROM exercise_session
+        WHERE id = #{id}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleRange" resultType="com.healix.core.exercise.domain.ExerciseSession">
+        SELECT <include refid="cols"/>
+        FROM exercise_session
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND exercise_date &gt;= #{from}
+          AND exercise_date &lt;= #{to}
+          AND is_deleted = 0
+        ORDER BY exercise_date ASC, started_at ASC, gmt_created ASC
+    </select>
+
+    <select id="listFrequentTypeCodes" resultType="java.lang.String">
+        SELECT type_code
+        FROM exercise_session
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND exercise_date &gt;= #{since}
+          AND is_deleted = 0
+        GROUP BY type_code
+        ORDER BY COUNT(1) DESC, MAX(started_at) DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

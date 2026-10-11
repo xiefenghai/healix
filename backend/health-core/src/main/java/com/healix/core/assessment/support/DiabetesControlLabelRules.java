@@ -143,7 +143,7 @@ public final class DiabetesControlLabelRules {
                     targets,
                     redHits,
                     yellowHits,
-                    "调整治疗方案，加强监测",
+                    "建议就医复评，加强监测",
                     "ADJUST_THERAPY",
                     in,
                     Map.of());

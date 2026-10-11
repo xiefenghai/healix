@@ -112,21 +112,22 @@ public class DictSeedRunner implements ApplicationRunner {
             seedDiseaseField(
                     "diabetes",
                     "diagnosisDate",
-                    "确诊时间",
-                    DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_DIABETES_DIAGNOSIS_DATE, "确诊时间"),
+                    "患病时间",
+                    DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_DIABETES_DIAGNOSIS_DATE, "患病时间"),
                     100);
             seedDiseaseField(
                     "hypertension",
                     "diagnosisDate",
-                    "确诊时间",
+                    "患病时间",
                     DictFieldSchemas.textField(
-                            MetaDataCodeEnum.DISEASE_HYPERTENSION_DIAGNOSIS_DATE, "确诊时间"),
+                            MetaDataCodeEnum.DISEASE_HYPERTENSION_DIAGNOSIS_DATE, "患病时间"),
                     100);
             log.warn("Bootstrapped platform sys_dict seed data");
         }
         // 已有库也可幂等补齐糖尿病 / 高血压扩展字段
         ensureDiabetesArchiveExtensions();
         ensureHypertensionArchiveExtensions();
+        ensureDiagnosisDateLabels();
         ensureObesityDiseaseAndPresentIllness();
         ensureLifestyleSocialHistoryOptions();
         ensureDoseUnitOptions();
@@ -402,8 +403,8 @@ public class DictSeedRunner implements ApplicationRunner {
         seedDiseaseFieldIfAbsent(
                 "diabetes",
                 "diagnosisDate",
-                "确诊时间",
-                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_DIABETES_DIAGNOSIS_DATE, "确诊时间"),
+                "患病时间",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_DIABETES_DIAGNOSIS_DATE, "患病时间"),
                 95);
         seedDiseaseFieldIfAbsent(
                 "diabetes",
@@ -484,9 +485,9 @@ public class DictSeedRunner implements ApplicationRunner {
         seedDiseaseFieldIfAbsent(
                 "hypertension",
                 "diagnosisDate",
-                "确诊时间",
+                "患病时间",
                 DictFieldSchemas.textField(
-                        MetaDataCodeEnum.DISEASE_HYPERTENSION_DIAGNOSIS_DATE, "确诊时间"),
+                        MetaDataCodeEnum.DISEASE_HYPERTENSION_DIAGNOSIS_DATE, "患病时间"),
                 95);
         seedDiseaseFieldIfAbsent(
                 "hypertension",
@@ -697,6 +698,37 @@ public class DictSeedRunner implements ApplicationRunner {
         seedOption("presentIllness", "BPH", "良性前列腺增生", 135, null);
         seedOption("presentIllness", "THYROID_DISORDER", "甲状腺功能减退/亢进", 130, null);
         seedOption("presentIllness", "OBESITY", "肥胖症", 125, null);
+    }
+
+    /** 病种档案「确诊时间」→「患病时间」（健康管理合规用语；已有库纠偏）。 */
+    private void ensureDiagnosisDateLabels() {
+        syncDiseaseField(
+                "diabetes",
+                "diagnosisDate",
+                "患病时间",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_DIABETES_DIAGNOSIS_DATE, "患病时间"));
+        syncDiseaseField(
+                "hypertension",
+                "diagnosisDate",
+                "患病时间",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_HYPERTENSION_DIAGNOSIS_DATE, "患病时间"));
+    }
+
+    private void syncDiseaseField(String parent, String code, String desc, String content) {
+        SysDict existing =
+                sysDictMapper
+                        .listByTypeAndParent(DictService.PLATFORM_TENANT, DictTypeEnum.DISEASE_FIELD.name(), parent)
+                        .stream()
+                        .filter(r -> code.equals(r.getDictCode()))
+                        .findFirst()
+                        .orElse(null);
+        if (existing == null || desc.equals(existing.getDictCodeDesc())) {
+            return;
+        }
+        existing.setDictCodeDesc(desc);
+        existing.setContent(content);
+        EntityMeta.onUpdate(existing);
+        sysDictMapper.updateDescAndContent(existing);
     }
 
     /** 肥胖症病种 + 现有疾病勾选项（幂等）。 */

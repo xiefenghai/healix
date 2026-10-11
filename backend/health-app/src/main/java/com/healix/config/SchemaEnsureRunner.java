@@ -66,6 +66,15 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "recorded_by_staff_id",
                 "ALTER TABLE vital_record ADD COLUMN recorded_by_staff_id VARCHAR(32) NULL COMMENT 'B端代录人员工业务ID' AFTER note");
 
+        ensureColumn(
+                "adherence_daily_snapshot",
+                "diet_logged_count",
+                "ALTER TABLE adherence_daily_snapshot ADD COLUMN diet_logged_count INT NOT NULL DEFAULT 0 COMMENT '当日有饮食记录人数' AFTER med_rate");
+        ensureColumn(
+                "adherence_daily_snapshot",
+                "exercise_logged_count",
+                "ALTER TABLE adherence_daily_snapshot ADD COLUMN exercise_logged_count INT NOT NULL DEFAULT 0 COMMENT '当日有运动记录人数' AFTER diet_logged_count");
+
         ensureTable(
                 "lab_report",
                 """
@@ -892,6 +901,43 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_care_chat_message_thread (thread_id, gmt_created),
                     KEY idx_care_chat_message_staff (tenant_id, sender_staff_id, gmt_created)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管沟通消息气泡'
+                """);
+        ensureTable(
+                "web_push_subscription",
+                """
+                CREATE TABLE IF NOT EXISTS web_push_subscription (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    account_id VARCHAR(32) NOT NULL,
+                    endpoint VARCHAR(1024) NOT NULL,
+                    endpoint_hash CHAR(64) NOT NULL,
+                    p256dh VARCHAR(128) NOT NULL,
+                    auth VARCHAR(64) NOT NULL,
+                    user_agent VARCHAR(255) NULL,
+                    fail_count INT NOT NULL DEFAULT 0,
+                    last_success_at DATETIME NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_web_push_sub_id (id),
+                    UNIQUE KEY uk_web_push_sub_endpoint (endpoint_hash),
+                    KEY idx_web_push_sub_account (account_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='浏览器推送订阅'
+                """);
+        ensureTable(
+                "web_push_vapid",
+                """
+                CREATE TABLE IF NOT EXISTS web_push_vapid (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    public_key VARCHAR(128) NOT NULL,
+                    private_key VARCHAR(128) NOT NULL,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_web_push_vapid_id (id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Web Push VAPID 密钥'
                 """);
     }
 

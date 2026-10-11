@@ -44,6 +44,15 @@
           AND is_deleted = 0
     </update>
 
+    <delete id="deleteSystemCheckin">
+        DELETE FROM care_plan_task_checkin
+        WHERE id = #{id}
+          AND is_deleted = 0
+          AND note = #{systemNote}
+          AND recorded_by_people_id IS NULL
+          AND recorded_by_staff_id IS NULL
+    </delete>
+
     <select id="findByTaskDateSlot" resultType="com.healix.core.careplan.domain.CarePlanTaskCheckin">
         SELECT <include refid="cols"/>
         FROM care_plan_task_checkin

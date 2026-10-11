@@ -89,7 +89,7 @@ public class AssessmentOrchestrator {
                     "肥胖症",
                     ctx.isHasObesityDiseaseArchive(),
                     ctx.isHasObesityPresentIllness());
-            dto.getNotices().add(reason + "：肥胖风险评估不适用；请以确诊后的分层干预与管理为主");
+            dto.getNotices().add(reason + "：肥胖风险评估不适用；请以已患病人群的分层干预与管理为主");
         } else if (ctx.getAgeYears() != null && ctx.getAgeYears() < 18) {
             dto.getNotices().add("肥胖筛查：儿童青少年需按年龄别/性别别 BMI 百分位判定，本期不套用成人 BMI 阈值");
         }

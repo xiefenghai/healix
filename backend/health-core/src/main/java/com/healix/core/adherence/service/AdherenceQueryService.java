@@ -2,6 +2,7 @@ package com.healix.core.adherence.service;
 
 import com.healix.common.result.PageResult;
 import com.healix.core.adherence.dto.AdherenceDayPointDto;
+import com.healix.core.adherence.dto.AdherenceLifestyleMetricsDto;
 import com.healix.core.adherence.dto.AdherenceMedMetricsDto;
 import com.healix.core.adherence.dto.AdherenceOverviewDto;
 import com.healix.core.adherence.dto.AdherencePatientDetailDto;
@@ -12,6 +13,8 @@ import com.healix.core.adherence.dto.AdherenceTodayMedItemDto;
 import com.healix.core.adherence.dto.AdherenceTodayTaskItemDto;
 import com.healix.core.adherence.enums.AdherenceFilterEnum;
 import com.healix.core.adherence.enums.AdherenceRiskLevelEnum;
+import com.healix.core.adherence.mapper.LifestyleActivityMapper;
+import com.healix.core.adherence.mapper.LifestyleActivityMapper.PeopleDayRow;
 import com.healix.core.careplan.domain.CarePlan;
 import com.healix.core.careplan.domain.CarePlanTask;
 import com.healix.core.careplan.domain.CarePlanTaskCheckin;
@@ -66,6 +69,7 @@ public class AdherenceQueryService {
     private final CarePlanTaskCheckinMapper checkinMapper;
     private final PeopleMedicationMapper medicationMapper;
     private final PeopleMedicationIntakeMapper intakeMapper;
+    private final LifestyleActivityMapper lifestyleActivityMapper;
 
     public AdherenceOverviewDto overview(String tenantId, String orgId, LocalDate date, String careTeamId) {
         LocalDate day = date != null ? date : LocalDate.now();
@@ -78,9 +82,13 @@ public class AdherenceQueryService {
         int planIncomplete = 0;
         int medIncomplete = 0;
         int streakGe3 = 0;
+        int lifestyleInactive = 0;
         for (AdherencePatientItemDto item : all) {
             if (AdherenceRiskLevelEnum.HIGH.name().equals(item.getRiskLevel())) {
                 followUp++;
+            }
+            if (isLifestyleInactive(item)) {
+                lifestyleInactive++;
             }
             if (item.getPlan() != null && item.getPlan().isTodayIncomplete()) {
                 planIncomplete++;
@@ -96,6 +104,7 @@ public class AdherenceQueryService {
         out.setPlanIncompleteCount(planIncomplete);
         out.setMedIncompleteCount(medIncomplete);
         out.setStreakGe3Count(streakGe3);
+        out.setLifestyleInactiveCount(lifestyleInactive);
         return out;
     }
 
@@ -109,7 +118,9 @@ public class AdherenceQueryService {
             int planDueSum,
             int planDoneSum,
             int medDueDoseSum,
-            int medTakenDoseSum) {}
+            int medTakenDoseSum,
+            int dietLoggedCount,
+            int exerciseLoggedCount) {}
 
     /**
      * 供快照 Job 调用：不校验工作台权限，直接按机构（可选健管组）汇总某一天。
@@ -126,9 +137,16 @@ public class AdherenceQueryService {
         int planDone = 0;
         int medDueDoses = 0;
         int medTakenDoses = 0;
+        int dietLogged = 0;
+        int exerciseLogged = 0;
         for (AdherencePatientItemDto item : all) {
             if (AdherenceRiskLevelEnum.HIGH.name().equals(item.getRiskLevel())) {
                 followUp++;
+            }
+            AdherenceLifestyleMetricsDto lifestyle = item.getLifestyle();
+            if (lifestyle != null) {
+                dietLogged += lifestyle.isDietToday() ? 1 : 0;
+                exerciseLogged += lifestyle.isExerciseToday() ? 1 : 0;
             }
             AdherencePlanMetricsDto plan = item.getPlan();
             if (plan != null) {
@@ -159,7 +177,9 @@ public class AdherenceQueryService {
                 planDue,
                 planDone,
                 medDueDoses,
-                medTakenDoses);
+                medTakenDoses,
+                dietLogged,
+                exerciseLogged);
     }
 
     public PageResult<AdherencePatientItemDto> pagePatients(
@@ -681,6 +701,8 @@ public class AdherenceQueryService {
                 intakeMapper.listByTenantPeopleIdsDate(tenantId, peopleIds, day);
         Map<String, Map<String, Set<String>>> takenSlotsByPeople = indexTakenSlotsByPeople(intakes);
 
+        Map<String, AdherenceLifestyleMetricsDto> lifestyleByPeople = loadLifestyle(tenantId, peopleIds, day);
+
         List<AdherencePatientItemDto> out = new ArrayList<>();
         for (OrgPatientListItem patient : patients) {
             String peopleId = patient.getPeopleId();
@@ -738,6 +760,7 @@ public class AdherenceQueryService {
             item.setClientLinked(patient.getClientLinked());
             item.setPlan(planMetrics);
             item.setMed(medMetrics);
+            item.setLifestyle(lifestyleByPeople.getOrDefault(peopleId, new AdherenceLifestyleMetricsDto()));
             item.setRiskLevel(resolveRisk(planMetrics, medMetrics).name());
             out.add(item);
         }
@@ -997,7 +1020,36 @@ public class AdherenceQueryService {
             case MED_INCOMPLETE -> item.getMed() != null && item.getMed().isTodayIncomplete();
             case STREAK_GE_3 ->
                     item.getPlan() != null && item.getPlan().getStreakDays() >= STREAK_HIGH_THRESHOLD;
+            case LIFESTYLE_INACTIVE -> isLifestyleInactive(item);
         };
+    }
+
+    /** 近 7 日饮食、运动都没有记录。 */
+    private static boolean isLifestyleInactive(AdherencePatientItemDto item) {
+        AdherenceLifestyleMetricsDto ls = item.getLifestyle();
+        return ls != null && ls.getDietDays7d() == 0 && ls.getExerciseDays7d() == 0;
+    }
+
+    private Map<String, AdherenceLifestyleMetricsDto> loadLifestyle(
+            String tenantId, List<String> peopleIds, LocalDate day) {
+        LocalDate from = day.minusDays(RATE_WINDOW_DAYS - 1L);
+        Map<String, AdherenceLifestyleMetricsDto> out = new HashMap<>();
+        for (PeopleDayRow row : lifestyleActivityMapper.listDietDays(tenantId, peopleIds, from, day)) {
+            AdherenceLifestyleMetricsDto m = out.computeIfAbsent(row.peopleId(), k -> new AdherenceLifestyleMetricsDto());
+            m.setDietDays7d(m.getDietDays7d() + 1);
+            if (day.equals(row.day())) {
+                m.setDietToday(true);
+            }
+        }
+        for (PeopleDayRow row : lifestyleActivityMapper.listExerciseDays(tenantId, peopleIds, from, day)) {
+            AdherenceLifestyleMetricsDto m = out.computeIfAbsent(row.peopleId(), k -> new AdherenceLifestyleMetricsDto());
+            m.setExerciseDays7d(m.getExerciseDays7d() + 1);
+            m.setActiveMin7d(m.getActiveMin7d() + row.minutes());
+            if (day.equals(row.day())) {
+                m.setExerciseToday(true);
+            }
+        }
+        return out;
     }
 
     private static AdherenceFilterEnum parseFilter(String filter) {

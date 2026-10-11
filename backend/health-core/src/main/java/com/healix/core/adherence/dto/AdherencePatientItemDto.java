@@ -13,4 +13,5 @@ public class AdherencePatientItemDto {
     private String riskLevel;
     private AdherencePlanMetricsDto plan;
     private AdherenceMedMetricsDto med;
+    private AdherenceLifestyleMetricsDto lifestyle;
 }

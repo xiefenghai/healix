@@ -58,7 +58,7 @@ const FIELD_PATH_LABELS: Record<string, string> = {
   'lifestyle.drinking.amountPerDay': '饮酒 · 日均量',
   'lifestyle.drinking.note': '饮酒 · 备注',
   'lifestyle.note': '生活习惯 · 备注',
-  diagnosisDate: '确诊时间',
+  diagnosisDate: '患病时间',
   diabetesType: '糖尿病类型',
   hypertensionType: '高血压类型',
   hypertensionGrade: '高血压分级',
@@ -184,7 +184,7 @@ const CARE_PLAN_STATUS_LABELS: Record<string, string> = {
 
 const MEDICATION_SOURCE_LABELS: Record<string, string> = {
   MANUAL: '健管录入',
-  PRESCRIPTION: '外部医嘱',
+  PRESCRIPTION: '院外用药',
   PATIENT: '患者自添加',
 }
 
@@ -619,7 +619,7 @@ function formatParsedValue(
       STAFF: '医护代录',
       STAFF_OCR: '医护代录-OCR识别',
       MANUAL: '医护代录',
-      PRESCRIPTION: '外部医嘱',
+      PRESCRIPTION: '院外用药',
       OCR: '医护代录-OCR识别',
     }
     return sourceLabels[value] ?? MEDICATION_SOURCE_LABELS[value] ?? value

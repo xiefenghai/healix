@@ -323,7 +323,7 @@ function confirmDialog() {
             <el-form-item label="疾病名称" required>
               <el-input v-model="diseaseDraft.name" maxlength="64" placeholder="可手输或由上项带出" />
             </el-form-item>
-            <el-form-item label="发病/诊断年">
+            <el-form-item label="发病年份">
               <el-date-picker
                 v-model="diseaseDraft.year"
                 type="year"

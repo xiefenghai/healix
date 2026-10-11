@@ -3,6 +3,12 @@ package com.healix.agent.tool;
 import com.healix.core.careplan.dto.CarePlanTodayDto;
 import com.healix.core.careplan.dto.CarePlanTodayTaskDto;
 import com.healix.core.careplan.service.CarePlanCheckinService;
+import com.healix.core.diet.dto.DietDaySummaryDto;
+import com.healix.core.diet.service.DietRecordService;
+import com.healix.core.exercise.dto.ExerciseSessionDto;
+import com.healix.core.exercise.dto.ExerciseTodayDto;
+import com.healix.core.exercise.dto.ExerciseWeekDto;
+import com.healix.core.exercise.service.ExerciseRecordService;
 import com.healix.core.followup.catalog.FollowupRecordStatus;
 import com.healix.core.followup.dto.FollowupListItemDto;
 import com.healix.core.followup.service.FollowupService;
@@ -50,6 +56,8 @@ public class PatientBizTools {
     private final VitalService vitalService;
     private final FollowupService followupService;
     private final HealthReportService healthReportService;
+    private final DietRecordService dietRecordService;
+    private final ExerciseRecordService exerciseRecordService;
 
     /**
      * 工具输出：喂给 LLM 的文本 + 建议给用户的跳转动作。
@@ -260,6 +268,103 @@ public class PatientBizTools {
             log.debug("latestReport tool failed people={}", peopleId, e);
             return ToolOutput.empty();
         }
+    }
+
+    /** 近 7 天饮食记录：记录天数、三餐记全、记全日平均热量 vs 目标、今日已记餐次。 */
+    public ToolOutput recentMeals(String tenantId, String peopleId) {
+        try {
+            LocalDate today = LocalDate.now();
+            List<DietDaySummaryDto> days = dietRecordService.summary(tenantId, peopleId, today.minusDays(6), today);
+            if (days.isEmpty()) {
+                return new ToolOutput(
+                        "饮食：近7天没有记录",
+                        List.of(new AgentQuickAction("记一餐", "/diet/add")));
+            }
+            List<DietDaySummaryDto> complete = days.stream().filter(DietDaySummaryDto::threeMealsComplete).toList();
+            Integer target = days.get(days.size() - 1).targetKcal();
+            StringBuilder sb = new StringBuilder("饮食（近7天）：记录 ")
+                    .append(days.size())
+                    .append(" 天，三餐记全 ")
+                    .append(complete.size())
+                    .append(" 天");
+            if (!complete.isEmpty()) {
+                long avg = Math.round(complete.stream().mapToDouble(d -> d.intake().energyKcal()).average().orElse(0));
+                sb.append("；记全日平均 ").append(avg).append(" kcal");
+                if (target != null) {
+                    sb.append("（目标 ").append(target).append(" kcal）");
+                }
+            }
+            int warn = days.stream().mapToInt(d -> d.redMeals() + d.yellowMeals()).sum();
+            if (warn > 0) {
+                sb.append("；需注意餐次 ").append(warn).append(" 餐");
+            }
+            DietDaySummaryDto last = days.get(days.size() - 1);
+            if (today.equals(last.date())) {
+                sb.append("；今日已记 ").append(last.mealCount()).append(" 餐，共 ")
+                        .append(Math.round(last.intake().energyKcal())).append(" kcal");
+            } else {
+                sb.append("；今日还没记录");
+            }
+            return new ToolOutput(
+                    sb.toString(),
+                    List.of(new AgentQuickAction("记一餐", "/diet/add"), new AgentQuickAction("饮食日记", "/diet")));
+        } catch (Exception e) {
+            log.debug("recentMeals tool failed people={}", peopleId, e);
+            return ToolOutput.empty();
+        }
+    }
+
+    /** 近 7 天运动记录 + 本周活动分钟 vs 计划 + 今日运动任务进度。 */
+    public ToolOutput recentExercise(String tenantId, String peopleId) {
+        try {
+            LocalDate today = LocalDate.now();
+            List<ExerciseSessionDto> sessions =
+                    exerciseRecordService.list(tenantId, peopleId, today.minusDays(6), today, true);
+            ExerciseWeekDto week = exerciseRecordService.week(tenantId, peopleId, today);
+            ExerciseTodayDto todayDto = exerciseRecordService.today(tenantId, peopleId, true);
+            StringBuilder sb = new StringBuilder("运动（近7天）：");
+            if (sessions.isEmpty()) {
+                sb.append("没有记录");
+            } else {
+                long activeDays = sessions.stream().map(ExerciseSessionDto::getExerciseDate).distinct().count();
+                int totalMin = sessions.stream().mapToInt(s -> nz(s.getDurationMin())).sum();
+                sb.append(activeDays).append(" 天、共 ").append(sessions.size()).append(" 次 ")
+                        .append(totalMin).append(" 分钟");
+                ExerciseSessionDto latest = sessions.get(sessions.size() - 1);
+                sb.append("；最近一次：").append(latest.getExerciseDate().format(DAY)).append(" ")
+                        .append(latest.getTypeName()).append(" ").append(nz(latest.getDurationMin())).append(" 分钟");
+                long discomfort = sessions.stream().filter(s -> "RED".equals(s.getLevel())).count();
+                if (discomfort > 0) {
+                    sb.append("；运动中明显不适 ").append(discomfort).append(" 次");
+                }
+            }
+            sb.append("；本周活动 ").append(week.getActiveMin()).append(" 分钟");
+            if (week.getWeeklyActiveMinTarget() > 0) {
+                sb.append("（计划 ").append(week.getWeeklyActiveMinTarget()).append(" 分钟/周）");
+            }
+            List<String> pending = new ArrayList<>();
+            for (ExerciseTodayDto.TaskItem t : nullSafe(todayDto.getTasks())) {
+                if (!"DONE".equals(t.getCheckinStatus())) {
+                    pending.add(t.getTitle() + "（" + t.getDoneMin() + "/" + t.getTargetMin() + " 分钟）");
+                }
+            }
+            if (!pending.isEmpty()) {
+                sb.append("；今日待完成：").append(String.join("、", limit(pending, 3)));
+            }
+            if (!nullSafe(todayDto.getContraindications()).isEmpty()) {
+                sb.append("；运动禁忌：").append(String.join("、", limit(todayDto.getContraindications(), 3)));
+            }
+            return new ToolOutput(
+                    sb.toString(),
+                    List.of(new AgentQuickAction("记录运动", "/exercise/add"), new AgentQuickAction("运动记录", "/exercise")));
+        } catch (Exception e) {
+            log.debug("recentExercise tool failed people={}", peopleId, e);
+            return ToolOutput.empty();
+        }
+    }
+
+    private static int nz(Integer v) {
+        return v == null ? 0 : v;
     }
 
     private void appendLatest(

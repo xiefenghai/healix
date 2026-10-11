@@ -29,6 +29,8 @@ public class CockpitFocusDto {
     private List<String> diseaseLabels = new ArrayList<>();
     /** 最近血压文案，如 138/86 mmHg */
     private String bloodPressure;
+    /** 近 7 天饮食 / 运动记录摘要（助手上下文用） */
+    private String lifestyleSummary;
     /** 档案完整度 0–100 */
     private Integer archiveCompletenessPercent;
     private Integer archiveFilledCount;

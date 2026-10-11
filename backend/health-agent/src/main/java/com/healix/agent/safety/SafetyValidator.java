@@ -4,6 +4,7 @@ import com.healix.agent.safety.chain.AllergenSafetyHandler;
 import com.healix.agent.safety.chain.ExerciseGlucoseSafetyHandler;
 import com.healix.agent.safety.chain.SafetyContext;
 import com.healix.agent.safety.chain.SafetyHandler;
+import com.healix.core.compliance.ComplianceText;
 import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +32,6 @@ public class SafetyValidator {
     }
 
     public String validate(String tenantId, String patientId, String draftReply) {
-        return chainHead.handle(new SafetyContext(tenantId, patientId, draftReply));
+        return ComplianceText.filter(chainHead.handle(new SafetyContext(tenantId, patientId, draftReply)));
     }
 }

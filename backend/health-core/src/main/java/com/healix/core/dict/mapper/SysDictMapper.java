@@ -20,4 +20,6 @@ public interface SysDictMapper {
     int insert(SysDict row);
 
     int updateDescAndSort(SysDict row);
+
+    int updateDescAndContent(SysDict row);
 }

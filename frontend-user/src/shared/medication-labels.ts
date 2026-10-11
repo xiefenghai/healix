@@ -87,7 +87,7 @@ export function formatMedicationLine(row: {
   if (freq) parts.push(freq)
   if (row.courseDays != null && row.courseDays > 0) parts.push(`×${row.courseDays}天`)
   else if (!row.stopDate) parts.push('长期')
-  let line = parts.join(' · ') || '按医嘱服用'
+  let line = parts.join(' · ') || '按说明服用'
   if (row.timingNote?.trim()) line += `（${row.timingNote.trim()}）`
   return line
 }

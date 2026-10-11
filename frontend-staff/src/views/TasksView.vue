@@ -129,6 +129,7 @@ const todayCards = computed(() => [
 function accentClass(row: WorkspaceTaskItem) {
   if (isOverdue(row.dueAt, row.status)) return 'accent-danger'
   if (dueSoon(row.dueAt, row.status)) return 'accent-warn'
+  if (row.taskType === 'EXERCISE_ALERT') return 'accent-danger'
   if (row.taskType === 'METRIC_ALERT') return 'accent-warn'
   return 'accent-teal'
 }

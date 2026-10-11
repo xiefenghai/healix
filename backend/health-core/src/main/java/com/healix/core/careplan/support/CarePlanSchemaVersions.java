@@ -9,8 +9,12 @@ package com.healix.core.careplan.support;
  */
 public final class CarePlanSchemaVersions {
 
-    /** 当前产品规则版本；改运动/饮食方案字段或生成规则时 +1。 */
-    public static final int CURRENT = 1;
+    /**
+     * 当前产品规则版本；改运动/饮食方案字段或生成规则时 +1。
+     *
+     * <p>V2：运动任务 payload（targetMin / intensity）、exercise.targets、weeklyPlan 改为每天。
+     */
+    public static final int CURRENT = 2;
 
     private CarePlanSchemaVersions() {}
 

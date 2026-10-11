@@ -117,6 +117,8 @@ public class AdherenceSnapshotService {
         row.setMedTakenDoseSum(agg.medTakenDoseSum());
         row.setPlanRate(rate(agg.planDoneSum(), agg.planDueSum()));
         row.setMedRate(rate(agg.medTakenDoseSum(), agg.medDueDoseSum()));
+        row.setDietLoggedCount(agg.dietLoggedCount());
+        row.setExerciseLoggedCount(agg.exerciseLoggedCount());
         EntityMeta.onCreate(row);
         snapshotMapper.upsert(row);
     }
@@ -143,6 +145,8 @@ public class AdherenceSnapshotService {
             p.setStreakGe3Count(row.getStreakGe3Count());
             p.setPlanRate(row.getPlanRate() == null ? null : row.getPlanRate().doubleValue());
             p.setMedRate(row.getMedRate() == null ? null : row.getMedRate().doubleValue());
+            p.setDietLoggedCount(row.getDietLoggedCount());
+            p.setExerciseLoggedCount(row.getExerciseLoggedCount());
             out.add(p);
         }
         return out;

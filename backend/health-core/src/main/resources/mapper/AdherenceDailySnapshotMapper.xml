@@ -7,6 +7,7 @@
         pk_id, id, tenant_id, org_id, care_team_id, snapshot_date,
         universe_count, follow_up_count, plan_incomplete_count, med_incomplete_count, streak_ge3_count,
         plan_due_sum, plan_done_sum, med_due_dose_sum, med_taken_dose_sum, plan_rate, med_rate,
+        diet_logged_count, exercise_logged_count,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
 
@@ -15,11 +16,13 @@
             id, tenant_id, org_id, care_team_id, snapshot_date,
             universe_count, follow_up_count, plan_incomplete_count, med_incomplete_count, streak_ge3_count,
             plan_due_sum, plan_done_sum, med_due_dose_sum, med_taken_dose_sum, plan_rate, med_rate,
+            diet_logged_count, exercise_logged_count,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{orgId}, #{careTeamId}, #{snapshotDate},
             #{universeCount}, #{followUpCount}, #{planIncompleteCount}, #{medIncompleteCount}, #{streakGe3Count},
             #{planDueSum}, #{planDoneSum}, #{medDueDoseSum}, #{medTakenDoseSum}, #{planRate}, #{medRate},
+            #{dietLoggedCount}, #{exerciseLoggedCount},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
         ON DUPLICATE KEY UPDATE
@@ -34,6 +37,8 @@
             med_taken_dose_sum = VALUES(med_taken_dose_sum),
             plan_rate = VALUES(plan_rate),
             med_rate = VALUES(med_rate),
+            diet_logged_count = VALUES(diet_logged_count),
+            exercise_logged_count = VALUES(exercise_logged_count),
             gmt_modified = VALUES(gmt_modified)
     </insert>
 

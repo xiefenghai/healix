@@ -8,7 +8,10 @@ import com.healix.core.adherence.service.AdherenceQueryService.PlanStreakSnapsho
 import com.healix.core.care.domain.CareTeamMember;
 import com.healix.core.care.mapper.CareTeamMemberMapper;
 import com.healix.core.careplan.domain.CarePlan;
+import com.healix.core.careplan.domain.CarePlanVersion;
 import com.healix.core.careplan.mapper.CarePlanMapper;
+import com.healix.core.careplan.mapper.CarePlanVersionMapper;
+import com.healix.core.careplan.support.CarePlanDueSupport;
 import com.healix.core.job.support.JobCronSupport;
 import com.healix.core.patient.domain.PatientCareAssignment;
 import com.healix.core.patient.domain.PatientOrgMembership;
@@ -67,6 +70,7 @@ public class WorkspaceTaskGenerator {
     private final PatientCareAssignmentMapper careAssignmentMapper;
     private final CareTeamMemberMapper careTeamMemberMapper;
     private final CarePlanMapper carePlanMapper;
+    private final CarePlanVersionMapper carePlanVersionMapper;
     private final VitalRecordMapper vitalRecordMapper;
     private final AdherenceQueryService adherenceQueryService;
     private final MetricAbnormalEvaluator metricAbnormalEvaluator;
@@ -120,6 +124,23 @@ public class WorkspaceTaskGenerator {
                                 "joinedAt",
                                 teamMember.getJoinedAt() == null ? null : teamMember.getJoinedAt().toString()),
                         false)) {
+                    planOpened++;
+                }
+            } else {
+                LocalDate horizonEnd = activePlanHorizonEnd(tenantId, peopleId);
+                if (horizonEnd != null
+                        && horizonEnd.isBefore(scanDay)
+                        && openIfAbsent(
+                                tenantId,
+                                orgId,
+                                peopleId,
+                                WorkspaceTaskType.PLAN_CREATE,
+                                peopleId,
+                                "JOB",
+                                scanDay,
+                                "方案执行期已结束，请更新",
+                                Map.of("horizonEnd", horizonEnd.toString()),
+                                false)) {
                     planOpened++;
                 }
             }
@@ -892,6 +913,103 @@ public class WorkspaceTaskGenerator {
         }
         List<PatientOrgMembership> list = membershipMapper.listActiveByPeople(peopleId);
         return list.isEmpty() ? null : list.get(0).getOrgId();
+    }
+
+    /** 生效方案执行窗口末日；无生效版本返回 null。 */
+    private LocalDate activePlanHorizonEnd(String tenantId, String peopleId) {
+        CarePlan plan = carePlanMapper.findByTenantAndPeople(tenantId, peopleId);
+        if (plan == null || !StringUtils.hasText(plan.getCurrentVersionId())) {
+            return null;
+        }
+        CarePlanVersion version = carePlanVersionMapper.findById(plan.getCurrentVersionId());
+        if (version == null || version.getPublishedAt() == null) {
+            return null;
+        }
+        return CarePlanDueSupport.resolveHorizonEnd(
+                version.getPublishedAt().toLocalDate(),
+                CarePlanDueSupport.resolveHorizonDays(version.getExecutionJson()));
+    }
+
+    /**
+     * 运动后 RED 症状：同患者只保留一张 OPEN 的 EXERCISE_ALERT，期间再次上报合并进 events。
+     *
+     * @param event 症状快照（sessionId / symptoms / typeName / startedAt / durationMin / reportedAt）
+     * @return 任务 id；患者无在管机构时返回 null
+     */
+    @Transactional
+    public String onExerciseSymptom(String tenantId, String peopleId, Map<String, Object> event) {
+        String orgId = resolveOrgId(tenantId, null, peopleId);
+        if (!StringUtils.hasText(orgId)) {
+            return null;
+        }
+        String type = WorkspaceTaskType.EXERCISE_ALERT.name();
+        WorkspaceTask open = taskMapper.findOpen(tenantId, orgId, type, peopleId);
+        if (open != null) {
+            List<Map<String, Object>> events = exerciseEvents(open.getPayloadJson());
+            events.add(event);
+            taskMapper.updatePayload(open.getId(), exerciseSummary(events), JsonUtils.toJson(Map.of("events", events)));
+            return open.getId();
+        }
+        List<Map<String, Object>> events = new ArrayList<>(List.of(event));
+        openIfAbsent(
+                tenantId,
+                orgId,
+                peopleId,
+                WorkspaceTaskType.EXERCISE_ALERT,
+                peopleId,
+                "EVENT",
+                LocalDate.now(JobCronSupport.ZONE),
+                exerciseSummary(events),
+                Map.of("events", events),
+                false);
+        WorkspaceTask created = taskMapper.findOpen(tenantId, orgId, type, peopleId);
+        return created == null ? null : created.getId();
+    }
+
+    /** 患者删除了带症状的运动记录：待办保留，仅在快照中标注。 */
+    @Transactional
+    public void onExerciseSessionDeleted(String taskId, String sessionId) {
+        WorkspaceTask task = taskMapper.findById(taskId);
+        if (task == null || !WorkspaceTaskStatus.OPEN.matches(task.getStatus())) {
+            return;
+        }
+        List<Map<String, Object>> events = exerciseEvents(task.getPayloadJson());
+        boolean changed = false;
+        for (Map<String, Object> e : events) {
+            if (sessionId.equals(e.get("sessionId"))) {
+                e.put("deleted", true);
+                changed = true;
+            }
+        }
+        if (changed) {
+            taskMapper.updatePayload(task.getId(), task.getSummary(), JsonUtils.toJson(Map.of("events", events)));
+        }
+    }
+
+    private static List<Map<String, Object>> exerciseEvents(String payloadJson) {
+        Map<String, Object> payload = JsonUtils.fromJson(payloadJson, new TypeReference<Map<String, Object>>() {});
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (payload != null && payload.get("events") instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m) {
+                    Map<String, Object> copy = new LinkedHashMap<>();
+                    m.forEach((k, v) -> copy.put(String.valueOf(k), v));
+                    out.add(copy);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static String exerciseSummary(List<Map<String, Object>> events) {
+        Set<String> labels = new java.util.LinkedHashSet<>();
+        for (Map<String, Object> e : events) {
+            if (e.get("symptomLabels") instanceof List<?> l) {
+                l.forEach(x -> labels.add(String.valueOf(x)));
+            }
+        }
+        String text = "运动后不适：" + String.join("、", labels);
+        return events.size() > 1 ? text + "（共 " + events.size() + " 次）" : text;
     }
 
     private boolean hasActivePlan(String tenantId, String peopleId) {

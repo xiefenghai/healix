@@ -123,6 +123,7 @@ const NAV_ITEMS = [
   { name: 'care-plan', label: '管理方案' },
   { name: 'medications', label: '用药管理' },
   { name: 'diet', label: '饮食记录' },
+  { name: 'exercise', label: '运动记录' },
   { name: 'assessments', label: '风险评估' },
   { name: 'followups', label: '随访管理' },
   { name: 'health-reports', label: '健康报告' },
@@ -136,6 +137,7 @@ const activeTab = computed<NavName>(() => {
   const path = route.path
   if (path.includes('/medications')) return 'medications'
   if (path.includes('/diet')) return 'diet'
+  if (path.includes('/exercise')) return 'exercise'
   if (path.includes('/care-plan')) return 'care-plan'
   if (path.includes('/observations')) return 'observations'
   if (path.includes('/revisions')) return 'revisions'
@@ -765,6 +767,8 @@ function switchTab(name: string | number) {
     router.push({ path: `${base}/medications`, query })
   } else if (name === 'diet') {
     router.push({ path: `${base}/diet`, query })
+  } else if (name === 'exercise') {
+    router.push({ path: `${base}/exercise`, query })
   } else if (name === 'care-plan') {
     router.push({ path: `${base}/care-plan`, query })
   } else if (name === 'observations') {

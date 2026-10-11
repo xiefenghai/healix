@@ -272,6 +272,10 @@ function openTodoTask(task: FocusTask) {
     goPatientPath('/followups')
     return
   }
+  if (task.taskType === 'EXERCISE_ALERT') {
+    goPatientPath('/exercise')
+    return
+  }
   router.push('/workspace/tasks')
 }
 

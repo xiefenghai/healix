@@ -42,6 +42,14 @@ interface MedMetrics {
   todayIncomplete: boolean
 }
 
+interface LifestyleMetrics {
+  dietDays7d: number
+  exerciseDays7d: number
+  activeMin7d: number
+  dietToday: boolean
+  exerciseToday: boolean
+}
+
 interface AdherencePatientItem {
   peopleId: string
   displayName: string
@@ -51,6 +59,7 @@ interface AdherencePatientItem {
   riskLevel: 'HIGH' | 'MEDIUM' | 'LOW' | string
   plan: PlanMetrics
   med: MedMetrics
+  lifestyle?: LifestyleMetrics
 }
 
 interface AdherenceOverview {
@@ -61,6 +70,7 @@ interface AdherenceOverview {
   planIncompleteCount: number
   medIncompleteCount: number
   streakGe3Count: number
+  lifestyleInactiveCount?: number
 }
 
 interface AdherenceTrendPoint {
@@ -72,9 +82,17 @@ interface AdherenceTrendPoint {
   streakGe3Count: number
   planRate?: number | null
   medRate?: number | null
+  dietLoggedCount?: number
+  exerciseLoggedCount?: number
 }
 
-type AdherenceFilter = '' | 'FOLLOW_UP' | 'PLAN_INCOMPLETE' | 'MED_INCOMPLETE' | 'STREAK_GE_3'
+type AdherenceFilter =
+  | ''
+  | 'FOLLOW_UP'
+  | 'PLAN_INCOMPLETE'
+  | 'MED_INCOMPLETE'
+  | 'STREAK_GE_3'
+  | 'LIFESTYLE_INACTIVE'
 
 function formatLocalYmd(d: Date) {
   const y = d.getFullYear()
@@ -154,6 +172,13 @@ const summaryCards = computed(() => [
     hint: '高风险（未完成或连续≥3）',
     tone: 'violet' as const,
   },
+  {
+    key: 'LIFESTYLE_INACTIVE' as const,
+    label: '饮食运动无记录',
+    value: overview.value?.lifestyleInactiveCount ?? 0,
+    hint: `截至${dayScopeLabel.value}近 7 天`,
+    tone: 'slate' as const,
+  },
 ])
 
 const filterTitle = computed(() => {
@@ -166,6 +191,8 @@ const filterTitle = computed(() => {
       return '用药未完成'
     case 'FOLLOW_UP':
       return '待跟进患者'
+    case 'LIFESTYLE_INACTIVE':
+      return '近 7 天饮食运动无记录'
     default:
       return '患者名单'
   }
@@ -353,6 +380,22 @@ function renderTrend() {
           symbolSize: 6,
           lineStyle: { width: 2, type: 'dashed' },
           data: points.map((p) => p.followUpCount),
+        },
+        {
+          name: '饮食记录人数',
+          type: 'bar',
+          yAxisIndex: 1,
+          barMaxWidth: 8,
+          itemStyle: { color: 'rgba(16,185,129,.55)' },
+          data: points.map((p) => p.dietLoggedCount ?? 0),
+        },
+        {
+          name: '运动记录人数',
+          type: 'bar',
+          yAxisIndex: 1,
+          barMaxWidth: 8,
+          itemStyle: { color: 'rgba(245,158,11,.55)' },
+          data: points.map((p) => p.exerciseLoggedCount ?? 0),
         },
       ],
     },
@@ -664,7 +707,7 @@ onBeforeUnmount(() => {
         <div class="trend-head">
           <div>
             <div class="card-title">依从率趋势</div>
-            <div class="card-sub">方案完成率 / 用药达标率 / 待跟进人数 · 来自每日快照</div>
+            <div class="card-sub">方案完成率 / 用药达标率 / 待跟进与饮食运动记录人数 · 来自每日快照</div>
           </div>
           <div class="trend-actions">
             <el-radio-group v-model="trendDays" size="small" @change="loadTrend">
@@ -741,6 +784,22 @@ onBeforeUnmount(() => {
             >
               {{ formatMedDay(row.med) }}
             </span>
+          </template>
+        </el-table-column>
+        <el-table-column width="132">
+          <template #header>
+            <el-tooltip content="近 7 天（含统计日）有记录的天数；运动附活动分钟" placement="top">
+              <span class="col-hint">7 天饮食 / 运动</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <div class="ls-cell" :class="{ 'is-warn': !row.lifestyle?.dietDays7d && !row.lifestyle?.exerciseDays7d }">
+              <span>饮食 {{ row.lifestyle?.dietDays7d ?? 0 }} 天</span>
+              <span>
+                运动 {{ row.lifestyle?.exerciseDays7d ?? 0 }} 天
+                <template v-if="row.lifestyle?.activeMin7d"> · {{ row.lifestyle.activeMin7d }} 分</template>
+              </span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="连续未执行" width="110">
@@ -888,7 +947,18 @@ onBeforeUnmount(() => {
 }
 
 .summary-row {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.tone-slate .summary-value {
+  color: #475569;
+}
+
+.ls-cell {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .summary-card .summary-label {

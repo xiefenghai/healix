@@ -55,6 +55,7 @@ const TASK_TYPES = [
   { value: 'PLAN_CREATE', label: '制定方案' },
   { value: 'PLAN_NUDGE', label: '打卡跟进' },
   { value: 'METRIC_ALERT', label: '指标异常' },
+  { value: 'EXERCISE_ALERT', label: '运动不适' },
   { value: 'FOLLOW_UP', label: '定期随访' },
   { value: 'REPORT_REVIEW', label: '报告审阅' },
 ]
@@ -205,6 +206,7 @@ const POOL_COLUMN_HINT = '任务归属：公共=无人领取，个人=已有归�
 function taskTypeTagType(taskType?: string): 'danger' | 'warning' | 'primary' | 'info' {
   switch (taskType) {
     case 'METRIC_ALERT':
+    case 'EXERCISE_ALERT':
       return 'danger'
     case 'PLAN_NUDGE':
       return 'warning'
@@ -280,7 +282,9 @@ function highlightMetricSummary(summary?: string) {
 }
 
 function formActionLabel(row: WorkspaceTaskItem) {
-  return row.taskType === 'METRIC_ALERT' || row.taskType === 'FOLLOW_UP' ? '处理' : '填单'
+  return row.taskType === 'METRIC_ALERT' || row.taskType === 'EXERCISE_ALERT' || row.taskType === 'FOLLOW_UP'
+    ? '处理'
+    : '填单'
 }
 
 function processActionLabel(row: WorkspaceTaskItem) {
@@ -303,8 +307,7 @@ function isMineOpen(row: WorkspaceTaskItem) {
 
 function canForm(row: WorkspaceTaskItem) {
   return (
-    isMineOpen(row) &&
-    (row.taskType === 'PLAN_NUDGE' || row.taskType === 'METRIC_ALERT' || row.taskType === 'FOLLOW_UP')
+    isMineOpen(row) && FORM_TASK_TYPES.has(row.taskType)
   )
 }
 
@@ -441,7 +444,7 @@ async function confirmAssign() {
   }
 }
 
-const FORM_TASK_TYPES = new Set(['PLAN_NUDGE', 'METRIC_ALERT', 'FOLLOW_UP'])
+const FORM_TASK_TYPES = new Set(['PLAN_NUDGE', 'METRIC_ALERT', 'EXERCISE_ALERT', 'FOLLOW_UP'])
 
 const followupDetailId = ref<string | null>(null)
 const healthReportDetailId = ref<string | null>(null)

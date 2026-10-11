@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../shared/http'
+import { lifestyleSections } from '../shared/report-lifestyle'
 import {
   formatPeriodType,
   formatReportStatus,
@@ -38,6 +39,8 @@ const adherence = computed(() => {
     | undefined
   return a || null
 })
+const lifestyle = computed(() => lifestyleSections(report.value?.content))
+
 const metrics = computed(() => {
   const m = report.value?.content?.metrics
   return Array.isArray(m) ? (m as Array<Record<string, unknown>>) : []
@@ -103,6 +106,18 @@ onMounted(load)
           <strong>{{ metricLabel(String(m.family)) }}</strong>
           <span class="hx-muted">测量 {{ m.count || 0 }} 次</span>
         </div>
+      </section>
+
+      <section v-for="sec in lifestyle" :key="sec.key" class="block hx-surface">
+        <h3>{{ sec.title }}</h3>
+        <p v-if="sec.empty" class="hx-muted">{{ sec.empty }}</p>
+        <template v-else>
+          <div v-for="s in sec.stats" :key="s.label" class="metric">
+            <strong>{{ s.label }}</strong>
+            <span :class="s.warn ? 'warn' : ''">{{ s.value }}</span>
+            <span v-if="s.sub" class="hx-muted">{{ s.sub }}</span>
+          </div>
+        </template>
       </section>
 
       <section v-if="report.staffComment" class="block hx-surface">
@@ -179,5 +194,9 @@ onMounted(load)
 }
 .metric + .metric {
   border-top: 1px solid var(--hx-line);
+}
+.warn {
+  color: #c44545;
+  font-weight: 600;
 }
 </style>

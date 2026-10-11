@@ -1,7 +1,7 @@
 /** 肥胖症筛查展示（《肥胖症诊疗指南（2024年版）》） */
 export const OBESITY_GUIDELINE = '《肥胖症诊疗指南（2024年版）》'
 export const OBESITY_APPLICABLE =
-  '中国成人：BMI≥28 诊断肥胖症；中心性肥胖为独立标记（男腰围≥90 / 女≥85 cm）'
+  '中国成人：BMI≥28 判定为肥胖；中心性肥胖为独立标记（男腰围≥90 / 女≥85 cm）'
 
 export const OBESITY_BMI_TABLE: Array<{ category: string; range: string }> = [
   { category: '偏瘦', range: '<18.5' },
@@ -24,8 +24,8 @@ export const OBESITY_WAIST_TABLE: Array<{ item: string; male: string; female: st
 ]
 
 export const OBESITY_NOTES = [
-  '中国成人 BMI≥28 即可诊断肥胖症（严于 WHO≥30），因同 BMI 下体脂与中心性肥胖比例更高。',
-  '中心性肥胖与 BMI 诊断可并存，不可互相替代。',
+  '中国成人 BMI≥28 即判定为肥胖（严于 WHO≥30），因同 BMI 下体脂与中心性肥胖比例更高。',
+  '中心性肥胖与 BMI 判定可并存，不可互相替代。',
   '体脂率可辅助：男>25%、女>30%。',
   '儿童青少年应按年龄别/性别别 BMI 百分位判定，本期不做成人阈值硬套。',
 ]

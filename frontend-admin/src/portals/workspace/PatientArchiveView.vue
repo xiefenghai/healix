@@ -1903,7 +1903,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="archive-row compact disease-pair-item">
-                      <label class="row-label">确诊时间</label>
+                      <label class="row-label">患病时间</label>
                       <div class="row-body">
                         <el-date-picker
                           v-model="diseaseForms.diabetes.diagnosisDate"
@@ -2055,7 +2055,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="archive-row compact disease-pair-item">
-                      <label class="row-label">确诊时间</label>
+                      <label class="row-label">患病时间</label>
                       <div class="row-body">
                         <el-date-picker
                           v-model="diseaseForms.hypertension.diagnosisDate"
@@ -2196,7 +2196,7 @@ onBeforeUnmount(() => {
 
                 <template v-else>
                   <div class="archive-row compact">
-                    <label class="row-label">确诊时间</label>
+                    <label class="row-label">患病时间</label>
                     <div class="row-body">
                       <el-date-picker
                         v-model="diseaseForms[d.dictCode].diagnosisDate"

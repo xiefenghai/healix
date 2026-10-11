@@ -12,6 +12,8 @@
 - `adherence.plan`：方案打卡，`dueCount` 应打次数、`doneCount` 已打、`rate` 完成率（0–1）
 - `adherence.med`：用药打卡，`dueDayCount` 应打天数、`okDayCount` 达标天数、`rate` 达标率（0–1）
 - `metrics`：指标序列摘要，每项含 `label` 名称、`abnormalCount` 异常次数、`latest` 最近一次值
+- `lifestyle.diet`：饮食记录，`recordDays` 记录天数（周期共 `lifestyle.dayCount` 天）、`completeDays` 三餐记全天数、`avgKcal` 记全日平均热量、`targetKcal` 目标热量、`onTargetDays` 热量达标天数、`avgSodiumMg` 日均钠、`redMeals`/`yellowMeals` 需注意餐次
+- `lifestyle.exercise`：运动记录，`activeDays` 运动天数、`totalMin` 总时长、`avgWeeklyActiveMin` 周均活动分钟、`weeklyActiveMinTarget` 周目标、`redCount` 运动中不适次数
 - `followups`：本周期已办结随访的摘要列表
 - `observations`：本周期检验/检查记录（仅月报与三月报）
 

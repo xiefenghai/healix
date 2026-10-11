@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../api/http'
 import { ensureActivePeople } from '../shared/patient-context'
+import {
+  currentSubscription,
+  disablePush,
+  enablePush,
+  pushSupport,
+  sendTestPush,
+  type PushSupport,
+} from '../shared/web-push'
 
 interface Item {
   id: string
@@ -18,7 +26,59 @@ interface Item {
 }
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
+const support = ref<PushSupport>(pushSupport())
+const pushOn = ref(false)
+const pushBusy = ref(false)
+const testing = ref(false)
+
+const supportHint: Record<Exclude<PushSupport, 'supported'>, string> = {
+  insecure: '需通过 HTTPS 访问才能开启推送',
+  'ios-needs-install': 'iPhone 需先点浏览器「分享 → 添加到主屏幕」，再从主屏幕图标打开后开启',
+  unsupported: '当前浏览器不支持推送提醒',
+}
+
+async function refreshPush() {
+  if (support.value !== 'supported') return
+  try {
+    pushOn.value = Boolean(await currentSubscription())
+  } catch {
+    pushOn.value = false
+  }
+}
+
+async function togglePush(next: boolean) {
+  pushBusy.value = true
+  try {
+    if (next) {
+      await enablePush()
+      pushOn.value = true
+      showToast({ type: 'success', message: '已开启推送提醒' })
+    } else {
+      await disablePush()
+      pushOn.value = false
+      showToast('已关闭本设备的推送提醒')
+    }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '操作失败')
+    await refreshPush()
+  } finally {
+    pushBusy.value = false
+  }
+}
+
+async function testPush() {
+  testing.value = true
+  try {
+    await sendTestPush()
+    showToast('已发送，请留意系统通知')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '发送失败')
+  } finally {
+    testing.value = false
+  }
+}
 const markingAll = ref(false)
 const openingId = ref<string | null>(null)
 const items = ref<Item[]>([])
@@ -84,7 +144,16 @@ async function readAll() {
   }
 }
 
-onMounted(() => void load())
+onMounted(async () => {
+  void refreshPush()
+  await load()
+  const openId = typeof route.query.open === 'string' ? route.query.open : ''
+  if (openId) {
+    await router.replace({ path: '/notifications' })
+    const row = items.value.find((i) => i.id === openId)
+    if (row) await openItem(row)
+  }
+})
 </script>
 
 <template>
@@ -101,6 +170,26 @@ onMounted(() => void load())
         </button>
       </template>
     </van-nav-bar>
+    <section class="push">
+      <div class="push-main">
+        <div>
+          <strong class="push-title">推送提醒</strong>
+          <p class="push-desc">
+            {{ support === 'supported' ? '报告、计划和每日待办会以系统通知提醒你' : supportHint[support] }}
+          </p>
+        </div>
+        <van-switch
+          v-if="support === 'supported'"
+          :model-value="pushOn"
+          :loading="pushBusy"
+          size="22px"
+          @update:model-value="togglePush"
+        />
+      </div>
+      <button v-if="pushOn" type="button" class="push-test" :disabled="testing" @click="testPush">
+        {{ testing ? '发送中…' : '发一条测试通知' }}
+      </button>
+    </section>
     <van-loading v-if="loading" class="loading" vertical>加载中</van-loading>
     <template v-else>
       <van-empty v-if="!items.length" description="暂无消息" />
@@ -145,6 +234,41 @@ onMounted(() => void load())
 }
 .loading {
   padding: 48px 0;
+}
+.push {
+  margin: 12px 16px 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-shadow);
+}
+.push-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.push-title {
+  font-size: 15px;
+  color: var(--hx-text);
+}
+.push-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--hx-muted);
+  line-height: 1.45;
+}
+.push-test {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--hx-teal);
+  font-size: 13px;
+  font-weight: 550;
+}
+.push-test:disabled {
+  opacity: 0.5;
 }
 .card {
   position: relative;

@@ -205,7 +205,7 @@ function statusLabel(status?: string) {
 
 function sourceLabel(source?: string) {
   if (source === 'PATIENT') return '患者自添加'
-  if (source === 'PRESCRIPTION') return '外部医嘱'
+  if (source === 'PRESCRIPTION') return '院外用药'
   if (source === 'MANUAL') return '健管录入'
   return source || '-'
 }

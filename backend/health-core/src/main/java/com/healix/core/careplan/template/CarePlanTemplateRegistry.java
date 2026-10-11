@@ -73,7 +73,7 @@ public class CarePlanTemplateRegistry {
 
         ObjectNode exercise = buildExercise(templateKey, hypo);
         ObjectNode diet = buildDiet(templateKey, allergens, meds);
-        ObjectNode execution = buildExecution(templateKey, hypo);
+        ObjectNode execution = buildExecution(templateKey, hypo, walkDurationMin(templateKey, hypo));
 
         ObjectNode snapshot = ctx != null && ctx.snapshot() != null
                 ? ctx.snapshot().deepCopy()
@@ -99,10 +99,18 @@ public class CarePlanTemplateRegistry {
                 hypo);
     }
 
+    private static int walkDurationMin(CarePlanTemplateKeyEnum key, boolean hypoRisk) {
+        return hypoRisk ? 20 : (key == CarePlanTemplateKeyEnum.GENERAL ? 25 : 30);
+    }
+
+    private static String walkIntensity(boolean hypoRisk) {
+        return hypoRisk ? "LIGHT" : "MODERATE";
+    }
+
     private ObjectNode buildExercise(CarePlanTemplateKeyEnum key, boolean hypoRisk) {
         ObjectNode ex = JsonUtils.emptyObject();
-        String intensity = hypoRisk ? "LIGHT" : "MODERATE";
-        int duration = hypoRisk ? 20 : (key == CarePlanTemplateKeyEnum.GENERAL ? 25 : 30);
+        String intensity = walkIntensity(hypoRisk);
+        int duration = walkDurationMin(key, hypoRisk);
         switch (key) {
             case DIABETES, DIABETES_HYPERTENSION -> {
                 ex.put(
@@ -132,8 +140,10 @@ public class CarePlanTemplateRegistry {
                 ex.put("reviewHint", "按耐受度逐步增加");
             }
         }
+        // 低强度运动计划不计 WHO 活跃分钟，周目标为 0，C 端以计划完成度为主
+        ex.putObject("targets").put("weeklyActiveMin", hypoRisk ? 0 : 150);
         ArrayNode weekly = ex.putArray("weeklyPlan");
-        for (String day : List.of("MON", "WED", "FRI")) {
+        for (String day : List.of("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")) {
             ObjectNode d = weekly.addObject();
             d.put("day", day);
             ArrayNode items = d.putArray("items");
@@ -202,20 +212,24 @@ public class CarePlanTemplateRegistry {
         return options[options.length - 1];
     }
 
-    private ObjectNode buildExecution(CarePlanTemplateKeyEnum key, boolean hypoRisk) {
+    private ObjectNode buildExecution(CarePlanTemplateKeyEnum key, boolean hypoRisk, int walkMin) {
         ObjectNode exec = JsonUtils.emptyObject();
         exec.put("horizonDays", 14);
         ArrayNode tasks = exec.putArray("tasks");
-        tasks.add(task(
+        ObjectNode walk = task(
                 "EX_WALK_30",
-                hypoRisk ? "短时步行 20 分钟" : "步行 30 分钟",
+                (hypoRisk ? "短时步行 " : "步行 ") + walkMin + " 分钟",
                 "EXERCISE",
                 "QD",
                 "AFTER_DINNER",
-                "WALKING"));
+                "WALKING");
+        ObjectNode payload = walk.putObject("payload");
+        payload.put("targetMin", walkMin);
+        payload.put("intensity", walkIntensity(hypoRisk));
+        tasks.add(walk);
         tasks.add(task("DIET_LOG", "记录三餐", "DIET", "QD", "EVENING", null));
         if (key == CarePlanTemplateKeyEnum.DIABETES || key == CarePlanTemplateKeyEnum.DIABETES_HYPERTENSION) {
-            tasks.add(task("GLUCOSE_CHECK", "按医嘱监测血糖", "OTHER", "QD", "MORNING", "BLOOD_GLUCOSE"));
+            tasks.add(task("GLUCOSE_CHECK", "按时监测血糖", "OTHER", "QD", "MORNING", "BLOOD_GLUCOSE"));
         }
         if (key == CarePlanTemplateKeyEnum.HYPERTENSION || key == CarePlanTemplateKeyEnum.DIABETES_HYPERTENSION) {
             tasks.add(task("BP_HOME", "家庭血压测量", "OTHER", "QD", "MORNING", "BLOOD_PRESSURE"));

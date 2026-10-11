@@ -2,6 +2,7 @@ package com.healix.agent.report;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.llm.LlmClient;
+import com.healix.core.compliance.ComplianceText;
 import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
@@ -120,14 +121,14 @@ public class ReportSummaryGenerator {
                 emitFallbackStream(sink, fb);
                 return fb;
             }
-            String staffComment = text(parsed, "staffComment");
+            String staffComment = ComplianceText.filter(text(parsed, "staffComment"));
             if (!StringUtils.hasText(staffComment)) {
                 ReportSummaryDraft fb = fallback(content, quarter, "AI 未给出点评，已回退模板草稿");
                 emitFallbackStream(sink, fb);
                 return fb;
             }
-            String nextFocus = text(parsed, "nextFocus");
-            String quarterAdvice = quarter ? text(parsed, "quarterAdvice") : null;
+            String nextFocus = ComplianceText.filter(text(parsed, "nextFocus"));
+            String quarterAdvice = quarter ? ComplianceText.filter(text(parsed, "quarterAdvice")) : null;
             AgentStreamEvent.safeEmit(
                     sink,
                     AgentStreamEvent.tool(
@@ -220,6 +221,21 @@ public class ReportSummaryGenerator {
             }
         }
         out.put("metrics", metrics);
+
+        JsonNode lifestyle = path(content, "lifestyle");
+        if (lifestyle != null && lifestyle.isObject()) {
+            Map<String, Object> ls = new LinkedHashMap<>();
+            ls.put("dayCount", intVal(lifestyle, "dayCount"));
+            ls.put("diet", pick(
+                    path(lifestyle, "diet"),
+                    "recordDays", "completeDays", "targetKcal", "avgKcal", "onTargetDays",
+                    "avgSodiumMg", "redMeals", "yellowMeals"));
+            ls.put("exercise", pick(
+                    path(lifestyle, "exercise"),
+                    "activeDays", "sessionCount", "totalMin", "activeMin", "avgWeeklyActiveMin",
+                    "weeklyActiveMinTarget", "redCount"));
+            out.put("lifestyle", ls);
+        }
 
         List<String> followups = new ArrayList<>();
         JsonNode fuNode = path(content, "followups");

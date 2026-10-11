@@ -195,7 +195,7 @@ public class CarePlanCheckinService {
                 && SYSTEM_CHECKIN_NOTE.equals(existing.getNote())
                 && existing.getRecordedByPeopleId() == null
                 && existing.getRecordedByStaffId() == null) {
-            checkinMapper.softDelete(existing.getId());
+            checkinMapper.deleteSystemCheckin(existing.getId(), SYSTEM_CHECKIN_NOTE);
         }
     }
 

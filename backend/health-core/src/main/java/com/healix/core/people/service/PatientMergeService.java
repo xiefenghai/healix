@@ -7,6 +7,7 @@ import com.healix.core.audit.service.AuditService;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PatientMergeMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -42,7 +43,6 @@ public class PatientMergeService {
             "exam_report",
             "people_medication",
             "people_medication_intake",
-            "health_report",
             "followup_record",
             "notify_message",
             "agent_session",
@@ -52,11 +52,26 @@ public class PatientMergeService {
             "care_plan_task_checkin",
             "workspace_task",
             "account_patient",
-            "people_activation_invite");
+            "people_activation_invite",
+            "diet_meal",
+            "people_allergy",
+            "people_assessment_snapshot");
 
     /** 一人一行、目标优先的表 */
-    private static final List<String> SINGLETON_TABLES =
-            List.of("people_care_assignment", "people_basic_archive", "care_plan");
+    private static final List<String> SINGLETON_TABLES = List.of(
+            "people_care_assignment", "people_basic_archive", "care_plan", "diet_goal", "people_allergy_profile");
+
+    /** 「人 + 业务键」唯一的表 → 业务键列：同键目标优先，其余改归属 */
+    private static final Map<String, List<String>> KEYED_TABLES = keyedTables();
+
+    private static Map<String, List<String>> keyedTables() {
+        Map<String, List<String>> m = new LinkedHashMap<>();
+        m.put("health_report", List.of("tenant_id", "period_type", "period_start"));
+        m.put("exercise_session", List.of("tenant_id", "source", "external_id"));
+        m.put("staff_patient_watch", List.of("staff_id", "org_id"));
+        m.put("care_chat_thread", List.of("tenant_id", "org_id"));
+        return m;
+    }
 
     private final PeopleProfileMapper peopleProfileMapper;
     private final PatientMergeMapper mergeMapper;
@@ -68,6 +83,78 @@ public class PatientMergeService {
      */
     public record MergeResult(
             String targetPeopleId, String sourcePeopleId, Map<String, Integer> movedRows, List<String> droppedKeys) {}
+
+    /** 预览里展示的数据量：表 → 中文名 */
+    private static final Map<String, String> PREVIEW_COUNTS = previewCounts();
+
+    private static Map<String, String> previewCounts() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("vital_record", "体征记录");
+        m.put("diet_meal", "饮食记录");
+        m.put("exercise_session", "运动记录");
+        m.put("people_medication", "用药");
+        m.put("followup_record", "随访");
+        m.put("health_report", "管理报告");
+        m.put("lab_report", "检验报告");
+        m.put("exam_report", "检查报告");
+        m.put("care_plan_task", "计划任务");
+        return m;
+    }
+
+    /**
+     * @param mobileMasked 中间四位打码
+     * @param counts       中文名 → 行数；检索列表不带
+     */
+    public record Candidate(
+            String peopleId,
+            String displayName,
+            String gender,
+            LocalDate birthday,
+            String mobileMasked,
+            boolean hasAccount,
+            List<String> orgNames,
+            LocalDateTime createdAt,
+            Map<String, Integer> counts) {}
+
+    public List<Candidate> search(String tenantId, String keyword, int limit) {
+        if (!StringUtils.hasText(keyword)) {
+            return List.of();
+        }
+        List<Candidate> out = new ArrayList<>();
+        for (PeopleProfile p :
+                peopleProfileMapper.searchByTenant(tenantId, keyword.trim(), Math.min(Math.max(limit, 1), 50))) {
+            out.add(toCandidate(p, null));
+        }
+        return out;
+    }
+
+    public Candidate preview(String tenantId, String peopleId) {
+        PeopleProfile p = requireSameTenant(tenantId, peopleId, "档案");
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        PREVIEW_COUNTS.forEach((table, label) -> counts.put(label, mergeMapper.countRows(table, peopleId)));
+        return toCandidate(p, counts);
+    }
+
+    private Candidate toCandidate(PeopleProfile p, Map<String, Integer> counts) {
+        return new Candidate(
+                p.getId(),
+                p.getDisplayName(),
+                p.getGender(),
+                p.getBirthday(),
+                maskMobile(p.getMobile()),
+                StringUtils.hasText(p.getAccountId()) || mergeMapper.countRows("account_patient", p.getId()) > 0,
+                mergeMapper.listActiveOrgNames(p.getId()),
+                p.getGmtCreated(),
+                counts);
+    }
+
+    private static String maskMobile(String mobile) {
+        if (!StringUtils.hasText(mobile)) {
+            return null;
+        }
+        String m = mobile.trim();
+        return m.length() >= 7 ? m.substring(0, 3) + "****" + m.substring(m.length() - 4) : "****";
+    }
 
     /**
      * @param actorAccountId 操作者账号，写入审计
@@ -101,6 +188,21 @@ public class PatientMergeService {
         }
 
         for (String table : APPEND_ONLY_TABLES) {
+            int rows = mergeMapper.repointAppendOnly(table, sourcePeopleId, targetPeopleId, now);
+            if (rows > 0) {
+                moved.put(table, rows);
+            }
+        }
+
+        int chatMoved = mergeMapper.moveChatMessagesToTargetThread(sourcePeopleId, targetPeopleId, now);
+        if (chatMoved > 0) {
+            moved.put("care_chat_message", chatMoved);
+        }
+        for (Map.Entry<String, List<String>> e : KEYED_TABLES.entrySet()) {
+            String table = e.getKey();
+            if (mergeMapper.softDeleteKeyConflicts(table, e.getValue(), sourcePeopleId, targetPeopleId, now) > 0) {
+                dropped.add(table + ":保留目标档案同键数据");
+            }
             int rows = mergeMapper.repointAppendOnly(table, sourcePeopleId, targetPeopleId, now);
             if (rows > 0) {
                 moved.put(table, rows);

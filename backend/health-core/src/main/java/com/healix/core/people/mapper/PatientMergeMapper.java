@@ -90,9 +90,32 @@ public interface PatientMergeMapper {
             @Param("sourcePeopleId") String sourcePeopleId,
             @Param("gmtModified") LocalDateTime gmtModified);
 
+    /**
+     * 「人 + 业务键」唯一的表：源侧与目标同键（逐列 {@code =}，NULL 不算相同）的行作废，
+     * 之后剩余行可安全改归属。
+     */
+    int softDeleteKeyConflicts(
+            @Param("table") String table,
+            @Param("keyColumns") List<String> keyColumns,
+            @Param("sourcePeopleId") String sourcePeopleId,
+            @Param("targetPeopleId") String targetPeopleId,
+            @Param("gmtModified") LocalDateTime gmtModified);
+
+    /** 同机构双方都有沟通会话时，源会话的消息并入目标会话（须先于会话去重执行）。 */
+    int moveChatMessagesToTargetThread(
+            @Param("sourcePeopleId") String sourcePeopleId,
+            @Param("targetPeopleId") String targetPeopleId,
+            @Param("gmtModified") LocalDateTime gmtModified);
+
     /** 源侧未办结的工作台任务先作废，避免 OPEN 唯一键与目标撞车。 */
     int cancelOpenTasks(
             @Param("peopleId") String peopleId, @Param("gmtModified") LocalDateTime gmtModified);
+
+    /** 合并前预览：在组机构名。 */
+    List<String> listActiveOrgNames(@Param("peopleId") String peopleId);
+
+    /** 合并前预览：某表该档案的有效行数（table 只取服务层白名单）。 */
+    int countRows(@Param("table") String table, @Param("peopleId") String peopleId);
 
     int markMerged(
             @Param("sourcePeopleId") String sourcePeopleId,

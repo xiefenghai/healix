@@ -470,6 +470,13 @@ const hubs = [
     tone: 'coral',
   },
   {
+    key: 'exercise',
+    title: '运动记录',
+    icon: 'underway-o',
+    path: '/exercise',
+    tone: 'mint',
+  },
+  {
     key: 'assessments',
     title: '健康评估',
     icon: 'medal-o',
@@ -977,6 +984,14 @@ function checkinStatusLabel(code?: string) {
                 type="button"
                 class="act-btn primary"
                 @click="router.push('/diet')"
+              >
+                去记录
+              </button>
+              <button
+                v-else-if="task.category === 'EXERCISE'"
+                type="button"
+                class="act-btn primary"
+                @click="router.push('/exercise')"
               >
                 去记录
               </button>

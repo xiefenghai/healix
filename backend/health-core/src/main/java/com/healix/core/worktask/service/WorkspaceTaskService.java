@@ -1,5 +1,6 @@
 package com.healix.core.worktask.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.common.context.RequestContext;
 import com.healix.common.context.RequestContextHolder;
 import com.healix.common.domain.EntityMeta;
@@ -60,6 +61,8 @@ public class WorkspaceTaskService {
 
     private static final Set<String> CONTACT_CHANNELS = Set.of("PHONE", "WECOM", "IN_PERSON", "OTHER");
     private static final Set<String> CONTACT_RESULTS = Set.of("REACHED", "UNREACHED");
+    private static final Set<String> EXERCISE_DISPOSITIONS =
+            Set.of("CONTACTED", "ADVISED_VISIT", "VISITED", "FALSE_ALARM");
 
     private final OrgWorkspaceService orgWorkspaceService;
     private final WorkspaceTaskMapper taskMapper;
@@ -308,10 +311,11 @@ public class WorkspaceTaskService {
                 formContent.put("hits", hits);
             }
         }
-        Map<String, Object> normalized =
-                recordType == FollowupRecordType.PLAN_NUDGE
-                        ? validateNudge(formContent)
-                        : FollowupContentValidator.validateMetricReview(formContent);
+        Map<String, Object> normalized = switch (recordType) {
+            case PLAN_NUDGE -> validateNudge(formContent);
+            case EXERCISE_REVIEW -> validateExerciseAlert(formContent, task.getPayloadJson());
+            default -> FollowupContentValidator.validateMetricReview(formContent);
+        };
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
         FollowupRecord openDraft = followupRecordMapper.findOpenByTaskId(id);
         FollowupRecord record;
@@ -409,6 +413,36 @@ public class WorkspaceTaskService {
         }
         if (StringUtils.hasText(str(c.get("note")))) {
             out.put("note", str(c.get("note")));
+        }
+        return out;
+    }
+
+    /** 运动不适关单：处理方式必填；办结时固化症状快照。 */
+    private Map<String, Object> validateExerciseAlert(Map<String, Object> raw, String taskPayloadJson) {
+        Map<String, Object> c = raw == null ? Map.of() : raw;
+        String disposition = str(c.get("disposition"));
+        if (!EXERCISE_DISPOSITIONS.contains(disposition)) {
+            throw new BusinessException(400, "请选择处理方式");
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("disposition", disposition);
+        String channel = str(c.get("contactChannel"));
+        if (StringUtils.hasText(channel)) {
+            if (!CONTACT_CHANNELS.contains(channel)) {
+                throw new BusinessException(400, "联系渠道无效");
+            }
+            out.put("contactChannel", channel);
+        }
+        String note = str(c.get("note"));
+        if (StringUtils.hasText(note)) {
+            if (note.length() > 500) {
+                throw new BusinessException(400, "备注不超过 500 字");
+            }
+            out.put("note", note);
+        }
+        JsonNode payload = JsonUtils.readTree(taskPayloadJson);
+        if (payload != null && payload.has("events")) {
+            out.put("events", payload.get("events"));
         }
         return out;
     }
@@ -550,6 +584,7 @@ public class WorkspaceTaskService {
             case METRIC_ALERT -> "/workspace/patients/" + peopleId + "/observations/metrics" + qs;
             case FOLLOW_UP -> "/workspace/patients/" + peopleId + "/followups" + qs;
             case REPORT_REVIEW -> "/workspace/patients/" + peopleId + "/health-reports" + qs;
+            case EXERCISE_ALERT -> "/workspace/patients/" + peopleId + "/exercise" + qs;
         };
     }
 

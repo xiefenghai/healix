@@ -137,6 +137,37 @@
           AND is_deleted = 0
     </update>
 
+    <update id="softDeleteKeyConflicts">
+        UPDATE ${table} s
+        JOIN ${table} t
+          ON t.people_id = #{targetPeopleId}
+         AND t.is_deleted = 0
+        <foreach collection="keyColumns" item="c">
+         AND s.${c} = t.${c}
+        </foreach>
+        SET s.is_deleted = 1,
+            s.gmt_deleted = #{gmtModified},
+            s.gmt_modified = #{gmtModified}
+        WHERE s.people_id = #{sourcePeopleId}
+          AND s.is_deleted = 0
+    </update>
+
+    <update id="moveChatMessagesToTargetThread">
+        UPDATE care_chat_message m
+        JOIN care_chat_thread s
+          ON s.id = m.thread_id
+         AND s.people_id = #{sourcePeopleId}
+         AND s.is_deleted = 0
+        JOIN care_chat_thread t
+          ON t.tenant_id = s.tenant_id
+         AND t.org_id = s.org_id
+         AND t.people_id = #{targetPeopleId}
+         AND t.is_deleted = 0
+        SET m.thread_id = t.id,
+            m.gmt_modified = #{gmtModified}
+        WHERE m.is_deleted = 0
+    </update>
+
     <update id="cancelOpenTasks">
         UPDATE workspace_task
         SET status = 'CANCELLED',
@@ -147,6 +178,20 @@
           AND status = 'OPEN'
           AND is_deleted = 0
     </update>
+
+    <select id="listActiveOrgNames" resultType="string">
+        SELECT o.name
+        FROM people_org_membership m
+        JOIN organization o ON o.id = m.org_id AND o.is_deleted = 0
+        WHERE m.people_id = #{peopleId}
+          AND m.is_deleted = 0
+          AND m.status = 'ACTIVE'
+        ORDER BY m.joined_at
+    </select>
+
+    <select id="countRows" resultType="int">
+        SELECT COUNT(1) FROM ${table} WHERE people_id = #{peopleId} AND is_deleted = 0
+    </select>
 
     <update id="markMerged">
         UPDATE people_profile

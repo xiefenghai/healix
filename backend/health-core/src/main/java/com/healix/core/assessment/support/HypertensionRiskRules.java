@@ -323,15 +323,15 @@ public final class HypertensionRiskRules {
     public static String adviceFor(
             String bpGrade, boolean susceptible, boolean cvHigh, int majorFactorCount) {
         if (GRADE_3.equals(bpGrade)) {
-            return "3级高血压：心脑血管病风险高危（无论危险因素数量）。建议立即就医，启动药物治疗（非诊断结论，供健管参考）";
+            return "3级高血压：心脑血管病风险高危（无论危险因素数量）。建议立即就医评估（非诊断结论，供健管参考）";
         }
         if (GRADE_2.equals(bpGrade) && cvHigh) {
             return "2级高血压且合并 "
                     + majorFactorCount
-                    + " 个主要危险因素，心脑血管病风险高危。建议就医评估并启动药物治疗";
+                    + " 个主要危险因素，心脑血管病风险高危。建议尽快就医评估";
         }
         if (GRADE_1.equals(bpGrade) && cvHigh) {
-            return "1级高血压且合并 ≥3 个主要危险因素，心脑血管病风险高危。建议就医评估，考虑药物治疗";
+            return "1级高血压且合并 ≥3 个主要危险因素，心脑血管病风险高危。建议就医评估";
         }
         if (GRADE_PRE.equals(bpGrade) && cvHigh) {
             return "高血压前期且合并 ≥3 个主要危险因素，心脑血管病风险高危。建议强化生活方式干预，3–6 个月复查血压";

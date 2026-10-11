@@ -15,8 +15,16 @@ export const TASK_TYPE_OPTIONS = [
   { value: 'PLAN_REVIEW', label: '方案复核' },
   { value: 'PLAN_NUDGE', label: '打卡跟进' },
   { value: 'METRIC_ALERT', label: '指标异常' },
+  { value: 'EXERCISE_ALERT', label: '运动不适' },
   { value: 'FOLLOW_UP', label: '定期随访' },
   { value: 'REPORT_REVIEW', label: '报告审阅' },
+] as const
+
+export const EXERCISE_DISPOSITION_OPTIONS = [
+  { label: '已电话联系', value: 'CONTACTED' },
+  { label: '建议就医', value: 'ADVISED_VISIT' },
+  { label: '已就医', value: 'VISITED' },
+  { label: '误报', value: 'FALSE_ALARM' },
 ] as const
 
 export const FOLLOWUP_CONTACT_TARGET_OPTIONS = [

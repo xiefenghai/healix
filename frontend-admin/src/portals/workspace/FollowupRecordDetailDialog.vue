@@ -63,6 +63,24 @@ const detailHits = computed<MetricHit[]>(() => {
   return []
 })
 
+const EXERCISE_DISPOSITION_LABELS: Record<string, string> = {
+  CONTACTED: '已电话联系',
+  ADVISED_VISIT: '建议就医',
+  VISITED: '已就医',
+  FALSE_ALARM: '误报',
+}
+const CONTACT_CHANNEL_LABELS: Record<string, string> = {
+  PHONE: '电话',
+  WECOM: '企微',
+  IN_PERSON: '当面',
+  OTHER: '其他',
+}
+
+const exerciseEvents = computed<Record<string, unknown>[]>(() => {
+  const events = detail.value?.content?.events
+  return Array.isArray(events) ? (events as Record<string, unknown>[]) : []
+})
+
 const detailDialogWidth = computed(() => {
   if (!detail.value) return '560px'
   if (detail.value.recordType === 'METRIC_REVIEW') return '640px'
@@ -437,6 +455,44 @@ function detailTitle() {
           </div>
         </div>
         <p v-else-if="detail.summary" class="detail-fallback">{{ detail.summary }}</p>
+      </template>
+      <template v-else-if="detail.recordType === 'EXERCISE_REVIEW'">
+        <div v-if="exerciseEvents.length" class="hits">
+          <div class="hits-head">
+            <span class="hits-title">不适上报</span>
+            <span class="hits-count">{{ exerciseEvents.length }} 次</span>
+          </div>
+          <div class="hits-list">
+            <div v-for="(e, idx) in exerciseEvents" :key="String(e.sessionId || idx)" class="hit-row">
+              <span class="hit-main">
+                {{ e.typeName || '运动' }}<template v-if="e.durationMin"> · {{ e.durationMin }} 分钟</template>：{{
+                  (Array.isArray(e.symptomLabels) ? e.symptomLabels : []).join('、') || '不适'
+                }}
+                <el-tag v-if="e.deleted" size="small" type="info">患者已删除该记录</el-tag>
+              </span>
+              <span v-if="e.startedAt" class="hit-time">{{ formatTime(String(e.startedAt)) }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-title">处理结果</div>
+          <div class="kv-grid">
+            <div class="kv-item">
+              <span class="kv-label">处理方式</span>
+              <el-tag size="small" effect="plain" :type="contentText('disposition') === 'ADVISED_VISIT' ? 'warning' : 'info'">
+                {{ EXERCISE_DISPOSITION_LABELS[contentText('disposition')] || contentText('disposition') || '-' }}
+              </el-tag>
+            </div>
+            <div v-if="contentText('contactChannel')" class="kv-item">
+              <span class="kv-label">联系渠道</span>
+              <span>{{ CONTACT_CHANNEL_LABELS[contentText('contactChannel')] || contentText('contactChannel') }}</span>
+            </div>
+          </div>
+          <div v-if="contentText('note')" class="text-block">
+            <div class="text-block-label">备注</div>
+            <div class="text-block-body">{{ contentText('note') }}</div>
+          </div>
+        </div>
       </template>
       <template v-else>
         <div class="detail-card">

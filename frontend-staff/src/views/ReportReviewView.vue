@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api } from '../shared/http'
+import { lifestyleSections } from '../shared/report-lifestyle'
 import {
   formatPeriodType,
   formatReportStatus,
@@ -57,6 +58,8 @@ const adherence = computed(() => {
     | undefined
   return a || null
 })
+
+const lifestyle = computed(() => lifestyleSections(report.value?.content))
 
 const metrics = computed(() => {
   const m = report.value?.content?.metrics
@@ -214,6 +217,18 @@ onMounted(load)
           <span class="hx-muted">测量 {{ m.count || 0 }} 次</span>
           <span v-if="Number(m.abnormalCount) > 0" class="warn">异常 {{ m.abnormalCount }}</span>
         </div>
+      </section>
+
+      <section v-for="sec in lifestyle" :key="sec.key" class="block hx-surface">
+        <h3>{{ sec.title }}</h3>
+        <p v-if="sec.empty" class="hx-muted">{{ sec.empty }}</p>
+        <template v-else>
+          <div v-for="s in sec.stats" :key="s.label" class="metric">
+            <strong>{{ s.label }}</strong>
+            <span :class="s.warn ? 'warn' : ''">{{ s.value }}</span>
+            <span v-if="s.sub" class="hx-muted">{{ s.sub }}</span>
+          </div>
+        </template>
       </section>
 
       <section v-if="followups.length" class="block hx-surface">

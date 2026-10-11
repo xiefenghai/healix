@@ -64,6 +64,8 @@ const router = createRouter({
     { path: '/diet', component: () => import('../views/DietView.vue'), meta: { hideTab: true } },
     { path: '/diet/goal', component: () => import('../views/DietGoalView.vue'), meta: { hideTab: true } },
     { path: '/diet/add', component: () => import('../views/DietAddView.vue'), meta: { hideTab: true } },
+    { path: '/exercise', component: () => import('../views/ExerciseView.vue'), meta: { hideTab: true } },
+    { path: '/exercise/add', component: () => import('../views/ExerciseAddView.vue'), meta: { hideTab: true } },
     {
       path: '/management-reports',
       component: () => import('../views/ManagementReportsView.vue'),

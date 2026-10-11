@@ -788,6 +788,37 @@ CREATE TABLE IF NOT EXISTS notify_delivery (
     KEY idx_notify_delivery_dispatch (status, next_retry_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息通道投递';
 
+CREATE TABLE IF NOT EXISTS web_push_subscription (
+    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+    id VARCHAR(32) NOT NULL,
+    account_id VARCHAR(32) NOT NULL COMMENT 'C 端账号',
+    endpoint VARCHAR(1024) NOT NULL,
+    endpoint_hash CHAR(64) NOT NULL COMMENT 'endpoint SHA-256',
+    p256dh VARCHAR(128) NOT NULL,
+    auth VARCHAR(64) NOT NULL,
+    user_agent VARCHAR(255) NULL,
+    fail_count INT NOT NULL DEFAULT 0,
+    last_success_at DATETIME NULL,
+    is_deleted TINYINT NOT NULL DEFAULT 0,
+    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_web_push_sub_id (id),
+    UNIQUE KEY uk_web_push_sub_endpoint (endpoint_hash),
+    KEY idx_web_push_sub_account (account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='浏览器推送订阅';
+
+CREATE TABLE IF NOT EXISTS web_push_vapid (
+    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+    id VARCHAR(32) NOT NULL,
+    public_key VARCHAR(128) NOT NULL,
+    private_key VARCHAR(128) NOT NULL,
+    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_web_push_vapid_id (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Web Push VAPID 密钥（未配置时自动生成）';
+
 CREATE TABLE IF NOT EXISTS tenant_quota_usage (
     pk_id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
     id                  VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
@@ -1103,6 +1134,8 @@ CREATE TABLE IF NOT EXISTS adherence_daily_snapshot (
     med_taken_dose_sum      INT          NOT NULL DEFAULT 0 COMMENT '用药已服次数合计',
     plan_rate               DECIMAL(6,4) NULL COMMENT '方案完成率 0-1',
     med_rate                DECIMAL(6,4) NULL COMMENT '用药按次达标率 0-1',
+    diet_logged_count       INT          NOT NULL DEFAULT 0 COMMENT '当日有饮食记录人数',
+    exercise_logged_count   INT          NOT NULL DEFAULT 0 COMMENT '当日有运动记录人数',
     is_deleted              TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
     gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
@@ -1416,6 +1449,46 @@ CREATE TABLE IF NOT EXISTS diet_meal_item (
     UNIQUE KEY uk_diet_meal_item_id (id),
     KEY idx_diet_meal_item_meal (meal_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='饮食记录-餐次明细';
+
+CREATE TABLE IF NOT EXISTS exercise_session (
+    pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id               VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    people_id               VARCHAR(32)  NOT NULL COMMENT '患者业务ID',
+    exercise_date           DATE         NOT NULL COMMENT '运动日期（东八区）',
+    started_at              DATETIME     NOT NULL COMMENT '开始时间',
+    duration_min            INT          NOT NULL COMMENT '时长（分钟）',
+    type_code               VARCHAR(64)  NOT NULL COMMENT '运动类型编码（seed/exercise_types.json）',
+    type_name               VARCHAR(64)  NOT NULL COMMENT '类型名称快照',
+    category                VARCHAR(16)  NOT NULL COMMENT 'AEROBIC/RESISTANCE/FLEXIBILITY/BALANCE/DAILY',
+    intensity               VARCHAR(16)  NOT NULL COMMENT 'LIGHT/MODERATE/VIGOROUS（谈话测试）',
+    avg_hr                  INT          NULL COMMENT '平均心率（仅记录）',
+    distance_m              INT          NULL COMMENT '距离（米）',
+    met_value               DECIMAL(4,1) NOT NULL COMMENT 'MET 快照',
+    active_min              INT          NOT NULL DEFAULT 0 COMMENT '活跃分钟快照（中等×1 高强度×2）',
+    energy_kcal             DECIMAL(8,1) NOT NULL DEFAULT 0 COMMENT '估算消耗快照',
+    weight_estimated        TINYINT      NOT NULL DEFAULT 0 COMMENT '体重缺失按 60kg 估算',
+    symptoms_json           JSON         NULL COMMENT '运动后不适症状',
+    symptom_level           VARCHAR(8)   NOT NULL DEFAULT 'NONE' COMMENT 'NONE/YELLOW/RED',
+    flags_json              JSON         NULL COMMENT '规则提示',
+    level                   VARCHAR(8)   NOT NULL DEFAULT 'GREEN' COMMENT 'GREEN/YELLOW/RED',
+    alert_task_id           VARCHAR(32)  NULL COMMENT '关联 EXERCISE_ALERT 工作台任务',
+    care_plan_task_id       VARCHAR(32)  NULL COMMENT '按方案一键记录时关联任务',
+    source                  VARCHAR(16)  NOT NULL COMMENT 'MANUAL/PLAN_QUICK/STAFF',
+    device_vendor           VARCHAR(32)  NULL COMMENT '设备来源（预留）',
+    external_id             VARCHAR(64)  NULL COMMENT '设备记录 ID（预留，去重）',
+    note                    VARCHAR(200) NULL COMMENT '备注',
+    recorded_by_people_id   VARCHAR(32)  NULL COMMENT '患者自录',
+    recorded_by_staff_id    VARCHAR(32)  NULL COMMENT '员工代录',
+    is_deleted              TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted             DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_exercise_session_id (id),
+    UNIQUE KEY uk_exercise_session_external (tenant_id, people_id, source, external_id, gmt_deleted),
+    KEY idx_exercise_session_people_date (tenant_id, people_id, exercise_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运动记录';
 
 CREATE TABLE IF NOT EXISTS people_allergy_profile (
     pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
