@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.assessment.mapper.AssessmentStoreMapper">
+
+    <resultMap id="peopleRef" type="com.healix.core.assessment.mapper.AssessmentStoreMapper$PeopleRef">
+        <constructor>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="people_id" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="latestCols">
+        tenant_id, people_id, engine_code, category, disease_code, snapshot_id, status,
+        level, level_label, tier, score, active, fingerprint, assessed_at, evaluated_at
+    </sql>
+
+    <insert id="upsertLatest">
+        INSERT INTO people_assessment_latest(
+            tenant_id, people_id, engine_code, category, disease_code, snapshot_id, status,
+            level, level_label, tier, score, active, fingerprint, assessed_at, evaluated_at
+        ) VALUES (
+            #{tenantId}, #{peopleId}, #{engineCode}, #{category}, #{diseaseCode}, #{snapshotId}, #{status},
+            #{level}, #{levelLabel}, #{tier}, #{score}, #{active}, #{fingerprint}, #{assessedAt}, #{evaluatedAt}
+        )
+        ON DUPLICATE KEY UPDATE
+            tenant_id = VALUES(tenant_id),
+            category = VALUES(category),
+            disease_code = VALUES(disease_code),
+            snapshot_id = VALUES(snapshot_id),
+            status = VALUES(status),
+            level = VALUES(level),
+            level_label = VALUES(level_label),
+            tier = VALUES(tier),
+            score = VALUES(score),
+            active = VALUES(active),
+            fingerprint = VALUES(fingerprint),
+            assessed_at = VALUES(assessed_at),
+            evaluated_at = VALUES(evaluated_at)
+    </insert>
+
+    <update id="touchLatest">
+        UPDATE people_assessment_latest
+        SET evaluated_at = #{evaluatedAt}, active = 1
+        WHERE people_id = #{peopleId} AND engine_code = #{engineCode}
+    </update>
+
+    <update id="deactivateLatest">
+        UPDATE people_assessment_latest
+        SET active = 0, evaluated_at = #{evaluatedAt}
+        WHERE people_id = #{peopleId} AND engine_code = #{engineCode} AND active = 1
+    </update>
+
+    <select id="listLatest" resultType="com.healix.core.assessment.domain.PeopleAssessmentLatest">
+        SELECT <include refid="latestCols"/>
+        FROM people_assessment_latest
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+    </select>
+
+    <select id="listLatestByPeopleIds" resultType="com.healix.core.assessment.domain.PeopleAssessmentLatest">
+        SELECT <include refid="latestCols"/>
+        FROM people_assessment_latest
+        WHERE tenant_id = #{tenantId}
+          AND people_id IN
+        <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">#{pid}</foreach>
+    </select>
+
+    <select id="countLatest" resultType="long">
+        SELECT COUNT(1) FROM people_assessment_latest
+    </select>
+
+    <insert id="markDirty">
+        INSERT INTO people_assessment_state(tenant_id, people_id, dirty_at)
+        VALUES (#{tenantId}, #{peopleId}, #{at})
+        ON DUPLICATE KEY UPDATE dirty_at = VALUES(dirty_at)
+    </insert>
+
+    <select id="listDirty" resultMap="peopleRef">
+        SELECT tenant_id, people_id
+        FROM people_assessment_state
+        WHERE dirty_at IS NOT NULL
+        ORDER BY dirty_at
+        LIMIT #{limit}
+    </select>
+
+    <insert id="markEvaluated">
+        INSERT INTO people_assessment_state(tenant_id, people_id, dirty_at, evaluated_at)
+        VALUES (#{tenantId}, #{peopleId}, NULL, #{startedAt})
+        ON DUPLICATE KEY UPDATE
+            evaluated_at = VALUES(evaluated_at),
+            dirty_at = IF(dirty_at IS NOT NULL AND dirty_at &lt;= #{startedAt}, NULL, dirty_at)
+    </insert>
+
+    <select id="listSweepCandidates" resultMap="peopleRef">
+        SELECT tenant_id, people_id FROM (
+            SELECT m.tenant_id, m.people_id
+            FROM people_org_membership m
+            WHERE m.status = 'ACTIVE' AND m.left_at IS NULL AND m.is_deleted = 0
+            UNION
+            SELECT l.tenant_id, l.people_id
+            FROM people_assessment_latest l
+        ) x
+        WHERE x.people_id &gt; #{afterPeopleId}
+        GROUP BY x.people_id, x.tenant_id
+        ORDER BY x.people_id
+        LIMIT #{limit}
+    </select>
+
+    <select id="listFacts" resultType="com.healix.core.assessment.domain.PeopleAssessmentFact">
+        SELECT id, tenant_id, people_id, field_code, value_json, source, submission_id, recorded_at, recorded_by
+        FROM people_assessment_fact
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+    </select>
+
+    <insert id="upsertFact">
+        INSERT INTO people_assessment_fact(
+            id, tenant_id, people_id, field_code, value_json, source, submission_id, recorded_at, recorded_by
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{fieldCode}, #{valueJson}, #{source}, #{submissionId}, #{recordedAt}, #{recordedBy}
+        )
+        ON DUPLICATE KEY UPDATE
+            value_json = VALUES(value_json),
+            source = VALUES(source),
+            submission_id = VALUES(submission_id),
+            recorded_at = VALUES(recorded_at),
+            recorded_by = VALUES(recorded_by)
+    </insert>
+
+    <insert id="insertSubmission">
+        INSERT INTO assessment_questionnaire_submission(
+            id, tenant_id, people_id, portal, submitted_by, request_id, answers_json, overrides_json, submitted_at
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{portal}, #{submittedBy}, #{requestId}, #{answersJson}, #{overridesJson}, #{submittedAt}
+        )
+    </insert>
+
+    <select id="findLatestSubmission" resultType="com.healix.core.assessment.domain.AssessmentQuestionnaireSubmission">
+        SELECT id, tenant_id, people_id, portal, submitted_by, request_id, answers_json, overrides_json, submitted_at
+        FROM assessment_questionnaire_submission
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+        ORDER BY submitted_at DESC, pk_id DESC
+        LIMIT 1
+    </select>
+
+    <select id="listSubmissions" resultType="com.healix.core.assessment.domain.AssessmentQuestionnaireSubmission">
+        SELECT id, tenant_id, people_id, portal, submitted_by, request_id, answers_json, overrides_json, submitted_at
+        FROM assessment_questionnaire_submission
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+        ORDER BY submitted_at DESC, pk_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <sql id="requestCols">
+        id, tenant_id, people_id, org_id, staff_id, fields_json, status, expires_at, reminded_at,
+        submission_id, submitted_at, gmt_created
+    </sql>
+
+    <insert id="insertRequest">
+        INSERT INTO assessment_questionnaire_request(
+            id, tenant_id, people_id, org_id, staff_id, fields_json, status, expires_at
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{staffId}, #{fieldsJson}, #{status}, #{expiresAt}
+        )
+    </insert>
+
+    <select id="findPendingRequest" resultType="com.healix.core.assessment.domain.AssessmentQuestionnaireRequest">
+        SELECT <include refid="requestCols"/>
+        FROM assessment_questionnaire_request
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND status = 'PENDING'
+        ORDER BY pk_id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findLatestRequest" resultType="com.healix.core.assessment.domain.AssessmentQuestionnaireRequest">
+        SELECT <include refid="requestCols"/>
+        FROM assessment_questionnaire_request
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+        ORDER BY pk_id DESC
+        LIMIT 1
+    </select>
+
+    <select id="listRequests" resultType="com.healix.core.assessment.domain.AssessmentQuestionnaireRequest">
+        SELECT <include refid="requestCols"/>
+        FROM assessment_questionnaire_request
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+          AND status &lt;&gt; 'CANCELLED'
+        ORDER BY gmt_created DESC, pk_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="markRequestSubmitted">
+        UPDATE assessment_questionnaire_request
+        SET status = 'SUBMITTED', submission_id = #{submissionId}, submitted_at = #{at}
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+
+    <update id="cancelPendingRequests">
+        UPDATE assessment_questionnaire_request
+        SET status = 'CANCELLED'
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND status = 'PENDING'
+    </update>
+
+    <select id="listRequestsToRemind" resultType="com.healix.core.assessment.domain.AssessmentQuestionnaireRequest">
+        SELECT <include refid="requestCols"/>
+        FROM assessment_questionnaire_request
+        WHERE status = 'PENDING' AND reminded_at IS NULL AND gmt_created &lt;= #{createdBefore}
+        LIMIT 500
+    </select>
+
+    <update id="markRequestReminded">
+        UPDATE assessment_questionnaire_request SET reminded_at = #{at} WHERE id = #{id}
+    </update>
+
+    <select id="listExpiredRequests" resultType="com.healix.core.assessment.domain.AssessmentQuestionnaireRequest">
+        SELECT <include refid="requestCols"/>
+        FROM assessment_questionnaire_request
+        WHERE status = 'PENDING' AND expires_at &lt;= #{now}
+        LIMIT 500
+    </select>
+
+    <update id="markRequestExpired">
+        UPDATE assessment_questionnaire_request SET status = 'EXPIRED' WHERE id = #{id} AND status = 'PENDING'
+    </update>
+    <update id="repointQuestionnaire">
+        UPDATE assessment_questionnaire_submission SET people_id = #{targetPeopleId} WHERE people_id = #{sourcePeopleId}
+    </update>
+
+    <update id="repointRequests">
+        UPDATE assessment_questionnaire_request SET people_id = #{targetPeopleId} WHERE people_id = #{sourcePeopleId}
+    </update>
+
+    <update id="repointFacts">
+        UPDATE IGNORE people_assessment_fact SET people_id = #{targetPeopleId} WHERE people_id = #{sourcePeopleId}
+    </update>
+
+    <delete id="deleteFacts">
+        DELETE FROM people_assessment_fact WHERE people_id = #{peopleId}
+    </delete>
+
+    <delete id="deleteLatest">
+        DELETE FROM people_assessment_latest WHERE people_id = #{peopleId}
+    </delete>
+
+    <delete id="deleteState">
+        DELETE FROM people_assessment_state WHERE people_id = #{peopleId}
+    </delete>
+</mapper>

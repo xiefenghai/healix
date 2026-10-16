@@ -53,6 +53,27 @@ public class MetricAbnormalEvaluator {
         return hits;
     }
 
+    /** 各指标族参考范围文案（与判定口径一致），供报告展示。 */
+    public Map<MetricFamily, String> referenceTexts() {
+        Map<String, JsonNode> dict = loadMetricDict();
+        Map<MetricFamily, String> out = new LinkedHashMap<>();
+        out.put(
+                MetricFamily.BP,
+                rangeText(rangeFromDict(dict.get(MetricTypeEnum.BLOOD_PRESSURE_SYS.name()), 90d, 139d))
+                        + "/"
+                        + rangeText(rangeFromDict(dict.get(MetricTypeEnum.BLOOD_PRESSURE_DIA.name()), 60d, 89d))
+                        + " mmHg");
+        JsonNode glucose = dict.get(MetricTypeEnum.BLOOD_GLUCOSE.name());
+        out.put(
+                MetricFamily.GLUCOSE,
+                "空腹 " + rangeText(glucoseRange(glucose, "FASTING"))
+                        + " · 餐后 " + rangeText(glucoseRange(glucose, "POSTPRANDIAL"))
+                        + " mmol/L");
+        out.put(MetricFamily.HR, rangeText(rangeFromDict(dict.get(MetricTypeEnum.HEART_RATE.name()), 60d, 100d)) + " bpm");
+        out.put(MetricFamily.BMI, rangeText(rangeFromDict(dict.get("BMI"), 18.5d, 23.9d)));
+        return out;
+    }
+
     private List<AbnormalHit> evaluateBp(List<VitalRecord> records, Map<String, JsonNode> dict) {
         Map<String, List<VitalRecord>> groups = new LinkedHashMap<>();
         List<VitalRecord> unpaired = new ArrayList<>();

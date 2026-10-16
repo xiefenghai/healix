@@ -446,9 +446,9 @@ function verifyBadge(item: AllergyItem) {
 .card {
   margin: 12px 16px 0;
   padding: 14px 16px;
-  border-radius: var(--hx-radius);
+  border-radius: var(--hx-r-lg);
   background: var(--hx-card);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 .intro p {
   margin: 0;
@@ -467,10 +467,10 @@ function verifyBadge(item: AllergyItem) {
 }
 .toolbar :deep(.van-button) {
   height: 44px;
-  font-weight: 650;
+  font-weight: 700;
 }
 .item.risk {
-  background: #fef2f2;
+  background: var(--hx-danger-bg);
   border: 1px solid #fecaca;
 }
 .item.inactive {
@@ -488,27 +488,27 @@ function verifyBadge(item: AllergyItem) {
 }
 .badge {
   font-size: 11px;
-  font-weight: 550;
+  font-weight: 600;
   color: var(--hx-teal);
   background: var(--hx-teal-light);
   border-radius: 999px;
   padding: 2px 8px;
 }
 .badge.ok {
-  color: #2a9b6f;
-  background: rgba(42, 155, 111, 0.12);
+  color: var(--hx-teal-700);
+  background: rgba(11, 122, 102, 0.12);
 }
 .badge.warn {
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--hx-warn-text);
+  background: var(--hx-warn-bg);
 }
 .badge.danger {
   color: #fff;
-  background: #dc2626;
+  background: var(--hx-danger);
 }
 .badge.muted {
   color: var(--hx-muted);
-  background: #eef2f5;
+  background: var(--hx-n-100);
 }
 .line {
   margin: 8px 0 0;
@@ -551,7 +551,7 @@ function verifyBadge(item: AllergyItem) {
 }
 .del-btn {
   flex: 0 0 88px;
-  color: #dc2626;
+  color: var(--hx-danger);
   border-color: #fecaca;
 }
 .block {
@@ -560,12 +560,12 @@ function verifyBadge(item: AllergyItem) {
 .label {
   margin: 0 0 8px;
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 600;
   color: var(--hx-muted);
 }
 .label.required::after {
   content: ' *';
-  color: #e11d48;
+  color: var(--hx-danger);
 }
 .chips {
   display: flex;
@@ -573,8 +573,8 @@ function verifyBadge(item: AllergyItem) {
   gap: 8px;
 }
 .chip {
-  border: 1px solid #e4ecec;
-  background: #f7fbfb;
+  border: 1px solid var(--hx-n-200);
+  background: var(--hx-n-50);
   color: var(--hx-text);
   font-size: 13px;
   padding: 8px 12px;
@@ -588,16 +588,16 @@ function verifyBadge(item: AllergyItem) {
   font-weight: 600;
 }
 .chip.risk {
-  color: #dc2626;
+  color: var(--hx-danger);
 }
 .chip.risk.active {
-  background: #fee2e2;
-  color: #b91c1c;
+  background: var(--hx-danger-bg);
+  color: var(--hx-danger-text);
 }
 .risk-hint {
   margin: 8px 0 0;
   font-size: 12px;
-  color: #dc2626;
+  color: var(--hx-danger);
 }
 .block :deep(.van-field) {
   margin-top: 8px;

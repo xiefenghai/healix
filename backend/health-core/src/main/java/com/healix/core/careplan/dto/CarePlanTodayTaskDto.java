@@ -15,4 +15,8 @@ public class CarePlanTodayTaskDto {
     private String checkinStatus;
     private String checkinId;
     private String note;
+    /** 饮水任务目标毫升；其它类别为空 */
+    private Integer targetMl;
+    /** 监测类任务关联的指标（BLOOD_GLUCOSE / BLOOD_PRESSURE），录入即自动完成；其它任务为空 */
+    private String metricRef;
 }

@@ -30,7 +30,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** B 端患者饮食：热量目标设定、饮食记录查看 / 代录 / 点评。 */
+/** B 端患者饮食：热量目标设定、饮食记录查看 / 代录 / 点评。代录记录可改删，患者自录只读。 */
 @Validated
 @RestController
 @RequestMapping("/api/b/v1")
@@ -89,6 +89,21 @@ public class BDietController {
     public ApiResult<DietMealDto> createMeal(@PathVariable String peopleId, @RequestBody MealInput request) {
         String tenantId = access(peopleId);
         return ApiResult.ok(recordService.create(tenantId, peopleId, request, Actor.staff(SecurityUtils.requireStaffId())));
+    }
+
+    @PutMapping("/patients/{peopleId}/diet/meals/{mealId}")
+    public ApiResult<DietMealDto> updateMeal(
+            @PathVariable String peopleId, @PathVariable String mealId, @RequestBody MealInput request) {
+        String tenantId = access(peopleId);
+        return ApiResult.ok(recordService.update(
+                tenantId, peopleId, mealId, request, Actor.staff(SecurityUtils.requireStaffId())));
+    }
+
+    @DeleteMapping("/patients/{peopleId}/diet/meals/{mealId}")
+    public ApiResult<Void> deleteMeal(@PathVariable String peopleId, @PathVariable String mealId) {
+        String tenantId = access(peopleId);
+        recordService.delete(tenantId, peopleId, mealId, Actor.staff(SecurityUtils.requireStaffId()));
+        return ApiResult.ok(null);
     }
 
     @PutMapping("/patients/{peopleId}/diet/meals/{mealId}/comment")

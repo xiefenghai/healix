@@ -60,28 +60,25 @@ async function submit() {
 .auth {
   min-height: 100vh;
   padding: 48px 20px 32px;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(92, 184, 184, 0.35), transparent 40%),
-    radial-gradient(circle at 100% 10%, rgba(245, 166, 35, 0.2), transparent 35%),
-    var(--hx-bg);
+  background: var(--hx-bg);
 }
 .brand { text-align: center; margin-bottom: 28px; }
 .logo {
   width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 22px;
   display: grid; place-items: center;
-  background: linear-gradient(145deg, #5cb8b8, #2b9e9e);
+  background: linear-gradient(145deg, var(--hx-teal-500), var(--hx-teal-600));
   color: #fff; font-size: 28px; font-weight: 700;
-  box-shadow: 0 12px 24px rgba(43, 158, 158, 0.28);
+  box-shadow: 0 12px 24px rgba(14, 159, 131, 0.28);
 }
-h1 { margin: 0; font-size: 28px; color: #1f6f6f; }
+h1 { margin: 0; font-size: 28px; color: var(--hx-teal-700); }
 .brand p { margin: 6px 0 0; color: var(--hx-muted); }
 .card {
-  padding: 20px; border-radius: 18px; background: #fff;
-  box-shadow: 0 10px 28px rgba(31, 111, 111, 0.1);
+  padding: 20px; border-radius: var(--hx-r-lg); background: #fff;
+  box-shadow: var(--hx-elev-2);
 }
 h2 { margin: 0 0 12px; font-size: 18px; }
 .link {
   display: block; width: 100%; margin-top: 12px; border: 0; background: transparent;
-  color: #2b9e9e; font-size: 14px;
+  color: var(--hx-teal-600); font-size: 14px;
 }
 </style>

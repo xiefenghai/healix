@@ -276,6 +276,10 @@ function openTodoTask(task: FocusTask) {
     goPatientPath('/exercise')
     return
   }
+  if (task.taskType === 'MED_FEEDBACK' || task.taskType === 'MED_VERIFY') {
+    goPatientPath('/medications')
+    return
+  }
   router.push('/workspace/tasks')
 }
 

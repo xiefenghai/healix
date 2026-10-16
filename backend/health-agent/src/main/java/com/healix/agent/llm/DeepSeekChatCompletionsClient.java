@@ -49,20 +49,26 @@ public class DeepSeekChatCompletionsClient {
 
     public VisionChatResult chatWithImage(
             String scene, String systemPrompt, String userPrompt, String imageDataUrl) {
+        return chatWithImages(scene, systemPrompt, userPrompt, List.of(imageDataUrl));
+    }
+
+    public VisionChatResult chatWithImages(
+            String scene, String systemPrompt, String userPrompt, List<String> imageDataUrls) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", model);
         body.put("temperature", 0.1);
         body.put("max_tokens", maxTokens);
         body.put("thinking", Map.of("type", "disabled"));
-        body.put("messages", buildMessages(systemPrompt, userPrompt, imageDataUrl));
+        body.put("messages", buildMessages(systemPrompt, userPrompt, imageDataUrls));
 
         long started = System.currentTimeMillis();
         log.info(
-                "[DeepSeek] start scene={} model={} systemChars={} userChars={} maxTokens={}",
+                "[DeepSeek] start scene={} model={} systemChars={} userChars={} images={} maxTokens={}",
                 scene,
                 model,
                 length(systemPrompt),
                 length(userPrompt),
+                imageDataUrls.size(),
                 maxTokens);
         String raw = restClient
                 .post()
@@ -94,12 +100,14 @@ public class DeepSeekChatCompletionsClient {
     }
 
     private static List<Map<String, Object>> buildMessages(
-            String systemPrompt, String userPrompt, String imageDataUrl) {
+            String systemPrompt, String userPrompt, List<String> imageDataUrls) {
         List<Map<String, Object>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", systemPrompt));
         List<Map<String, Object>> userContent = new ArrayList<>();
         userContent.add(Map.of("type", "text", "text", userPrompt));
-        userContent.add(Map.of("type", "image_url", "image_url", Map.of("url", imageDataUrl)));
+        for (String url : imageDataUrls) {
+            userContent.add(Map.of("type", "image_url", "image_url", Map.of("url", url)));
+        }
         messages.add(Map.of("role", "user", "content", userContent));
         return messages;
     }

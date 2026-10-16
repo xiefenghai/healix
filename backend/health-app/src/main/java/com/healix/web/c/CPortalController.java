@@ -16,6 +16,7 @@ import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.service.MembershipService;
 import com.healix.core.patientcard.domain.AccountPatient;
 import com.healix.core.patientcard.service.PatientActivationService;
+import com.healix.core.patientcard.service.PatientCardMergeService;
 import com.healix.core.patientcard.service.PatientCardService;
 import com.healix.core.people.domain.PeopleAccount;
 import com.healix.core.people.domain.PeopleProfile;
@@ -64,6 +65,7 @@ public class CPortalController {
     private final LifestyleArchiveService lifestyleArchiveService;
     private final PatientCardService patientCardService;
     private final PatientActivationService patientActivationService;
+    private final PatientCardMergeService patientCardMergeService;
     private final TenantMapper tenantMapper;
     private final TenantConfigService tenantConfigService;
     private final FeatureFlagService featureFlagService;
@@ -146,14 +148,35 @@ public class CPortalController {
                 tenantId,
                 ctx.getAccountId(),
                 request.displayName(),
+                request.gender(),
+                request.birthday(),
                 request.identityType(),
                 request.identityValue(),
                 request.relation(),
-                request.mobile());
+                request.mobile(),
+                request.mobileOwner());
         String token = jwtTokenProvider.createPatientToken(
                 ctx.getAccountId(), card.getPeopleId(), tenantId, card.getId());
         return ApiResult.ok(new TokenResponse(
                 token, ctx.getAccountId(), card.getPeopleId(), card.getId(), tenantId));
+    }
+
+    /** 激活后检查：账号里是否有自己添加过的同一人记录，可并入机构档案。 */
+    @GetMapping("/patient-cards/{cardId}/merge-candidate")
+    public ApiResult<PatientCardMergeService.MergeCandidate> mergeCandidate(@PathVariable String cardId) {
+        return ApiResult.ok(patientCardMergeService.findCandidate(
+                SecurityUtils.requireContext().getAccountId(), cardId));
+    }
+
+    @PostMapping("/patient-cards/{cardId}/merge-from/{sourceCardId}")
+    public ApiResult<TokenResponse> mergeFrom(@PathVariable String cardId, @PathVariable String sourceCardId) {
+        var ctx = SecurityUtils.requireContext();
+        patientCardMergeService.merge(ctx.getAccountId(), cardId, sourceCardId);
+        AccountPatient card = patientCardService.requireOwnedCard(ctx.getAccountId(), cardId);
+        String token = jwtTokenProvider.createPatientToken(
+                ctx.getAccountId(), card.getPeopleId(), card.getTenantId(), card.getId());
+        return ApiResult.ok(new TokenResponse(
+                token, ctx.getAccountId(), card.getPeopleId(), card.getId(), card.getTenantId()));
     }
 
     @PostMapping("/patient-cards/{cardId}/select")
@@ -271,12 +294,16 @@ public class CPortalController {
             String displayName,
             String relation) {}
 
+    /** 证件选填；不填证件时性别、出生日期必填。 */
     public record CreatePatientCardRequest(
             @NotBlank String displayName,
-            @NotBlank String identityType,
-            @NotBlank String identityValue,
+            String gender,
+            LocalDate birthday,
+            String identityType,
+            String identityValue,
             String relation,
-            String mobile) {}
+            String mobile,
+            String mobileOwner) {}
 
     public record UpdateProfileRequest(
             String displayName, String gender, LocalDate birthday, String allergensJson) {}

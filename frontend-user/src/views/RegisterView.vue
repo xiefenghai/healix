@@ -57,12 +57,12 @@ async function submit() {
 <style scoped>
 .auth { min-height: 100vh; }
 .card {
-  margin: 16px; padding: 20px; border-radius: 16px; background: #fff;
-  box-shadow: 0 8px 24px rgba(31, 111, 111, 0.08);
+  margin: 16px; padding: 20px; border-radius: var(--hx-r-lg); background: #fff;
+  box-shadow: var(--hx-elev-2);
 }
 .hint { margin: 0 0 12px; color: var(--hx-muted); font-size: 13px; line-height: 1.5; }
 .link {
   display: block; width: 100%; margin-top: 14px; border: 0; background: transparent;
-  color: #2b9e9e; font-size: 14px;
+  color: var(--hx-teal-600); font-size: 14px;
 }
 </style>

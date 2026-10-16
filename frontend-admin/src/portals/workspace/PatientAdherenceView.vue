@@ -24,6 +24,7 @@ import {
   formatCarePlanTaskCategory,
   formatCarePlanTimeSlot,
 } from '../../shared/care-plan-labels'
+import PatientRewardPanel from './PatientRewardPanel.vue'
 
 echarts.use([
   BarChart,
@@ -118,17 +119,37 @@ const chartRef = ref<HTMLDivElement | null>(null)
 let chart: EChartsType | null = null
 let resizeObserver: ResizeObserver | null = null
 
-function riskLabel(level?: string) {
-  if (level === 'HIGH') return '高'
-  if (level === 'MEDIUM') return '中'
-  return '低'
-}
-
-function riskTagType(level?: string) {
-  if (level === 'HIGH') return 'danger'
-  if (level === 'MEDIUM') return 'warning'
-  return 'success'
-}
+const followupTag = computed(() => {
+  const d = detail.value
+  if (!d) return { text: '—', hint: '', type: 'info' as const }
+  const plan = d.plan
+  const med = d.med
+  if (!plan?.hasActivePlan) {
+    return { text: '暂无方案', hint: '还没有执行中的管理方案', type: 'info' as const }
+  }
+  const streak = plan.streakDays || 0
+  const planMiss = !!plan.todayIncomplete
+  const medMiss = !!med?.todayIncomplete
+  if (d.riskLevel === 'HIGH') {
+    const bits: string[] = []
+    if (planMiss) bits.push('今日方案任务还没打完')
+    if (medMiss) bits.push('今日用药还没打卡')
+    if (streak >= 3) bits.push(`方案已连续 ${streak} 天未完成`)
+    let text = '需跟进'
+    if (streak >= 3) text = `连续${streak}天`
+    else if (planMiss && medMiss) text = '今日未完成'
+    else if (planMiss) text = '方案未完成'
+    else if (medMiss) text = '用药未打卡'
+    return { text, hint: bits.join('，'), type: 'danger' as const }
+  }
+  if (d.riskLevel === 'MEDIUM') {
+    return { text: '完成偏低', hint: '近 7 日完成率不到 60%', type: 'warning' as const }
+  }
+  if (plan.rate7d == null) {
+    return { text: '暂无任务', hint: '近 7 日没有应打卡任务', type: 'info' as const }
+  }
+  return { text: '执行正常', hint: '今天已完成', type: 'success' as const }
+})
 
 function formatPct(rate?: number | null) {
   return formatPlanRatePct(rate)
@@ -292,6 +313,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-loading="loading" class="adherence-page">
+    <PatientRewardPanel :people-id="peopleId" />
     <div class="toolbar">
       <el-date-picker
         v-model="date"
@@ -314,12 +336,13 @@ onBeforeUnmount(() => {
 
     <div class="summary-row">
       <div class="summary-card">
-        <div class="summary-label">风险等级</div>
+        <div class="summary-label">执行跟进</div>
         <div class="summary-value">
-          <el-tag :type="riskTagType(detail?.riskLevel)" effect="light" size="large">
-            {{ riskLabel(detail?.riskLevel) }}
+          <el-tag :type="followupTag.type" effect="light" size="large">
+            {{ followupTag.text }}
           </el-tag>
         </div>
+        <div v-if="followupTag.hint" class="summary-hint">{{ followupTag.hint }}</div>
       </div>
       <div class="summary-card">
         <div class="summary-label">方案今日</div>

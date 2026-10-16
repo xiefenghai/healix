@@ -438,7 +438,8 @@ public class ExerciseRecordService {
         List<ExerciseSession> sessions = sessionMapper.listByPeopleRange(tenantId, peopleId, date, date);
         for (TaskTarget tt : due) {
             boolean done = minutesOf(sessions, tt.target().category()) >= tt.target().targetMin();
-            checkinService.syncSystemCheckin(tenantId, peopleId, tt.task().getTaskCode(), date, done);
+            checkinService.syncSystemCheckin(
+                    tenantId, peopleId, tt.task().getTaskCode(), date, done, peopleId);
         }
     }
 
@@ -473,8 +474,12 @@ public class ExerciseRecordService {
     }
 
     private static void assertWritable(ExerciseSession s, Actor actor) {
-        if (actor.isPatient() && StringUtils.hasText(s.getRecordedByStaffId())) {
+        boolean byStaff = StringUtils.hasText(s.getRecordedByStaffId());
+        if (actor.isPatient() && byStaff) {
             throw new BusinessException(400, "健管师代录的记录不可修改");
+        }
+        if (!actor.isPatient() && !byStaff) {
+            throw new BusinessException(400, "患者自行记录的数据不可修改");
         }
     }
 
@@ -522,7 +527,7 @@ public class ExerciseRecordService {
         d.setNote(s.getNote());
         boolean byStaff = StringUtils.hasText(s.getRecordedByStaffId());
         d.setRecordedByStaff(byStaff);
-        d.setEditable(!patientView || !byStaff);
+        d.setEditable(patientView != byStaff);
         return d;
     }
 

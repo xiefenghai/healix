@@ -31,6 +31,8 @@ interface ExerciseSession {
   source: string
   note?: string | null
   recordedByStaff: boolean
+  /** 健管师只能改代录的记录 */
+  editable: boolean
 }
 
 interface TaskItem {
@@ -441,14 +443,17 @@ onMounted(reload)
           <template #default="{ row }">{{ SOURCE_LABELS[row.source] || row.source }}</template>
         </el-table-column>
         <el-table-column label="备注" min-width="120" prop="note" show-overflow-tooltip />
-        <el-table-column label="操作" width="110" fixed="right">
+        <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
-            <el-button text type="primary" size="small" @click="openDialog(row)">编辑</el-button>
-            <el-button text type="danger" size="small" @click="remove(row)">删除</el-button>
+            <div v-if="row.editable" class="row-actions">
+              <el-button text type="primary" size="small" @click="openDialog(row)">编辑</el-button>
+              <el-button text type="danger" size="small" @click="remove(row)">删除</el-button>
+            </div>
+            <span v-else class="readonly">患者自录</span>
           </template>
         </el-table-column>
       </el-table>
-      <p class="legend">* 体重缺失，按 60kg 估算消耗。消耗仅供参考，不计入饮食热量预算。</p>
+      <p class="legend">* 体重缺失，按 60kg 估算消耗。消耗仅供参考，不计入饮食热量预算。患者自行记录的运动只读，代录的记录可编辑。</p>
     </el-card>
 
     <el-dialog v-model="dialog" :title="editingId ? '编辑运动记录' : '代录运动'" width="560px" append-to-body>
@@ -635,6 +640,19 @@ onMounted(reload)
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.row-actions .el-button + .el-button {
+  margin-left: 4px;
+}
+.readonly {
+  font-size: 12px;
+  color: #8a94a6;
 }
 .unit {
   margin-left: 8px;

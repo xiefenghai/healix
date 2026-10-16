@@ -16,10 +16,13 @@ import com.healix.core.diet.service.DietRecordService;
 import com.healix.core.diet.service.DietRecordService.Actor;
 import com.healix.core.diet.service.DietRecordService.FrequentFoodDto;
 import com.healix.core.diet.service.DietRecordService.MealInput;
+import com.healix.core.diet.service.DietRecordService.MealItemInput;
 import com.healix.core.diet.service.FoodCatalogService;
 import com.healix.security.SecurityUtils;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -95,25 +98,53 @@ public class CDietController {
                 SecurityUtils.requireTenantId(), peopleId, mealId, request, Actor.patient(peopleId)));
     }
 
+    /** 同一餐次合并保存：mealIds 为页面上一并编辑的已有记录，items 为空即删除这些记录。 */
+    @PutMapping("/diet/meal-slot")
+    public ApiResult<DietMealDto> saveMealSlot(@RequestBody MealSlotRequest request) {
+        String peopleId = SecurityUtils.requirePatientId();
+        MealInput input = new MealInput(
+                request.mealDate(), request.mealType(), request.eatenAt(), request.source(), request.note(), request.items());
+        return ApiResult.ok(recordService.saveSlot(
+                SecurityUtils.requireTenantId(), peopleId, request.mealIds(), input, Actor.patient(peopleId)));
+    }
+
+    public record MealSlotRequest(
+            List<String> mealIds,
+            LocalDate mealDate,
+            String mealType,
+            LocalDateTime eatenAt,
+            String source,
+            String note,
+            List<MealItemInput> items) {}
+
     @DeleteMapping("/diet/meals/{mealId}")
     public ApiResult<Void> deleteMeal(@PathVariable String mealId) {
-        recordService.delete(SecurityUtils.requireTenantId(), SecurityUtils.requirePatientId(), mealId);
+        String peopleId = SecurityUtils.requirePatientId();
+        recordService.delete(SecurityUtils.requireTenantId(), peopleId, mealId, Actor.patient(peopleId));
         return ApiResult.ok(null);
     }
 
-    /** 拍照识别：只返回草稿，用户确认克数后再 POST /diet/meals；图片不保存。 */
+    /** 拍照识别：同一餐可传多张 file，一次识别并合并重复食物；只返回草稿，图片不保存。 */
     @PostMapping(value = "/diet/recognize", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResult<DietDraftDto> recognizePhoto(
-            @RequestParam("file") MultipartFile file, @RequestParam(required = false) String mealType) {
+            @RequestParam("file") List<MultipartFile> files,
+            @RequestParam(required = false) String mealType,
+            @RequestParam(required = false) String hint) {
         SecurityUtils.requirePatientId();
-        if (file == null || file.isEmpty()) {
-            throw new BusinessException("请上传图片");
-        }
+        List<DietRecognitionService.Photo> photos = new ArrayList<>();
         try {
-            return ApiResult.ok(recognitionService.recognizePhoto(file.getBytes(), file.getContentType(), mealType));
+            for (MultipartFile f : files == null ? List.<MultipartFile>of() : files) {
+                if (f != null && !f.isEmpty()) {
+                    photos.add(new DietRecognitionService.Photo(f.getBytes(), f.getContentType()));
+                }
+            }
         } catch (IOException e) {
             throw new BusinessException("读取图片失败");
         }
+        if (photos.isEmpty()) {
+            throw new BusinessException("请上传图片");
+        }
+        return ApiResult.ok(recognitionService.recognizePhotos(photos, mealType, hint));
     }
 
     @PostMapping("/diet/recognize-text")

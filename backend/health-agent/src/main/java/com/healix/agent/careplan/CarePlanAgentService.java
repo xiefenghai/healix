@@ -6,8 +6,10 @@ import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.domain.EntityMeta;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.careplan.support.CarePlanEnergyTargetService;
 import com.healix.core.agent.enums.AgentTypeEnum;
 import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
@@ -198,6 +200,7 @@ public class CarePlanAgentService {
         }
         LlmPlanResult r = llmResult.get();
         guardAllergens(ctx, r.plan().diet(), sink);
+        keepEnergyTarget(draft.getDiet(), r.plan().diet());
         logEntity.setDraftReply("LLM_REVISE");
         if (r.llmResponse() != null) {
             logEntity.setPromptTokens(r.llmResponse().promptTokens());
@@ -397,6 +400,19 @@ public class CarePlanAgentService {
                 logEntity.getId());
         CarePlanStreamSink.tool(sink, "persistGenerated", "done", "草稿已保存");
         return bundle;
+    }
+
+    /** 修订不改热量目标：沿用草稿里的（含健管师手改值），保存时再按饮食目标刷新。 */
+    private static void keepEnergyTarget(JsonNode currentDiet, ObjectNode revisedDiet) {
+        if (revisedDiet == null) {
+            return;
+        }
+        JsonNode target = currentDiet == null ? null : currentDiet.get(CarePlanEnergyTargetService.FIELD);
+        if (target != null && target.isObject()) {
+            revisedDiet.set(CarePlanEnergyTargetService.FIELD, target.deepCopy());
+        } else {
+            revisedDiet.remove(CarePlanEnergyTargetService.FIELD);
+        }
     }
 
     /** 按过敏史补齐回避清单，并移除模型误推荐的过敏食物（服务端兜底，不依赖模型自觉）。 */

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../shared/http'
+import PatientRewardCard from '../shared/PatientRewardCard.vue'
 import { ageFromBirthday, formatDateTime, formatGender } from '../shared/format'
 
 function dial(mobile?: string | null) {
@@ -12,6 +13,14 @@ function dial(mobile?: string | null) {
     return
   }
   window.location.href = `tel:${n}`
+}
+
+const MOBILE_OWNER_LABELS: Record<string, string> = {
+  SPOUSE: '配偶',
+  CHILD: '子女',
+  PARENT: '父母',
+  RELATIVE: '其他亲属',
+  OTHER: '其他',
 }
 
 async function copyMobile(mobile?: string | null) {
@@ -39,6 +48,7 @@ interface OrgPatientListItem {
   primaryCareManagerName?: string | null
   clientLinked?: boolean
   mobile?: string | null
+  mobileOwner?: string | null
   watched?: boolean | null
 }
 
@@ -73,6 +83,10 @@ const nudging = ref(false)
 const escalating = ref(false)
 const issuing = ref(false)
 const patient = ref<OrgPatientListItem | null>(null)
+const mobileOwnerSuffix = computed(() => {
+  const label = MOBILE_OWNER_LABELS[patient.value?.mobileOwner || '']
+  return label ? `（${label}）` : ''
+})
 const completeness = ref<number | null>(null)
 const focus = ref<Focus | null>(null)
 const metrics = ref<MetricSlot[]>([])
@@ -283,10 +297,12 @@ onMounted(load)
         </div>
         <p v-if="focus?.bloodPressure" class="bp">血压 {{ focus.bloodPressure }}</p>
         <div v-if="patient.mobile" class="phone-row">
-          <button type="button" class="phone-btn" @click="dial(patient.mobile)">拨打 {{ patient.mobile }}</button>
+          <button type="button" class="phone-btn" @click="dial(patient.mobile)">拨打 {{ patient.mobile }}{{ mobileOwnerSuffix }}</button>
           <button type="button" class="phone-btn ghost" @click="copyMobile(patient.mobile)">复制</button>
         </div>
       </section>
+
+      <PatientRewardCard :people-id="peopleId" />
 
       <section v-if="metrics.length" class="metrics hx-surface">
         <div class="metrics-head">

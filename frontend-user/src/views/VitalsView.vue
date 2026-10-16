@@ -4,6 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api } from '../api/http'
 import { formatHealthDataSource, isPatientSource } from '../shared/health-data-source'
+import {
+  bloodPressurePairError,
+  parseMetricInput,
+  vitalPlausibilityError,
+} from '../shared/metric-ranges'
 
 /** 与 MetricTypeEnum / 首页录入 / 趋势图保持一致 */
 const METRICS = [
@@ -277,10 +282,25 @@ async function record() {
   loading.value = true
   try {
     if (isBp.value) {
-      const sysN = Number(sys.value)
-      const diaN = Number(dia.value)
-      if (!Number.isFinite(sysN) || !Number.isFinite(diaN)) {
+      const sysN = parseMetricInput(sys.value)
+      const diaN = parseMetricInput(dia.value)
+      if (sysN == null || diaN == null) {
         showToast('请填写收缩压和舒张压')
+        return
+      }
+      const sysErr = vitalPlausibilityError('BLOOD_PRESSURE_SYS', sysN)
+      if (sysErr) {
+        showToast(sysErr)
+        return
+      }
+      const diaErr = vitalPlausibilityError('BLOOD_PRESSURE_DIA', diaN)
+      if (diaErr) {
+        showToast(diaErr)
+        return
+      }
+      const pairErr = bloodPressurePairError(sysN, diaN)
+      if (pairErr) {
+        showToast(pairErr)
         return
       }
       const bpCtx = bpContext.value === 'CLINIC' ? 'CLINIC' : 'HOME'
@@ -322,9 +342,14 @@ async function record() {
         showToast({ type: 'success', message: '已记录' })
       }
     } else {
-      const n = Number(value.value)
-      if (!Number.isFinite(n)) {
+      const n = parseMetricInput(value.value)
+      if (n == null) {
         showToast('请输入数值')
+        return
+      }
+      const rangeErr = vitalPlausibilityError(metricType.value, n)
+      if (rangeErr) {
+        showToast(rangeErr)
         return
       }
       const body: Record<string, unknown> = {
@@ -517,10 +542,10 @@ onMounted(() => {
 }
 .card {
   background: #fff;
-  border-radius: 18px;
+  border-radius: var(--hx-r-lg);
   padding: 14px;
   margin: 12px 16px;
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 h2 {
   margin: 0 0 10px;
@@ -564,7 +589,7 @@ h2 {
   padding: 10px 0;
 }
 .row + .row {
-  border-top: 1px solid #f0f3f3;
+  border-top: 1px solid var(--hx-n-100);
 }
 .row strong {
   font-size: 16px;
@@ -583,8 +608,8 @@ h2 {
 }
 .tag {
   font-size: 11px;
-  color: #2b9e9e;
-  background: #e8f7f7;
+  color: var(--hx-teal-600);
+  background: var(--hx-teal-50);
   border-radius: 999px;
   padding: 2px 8px;
   white-space: nowrap;
@@ -596,12 +621,12 @@ h2 {
   gap: 4px;
 }
 .tag.source {
-  color: #64748b;
-  background: #f1f5f9;
+  color: var(--hx-muted);
+  background: var(--hx-n-100);
 }
 .tag.source.staff {
-  color: #b45309;
-  background: #fff7ed;
+  color: var(--hx-warn-text);
+  background: var(--hx-warn-bg);
 }
 .row-ops {
   display: flex;
@@ -616,6 +641,6 @@ h2 {
   color: var(--hx-teal);
 }
 .link.danger {
-  color: #b91c1c;
+  color: var(--hx-danger-text);
 }
 </style>

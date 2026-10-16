@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api } from '../shared/http'
+import { asEnergyTarget, ENERGY_SOURCE_LABELS, energyMacroText, type EnergyTarget } from '../shared/energy-target'
 
 interface SafetyFlag {
   level?: string
@@ -52,10 +53,11 @@ interface TaskDetail {
 
 const TEMPLATE_OPTIONS = [
   { value: '', label: '自动推断（推荐）' },
-  { value: 'GENERAL', label: '通用健康管理' },
+  { value: 'COMPREHENSIVE', label: '综合管理' },
   { value: 'DIABETES', label: '糖尿病管理' },
   { value: 'HYPERTENSION', label: '高血压管理' },
-  { value: 'DIABETES_HYPERTENSION', label: '糖尿病+高血压' },
+  { value: 'OBESITY', label: '肥胖管理' },
+  { value: 'WELLNESS', label: '健康管理' },
 ]
 
 const route = useRoute()
@@ -80,9 +82,21 @@ const form = reactive({
   summary: '',
   dietPrinciples: '',
   calorieHint: '',
+  energyKcal: '' as number | string,
+  syncDietGoal: true,
   precautions: '',
   tasks: [] as ExecTask[],
 })
+
+const energyTarget = computed(() => asEnergyTarget(draft.value?.diet?.energyTarget))
+const energyEdited = computed(() => {
+  const v = Number(form.energyKcal)
+  return v > 0 && v !== energyTarget.value?.energyKcal
+})
+const energySource = computed<EnergyTarget['source'] | null>(() =>
+  energyEdited.value ? 'PLAN_EDIT' : (energyTarget.value?.source ?? null),
+)
+const energyNeedsSync = computed(() => energySource.value === 'PLAN_EDIT' || energySource.value === 'ESTIMATED')
 
 const peopleId = computed(() => task.value?.peopleId || '')
 const draft = computed(() => bundle.value?.draft || null)
@@ -110,6 +124,12 @@ function categoryLabel(code?: string) {
       return '运动'
     case 'DIET':
       return '饮食'
+    case 'WATER':
+      return '饮水'
+    case 'SLEEP':
+      return '睡眠'
+    case 'MOOD':
+      return '心情'
     case 'MED':
     case 'MEDICATION':
       return '用药'
@@ -141,6 +161,7 @@ function syncFormFromBundle() {
     typeof d.contextSnapshot?.summary === 'string' ? d.contextSnapshot.summary : ''
   form.dietPrinciples = asStringArray(diet.principles).join('\n')
   form.calorieHint = typeof diet.calorieHint === 'string' ? diet.calorieHint : ''
+  form.energyKcal = asEnergyTarget(diet.energyTarget)?.energyKcal ?? ''
   form.precautions = asStringArray(exercise.precautions).join('\n')
   form.tasks = Array.isArray(execution.tasks)
     ? (JSON.parse(JSON.stringify(execution.tasks)) as ExecTask[]).map((t) => ({
@@ -160,6 +181,16 @@ function buildPayload() {
   exercise.precautions = lines(form.precautions)
   diet.principles = lines(form.dietPrinciples)
   diet.calorieHint = form.calorieHint.trim()
+  if (energyEdited.value) {
+    diet.energyTarget = {
+      energyKcal: Number(form.energyKcal),
+      goalType: energyTarget.value?.goalType,
+      rateKgPerWeek: energyTarget.value?.rateKgPerWeek,
+      source: 'PLAN_EDIT',
+    }
+  } else if (!(Number(form.energyKcal) > 0)) {
+    delete diet.energyTarget
+  }
   execution.horizonDays = Number(execution.horizonDays) || 14
   execution.tasks = form.tasks
   return {
@@ -289,6 +320,7 @@ async function publish() {
       body: JSON.stringify({
         ackWarnCodes: ack,
         title: form.title.trim() || undefined,
+        syncDietGoal: energyNeedsSync.value ? form.syncDietGoal : undefined,
       }),
     })
     showToast('方案已发布')
@@ -411,8 +443,26 @@ onMounted(loadTaskAndBundle)
             @update:model-value="markDirty"
           />
           <van-field
+            v-model="form.energyKcal"
+            label="每日热量"
+            type="digit"
+            border
+            placeholder="档案不全时可直接填写"
+            @update:model-value="markDirty"
+          >
+            <template #extra>千卡</template>
+          </van-field>
+          <p v-if="energySource" class="energy-meta">
+            {{ ENERGY_SOURCE_LABELS[energySource] }}
+            <template v-if="energyTarget && !energyEdited"> · {{ energyMacroText(energyTarget) }}</template>
+            <template v-else-if="energyEdited"> · 保存后按病种重算三大营养素</template>
+          </p>
+          <van-checkbox v-if="energyNeedsSync" v-model="form.syncDietGoal" shape="square" icon-size="16px" class="energy-sync">
+            发布时同步为患者的饮食热量目标
+          </van-checkbox>
+          <van-field
             v-model="form.calorieHint"
-            label="热量"
+            label="热量说明"
             border
             placeholder="可选"
             @update:model-value="markDirty"
@@ -586,6 +636,15 @@ onMounted(loadTaskAndBundle)
 }
 .block.caution .block-label {
   color: #9a6508;
+}
+.energy-meta {
+  margin: 2px 6px 4px;
+  font-size: 12px;
+  color: var(--hx-muted);
+}
+.energy-sync {
+  margin: 2px 6px 6px;
+  font-size: 12px;
 }
 .block-label em {
   margin-left: auto;

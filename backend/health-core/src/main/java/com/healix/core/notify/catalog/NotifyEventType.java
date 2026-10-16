@@ -8,7 +8,15 @@ public enum NotifyEventType {
     CARE_PLAN_PUBLISHED(NotifyCategory.CARE_PLAN),
     DAILY_HEALTH_TODO(NotifyCategory.ADHERENCE),
     ACTIVATION_OTP(NotifyCategory.SECURITY),
-    STAFF_NUDGE(NotifyCategory.ADHERENCE);
+    STAFF_NUDGE(NotifyCategory.ADHERENCE),
+    /** 激励：徽章、保护卡、晚间火苗提醒（每日最多 1 条） */
+    REWARD(NotifyCategory.ADHERENCE),
+    /** 健管师点赞鼓励 */
+    STAFF_KUDOS(NotifyCategory.ADHERENCE),
+    /** 服药到点提醒 / 跟进提醒 */
+    MEDICATION_REMIND(NotifyCategory.ADHERENCE),
+    /** 健管师发来的评估问卷（发送 / 48 小时未填提醒） */
+    ASSESSMENT_QUESTIONNAIRE(NotifyCategory.CARE_PLAN);
 
     private final NotifyCategory category;
 

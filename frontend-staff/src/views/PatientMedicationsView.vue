@@ -17,6 +17,10 @@ interface Medication {
   timingNote?: string
   status?: string
   remark?: string
+  source?: string
+  verified?: boolean | null
+  allergyConflict?: string | null
+  openFeedbackCount?: number
 }
 
 const route = useRoute()
@@ -25,6 +29,20 @@ const peopleId = computed(() => String(route.params.peopleId || ''))
 const loading = ref(false)
 const filter = ref<'ACTIVE' | 'ALL'>('ACTIVE')
 const items = ref<Medication[]>([])
+const verifying = ref('')
+
+async function verify(m: Medication) {
+  verifying.value = m.id
+  try {
+    await api(`/api/b/v1/patients/${peopleId.value}/medications/${m.id}/verify`, { method: 'POST' })
+    showToast({ type: 'success', message: '已核对' })
+    await load()
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '核对失败')
+  } finally {
+    verifying.value = ''
+  }
+}
 
 async function load() {
   loading.value = true
@@ -81,6 +99,23 @@ onMounted(load)
           <template v-if="m.stopDate"> ~ {{ sliceDate(m.stopDate) }}</template>
         </p>
         <p v-if="m.remark" class="meta hx-muted">{{ m.remark }}</p>
+        <div v-if="m.source === 'PATIENT' || m.allergyConflict || m.openFeedbackCount" class="flags">
+          <span v-if="m.source === 'PATIENT'" class="hx-chip" :class="{ warn: !m.verified }">
+            {{ m.verified ? '自添加·已核对' : '自添加·待核对' }}
+          </span>
+          <span v-if="m.allergyConflict" class="hx-chip warn">过敏冲突：{{ m.allergyConflict }}</span>
+          <span v-if="m.openFeedbackCount" class="hx-chip warn">待处理反馈 {{ m.openFeedbackCount }}</span>
+          <van-button
+            v-if="m.source === 'PATIENT' && !m.verified"
+            size="mini"
+            type="primary"
+            round
+            :loading="verifying === m.id"
+            @click="verify(m)"
+          >
+            核对
+          </van-button>
+        </div>
       </article>
     </div>
   </div>
@@ -108,5 +143,12 @@ onMounted(load)
 .meta {
   margin: 6px 0 0;
   font-size: 12px;
+}
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
 }
 </style>

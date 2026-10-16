@@ -146,20 +146,20 @@ onBeforeUnmount(() => {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: var(--hx-bg, #f5f7fb);
+  background: var(--hx-bg, var(--hx-n-50));
   padding-bottom: 24px;
 }
 .nav-link {
   border: 0;
   background: transparent;
-  color: var(--van-primary-color, #2b9e9e);
+  color: var(--van-primary-color, var(--hx-teal-600));
   font-size: 14px;
   padding: 0 4px;
 }
 .hint {
   margin: 10px 16px 0;
   font-size: 12px;
-  color: #64748b;
+  color: var(--hx-muted);
   line-height: 1.5;
 }
 .cta-wrap {
@@ -174,15 +174,16 @@ onBeforeUnmount(() => {
   margin: 12px 16px 0;
   padding: 14px 14px 12px;
   text-align: left;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--hx-r-lg);
   background: #fff;
+  box-shadow: var(--hx-elev-2);
   font: inherit;
   color: inherit;
 }
 .card.unread {
-  border-color: #d6e6ff;
-  background: linear-gradient(180deg, #f8fbff, #fff);
+  border-color: var(--hx-teal-200);
+  background: linear-gradient(180deg, var(--hx-teal-50), #fff);
 }
 .row {
   display: flex;
@@ -192,17 +193,17 @@ onBeforeUnmount(() => {
 }
 .row strong {
   font-size: 15px;
-  color: #0f172a;
+  color: var(--hx-n-900);
 }
 .time {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--hx-n-500);
   flex-shrink: 0;
 }
 .sub {
   margin-top: 4px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--hx-muted);
 }
 .preview {
   margin-top: 8px;
@@ -211,7 +212,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   align-items: center;
   font-size: 13px;
-  color: #334155;
+  color: var(--hx-n-800);
 }
 .preview span {
   overflow: hidden;

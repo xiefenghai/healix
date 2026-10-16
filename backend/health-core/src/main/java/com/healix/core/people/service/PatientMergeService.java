@@ -1,5 +1,7 @@
 package com.healix.core.people.service;
 
+import com.healix.core.assessment.mapper.AssessmentStoreMapper;
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.AuditDetails;
 import com.healix.core.audit.enums.AuditActionEnum;
@@ -75,6 +77,8 @@ public class PatientMergeService {
 
     private final PeopleProfileMapper peopleProfileMapper;
     private final PatientMergeMapper mergeMapper;
+    private final AssessmentStoreMapper assessmentStoreMapper;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
     private final AuditService auditService;
 
     /**
@@ -252,6 +256,7 @@ public class PatientMergeService {
 
         mergeByCode("people_disease_archive", "disease_code", sourcePeopleId, targetPeopleId, now, moved, dropped);
         mergeByCode("people_metadata_info", "metadata_code", sourcePeopleId, targetPeopleId, now, moved, dropped);
+        mergeAssessment(tenantId, sourcePeopleId, targetPeopleId, moved);
 
         if (mergeMapper.markMerged(sourcePeopleId, targetPeopleId, now) == 0) {
             throw new BusinessException("被合并档案状态已变化，请重试");
@@ -281,6 +286,24 @@ public class PatientMergeService {
                 moved,
                 dropped);
         return new MergeResult(targetPeopleId, sourcePeopleId, moved, dropped);
+    }
+
+    /** 问卷与事实随人迁移（目标已有同字段保留目标）；最新结果作废，目标标脏由自动任务重算。 */
+    private void mergeAssessment(String tenantId, String sourcePeopleId, String targetPeopleId, Map<String, Integer> moved) {
+        int subs = assessmentStoreMapper.repointQuestionnaire(sourcePeopleId, targetPeopleId);
+        assessmentStoreMapper.cancelPendingRequests(tenantId, sourcePeopleId);
+        assessmentStoreMapper.repointRequests(sourcePeopleId, targetPeopleId);
+        int facts = assessmentStoreMapper.repointFacts(sourcePeopleId, targetPeopleId);
+        assessmentStoreMapper.deleteFacts(sourcePeopleId);
+        assessmentStoreMapper.deleteLatest(sourcePeopleId);
+        assessmentStoreMapper.deleteState(sourcePeopleId);
+        assessmentDirtyMarker.mark(tenantId, targetPeopleId);
+        if (subs > 0) {
+            moved.put("assessment_questionnaire_submission", subs);
+        }
+        if (facts > 0) {
+            moved.put("people_assessment_fact", facts);
+        }
     }
 
     private void mergeByCode(

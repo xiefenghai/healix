@@ -37,6 +37,9 @@ import com.healix.core.careplan.mapper.CarePlanVersionMapper;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
+import com.healix.core.careplan.support.CarePlanDiseaseTags;
+import com.healix.core.careplan.support.CarePlanEnergyTargetService;
+import com.healix.core.careplan.support.CarePlanRationaleSupport;
 import com.healix.core.careplan.support.CarePlanSafetyService;
 import com.healix.core.careplan.support.CarePlanSchemaVersions;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry;
@@ -96,6 +99,7 @@ public class CarePlanService {
     private final CareTeamMapper careTeamMapper;
     private final FeatureFlagService featureFlagService;
     private final AllergyQueryService allergyQueryService;
+    private final CarePlanEnergyTargetService energyTargetService;
 
     public CarePlanBundleDto getBundle(String tenantId, String orgId, String peopleId) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
@@ -130,7 +134,7 @@ public class CarePlanService {
         if (StringUtils.hasText(plan.getCurrentVersionId())) {
             CarePlanVersion ver = versionMapper.findById(plan.getCurrentVersionId());
             if (ver != null) {
-                bundle.setActiveVersion(toVersionDto(ver, true));
+                bundle.setActiveVersion(toVersionDto(ver, true, true));
             }
         }
         return bundle;
@@ -159,7 +163,7 @@ public class CarePlanService {
         if (ver == null || !plan.getId().equals(ver.getPlanId())) {
             throw new BusinessException("方案版本不存在");
         }
-        return toVersionDto(ver, true);
+        return toVersionDto(ver, true, true);
     }
 
     @Transactional
@@ -190,10 +194,12 @@ public class CarePlanService {
                 emptyDiet,
                 emptyExec,
                 true,
-                true,
+                false,
                 false,
                 allergens,
-                allergyQueryService.status(tenantId, peopleId));
+                allergyQueryService.status(tenantId, peopleId),
+                null,
+                false);
         CarePlanDraft draft = newDraft(
                 plan,
                 peopleId,
@@ -266,15 +272,18 @@ public class CarePlanService {
             removed.forEach(generated.contextSnapshot().putArray("allergenRemoved")::add);
             log.info("[CarePlan] removed allergen conflicts peopleId={} items={}", peopleId, removed);
         }
+        energyTargetService.applyFresh(tenantId, peopleId, generated.diet());
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 generated.exercise(),
                 generated.diet(),
                 generated.execution(),
                 generated.contextIncomplete(),
-                generated.noDiseaseTag(),
+                generated.specialtyMismatch(),
                 generated.hypoglycemiaRisk(),
                 allergens,
-                allergyQueryService.status(tenantId, peopleId));
+                allergyQueryService.status(tenantId, peopleId),
+                generated.contextSnapshot(),
+                true);
         if (existing != null) {
             draftMapper.softDelete(existing.getId());
         }
@@ -298,9 +307,7 @@ public class CarePlanService {
                 ? goalSummaryOverride
                 : generated.exercise().path("goal").asText(null);
         plan.setGoalSummary(goal);
-        if (!StringUtils.hasText(plan.getTitle())) {
-            plan.setTitle("管理方案");
-        }
+        plan.setTitle(buildDefaultTitle(generated.templateKey(), goal));
         plan.setUpdatedByStaffId(staffId);
         EntityMeta.onUpdate(plan);
         carePlanMapper.update(plan);
@@ -329,7 +336,45 @@ public class CarePlanService {
             String title,
             String goalSummary) {
         return updateDraft(
-                tenantId, orgId, peopleId, staffId, expectedVersion, exercise, diet, execution, title, goalSummary, null);
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                expectedVersion,
+                exercise,
+                diet,
+                execution,
+                title,
+                goalSummary,
+                null,
+                null);
+    }
+
+    public CarePlanBundleDto updateDraft(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            int expectedVersion,
+            JsonNode exercise,
+            JsonNode diet,
+            JsonNode execution,
+            String title,
+            String goalSummary,
+            String planSummary) {
+        return updateDraft(
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                expectedVersion,
+                exercise,
+                diet,
+                execution,
+                title,
+                goalSummary,
+                planSummary,
+                null);
     }
 
     @Transactional
@@ -344,7 +389,8 @@ public class CarePlanService {
             JsonNode execution,
             String title,
             String goalSummary,
-            String planSummary) {
+            String planSummary,
+            String rationaleOverview) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         CarePlan plan = requirePlan(tenantId, peopleId);
         CarePlanDraft draft = draftMapper.findByPlanId(plan.getId());
@@ -357,25 +403,43 @@ public class CarePlanService {
         }
         String oldSnap = draftContentSnap(draft);
         CarePlanContext ctx = contextService.load(tenantId, peopleId);
-        if (diet instanceof ObjectNode dietObj) {
-            CarePlanAllergenGuard.enforce(dietObj, ctx.foodAllergens());
+        ObjectNode exerciseNorm = CarePlanRationaleSupport.clearIfContentChanged(
+                JsonUtils.readTree(draft.getExerciseJson()),
+                exercise == null ? JsonUtils.emptyObject() : exercise);
+        ObjectNode dietNorm = CarePlanRationaleSupport.clearIfContentChanged(
+                JsonUtils.readTree(draft.getDietJson()), diet == null ? JsonUtils.emptyObject() : diet);
+        if (dietNorm != null) {
+            CarePlanAllergenGuard.enforce(dietNorm, ctx.foodAllergens());
+            energyTargetService.apply(tenantId, peopleId, dietNorm);
         }
+        ObjectNode executionNorm = CarePlanRationaleSupport.clearIfContentChanged(
+                JsonUtils.readTree(draft.getExecutionJson()),
+                com.healix.core.water.support.WaterTaskMigration.normalizeExecution(execution));
+        if (planSummary != null || rationaleOverview != null) {
+            draft.setContextSnapshotJson(mergeSnapshotFields(
+                    draft.getContextSnapshotJson(), planSummary, rationaleOverview));
+        }
+        JsonNode snapshotNode = JsonUtils.readTree(
+                draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson());
+        CarePlanTemplateKeyEnum templateKey =
+                CarePlanTemplateKeyEnum.parseOrNull(snapshotNode.path("templateKey").asText(null));
+        boolean specialtyMismatch = CarePlanDiseaseTags.specialtyMismatch(templateKey, ctx.diseaseCodes());
+        boolean requireRationale = templateKey != null;
         List<SafetyFlagDto> flags = safetyService.evaluate(
-                exercise,
-                diet,
-                execution,
+                exerciseNorm,
+                dietNorm,
+                executionNorm,
                 ctx.contextIncomplete(),
-                ctx.diseaseCodes().isEmpty(),
+                specialtyMismatch,
                 ctx.hypoglycemiaRisk(),
                 ctx.foodAllergens(),
-                ctx.allergyStatus());
-        draft.setExerciseJson(JsonUtils.toJson(exercise == null ? JsonUtils.emptyObject() : exercise));
-        draft.setDietJson(JsonUtils.toJson(diet == null ? JsonUtils.emptyObject() : diet));
-        draft.setExecutionJson(JsonUtils.toJson(execution == null ? JsonUtils.emptyObject() : execution));
+                ctx.allergyStatus(),
+                snapshotNode,
+                requireRationale);
+        draft.setExerciseJson(JsonUtils.toJson(exerciseNorm));
+        draft.setDietJson(JsonUtils.toJson(dietNorm == null ? JsonUtils.emptyObject() : dietNorm));
+        draft.setExecutionJson(JsonUtils.toJson(executionNorm));
         draft.setSafetyFlagsJson(safetyService.toFlagsJson(flags));
-        if (planSummary != null) {
-            draft.setContextSnapshotJson(mergePlanSummaryIntoSnapshot(draft.getContextSnapshotJson(), planSummary));
-        }
         if (CarePlanSourceEnum.TEMPLATE.name().equals(draft.getSource())
                 || CarePlanSourceEnum.LLM.name().equals(draft.getSource())) {
             draft.setSource(
@@ -403,6 +467,14 @@ public class CarePlanService {
 
     /** 将方案总结写入 context_snapshot.summary，保留其余快照字段。 */
     private static String mergePlanSummaryIntoSnapshot(String existingJson, String planSummary) {
+        return mergeSnapshotFields(existingJson, planSummary, null);
+    }
+
+    /**
+     * 合并草稿快照字段：summary / rationale.overview；传 null 表示该字段不改动，传空串则清除。
+     */
+    private static String mergeSnapshotFields(
+            String existingJson, String planSummary, String rationaleOverview) {
         ObjectNode snap;
         try {
             JsonNode raw = JsonUtils.readTree(existingJson == null || existingJson.isBlank() ? "{}" : existingJson);
@@ -410,10 +482,22 @@ public class CarePlanService {
         } catch (Exception e) {
             snap = JsonUtils.emptyObject();
         }
-        if (StringUtils.hasText(planSummary)) {
-            snap.put("summary", planSummary.trim());
-        } else {
-            snap.remove("summary");
+        if (planSummary != null) {
+            if (StringUtils.hasText(planSummary)) {
+                snap.put("summary", planSummary.trim());
+            } else {
+                snap.remove("summary");
+            }
+        }
+        if (rationaleOverview != null) {
+            ObjectNode rationale = snap.has("rationale") && snap.get("rationale").isObject()
+                    ? (ObjectNode) snap.get("rationale")
+                    : snap.putObject("rationale");
+            if (StringUtils.hasText(rationaleOverview)) {
+                rationale.put("overview", rationaleOverview.trim());
+            } else {
+                rationale.remove("overview");
+            }
         }
         return JsonUtils.toJson(snap);
     }
@@ -487,7 +571,6 @@ public class CarePlanService {
         return getBundle(tenantId, orgId, peopleId);
     }
 
-    @Transactional
     public CarePlanBundleDto publish(
             String tenantId,
             String orgId,
@@ -495,6 +578,21 @@ public class CarePlanService {
             String staffId,
             List<String> ackWarnCodes,
             String title) {
+        return publish(tenantId, orgId, peopleId, staffId, ackWarnCodes, title, null);
+    }
+
+    /**
+     * @param syncDietGoal 是否把方案热量同步为医护设定的饮食目标；null 按默认（仅手改的热量同步）
+     */
+    @Transactional
+    public CarePlanBundleDto publish(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            List<String> ackWarnCodes,
+            String title,
+            Boolean syncDietGoal) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         CarePlan plan = requirePlan(tenantId, peopleId);
         CarePlanDraft draft = draftMapper.findByPlanId(plan.getId());
@@ -503,21 +601,31 @@ public class CarePlanService {
         }
         JsonNode exercise = JsonUtils.readTree(draft.getExerciseJson());
         JsonNode diet = JsonUtils.readTree(draft.getDietJson());
-        JsonNode execution = JsonUtils.readTree(draft.getExecutionJson());
+        ObjectNode execution =
+                com.healix.core.water.support.WaterTaskMigration.normalizeExecution(
+                        JsonUtils.readTree(draft.getExecutionJson()));
+        draft.setExecutionJson(JsonUtils.toJson(execution));
         CarePlanContext ctx = contextService.load(tenantId, peopleId);
         if (diet instanceof ObjectNode dietObj) {
             CarePlanAllergenGuard.enforce(dietObj, ctx.foodAllergens());
+            energyTargetService.onPublish(tenantId, peopleId, staffId, dietObj, syncDietGoal);
             draft.setDietJson(JsonUtils.toJson(dietObj));
         }
+        JsonNode publishSnapshot = JsonUtils.readTree(
+                draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson());
+        CarePlanTemplateKeyEnum publishKey =
+                CarePlanTemplateKeyEnum.parseOrNull(publishSnapshot.path("templateKey").asText(null));
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 exercise,
                 diet,
                 execution,
                 ctx.contextIncomplete(),
-                ctx.diseaseCodes().isEmpty(),
+                CarePlanDiseaseTags.specialtyMismatch(publishKey, ctx.diseaseCodes()),
                 ctx.hypoglycemiaRisk(),
                 ctx.foodAllergens(),
-                ctx.allergyStatus());
+                ctx.allergyStatus(),
+                publishSnapshot,
+                publishKey != null);
         draft.setSafetyFlagsJson(safetyService.toFlagsJson(flags));
         safetyService.assertPublishable(flags, ackWarnCodes);
 
@@ -608,6 +716,16 @@ public class CarePlanService {
     @Transactional
     public CarePlanVersionDto signVersion(
             String tenantId, String orgId, String peopleId, String versionId, String staffId) {
+        return signVersion(tenantId, orgId, peopleId, versionId, staffId, null);
+    }
+
+    public CarePlanVersionDto signVersion(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String versionId,
+            String staffId,
+            String clinicalNote) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         if (!currentRoles().contains(StaffRoleEnum.DOCTOR.name())) {
             throw new BusinessException(403, "仅医生可签署方案");
@@ -629,6 +747,15 @@ public class CarePlanService {
             if (gen != null) {
                 gen.onPlanVersionSigned(tenantId, orgId, versionId, staffId);
             }
+            Map<String, Object> after = new LinkedHashMap<>();
+            after.put("signStatus", SIGNED);
+            after.put("versionId", versionId);
+            after.put("signedByStaffId", staffId);
+            after.put("signedAt", now.toString());
+            if (StringUtils.hasText(clinicalNote)) {
+                String note = clinicalNote.trim();
+                after.put("clinicalNote", note.length() > 500 ? note.substring(0, 500) : note);
+            }
             recordRevision(
                     tenantId,
                     peopleId,
@@ -638,7 +765,7 @@ public class CarePlanService {
                     version.getVersionNo(),
                     version.getVersionNo(),
                     JsonUtils.toJson(Map.of("signStatus", "UNSIGNED")),
-                    JsonUtils.toJson(Map.of("signStatus", SIGNED, "versionId", versionId)));
+                    JsonUtils.toJson(after));
         }
         return toVersionDto(version, true);
     }
@@ -804,19 +931,43 @@ public class CarePlanService {
             row.setPeopleId(peopleId);
             row.setPlanId(planId);
             row.setPlanVersionId(versionId);
-            row.setTaskCode(t.path("code").asText("TASK_" + order));
-            row.setTitle(ComplianceText.filter(t.path("title").asText("未命名任务")));
-            row.setCategory(t.path("category").asText("OTHER"));
+            String title = ComplianceText.filter(t.path("title").asText("未命名任务"));
+            String category = t.path("category").asText("OTHER");
+            String code = t.path("code").asText("TASK_" + order);
+            if (com.healix.core.water.support.WaterIntakeRules.looksLikeWaterTask(category, title, code)) {
+                category = com.healix.core.water.support.WaterIntakeRules.CATEGORY;
+                code = com.healix.core.water.support.WaterIntakeRules.TASK_CODE;
+            }
+            row.setTaskCode(code);
+            row.setTitle(title);
+            row.setCategory(category);
             row.setFrequency(textOrNull(t, "frequency"));
             row.setTimeSlot(textOrNull(t, "timeSlot"));
             row.setRelatedRef(textOrNull(t, "relatedRef"));
             row.setEnabled(t.path("enabled").asBoolean(true) ? 1 : 0);
-            JsonNode payload = t.get("payload");
-            row.setPayloadJson(payload != null && payload.isObject() ? JsonUtils.toJson(payload) : null);
+            row.setPayloadJson(payloadJsonOf(t));
             row.setSortOrder(order++);
             EntityMeta.onCreate(row);
             taskMapper.insert(row);
         }
+    }
+
+    /** 合并 tasks[].payload 与根级 targetMl（Agent Skill 写在根上）。 */
+    private static String payloadJsonOf(JsonNode t) {
+        com.fasterxml.jackson.databind.node.ObjectNode payload;
+        JsonNode existing = t.get("payload");
+        if (existing != null && existing.isObject()) {
+            payload = ((com.fasterxml.jackson.databind.node.ObjectNode) existing).deepCopy();
+        } else {
+            payload = JsonUtils.emptyObject();
+        }
+        if (t.has("targetMl") && t.get("targetMl").canConvertToInt()) {
+            int ml = t.get("targetMl").asInt();
+            if (ml > 0) {
+                payload.put("targetMl", ml);
+            }
+        }
+        return payload.isEmpty() ? null : JsonUtils.toJson(payload);
     }
 
     private String textOrNull(JsonNode n, String field) {
@@ -963,6 +1114,10 @@ public class CarePlanService {
     }
 
     private CarePlanVersionDto toVersionDto(CarePlanVersion ver, boolean withTasks) {
+        return toVersionDto(ver, withTasks, false);
+    }
+
+    private CarePlanVersionDto toVersionDto(CarePlanVersion ver, boolean withTasks, boolean stripRationale) {
         CarePlanVersionDto dto = new CarePlanVersionDto();
         dto.setId(ver.getId());
         dto.setPlanId(ver.getPlanId());
@@ -976,12 +1131,22 @@ public class CarePlanService {
             dto.setTitle("管理方案");
         }
         dto.setSource(ver.getSource());
-        dto.setExercise(JsonUtils.readTree(ver.getExerciseJson()));
-        dto.setDiet(JsonUtils.readTree(ver.getDietJson()));
-        dto.setExecution(JsonUtils.readTree(ver.getExecutionJson()));
+        JsonNode exercise = JsonUtils.readTree(ver.getExerciseJson());
+        JsonNode diet = JsonUtils.readTree(ver.getDietJson());
+        JsonNode execution = JsonUtils.readTree(ver.getExecutionJson());
+        JsonNode snapshot = JsonUtils.readTree(
+                ver.getContextSnapshotJson() == null ? "{}" : ver.getContextSnapshotJson());
+        if (stripRationale) {
+            exercise = CarePlanRationaleSupport.strip(exercise);
+            diet = CarePlanRationaleSupport.strip(diet);
+            execution = CarePlanRationaleSupport.strip(execution);
+            snapshot = CarePlanRationaleSupport.strip(snapshot);
+        }
+        dto.setExercise(exercise);
+        dto.setDiet(diet);
+        dto.setExecution(execution);
         dto.setSafetyFlags(JsonUtils.readTree(ver.getSafetyFlagsJson() == null ? "[]" : ver.getSafetyFlagsJson()));
-        dto.setContextSnapshot(JsonUtils.readTree(
-                ver.getContextSnapshotJson() == null ? "{}" : ver.getContextSnapshotJson()));
+        dto.setContextSnapshot(snapshot);
         dto.setPublishedAt(ver.getPublishedAt());
         dto.setPublishedByStaffId(ver.getPublishedByStaffId());
         dto.setSignStatus(ver.getSignStatus());
@@ -998,12 +1163,18 @@ public class CarePlanService {
         dto.setId(row.getId());
         dto.setTaskCode(row.getTaskCode());
         dto.setTitle(row.getTitle());
-        dto.setCategory(row.getCategory());
+        String category = row.getCategory();
+        if (com.healix.core.water.support.WaterIntakeRules.looksLikeWaterTask(
+                category, row.getTitle(), row.getTaskCode())) {
+            category = com.healix.core.water.support.WaterIntakeRules.CATEGORY;
+        }
+        dto.setCategory(category);
         dto.setFrequency(row.getFrequency());
         dto.setTimeSlot(row.getTimeSlot());
         dto.setRelatedRef(row.getRelatedRef());
         dto.setEnabled(row.getEnabled() != null && row.getEnabled() == 1);
         dto.setSortOrder(row.getSortOrder());
+        dto.setTargetMl(com.healix.core.water.support.WaterTaskTargetResolver.targetMlOf(row));
         return dto;
     }
 
@@ -1095,7 +1266,7 @@ public class CarePlanService {
      */
     private static String sanitizePlanTitle(String title, String goalSummary) {
         if (!StringUtils.hasText(title)) {
-            return "管理方案";
+            return "健康管理方案";
         }
         String t = title.trim();
         if (!StringUtils.hasText(goalSummary)) {
@@ -1103,16 +1274,28 @@ public class CarePlanService {
         }
         String g = goalSummary.trim();
         if (t.equals(g)) {
-            return "管理方案";
+            return "健康管理方案";
         }
         if (g.length() > 40) {
             String truncatedCn = g.substring(0, 40) + "…";
             String truncatedDots = g.substring(0, 40) + "...";
             if (t.equals(truncatedCn) || t.equals(truncatedDots)) {
-                return "管理方案";
+                return "健康管理方案";
             }
         }
         return t;
+    }
+
+    static String buildDefaultTitle(CarePlanTemplateKeyEnum key, String goalSummary) {
+        String prefix = key == null ? "健康管理方案" : key.canonical().titlePrefix();
+        if (!StringUtils.hasText(goalSummary)) {
+            return prefix;
+        }
+        String g = goalSummary.trim();
+        if (g.length() > 40) {
+            g = g.substring(0, 40) + "…";
+        }
+        return prefix + " · " + g;
     }
 
     private static String resolveSourceMode(String source) {

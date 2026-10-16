@@ -5,7 +5,7 @@
 
     <sql id="cols">
         pk_id, id, tenant_id, account_id, display_name, gender, birthday, name_pinyin,
-        mobile, address, education_level, marital_status, occupation,
+        mobile, mobile_owner, address, education_level, marital_status, occupation,
         allergens_json, chronic_tags_json, emergency_contact_json, merged_into_people_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
@@ -42,15 +42,33 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 建档查重：同名且（同生日或同号码） -->
+    <select id="listPossibleDuplicates" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND display_name = #{displayName}
+          AND (
+            <choose>
+                <when test="birthday != null">birthday = #{birthday}</when>
+                <otherwise>1 = 0</otherwise>
+            </choose>
+            <if test="mobile != null and mobile != ''">OR mobile = #{mobile}</if>
+          )
+        ORDER BY id DESC
+        LIMIT 10
+    </select>
+
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO people_profile(
             id, tenant_id, account_id, display_name, gender, birthday, name_pinyin,
-            mobile, address, education_level, marital_status, occupation,
+            mobile, mobile_owner, address, education_level, marital_status, occupation,
             allergens_json, chronic_tags_json, emergency_contact_json,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{accountId}, #{displayName}, #{gender}, #{birthday}, #{namePinyin},
-            #{mobile}, #{address}, #{educationLevel}, #{maritalStatus}, #{occupation},
+            #{mobile}, #{mobileOwner}, #{address}, #{educationLevel}, #{maritalStatus}, #{occupation},
             #{allergensJson}, #{chronicTagsJson}, #{emergencyContactJson},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
@@ -63,6 +81,7 @@
             birthday = #{birthday},
             name_pinyin = #{namePinyin},
             mobile = #{mobile},
+            mobile_owner = #{mobileOwner},
             address = #{address},
             education_level = #{educationLevel},
             marital_status = #{maritalStatus},

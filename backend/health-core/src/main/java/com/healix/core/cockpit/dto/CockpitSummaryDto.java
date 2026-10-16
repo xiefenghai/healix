@@ -19,4 +19,10 @@ public class CockpitSummaryDto {
     private int pendingCarePlanDraftCount;
     /** 当前员工可见范围内：待审阅报告草稿数 */
     private int pendingReportDraftCount;
+    /** 本机构本周健康豆合计（激励开启患者） */
+    private Integer rewardWeekPoints;
+    /** 本机构本周全勤人次 */
+    private Integer rewardFullDayCount;
+    /** 本机构今日已打卡人数 */
+    private Integer rewardActiveTodayCount;
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { showToast } from 'vant'
+import { showConfirmDialog, showToast } from 'vant'
 import { api, getToken, setToken } from '../api/http'
 import { resolveTenantId } from '../shared/tenant'
 import LegalConsent from '../shared/LegalConsent.vue'
@@ -21,6 +21,55 @@ onMounted(() => {
   if (q.get('code')) activationCode.value = q.get('code') || ''
 })
 
+interface TokenData {
+  accessToken: string
+  patientCardId?: string
+}
+
+interface MergeCandidate {
+  sourceCardId: string
+  displayName: string
+  counts?: Record<string, number>
+}
+
+async function offerMergeSelfCard(cardId?: string) {
+  if (!cardId) return
+  let candidate: MergeCandidate | null = null
+  try {
+    const res = await api<{ data: MergeCandidate | null }>(`/api/c/v1/patient-cards/${cardId}/merge-candidate`)
+    candidate = res.data
+  } catch {
+    return
+  }
+  if (!candidate) return
+  const summary = Object.entries(candidate.counts || {})
+    .filter(([, n]) => n > 0)
+    .map(([label, n]) => `${label} ${n} 条`)
+    .join('、')
+  try {
+    await showConfirmDialog({
+      title: '发现同一人的记录',
+      message:
+        `您之前自己添加过「${candidate.displayName}」${summary ? `，已有${summary}` : ''}。` +
+        '是否把这些记录并入机构档案？合并后只保留一个就诊人。',
+      confirmButtonText: '合并',
+      cancelButtonText: '暂不',
+    })
+  } catch {
+    return
+  }
+  try {
+    const res = await api<{ data: TokenData }>(
+      `/api/c/v1/patient-cards/${cardId}/merge-from/${candidate.sourceCardId}`,
+      { method: 'POST' },
+    )
+    setToken(res.data.accessToken)
+    showToast('已合并')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '合并失败')
+  }
+}
+
 async function submit() {
   if (!loggedIn.value && (!agreeTerms.value || !agreeSensitive.value)) {
     showToast('请先阅读并勾选同意相关协议')
@@ -38,12 +87,13 @@ async function submit() {
       body.username = username.value
       body.password = password.value
     }
-    const res = await api<{ data: { accessToken: string } }>('/api/c/v1/auth/activate', {
+    const res = await api<{ data: TokenData }>('/api/c/v1/auth/activate', {
       method: 'POST',
       body: JSON.stringify(body),
     })
     setToken(res.data.accessToken)
     showToast('激活成功')
+    await offerMergeSelfCard(res.data.patientCardId)
     await router.replace('/home')
   } catch (e) {
     showToast(e instanceof Error ? e.message : '操作失败')
@@ -80,9 +130,9 @@ async function submit() {
 .card {
   margin: 16px;
   padding: 20px;
-  border-radius: 16px;
+  border-radius: var(--hx-r-lg);
   background: #fff;
-  box-shadow: 0 8px 24px rgba(31, 111, 111, 0.08);
+  box-shadow: var(--hx-elev-2);
 }
 .hint { margin: 0 0 12px; color: var(--hx-muted); font-size: 13px; line-height: 1.5; }
 .link {
@@ -91,7 +141,7 @@ async function submit() {
   margin-top: 14px;
   border: 0;
   background: transparent;
-  color: #2b9e9e;
+  color: var(--hx-teal-600);
   font-size: 14px;
 }
 </style>

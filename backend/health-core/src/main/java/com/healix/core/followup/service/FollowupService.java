@@ -238,9 +238,11 @@ public class FollowupService {
         } else {
             record.setStatus(FollowupRecordStatus.OPEN.name());
             WorkspaceTaskType taskType = WorkspaceTaskType.FOLLOW_UP;
-            record.setDueAt(LocalDate.now(JobCronSupport.ZONE)
-                    .plusDays(Math.max(0, taskType.dueDaysInclusive() - 1))
-                    .atTime(LocalTime.of(23, 59, 59)));
+            record.setDueAt(plannedAt != null && plannedAt.isAfter(now)
+                    ? plannedAt
+                    : LocalDate.now(JobCronSupport.ZONE)
+                            .plusDays(Math.max(0, taskType.dueDaysInclusive() - 1))
+                            .atTime(LocalTime.of(23, 59, 59)));
             followupRecordMapper.insert(record);
             boolean wantTask = createTask == null || createTask;
             if (wantTask) {
@@ -695,9 +697,11 @@ public class FollowupService {
         row.setSource("FOLLOWUP");
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
         row.setOpenedAt(now);
-        row.setDueAt(LocalDate.now(JobCronSupport.ZONE)
-                .plusDays(Math.max(0, type.dueDaysInclusive() - 1))
-                .atTime(LocalTime.of(23, 59, 59)));
+        row.setDueAt(record.getPlannedAt() != null && record.getPlannedAt().isAfter(now)
+                ? record.getPlannedAt()
+                : LocalDate.now(JobCronSupport.ZONE)
+                        .plusDays(Math.max(0, type.dueDaysInclusive() - 1))
+                        .atTime(LocalTime.of(23, 59, 59)));
         EntityMeta.onCreate(row);
         workspaceTaskMapper.insert(row);
         return row.getId();

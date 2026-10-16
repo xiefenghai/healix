@@ -19,6 +19,7 @@ import com.healix.core.careplan.mapper.CarePlanTaskMapper;
 import com.healix.core.careplan.mapper.CarePlanVersionMapper;
 import com.healix.core.careplan.support.CarePlanDueSupport;
 import com.healix.core.careplan.support.CarePlanSchemaVersions;
+import com.healix.core.careplan.support.MetricTaskRules;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -118,7 +119,11 @@ public class CarePlanCheckinService {
     public CarePlanCheckinViewDto upsertByPatient(
             String tenantId, String peopleId, String taskId, CheckinCommand cmd) {
         CarePlanTask task = requireActiveTask(tenantId, peopleId, taskId);
-        LocalDate day = cmd.checkinDate() != null ? cmd.checkinDate() : LocalDate.now();
+        LocalDate today = LocalDate.now();
+        LocalDate day = cmd.checkinDate() != null ? cmd.checkinDate() : today;
+        if (day.isAfter(today) || day.isBefore(today.minusDays(1))) {
+            throw new BusinessException("只能打卡今天或补打昨天的任务");
+        }
         String slot = CarePlanDueSupport.resolveTimeSlot(
                 StringUtils.hasText(cmd.timeSlot()) ? cmd.timeSlot() : task.getTimeSlot());
         String status = resolveStatus(cmd.status());
@@ -161,11 +166,45 @@ public class CarePlanCheckinService {
      */
     @Transactional
     public void syncSystemCheckin(String tenantId, String peopleId, String taskCode, LocalDate day, boolean done) {
+        syncSystemCheckin(tenantId, peopleId, taskCode, day, done, null);
+    }
+
+    /**
+     * @param recordedByPeopleId 患者本人驱动的系统完成（如饮水达标）时传入，以便计入激励；饮食三餐同步仍传 null
+     */
+    @Transactional
+    public void syncSystemCheckin(
+            String tenantId,
+            String peopleId,
+            String taskCode,
+            LocalDate day,
+            boolean done,
+            String recordedByPeopleId) {
         CarePlanTodayDto today = getPatientToday(tenantId, peopleId, day);
-        CarePlanTodayTaskDto due = today.getTasks().stream()
-                .filter(t -> taskCode.equals(t.getTaskCode()))
-                .findFirst()
-                .orElse(null);
+        applySystemCheckin(tenantId, peopleId, resolveDueTask(today, taskCode), day, done, recordedByPeopleId);
+    }
+
+    /** 监测类任务（血糖 / 血压）：当日有对应指标记录 → 系统完成；记录全删 → 撤销系统打卡。 */
+    @Transactional
+    public void syncMetricCheckin(
+            String tenantId, String peopleId, String metricRef, LocalDate day, boolean done, String recordedByPeopleId) {
+        CarePlanTodayDto today = getPatientToday(tenantId, peopleId, day);
+        CarePlanTodayTaskDto due = today.getTasks() == null
+                ? null
+                : today.getTasks().stream()
+                        .filter(t -> metricRef.equals(t.getMetricRef()))
+                        .findFirst()
+                        .orElse(null);
+        applySystemCheckin(tenantId, peopleId, due, day, done, recordedByPeopleId);
+    }
+
+    private void applySystemCheckin(
+            String tenantId,
+            String peopleId,
+            CarePlanTodayTaskDto due,
+            LocalDate day,
+            boolean done,
+            String recordedByPeopleId) {
         if (due == null) {
             return;
         }
@@ -186,6 +225,9 @@ public class CarePlanCheckinService {
             row.setTimeSlot(slot);
             row.setStatus(CarePlanCheckinStatusEnum.DONE.name());
             row.setNote(SYSTEM_CHECKIN_NOTE);
+            if (StringUtils.hasText(recordedByPeopleId)) {
+                row.setRecordedByPeopleId(recordedByPeopleId);
+            }
             EntityMeta.onCreate(row);
             checkinMapper.insert(row);
             maybeClosePlanNudgeAfterCheckin(tenantId, peopleId, day, row.getStatus());
@@ -193,10 +235,47 @@ public class CarePlanCheckinService {
         }
         if (existing != null
                 && SYSTEM_CHECKIN_NOTE.equals(existing.getNote())
-                && existing.getRecordedByPeopleId() == null
                 && existing.getRecordedByStaffId() == null) {
             checkinMapper.deleteSystemCheckin(existing.getId(), SYSTEM_CHECKIN_NOTE);
         }
+    }
+
+    /**
+     * 先按 taskCode 精确匹配；再按饮水/睡眠/心情/饮食等系统编码回落到类别，
+     * 避免历史任务编码与稳定编码不一致时无法自动完成。
+     */
+    private static CarePlanTodayTaskDto resolveDueTask(CarePlanTodayDto today, String taskCode) {
+        if (today == null || today.getTasks() == null || !StringUtils.hasText(taskCode)) {
+            return null;
+        }
+        for (CarePlanTodayTaskDto t : today.getTasks()) {
+            if (taskCode.equals(t.getTaskCode())) {
+                return t;
+            }
+        }
+        String category = categoryForSystemTaskCode(taskCode);
+        if (category == null) {
+            return null;
+        }
+        for (CarePlanTodayTaskDto t : today.getTasks()) {
+            if (category.equalsIgnoreCase(t.getCategory())) {
+                return t;
+            }
+        }
+        return null;
+    }
+
+    private static String categoryForSystemTaskCode(String taskCode) {
+        if (!StringUtils.hasText(taskCode)) {
+            return null;
+        }
+        return switch (taskCode.trim().toUpperCase()) {
+            case "WATER_LOG" -> "WATER";
+            case "SLEEP_LOG" -> "SLEEP";
+            case "MOOD_LOG" -> "MOOD";
+            case "DIET_LOG" -> "DIET";
+            default -> null;
+        };
     }
 
     /** 当日应打任务已全部完成/跳过时，关闭过期的打卡跟进单。 */
@@ -360,9 +439,17 @@ public class CarePlanCheckinService {
         dto.setId(task.getId());
         dto.setTaskCode(task.getTaskCode());
         dto.setTitle(task.getTitle());
-        dto.setCategory(task.getCategory());
+        // 旧 DIET 饮水任务展示为 WATER
+        String category = task.getCategory();
+        if (com.healix.core.water.support.WaterIntakeRules.looksLikeWaterTask(
+                category, task.getTitle(), task.getTaskCode())) {
+            category = com.healix.core.water.support.WaterIntakeRules.CATEGORY;
+        }
+        dto.setCategory(category);
         dto.setFrequency(task.getFrequency());
         dto.setTimeSlot(task.getTimeSlot());
+        dto.setTargetMl(com.healix.core.water.support.WaterTaskTargetResolver.targetMlOf(task));
+        dto.setMetricRef(MetricTaskRules.metricRefOfTask(task.getRelatedRef(), task.getTaskCode()));
         if (checkin != null) {
             dto.setCheckinStatus(checkin.getStatus());
             dto.setCheckinId(checkin.getId());

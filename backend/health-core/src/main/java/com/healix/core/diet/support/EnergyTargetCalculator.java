@@ -85,7 +85,8 @@ public final class EnergyTargetCalculator {
 
     /** 按病种的默认供能比（取推荐区间中值）。 */
     public static MacroRatio macroRatio(CarePlanTemplateKeyEnum disease) {
-        if (disease == CarePlanTemplateKeyEnum.DIABETES || disease == CarePlanTemplateKeyEnum.DIABETES_HYPERTENSION) {
+        CarePlanTemplateKeyEnum c = disease == null ? null : disease.canonical();
+        if (c == CarePlanTemplateKeyEnum.DIABETES || c == CarePlanTemplateKeyEnum.COMPREHENSIVE) {
             return new MacroRatio(0.50, 0.20, 0.30);
         }
         return new MacroRatio(0.55, 0.18, 0.27);

@@ -203,14 +203,14 @@ onBeforeUnmount(() => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--hx-bg, #f5f7fb);
+  background: var(--hx-bg, var(--hx-n-50));
 }
 .people {
   padding: 8px 16px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--hx-muted);
   background: #fff;
-  border-bottom: 1px solid #eef2f7;
+  border-bottom: 1px solid var(--hx-n-100);
 }
 .loading {
   margin-top: 48px;
@@ -235,19 +235,19 @@ onBeforeUnmount(() => {
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 .row.mine .bubble {
-  background: #d9f5f2;
+  background: var(--hx-teal-100);
 }
 .meta {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--hx-n-500);
   margin-bottom: 4px;
 }
 .text {
   font-size: 14px;
-  color: #0f172a;
+  color: var(--hx-n-900);
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.45;
@@ -260,11 +260,11 @@ onBeforeUnmount(() => {
   align-items: flex-end;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   background: #fff;
-  border-top: 1px solid #eef2f7;
+  border-top: 1px solid var(--hx-n-100);
 }
 .composer :deep(.van-field) {
   flex: 1;
-  background: #f8fafc;
+  background: var(--hx-n-50);
   border-radius: 10px;
   padding: 6px 10px;
 }
@@ -272,6 +272,6 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 0 16px 12px;
   font-size: 12px;
-  color: #b45309;
+  color: var(--hx-warn-text);
 }
 </style>

@@ -3,6 +3,8 @@ package com.healix.core.notify.service;
 import com.healix.core.adherence.service.AdherenceQueryService;
 import com.healix.core.adherence.service.AdherenceQueryService.DailyHealthTodoCandidate;
 import com.healix.core.job.support.JobCronSupport;
+import com.healix.core.medication.dto.MedicationReminderDto;
+import com.healix.core.medication.service.MedicationReminderService;
 import com.healix.core.notify.catalog.NotifyEventType;
 import com.healix.core.notify.dto.NotifyPublishCommand;
 import com.healix.core.notify.dto.NotifyPublishResult;
@@ -48,6 +50,7 @@ public class NotifyReminderScanService {
     private final PeopleProfileMapper peopleProfileMapper;
     private final AdherenceQueryService adherenceQueryService;
     private final NotifyFacade notifyFacade;
+    private final MedicationReminderService medicationReminderService;
 
     public record ScanCounts(int orgs, int candidates, int created, int upserted, int skippedNoRecipient) {}
 
@@ -104,9 +107,18 @@ public class NotifyReminderScanService {
                 continue;
             }
             Map<String, String> names = loadDisplayNames(linked);
+            Map<String, MedicationReminderDto> reminders = medicationReminderService.getAll(tenantId, linked);
             List<DailyHealthTodoCandidate> todos =
                     adherenceQueryService.listDailyHealthTodos(tenantId, linked, names, scanDay);
-            for (DailyHealthTodoCandidate todo : todos) {
+            for (DailyHealthTodoCandidate raw : todos) {
+                DailyHealthTodoCandidate todo = reminders
+                                .getOrDefault(raw.peopleId(), MedicationReminderService.DEFAULTS)
+                                .enabled()
+                        ? withoutMedication(raw)
+                        : raw;
+                if (!todo.planIncompleteFlag() && !todo.medIncompleteFlag()) {
+                    continue;
+                }
                 candidates++;
                 NotifyPublishResult result = publishDigest(tenantId, orgId, scanDay, todo);
                 if (result.getMessageIds().isEmpty()) {
@@ -162,6 +174,12 @@ public class NotifyReminderScanService {
                     ex.getMessage());
             return new NotifyPublishResult();
         }
+    }
+
+    /** 开了服药提醒的人已按时段收到用药提醒，日批摘要只保留方案待办。 */
+    static DailyHealthTodoCandidate withoutMedication(DailyHealthTodoCandidate t) {
+        return new DailyHealthTodoCandidate(
+                t.peopleId(), t.displayName(), t.planDue(), t.planIncomplete(), t.planIncompleteFlag(), 0, 0, 0, 0, false);
     }
 
     static String buildBody(String name, DailyHealthTodoCandidate todo) {

@@ -1,5 +1,6 @@
 package com.healix.core.cockpit.dto;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Data;
@@ -23,12 +24,26 @@ public class CockpitFocusDto {
     private boolean medIncomplete;
     private int medDueDoseCount;
     private int medTakenDoseCount;
+    /** 近 7 日服药完成率（按次）0~1；无在用药为 null */
+    private Double medRate7d;
+    /** 截至今天连续服药未完成天数（含今天） */
+    private int medMissStreakDays;
+    /** 近 7 日有饮食记录的天数 */
+    private Integer dietDays7d;
+    /** 近 7 日有运动记录的天数 */
+    private Integer exerciseDays7d;
     /** 病种档案代码 */
     private List<String> diseaseCodes = new ArrayList<>();
     /** 病种展示名 */
     private List<String> diseaseLabels = new ArrayList<>();
     /** 最近血压文案，如 138/86 mmHg */
     private String bloodPressure;
+    /** 最近一次血压测量时间 */
+    private LocalDateTime bloodPressureAt;
+    /** 最近血压 ≥140/90 */
+    private boolean bloodPressureHigh;
+    /** 过敏史：有过敏时列名称，否则「无已知过敏 / 未询问」 */
+    private String allergyText;
     /** 近 7 天饮食 / 运动记录摘要（助手上下文用） */
     private String lifestyleSummary;
     /** 档案完整度 0–100 */
@@ -47,6 +62,11 @@ public class CockpitFocusDto {
     @Data
     public static class AssessmentTag {
         private String engineCode;
+        private String diseaseCode;
+        /** RISK / SEVERITY */
+        private String category;
+        /** LOW / MID / HIGH / VERY_HIGH */
+        private String tier;
         private String text;
         /** danger / warning / success / info / muted */
         private String tone;
@@ -61,6 +81,7 @@ public class CockpitFocusDto {
         private String summary;
         private String priority;
         private boolean overdue;
+        private LocalDateTime dueAt;
     }
 
     /** 右栏「待你确认」草稿项 */

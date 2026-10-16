@@ -91,6 +91,25 @@ export interface DietFlag {
   message: string
 }
 
+const FLAG_TAGS: Record<string, string> = {
+  ALLERGEN_HIT: '过敏',
+  INTOLERANCE_HIT: '不耐受',
+  LIMITED_FOOD: '方案限制',
+  HIGH_GI_SHARE: '控糖',
+  MEAL_CARB_OVER: '控糖',
+  DAILY_CARB_OVER: '控糖',
+  MEAL_ENERGY_OVER: '热量',
+  DAILY_ENERGY_OVER: '热量',
+  DAILY_ENERGY_LOW: '热量',
+  DAILY_SODIUM_HIGH: '控盐',
+  NO_VEGETABLE: '搭配',
+  NO_PROTEIN: '搭配',
+}
+
+export function dietFlagTag(f: DietFlag) {
+  return FLAG_TAGS[f.code] ?? (f.level === 'RED' ? '注意' : '提醒')
+}
+
 export interface MealItem {
   id?: string
   foodCode?: string | null
@@ -108,6 +127,8 @@ export interface MealItem {
   precisionLevel?: string | null
   confidence?: number | null
   gramsConfirmed?: boolean | null
+  /** 识别草稿的份量估算依据 */
+  basis?: string | null
 }
 
 export interface Meal {
@@ -170,6 +191,7 @@ export interface DietDay {
   intake: Nutrients
   remainingKcal: number | null
   mealTargetsKcal?: Record<string, number> | null
+  mealTargetsCarbG?: Record<string, number> | null
   mainMealsLogged: string[]
   threeMealsComplete: boolean
   dayFlags: DietFlag[]

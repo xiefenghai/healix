@@ -11,7 +11,19 @@ public enum WorkspaceTaskType {
     /** 方案医生复核（临床签署） */
     PLAN_REVIEW,
     /** 运动后不适症状（RED）上报 */
-    EXERCISE_ALERT;
+    EXERCISE_ALERT,
+    /** 患者用药反馈：不适 / 申请调整 / 自述停药 / 过敏冲突 */
+    MED_FEEDBACK,
+    /** 患者自添加用药待核对（按人合并） */
+    MED_VERIFY,
+    /** 疾病评估统一等级升到高 / 很高 */
+    ASSESSMENT_ESCALATION,
+    /** 风险评估提示疑似已患病，建议确诊建档 */
+    ASSESSMENT_SUSPECTED,
+    /** 患者问卷覆盖了档案已有值 */
+    ARCHIVE_SELF_REPORT,
+    /** 发给患者的评估问卷过期未填 */
+    QUESTIONNAIRE_EXPIRED;
 
     public boolean matches(String value) {
         return name().equals(value);
@@ -27,6 +39,12 @@ public enum WorkspaceTaskType {
             case REPORT_REVIEW -> "报告审阅";
             case PLAN_REVIEW -> "方案复核";
             case EXERCISE_ALERT -> "运动不适";
+            case MED_FEEDBACK -> "用药反馈";
+            case MED_VERIFY -> "用药核对";
+            case ASSESSMENT_ESCALATION -> "评估升级";
+            case ASSESSMENT_SUSPECTED -> "疑似患病";
+            case ARCHIVE_SELF_REPORT -> "患者自报更新";
+            case QUESTIONNAIRE_EXPIRED -> "问卷未完成";
         };
     }
 
@@ -42,8 +60,9 @@ public enum WorkspaceTaskType {
     public WorkspaceTaskPriority defaultPriority() {
         return switch (this) {
             case METRIC_ALERT, TEAM_ASSIGN, EXERCISE_ALERT -> WorkspaceTaskPriority.HIGH;
-            case FOLLOW_UP, PLAN_NUDGE, PLAN_CREATE, PLAN_REVIEW -> WorkspaceTaskPriority.MEDIUM;
-            case REPORT_REVIEW -> WorkspaceTaskPriority.LOW;
+            case FOLLOW_UP, PLAN_NUDGE, PLAN_CREATE, PLAN_REVIEW, MED_FEEDBACK, ASSESSMENT_ESCALATION,
+                    ASSESSMENT_SUSPECTED -> WorkspaceTaskPriority.MEDIUM;
+            case REPORT_REVIEW, MED_VERIFY, ARCHIVE_SELF_REPORT, QUESTIONNAIRE_EXPIRED -> WorkspaceTaskPriority.LOW;
         };
     }
 
@@ -54,13 +73,15 @@ public enum WorkspaceTaskType {
     public int dueDaysInclusive() {
         return switch (this) {
             case TEAM_ASSIGN, EXERCISE_ALERT -> 1;
-            case PLAN_CREATE, PLAN_NUDGE, METRIC_ALERT, FOLLOW_UP, REPORT_REVIEW, PLAN_REVIEW -> 3;
+            case PLAN_CREATE, PLAN_NUDGE, METRIC_ALERT, FOLLOW_UP, REPORT_REVIEW, PLAN_REVIEW, MED_FEEDBACK, MED_VERIFY,
+                    ASSESSMENT_ESCALATION, ASSESSMENT_SUSPECTED, ARCHIVE_SELF_REPORT, QUESTIONNAIRE_EXPIRED -> 3;
         };
     }
 
     /** 医生公共池不可见、不可领。 */
     public boolean doctorPublicHidden() {
-        return this == TEAM_ASSIGN || this == PLAN_CREATE || this == REPORT_REVIEW;
+        return this == TEAM_ASSIGN || this == PLAN_CREATE || this == REPORT_REVIEW || this == MED_VERIFY
+                || this == ARCHIVE_SELF_REPORT || this == QUESTIONNAIRE_EXPIRED;
     }
 
     public boolean requiresFormToClose() {

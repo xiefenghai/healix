@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Healix · C 端首页 v9 三个方向</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:"PingFang SC","Hiragino Sans GB",system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+  background:#d9e0e4;color:#13222e;padding:28px 24px;}
+.row{display:flex;gap:28px;justify-content:center;align-items:flex-start;}
+.col{display:flex;flex-direction:column;align-items:center;gap:12px;}
+.label{font-size:20px;font-weight:900;}
+.label small{display:block;font-size:13px;font-weight:600;color:#5b6a77;margin-top:4px;text-align:center;}
+.phone{width:390px;height:1180px;border-radius:40px;overflow:hidden;position:relative;
+  box-shadow:0 24px 50px rgba(19,34,46,.22),0 0 0 10px #1b2226;}
+.tabbar{position:absolute;left:0;right:0;bottom:0;height:72px;display:flex;justify-content:space-around;
+  align-items:center;padding-bottom:10px;font-size:11px;font-weight:600;color:#8593a0;}
+.tabbar span{display:flex;flex-direction:column;align-items:center;gap:4px;}
+.tabbar i{width:22px;height:22px;border-radius:7px;border:2px solid currentColor;display:block;}
+.tabbar .on{color:#0e9f83;font-weight:800;}
+.ring{--p:40;width:76px;height:76px;border-radius:50%;flex:none;display:grid;place-items:center;
+  background:conic-gradient(var(--c,#0e9f83) calc(var(--p)*1%),var(--t,#e3f6ef) 0);}
+.ring > div{width:60px;height:60px;border-radius:50%;background:var(--in,#fff);display:grid;place-items:center;text-align:center;line-height:1.05;}
+.ring b{font-size:20px;font-weight:900;letter-spacing:-.02em;}
+.ring small{display:block;font-size:10px;font-weight:700;color:#7a8b99;}
+.ck{width:22px;height:22px;border-radius:50%;border:2px solid #cfd8de;flex:none;display:grid;place-items:center;font-size:12px;color:#fff;}
+.ck.on{background:#0e9f83;border-color:#0e9f83;}
+.cat{font-size:11px;font-weight:800;border-radius:7px;padding:2px 7px;flex:none;}
+.c-ex{background:#e3f6ef;color:#0b7a66;} .c-diet{background:#e3f6ef;color:#0b7a66;}
+.c-mon{background:#fff1d6;color:#8a5c00;} .c-water{background:#dff3ff;color:#1769a5;}
+.c-sleep{background:#ece7ff;color:#5b3cc4;} .c-mood{background:#ffe8f0;color:#b03060;}
+
+/* ═════════ A · 暖阳陪伴（延续小红书品牌视觉） ═════════ */
+.A{background:
+  radial-gradient(circle at 105% -4%, rgba(255,226,160,.75), transparent 40%),
+  radial-gradient(circle at -12% 38%, rgba(196,238,224,.8), transparent 42%),
+  linear-gradient(172deg,#fff8ec 0%,#f6fbf7 48%,#e6f6ef 100%);}
+.A .in{padding:52px 18px 90px;display:flex;flex-direction:column;gap:14px;}
+.A .top{display:flex;align-items:center;justify-content:space-between;}
+.A .brand{font-size:14px;font-weight:800;color:#5b6b7a;} .A .brand b{color:#0e9f83;}
+.A .bell{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.85);display:grid;place-items:center;
+  position:relative;box-shadow:0 6px 14px rgba(19,34,46,.06);font-size:16px;}
+.A .bell em{position:absolute;top:-3px;right:-3px;background:#e0435a;color:#fff;font-style:normal;font-size:10px;font-weight:800;
+  min-width:16px;height:16px;border-radius:8px;display:grid;place-items:center;border:2px solid #fff8ec;}
+.A h1{font-size:30px;font-weight:900;line-height:1.25;letter-spacing:-.02em;margin-top:2px;}
+.A .mk{background:linear-gradient(transparent 58%,#ffd84d 58%);padding:0 4px;}
+.A .lead{font-size:14px;font-weight:600;color:#4a5b68;margin-top:-6px;}
+.A .pills{display:flex;gap:8px;}
+.A .pill{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:800;}
+.A .pill.ink{background:#13222e;color:#fff;} .A .pill.mint{background:#e3f6ef;color:#0b7a66;}
+.A .pill.sun{background:#fff1d6;color:#8a5c00;}
+.A .hero{background:#fff;border-radius:26px;padding:18px;box-shadow:0 14px 34px rgba(19,34,46,.08);}
+.A .hero-top{display:flex;gap:16px;align-items:center;}
+.A .hero-top .tx{flex:1;}
+.A .hero-top .t1{font-size:13px;font-weight:700;color:#7a8b99;}
+.A .hero-top .t2{font-size:19px;font-weight:900;margin-top:4px;line-height:1.3;}
+.A .hero-top .t3{font-size:12px;font-weight:600;color:#7a8b99;margin-top:4px;}
+.A .next{margin-top:14px;display:flex;align-items:center;gap:10px;background:#f4fbf8;border-radius:16px;padding:12px 12px 12px 14px;}
+.A .next .nt{flex:1;font-size:15px;font-weight:800;}
+.A .next .nt small{display:block;font-size:12px;font-weight:600;color:#7a8b99;margin-top:2px;}
+.A .btn{height:34px;padding:0 16px;border-radius:999px;border:0;background:#0e9f83;color:#fff;font-size:13px;font-weight:800;}
+.A .btn.ghost{background:#fff;color:#5b6a77;border:1px solid #d5dee4;}
+.A .list{margin-top:6px;}
+.A .it{display:flex;align-items:center;gap:10px;padding:11px 2px;border-top:1px solid #f0f4f6;font-size:14px;font-weight:700;}
+.A .it.done span:last-child{color:#9aa8b5;text-decoration:line-through;}
+.A .more{text-align:center;font-size:13px;font-weight:700;color:#0b7a66;padding-top:10px;border-top:1px solid #f0f4f6;}
+.A .team{display:flex;align-items:center;gap:12px;background:#13222e;color:#fff;border-radius:20px;padding:14px 16px;}
+.A .team .av{width:40px;height:40px;border-radius:14px;background:linear-gradient(135deg,#1fc2a3,#0b7a66);display:grid;place-items:center;font-weight:900;}
+.A .team .tx{flex:1;min-width:0;}
+.A .team b{font-size:14px;font-weight:800;display:block;}
+.A .team span{font-size:12px;color:#b9c6d0;display:block;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.A .team em{font-style:normal;background:#e0435a;font-size:11px;font-weight:800;border-radius:8px;padding:2px 8px;}
+.A .sec{font-size:18px;font-weight:900;display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;}
+.A .sec a{font-size:13px;font-weight:700;color:#0b7a66;}
+.A .rec{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+.A .rec div{background:rgba(255,255,255,.9);border-radius:16px;padding:12px 0 10px;text-align:center;box-shadow:0 6px 16px rgba(19,34,46,.05);}
+.A .rec .ic{width:34px;height:34px;border-radius:12px;margin:0 auto;display:grid;place-items:center;font-size:12px;font-weight:900;}
+.A .rec b{display:block;font-size:12px;font-weight:800;margin-top:6px;}
+.A .rec small{display:block;font-size:11px;font-weight:700;color:#7a8b99;margin-top:2px;}
+.A .rec .ok small{color:#0b7a66;}
+.A .met{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.A .m{background:#fff;border-radius:18px;padding:14px;box-shadow:0 6px 16px rgba(19,34,46,.05);}
+.A .m .h{display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:#7a8b99;}
+.A .m .h i{font-style:normal;font-size:10px;font-weight:800;border-radius:6px;padding:1px 6px;background:#e3f6ef;color:#0b7a66;}
+.A .m.hi .h i{background:#fde7ea;color:#a8243a;}
+.A .m .v{font-size:26px;font-weight:900;letter-spacing:-.02em;margin-top:6px;}
+.A .m .v small{font-size:11px;font-weight:600;color:#7a8b99;margin-left:3px;}
+.A .m.hi .v{color:#c8324a;}
+.A .tabbar{background:rgba(255,255,255,.92);backdrop-filter:blur(10px);}
+
+/* ═════════ B · 青绿头图（主流健康 App 结构） ═════════ */
+.B{background:#f3f6f7;}
+.B .head{background:linear-gradient(160deg,#14b394 0%,#0b7a66 100%);color:#fff;padding:52px 20px 70px;border-radius:0 0 30px 30px;position:relative;overflow:hidden;}
+.B .head::after{content:"";position:absolute;right:-60px;top:-40px;width:220px;height:220px;border-radius:50%;background:rgba(255,255,255,.08);}
+.B .ht{display:flex;justify-content:space-between;align-items:center;}
+.B .ht .hi{font-size:14px;font-weight:600;opacity:.85;}
+.B .ht h1{font-size:24px;font-weight:900;margin-top:4px;}
+.B .ht .av{width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;font-weight:900;border:2px solid rgba(255,255,255,.5);}
+.B .sum{display:flex;align-items:center;gap:16px;margin-top:20px;}
+.B .sum .ring{--c:#fff;--t:rgba(255,255,255,.22);--in:#0f8e76;}
+.B .sum .ring b{color:#fff;} .B .sum .ring small{color:rgba(255,255,255,.75);}
+.B .sum .stats{display:flex;gap:18px;}
+.B .sum .stats div b{display:block;font-size:22px;font-weight:900;}
+.B .sum .stats div span{font-size:12px;opacity:.8;font-weight:600;}
+.B .in{padding:0 14px 90px;margin-top:-46px;position:relative;display:flex;flex-direction:column;gap:12px;}
+.B .card{background:#fff;border-radius:20px;padding:16px;box-shadow:0 8px 22px rgba(19,34,46,.07);}
+.B .ch{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
+.B .ch b{font-size:17px;font-weight:900;} .B .ch a{font-size:13px;font-weight:700;color:#0b7a66;}
+.B .it{display:flex;align-items:center;gap:10px;padding:11px 0;border-top:1px solid #f0f4f6;font-size:14px;font-weight:700;}
+.B .it:first-of-type{border-top:0;}
+.B .it .sp{flex:1;}
+.B .it small{display:block;font-size:12px;color:#7a8b99;font-weight:600;margin-top:2px;}
+.B .btn{height:30px;padding:0 14px;border-radius:999px;border:0;background:#0e9f83;color:#fff;font-size:12px;font-weight:800;}
+.B .done{color:#9aa8b5;}
+.B .team{display:flex;align-items:center;gap:12px;}
+.B .team .av{width:42px;height:42px;border-radius:50%;background:#e3f6ef;color:#0b7a66;display:grid;place-items:center;font-weight:900;}
+.B .team .tx{flex:1;} .B .team b{font-size:14px;font-weight:800;} .B .team span{display:block;font-size:12px;color:#7a8b99;margin-top:2px;}
+.B .dot{width:8px;height:8px;border-radius:50%;background:#e0435a;}
+.B .rec{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;text-align:center;}
+.B .rec .ic{width:42px;height:42px;border-radius:50%;margin:0 auto;display:grid;place-items:center;font-size:13px;font-weight:900;}
+.B .rec b{display:block;font-size:12px;margin-top:6px;font-weight:800;} .B .rec small{font-size:11px;color:#7a8b99;font-weight:600;}
+.B .met{display:grid;grid-template-columns:1fr 1fr;gap:0;}
+.B .m{padding:10px 4px;} .B .m:nth-child(odd){border-right:1px solid #f0f4f6;padding-right:12px;} .B .m:nth-child(even){padding-left:14px;}
+.B .m:nth-child(-n+2){border-bottom:1px solid #f0f4f6;}
+.B .m .h{font-size:12px;color:#7a8b99;font-weight:700;display:flex;justify-content:space-between;}
+.B .m .h i{font-style:normal;color:#0b7a66;font-size:11px;} .B .m.hi .h i{color:#c8324a;}
+.B .m .v{font-size:24px;font-weight:900;margin-top:4px;} .B .m .v small{font-size:11px;color:#7a8b99;font-weight:600;margin-left:2px;}
+.B .m.hi .v{color:#c8324a;}
+.B .tabbar{background:#fff;box-shadow:0 -4px 16px rgba(19,34,46,.05);}
+
+/* ═════════ C · 白底极简（iOS 健康风） ═════════ */
+.C{background:#fff;}
+.C .in{padding:54px 20px 90px;display:flex;flex-direction:column;gap:26px;}
+.C .date{font-size:13px;font-weight:700;color:#7a8b99;letter-spacing:.02em;}
+.C h1{font-size:32px;font-weight:900;letter-spacing:-.03em;margin-top:2px;}
+.C .ht{display:flex;justify-content:space-between;align-items:flex-end;}
+.C .ht .av{width:40px;height:40px;border-radius:50%;background:#13222e;color:#fff;display:grid;place-items:center;font-weight:900;}
+.C .bigrow{display:flex;gap:10px;}
+.C .big{flex:1;border-radius:22px;padding:16px;}
+.C .big.g{background:#0e9f83;color:#fff;} .C .big.y{background:#fff3da;color:#13222e;}
+.C .big .k{font-size:12px;font-weight:700;opacity:.85;}
+.C .big .n{font-size:40px;font-weight:900;letter-spacing:-.03em;line-height:1.05;margin-top:8px;}
+.C .big .n small{font-size:16px;font-weight:800;opacity:.75;}
+.C .big .s{font-size:12px;font-weight:600;opacity:.85;margin-top:4px;}
+.C .bar{height:6px;border-radius:3px;background:rgba(255,255,255,.3);margin-top:10px;overflow:hidden;}
+.C .bar i{display:block;height:100%;width:40%;background:#fff;border-radius:3px;}
+.C .sh{display:flex;justify-content:space-between;align-items:baseline;}
+.C .sh b{font-size:20px;font-weight:900;letter-spacing:-.02em;} .C .sh a{font-size:13px;font-weight:700;color:#0e9f83;}
+.C .it{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid #f0f4f6;}
+.C .it .sp{flex:1;font-size:15px;font-weight:700;} .C .it .sp small{display:block;font-size:12px;color:#7a8b99;font-weight:600;margin-top:2px;}
+.C .go{font-size:13px;font-weight:800;color:#0e9f83;}
+.C .done .sp{color:#9aa8b5;}
+.C .team{display:flex;align-items:center;gap:12px;padding:14px;border-radius:18px;background:#f5f8fa;}
+.C .team .tx{flex:1;} .C .team b{font-size:14px;font-weight:800;} .C .team span{display:block;font-size:12px;color:#5b6a77;margin-top:2px;}
+.C .team em{font-style:normal;font-size:12px;font-weight:800;color:#e0435a;}
+.C .rec{display:flex;gap:8px;flex-wrap:wrap;}
+.C .rec span{height:34px;padding:0 14px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:800;}
+.C .rec .off{background:#f5f8fa;color:#5b6a77;}
+.C .met{display:grid;grid-template-columns:1fr 1fr;gap:18px 14px;}
+.C .m .h{font-size:12px;font-weight:700;color:#7a8b99;}
+.C .m .v{font-size:30px;font-weight:900;letter-spacing:-.03em;margin-top:2px;}
+.C .m .v small{font-size:12px;color:#7a8b99;font-weight:600;margin-left:3px;}
+.C .m.hi .v{color:#c8324a;}
+.C .m .f{font-size:11px;font-weight:700;color:#0b7a66;} .C .m.hi .f{color:#c8324a;}
+.C .tabbar{background:rgba(255,255,255,.95);border-top:1px solid #f0f4f6;}
+</style>
+</head>
+<body>
+<div class="row">
+
+<!-- A -->
+<div class="col">
+  <div class="label">A · 暖阳陪伴<small>延续小红书品牌视觉：米白→薄荷渐变、黄色荧光笔、深色胶囊</small></div>
+  <div class="phone A">
+    <div class="in">
+      <div class="top"><span class="brand">Heal<b>ix</b> · 今天</span><span class="bell">🔔<em>3</em></span></div>
+      <h1>早安，<span class="mk">王丽</span><br>今天还差 3 件小事</h1>
+      <p class="lead">坚持 12 天了，别让火苗断掉</p>
+      <div class="pills"><span class="pill ink">🔥 连续 12 天</span><span class="pill sun">Lv.4 · 320 豆</span></div>
+
+      <div class="hero">
+        <div class="hero-top">
+          <div class="ring" style="--p:40"><div><b>2/5</b><small>今日</small></div></div>
+          <div class="tx">
+            <div class="t1">综合管理方案</div>
+            <div class="t2">完成 2 项，还剩 3 项</div>
+            <div class="t3">建议 12:30 后 · 餐后 2 小时测血糖</div>
+          </div>
+        </div>
+        <div class="next"><div class="nt">饭后散步 30 分钟<small>运动 · 午餐后</small></div><button class="btn">去完成</button></div>
+        <div class="list">
+          <div class="it"><span class="ck"></span><span class="cat c-diet">饮食</span><span>拍照记录午餐</span></div>
+          <div class="it"><span class="ck"></span><span class="cat c-mon">监测</span><span>测血糖 · 餐后 2h</span></div>
+          <div class="it done"><span class="ck on">✓</span><span class="cat c-mon">监测</span><span>测血压</span></div>
+        </div>
+        <div class="more">展开全部 5 项 ⌄</div>
+      </div>
+
+      <div class="team"><div class="av">林</div><div class="tx"><b>林悦健管团队</b><span>王阿姨，今天记得餐后测血糖哦</span></div><em>2</em></div>
+
+      <div class="sec">今日记录 <a>看趋势 ›</a></div>
+      <div class="rec">
+        <div class="ok"><span class="ic c-diet">食</span><b>饮食</b><small>已记</small></div>
+        <div><span class="ic c-ex">动</span><b>运动</b><small>去记</small></div>
+        <div class="ok"><span class="ic c-water">水</span><b>饮水</b><small>5/8 杯</small></div>
+        <div><span class="ic c-sleep">眠</span><b>睡眠</b><small>去记</small></div>
+        <div class="ok"><span class="ic c-mood">心</span><b>心情</b><small>已记</small></div>
+      </div>
+
+      <div class="sec">最近指标 <a>详情 ›</a></div>
+      <div class="met">
+        <div class="m"><div class="h">血压<i>正常</i></div><div class="v">128/85<small>mmHg</small></div></div>
+        <div class="m hi"><div class="h">血糖<i>偏高</i></div><div class="v">7.6<small>mmol/L</small></div></div>
+        <div class="m"><div class="h">心率<i>正常</i></div><div class="v">76<small>次/分</small></div></div>
+        <div class="m"><div class="h">BMI<i>正常</i></div><div class="v">23.1</div></div>
+      </div>
+    </div>
+    <div class="tabbar"><span class="on"><i></i>首页</span><span><i></i>健康</span><span><i></i>发现</span><span><i></i>我的</span></div>
+  </div>
+</div>
+
+<!-- B -->
+<div class="col">
+  <div class="label">B · 青绿头图<small>Keep / 健康类 App 常见结构：品牌色头图 + 卡片上浮</small></div>
+  <div class="phone B">
+    <div class="head">
+      <div class="ht"><div><div class="hi">早安</div><h1>王丽</h1></div><div class="av">王</div></div>
+      <div class="sum">
+        <div class="ring" style="--p:40"><div><b>2/5</b><small>今日</small></div></div>
+        <div class="stats">
+          <div><b>12</b><span>连续天数</span></div>
+          <div><b>320</b><span>健康豆</span></div>
+          <div><b>Lv.4</b><span>等级</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="in">
+      <div class="card">
+        <div class="ch"><b>今日待办</b><a>查看方案 ›</a></div>
+        <div class="it"><span class="ck"></span><span class="cat c-ex">运动</span><div class="sp">饭后散步 30 分钟<small>午餐后</small></div><button class="btn">去完成</button></div>
+        <div class="it"><span class="ck"></span><span class="cat c-diet">饮食</span><div class="sp">拍照记录午餐<small>12:20</small></div><button class="btn">去记</button></div>
+        <div class="it"><span class="ck"></span><span class="cat c-mon">监测</span><div class="sp">测血糖<small>餐后 2h</small></div><button class="btn">去测</button></div>
+        <div class="it done"><span class="ck on">✓</span><span class="cat c-mon">监测</span><div class="sp">测血压</div></div>
+      </div>
+      <div class="card team"><div class="av">林</div><div class="tx"><b>林悦健管团队</b><span>王阿姨，今天记得餐后测血糖哦</span></div><span class="dot"></span></div>
+      <div class="card">
+        <div class="ch"><b>今日记录</b><a>看趋势 ›</a></div>
+        <div class="rec">
+          <div><span class="ic c-diet">食</span><b>饮食</b><small>已记</small></div>
+          <div><span class="ic c-ex">动</span><b>运动</b><small>去记</small></div>
+          <div><span class="ic c-water">水</span><b>饮水</b><small>5/8</small></div>
+          <div><span class="ic c-sleep">眠</span><b>睡眠</b><small>去记</small></div>
+          <div><span class="ic c-mood">心</span><b>心情</b><small>已记</small></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="ch"><b>最近指标</b><a>详情 ›</a></div>
+        <div class="met">
+          <div class="m"><div class="h">血压<i>正常</i></div><div class="v">128/85<small>mmHg</small></div></div>
+          <div class="m hi"><div class="h">血糖<i>偏高</i></div><div class="v">7.6<small>mmol/L</small></div></div>
+          <div class="m"><div class="h">心率<i>正常</i></div><div class="v">76<small>次/分</small></div></div>
+          <div class="m"><div class="h">BMI<i>正常</i></div><div class="v">23.1</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="tabbar"><span class="on"><i></i>首页</span><span><i></i>健康</span><span><i></i>发现</span><span><i></i>我的</span></div>
+  </div>
+</div>
+
+<!-- C -->
+<div class="col">
+  <div class="label">C · 白底极简<small>iOS 健康风：大数字、少卡片、靠留白分组</small></div>
+  <div class="phone C">
+    <div class="in">
+      <div class="ht"><div><div class="date">10 月 15 日 · 周四</div><h1>早安，王丽</h1></div><div class="av">王</div></div>
+      <div class="bigrow">
+        <div class="big g"><div class="k">今日执行</div><div class="n">2<small>/5</small></div><div class="bar"><i></i></div></div>
+        <div class="big y"><div class="k">连续打卡</div><div class="n">12<small> 天</small></div><div class="s">Lv.4 · 320 健康豆</div></div>
+      </div>
+      <div>
+        <div class="sh"><b>今日待办</b><a>全部 5 项 ›</a></div>
+        <div class="it"><span class="ck"></span><div class="sp">饭后散步 30 分钟<small>运动 · 午餐后</small></div><span class="go">去完成</span></div>
+        <div class="it"><span class="ck"></span><div class="sp">拍照记录午餐<small>饮食 · 12:20</small></div><span class="go">去记</span></div>
+        <div class="it"><span class="ck"></span><div class="sp">测血糖<small>监测 · 餐后 2h</small></div><span class="go">去测</span></div>
+      </div>
+      <div class="team"><div class="tx"><b>林悦健管团队</b><span>王阿姨，今天记得餐后测血糖哦</span></div><em>2 条新消息</em></div>
+      <div>
+        <div class="sh"><b>今日记录</b><a>看趋势 ›</a></div>
+        <div class="rec" style="margin-top:12px">
+          <span class="c-diet">✓ 饮食</span><span class="off">+ 运动</span><span class="c-water">5/8 饮水</span>
+          <span class="off">+ 睡眠</span><span class="c-mood">✓ 心情</span>
+        </div>
+      </div>
+      <div>
+        <div class="sh"><b>最近指标</b><a>详情 ›</a></div>
+        <div class="met" style="margin-top:12px">
+          <div class="m"><div class="h">血压</div><div class="v">128/85<small>mmHg</small></div><div class="f">正常</div></div>
+          <div class="m hi"><div class="h">血糖</div><div class="v">7.6<small>mmol/L</small></div><div class="f">偏高 · 空腹</div></div>
+          <div class="m"><div class="h">心率</div><div class="v">76<small>次/分</small></div><div class="f">正常</div></div>
+          <div class="m"><div class="h">BMI</div><div class="v">23.1</div><div class="f">正常</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="tabbar"><span class="on"><i></i>首页</span><span><i></i>健康</span><span><i></i>发现</span><span><i></i>我的</span></div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

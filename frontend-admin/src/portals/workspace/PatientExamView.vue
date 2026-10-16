@@ -219,6 +219,62 @@ function resetFindings(type: string) {
   form.findings = blankFindings(type)
 }
 
+interface ReportDayGroup<T> {
+  key: string
+  relative: string
+  dateText: string
+  count: number
+  rows: T[]
+}
+
+function groupReportsByDay<T>(rows: T[], timeOf: (row: T) => string | undefined): ReportDayGroup<T>[] {
+  const byDay = new Map<string, T[]>()
+  for (const row of rows) {
+    const raw = timeOf(row)
+    const key = raw ? raw.replace('T', ' ').slice(0, 10) : 'unknown'
+    const bucket = byDay.get(key)
+    if (bucket) bucket.push(row)
+    else byDay.set(key, [row])
+  }
+  const today = new Date()
+  const ymd = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  }
+  const todayKey = ymd(today)
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  const yesterdayKey = ymd(yesterday)
+  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  return [...byDay.entries()]
+    .map(([key, items]) => {
+      items.sort((a, b) => (timeOf(b) || '').localeCompare(timeOf(a) || ''))
+      let relative = ''
+      let dateText = '时间未知'
+      if (key !== 'unknown') {
+        const [y, m, d] = key.split('-').map(Number)
+        const dt = new Date(y, (m || 1) - 1, d || 1)
+        dateText = `${m}月${d}日 ${week[dt.getDay()]}`
+        if (key === todayKey) relative = '今天'
+        else if (key === yesterdayKey) relative = '昨天'
+      }
+      return { key, relative, dateText, count: items.length, rows: items }
+    })
+    .sort((a, b) => {
+      if (a.key === 'unknown') return 1
+      if (b.key === 'unknown') return -1
+      return b.key.localeCompare(a.key)
+    })
+}
+
+const examRecordGroups = computed(() => groupReportsByDay(list.value, (row) => row.examinedAt))
+
+function examFindingRows(report: ExamReport) {
+  return (EXAM_FINDING_FIELDS[report.examType] || [])
+    .map((field) => ({ field, value: report.findings?.[field.key] }))
+    .filter((row) => row.value != null && row.value !== '')
+}
+
 function openDetail(row: ExamReport) {
   detailRow.value = row
   detailVisible.value = true
@@ -616,6 +672,44 @@ watch(
           </div>
         </section>
       </div>
+
+      <section class="recent-card">
+        <div class="recent-head">
+          <span class="section-title">近期记录</span>
+        </div>
+        <el-empty v-if="!examRecordGroups.length" description="暂无检查记录" :image-size="64" />
+        <div v-else class="record-days">
+          <section v-for="group in examRecordGroups" :key="group.key" class="day-group">
+            <div class="day-head">
+              <span v-if="group.relative" class="day-relative">{{ group.relative }}</span>
+              <span class="day-date">{{ group.dateText }}</span>
+              <span class="day-count">{{ group.count }} 份</span>
+            </div>
+            <div v-for="report in group.rows" :key="report.id" class="time-cluster">
+              <div class="time-mark">
+                <span class="time-clock">{{ formatTime(report.examinedAt).slice(11) || '—' }}</span>
+                <el-tag size="small" effect="plain">{{ examSourceLabel(report.source) }}</el-tag>
+                <span class="specimen">{{ typeLabel(report.examType) }}</span>
+              </div>
+              <div class="time-rows">
+                <div v-for="row in examFindingRows(report)" :key="row.field.key" class="metric-row">
+                  <span class="metric-name">{{ row.field.label }}</span>
+                  <span class="metric-value">
+                    {{ formatExamFindingValue(row.field.key, row.value) }}
+                    <span v-if="row.field.unit" class="metric-unit"> {{ row.field.unit }}</span>
+                  </span>
+                </div>
+                <p v-if="report.conclusion" class="report-note">结论：{{ report.conclusion }}</p>
+                <div class="metric-actions">
+                  <el-button link type="primary" @click="openDetail(report)">详情</el-button>
+                  <el-button link type="primary" @click="openEdit(report)">编辑</el-button>
+                  <el-button link type="danger" @click="removeRow(report)">删除</el-button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
     </div>
 
     <!-- 全部报告 -->
@@ -886,6 +980,130 @@ watch(
   font-weight: 600;
   color: var(--ink-800, #1e293b);
   letter-spacing: -0.01em;
+}
+
+.recent-card {
+  margin-top: 16px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--admin-border, #e5e7eb);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.recent-head {
+  margin-bottom: 12px;
+}
+
+.record-days {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.day-group {
+  border: 1px solid var(--ink-100, #f1f5f9);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.day-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+}
+
+.day-relative {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.day-date {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.day-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.time-cluster {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.time-cluster + .time-cluster {
+  border-top: 1px dashed #e8eef2;
+}
+
+.time-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.time-clock {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.specimen {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.time-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.2fr) minmax(120px, 2fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.metric-name,
+.metric-value {
+  font-weight: 600;
+}
+
+.metric-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
+}
+
+.report-note {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.metric-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 960px) {
+  .time-cluster {
+    grid-template-columns: 1fr;
+  }
 }
 
 .card-head-actions {

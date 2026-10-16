@@ -585,6 +585,10 @@ public class WorkspaceTaskService {
             case FOLLOW_UP -> "/workspace/patients/" + peopleId + "/followups" + qs;
             case REPORT_REVIEW -> "/workspace/patients/" + peopleId + "/health-reports" + qs;
             case EXERCISE_ALERT -> "/workspace/patients/" + peopleId + "/exercise" + qs;
+            case MED_FEEDBACK, MED_VERIFY -> "/workspace/patients/" + peopleId + "/medications" + qs;
+            case ASSESSMENT_ESCALATION, ASSESSMENT_SUSPECTED, QUESTIONNAIRE_EXPIRED ->
+                    "/workspace/patients/" + peopleId + "/assessments" + qs;
+            case ARCHIVE_SELF_REPORT -> "/workspace/patients/" + peopleId + "/archive" + qs;
         };
     }
 

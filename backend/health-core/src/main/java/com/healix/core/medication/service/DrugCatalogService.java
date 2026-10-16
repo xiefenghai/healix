@@ -42,6 +42,18 @@ public class DrugCatalogService {
         return hits;
     }
 
+    public DrugCatalogItemDto findByCode(String code) {
+        if (!StringUtils.hasText(code)) {
+            return null;
+        }
+        for (DictItemDto row : catalog()) {
+            if (code.trim().equals(row.getDictCode())) {
+                return toItem(row);
+            }
+        }
+        return null;
+    }
+
     private List<DictItemDto> catalog() {
         return dictService.listMerged(
                 DictService.PLATFORM_TENANT, DictTypeEnum.OPTION.name(), DRUG_CATALOG_PARENT);

@@ -3,12 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../shared/http'
+import { asEnergyTarget, energyMacroText } from '../shared/energy-target'
 
 interface CarePlanBundle {
   plan?: { title?: string; goalSummary?: string } | null
   draft?: {
     exercise?: { goal?: string; precautions?: string[] }
-    diet?: { principles?: string[]; calorieHint?: string }
+    diet?: { principles?: string[]; calorieHint?: string; energyTarget?: unknown }
     execution?: { tasks?: Array<{ title?: string; enabled?: boolean }> }
     contextSnapshot?: { summary?: string }
   } | null
@@ -19,7 +20,7 @@ interface CarePlanBundle {
     publishedAt?: string
     signStatus?: string
     exercise?: { goal?: string; precautions?: string[] }
-    diet?: { principles?: string[]; calorieHint?: string }
+    diet?: { principles?: string[]; calorieHint?: string; energyTarget?: unknown }
     execution?: { tasks?: Array<{ title?: string; enabled?: boolean }> }
     contextSnapshot?: { summary?: string }
   } | null
@@ -51,6 +52,7 @@ const principles = computed(() =>
     ? src.value!.diet!.principles!.filter(Boolean).slice(0, 6)
     : [],
 )
+const energy = computed(() => asEnergyTarget(src.value?.diet?.energyTarget))
 const tasks = computed(() =>
   (src.value?.execution?.tasks || []).filter((t) => t.enabled !== false).slice(0, 12),
 )
@@ -107,9 +109,10 @@ onMounted(load)
         <h3>饮食要点</h3>
         <p v-for="(p, i) in principles" :key="i">· {{ p }}</p>
       </section>
-      <section v-if="src?.diet?.calorieHint" class="block hx-surface">
+      <section v-if="energy || src?.diet?.calorieHint" class="block hx-surface">
         <h3>热量</h3>
-        <p>{{ src.diet.calorieHint }}</p>
+        <p v-if="energy">每日 {{ energy.energyKcal }} 千卡 · {{ energyMacroText(energy) }}</p>
+        <p v-if="src?.diet?.calorieHint">{{ src.diet.calorieHint }}</p>
       </section>
       <section v-if="tasks.length" class="block hx-surface">
         <h3>执行任务</h3>

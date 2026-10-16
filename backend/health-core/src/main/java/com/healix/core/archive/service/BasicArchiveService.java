@@ -3,6 +3,7 @@ package com.healix.core.archive.service;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.core.archive.dto.ArchiveViewDto;
 import com.healix.core.metadata.service.MetadataSyncService;
 import com.healix.core.patient.enums.PatientArchiveSourceEnum;
@@ -26,6 +27,7 @@ public class BasicArchiveService {
     private final ArchiveAccessService archiveAccessService;
     private final MetadataSyncService metadataSyncService;
     private final FieldRevisionService fieldRevisionService;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
 
     public ArchiveViewDto get(String tenantId, String peopleId) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
@@ -104,6 +106,7 @@ public class BasicArchiveService {
 
         metadataSyncService.syncBasicArchive(
                 tenantId, peopleId, normalized, META_BIZ, operator.sourceClientCode());
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         return toView(archive);
     }
 

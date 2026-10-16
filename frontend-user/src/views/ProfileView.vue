@@ -4,8 +4,11 @@ import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api, clearToken } from '../api/http'
 import { PATIENT_AGENT_ENABLED } from '../shared/features'
+import IcpFooter from '../shared/IcpFooter.vue'
+import { loadRewardSummary } from '../shared/rewards'
 
 const router = useRouter()
+const rewardsOn = ref(false)
 const displayName = ref('')
 const gender = ref('')
 const homeTenantId = ref<number | null>(null)
@@ -23,6 +26,7 @@ onMounted(async () => {
     displayName.value = res.data.displayName ?? ''
     gender.value = res.data.gender ?? ''
     homeTenantId.value = res.data.tenantId ? 1 : null
+    void loadRewardSummary().then((s) => (rewardsOn.value = !!s))
   } catch (e) {
     const msg = e instanceof Error ? e.message : ''
     if (msg.includes('就诊人')) {
@@ -82,6 +86,7 @@ function logout() {
 
     <section class="card menu">
       <van-cell title="就诊人管理" is-link to="/patient-cards" />
+      <van-cell v-if="rewardsOn" title="我的成就" is-link to="/achievements" />
       <van-cell title="健康档案" is-link to="/archive" />
       <van-cell title="健康数据" is-link to="/health-data?tab=vitals" />
       <van-cell title="管理方案" is-link to="/care-plan" />
@@ -97,11 +102,13 @@ function logout() {
       <van-cell title="隐私政策" is-link to="/legal/privacy" />
       <van-cell title="退出登录" is-link @click="logout" />
     </section>
+    <IcpFooter class="profile-icp" />
   </div>
 </template>
 
 <style scoped>
 .page { padding: 18px 16px 24px; }
+.profile-icp { justify-content: center; margin-top: 16px; color: var(--hx-muted); }
 .profile-head {
   display: flex;
   gap: 12px;
@@ -114,7 +121,7 @@ function logout() {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: linear-gradient(145deg, #ffd080, #f5a623);
+  background: linear-gradient(145deg, #ffd080, var(--hx-warn));
   color: #fff;
   font-size: 22px;
   font-weight: 700;
@@ -123,10 +130,10 @@ h1 { margin: 0; font-size: 20px; }
 .profile-head p { margin: 4px 0 0; color: var(--hx-muted); font-size: 13px; }
 .card {
   background: #fff;
-  border-radius: 18px;
+  border-radius: var(--hx-r-lg);
   margin-bottom: 14px;
   overflow: hidden;
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 .gender {
   display: flex;
@@ -137,13 +144,13 @@ h1 { margin: 0; font-size: 20px; }
 .gender-label {
   width: 6.2em;
   flex-shrink: 0;
-  color: var(--van-field-label-color, #646566);
+  color: var(--van-field-label-color, var(--hx-n-700));
   font-size: 14px;
 }
 .pad { padding: 8px 12px 14px; }
 .menu :deep(.van-cell) { font-size: 15px; }
 :deep(.van-button--primary) {
-  background: linear-gradient(90deg, #5cb8b8, #2b9e9e);
+  background: var(--hx-grad);
   border: 0;
 }
 </style>

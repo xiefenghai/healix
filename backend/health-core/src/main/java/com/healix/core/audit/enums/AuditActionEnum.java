@@ -44,6 +44,7 @@ public enum AuditActionEnum {
     PATIENT_ARCHIVE_CREATE,
     /** B 端编辑患者人口学基础信息 */
     PATIENT_BASIC_INFO_UPDATE,
+    PATIENT_IDENTITY_ADD,
     /** C 端激活码绑定就诊人卡片 */
     PATIENT_CARD_ACTIVATE,
     WORKSPACE_TASK_CLAIM,
@@ -73,8 +74,10 @@ public enum AuditActionEnum {
     MFA_DISABLE,
     /** 患者档案合并 */
     PATIENT_MERGE,
-    /** B 端患者风险评估（手动/预留 Job） */
+    /** B 端患者疾病评估（手动重新评估） */
     PATIENT_ASSESSMENT_RUN,
+    /** 疾病评估问卷提交（B 端代填 / 患者自填） */
+    PATIENT_ASSESSMENT_QUESTIONNAIRE,
     /** 健管师↔患者沟通消息发送 */
     CARE_CHAT_SEND;
 

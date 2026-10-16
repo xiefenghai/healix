@@ -219,9 +219,9 @@ onMounted(() => {
   font-weight: 600;
 }
 .group :deep(.tone-ok) {
-  color: #1f8a6e !important;
+  color: var(--hx-teal-700) !important;
 }
 .group :deep(.tone-warn) {
-  color: #c4841a !important;
+  color: var(--hx-warn) !important;
 }
 </style>

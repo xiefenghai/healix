@@ -39,7 +39,22 @@ public class ReportSummaryGenerator {
      * @param fromLlm true = LLM 生成；false = 模板降级
      */
     public record ReportSummaryDraft(
-            String staffComment, String nextFocus, String quarterAdvice, boolean fromLlm, String note) {}
+            String staffComment,
+            String nextFocus,
+            String quarterAdvice,
+            Map<String, String> insights,
+            List<Map<String, String>> highlights,
+            boolean fromLlm,
+            String note) {
+        public ReportSummaryDraft(
+                String staffComment, String nextFocus, String quarterAdvice, boolean fromLlm, String note) {
+            this(staffComment, nextFocus, quarterAdvice, null, null, fromLlm, note);
+        }
+    }
+
+    private static final List<String> INSIGHT_KEYS =
+            List.of("plan", "med", "metrics", "diet", "exercise", "observations");
+    private static final List<String> HIGHLIGHT_TYPES = List.of("GOOD", "WATCH", "FOCUS");
 
     public ReportSummaryDraft generate(JsonNode content, String periodType) {
         return generate(content, periodType, null, null);
@@ -79,7 +94,7 @@ public class ReportSummaryGenerator {
                     + "\n\n## 修订模式（REVISE）\n"
                     + "在「当前点评草稿」基础上按「修订意见」调整 staffComment / nextFocus"
                     + (quarter ? " / quarterAdvice" : "")
-                    + "；未提及的部分尽量保持原样。仍只输出完整 JSON。\n";
+                    + "；未提及的部分尽量保持原样。highlights / insights 按修订后的口径一并输出。仍只输出完整 JSON。\n";
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("reportDigest", JsonUtils.readTree(digest));
             Map<String, Object> current = new LinkedHashMap<>();
@@ -146,7 +161,14 @@ public class ReportSummaryGenerator {
                     staffComment.length(),
                     llm.promptTokens(),
                     llm.completionTokens());
-            return new ReportSummaryDraft(staffComment, nextFocus, quarterAdvice, true, null);
+            return new ReportSummaryDraft(
+                    staffComment,
+                    nextFocus,
+                    quarterAdvice,
+                    parseInsights(parsed.get("insights")),
+                    parseHighlights(parsed.get("highlights")),
+                    true,
+                    null);
         } catch (Exception e) {
             log.warn("[ReportSummary] parse failed: {}", e.getMessage());
             ReportSummaryDraft fb = fallback(content, quarter, "AI 返回解析失败，已回退模板草稿");
@@ -175,7 +197,36 @@ public class ReportSummaryGenerator {
         }
     }
 
-    /** 压缩 content_json：去掉逐点序列，只留统计量与最近值，控制 prompt 体积。 */
+    private static Map<String, String> parseInsights(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String key : INSIGHT_KEYS) {
+            String v = ComplianceText.filter(text(node, key));
+            if (StringUtils.hasText(v)) {
+                out.put(key, v);
+            }
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    private static List<Map<String, String>> parseHighlights(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return null;
+        }
+        List<Map<String, String>> out = new ArrayList<>();
+        for (JsonNode h : node) {
+            String type = text(h, "type").toUpperCase();
+            String t = ComplianceText.filter(text(h, "text"));
+            if (HIGHLIGHT_TYPES.contains(type) && StringUtils.hasText(t)) {
+                out.add(Map.of("type", type, "text", t));
+            }
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /** 压缩 content_json：去掉逐日/逐点序列，只留统计量、上期对比与要点，控制 prompt 体积。 */
     private Map<String, Object> buildDigest(JsonNode content, String periodType) {
         Map<String, Object> out = new LinkedHashMap<>();
         Map<String, Object> period = new LinkedHashMap<>();
@@ -183,6 +234,7 @@ public class ReportSummaryGenerator {
         JsonNode periodNode = path(content, "period");
         period.put("start", text(periodNode, "start"));
         period.put("end", text(periodNode, "end"));
+        period.put("dayCount", intVal(periodNode, "dayCount"));
         out.put("period", period);
 
         JsonNode profile = path(content, "profile");
@@ -195,30 +247,79 @@ public class ReportSummaryGenerator {
         }
         out.put("profile", p);
 
+        JsonNode overview = path(content, "overview");
+        if (overview != null) {
+            List<String> kpis = new ArrayList<>();
+            for (JsonNode k : iter(path(overview, "kpis"))) {
+                String delta = text(k, "deltaText");
+                kpis.add(text(k, "label") + " " + text(k, "display") + text(k, "unit")
+                        + (StringUtils.hasText(delta) ? "（" + delta + "）" : ""));
+            }
+            out.put("keyNumbers", kpis);
+            List<Map<String, Object>> hl = new ArrayList<>();
+            for (JsonNode h : iter(path(overview, "highlights"))) {
+                hl.add(pick(h, "type", "text"));
+            }
+            out.put("ruleHighlights", hl);
+        }
+
         JsonNode adherence = path(content, "adherence");
         Map<String, Object> adh = new LinkedHashMap<>();
-        adh.put("plan", pick(path(adherence, "plan"), "dueCount", "doneCount", "skippedCount", "rate"));
-        adh.put("med", pick(path(adherence, "med"), "dueDayCount", "okDayCount", "rate"));
+        JsonNode planNode = path(adherence, "plan");
+        Map<String, Object> plan = pick(planNode, "dueCount", "doneCount", "skippedCount", "rate", "longestStreak");
+        plan.put("prev", pick(path(planNode, "prev"), "rate"));
+        List<Map<String, Object>> weakTasks = new ArrayList<>();
+        for (JsonNode t : iter(path(planNode, "byTask"))) {
+            if (weakTasks.size() >= 3) {
+                break;
+            }
+            Double r = doubleVal(t, "rate");
+            if (r != null && r < 0.8) {
+                weakTasks.add(pick(t, "title", "categoryLabel", "done", "due"));
+            }
+        }
+        plan.put("weakTasks", weakTasks);
+        adh.put("plan", plan);
+        JsonNode medNode = path(adherence, "med");
+        Map<String, Object> med = pick(medNode, "dueDayCount", "okDayCount", "rate");
+        med.put("prev", pick(path(medNode, "prev"), "rate"));
+        // 不给药名：避免寄语里出现具体药物
+        List<Map<String, Object>> missed = new ArrayList<>();
+        for (JsonNode m : iter(path(medNode, "missedBySlot"))) {
+            missed.add(pick(m, "label", "count"));
+        }
+        med.put("missedBySlot", missed);
+        adh.put("med", med);
         out.put("adherence", adh);
 
         List<Map<String, Object>> metrics = new ArrayList<>();
-        JsonNode metricsNode = path(content, "metrics");
-        if (metricsNode != null && metricsNode.isArray()) {
-            for (JsonNode m : metricsNode) {
-                if (metrics.size() >= MAX_METRIC_FAMILIES) {
-                    break;
-                }
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("label", text(m, "label"));
-                item.put("abnormalCount", intVal(m, "abnormalCount"));
-                JsonNode series = path(m, "series");
-                item.put("pointCount", series != null && series.isArray() ? series.size() : 0);
-                JsonNode latest = path(m, "latest");
-                if (latest != null && latest.isObject()) {
-                    item.put("latest", latest);
-                }
-                metrics.add(item);
+        for (JsonNode m : iter(path(content, "metrics"))) {
+            if (metrics.size() >= MAX_METRIC_FAMILIES) {
+                break;
             }
+            Map<String, Object> item = pick(m, "label", "count", "abnormalCount", "inRangeRate", "ref");
+            JsonNode stats = path(m, "stats");
+            if (stats != null) {
+                item.put("stats", stats);
+            }
+            JsonNode prev = path(m, "prev");
+            if (prev != null) {
+                item.put("prev", prev);
+            }
+            List<String> abnormal = new ArrayList<>();
+            for (JsonNode a : iter(path(m, "abnormalItems"))) {
+                abnormal.add(text(a, "text"));
+            }
+            if (!abnormal.isEmpty()) {
+                item.put("abnormalItems", abnormal);
+            }
+            for (String key : new String[] {"bySlot", "byTime"}) {
+                JsonNode n = path(m, key);
+                if (n != null && n.isArray() && n.size() > 0) {
+                    item.put(key, n);
+                }
+            }
+            metrics.add(item);
         }
         out.put("metrics", metrics);
 
@@ -226,27 +327,49 @@ public class ReportSummaryGenerator {
         if (lifestyle != null && lifestyle.isObject()) {
             Map<String, Object> ls = new LinkedHashMap<>();
             ls.put("dayCount", intVal(lifestyle, "dayCount"));
-            ls.put("diet", pick(
-                    path(lifestyle, "diet"),
-                    "recordDays", "completeDays", "targetKcal", "avgKcal", "onTargetDays",
-                    "avgSodiumMg", "redMeals", "yellowMeals"));
-            ls.put("exercise", pick(
-                    path(lifestyle, "exercise"),
+            JsonNode dietNode = path(lifestyle, "diet");
+            Map<String, Object> diet = pick(
+                    dietNode,
+                    "recordDays", "completeDays", "breakfastDays", "targetKcal", "avgKcal", "onTargetDays",
+                    "avgSodiumMg", "sodiumLimitMg", "highSodiumDays", "redMeals", "yellowMeals");
+            JsonNode macro = path(dietNode, "macro");
+            if (macro != null) {
+                diet.put("macro", macro);
+            }
+            List<String> flags = new ArrayList<>();
+            for (JsonNode f : iter(path(dietNode, "flagTop"))) {
+                flags.add(text(f, "label") + " " + intVal(f, "count") + " 次");
+            }
+            diet.put("flagTop", flags);
+            List<String> foods = new ArrayList<>();
+            for (JsonNode f : iter(path(dietNode, "topFoods"))) {
+                foods.add(text(f, "name") + "×" + intVal(f, "count"));
+            }
+            diet.put("topFoods", foods);
+            diet.put("prev", pick(path(dietNode, "prev"), "recordDays", "avgKcal", "onTargetDays", "avgSodiumMg"));
+            ls.put("diet", diet);
+            JsonNode exNode = path(lifestyle, "exercise");
+            Map<String, Object> ex = pick(
+                    exNode,
                     "activeDays", "sessionCount", "totalMin", "activeMin", "avgWeeklyActiveMin",
-                    "weeklyActiveMinTarget", "redCount"));
+                    "weeklyActiveMinTarget", "targetMetWeeks", "weekCount", "redCount");
+            List<String> types = new ArrayList<>();
+            for (JsonNode t : iter(path(exNode, "topTypes"))) {
+                types.add(text(t, "name") + " " + intVal(t, "min") + " 分钟");
+            }
+            ex.put("topTypes", types);
+            ex.put("prev", pick(path(exNode, "prev"), "activeDays", "avgWeeklyActiveMin"));
+            ls.put("exercise", ex);
             out.put("lifestyle", ls);
         }
 
         List<String> followups = new ArrayList<>();
-        JsonNode fuNode = path(content, "followups");
-        if (fuNode != null && fuNode.isArray()) {
-            for (JsonNode f : fuNode) {
-                if (followups.size() >= MAX_FOLLOWUPS) {
-                    break;
-                }
-                String summary = text(f, "summary");
-                followups.add(StringUtils.hasText(summary) ? summary : text(f, "title"));
+        for (JsonNode f : iter(path(content, "followups"))) {
+            if (followups.size() >= MAX_FOLLOWUPS) {
+                break;
             }
+            String summary = text(f, "summary");
+            followups.add(StringUtils.hasText(summary) ? summary : text(f, "title"));
         }
         out.put("followups", followups);
 
@@ -256,9 +379,33 @@ public class ReportSummaryGenerator {
             o.put("labCount", arraySize(path(obs, "labs")));
             o.put("examCount", arraySize(path(obs, "exams")));
             o.put("items", observationTitles(obs));
+            List<String> abnormal = new ArrayList<>();
+            for (JsonNode a : iter(path(obs, "abnormalItems"))) {
+                String prev = text(a, "prevValue");
+                abnormal.add(text(a, "name") + " " + text(a, "value") + text(a, "unit")
+                        + "（" + text(a, "flag") + "，参考 " + text(a, "ref") + "）"
+                        + (StringUtils.hasText(prev) ? " 上次 " + prev : ""));
+            }
+            o.put("abnormalItems", abnormal);
             out.put("observations", o);
         }
+
+        List<String> milestones = new ArrayList<>();
+        for (JsonNode m : iter(path(content, "milestones"))) {
+            milestones.add(text(m, "text"));
+        }
+        out.put("milestones", milestones);
+        List<String> goals = new ArrayList<>();
+        for (JsonNode g : iter(path(content, "goals"))) {
+            goals.add(text(g, "label") + "：目标 " + text(g, "targetText") + "，实际 " + text(g, "actualText")
+                    + (g.path("met").asBoolean(false) ? "（已达成）" : "（未达成）"));
+        }
+        out.put("goals", goals);
         return out;
+    }
+
+    private static Iterable<JsonNode> iter(JsonNode node) {
+        return node != null && node.isArray() ? node : List.of();
     }
 
     private List<String> observationTitles(JsonNode obs) {
@@ -275,7 +422,7 @@ public class ReportSummaryGenerator {
                 String label = StringUtils.hasText(text(n, "specimenType"))
                         ? text(n, "specimenType")
                         : text(n, "examType");
-                String note = text(n, "note");
+                String note = StringUtils.hasText(text(n, "conclusion")) ? text(n, "conclusion") : text(n, "note");
                 items.add(StringUtils.hasText(note) ? label + "：" + note : label);
             }
         }

@@ -35,6 +35,7 @@ public class FollowupScheduleScanJobHandler implements JobHandler {
         detail.put("created", counts.created());
         detail.put("skippedOpen", counts.skippedOpen());
         detail.put("skippedNotDue", counts.skippedNotDue());
+        detail.put("skippedDisabled", counts.skippedDisabled());
         String summary = "扫描 " + counts.orgs() + " 个机构 / " + counts.scanned()
                 + " 人，新排期 " + counts.created() + "，已有待办 " + counts.skippedOpen();
         log.info("FOLLOWUP_SCHEDULE_SCAN done: {}", summary);

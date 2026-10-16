@@ -19,7 +19,8 @@ public class NotifyChannelRouter {
         }
         List<NotifyChannel> channels = new ArrayList<>();
         switch (eventType) {
-            case REPORT_PUBLISHED, CARE_PLAN_PUBLISHED, DAILY_HEALTH_TODO, STAFF_NUDGE -> {
+            case REPORT_PUBLISHED, CARE_PLAN_PUBLISHED, DAILY_HEALTH_TODO, STAFF_NUDGE, REWARD, STAFF_KUDOS, MEDICATION_REMIND,
+                    ASSESSMENT_QUESTIONNAIRE -> {
                 channels.add(NotifyChannel.IN_APP);
                 channels.add(NotifyChannel.WEB_PUSH);
             }

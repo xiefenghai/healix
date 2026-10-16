@@ -47,8 +47,8 @@ async function join() {
   margin: 16px;
   padding: 24px 16px;
   background: #fff;
-  border-radius: 20px;
-  box-shadow: var(--hx-shadow);
+  border-radius: var(--hx-r-lg);
+  box-shadow: var(--hx-elev-2);
   text-align: center;
 }
 .illus {

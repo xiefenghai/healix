@@ -14,6 +14,9 @@ public interface HealthReportMapper {
 
     int updateContent(HealthReport row);
 
+    /** 不限状态，仅改快照（运维重算用）。 */
+    int updateSnapshot(HealthReport row);
+
     /** 待审阅报告：写入寄语草稿（不发布）。 */
     int updateDraftNarrative(HealthReport row);
 
@@ -23,6 +26,9 @@ public interface HealthReportMapper {
             @Param("id") String id,
             @Param("workspaceTaskId") String workspaceTaskId,
             @Param("gmtModified") LocalDateTime gmtModified);
+
+    /** 记录 C 端首次阅读时间（已记录则不变）。 */
+    int markPatientRead(@Param("id") String id, @Param("readAt") LocalDateTime readAt);
 
     int softDelete(
             @Param("id") String id,

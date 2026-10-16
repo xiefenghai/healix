@@ -11,6 +11,7 @@ import com.healix.agent.ocr.ObservationReportIngestService.ConfirmMedItem;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.result.ApiResult;
 import com.healix.core.cockpit.dto.CockpitBriefingDto;
+import com.healix.core.cockpit.dto.CockpitDraftInboxItemDto;
 import com.healix.core.cockpit.dto.CockpitFocusDto;
 import com.healix.core.cockpit.dto.CockpitPriorityCardDto;
 import com.healix.core.cockpit.dto.CockpitSummaryDto;
@@ -77,6 +78,13 @@ public class BCockpitController {
     public ApiResult<CockpitFocusDto> focus(@PathVariable String peopleId) {
         return ApiResult.ok(cockpitService.focus(
                 SecurityUtils.requireTenantId(), SecurityUtils.requireCurrentOrgId(), peopleId));
+    }
+
+    /** 机构级草稿箱：我名下待制定 / 复核方案、待审阅报告。 */
+    @GetMapping("/drafts")
+    public ApiResult<List<CockpitDraftInboxItemDto>> drafts() {
+        return ApiResult.ok(cockpitService.draftInbox(
+                SecurityUtils.requireTenantId(), SecurityUtils.requireCurrentOrgId()));
     }
 
     @GetMapping("/briefing")

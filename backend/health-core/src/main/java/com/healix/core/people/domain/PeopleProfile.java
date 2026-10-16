@@ -18,6 +18,8 @@ public class PeopleProfile extends BaseEntity {
     private String namePinyin;
     /** 联系手机号 */
     private String mobile;
+    /** 号码归属：本人 / 配偶 / 子女等，见 MobileOwnerEnum */
+    private String mobileOwner;
     /** 家庭住址 */
     private String address;
     /** 文化程度 code，见 EducationLevelEnum */

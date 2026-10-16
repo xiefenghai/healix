@@ -92,8 +92,8 @@ class CarePlanAllergenGuardTest {
         ObjectNode diet = registry.generate(CarePlanTemplateKeyEnum.DIABETES, ctx, null, null).diet();
         assertTrue(CarePlanAllergenGuard.conflicts(diet, allergens).stream()
                 .noneMatch(h -> !h.allergen().intolerance()));
-        assertEquals("燕麦粥 + 瘦肉末 + 蔬菜", diet.at("/sampleDay/breakfast").asText());
-        assertEquals("清淡主食 + 去皮禽肉 + 蔬菜", diet.at("/sampleDay/dinner").asText());
+        assertEquals("燕麦粥 + 瘦肉末 + 蔬菜", diet.at("/sampleDay/breakfast/text").asText());
+        assertEquals("清淡主食 + 去皮禽肉 + 蔬菜", diet.at("/sampleDay/dinner/text").asText());
         assertEquals("瘦肉/禽肉", diet.at("/recommended/2/label").asText());
         assertEquals(4, diet.get("allergensAvoid").size());
         assertTrue(diet.path("notes").asText().contains("外出就餐"));

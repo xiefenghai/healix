@@ -12,6 +12,12 @@ public class CockpitPriorityCardDto {
     private String displayName;
     /** MALE / FEMALE / UNKNOWN */
     private String gender;
+    /** 周岁；无生日为 null */
+    private Integer age;
+    /** 已建档病种中文 */
+    private List<String> diseaseLabels = new ArrayList<>();
+    /** 各 OPEN 任务的「类型：摘要」，供简报引用具体读数 */
+    private List<String> reasonDetails = new ArrayList<>();
     private String careTeamId;
     private String careTeamName;
     private Boolean clientLinked;

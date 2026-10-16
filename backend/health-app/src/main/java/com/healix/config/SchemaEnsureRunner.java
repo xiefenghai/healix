@@ -41,6 +41,10 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 """);
 
         ensureColumn(
+                "people_profile",
+                "mobile_owner",
+                "ALTER TABLE people_profile ADD COLUMN mobile_owner VARCHAR(16) NULL COMMENT '号码归属：SELF/SPOUSE/CHILD/PARENT/RELATIVE/OTHER' AFTER mobile");
+        ensureColumn(
                 "people_medication",
                 "timing_note",
                 "ALTER TABLE people_medication ADD COLUMN timing_note VARCHAR(128) NULL COMMENT '用药时机：晨起/饭后/痛时服等' AFTER stop_date");
@@ -617,6 +621,394 @@ public class SchemaEnsureRunner implements ApplicationRunner {
         dropObsoleteTable("intervention_record");
 
         ensureHealthReportSchema();
+        ensureRewardSchema();
+        ensureMedicationSchema();
+        ensureAssessmentSchema();
+    }
+
+    private void ensureAssessmentSchema() {
+        ensureColumn(
+                "people_assessment_snapshot",
+                "tier",
+                "ALTER TABLE people_assessment_snapshot ADD COLUMN tier VARCHAR(16) NULL COMMENT 'LOW/MID/HIGH/VERY_HIGH' AFTER level");
+        ensureColumn(
+                "people_assessment_snapshot",
+                "fingerprint",
+                "ALTER TABLE people_assessment_snapshot ADD COLUMN fingerprint VARCHAR(64) NULL COMMENT '结果指纹，未变化不新增快照' AFTER input_snapshot_json");
+        tryExecute("UPDATE people_assessment_snapshot SET kind = 'RISK' WHERE kind = 'INCIDENT_RISK'");
+        tryExecute("UPDATE people_assessment_snapshot SET kind = 'SEVERITY' WHERE kind = 'CONTROL_STATUS'");
+        tryExecute("UPDATE people_assessment_snapshot SET engine_code = 'OBESITY_RISK' WHERE engine_code = 'OBESITY_SCREEN'");
+        tryExecute("UPDATE people_assessment_snapshot SET engine_code = 'DIABETES_SEVERITY' WHERE engine_code = 'DIABETES_CONTROL_LABEL'");
+        rewriteAssessmentAdvice();
+        ensureTable(
+                "people_assessment_latest",
+                """
+                CREATE TABLE IF NOT EXISTS people_assessment_latest (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    engine_code VARCHAR(64) NOT NULL,
+                    category VARCHAR(16) NOT NULL,
+                    disease_code VARCHAR(32) NOT NULL,
+                    snapshot_id VARCHAR(32) NOT NULL,
+                    status VARCHAR(16) NOT NULL,
+                    level VARCHAR(32) NULL,
+                    level_label VARCHAR(64) NULL,
+                    tier VARCHAR(16) NULL,
+                    score DECIMAL(10,2) NULL,
+                    active TINYINT NOT NULL DEFAULT 1,
+                    fingerprint VARCHAR(64) NULL,
+                    assessed_at DATETIME NOT NULL,
+                    evaluated_at DATETIME NOT NULL,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_assessment_latest (people_id, engine_code),
+                    KEY idx_assessment_latest_tenant (tenant_id, people_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每人每引擎最新评估结果'
+                """);
+        ensureTable(
+                "people_assessment_state",
+                """
+                CREATE TABLE IF NOT EXISTS people_assessment_state (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    dirty_at DATETIME NULL,
+                    evaluated_at DATETIME NULL,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_assessment_state_people (people_id),
+                    KEY idx_assessment_state_dirty (dirty_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估待重算标记'
+                """);
+        ensureTable(
+                "people_assessment_fact",
+                """
+                CREATE TABLE IF NOT EXISTS people_assessment_fact (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    field_code VARCHAR(64) NOT NULL,
+                    value_json JSON NOT NULL,
+                    source VARCHAR(32) NOT NULL COMMENT 'QUESTIONNAIRE_STAFF/QUESTIONNAIRE_PATIENT',
+                    submission_id VARCHAR(32) NULL,
+                    recorded_at DATETIME NOT NULL,
+                    recorded_by VARCHAR(32) NULL,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_assessment_fact_id (id),
+                    UNIQUE KEY uk_assessment_fact_field (people_id, field_code)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估问卷补充事实（档案外字段，仅存最新值）'
+                """);
+        ensureTable(
+                "assessment_questionnaire_submission",
+                """
+                CREATE TABLE IF NOT EXISTS assessment_questionnaire_submission (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    portal VARCHAR(8) NOT NULL COMMENT 'B/C',
+                    submitted_by VARCHAR(32) NULL COMMENT 'staffId / accountId',
+                    request_id VARCHAR(32) NULL,
+                    answers_json JSON NOT NULL,
+                    overrides_json JSON NULL COMMENT '确认覆盖的档案冲突项',
+                    submitted_at DATETIME NOT NULL,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_assessment_submission_id (id),
+                    KEY idx_assessment_submission_people (tenant_id, people_id, submitted_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估问卷提交记录'
+                """);
+        ensureTable(
+                "assessment_questionnaire_request",
+                """
+                CREATE TABLE IF NOT EXISTS assessment_questionnaire_request (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    org_id VARCHAR(32) NULL,
+                    staff_id VARCHAR(32) NOT NULL,
+                    fields_json JSON NOT NULL,
+                    status VARCHAR(16) NOT NULL COMMENT 'PENDING/SUBMITTED/EXPIRED/CANCELLED',
+                    expires_at DATETIME NOT NULL,
+                    reminded_at DATETIME NULL,
+                    submission_id VARCHAR(32) NULL,
+                    submitted_at DATETIME NULL,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_assessment_request_id (id),
+                    KEY idx_assessment_request_people (people_id, status),
+                    KEY idx_assessment_request_status (status, expires_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管师发给患者的评估问卷'
+                """);
+    }
+
+    private void ensureMedicationSchema() {
+        ensureColumn(
+                "people_medication",
+                "drug_code",
+                "ALTER TABLE people_medication ADD COLUMN drug_code VARCHAR(64) NULL COMMENT '药品目录编码' AFTER drug_name");
+        ensureColumn(
+                "people_medication",
+                "slots_json",
+                "ALTER TABLE people_medication ADD COLUMN slots_json VARCHAR(128) NULL COMMENT '服药时段覆盖' AFTER status");
+        ensureColumn(
+                "people_medication",
+                "verified_at",
+                "ALTER TABLE people_medication ADD COLUMN verified_at DATETIME NULL COMMENT '自添加药核对时间' AFTER slots_json");
+        ensureColumn(
+                "people_medication",
+                "verified_by_staff_id",
+                "ALTER TABLE people_medication ADD COLUMN verified_by_staff_id VARCHAR(32) NULL COMMENT '核对人' AFTER verified_at");
+        ensureColumn(
+                "people_medication",
+                "allergy_conflict",
+                "ALTER TABLE people_medication ADD COLUMN allergy_conflict VARCHAR(255) NULL COMMENT '药物过敏冲突摘要' AFTER verified_by_staff_id");
+        ensureColumn(
+                "people_medication",
+                "stop_reason",
+                "ALTER TABLE people_medication ADD COLUMN stop_reason VARCHAR(32) NULL COMMENT '患者自述停药原因' AFTER allergy_conflict");
+        ensureColumn(
+                "people_medication_intake",
+                "dose_seq",
+                "ALTER TABLE people_medication_intake ADD COLUMN dose_seq TINYINT NOT NULL DEFAULT 1 COMMENT 'PRN 同日第几次' AFTER time_slot");
+        ensureColumn(
+                "people_medication_intake",
+                "taken_at",
+                "ALTER TABLE people_medication_intake ADD COLUMN taken_at DATETIME NULL COMMENT '实际服药时刻' AFTER status");
+        ensureColumn(
+                "people_medication_intake",
+                "backfill",
+                "ALTER TABLE people_medication_intake ADD COLUMN backfill TINYINT NOT NULL DEFAULT 0 COMMENT '1=次日补记' AFTER taken_at");
+        ensureIndex(
+                "people_medication_intake",
+                "uk_med_intake_day_slot_seq",
+                "ALTER TABLE people_medication_intake ADD UNIQUE KEY uk_med_intake_day_slot_seq (medication_id, intake_date, time_slot, dose_seq, gmt_deleted)");
+        dropObsoleteIndex("people_medication_intake", "uk_med_intake_day_slot");
+        ensureTable(
+                "people_medication_reminder",
+                """
+                CREATE TABLE IF NOT EXISTS people_medication_reminder (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    enabled TINYINT NOT NULL DEFAULT 1,
+                    morning_at CHAR(5) NOT NULL DEFAULT '08:00',
+                    noon_at CHAR(5) NOT NULL DEFAULT '12:00',
+                    evening_at CHAR(5) NOT NULL DEFAULT '18:00',
+                    bedtime_at CHAR(5) NOT NULL DEFAULT '21:30',
+                    follow_up_min INT NOT NULL DEFAULT 30,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_med_reminder_id (id),
+                    UNIQUE KEY uk_med_reminder_people (tenant_id, people_id, gmt_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='服药提醒设置'
+                """);
+        ensureTable(
+                "people_medication_reminder_log",
+                """
+                CREATE TABLE IF NOT EXISTS people_medication_reminder_log (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    remind_date DATE NOT NULL,
+                    time_slot VARCHAR(16) NOT NULL,
+                    seq TINYINT NOT NULL,
+                    sent_at DATETIME NOT NULL,
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_med_remind (people_id, remind_date, time_slot, seq)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='服药提醒发送去重'
+                """);
+        ensureTable(
+                "people_medication_feedback",
+                """
+                CREATE TABLE IF NOT EXISTS people_medication_feedback (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    medication_id VARCHAR(32) NOT NULL,
+                    kind VARCHAR(24) NOT NULL,
+                    symptoms_json VARCHAR(255) NULL,
+                    severity VARCHAR(16) NULL,
+                    content VARCHAR(500) NULL,
+                    status VARCHAR(16) NOT NULL DEFAULT 'OPEN',
+                    work_task_id VARCHAR(32) NULL,
+                    handled_by_staff_id VARCHAR(32) NULL,
+                    handled_at DATETIME NULL,
+                    reply VARCHAR(500) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_med_feedback_id (id),
+                    KEY idx_med_feedback_people (tenant_id, people_id, status),
+                    KEY idx_med_feedback_med (medication_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患者用药反馈'
+                """);
+    }
+
+    private void ensureRewardSchema() {
+        ensureTable(
+                "reward_point_ledger",
+                """
+                CREATE TABLE IF NOT EXISTS reward_point_ledger (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    biz_date DATE NOT NULL,
+                    biz_type VARCHAR(16) NOT NULL,
+                    biz_ref VARCHAR(64) NOT NULL,
+                    seq INT NOT NULL DEFAULT 0,
+                    points INT NOT NULL,
+                    title VARCHAR(64) NOT NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_reward_ledger_id (id),
+                    UNIQUE KEY uk_reward_ledger_ref (people_id, biz_type, biz_ref, seq),
+                    KEY idx_reward_ledger_people_date (people_id, biz_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健康豆流水'
+                """);
+        ensureTable(
+                "reward_summary",
+                """
+                CREATE TABLE IF NOT EXISTS reward_summary (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    level_max INT NOT NULL DEFAULT 1,
+                    streak_days INT NOT NULL DEFAULT 0,
+                    best_streak INT NOT NULL DEFAULT 0,
+                    freeze_cards INT NOT NULL DEFAULT 0,
+                    last_settled_date DATE NULL,
+                    last_push_date DATE NULL,
+                    reward_disabled TINYINT NOT NULL DEFAULT 0,
+                    peer_opt_out TINYINT NOT NULL DEFAULT 0,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_reward_summary_id (id),
+                    UNIQUE KEY uk_reward_summary_people (people_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患者激励汇总'
+                """);
+        ensureColumn(
+                "reward_summary",
+                "peer_opt_out",
+                "ALTER TABLE reward_summary ADD COLUMN peer_opt_out TINYINT NOT NULL DEFAULT 0 COMMENT '关闭同期百分位对比' AFTER reward_disabled");
+        ensureTable(
+                "reward_day",
+                """
+                CREATE TABLE IF NOT EXISTS reward_day (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    biz_date DATE NOT NULL,
+                    active TINYINT NOT NULL DEFAULT 0,
+                    full_day TINYINT NOT NULL DEFAULT 0,
+                    due_count INT NOT NULL DEFAULT 0,
+                    done_count INT NOT NULL DEFAULT 0,
+                    freeze_used TINYINT NOT NULL DEFAULT 0,
+                    streak_after INT NOT NULL DEFAULT 0,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_reward_day_id (id),
+                    UNIQUE KEY uk_reward_day_people (people_id, biz_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='激励日结'
+                """);
+        ensureTable(
+                "reward_badge",
+                """
+                CREATE TABLE IF NOT EXISTS reward_badge (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    badge_code VARCHAR(64) NOT NULL,
+                    badge_name VARCHAR(64) NOT NULL,
+                    kind VARCHAR(16) NOT NULL,
+                    earned_date DATE NOT NULL,
+                    source_ref VARCHAR(64) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_reward_badge_id (id),
+                    UNIQUE KEY uk_reward_badge_people (people_id, badge_code)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患者徽章'
+                """);
+        ensureTable(
+                "reward_kudos",
+                """
+                CREATE TABLE IF NOT EXISTS reward_kudos (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    org_id VARCHAR(32) NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    staff_id VARCHAR(32) NOT NULL,
+                    kudos_date DATE NOT NULL,
+                    message VARCHAR(100) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_reward_kudos_id (id),
+                    UNIQUE KEY uk_reward_kudos_day (people_id, staff_id, kudos_date),
+                    KEY idx_reward_kudos_people (people_id, gmt_created)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管师点赞'
+                """);
+        ensureTable(
+                "reward_challenge",
+                """
+                CREATE TABLE IF NOT EXISTS reward_challenge (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    period_start DATE NOT NULL,
+                    period_end DATE NOT NULL,
+                    kind VARCHAR(32) NOT NULL,
+                    title VARCHAR(64) NOT NULL,
+                    target INT NOT NULL,
+                    progress INT NOT NULL DEFAULT 0,
+                    status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+                    source VARCHAR(16) NOT NULL DEFAULT 'AUTO',
+                    points_awarded INT NOT NULL DEFAULT 0,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_reward_challenge_id (id),
+                    UNIQUE KEY uk_reward_challenge_week (people_id, period_start, kind),
+                    KEY idx_reward_challenge_people (people_id, period_start)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='周挑战'
+                """);
     }
 
     /** 旧 P2 占位表 → 管理报告主表（本地空表加列即可）。 */
@@ -642,6 +1034,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     workspace_task_id VARCHAR(32) NULL,
                     published_at DATETIME NULL,
                     published_by_staff_id VARCHAR(32) NULL,
+                    patient_read_at DATETIME NULL COMMENT 'C 端首次阅读时间',
                     generated_by VARCHAR(16) NOT NULL COMMENT 'JOB/MANUAL',
                     is_deleted TINYINT NOT NULL DEFAULT 0,
                     gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -654,6 +1047,10 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_report_people_period (people_id, period_type, period_start)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理报告（周/月/季）'
                 """);
+        ensureColumn(
+                "health_report",
+                "patient_read_at",
+                "ALTER TABLE health_report ADD COLUMN patient_read_at DATETIME NULL COMMENT 'C 端首次阅读时间' AFTER published_by_staff_id");
         ensureColumn(
                 "health_report",
                 "org_id",
@@ -903,6 +1300,28 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健管沟通消息气泡'
                 """);
         ensureTable(
+                "followup_schedule_rule",
+                """
+                CREATE TABLE IF NOT EXISTS followup_schedule_rule (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    org_id VARCHAR(32) NOT NULL DEFAULT '',
+                    disease_code VARCHAR(64) NOT NULL DEFAULT '',
+                    interval_with_plan INT NOT NULL,
+                    interval_no_plan INT NOT NULL,
+                    enabled TINYINT NOT NULL DEFAULT 1,
+                    updated_by_staff_id VARCHAR(32) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_followup_rule_id (id),
+                    UNIQUE KEY uk_followup_rule_scope (tenant_id, org_id, disease_code, gmt_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定期随访排期规则'
+                """);
+        ensureTable(
                 "web_push_subscription",
                 """
                 CREATE TABLE IF NOT EXISTS web_push_subscription (
@@ -939,6 +1358,117 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     UNIQUE KEY uk_web_push_vapid_id (id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Web Push VAPID 密钥'
                 """);
+        ensureTable(
+                "water_intake_log",
+                """
+                CREATE TABLE IF NOT EXISTS water_intake_log (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    biz_date DATE NOT NULL,
+                    amount_ml INT NOT NULL,
+                    source VARCHAR(16) NOT NULL DEFAULT 'CUP',
+                    recorded_at DATETIME NULL,
+                    recorded_by_people_id VARCHAR(32) NULL,
+                    recorded_by_staff_id VARCHAR(32) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_water_intake_id (id),
+                    KEY idx_water_intake_people_date (people_id, biz_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='饮水记录'
+                """);
+        ensureColumn(
+                "water_intake_log",
+                "recorded_at",
+                "ALTER TABLE water_intake_log ADD COLUMN recorded_at DATETIME NULL AFTER source");
+        jdbcTemplate.execute(
+                "UPDATE water_intake_log SET recorded_at = gmt_created WHERE recorded_at IS NULL AND is_deleted = 0");
+        ensureTable(
+                "sleep_log",
+                """
+                CREATE TABLE IF NOT EXISTS sleep_log (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    biz_date DATE NOT NULL,
+                    segment VARCHAR(16) NOT NULL DEFAULT 'MAIN',
+                    duration_min INT NOT NULL,
+                    quality VARCHAR(16) NOT NULL DEFAULT 'FAIR',
+                    bedtime TIME NULL,
+                    wake_time TIME NULL,
+                    note VARCHAR(200) NULL,
+                    recorded_by_people_id VARCHAR(32) NULL,
+                    recorded_by_staff_id VARCHAR(32) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_sleep_log_id (id),
+                    KEY idx_sleep_log_people_date (people_id, biz_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='睡眠记录'
+                """);
+        ensureColumn(
+                "sleep_log",
+                "segment",
+                "ALTER TABLE sleep_log ADD COLUMN segment VARCHAR(16) NOT NULL DEFAULT 'MAIN' AFTER biz_date");
+        // 多段睡眠：去掉「一人一天一条」唯一约束
+        dropObsoleteIndex("sleep_log", "uk_sleep_log_people_date");
+        ensureTable(
+                "mood_log",
+                """
+                CREATE TABLE IF NOT EXISTS mood_log (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    biz_date DATE NOT NULL,
+                    score TINYINT NOT NULL,
+                    tags_json JSON NULL,
+                    note VARCHAR(200) NULL,
+                    recorded_by_people_id VARCHAR(32) NULL,
+                    recorded_by_staff_id VARCHAR(32) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_mood_log_id (id),
+                    KEY idx_mood_log_people_date (people_id, biz_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='心情记录'
+                """);
+        ensureTable(
+                "org_recipe",
+                """
+                CREATE TABLE IF NOT EXISTS org_recipe (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    org_id VARCHAR(32) NOT NULL,
+                    name VARCHAR(64) NOT NULL,
+                    description VARCHAR(255) NULL,
+                    tags_json JSON NULL,
+                    meal_json JSON NOT NULL,
+                    week_json JSON NULL,
+                    energy_kcal_hint INT NULL,
+                    allergen_keywords_json JSON NULL,
+                    status VARCHAR(16) NOT NULL DEFAULT 'ENABLED',
+                    created_by_staff_id VARCHAR(32) NULL,
+                    updated_by_staff_id VARCHAR(32) NULL,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_org_recipe_id (id),
+                    KEY idx_org_recipe_org (org_id, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='机构食谱库'
+                """);
     }
 
     private void dropObsoleteTable(String table) {
@@ -971,6 +1501,47 @@ public class SchemaEnsureRunner implements ApplicationRunner {
         }
         jdbcTemplate.execute(ddl);
         log.warn("Ensured table {}", table);
+    }
+
+    /** 评估建议文案不得含启药、调药、手术等诊疗指令；已存快照按旧文案片段替换（新文案不含旧片段，可重复执行）。 */
+    private void rewriteAssessmentAdvice() {
+        String[][] pairs = {
+            {"心血管风险很高危，建议立即启动或强化药物治疗，并积极处理并存的危险因素与临床疾病",
+                "心血管风险分层为很高危。建议优先安排医师复诊，由医师评估降压方案；加强血压监测，协助管理并存的危险因素"},
+            {"心血管风险高危，建议及时启动降压药物治疗，同时控制其他危险因素",
+                "心血管风险分层为高危。建议安排医师复诊评估降压方案，同时加强血压监测与危险因素管理"},
+            {"心血管风险中危，建议生活方式干预并密切随访血压，必要时启动药物治疗",
+                "心血管风险分层为中危。建议生活方式干预并加强血压随访，按医师意见复诊"},
+            {"极重度肥胖，建议转诊专科评估药物或代谢手术治疗",
+                "肥胖分层为极重度。建议安排专科医师评估后续干预方案，持续开展营养与运动管理"},
+            {"重度肥胖或已有终末器官损害，建议专科评估，综合药物、营养与运动干预",
+                "肥胖分层为重度或已有终末器官损害。建议安排专科医师评估，同时加强营养、运动与合并症随访"},
+            {"建议强化减重（目标 3–6 个月减重 5%–10%）并管理合并症",
+                "建议强化生活方式减重（目标 3–6 个月减重 5%–10%），关注合并症随访"},
+            {"心脑血管病风险高危，建议尽快就医", "心脑血管病风险高危，建议尽快安排医师就诊"},
+            {"建议立即就医，启动药物治疗", "建议尽快安排医师就诊"},
+            {"强烈建议行口服葡萄糖耐量试验（OGTT）排查是否已患病", "建议安排医师评估是否进行口服葡萄糖耐量试验（OGTT）"},
+            {"强烈建议做口服葡萄糖耐量试验（OGTT）", "建议安排医师评估是否进行口服葡萄糖耐量试验（OGTT）"},
+            {"立即就医，紧急干预", "建议尽快安排医师复诊，加强血糖监测"},
+            {"建议就医复评，加强监测", "建议安排医师复评，加强血糖监测"},
+        };
+        for (String[] p : pairs) {
+            try {
+                int n = jdbcTemplate.update(
+                        """
+                        UPDATE people_assessment_snapshot
+                        SET result_json = JSON_SET(result_json, '$.advice',
+                            REPLACE(JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.advice')), ?, ?))
+                        WHERE JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.advice')) LIKE CONCAT('%', ?, '%')
+                        """,
+                        p[0], p[1], p[0]);
+                if (n > 0) {
+                    log.warn("Rewrote assessment advice x{}: {}", n, p[0]);
+                }
+            } catch (Exception ex) {
+                log.warn("Skip assessment advice rewrite [{}]: {}", p[0], ex.getMessage());
+            }
+        }
     }
 
     /** 数据兜底语句：表可能还没建出来，失败不该拦住启动。 */

@@ -13,6 +13,7 @@ import {
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsType } from 'echarts/core'
 import { api } from '../api/http'
+import LifestyleTrendsPanel from '../shared/LifestyleTrendsPanel.vue'
 import {
   findingsSummaryText,
   formatDateTime,
@@ -34,17 +35,18 @@ interface Metric {
 }
 
 type RangeKey = '30' | '90' | '180' | '365'
-type TabKey = 'vitals' | 'labs' | 'exams'
+type TabKey = 'vitals' | 'lifestyle' | 'labs' | 'exams'
 
 const route = useRoute()
 const router = useRouter()
 const isTabPage = computed(() => route.path === '/health')
 const pageTitle = computed(() => (isTabPage.value ? '健康' : '健康数据'))
-const TAB_KEYS: TabKey[] = ['vitals', 'labs', 'exams']
+const TAB_KEYS: TabKey[] = ['vitals', 'lifestyle', 'labs', 'exams']
 const initialTab = String(route.query.tab || '')
 const tab = ref<TabKey>(TAB_KEYS.includes(initialTab as TabKey) ? (initialTab as TabKey) : 'vitals')
 const tabs = [
   { name: 'vitals' as const, title: '体征趋势' },
+  { name: 'lifestyle' as const, title: '生活记录' },
   { name: 'labs' as const, title: '检验记录' },
   { name: 'exams' as const, title: '检查记录' },
 ]
@@ -124,7 +126,7 @@ function buildBmiSeries(): Array<{ time: string; value: number }> {
 
 function baseOption(unit: string) {
   return {
-    color: ['#2b9e9e', '#f5a623', '#3b82f6', '#8b5cf6'],
+    color: ['#0e9f83', '#e5a100', '#3b82f6', '#8b5cf6'],
     tooltip: {
       trigger: 'axis' as const,
       confine: true,
@@ -135,21 +137,21 @@ function baseOption(unit: string) {
       right: 0,
       itemWidth: 12,
       itemHeight: 8,
-      textStyle: { fontSize: 11, color: '#8a97a5' },
+      textStyle: { fontSize: 11, color: '#6b7a87' },
     },
     grid: { left: 40, right: 12, top: 28, bottom: 28 },
     xAxis: {
       type: 'category' as const,
       boundaryGap: false,
-      axisLabel: { hideOverlap: true, fontSize: 10, color: '#8a97a5' },
+      axisLabel: { hideOverlap: true, fontSize: 10, color: '#6b7a87' },
       axisLine: { lineStyle: { color: '#e5eef0' } },
     },
     yAxis: {
       type: 'value' as const,
       scale: true,
       name: unit,
-      nameTextStyle: { fontSize: 10, color: '#8a97a5', padding: [0, 0, 0, 4] },
-      axisLabel: { fontSize: 10, color: '#8a97a5' },
+      nameTextStyle: { fontSize: 10, color: '#6b7a87', padding: [0, 0, 0, 4] },
+      axisLabel: { fontSize: 10, color: '#6b7a87' },
       splitLine: { lineStyle: { type: 'dashed' as const, color: '#eef2f5' } },
     },
   }
@@ -425,6 +427,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <LifestyleTrendsPanel v-else-if="tab === 'lifestyle'" />
+
     <div v-else-if="tab === 'labs'" class="pad records-pad">
       <div class="records-head">
         <p class="records-hint">可查看报告，也可自己添加；录错可进详情修改</p>
@@ -493,7 +497,7 @@ onBeforeUnmount(() => {
   padding: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(43, 158, 158, 0.12);
+  border: 1px solid rgba(14, 159, 131, 0.12);
 }
 
 .seg-item {
@@ -509,8 +513,8 @@ onBeforeUnmount(() => {
 
 .seg-item.active {
   color: #fff;
-  background: linear-gradient(90deg, #5cb8b8, #2b9e9e);
-  box-shadow: 0 6px 14px rgba(43, 158, 158, 0.28);
+  background: var(--hx-grad);
+  box-shadow: 0 6px 14px rgba(14, 159, 131, 0.28);
 }
 
 .pad {
@@ -554,7 +558,7 @@ onBeforeUnmount(() => {
 .trend-head h2 {
   margin: 0;
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .trend-head p {
@@ -581,7 +585,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
   padding: 7px 12px;
   border-radius: 999px;
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 
 .range-chip.active {
@@ -598,13 +602,13 @@ onBeforeUnmount(() => {
   background: var(--hx-card);
   border-radius: 16px;
   padding: 12px 12px 8px;
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 
 .chart-card h3 {
   margin: 0;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .chart-sub {
@@ -633,7 +637,7 @@ onBeforeUnmount(() => {
   padding: 14px 16px;
   border-radius: 16px;
   background: var(--hx-card);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
   color: inherit;
 }
 
@@ -659,7 +663,7 @@ onBeforeUnmount(() => {
 }
 
 .record-arrow {
-  color: #c0c8d0;
+  color: var(--hx-n-400);
   font-size: 14px;
 }
 </style>

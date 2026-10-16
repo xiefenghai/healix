@@ -58,6 +58,12 @@ const TASK_TYPES = [
   { value: 'EXERCISE_ALERT', label: '运动不适' },
   { value: 'FOLLOW_UP', label: '定期随访' },
   { value: 'REPORT_REVIEW', label: '报告审阅' },
+  { value: 'MED_FEEDBACK', label: '用药反馈' },
+  { value: 'MED_VERIFY', label: '用药核对' },
+  { value: 'ASSESSMENT_ESCALATION', label: '评估升级' },
+  { value: 'ASSESSMENT_SUSPECTED', label: '疑似患病' },
+  { value: 'ARCHIVE_SELF_REPORT', label: '患者自报更新' },
+  { value: 'QUESTIONNAIRE_EXPIRED', label: '问卷未完成' },
 ]
 
 const route = useRoute()
@@ -207,8 +213,12 @@ function taskTypeTagType(taskType?: string): 'danger' | 'warning' | 'primary' | 
   switch (taskType) {
     case 'METRIC_ALERT':
     case 'EXERCISE_ALERT':
+    case 'MED_FEEDBACK':
+    case 'ASSESSMENT_ESCALATION':
+    case 'ASSESSMENT_SUSPECTED':
       return 'danger'
     case 'PLAN_NUDGE':
+    case 'QUESTIONNAIRE_EXPIRED':
       return 'warning'
     case 'FOLLOW_UP':
       return 'primary'
@@ -295,6 +305,10 @@ function processActionLabel(row: WorkspaceTaskItem) {
       return '制定方案'
     case 'REPORT_REVIEW':
       return '审阅'
+    case 'MED_FEEDBACK':
+      return '处理反馈'
+    case 'MED_VERIFY':
+      return '核对用药'
     default:
       return '去办理'
   }
@@ -317,7 +331,9 @@ function canProcess(row: WorkspaceTaskItem) {
     isMineOpen(row) &&
     (row.taskType === 'TEAM_ASSIGN' ||
       row.taskType === 'PLAN_CREATE' ||
-      row.taskType === 'REPORT_REVIEW')
+      row.taskType === 'REPORT_REVIEW' ||
+      row.taskType === 'MED_FEEDBACK' ||
+      row.taskType === 'MED_VERIFY')
   )
 }
 
@@ -507,7 +523,7 @@ async function loadPlanVersionCheckins(peopleId: string, versionId: string, publ
   }
 }
 
-async function openPlanVersionPreview(peopleId: string, versionId: string) {
+async function openPlanVersionPreview(peopleId: string, versionId: string, peopleName?: string) {
   const [verRes, bundleRes] = await Promise.all([
     api<{
       data: {
@@ -545,6 +561,7 @@ async function openPlanVersionPreview(peopleId: string, versionId: string) {
     diet: v.diet,
     execution: v.execution,
     publishedAt: v.publishedAt,
+    peopleName,
     checkins: [],
     checkinsLoading: true,
   }
@@ -579,7 +596,7 @@ async function openDetail(row: WorkspaceTaskItem) {
       const versionId = res.data.payload?.carePlanVersionId
       const peopleId = res.data.peopleId || row.peopleId
       if (versionId && peopleId) {
-        await openPlanVersionPreview(peopleId, versionId)
+        await openPlanVersionPreview(peopleId, versionId, row.peopleName)
         return
       }
       ElMessage.warning('该任务未关联方案版本，请从患者管理方案页查看')

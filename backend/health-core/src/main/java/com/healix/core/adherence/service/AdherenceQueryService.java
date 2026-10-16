@@ -31,6 +31,7 @@ import com.healix.core.medication.enums.MedicationIntakeStatusEnum;
 import com.healix.core.medication.mapper.PeopleMedicationIntakeMapper;
 import com.healix.core.medication.mapper.PeopleMedicationMapper;
 import com.healix.core.medication.support.MedicationFrequencySupport;
+import com.healix.core.medication.support.MedicationSlotRules;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.service.OrgWorkspaceService;
 import java.time.LocalDate;
@@ -613,8 +614,8 @@ public class AdherenceQueryService {
                 continue;
             }
             Set<String> slots = takenToday.getOrDefault(med.getId(), Set.of());
-            boolean prn = !MedicationFrequencySupport.isDueOnDay(med.getFrequency());
-            int perDay = prn ? 0 : MedicationFrequencySupport.dosesPerDay(med.getFrequency());
+            boolean prn = MedicationSlotRules.isPrn(med);
+            int perDay = MedicationSlotRules.dueCount(med);
             int done = prn ? slots.size() : Math.min(slots.size(), perDay);
 
             AdherenceTodayMedItemDto item = new AdherenceTodayMedItemDto();
@@ -762,9 +763,24 @@ public class AdherenceQueryService {
             item.setMed(medMetrics);
             item.setLifestyle(lifestyleByPeople.getOrDefault(peopleId, new AdherenceLifestyleMetricsDto()));
             item.setRiskLevel(resolveRisk(planMetrics, medMetrics).name());
+            if (planRecordExists) {
+                item.setPlanEndDate(CarePlanDueSupport.resolveHorizonEnd(window.planStart(), window.horizonDays()));
+            }
             out.add(item);
         }
         return out;
+    }
+
+    /** 机构内当前员工可见的全部依从条目（未分页、未排序），供驾驶舱统计问答。 */
+    public List<AdherencePatientItemDto> listUniverse(String tenantId, String orgId, LocalDate day) {
+        return buildUniverse(tenantId, orgId, day != null ? day : LocalDate.now(), null, null);
+    }
+
+    /** 单患者近 7 日饮食 / 运动记录天数。 */
+    public AdherenceLifestyleMetricsDto lifestyle7d(String tenantId, String peopleId, LocalDate day) {
+        LocalDate d = day != null ? day : LocalDate.now();
+        return loadLifestyle(tenantId, List.of(peopleId), d)
+                .getOrDefault(peopleId, new AdherenceLifestyleMetricsDto());
     }
 
     private static PlanWindow resolvePlanWindow(
@@ -900,7 +916,7 @@ public class AdherenceQueryService {
             if (!MedicationFrequencySupport.isDueOnDay(med.getFrequency())) {
                 continue;
             }
-            int perDay = MedicationFrequencySupport.dosesPerDay(med.getFrequency());
+            int perDay = MedicationSlotRules.dueCount(med);
             dueDoses += perDay;
             takenDoses += Math.min(slotCount, perDay);
         }

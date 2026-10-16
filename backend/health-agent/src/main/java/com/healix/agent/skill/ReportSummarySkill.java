@@ -117,7 +117,9 @@ public class ReportSummarySkill implements AgentSkill {
                     cmd.staffId(),
                     draft.staffComment(),
                     draft.nextFocus(),
-                    draft.quarterAdvice());
+                    draft.quarterAdvice(),
+                    draft.insights(),
+                    draft.highlights());
         } catch (BusinessException e) {
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("点评已生成，但草稿暂未写入：" + e.getMessage()));
         } catch (Exception e) {

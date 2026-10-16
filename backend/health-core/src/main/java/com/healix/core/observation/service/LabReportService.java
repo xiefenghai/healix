@@ -1,5 +1,6 @@
 package com.healix.core.observation.service;
 
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
@@ -36,6 +37,7 @@ public class LabReportService {
     private static final String OPERATOR_PEOPLE = "PEOPLE";
 
     private final LabReportMapper labReportMapper;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
     private final LabResultItemMapper labResultItemMapper;
     private final ArchiveAccessService archiveAccessService;
     private final FieldRevisionService fieldRevisionService;
@@ -71,6 +73,7 @@ public class LabReportService {
     @Transactional
     public LabReportViewDto create(
             String tenantId, String orgId, String peopleId, String staffId, LabReportCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         validateCommand(cmd);
         LabReport row = new LabReport();
@@ -102,6 +105,7 @@ public class LabReportService {
     /** C 端：患者自行上报检验报告。 */
     @Transactional
     public LabReportViewDto createForPatient(String tenantId, String peopleId, LabReportCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         validateCommand(cmd);
         LabReport row = new LabReport();
@@ -131,6 +135,7 @@ public class LabReportService {
     @Transactional
     public LabReportViewDto updateForPatient(
             String tenantId, String peopleId, String reportId, LabReportCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         validateCommand(cmd);
         LabReport row = requireOwned(tenantId, peopleId, reportId);
@@ -163,6 +168,7 @@ public class LabReportService {
     /** C 端：用户删除自己上报的检验报告。 */
     @Transactional
     public void deleteForPatient(String tenantId, String peopleId, String reportId) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         LabReport row = requireOwned(tenantId, peopleId, reportId);
         assertPatientOwned(row.getSource());
@@ -196,6 +202,7 @@ public class LabReportService {
             String staffId,
             String reportId,
             LabReportCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         validateCommand(cmd);
         LabReport row = requireOwned(tenantId, peopleId, reportId);
@@ -225,6 +232,7 @@ public class LabReportService {
 
     @Transactional
     public void delete(String tenantId, String orgId, String peopleId, String staffId, String reportId) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         LabReport row = requireOwned(tenantId, peopleId, reportId);
         List<LabResultItem> items = labResultItemMapper.listByReportId(reportId);

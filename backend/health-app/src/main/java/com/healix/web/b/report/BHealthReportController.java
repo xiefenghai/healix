@@ -15,6 +15,7 @@ import com.healix.core.report.service.HealthReportService;
 import com.healix.security.SecurityUtils;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.validation.annotation.Validated;
@@ -93,6 +94,8 @@ public class BHealthReportController {
                 draft.staffComment(),
                 draft.nextFocus(),
                 draft.quarterAdvice(),
+                draft.insights(),
+                draft.highlights(),
                 draft.fromLlm(),
                 draft.note()));
     }
@@ -100,14 +103,16 @@ public class BHealthReportController {
     @PostMapping("/health-reports/{id}/publish")
     public ApiResult<HealthReportViewDto> publish(
             @PathVariable String id, @RequestBody(required = false) PublishRequest req) {
-        PublishRequest body = req == null ? new PublishRequest(null, null, null) : req;
+        PublishRequest body = req == null ? new PublishRequest(null, null, null, null, null) : req;
         return ApiResult.ok(healthReportService.publish(
                 SecurityUtils.requireCurrentOrgId(),
                 id,
                 SecurityUtils.requireStaffId(),
                 body.staffComment(),
                 body.nextFocus(),
-                body.quarterAdvice()));
+                body.quarterAdvice(),
+                body.insights(),
+                body.highlights()));
     }
 
     @PostMapping("/health-reports/{id}/skip")
@@ -134,10 +139,22 @@ public class BHealthReportController {
     public record GenerateRequest(
             String periodType, @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart) {}
 
-    public record PublishRequest(String staffComment, String nextFocus, String quarterAdvice) {}
+    /** insights / highlights 为 null 时保留草稿里已有的内容。 */
+    public record PublishRequest(
+            String staffComment,
+            String nextFocus,
+            String quarterAdvice,
+            Map<String, String> insights,
+            List<Map<String, String>> highlights) {}
 
     public record AiSummaryResponse(
-            String staffComment, String nextFocus, String quarterAdvice, boolean fromLlm, String note) {}
+            String staffComment,
+            String nextFocus,
+            String quarterAdvice,
+            Map<String, String> insights,
+            List<Map<String, String>> highlights,
+            boolean fromLlm,
+            String note) {}
 
     public record SkipRequest(String reason) {}
 }

@@ -24,6 +24,7 @@ public class CarePlanSafetyService {
     public static final String ERR_INCOMPLETE = "PLAN_INCOMPLETE";
     public static final String WARN_CONTEXT = "CONTEXT_INCOMPLETE";
     public static final String WARN_NO_DISEASE = "NO_DISEASE_TAG";
+    public static final String WARN_MISSING_RATIONALE = CarePlanRationaleSupport.WARN_MISSING;
     public static final String WARN_HYPO = "HYPOGLYCEMIA_RISK";
     public static final String WARN_INTOLERANCE = "DIET_INTOLERANCE";
     public static final String WARN_ALLERGY_UNKNOWN = "ALLERGY_UNKNOWN";
@@ -33,24 +34,60 @@ public class CarePlanSafetyService {
             JsonNode diet,
             JsonNode execution,
             boolean contextIncomplete,
-            boolean noDiseaseTag,
+            boolean specialtyMismatch,
             boolean hypoglycemiaRisk) {
-        return evaluate(exercise, diet, execution, contextIncomplete, noDiseaseTag, hypoglycemiaRisk, List.of(), null);
+        return evaluate(
+                exercise,
+                diet,
+                execution,
+                contextIncomplete,
+                specialtyMismatch,
+                hypoglycemiaRisk,
+                List.of(),
+                null,
+                null,
+                false);
     }
 
     /**
      * @param foodAllergens 过敏史中的食物过敏/不耐受，用于全文命中推荐食物与示例食谱
      * @param allergyStatus 过敏史状态；UNKNOWN（未询问）时提示医护先采集
+     * @param contextSnapshot 含 rationale.overview；可空
+     * @param requireRationale 生成稿为 true；空白草稿为 false
      */
     public List<SafetyFlagDto> evaluate(
             JsonNode exercise,
             JsonNode diet,
             JsonNode execution,
             boolean contextIncomplete,
-            boolean noDiseaseTag,
+            boolean specialtyMismatch,
             boolean hypoglycemiaRisk,
             List<FoodAllergen> foodAllergens,
             AllergyStatusEnum allergyStatus) {
+        return evaluate(
+                exercise,
+                diet,
+                execution,
+                contextIncomplete,
+                specialtyMismatch,
+                hypoglycemiaRisk,
+                foodAllergens,
+                allergyStatus,
+                null,
+                false);
+    }
+
+    public List<SafetyFlagDto> evaluate(
+            JsonNode exercise,
+            JsonNode diet,
+            JsonNode execution,
+            boolean contextIncomplete,
+            boolean specialtyMismatch,
+            boolean hypoglycemiaRisk,
+            List<FoodAllergen> foodAllergens,
+            AllergyStatusEnum allergyStatus,
+            JsonNode contextSnapshot,
+            boolean requireRationale) {
         List<SafetyFlagDto> flags = new ArrayList<>();
         if (!isExercisePresent(exercise) || !isDietPresent(diet) || !hasEnabledTask(execution)) {
             flags.add(new SafetyFlagDto(
@@ -91,9 +128,18 @@ public class CarePlanSafetyService {
                     WARN_CONTEXT,
                     "患者档案或关键指标不完整，方案基于有限上下文生成"));
         }
-        if (noDiseaseTag) {
+        if (specialtyMismatch) {
             flags.add(new SafetyFlagDto(
-                    CarePlanSafetyLevelEnum.WARN.name(), WARN_NO_DISEASE, "未识别明确病种，已使用通用模板"));
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_NO_DISEASE,
+                    "已选专项管理但档案未见对应确诊，请核对病种或改选方案类型"));
+        }
+        if (requireRationale
+                && CarePlanRationaleSupport.missingBlockOrOverview(exercise, diet, execution, contextSnapshot)) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_MISSING_RATIONALE,
+                    "生成理由不完整（缺总览或运动/饮食/执行块级理由），请审阅后确认"));
         }
         if (hypoglycemiaRisk) {
             flags.add(new SafetyFlagDto(

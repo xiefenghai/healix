@@ -163,7 +163,8 @@ public class StaffAgentGateway {
                     AgentCapability.OCR_LAB.name().equals(response.capability())
                             || AgentCapability.OCR_EXAM.name().equals(response.capability())
                             || AgentCapability.OCR_MED.name().equals(response.capability())
-                            || AgentCapability.REPORT_SUMMARY.name().equals(response.capability());
+                            || AgentCapability.REPORT_SUMMARY.name().equals(response.capability())
+                            || AgentCapability.CARE_PLAN.name().equals(response.capability());
             AgentStreamEvent.safeEmit(
                     sink,
                     AgentStreamEvent.result(
@@ -328,7 +329,7 @@ public class StaffAgentGateway {
                 revise ? "CARE_PLAN_REVISE" : "CARE_PLAN_GENERATE",
                 CarePlanStreamSummary.buildReply(bundle, revise),
                 List.of(
-                        AgentAction.openSheet("查看方案草稿", "care-plan", cmd.peopleId()),
+                        AgentAction.openSheet("编辑方案草稿", "care-plan", cmd.peopleId()),
                         AgentAction.publishCarePlan("确认发布方案", cmd.peopleId()),
                         AgentAction.triggerCapability("继续闲聊", "GENERAL_CHAT", cmd.peopleId())),
                 List.of(),

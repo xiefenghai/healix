@@ -2,6 +2,7 @@ package com.healix.core.medication.domain;
 
 import com.healix.common.domain.BaseEntity;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -34,6 +35,16 @@ public class PeopleMedication extends BaseEntity {
     private Integer hasAdverseReaction;
     private String remark;
     private String status;
+    /** 药品目录编码 */
+    private String drugCode;
+    /** 服药时段覆盖（JSON 数组）；空按频次 + 时机推导 */
+    private String slotsJson;
+    private LocalDateTime verifiedAt;
+    private String verifiedByStaffId;
+    /** 保存时命中的药物过敏摘要 */
+    private String allergyConflict;
+    /** 患者自述停药原因 */
+    private String stopReason;
     private String createdByStaffId;
     private String updatedByStaffId;
 }

@@ -9,11 +9,13 @@ import com.healix.core.govern.service.QuotaService;
 import com.healix.core.identity.service.IdentityService;
 import com.healix.core.people.domain.PeopleIdentity;
 import com.healix.core.people.domain.PeopleProfile;
+import com.healix.core.people.enums.MobileOwnerEnum;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.patientcard.domain.AccountPatient;
 import com.healix.core.patientcard.mapper.AccountPatientMapper;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -45,6 +47,10 @@ public class PatientCardService {
             if (profile != null && StringUtils.hasText(profile.getDisplayName())) {
                 card.setDisplayName(profile.getDisplayName().trim());
             }
+            if (profile != null) {
+                card.setGender(profile.getGender());
+                card.setBirthday(profile.getBirthday());
+            }
         }
         return cards;
     }
@@ -66,71 +72,108 @@ public class PatientCardService {
         return accountPatientMapper.countByPeople(peopleId);
     }
 
+    /**
+     * C 端自助添加就诊人：姓名 + 性别 + 出生日期即可，证件选填。
+     *
+     * <p>不按手机号或姓名去匹配机构档案（共用号码会串档）；机构档案只能用激活码关联。
+     */
     @Transactional
     public AccountPatient createSelfServe(
             String tenantId,
             String accountId,
             String displayName,
+            String gender,
+            LocalDate birthday,
             String identityType,
             String identityValue,
             String relation,
-            String mobile) {
+            String mobile,
+            String mobileOwner) {
         if (!StringUtils.hasText(displayName)) {
             throw new BusinessException(400, "请填写就诊人姓名");
         }
-        if (!StringUtils.hasText(identityType) || !StringUtils.hasText(identityValue)) {
-            throw new BusinessException(400, "请填写证件信息");
+        String name = displayName.trim();
+        if (name.length() > 64) {
+            throw new BusinessException(400, "姓名过长");
         }
         if (accountPatientMapper.countByAccount(accountId) >= MAX_CARDS_PER_ACCOUNT) {
             throw new BusinessException(409, "就诊人数量已达上限");
         }
-
-        IdentityBits bits = resolveIdentity(tenantId, identityType, identityValue);
-
-        AccountPatient existingCard = accountPatientMapper.findByAccountAndIdentityHash(
-                accountId, bits.type().name(), bits.hash());
-        if (existingCard != null) {
-            throw new BusinessException(409, "该证件已在您的就诊人列表中");
+        IdentityBits bits = StringUtils.hasText(identityValue)
+                ? resolveIdentity(tenantId, StringUtils.hasText(identityType) ? identityType : "ID_CARD", identityValue)
+                : null;
+        String resolvedGender = bits != null && bits.gender() != null ? bits.gender() : normalizeGender(gender);
+        LocalDate resolvedBirthday = bits != null && bits.birthday() != null ? bits.birthday() : birthday;
+        if (resolvedGender == null || resolvedBirthday == null) {
+            throw new BusinessException(400, "请填写性别和出生日期");
         }
+        if (resolvedBirthday.isAfter(LocalDate.now())) {
+            throw new BusinessException(400, "出生日期不能晚于今天");
+        }
+        String mobileNorm = normalizeMobile(mobile);
 
-        PeopleIdentity occupied =
-                peopleIdentityMapper.findByTenantTypeHash(tenantId, bits.type().name(), bits.hash());
-        if (occupied != null) {
-            throw new BusinessException(409, "该就诊人已在机构建档，请使用激活码添加");
+        if (bits != null) {
+            if (accountPatientMapper.findByAccountAndIdentityHash(accountId, bits.type().name(), bits.hash()) != null) {
+                throw new BusinessException(409, "该证件已在您的就诊人列表中");
+            }
+            if (peopleIdentityMapper.findByTenantTypeHash(tenantId, bits.type().name(), bits.hash()) != null) {
+                throw new BusinessException(409, "该就诊人已在机构建档，请使用机构发放的激活码添加");
+            }
+        }
+        if (findSamePersonCard(accountId, name, resolvedBirthday) != null) {
+            throw new BusinessException(409, "「" + name + "」已在您的就诊人列表中");
         }
 
         quotaService.assertAvailable(tenantId, QuotaKeyEnum.PATIENT_TOTAL, 1);
         PeopleProfile profile = new PeopleProfile();
         profile.setTenantId(tenantId);
         profile.setAccountId(null);
-        profile.setDisplayName(displayName.trim());
-        profile.setNamePinyin(IdentityService.toPinyinKey(profile.getDisplayName()));
-        profile.setGender(bits.gender());
-        profile.setBirthday(bits.birthday());
+        profile.setDisplayName(name);
+        profile.setNamePinyin(IdentityService.toPinyinKey(name));
+        profile.setGender(resolvedGender);
+        profile.setBirthday(resolvedBirthday);
+        profile.setMobile(mobileNorm);
+        profile.setMobileOwner(mobileNorm == null ? null : MobileOwnerEnum.normalize(mobileOwner));
         profile.setAllergensJson("[]");
         EntityMeta.onCreate(profile);
         peopleProfileMapper.insert(profile);
 
-        PeopleIdentity identity = new PeopleIdentity();
-        identity.setTenantId(tenantId);
-        identity.setPeopleId(profile.getId());
-        identity.setIdentityType(bits.type().name());
-        identity.setIdentityValueHash(bits.hash());
-        identity.setIdentityValueCipher(bits.cipher());
-        identity.setIdentityValueMask(bits.mask());
-        EntityMeta.onCreate(identity);
-        peopleIdentityMapper.insert(identity);
+        if (bits != null) {
+            PeopleIdentity identity = new PeopleIdentity();
+            identity.setTenantId(tenantId);
+            identity.setPeopleId(profile.getId());
+            identity.setIdentityType(bits.type().name());
+            identity.setIdentityValueHash(bits.hash());
+            identity.setIdentityValueCipher(bits.cipher());
+            identity.setIdentityValueMask(bits.mask());
+            EntityMeta.onCreate(identity);
+            peopleIdentityMapper.insert(identity);
+        }
 
         return insertCard(
                 tenantId,
                 accountId,
                 profile.getId(),
-                profile.getDisplayName(),
+                name,
                 relation,
-                bits.type().name(),
-                bits.hash(),
-                bits.mask(),
-                mobile);
+                bits == null ? null : bits.type().name(),
+                bits == null ? null : bits.hash(),
+                bits == null ? null : bits.mask(),
+                mobileNorm);
+    }
+
+    /** 账号内同名同生日的就诊人卡片（视为同一人）。 */
+    public AccountPatient findSamePersonCard(String accountId, String name, LocalDate birthday) {
+        if (!StringUtils.hasText(name) || birthday == null) {
+            return null;
+        }
+        for (AccountPatient card : accountPatientMapper.listByAccount(accountId)) {
+            PeopleProfile p = peopleProfileMapper.findById(card.getPeopleId());
+            if (p != null && name.trim().equals(p.getDisplayName().trim()) && birthday.equals(p.getBirthday())) {
+                return card;
+            }
+        }
+        return null;
     }
 
     @Transactional
@@ -236,6 +279,28 @@ public class PatientCardService {
                 IdCardUtil.mask(normalized),
                 gender,
                 birthday);
+    }
+
+    private static String normalizeGender(String gender) {
+        if (!StringUtils.hasText(gender)) {
+            return null;
+        }
+        String g = gender.trim().toUpperCase(Locale.ROOT);
+        if (!g.equals("MALE") && !g.equals("FEMALE")) {
+            throw new BusinessException(400, "性别不正确");
+        }
+        return g;
+    }
+
+    private static String normalizeMobile(String mobile) {
+        if (!StringUtils.hasText(mobile)) {
+            return null;
+        }
+        String m = mobile.trim();
+        if (m.length() > 32 || !m.matches("^[0-9+\\-\\s]{6,20}$")) {
+            throw new BusinessException(400, "联系电话格式不正确");
+        }
+        return m;
     }
 
     private static String normalizeRelation(String relation) {

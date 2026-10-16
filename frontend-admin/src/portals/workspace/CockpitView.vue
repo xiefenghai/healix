@@ -21,6 +21,7 @@ import CockpitPatientSheet, { type CockpitSheetMode } from '../../shared/Cockpit
 import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
 import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
+import { onAgentCarePlanUpdated } from '../../shared/agent-events'
 import {
   notifyCockpitTasksPossiblyChanged,
   onCockpitTasksPossiblyChanged,
@@ -28,8 +29,14 @@ import {
 import { formatAssistantPlainHtml, visibleAnswerFromRawStream } from '../../shared/agent-plain-text'
 import { AGENT_LOGO, AGENT_NAME } from '../../shared/agent-brand'
 import { debounce } from '../../shared/debounce'
+import AgentCarePlanCard from '../../shared/AgentCarePlanCard.vue'
 import AgentOcrReviewCard from '../../shared/AgentOcrReviewCard.vue'
 import AgentReportReviewCard from '../../shared/AgentReportReviewCard.vue'
+import {
+  buildCarePlanChatPreview,
+  carePlanStatusLine,
+  type CarePlanChatPreview,
+} from '../../shared/agent-care-plan'
 import { callApiDoneLabel, runAgentCallApi } from '../../shared/agent-call-api'
 import { resolveStickyCapabilityHint } from '../../shared/agent-sticky'
 import {
@@ -51,12 +58,17 @@ interface Summary {
   urgentCount?: number
   watchCount?: number
   mineCount?: number
+  rewardWeekPoints?: number | null
+  rewardFullDayCount?: number | null
+  rewardActiveTodayCount?: number | null
 }
 
 /** 左栏优先卡：与 /cockpit/priority 对齐，仅保留前端用到的字段 */
 interface PriorityCard {
   peopleId: string
   displayName: string
+  age?: number | null
+  diseaseLabels?: string[]
   riskLevel?: string
   planRate7d?: number | null
   topReason?: string
@@ -74,6 +86,7 @@ interface FocusTask {
   taskTypeLabel: string
   summary?: string
   overdue: boolean
+  dueAt?: string | null
 }
 
 /** 右栏焦点快照：与 /cockpit/focus/:id 对齐 */
@@ -87,6 +100,13 @@ interface Focus {
   planRate7d?: number | null
   diseaseLabels?: string[]
   bloodPressure?: string | null
+  bloodPressureAt?: string | null
+  bloodPressureHigh?: boolean
+  allergyText?: string | null
+  medRate7d?: number | null
+  medMissStreakDays?: number
+  dietDays7d?: number | null
+  exerciseDays7d?: number | null
   archiveCompletenessPercent?: number | null
   archiveFilledCount?: number | null
   archiveTotalCount?: number | null
@@ -111,9 +131,30 @@ interface PendingDraft {
   actionLabel?: string
 }
 
+interface DraftInboxItem {
+  taskId: string
+  taskType: string
+  taskTypeLabel: string
+  kind: 'CARE_PLAN' | 'REPORT'
+  peopleId: string
+  reportId?: string
+  displayName: string
+  summary?: string
+  overdue: boolean
+  dueAt?: string
+  sheetMode: string
+  actionLabel: string
+}
+
 interface Briefing {
   text: string
-  actions: Array<{ peopleId: string; label: string }>
+  actions: Array<{
+    peopleId: string
+    label: string
+    type?: string | null
+    path?: string | null
+    payload?: Record<string, unknown> | null
+  }>
 }
 
 interface AgentAction {
@@ -145,6 +186,7 @@ interface ChatMessage {
   activity?: ActivityItem[]
   elapsedMs?: number | null
   reportReview?: ReportReviewPreview
+  carePlanPreview?: CarePlanChatPreview
 }
 
 type TabKey = 'urgent' | 'watch' | 'mine'
@@ -237,6 +279,8 @@ function closeImagePreview() {
 const sheetOpen = ref(false)
 const sheetMode = ref<CockpitSheetMode>('archive')
 const sheetPeopleId = ref('')
+/** 健康数据抽屉打开时的子页（如 trends） */
+const sheetObservationsSub = ref<string | undefined>(undefined)
 /** 与工作台「处理」同款的任务填单弹窗 */
 const formTaskId = ref<string | null>(null)
 const joinPeopleId = ref<string | null>(null)
@@ -532,6 +576,36 @@ watch(
   },
 )
 const planRateLabel = computed(() => rateText(focus.value?.planRate7d))
+/** 右栏「近 7 天」：服药 57% · 饮食 5/7 · 运动 2/7 */
+const executionText = computed(() => {
+  const f = focus.value
+  if (!f) return ''
+  const parts: string[] = []
+  if (f.medRate7d != null) {
+    let med = `服药 ${Math.round(f.medRate7d * 100)}%`
+    if ((f.medMissStreakDays ?? 0) >= 2) med += `（连续 ${f.medMissStreakDays} 天未完成）`
+    parts.push(med)
+  }
+  if (f.dietDays7d != null) parts.push(`饮食 ${f.dietDays7d}/7`)
+  if (f.exerciseDays7d != null) parts.push(`运动 ${f.exerciseDays7d}/7`)
+  return parts.join(' · ')
+})
+
+/** 今天 08:12 / 昨天 21:40 / 10-12 09:00 */
+function shortWhen(iso?: string | null) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const today = new Date()
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const diff = Math.round((startOf(d) - startOf(today)) / 86400000)
+  if (diff === 0) return `今天 ${hm}`
+  if (diff === -1) return `昨天 ${hm}`
+  if (diff === 1) return `明天 ${hm}`
+  if (diff > 1 && diff <= 6) return `${diff} 天后`
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`
+}
 const focusAge = computed(() => ageFromBirthday(focus.value?.birthday))
 const archivePercent = computed(() => focus.value?.archiveCompletenessPercent ?? null)
 const archivePercentLabel = computed(() =>
@@ -693,9 +767,16 @@ function isDraftTask(t: FocusTask) {
 const draftTaskCount = computed(() => todoTasks.value.filter(isDraftTask).length)
 
 /** 优先展示中文任务标签，否则回退类型码 / 相关 badge */
+function cardMeta(card: PriorityCard) {
+  const parts: string[] = []
+  if (card.age != null) parts.push(`${card.age}岁`)
+  if (card.diseaseLabels?.length) parts.push(card.diseaseLabels.slice(0, 2).join('/'))
+  return parts.join(' · ')
+}
+
 function cardTags(card: PriorityCard) {
   const labels = card.taskTypeLabels || []
-  if (labels.length) return labels.slice(0, 3)
+  if (labels.length) return labels.slice(0, 4)
 
   const tags: string[] = []
   for (const t of card.taskTypes || []) {
@@ -711,6 +792,12 @@ function cardTags(card: PriorityCard) {
       'REPORT_REVIEW',
       'TEAM_ASSIGN',
       'PLAN_REVIEW',
+      'MED_FEEDBACK',
+      'MED_VERIFY',
+      'ASSESSMENT_ESCALATION',
+      'ASSESSMENT_SUSPECTED',
+      'ARCHIVE_SELF_REPORT',
+      'QUESTIONNAIRE_EXPIRED',
     ])
     for (const b of card.badges || []) {
       if (badgeAllow.has(b) && !tags.includes(b)) tags.push(b)
@@ -754,6 +841,41 @@ async function loadSummary() {
   summary.value = res.data
 }
 
+const draftInbox = ref<DraftInboxItem[]>([])
+const draftInboxLoading = ref(false)
+
+async function loadDraftInbox() {
+  draftInboxLoading.value = true
+  try {
+    const res = await api<{ data: DraftInboxItem[] }>('/api/b/v1/cockpit/drafts')
+    draftInbox.value = res.data ?? []
+  } catch {
+    draftInbox.value = []
+  } finally {
+    draftInboxLoading.value = false
+  }
+}
+
+async function openInboxItem(item: DraftInboxItem) {
+  await selectPatient(item.peopleId, { autoAsk: false })
+  if (item.kind === 'REPORT' && item.reportId) {
+    setAgentDraft({
+      peopleId: item.peopleId,
+      mode: 'reports',
+      reportId: item.reportId,
+      openReview: true,
+    })
+  }
+  openSheet(item.sheetMode as CockpitSheetMode, item.peopleId)
+}
+
+function inboxDueLabel(item: DraftInboxItem) {
+  if (item.overdue) return '已超期'
+  if (!item.dueAt) return ''
+  const d = String(item.dueAt).slice(5, 10).replace('-', '/')
+  return `${d} 前`
+}
+
 async function loadPriority() {
   if (tab.value === 'mine') return
   loading.value = true
@@ -771,7 +893,7 @@ async function loadPriority() {
  * 办结 / 入组 / 领取等会改待办数量：同步刷新左栏名单 + Tab 角标，并可选刷新右栏焦点。
  */
 async function refreshAfterTaskChange(peopleId?: string | null) {
-  const jobs: Promise<unknown>[] = [loadSummary()]
+  const jobs: Promise<unknown>[] = [loadSummary(), loadDraftInbox()]
   if (tab.value === 'mine') {
     jobs.push(searchPatients())
   } else {
@@ -836,11 +958,15 @@ async function loadBriefing(force = false) {
       : await api<{ data: Briefing }>('/api/b/v1/cockpit/briefing')
     const b = res.data
     const actions: AgentAction[] = [
-      ...(b.actions || []).map((a) => ({
-        type: 'FOCUS_PATIENT',
-        label: a.label,
-        peopleId: a.peopleId,
-      })),
+      ...(b.actions || []).map(
+        (a): AgentAction => ({
+          type: a.type || 'FOCUS_PATIENT',
+          label: a.label,
+          peopleId: a.peopleId,
+          ...(a.path ? { path: a.path } : {}),
+          ...(a.payload ? { payload: a.payload } : {}),
+        }),
+      ),
       { type: 'REFRESH', label: '刷新今日建议' },
     ]
     const content = sanitizeBriefingText(b.text)
@@ -1496,11 +1622,28 @@ async function sendMessage(
         }
         row.streamContent = ''
         row.rawStream = ''
-        row.actions = data.actions
+        row.actions =
+          data.capability === 'CARE_PLAN'
+            ? [
+                ...(data.actions || []).map((a) =>
+                  a.type === 'OPEN_SHEET' && (a.path === 'care-plan' || a.label?.includes('方案'))
+                    ? { ...a, label: a.label?.includes('查看') ? '编辑方案草稿' : a.label }
+                    : a,
+                ),
+                { type: 'PREVIEW', label: '编辑方案草稿', path: 'care-plan' },
+              ].filter((a, i, arr) => {
+                // 避免「编辑方案草稿」重复
+                if (a.label !== '编辑方案草稿') return true
+                return arr.findIndex((x) => x.label === '编辑方案草稿') === i
+              })
+            : data.actions
         row.streaming = false
         finishAllActivity(row.activity)
         if (stillBound() && data.capability === 'REPORT_SUMMARY' && data.extracted) {
           applyReportReview(row, data.extracted)
+        }
+        if (stillBound() && data.capability === 'CARE_PLAN' && data.extracted) {
+          applyCarePlanPreview(row, data.extracted, data.intent === 'CARE_PLAN_REVISE')
         }
         if (
           stillBound() &&
@@ -1683,27 +1826,38 @@ function runAction(action: AgentAction) {
   if (action.type === 'OPEN_SHEET' && action.path) {
     const mode = action.path as CockpitSheetMode
     const peopleId = action.peopleId || focusPeopleId.value || undefined
+    if (mode === 'observations' && typeof action.payload?.sub === 'string') {
+      openSheet(mode, peopleId, action.payload.sub)
+      return
+    }
+    const openCompose =
+      mode === 'care-plan' ||
+      !!action.payload?.openCompose ||
+      !!action.payload?.openCreate
     if (
       action.payload?.draftContent ||
       action.payload?.openCreate ||
+      action.payload?.openCompose ||
       action.payload?.openReview ||
       action.payload?.staffComment ||
-      action.payload?.reportId
+      action.payload?.reportId ||
+      openCompose
     ) {
       if (peopleId) {
         setAgentDraft({
           peopleId,
           mode,
           draftContent:
-            typeof action.payload.draftContent === 'string' ? action.payload.draftContent : undefined,
-          openCreate: !!action.payload.openCreate,
-          reportId: typeof action.payload.reportId === 'string' ? action.payload.reportId : undefined,
-          openReview: !!action.payload.openReview,
+            typeof action.payload?.draftContent === 'string' ? action.payload.draftContent : undefined,
+          openCreate: !!action.payload?.openCreate,
+          openCompose: mode === 'care-plan' ? true : !!action.payload?.openCompose,
+          reportId: typeof action.payload?.reportId === 'string' ? action.payload.reportId : undefined,
+          openReview: !!action.payload?.openReview,
           staffComment:
-            typeof action.payload.staffComment === 'string' ? action.payload.staffComment : undefined,
-          nextFocus: typeof action.payload.nextFocus === 'string' ? action.payload.nextFocus : undefined,
+            typeof action.payload?.staffComment === 'string' ? action.payload.staffComment : undefined,
+          nextFocus: typeof action.payload?.nextFocus === 'string' ? action.payload.nextFocus : undefined,
           quarterAdvice:
-            typeof action.payload.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
+            typeof action.payload?.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
         })
       }
     }
@@ -1711,6 +1865,10 @@ function runAction(action: AgentAction) {
     return
   }
   if (action.type === 'PREVIEW' || isCarePlanPath(action.path)) {
+    const peopleId = action.peopleId || focusPeopleId.value || undefined
+    if (peopleId) {
+      setAgentDraft({ peopleId, mode: 'care-plan', openCompose: true })
+    }
     openSheet('care-plan', action.peopleId)
     return
   }
@@ -1758,8 +1916,9 @@ function runAction(action: AgentAction) {
 
 async function executeCallApi(action: AgentAction) {
   if (action.runState === 'busy' || action.runState === 'done') return
-  const peopleId = action.peopleId || focusPeopleId.value
-  if (!peopleId) {
+  const orgWide = action.path === 'NUDGE_BATCH'
+  const peopleId: string = orgWide ? '' : action.peopleId || focusPeopleId.value || ''
+  if (!peopleId && !orgWide) {
     ElMessage.info('请先选择患者')
     return
   }
@@ -1776,6 +1935,9 @@ async function executeCallApi(action: AgentAction) {
     action.runState = 'done'
     const doneLabel = callApiDoneLabel(apiKey)
     if (doneLabel) action.label = doneLabel
+    if (apiKey === 'PUBLISH_CARE_PLAN') {
+      retireCarePlanChatActions(peopleId)
+    }
     if (
       apiKey === 'CREATE_FOLLOWUP' ||
       apiKey === 'PUBLISH_REPORT' ||
@@ -1798,7 +1960,7 @@ async function executeCallApi(action: AgentAction) {
       at: nowClock(),
     }
     messages.value.push(msg)
-    await persistVisibleMessage(peopleId, msg.content, undefined, 'receipt')
+    await persistVisibleMessage(peopleId || null, msg.content, undefined, 'receipt')
     ElMessage.success(receipt)
     await scrollToBottom()
   } catch (e) {
@@ -1906,6 +2068,10 @@ function openTodoTask(task: FocusTask) {
     joinPeopleName.value = focus.value?.displayName || null
     return
   }
+  if (task.taskType === 'MED_FEEDBACK' || task.taskType === 'MED_VERIFY') {
+    openSheet('medications')
+    return
+  }
   if (DRAFT_TASK_TYPES.has(task.taskType)) {
     if (task.taskType === 'REPORT_REVIEW') goReports()
     else goCarePlan()
@@ -1916,6 +2082,55 @@ function openTodoTask(task: FocusTask) {
 
 function isCarePlanPath(path?: string) {
   return !!path && path.includes('/care-plan')
+}
+
+function isCarePlanChatAction(a: AgentAction): boolean {
+  if (a.path === 'PUBLISH_CARE_PLAN') return true
+  if (a.type === 'PREVIEW') return true
+  if (a.type === 'OPEN_SHEET' && a.path === 'care-plan') return true
+  if (a.label && /(编辑|查看)?方案草稿|确认发布方案|发布方案|预览全文/.test(a.label)) return true
+  return false
+}
+
+/** 方案已在抽屉或聊天内发布后，收掉过期的编辑/发布按钮，避免回到驾驶舱再点一遍 */
+function retireCarePlanChatActions(peopleId: string) {
+  if (!peopleId) return
+  const patch = (list: ChatMessage[]) => {
+    for (const msg of list) {
+      if (!msg.actions?.length) continue
+      const hit = msg.actions.some(
+        (a) => (!a.peopleId || a.peopleId === peopleId) && isCarePlanChatAction(a),
+      )
+      if (!hit) continue
+      for (const a of msg.actions) {
+        if (a.peopleId && a.peopleId !== peopleId) continue
+        if (!isCarePlanChatAction(a)) continue
+        a.runState = 'done'
+        if (a.path === 'PUBLISH_CARE_PLAN') a.label = '已发布方案'
+        else a.label = '方案已发布'
+      }
+      if (msg.carePlanPreview) {
+        msg.carePlanPreview = {
+          ...msg.carePlanPreview,
+          status: 'ACTIVE',
+          statusLabel: '已发布',
+        }
+      }
+    }
+  }
+  patch(messages.value)
+  const cached = patientSessionCache.get(peopleId)
+  if (cached) patch(cached.messages)
+  if (focusPeopleId.value === peopleId) cachePatientSession(peopleId)
+}
+
+function onCarePlanPublishedFromSheet() {
+  const id = sheetPeopleId.value || focusPeopleId.value
+  if (!id) return
+  retireCarePlanChatActions(id)
+  stickyCapability.value = null
+  sheetOpen.value = false
+  void refreshAfterTaskChange(id)
 }
 function isFollowupPath(path?: string) {
   return !!path && path.includes('/followups')
@@ -1939,7 +2154,7 @@ function isAssessmentsPath(path?: string) {
   return !!path && (path === 'assessments' || path.includes('/assessments'))
 }
 
-async function openSheet(mode: CockpitSheetMode, peopleId?: string) {
+async function openSheet(mode: CockpitSheetMode, peopleId?: string, observationsSub?: string) {
   const id = peopleId || focusPeopleId.value
   if (!id) {
     ElMessage.info('请先从左侧选择一位患者')
@@ -1949,9 +2164,11 @@ async function openSheet(mode: CockpitSheetMode, peopleId?: string) {
     void selectPatient(peopleId, { autoAsk: false })
   }
   const sameOpen = sheetOpen.value && sheetMode.value === mode && sheetPeopleId.value === id
+  const subChanged = mode === 'observations' && sheetObservationsSub.value !== observationsSub
   sheetPeopleId.value = id
   sheetMode.value = mode
-  if (sameOpen) {
+  sheetObservationsSub.value = observationsSub
+  if (sameOpen || (sheetOpen.value && subChanged)) {
     // destroy-on-close：同页再开时强制重挂载，以便消费 Agent 草稿预填
     sheetOpen.value = false
     await nextTick()
@@ -1991,6 +2208,8 @@ function goArchive() {
   openSheet('archive')
 }
 function goCarePlan() {
+  const id = focusPeopleId.value
+  if (id) setAgentDraft({ peopleId: id, mode: 'care-plan', openCompose: true })
   openSheet('care-plan')
 }
 function goFollowups() {
@@ -2074,6 +2293,13 @@ function applyReportReview(msg: ChatMessage, extracted: unknown) {
   if (!preview) return
   msg.reportReview = preview
   msg.content = reportStatusLine(preview)
+}
+
+function applyCarePlanPreview(msg: ChatMessage, extracted: unknown, revised = false) {
+  const preview = buildCarePlanChatPreview(extracted)
+  if (!preview) return
+  msg.carePlanPreview = preview
+  msg.content = carePlanStatusLine(preview, revised)
 }
 
 function applyOcrExtracted(
@@ -2211,6 +2437,7 @@ watch(tab, (t) => {
 const COCKPIT_FOCUS_KEY = 'healix.cockpit.focusPeopleId'
 
 let stopCockpitTasksRefresh: (() => void) | null = null
+let stopCarePlanUpdated: (() => void) | null = null
 
 watch(sheetOpen, (open, wasOpen) => {
   // 快捷办理抽屉关闭：随访/录入/方案等可能已改待办
@@ -2224,8 +2451,15 @@ onMounted(async () => {
   stopCockpitTasksRefresh = onCockpitTasksPossiblyChanged((id) => {
     scheduleRefreshAfterTaskChange(id)
   })
+  stopCarePlanUpdated = onAgentCarePlanUpdated(
+    () => sheetPeopleId.value || focusPeopleId.value || '',
+    () => {
+      const id = sheetPeopleId.value || focusPeopleId.value
+      if (id) retireCarePlanChatActions(id)
+    },
+  )
   try {
-    await Promise.all([loadSummary(), loadPriority(), loadCapabilities()])
+    await Promise.all([loadSummary(), loadPriority(), loadCapabilities(), loadDraftInbox()])
     // 先恢复机构会话（以服务端为准）
     await loadBriefing(false)
     const qPeople = typeof route.query.peopleId === 'string' ? route.query.peopleId : ''
@@ -2253,6 +2487,8 @@ onMounted(async () => {
 onUnmounted(() => {
   stopCockpitTasksRefresh?.()
   stopCockpitTasksRefresh = null
+  stopCarePlanUpdated?.()
+  stopCarePlanUpdated = null
   if (refreshTasksTimer) {
     clearTimeout(refreshTasksTimer)
     refreshTasksTimer = null
@@ -2330,6 +2566,16 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <div
+          v-if="summary.rewardWeekPoints != null"
+          class="reward-week"
+          title="本机构开启激励的患者本周汇总"
+        >
+          <span>🫘 本周 {{ summary.rewardWeekPoints }} 豆</span>
+          <span>🌟 全勤 {{ summary.rewardFullDayCount ?? 0 }} 人次</span>
+          <span>🔥 今日打卡 {{ summary.rewardActiveTodayCount ?? 0 }} 人</span>
+        </div>
+
         <div v-if="tab === 'mine'" class="search-box">
           <input
             v-model="searchKeyword"
@@ -2361,6 +2607,7 @@ onUnmounted(() => {
                 {{ nameInitial(c.displayName) }}
               </span>
               <strong class="name">{{ c.displayName || c.peopleId }}</strong>
+              <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
               <span class="risk" :class="riskBadge(c).tone">
                 <i class="dot" />
                 {{ riskBadge(c).text }}
@@ -2541,15 +2788,22 @@ onUnmounted(() => {
                 @toggle="(id) => toggleActivity(msg, id)"
               />
               <div
-                v-if="msg.streamContent || (msg.content && !msg.reportReview)"
+                v-if="
+                  msg.streamContent ||
+                  (msg.content && !msg.reportReview && !msg.carePlanPreview)
+                "
                 class="bubble-text md-body"
                 :class="{ 'stream-live': !!(msg.streamContent && msg.streaming) }"
                 v-html="messageHtml(msg)"
               />
-              <div v-else-if="msg.reportReview" class="bubble-text md-body report-status">
+              <div
+                v-else-if="msg.reportReview || msg.carePlanPreview"
+                class="bubble-text md-body report-status"
+              >
                 {{ msg.content }}
               </div>
               <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
+              <AgentCarePlanCard v-if="msg.carePlanPreview" :preview="msg.carePlanPreview" />
               <button
                 v-if="msg.imageUrl"
                 type="button"
@@ -2807,6 +3061,26 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
+
+              <dl class="focus-facts">
+                <template v-if="focus.bloodPressure">
+                  <dt>最近血压</dt>
+                  <dd :class="{ bad: focus.bloodPressureHigh }">
+                    {{ focus.bloodPressure }}<template v-if="focus.bloodPressureHigh"> ↑</template>
+                    <small v-if="focus.bloodPressureAt">{{ shortWhen(focus.bloodPressureAt) }}</small>
+                  </dd>
+                </template>
+                <template v-if="executionText">
+                  <dt>近 7 天</dt>
+                  <dd>{{ executionText }}</dd>
+                </template>
+                <template v-if="focus.allergyText">
+                  <dt>过敏史</dt>
+                  <dd :class="{ bad: focus.allergyText !== '无已知过敏' && focus.allergyText !== '未询问' }">
+                    {{ focus.allergyText }}
+                  </dd>
+                </template>
+              </dl>
             </div>
 
             <div class="focus-mid">
@@ -2888,6 +3162,7 @@ onUnmounted(() => {
                         {{ t.summary || '待处理' }}
                         <template v-if="t.overdue"> · 超期</template>
                         <template v-else-if="isDraftTask(t)"> · AI 草稿</template>
+                        <template v-if="!t.overdue && t.dueAt"> · 截止 {{ shortWhen(t.dueAt) }}</template>
                       </span>
                     </span>
                   </button>
@@ -2989,6 +3264,42 @@ onUnmounted(() => {
           </div>
         </template>
 
+        <div v-else-if="draftInbox.length" v-loading="draftInboxLoading" class="focus-body inbox-body">
+          <div class="section compact">
+            <div class="section-title">
+              待我确认
+              <span class="count">{{ draftInbox.length }} 项</span>
+            </div>
+            <div class="draft-list">
+              <button
+                v-for="item in draftInbox"
+                :key="item.taskId"
+                type="button"
+                class="draft-item draft"
+                :class="{ report: item.kind === 'REPORT', plan: item.kind === 'CARE_PLAN' }"
+                :title="`${item.displayName} · ${item.taskTypeLabel}${item.summary ? ' · ' + item.summary : ''}`"
+                @click="openInboxItem(item)"
+              >
+                <span class="draft-icon" :class="{ warn: item.overdue }">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </span>
+                <span class="draft-body">
+                  <span class="draft-title">{{ item.displayName }} · {{ item.taskTypeLabel }}</span>
+                  <span class="draft-meta">
+                    {{ item.summary || '待处理' }}
+                    <template v-if="inboxDueLabel(item)"> · {{ inboxDueLabel(item) }}</template>
+                  </span>
+                </span>
+                <span class="draft-cta">{{ item.actionLabel }}</span>
+              </button>
+            </div>
+          </div>
+          <p class="inbox-hint">点左侧名单可切换到单个患者</p>
+        </div>
+
         <div v-else class="right-empty">
           <div class="empty-ico">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -3005,8 +3316,10 @@ onUnmounted(() => {
       v-model="sheetOpen"
       :people-id="sheetPeopleId"
       :mode="sheetMode"
+      :observations-sub="sheetObservationsSub"
       :patient-name="focus?.displayName"
       @published="onReportPublished"
+      @care-plan-published="onCarePlanPublishedFromSheet"
     />
 
     <WorkspaceTaskFormDialog
@@ -3170,6 +3483,18 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.reward-week {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #fff6ea, #f4fbf8);
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6b7a;
+}
 .search-box {
   padding: 8px 12px 0;
   flex-shrink: 0;
@@ -3302,11 +3627,21 @@ onUnmounted(() => {
 }
 
 .card-top .name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--ink-800);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-500);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3321,6 +3656,7 @@ onUnmounted(() => {
   border-radius: 4px;
   font-weight: 600;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .risk .dot {
@@ -4860,6 +5196,34 @@ onUnmounted(() => {
   gap: 6px;
 }
 
+.focus-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 8px 0 0;
+  font-size: 11.5px;
+}
+
+.focus-facts dt {
+  color: var(--ink-500);
+}
+
+.focus-facts dd {
+  margin: 0;
+  color: var(--ink-800);
+  font-weight: 600;
+}
+
+.focus-facts dd.bad {
+  color: var(--rose-500, #f43f5e);
+}
+
+.focus-facts dd small {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--ink-400);
+}
+
 .metric {
   background: #fff;
   border-radius: 8px;
@@ -5049,6 +5413,15 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
+.inbox-body {
+  overflow-y: auto;
+}
+.inbox-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+}
 .draft-list {
   display: flex;
   flex-direction: column;

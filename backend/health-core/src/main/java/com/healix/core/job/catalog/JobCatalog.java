@@ -16,6 +16,13 @@ public class JobCatalog {
     public static final String NOTIFY_REMINDER_SCAN = "NOTIFY_REMINDER_SCAN";
     public static final String FOLLOWUP_SCHEDULE_SCAN = "FOLLOWUP_SCHEDULE_SCAN";
     public static final String ADHERENCE_SNAPSHOT = "ADHERENCE_SNAPSHOT";
+    public static final String REWARD_SETTLE = "REWARD_SETTLE";
+    public static final String REWARD_EVENING_REMIND = "REWARD_EVENING_REMIND";
+    public static final String REWARD_WEEKLY = "REWARD_WEEKLY";
+    public static final String REWARD_FLAME_NUDGE = "REWARD_FLAME_NUDGE";
+    public static final String MEDICATION_REMIND = "MEDICATION_REMIND";
+    public static final String ASSESSMENT_RECOMPUTE = "ASSESSMENT_RECOMPUTE";
+    public static final String ASSESSMENT_DAILY_SWEEP = "ASSESSMENT_DAILY_SWEEP";
 
     private static final List<JobCatalogSpec> SPECS = List.of(
             new JobCatalogSpec(
@@ -53,7 +60,49 @@ public class JobCatalog {
                     "依从性日快照",
                     "固化前一天的机构与健管组依从性汇总，供看板趋势查询",
                     "0 50 1 * * *",
-                    "{\"batchSize\":200}"));
+                    "{\"batchSize\":200}"),
+            new JobCatalogSpec(
+                    REWARD_SETTLE,
+                    "激励终结算",
+                    "对账前天的健康豆流水，结算火苗、保护卡、全勤日、徽章与等级，并推送成就",
+                    "0 10 0 * * *",
+                    "{}"),
+            new JobCatalogSpec(
+                    REWARD_EVENING_REMIND,
+                    "火苗晚间提醒",
+                    "火苗 ≥3 天且当天尚无任何打卡的患者，推送一次续火提醒",
+                    "0 5 20 * * *",
+                    "{}"),
+            new JobCatalogSpec(
+                    REWARD_WEEKLY,
+                    "周挑战结算与生成",
+                    "每周一结算上周周挑战并发放本周挑战；其余日仅补建本周挑战",
+                    "0 20 0 * * *",
+                    "{}"),
+            new JobCatalogSpec(
+                    REWARD_FLAME_NUDGE,
+                    "火苗中断跟进",
+                    "火苗中断 ≥3 天的患者，开或更新工作台打卡跟进任务（与方案未完成催办共用 PLAN_NUDGE，不重复派单）",
+                    "0 25 0 * * *",
+                    "{}"),
+            new JobCatalogSpec(
+                    MEDICATION_REMIND,
+                    "服药到点提醒",
+                    "每 5 分钟扫描到达提醒时间且该时段仍有药未记录的患者，推送服药提醒（到点 1 次 + 跟进 1 次）",
+                    "0 */5 * * * *",
+                    "{}"),
+            new JobCatalogSpec(
+                    ASSESSMENT_RECOMPUTE,
+                    "疾病评估自动重算",
+                    "每 2 分钟重算输入有变更（指标、检验、档案、用药、问卷）的患者；并处理评估问卷 48 小时提醒与 7 天过期",
+                    "0 */2 * * * *",
+                    "{\"batchSize\":200}"),
+            new JobCatalogSpec(
+                    ASSESSMENT_DAILY_SWEEP,
+                    "疾病评估每日全量",
+                    "凌晨对在管患者全量重算一次，处理年龄变化、数据窗口过期等不随录入变化的情况",
+                    "0 40 2 * * *",
+                    "{\"batchSize\":500}"));
 
     private final Map<String, JobCatalogSpec> byCode =
             SPECS.stream().collect(Collectors.toUnmodifiableMap(JobCatalogSpec::jobCode, Function.identity()));

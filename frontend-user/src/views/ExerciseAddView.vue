@@ -366,18 +366,18 @@ onMounted(load)
   padding-bottom: 32px;
 }
 :deep(.van-nav-bar) {
-  background: rgba(247, 249, 252, 0.88);
+  background: rgba(255, 250, 242, 0.86);
   backdrop-filter: blur(10px);
 }
 :deep(.van-nav-bar__title) {
-  font-weight: 650;
+  font-weight: 800;
   color: var(--hx-text);
 }
 :deep(.van-nav-bar .van-icon) {
   color: var(--hx-teal);
 }
 .nav-link.danger {
-  color: #e8743b;
+  color: var(--hx-warn);
   font-size: 14px;
 }
 .loading {
@@ -388,15 +388,15 @@ onMounted(load)
   padding: 8px 10px;
   border-radius: 10px;
   font-size: 13px;
-  color: #a16207;
+  color: var(--hx-warn-text);
   background: var(--hx-orange-soft);
 }
 .card {
   margin: 12px 16px 0;
   padding: 14px 16px;
-  border-radius: var(--hx-radius);
+  border-radius: var(--hx-r-lg);
   background: var(--hx-card);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 .label {
   margin-bottom: 8px;
@@ -419,7 +419,7 @@ onMounted(load)
   align-items: center;
 }
 .chip {
-  border: 1px solid #e3eaee;
+  border: 1px solid var(--hx-n-200);
   border-radius: 999px;
   padding: 6px 12px;
   background: #fff;
@@ -433,9 +433,9 @@ onMounted(load)
   font-weight: 600;
 }
 .chip.red {
-  border-color: #e8743b;
-  background: #fff1ec;
-  color: #c2410c;
+  border-color: var(--hx-warn);
+  background: var(--hx-danger-bg);
+  color: var(--hx-danger-text);
 }
 .chip.more {
   color: var(--hx-muted);
@@ -452,7 +452,7 @@ onMounted(load)
   min-width: 0;
   height: 36px;
   padding: 0 10px;
-  border: 1px solid #e3eaee;
+  border: 1px solid var(--hx-n-200);
   border-radius: 10px;
   background: #fff;
   font-size: 14px;
@@ -478,7 +478,7 @@ onMounted(load)
   flex-direction: column;
   gap: 4px;
   padding: 10px 6px;
-  border: 1px solid #e3eaee;
+  border: 1px solid var(--hx-n-200);
   border-radius: 12px;
   background: #fff;
   color: var(--hx-text);
@@ -505,14 +505,14 @@ onMounted(load)
   line-height: 1.5;
 }
 .flag.red {
-  color: #c2410c;
-  background: #fff1ec;
+  color: var(--hx-danger-text);
+  background: var(--hx-danger-bg);
 }
 .actions {
   margin: 20px 16px 0;
 }
 :deep(.van-button--primary) {
-  background: linear-gradient(90deg, #5cb8b8, #2b9e9e);
+  background: var(--hx-grad);
   border: 0;
 }
 .disclaimer {

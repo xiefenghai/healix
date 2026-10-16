@@ -1,13 +1,22 @@
 package com.healix.agent.tool;
 
 import com.healix.agent.gateway.AgentAction;
+import com.healix.core.adherence.dto.AdherencePatientItemDto;
 import com.healix.core.cockpit.dto.CockpitFocusDto;
 import com.healix.core.cockpit.dto.CockpitPriorityCardDto;
 import com.healix.core.cockpit.dto.CockpitSummaryDto;
 import com.healix.core.cockpit.service.CockpitService;
+import com.healix.core.job.support.JobCronSupport;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,6 +29,10 @@ import org.springframework.util.StringUtils;
 @Component
 @RequiredArgsConstructor
 public class StaffBizTools {
+
+    private static final int RANK_LIMIT = 5;
+    private static final int PLAN_ENDING_DAYS = 7;
+    private static final Pattern CLOCK = Pattern.compile("(\\d{1,2})\\s*[:点]\\s*(?:(\\d{1,2})|(半))?");
 
     private final CockpitService cockpitService;
     private final PatientBizTools patientBizTools;
@@ -85,11 +98,154 @@ public class StaffBizTools {
                     actions.add(AgentAction.focusPatient(name + " · " + reason, c.getPeopleId()));
                 }
             }
-            return new OrgBriefBundle(summary, top, formatOrg(summary, top), actions);
+            String text = formatOrg(summary, top);
+            List<AgentAction> insightActions = new ArrayList<>();
+            if (wantsAdherenceRank(message)) {
+                text += "\n" + adherenceRankText(tenantId, orgId, insightActions);
+            }
+            if (wantsPlanEnding(message)) {
+                text += "\n" + planEndingText(tenantId, orgId, insightActions);
+            }
+            if (!insightActions.isEmpty()) {
+                actions = insightActions;
+            }
+            return new OrgBriefBundle(summary, top, text, actions);
         } catch (Exception e) {
             log.debug("loadOrgBrief failed org={}", orgId, e);
             return new OrgBriefBundle(null, List.of(), "", List.of());
         }
+    }
+
+    private String adherenceRankText(String tenantId, String orgId, List<AgentAction> actions) {
+        List<AdherencePatientItemDto> low = cockpitService.lowestAdherence(tenantId, orgId, RANK_LIMIT);
+        if (low.isEmpty()) {
+            return "近 7 日打卡排名：名下暂无执行中方案的客户。";
+        }
+        StringBuilder sb = new StringBuilder("近 7 日方案打卡率最低（由低到高）：");
+        List<String> nudgeIds = new ArrayList<>();
+        for (int i = 0; i < low.size(); i++) {
+            AdherencePatientItemDto item = low.get(i);
+            String name = nameOf(item);
+            sb.append(i == 0 ? "" : "；").append(name).append(' ')
+                    .append(Math.round(item.getPlan().getRate7d() * 100)).append('%');
+            if (item.getPlan().getStreakDays() > 0) {
+                sb.append("，连续 ").append(item.getPlan().getStreakDays()).append(" 天未完成");
+            }
+            if (item.getLifestyle() != null) {
+                sb.append("，近 7 日饮食记录 ").append(item.getLifestyle().getDietDays7d()).append(" 天");
+            }
+            if (i < 3 && Boolean.TRUE.equals(item.getClientLinked())) {
+                nudgeIds.add(item.getPeopleId());
+            }
+        }
+        sb.append("。");
+        if (!nudgeIds.isEmpty()) {
+            actions.add(AgentAction.nudgeBatch("一起提醒（" + nudgeIds.size() + " 人）", nudgeIds));
+        }
+        for (int i = 0; i < Math.min(2, low.size()); i++) {
+            actions.add(AgentAction.focusPatient("处理" + nameOf(low.get(i)), low.get(i).getPeopleId()));
+        }
+        actions.add(AgentAction.navigate("打开依从看板", "/workspace/adherence"));
+        return sb.toString();
+    }
+
+    private String planEndingText(String tenantId, String orgId, List<AgentAction> actions) {
+        List<AdherencePatientItemDto> ending = cockpitService.plansEndingSoon(tenantId, orgId, PLAN_ENDING_DAYS);
+        if (ending.isEmpty()) {
+            return PLAN_ENDING_DAYS + " 天内到期的方案：暂无。";
+        }
+        LocalDate today = LocalDate.now(JobCronSupport.ZONE);
+        StringBuilder sb = new StringBuilder(PLAN_ENDING_DAYS + " 天内到期的方案共 " + ending.size() + " 位：");
+        for (int i = 0; i < ending.size(); i++) {
+            AdherencePatientItemDto item = ending.get(i);
+            LocalDate end = item.getPlanEndDate();
+            long left = ChronoUnit.DAYS.between(today, end);
+            sb.append(i == 0 ? "" : "；").append(nameOf(item)).append(' ')
+                    .append(end.getMonthValue()).append('月').append(end.getDayOfMonth()).append("日到期")
+                    .append(left == 0 ? "（今天）" : "（剩 " + left + " 天）");
+        }
+        sb.append("。");
+        for (int i = 0; i < Math.min(3, ending.size()); i++) {
+            actions.add(AgentAction.focusPatient("处理" + nameOf(ending.get(i)), ending.get(i).getPeopleId()));
+        }
+        AdherencePatientItemDto first = ending.get(0);
+        actions.add(AgentAction.triggerCapability(
+                "生成" + nameOf(first) + "的复评草稿", "CARE_PLAN", first.getPeopleId()));
+        return sb.toString();
+    }
+
+    private static String nameOf(AdherencePatientItemDto item) {
+        return StringUtils.hasText(item.getDisplayName()) ? item.getDisplayName() : "患者";
+    }
+
+    private static AgentAction trendAction(String label, String peopleId) {
+        return AgentAction.openSheet(label, "observations", peopleId, Map.of("sub", "trends"));
+    }
+
+    public static boolean wantsAdherenceRank(String message) {
+        return containsAny(
+                message == null ? "" : message.toLowerCase(Locale.ROOT),
+                "掉队", "打卡率", "依从", "没打卡", "不打卡", "打卡最", "打卡差", "打卡情况", "谁没完成");
+    }
+
+    public static boolean wantsPlanEnding(String message) {
+        return containsAny(
+                message == null ? "" : message.toLowerCase(Locale.ROOT),
+                "到期", "过期", "复评", "续期", "快结束");
+    }
+
+    /**
+     * 从「今天上午」「明天 15:30」「后天下午3点」这类话术解析计划时间；没有时间词或已过去返回 null。
+     */
+    public static LocalDateTime parsePlannedAt(String message, LocalDateTime now) {
+        if (!StringUtils.hasText(message)) {
+            return null;
+        }
+        String msg = message.replace('：', ':');
+        int dayOffset = -1;
+        if (msg.contains("后天")) {
+            dayOffset = 2;
+        } else if (msg.contains("明天") || msg.contains("明早")) {
+            dayOffset = 1;
+        } else if (msg.contains("今天") || msg.contains("今早") || msg.contains("今晚")) {
+            dayOffset = 0;
+        }
+        boolean pm = msg.contains("下午") || msg.contains("晚上") || msg.contains("今晚");
+        LocalTime time = null;
+        Matcher m = CLOCK.matcher(msg);
+        if (m.find()) {
+            int hour = Integer.parseInt(m.group(1));
+            int minute = m.group(2) != null ? Integer.parseInt(m.group(2)) : (m.group(3) != null ? 30 : 0);
+            if (pm && hour < 12) {
+                hour += 12;
+            }
+            if (hour <= 23 && minute <= 59) {
+                time = LocalTime.of(hour, minute);
+            }
+        }
+        if (time == null) {
+            if (msg.contains("上午") || msg.contains("早上") || msg.contains("今早") || msg.contains("明早")) {
+                time = LocalTime.of(10, 0);
+            } else if (msg.contains("中午")) {
+                time = LocalTime.of(12, 0);
+            } else if (msg.contains("下午")) {
+                time = LocalTime.of(15, 0);
+            } else if (msg.contains("晚上") || msg.contains("今晚")) {
+                time = LocalTime.of(19, 0);
+            }
+        }
+        if (dayOffset < 0 && time == null) {
+            return null;
+        }
+        LocalDate day = now.toLocalDate().plusDays(Math.max(0, dayOffset));
+        LocalDateTime at = day.atTime(time != null ? time : LocalTime.of(10, 0));
+        return at.isAfter(now) ? at : null;
+    }
+
+    private static String plannedLabel(LocalDateTime at, LocalDate today) {
+        long days = ChronoUnit.DAYS.between(today, at.toLocalDate());
+        String day = days == 0 ? "今天" : days == 1 ? "明天" : days == 2 ? "后天" : at.toLocalDate().toString();
+        return day + " " + at.toLocalTime().withSecond(0).withNano(0);
     }
 
     /** 按用户话术与焦点数据给出确定性抽屉动作（不依赖模型编造 path）。 */
@@ -123,7 +279,12 @@ public class StaffBizTools {
         }
 
         if (wantFollowup) {
-            out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "ROUTINE"));
+            LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+            LocalDateTime plannedAt = parsePlannedAt(message, now);
+            String label = plannedAt == null
+                    ? "一键创建随访待办"
+                    : "创建随访（" + plannedLabel(plannedAt, now.toLocalDate()) + "）";
+            out.add(AgentAction.createFollowupTask(label, peopleId, "ROUTINE", null, plannedAt));
             out.add(AgentAction.openSheet("打开随访页", "followups", peopleId));
         }
         if (wantChat) {
@@ -133,6 +294,13 @@ public class StaffBizTools {
             out.add(AgentAction.openSheet("联系患者", "care-chat", peopleId));
         }
         if (wantObs) {
+            if (containsAny(msg, "血压")) {
+                out.add(trendAction("看血压趋势", peopleId));
+            } else if (containsAny(msg, "血糖")) {
+                out.add(trendAction("看血糖趋势", peopleId));
+            } else if (containsAny(msg, "趋势", "指标")) {
+                out.add(trendAction("看指标趋势", peopleId));
+            }
             out.add(AgentAction.openSheet("录入健康数据", "observations", peopleId));
         }
         if (wantPlan) {
@@ -201,7 +369,11 @@ public class StaffBizTools {
                     out.add(AgentAction.triggerCapability("一键生成报告点评", "REPORT_SUMMARY", peopleId));
                     out.add(AgentAction.openSheet("审阅管理报告", "reports", peopleId));
                 } else if ("METRIC_ALERT".equals(type)) {
-                    out.add(AgentAction.openSheet("录入健康数据", "observations", peopleId));
+                    String summary = top.getSummary() == null ? "" : top.getSummary();
+                    out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "ROUTINE"));
+                    out.add(trendAction(
+                            summary.contains("血压") ? "看血压趋势" : summary.contains("血糖") ? "看血糖趋势" : "看指标趋势",
+                            peopleId));
                 } else if ("TEAM_ASSIGN".equals(type)) {
                     out.add(AgentAction.navigate("去分配健管组", "join-care-team", peopleId));
                 } else if (!StringUtils.hasText(type)) {
@@ -382,8 +554,30 @@ public class StaffBizTools {
         if (f.getPlanRate7d() != null) {
             sb.append("；近7日依从：").append(Math.round(f.getPlanRate7d() * 100)).append("%");
         }
+        if (f.getMedRate7d() != null) {
+            sb.append("；近7日服药：").append(Math.round(f.getMedRate7d() * 100)).append("%");
+        }
+        if (f.getMedMissStreakDays() >= 2) {
+            sb.append("（连续 ").append(f.getMedMissStreakDays()).append(" 天未按时完成）");
+        }
+        if (f.getDietDays7d() != null) {
+            sb.append("；近7日饮食记录 ").append(f.getDietDays7d()).append(" 天");
+        }
+        if (f.getExerciseDays7d() != null) {
+            sb.append("；近7日运动记录 ").append(f.getExerciseDays7d()).append(" 天");
+        }
         if (StringUtils.hasText(f.getBloodPressure())) {
-            sb.append("；血压：").append(f.getBloodPressure());
+            sb.append("；最近血压：").append(f.getBloodPressure());
+            if (f.isBloodPressureHigh()) {
+                sb.append("（偏高）");
+            }
+            if (f.getBloodPressureAt() != null) {
+                sb.append("，测于 ").append(f.getBloodPressureAt().toLocalDate())
+                        .append(' ').append(f.getBloodPressureAt().toLocalTime().withSecond(0).withNano(0));
+            }
+        }
+        if (StringUtils.hasText(f.getAllergyText())) {
+            sb.append("；过敏史：").append(f.getAllergyText());
         }
         if (StringUtils.hasText(f.getLifestyleSummary())) {
             sb.append("；").append(f.getLifestyleSummary());

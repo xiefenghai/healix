@@ -49,6 +49,7 @@ const KINSHIP_MEMBER: Record<string, string> = {
   DAUGHTER: '女',
   BROTHER: '兄/弟',
   SISTER: '姐/妹',
+  UNSPECIFIED: '未细分',
   P_GRANDFATHER: '祖父',
   P_GRANDMOTHER: '祖母',
   M_GRANDFATHER: '外祖父',

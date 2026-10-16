@@ -1,13 +1,17 @@
 package com.healix.core.vitals.service;
 
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.careplan.service.CarePlanMetricCheckinSync;
+import com.healix.core.observation.enums.HealthDataSourceEnum;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.enums.MetricTypeEnum;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
+import com.healix.core.vitals.support.VitalValueRules;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -28,7 +32,9 @@ public class VitalService {
 
     private final VitalRecordMapper vitalRecordMapper;
     private final PeopleProfileMapper peopleProfileMapper;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
     private final ObjectProvider<WorkspaceTaskGenerator> workspaceTaskGenerator;
+    private final ObjectProvider<CarePlanMetricCheckinSync> metricCheckinSync;
 
     /** 患者自助录入。新列 org_id/group_id/note/recorded_by_staff_id 可空，与 B 端增强表结构兼容。 */
     @Transactional
@@ -60,6 +66,7 @@ public class VitalService {
         if (profile.getTenantId() == null) {
             throw new BusinessException("患者未归属租户");
         }
+        VitalValueRules.assertPlausible(metricType, value);
         VitalRecord record = new VitalRecord();
         record.setTenantId(profile.getTenantId());
         record.setPeopleId(peopleId);
@@ -71,9 +78,18 @@ public class VitalService {
         EntityMeta.onCreate(record);
         record.setRecordedAt(recordedAt != null ? recordedAt : record.getGmtCreated());
         vitalRecordMapper.insert(record);
+        assessmentDirtyMarker.mark(profile.getTenantId(), peopleId);
         WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
         if (gen != null) {
             gen.onVitalsWritten(profile.getTenantId(), record.getOrgId(), peopleId, List.of(record));
+        }
+        CarePlanMetricCheckinSync sync = metricCheckinSync.getIfAvailable();
+        if (sync != null) {
+            sync.onMetricsChanged(
+                    profile.getTenantId(),
+                    peopleId,
+                    List.of(CarePlanMetricCheckinSync.MetricDay.of(record)),
+                    HealthDataSourceEnum.isPatientOwned(source) ? peopleId : null);
         }
         return record;
     }

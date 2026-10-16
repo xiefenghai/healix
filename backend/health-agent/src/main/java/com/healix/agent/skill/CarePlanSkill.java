@@ -47,7 +47,7 @@ public class CarePlanSkill implements AgentSkill {
                 "CARE_PLAN_GENERATE",
                 "已为患者生成管理方案草稿，请审阅后发布。",
                 List.of(
-                        AgentAction.openSheet("查看方案草稿", "care-plan", cmd.peopleId()),
+                        AgentAction.openSheet("编辑方案草稿", "care-plan", cmd.peopleId()),
                         AgentAction.publishCarePlan("确认发布方案", cmd.peopleId()),
                         AgentAction.triggerCapability("继续闲聊", "GENERAL_CHAT", cmd.peopleId())),
                 List.of(),

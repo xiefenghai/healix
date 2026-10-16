@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.medication.mapper.PeopleMedicationReminderMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, enabled, morning_at, noon_at, evening_at, bedtime_at, follow_up_min,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_medication_reminder(
+            id, tenant_id, people_id, enabled, morning_at, noon_at, evening_at, bedtime_at, follow_up_min,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{enabled}, #{morningAt}, #{noonAt}, #{eveningAt}, #{bedtimeAt},
+            #{followUpMin}, #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE people_medication_reminder
+        SET enabled = #{enabled},
+            morning_at = #{morningAt},
+            noon_at = #{noonAt},
+            evening_at = #{eveningAt},
+            bedtime_at = #{bedtimeAt},
+            follow_up_min = #{followUpMin},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findByPeople" resultType="com.healix.core.medication.domain.PeopleMedicationReminder">
+        SELECT <include refid="cols"/>
+        FROM people_medication_reminder
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleIds" resultType="com.healix.core.medication.domain.PeopleMedicationReminder">
+        SELECT <include refid="cols"/>
+        FROM people_medication_reminder
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+    </select>
+
+    <select id="listReminderCandidates" resultType="string">
+        SELECT DISTINCT m.people_id
+        FROM people_medication m
+        INNER JOIN account_patient ap
+                ON ap.people_id = m.people_id
+               AND ap.tenant_id = m.tenant_id
+               AND ap.is_deleted = 0
+        WHERE m.tenant_id = #{tenantId}
+          AND m.is_deleted = 0
+          AND m.status = 'ACTIVE'
+    </select>
+
+    <insert id="insertLogIgnore">
+        INSERT IGNORE INTO people_medication_reminder_log(
+            tenant_id, people_id, remind_date, time_slot, seq, sent_at
+        ) VALUES (
+            #{tenantId}, #{peopleId}, #{remindDate}, #{timeSlot}, #{seq}, #{sentAt}
+        )
+    </insert>
+
+    <delete id="deleteLogsBefore">
+        DELETE FROM people_medication_reminder_log
+        WHERE remind_date &lt; #{before}
+    </delete>
+</mapper>

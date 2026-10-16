@@ -17,6 +17,8 @@ public enum FeatureFlagKeyEnum {
     AI_REPORT_SUMMARY("报告 AI 点评", true),
     /** C 端自助申请回访 */
     PATIENT_FOLLOWUP_REQUEST("C 端申请回访", true),
+    /** C 端健康豆 / 火苗 / 徽章 */
+    PATIENT_REWARDS("C 端激励体系", true),
     /** 租户白标（Logo / 主色 / 应用名） */
     WHITE_LABEL("白标定制", false),
     /** 方案发布后需医生复核签署 */

@@ -51,11 +51,6 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class FollowupScheduleService {
 
-    /** 有执行中方案：随访更密（天） */
-    public static final int DEFAULT_INTERVAL_WITH_PLAN = 30;
-    /** 无方案：常规回访间隔（天） */
-    public static final int DEFAULT_INTERVAL_NO_PLAN = 90;
-
     private final TenantMapper tenantMapper;
     private final OrganizationMapper organizationMapper;
     private final PatientOrgMembershipMapper membershipMapper;
@@ -64,8 +59,10 @@ public class FollowupScheduleService {
     private final WorkspaceTaskMapper workspaceTaskMapper;
     private final CarePlanMapper carePlanMapper;
     private final FeatureFlagService featureFlagService;
+    private final FollowupScheduleRuleService scheduleRuleService;
 
-    public record ScheduleCounts(int orgs, int scanned, int created, int skippedOpen, int skippedNotDue) {}
+    public record ScheduleCounts(
+            int orgs, int scanned, int created, int skippedOpen, int skippedNotDue, int skippedDisabled) {}
 
     public ScheduleCounts scanAll(LocalDate day) {
         LocalDate scanDay = day != null ? day : LocalDate.now(JobCronSupport.ZONE);
@@ -74,6 +71,7 @@ public class FollowupScheduleService {
         int created = 0;
         int skippedOpen = 0;
         int skippedNotDue = 0;
+        int skippedDisabled = 0;
         for (Tenant tenant : tenantMapper.listByStatus("ACTIVE")) {
             for (Organization org : organizationMapper.listByTenant(tenant.getId())) {
                 orgs++;
@@ -82,9 +80,10 @@ public class FollowupScheduleService {
                 created += c.created();
                 skippedOpen += c.skippedOpen();
                 skippedNotDue += c.skippedNotDue();
+                skippedDisabled += c.skippedDisabled();
             }
         }
-        return new ScheduleCounts(orgs, scanned, created, skippedOpen, skippedNotDue);
+        return new ScheduleCounts(orgs, scanned, created, skippedOpen, skippedNotDue, skippedDisabled);
     }
 
     @Transactional
@@ -94,6 +93,8 @@ public class FollowupScheduleService {
         int created = 0;
         int skippedOpen = 0;
         int skippedNotDue = 0;
+        int skippedDisabled = 0;
+        FollowupScheduleRuleService.RuleSet rules = scheduleRuleService.loadRuleSet(tenantId);
 
         for (PatientOrgMembership m : membershipMapper.listActiveByOrg(orgId)) {
             if (!MembershipStatusEnum.ACTIVE.matches(m.getStatus()) || !StringUtils.hasText(m.getPeopleId())) {
@@ -111,7 +112,12 @@ public class FollowupScheduleService {
                 skippedNotDue++;
                 continue;
             }
-            int interval = resolveIntervalDays(tenantId, peopleId);
+            Integer interval = scheduleRuleService.resolveIntervalDays(
+                    rules, tenantId, orgId, peopleId, hasActivePlan(tenantId, peopleId));
+            if (interval == null) {
+                skippedDisabled++;
+                continue;
+            }
             if (anchor.plusDays(interval).isAfter(scanDay)) {
                 skippedNotDue++;
                 continue;
@@ -120,7 +126,7 @@ public class FollowupScheduleService {
                 created++;
             }
         }
-        return new ScheduleCounts(1, scanned, created, skippedOpen, skippedNotDue);
+        return new ScheduleCounts(1, scanned, created, skippedOpen, skippedNotDue, skippedDisabled);
     }
 
     /**
@@ -285,12 +291,9 @@ public class FollowupScheduleService {
         return membership.getJoinedAt() == null ? null : membership.getJoinedAt().toLocalDate();
     }
 
-    private int resolveIntervalDays(String tenantId, String peopleId) {
+    private boolean hasActivePlan(String tenantId, String peopleId) {
         CarePlan plan = carePlanMapper.findByTenantAndPeople(tenantId, peopleId);
-        boolean hasActivePlan = plan != null
-                && "ACTIVE".equals(plan.getStatus())
-                && StringUtils.hasText(plan.getCurrentVersionId());
-        return hasActivePlan ? DEFAULT_INTERVAL_WITH_PLAN : DEFAULT_INTERVAL_NO_PLAN;
+        return plan != null && "ACTIVE".equals(plan.getStatus()) && StringUtils.hasText(plan.getCurrentVersionId());
     }
 
     private boolean openScheduled(

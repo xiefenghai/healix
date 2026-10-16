@@ -14,9 +14,15 @@ import {
   type ActivityItem,
 } from './agent-activity'
 import AgentActivityPanel from './AgentActivityPanel.vue'
+import AgentCarePlanCard from './AgentCarePlanCard.vue'
 import AgentOcrReviewCard from './AgentOcrReviewCard.vue'
 import AgentReportReviewCard from './AgentReportReviewCard.vue'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from './CarePlanPreviewDialog.vue'
+import {
+  buildCarePlanChatPreview,
+  carePlanStatusLine,
+  type CarePlanChatPreview,
+} from './agent-care-plan'
 import { setAgentDraft } from './agent-draft-bus'
 import { formatAssistantPlainHtml } from './agent-plain-text'
 import { callApiDoneLabel, runAgentCallApi } from './agent-call-api'
@@ -72,6 +78,7 @@ interface ChatMessage {
   imageName?: string
   ocrReview?: OcrReview
   reportReview?: ReportReviewPreview
+  carePlanPreview?: CarePlanChatPreview
 }
 
 const props = defineProps<{
@@ -195,7 +202,13 @@ function applyAgentResult(
   const streamed = (row.streamContent || '').trim()
   if (!data?.reply && !streamed && !data?.extracted) return
   if (data.capability === 'CARE_PLAN') {
-    row.content = streamed || data.reply || ''
+    const preview = data.extracted ? buildCarePlanChatPreview(data.extracted) : null
+    if (preview) {
+      row.carePlanPreview = preview
+      row.content = carePlanStatusLine(preview, data.intent === 'CARE_PLAN_REVISE')
+    } else {
+      row.content = streamed || data.reply || ''
+    }
   } else if (data.capability === 'REPORT_SUMMARY' && data.extracted) {
     const preview = buildReportReview(data.extracted)
     if (preview) {
@@ -210,7 +223,14 @@ function applyAgentResult(
   row.streamContent = ''
   row.actions =
     data.capability === 'CARE_PLAN'
-      ? [...(data.actions || []), { type: 'PREVIEW', label: '预览方案详情' }]
+      ? [
+          ...(data.actions || []).map((a) =>
+            a.type === 'OPEN_SHEET' && a.path === 'care-plan'
+              ? { ...a, label: '编辑方案草稿' }
+              : a,
+          ),
+          { type: 'PREVIEW', label: '预览全文' },
+        ]
       : data.actions
   row.isCarePlan = data.capability === 'CARE_PLAN'
   row.streaming = false
@@ -461,29 +481,39 @@ function runAction(action: AgentAction) {
   }
   if (action.type === 'OPEN_SHEET' && action.path) {
     const peopleId = action.peopleId || props.peopleId
+    const openCompose = action.path === 'care-plan'
     if (
       action.payload?.draftContent ||
       action.payload?.openCreate ||
+      action.payload?.openCompose ||
       action.payload?.openReview ||
       action.payload?.staffComment ||
-      action.payload?.reportId
+      action.payload?.reportId ||
+      openCompose
     ) {
       setAgentDraft({
         peopleId,
         mode: action.path,
-        draftContent: typeof action.payload.draftContent === 'string' ? action.payload.draftContent : undefined,
-        openCreate: !!action.payload.openCreate,
-        reportId: typeof action.payload.reportId === 'string' ? action.payload.reportId : undefined,
-        openReview: !!action.payload.openReview,
-        staffComment: typeof action.payload.staffComment === 'string' ? action.payload.staffComment : undefined,
-        nextFocus: typeof action.payload.nextFocus === 'string' ? action.payload.nextFocus : undefined,
+        draftContent:
+          typeof action.payload?.draftContent === 'string' ? action.payload.draftContent : undefined,
+        openCreate: !!action.payload?.openCreate,
+        openCompose: openCompose || !!action.payload?.openCompose,
+        reportId: typeof action.payload?.reportId === 'string' ? action.payload.reportId : undefined,
+        openReview: !!action.payload?.openReview,
+        staffComment:
+          typeof action.payload?.staffComment === 'string' ? action.payload.staffComment : undefined,
+        nextFocus: typeof action.payload?.nextFocus === 'string' ? action.payload.nextFocus : undefined,
         quarterAdvice:
-          typeof action.payload.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
+          typeof action.payload?.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
       })
     }
     const target = sheetModeToPath(peopleId, action.path)
     drawerVisible.value = false
-    router.push(target)
+    if (openCompose) {
+      router.push({ path: target, query: { mainTab: 'compose' } })
+    } else {
+      router.push(target)
+    }
     return
   }
   if (action.path) {
@@ -648,7 +678,7 @@ async function openCarePlanPreview() {
         exercise?: CarePlanPreviewData['exercise']
         diet?: CarePlanPreviewData['diet']
         execution?: CarePlanPreviewData['execution']
-        contextSnapshot?: { summary?: string }
+        contextSnapshot?: { summary?: string; rationale?: { overview?: string } }
       }
       activeVersion?: {
         source?: string
@@ -656,17 +686,22 @@ async function openCarePlanPreview() {
         exercise?: CarePlanPreviewData['exercise']
         diet?: CarePlanPreviewData['diet']
         execution?: CarePlanPreviewData['execution']
-        contextSnapshot?: { summary?: string }
+        contextSnapshot?: { summary?: string; rationale?: { overview?: string } }
         publishedAt?: string
       }
     }
     const src = b.draft || b.activeVersion
     const snapSummary =
       typeof src?.contextSnapshot?.summary === 'string' ? src.contextSnapshot.summary.trim() : ''
+    const rationaleOverview =
+      typeof src?.contextSnapshot?.rationale?.overview === 'string'
+        ? src.contextSnapshot.rationale.overview.trim()
+        : ''
     previewData.value = {
       title: b.plan?.title,
       goalSummary: b.plan?.goalSummary,
       summary: snapSummary || undefined,
+      rationaleOverview: rationaleOverview || undefined,
       source: b.draft?.source || b.activeVersion?.source,
       versionLabel: b.draft ? '草稿' : `v${b.activeVersion?.versionNo || ''}`,
       status: b.draft ? 'DRAFT' : 'ACTIVE',
@@ -929,11 +964,19 @@ watch(
               <div class="plain-body" v-html="formatAssistantPlainHtml(msg.streamContent)" />
             </div>
             <div
-              v-else-if="msg.content && msg.role === 'assistant' && !msg.reportReview"
+              v-else-if="
+                msg.content &&
+                msg.role === 'assistant' &&
+                !msg.reportReview &&
+                !msg.carePlanPreview
+              "
               class="bubble-text plain-body"
               v-html="formatAssistantPlainHtml(msg.content)"
             />
-            <div v-else-if="msg.reportReview" class="bubble-text plain-body report-status">
+            <div
+              v-else-if="msg.reportReview || msg.carePlanPreview"
+              class="bubble-text plain-body report-status"
+            >
               {{ msg.content }}
             </div>
             <div v-else-if="msg.content" class="bubble-text">
@@ -948,6 +991,7 @@ watch(
             </div>
 
             <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
+            <AgentCarePlanCard v-if="msg.carePlanPreview" :preview="msg.carePlanPreview" />
 
             <button
               v-if="msg.imageUrl"

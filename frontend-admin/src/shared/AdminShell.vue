@@ -157,6 +157,7 @@ function onSwitchOrg() {
                 <el-icon v-else-if="m.icon === 'ticket'"><Ticket /></el-icon>
                 <el-icon v-else-if="m.icon === 'timer'"><Timer /></el-icon>
                 <el-icon v-else-if="m.icon === 'merge'"><Connection /></el-icon>
+                <el-icon v-else-if="m.icon === 'dish'"><Dish /></el-icon>
                 <el-icon v-else><Menu /></el-icon>
                 <template v-if="!collapsed">
                   <span class="menu-label">{{ m.label }}</span>

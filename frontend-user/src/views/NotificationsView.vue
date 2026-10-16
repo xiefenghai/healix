@@ -216,9 +216,7 @@ onMounted(async () => {
 <style scoped>
 .page {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 12% -8%, rgba(92, 184, 184, 0.2), transparent 42%),
-    var(--hx-bg);
+  background: var(--hx-bg);
   padding-bottom: 24px;
 }
 .nav-action {
@@ -226,7 +224,7 @@ onMounted(async () => {
   background: transparent;
   color: var(--hx-teal);
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 600;
   padding: 0;
 }
 .nav-action:disabled {
@@ -240,7 +238,7 @@ onMounted(async () => {
   padding: 14px 16px;
   border-radius: 16px;
   background: #fff;
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 .push-main {
   display: flex;
@@ -265,7 +263,7 @@ onMounted(async () => {
   background: transparent;
   color: var(--hx-teal);
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 600;
 }
 .push-test:disabled {
   opacity: 0.5;
@@ -277,9 +275,9 @@ onMounted(async () => {
   margin: 12px 16px 0;
   padding: 14px 16px;
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--hx-r-lg);
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
   text-align: left;
 }
 .card.unread {
@@ -296,7 +294,7 @@ onMounted(async () => {
 }
 .title {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--hx-text);
   line-height: 1.35;
 }
@@ -318,7 +316,7 @@ onMounted(async () => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #e11d48;
+  background: var(--hx-danger);
 }
 .card.unread .time {
   margin-right: 10px;

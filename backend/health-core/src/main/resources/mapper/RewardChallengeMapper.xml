@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.reward.mapper.RewardChallengeMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, period_start, period_end, kind, title, target, progress,
+        status, source, points_awarded, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO reward_challenge(
+            id, tenant_id, people_id, period_start, period_end, kind, title, target, progress,
+            status, source, points_awarded,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{periodStart}, #{periodEnd}, #{kind}, #{title}, #{target}, #{progress},
+            #{status}, #{source}, #{pointsAwarded},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateProgress">
+        UPDATE reward_challenge
+        SET progress = #{progress},
+            status = #{status},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="updateSettled">
+        UPDATE reward_challenge
+        SET progress = #{progress},
+            status = #{status},
+            points_awarded = #{pointsAwarded},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="findActive" resultType="com.healix.core.reward.domain.RewardChallenge">
+        SELECT <include refid="cols"/>
+        FROM reward_challenge
+        WHERE people_id = #{peopleId}
+          AND period_start = #{periodStart}
+          AND is_deleted = 0
+        ORDER BY gmt_created DESC
+        LIMIT 1
+    </select>
+
+    <select id="listByPeriodStart" resultType="com.healix.core.reward.domain.RewardChallenge">
+        SELECT <include refid="cols"/>
+        FROM reward_challenge
+        WHERE period_start = #{periodStart}
+          AND is_deleted = 0
+    </select>
+
+    <select id="findById" resultType="com.healix.core.reward.domain.RewardChallenge">
+        SELECT <include refid="cols"/>
+        FROM reward_challenge
+        WHERE id = #{id} AND is_deleted = 0
+        LIMIT 1
+    </select>
+</mapper>

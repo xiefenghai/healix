@@ -9,7 +9,10 @@ import com.healix.core.notify.domain.NotifyMessage;
 import com.healix.core.notify.enums.NotifyChannel;
 import com.healix.core.notify.enums.NotifyDeliveryStatus;
 import com.healix.core.notify.mapper.NotifyDeliveryMapper;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -76,10 +79,11 @@ public class WebPushService {
     @Value("${healix.web-push.ttl-seconds:86400}")
     private int ttlSeconds;
 
-    private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .build();
+    /** host:port 的 HTTP 代理；大陆服务器连不上 FCM（Chrome）时配一个境外代理 */
+    @Value("${healix.web-push.proxy:}")
+    private String proxy;
+
+    private HttpClient http;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private volatile WebPushCrypto.VapidKeys keys;
 
@@ -174,6 +178,24 @@ public class WebPushService {
         } else {
             executor.execute(task);
         }
+    }
+
+    @PostConstruct
+    void initHttpClient() {
+        HttpClient.Builder b = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER);
+        if (StringUtils.hasText(proxy)) {
+            String p = proxy.trim().replaceFirst("^https?://", "");
+            int colon = p.lastIndexOf(':');
+            if (colon <= 0) {
+                throw new IllegalStateException("healix.web-push.proxy 须为 host:port");
+            }
+            b.proxy(ProxySelector.of(
+                    InetSocketAddress.createUnresolved(p.substring(0, colon), Integer.parseInt(p.substring(colon + 1)))));
+            log.info("Web push via proxy {}", p);
+        }
+        http = b.build();
     }
 
     @PreDestroy

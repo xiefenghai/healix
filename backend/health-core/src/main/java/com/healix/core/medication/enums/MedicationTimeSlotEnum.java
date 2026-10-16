@@ -6,5 +6,8 @@ public enum MedicationTimeSlotEnum {
     NOON,
     EVENING,
     BEDTIME,
+    /** 需要时服用：同日可多次，按 dose_seq 区分 */
+    PRN,
+    /** 仅历史数据：旧版每日一次统一写在此槽 */
     OTHER
 }

@@ -9,7 +9,7 @@ import PatientMetricTrendView from './PatientMetricTrendView.vue'
 import PatientLabView from './PatientLabView.vue'
 import PatientExamView from './PatientExamView.vue'
 
-const props = defineProps<{ peopleId?: string }>()
+const props = defineProps<{ peopleId?: string; initialSub?: string }>()
 
 const route = useRoute()
 const router = useRouter()
@@ -17,7 +17,15 @@ const router = useRouter()
 const embedded = computed(() => !!props.peopleId)
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
-const localSub = ref<'metrics' | 'trends' | 'labs' | 'exams'>('metrics')
+type SubName = 'metrics' | 'trends' | 'labs' | 'exams'
+const SUB_NAMES: readonly SubName[] = ['metrics', 'trends', 'labs', 'exams']
+
+function initialLocalSub(): SubName {
+  const s = props.initialSub as SubName | undefined
+  return s && SUB_NAMES.includes(s) ? s : 'metrics'
+}
+
+const localSub = ref<SubName>(initialLocalSub())
 const consumeOcrDraft = ref(false)
 const labRemountKey = ref(0)
 
@@ -43,7 +51,7 @@ const SUB_TABS = [
 watch(
   () => props.peopleId,
   () => {
-    localSub.value = 'metrics'
+    localSub.value = initialLocalSub()
     consumeOcrDraft.value = false
   },
 )

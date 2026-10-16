@@ -2,8 +2,16 @@ package com.healix.core.assessment.support;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.common.util.JsonUtils;
-import com.healix.core.archive.dto.DiseaseArchiveViewDto;
-import com.healix.core.archive.service.DiseaseArchiveService;
+import com.healix.core.archive.domain.PeopleDiseaseArchive;
+import com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper;
+import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.domain.PeopleAssessmentFact;
+import com.healix.core.assessment.mapper.AssessmentStoreMapper;
+import com.healix.core.assessment.support.AssessmentContext.FactValue;
+import com.healix.core.medication.domain.PeopleMedication;
+import com.healix.core.medication.dto.DrugCatalogItemDto;
+import com.healix.core.medication.mapper.PeopleMedicationMapper;
+import com.healix.core.medication.service.DrugCatalogService;
 import com.healix.core.observation.dto.MetricLatestSlotDto;
 import com.healix.core.observation.mapper.LabResultItemMapper;
 import com.healix.core.observation.mapper.LabResultItemMapper.LabLatestNumeric;
@@ -17,599 +25,522 @@ import com.healix.core.vitals.enums.MetricTypeEnum;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Period;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+/**
+ * 评估输入批量加载：每类数据源只取一次。
+ *
+ * <p>指标最新值、基础档案、病种档案、检验、近 4 周血压、近 14 天血糖、在用药品、问卷事实各一次查询。
+ */
 @Component
 @RequiredArgsConstructor
 public class AssessmentContextBuilder {
 
-    private static final String DISEASE_DIABETES = "diabetes";
-    private static final String DISEASE_HYPERTENSION = "hypertension";
-    private static final String DISEASE_OBESITY = "obesity";
-    private static final String PI_DIABETES = "DIABETES";
-    private static final String PI_HYPERTENSION = "HYPERTENSION";
-    private static final String PI_OBESITY = "OBESITY";
-    private static final String FH_DIABETES = "FH_DIABETES";
-    private static final String FH_HYPERTENSION = "FH_HYPERTENSION";
-    private static final String FH_EARLY_MI = "FH_EARLY_MI";
-    private static final Set<String> FH_ASCVD = Set.of("FH_CHD", "FH_EARLY_MI", "FH_STROKE");
-    private static final List<String> LIPID_CODES = List.of("HDL_C", "TG", "TC", "LDL_C", "FPG", "UA", "HBA1C");
+    static final int BP_WINDOW_DAYS = 28;
+    static final int CONTROL_WINDOW_DAYS = 90;
     private static final BigDecimal HYPO_THRESHOLD = new BigDecimal("4.0");
+    private static final List<String> LAB_CODES =
+            List.of("HDL_C", "TG", "TC", "LDL_C", "FPG", "UA", "HBA1C", "CR", "EGFR", "UACR", "ALT");
+    private static final Set<String> FH_ASCVD = Set.of("FH_CHD", "FH_EARLY_MI", "FH_STROKE");
     private static final Set<String> COMORBIDITY_CODES = Set.of(
-            "OSTEOARTHRITIS",
-            "RHEUMATOID_ARTHRITIS",
-            "MALIGNANT_TUMOR",
-            "HEART_FAILURE",
-            "DEPRESSION",
-            "COPD",
-            "HYPERTENSION",
-            "CKD",
-            "CHD",
-            "STROKE");
+            "OSTEOARTHRITIS", "RHEUMATOID_ARTHRITIS", "MALIGNANT_TUMOR", "HEART_FAILURE", "DEPRESSION",
+            "COPD", "HYPERTENSION", "CKD", "CHD", "STROKE");
 
     private final PeopleProfileMapper peopleProfileMapper;
     private final PeopleBasicArchiveMapper basicArchiveMapper;
-    private final DiseaseArchiveService diseaseArchiveService;
+    private final PeopleDiseaseArchiveMapper diseaseArchiveMapper;
     private final MetricService metricService;
     private final LabResultItemMapper labResultItemMapper;
     private final VitalRecordMapper vitalRecordMapper;
+    private final PeopleMedicationMapper medicationMapper;
+    private final DrugCatalogService drugCatalogService;
+    private final AssessmentStoreMapper storeMapper;
 
     public AssessmentContext build(String tenantId, String peopleId) {
-        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
-        String gender = profile == null ? null : profile.getGender();
-        LocalDate birthday = profile == null ? null : profile.getBirthday();
-        Integer age = birthday == null ? null : Period.between(birthday, LocalDate.now()).getYears();
-
-        MetricPick height = pickMetric(tenantId, peopleId, MetricTypeEnum.HEIGHT);
-        MetricPick weight = pickMetric(tenantId, peopleId, MetricTypeEnum.WEIGHT);
-        MetricPick waist = pickMetric(tenantId, peopleId, MetricTypeEnum.WAIST);
-        MetricPick sbp = pickMetric(tenantId, peopleId, MetricTypeEnum.BLOOD_PRESSURE_SYS);
-        MetricPick dbp = pickMetric(tenantId, peopleId, MetricTypeEnum.BLOOD_PRESSURE_DIA);
-        MetricPick heartRate = pickMetric(tenantId, peopleId, MetricTypeEnum.HEART_RATE);
-        GlucosePick glucose = pickGlucose(tenantId, peopleId);
-
-        BigDecimal bmi = null;
-        if (height.value != null
-                && weight.value != null
-                && height.value.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal meters = height.value.divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP);
-            bmi = weight.value.divide(meters.multiply(meters), 2, RoundingMode.HALF_UP);
-        }
-
-        FamilyHistoryFh fh = resolveFamilyHistory(tenantId, peopleId);
-        ArchiveExtras extras = resolveArchiveExtras(tenantId, peopleId);
-        PresentIllnessFlags presentIllness = resolvePresentIllness(tenantId, peopleId);
-        LipidPick lipids = resolveLipids(tenantId, peopleId);
-        DiseaseFlags diseases = resolveDiseases(tenantId, peopleId);
-        DiabetesControlExtras dmControl =
-                resolveDiabetesControlExtras(tenantId, peopleId, diseases, presentIllness);
-
-        BigDecimal fastingGlucose = glucose.fasting;
-        LocalDateTime fastingAt = glucose.fastingAt;
-        if (fastingGlucose == null && lipids.fpg != null) {
-            fastingGlucose = lipids.fpg;
-            fastingAt = lipids.fpgAt;
-        }
-
-        LocalDateTime asOf = LocalDateTime.now();
-        LocalDateTime windowStart = asOf.minusDays(90);
-
-        return AssessmentContext.builder()
+        LocalDateTime now = LocalDateTime.now();
+        AssessmentContext.AssessmentContextBuilder b = AssessmentContext.builder()
                 .tenantId(tenantId)
                 .peopleId(peopleId)
-                .gender(gender)
-                .birthday(birthday)
-                .ageYears(age)
-                .heightCm(height.value)
-                .heightRecordedAt(height.at)
-                .weightKg(weight.value)
-                .weightRecordedAt(weight.at)
-                .waistCm(waist.value)
-                .waistRecordedAt(waist.at)
-                .sbp(sbp.value)
-                .sbpRecordedAt(sbp.at)
-                .dbp(dbp.value)
-                .dbpRecordedAt(dbp.at)
-                .bmi(bmi)
-                .heartRate(heartRate.value)
-                .heartRateRecordedAt(heartRate.at)
-                .familyHistoryCollected(fh.collected)
-                .firstDegreeDiabetesFamilyHistory(fh.firstDegreeDiabetes)
-                .firstDegreeHypertensionFamilyHistory(fh.firstDegreeHypertension)
-                .firstDegreeAscvdFamilyHistory(fh.firstDegreeAscvd)
-                .earlyAscvdFamilyHistory(fh.earlyAscvd)
-                .hasDiabetesDiseaseArchive(diseases.diabetes)
-                .hasHypertensionDiseaseArchive(diseases.hypertension)
-                .hasObesityDiseaseArchive(diseases.obesity)
-                .hasDiabetesPresentIllness(presentIllness.diabetes)
-                .hasHypertensionPresentIllness(presentIllness.hypertension)
-                .hasObesityPresentIllness(presentIllness.obesity)
-                .pastHistoryCollected(extras.pastHistoryCollected)
-                .prediabetesHistory(extras.prediabetes)
-                .exerciseCollected(extras.exerciseCollected)
-                .exerciseFrequency(extras.exerciseFrequency)
-                .smokingCollected(extras.smokingCollected)
-                .smokingStatus(extras.smokingStatus)
-                .drinkingCollected(extras.drinkingCollected)
-                .drinkingStatus(extras.drinkingStatus)
-                .drinkingFrequency(extras.drinkingFrequency)
-                .drinkingAmountPerDay(extras.drinkingAmountPerDay)
-                .dietCollected(extras.dietCollected)
-                .dietType(extras.dietType)
-                .dietPreference(extras.dietPreference)
-                .hdlC(lipids.hdl)
-                .hdlUnit(lipids.hdlUnit)
-                .hdlRecordedAt(lipids.hdlAt)
-                .tg(lipids.tg)
-                .tgUnit(lipids.tgUnit)
-                .tgRecordedAt(lipids.tgAt)
-                .tc(lipids.tc)
-                .tcUnit(lipids.tcUnit)
-                .tcRecordedAt(lipids.tcAt)
-                .ldlC(lipids.ldl)
-                .ldlUnit(lipids.ldlUnit)
-                .ldlRecordedAt(lipids.ldlAt)
-                .fastingGlucose(fastingGlucose)
-                .fastingGlucoseRecordedAt(fastingAt)
-                .postprandialGlucose(glucose.postprandial)
-                .postprandialGlucoseRecordedAt(glucose.postprandialAt)
-                .uricAcid(lipids.ua)
-                .uricAcidUnit(lipids.uaUnit)
-                .uricAcidRecordedAt(lipids.uaAt)
-                .hba1c(lipids.hba1c)
-                .hba1cRecordedAt(lipids.hba1cAt)
-                .controlLabelAsOf(asOf)
-                .controlLabelWindowStart(windowStart)
-                .hypoEvents14d(dmControl.hypoEvents14d)
-                .hypoArchiveFallbackHit(dmControl.hypoArchiveFallbackHit)
-                .diabetesComorbidityHits(dmControl.comorbidityHits)
-                .diabetesComorbidityCount(dmControl.comorbidityHits.size())
-                .diabetesEndStageChronic(dmControl.endStageChronic)
-                .build();
-    }
+                .asOf(now)
+                .controlWindowStart(now.minusDays(CONTROL_WINDOW_DAYS));
 
-    private MetricPick pickMetric(String tenantId, String peopleId, MetricTypeEnum type) {
-        BigDecimal best = null;
-        LocalDateTime bestAt = null;
-        for (MetricLatestSlotDto slot : metricService.latestForPatient(tenantId, peopleId)) {
-            if (!type.matches(slot.metricType()) || slot.value() == null) {
-                continue;
-            }
-            if (bestAt == null || (slot.recordedAt() != null && slot.recordedAt().isAfter(bestAt))) {
-                best = slot.value();
-                bestAt = slot.recordedAt();
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile != null) {
+            b.gender(normalizeGender(profile.getGender()));
+            b.birthday(profile.getBirthday());
+            if (profile.getBirthday() != null) {
+                b.ageYears(Period.between(profile.getBirthday(), now.toLocalDate()).getYears());
             }
         }
-        return new MetricPick(best, bestAt);
+
+        MetricsLoaded metrics = loadMetrics(b, tenantId, peopleId, now);
+        LabLatestNumeric fpg = loadLabs(b, tenantId, peopleId);
+        if (fpg != null
+                && (metrics.fasting() == null
+                        || (fpg.getRecordedAt() != null
+                                && metrics.fasting().recordedAt() != null
+                                && fpg.getRecordedAt().isAfter(metrics.fasting().recordedAt())))) {
+            b.fastingGlucose(LabUnits.glucose(fpg.getValueNum(), fpg.getUnit()))
+                    .fastingGlucoseRecordedAt(fpg.getRecordedAt());
+        }
+        Set<String> presentIllness = loadBasicArchive(b, tenantId, peopleId);
+        loadDiseaseArchives(b, tenantId, peopleId, presentIllness, metrics.glucoseSeen14d());
+        loadMedications(b, tenantId, peopleId);
+        loadFacts(b, tenantId, peopleId);
+        return b.build();
     }
 
-    private GlucosePick pickGlucose(String tenantId, String peopleId) {
-        BigDecimal fasting = null;
-        LocalDateTime fastingAt = null;
-        BigDecimal post = null;
-        LocalDateTime postAt = null;
+    private record MetricsLoaded(MetricLatestSlotDto fasting, boolean glucoseSeen14d) {}
+
+    // ---------------------------------------------------------------- 指标
+
+    private MetricsLoaded loadMetrics(
+            AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId, LocalDateTime now) {
+        Map<MetricTypeEnum, MetricLatestSlotDto> latest = new EnumMap<>(MetricTypeEnum.class);
+        MetricLatestSlotDto fasting = null;
+        MetricLatestSlotDto post = null;
         for (MetricLatestSlotDto slot : metricService.latestForPatient(tenantId, peopleId)) {
-            if (!MetricTypeEnum.BLOOD_GLUCOSE.matches(slot.metricType()) || slot.value() == null) {
+            if (slot == null || slot.value() == null) {
                 continue;
             }
-            String meal = slot.mealContext() == null ? "" : slot.mealContext().toUpperCase(Locale.ROOT);
-            if ("FASTING".equals(meal)) {
-                if (fastingAt == null || (slot.recordedAt() != null && slot.recordedAt().isAfter(fastingAt))) {
-                    fasting = slot.value();
-                    fastingAt = slot.recordedAt();
+            if (MetricTypeEnum.BLOOD_GLUCOSE.matches(slot.metricType())) {
+                String meal = slot.mealContext() == null ? "" : slot.mealContext().toUpperCase(Locale.ROOT);
+                if ("FASTING".equals(meal)) {
+                    fasting = newer(fasting, slot);
+                } else if ("POSTPRANDIAL".equals(meal)) {
+                    post = newer(post, slot);
                 }
-            } else if ("POSTPRANDIAL".equals(meal)) {
-                if (postAt == null || (slot.recordedAt() != null && slot.recordedAt().isAfter(postAt))) {
-                    post = slot.value();
-                    postAt = slot.recordedAt();
+                continue;
+            }
+            for (MetricTypeEnum t : List.of(
+                    MetricTypeEnum.HEIGHT,
+                    MetricTypeEnum.WEIGHT,
+                    MetricTypeEnum.WAIST,
+                    MetricTypeEnum.HEART_RATE,
+                    MetricTypeEnum.BLOOD_PRESSURE_SYS,
+                    MetricTypeEnum.BLOOD_PRESSURE_DIA)) {
+                if (t.matches(slot.metricType())) {
+                    latest.put(t, newer(latest.get(t), slot));
                 }
             }
         }
-        return new GlucosePick(fasting, fastingAt, post, postAt);
-    }
 
-    private DiseaseFlags resolveDiseases(String tenantId, String peopleId) {
-        boolean diabetes = false;
-        boolean hypertension = false;
-        boolean obesity = false;
-        for (DiseaseArchiveViewDto row : diseaseArchiveService.list(tenantId, peopleId)) {
-            if (DISEASE_DIABETES.equalsIgnoreCase(row.getDiseaseCode())) {
-                diabetes = true;
-            }
-            if (DISEASE_HYPERTENSION.equalsIgnoreCase(row.getDiseaseCode())) {
-                hypertension = true;
-            }
-            if (DISEASE_OBESITY.equalsIgnoreCase(row.getDiseaseCode())) {
-                obesity = true;
+        MetricLatestSlotDto h = latest.get(MetricTypeEnum.HEIGHT);
+        MetricLatestSlotDto w = latest.get(MetricTypeEnum.WEIGHT);
+        MetricLatestSlotDto waist = latest.get(MetricTypeEnum.WAIST);
+        MetricLatestSlotDto hr = latest.get(MetricTypeEnum.HEART_RATE);
+        if (h != null) {
+            b.heightCm(h.value()).heightRecordedAt(h.recordedAt());
+        }
+        if (w != null) {
+            b.weightKg(w.value()).weightRecordedAt(w.recordedAt());
+        }
+        if (h != null && w != null && h.value().signum() > 0) {
+            BigDecimal m = h.value().divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP);
+            b.bmi(w.value().divide(m.multiply(m), 1, RoundingMode.HALF_UP));
+        }
+        if (waist != null) {
+            b.waistCm(waist.value()).waistRecordedAt(waist.recordedAt());
+        }
+        if (hr != null) {
+            b.heartRate(hr.value()).heartRateRecordedAt(hr.recordedAt());
+        }
+        if (fasting != null) {
+            b.fastingGlucose(fasting.value()).fastingGlucoseRecordedAt(fasting.recordedAt());
+        }
+        if (post != null) {
+            b.postprandialGlucose(post.value()).postprandialGlucoseRecordedAt(post.recordedAt());
+        }
+
+        LocalDateTime from = now.minusDays(BP_WINDOW_DAYS);
+        List<VitalRecord> sysRows = nonNull(vitalRecordMapper.listByRange(
+                tenantId, peopleId, MetricTypeEnum.BLOOD_PRESSURE_SYS.name(), from, now));
+        List<VitalRecord> diaRows = nonNull(vitalRecordMapper.listByRange(
+                tenantId, peopleId, MetricTypeEnum.BLOOD_PRESSURE_DIA.name(), from, now));
+        if (sysRows.size() >= 2 && diaRows.size() >= 2) {
+            b.sbp(mean(sysRows)).dbp(mean(diaRows)).bpReadings(sysRows.size());
+            b.bpRecordedAt(sysRows.stream()
+                    .map(VitalRecord::getRecordedAt)
+                    .filter(java.util.Objects::nonNull)
+                    .max(Comparator.naturalOrder())
+                    .orElse(null));
+        } else {
+            MetricLatestSlotDto s = latest.get(MetricTypeEnum.BLOOD_PRESSURE_SYS);
+            MetricLatestSlotDto d = latest.get(MetricTypeEnum.BLOOD_PRESSURE_DIA);
+            if (s != null && d != null) {
+                b.sbp(s.value()).dbp(d.value()).bpReadings(1).bpRecordedAt(s.recordedAt());
             }
         }
-        return new DiseaseFlags(diabetes, hypertension, obesity);
+
+        List<VitalRecord> glucose14 = nonNull(vitalRecordMapper.listByRange(
+                tenantId, peopleId, MetricTypeEnum.BLOOD_GLUCOSE.name(), now.minusDays(14), now));
+        int hypo = (int) glucose14.stream().filter(r -> r.getValue().compareTo(HYPO_THRESHOLD) < 0).count();
+        b.hypoEvents14d(hypo);
+        return new MetricsLoaded(fasting, !glucose14.isEmpty());
     }
 
-    private PresentIllnessFlags resolvePresentIllness(String tenantId, String peopleId) {
+    private static List<VitalRecord> nonNull(List<VitalRecord> rows) {
+        if (rows == null) {
+            return List.of();
+        }
+        return rows.stream().filter(r -> r != null && r.getValue() != null).toList();
+    }
+
+    private static BigDecimal mean(List<VitalRecord> rows) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (VitalRecord r : rows) {
+            sum = sum.add(r.getValue());
+        }
+        return sum.divide(BigDecimal.valueOf(rows.size()), 0, RoundingMode.HALF_UP);
+    }
+
+    private static MetricLatestSlotDto newer(MetricLatestSlotDto a, MetricLatestSlotDto b) {
+        if (a == null) {
+            return b;
+        }
+        if (b.recordedAt() != null && (a.recordedAt() == null || b.recordedAt().isAfter(a.recordedAt()))) {
+            return b;
+        }
+        return a;
+    }
+
+    // ---------------------------------------------------------------- 检验
+
+    /** 返回检验空腹血糖，供指标缺失时兜底。 */
+    private LabLatestNumeric loadLabs(AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId) {
+        List<LabLatestNumeric> rows = labResultItemMapper.listLatestNumericByPeople(tenantId, peopleId, LAB_CODES);
+        Map<String, LabLatestNumeric> byCode = new HashMap<>();
+        if (rows != null) {
+            for (LabLatestNumeric r : rows) {
+                if (r != null && StringUtils.hasText(r.getItemCode()) && r.getValueNum() != null) {
+                    byCode.putIfAbsent(r.getItemCode(), r);
+                }
+            }
+        }
+        LocalDateTime lipidAt = null;
+        LabLatestNumeric r;
+        if ((r = byCode.get("TC")) != null) {
+            b.tc(LabUnits.cholesterol(r.getValueNum(), r.getUnit()));
+            lipidAt = max(lipidAt, r.getRecordedAt());
+        }
+        if ((r = byCode.get("LDL_C")) != null) {
+            b.ldlC(LabUnits.cholesterol(r.getValueNum(), r.getUnit()));
+            lipidAt = max(lipidAt, r.getRecordedAt());
+        }
+        if ((r = byCode.get("HDL_C")) != null) {
+            b.hdlC(LabUnits.cholesterol(r.getValueNum(), r.getUnit()));
+            lipidAt = max(lipidAt, r.getRecordedAt());
+        }
+        if ((r = byCode.get("TG")) != null) {
+            b.tg(LabUnits.triglyceride(r.getValueNum(), r.getUnit()));
+            lipidAt = max(lipidAt, r.getRecordedAt());
+        }
+        b.lipidRecordedAt(lipidAt);
+        if ((r = byCode.get("UA")) != null) {
+            b.uricAcid(LabUnits.uricAcid(r.getValueNum(), r.getUnit()));
+        }
+        LocalDateTime renalAt = null;
+        if ((r = byCode.get("CR")) != null) {
+            b.creatinine(LabUnits.creatinine(r.getValueNum(), r.getUnit()));
+            renalAt = max(renalAt, r.getRecordedAt());
+        }
+        if ((r = byCode.get("EGFR")) != null) {
+            b.egfr(r.getValueNum());
+            renalAt = max(renalAt, r.getRecordedAt());
+        }
+        if ((r = byCode.get("UACR")) != null) {
+            b.uacr(LabUnits.uacr(r.getValueNum(), r.getUnit()));
+            renalAt = max(renalAt, r.getRecordedAt());
+        }
+        b.renalRecordedAt(renalAt);
+        if ((r = byCode.get("ALT")) != null) {
+            b.alt(r.getValueNum());
+        }
+        if ((r = byCode.get("HBA1C")) != null) {
+            b.hba1c(LabUnits.hba1c(r.getValueNum(), r.getUnit())).hba1cRecordedAt(r.getRecordedAt());
+        }
+        return byCode.get("FPG");
+    }
+
+    private static LocalDateTime max(LocalDateTime a, LocalDateTime b) {
+        if (a == null) {
+            return b;
+        }
+        return b != null && b.isAfter(a) ? b : a;
+    }
+
+    // ---------------------------------------------------------------- 基础档案
+
+    private Set<String> loadBasicArchive(
+            AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId) {
+        Set<String> illness = new LinkedHashSet<>();
         PeopleBasicArchive archive = basicArchiveMapper.findByTenantAndPeople(tenantId, peopleId);
-        if (archive == null || !StringUtils.hasText(archive.getContentJson())) {
-            return new PresentIllnessFlags(false, false, false, List.of());
+        JsonNode root = archive == null || !StringUtils.hasText(archive.getContentJson())
+                ? null
+                : JsonUtils.readTree(archive.getContentJson());
+        if (root == null) {
+            return illness;
         }
-        JsonNode root = JsonUtils.readTree(archive.getContentJson());
-        JsonNode items = root.get("presentIllness");
-        boolean diabetes = false;
-        boolean hypertension = false;
-        boolean obesity = false;
-        List<String> codes = new ArrayList<>();
-        if (items != null && items.isArray()) {
-            for (JsonNode n : items) {
-                if (n == null || n.isNull()) {
-                    continue;
-                }
-                String code = n.asText();
-                if (!StringUtils.hasText(code)) {
-                    continue;
-                }
-                String c = code.trim().toUpperCase(Locale.ROOT);
-                codes.add(c);
-                if (PI_DIABETES.equals(c)) {
-                    diabetes = true;
-                } else if (PI_HYPERTENSION.equals(c)) {
-                    hypertension = true;
-                } else if (PI_OBESITY.equals(c)) {
-                    obesity = true;
+
+        // 家族史
+        String fhStatus = text(root, "familyHistoryStatus");
+        JsonNode fhItems = root.get("familyHistoryItems");
+        boolean fhCollected = "none".equalsIgnoreCase(fhStatus)
+                || "has".equalsIgnoreCase(fhStatus)
+                || (fhItems != null && fhItems.isArray() && !fhItems.isEmpty());
+        if (fhCollected) {
+            Set<String> codes = new LinkedHashSet<>();
+            if (!"none".equalsIgnoreCase(fhStatus) && fhItems != null && fhItems.isArray()) {
+                for (JsonNode item : fhItems) {
+                    String level = text(item, "kinshipLevel");
+                    if (level != null && !"1".equals(level)) {
+                        continue;
+                    }
+                    JsonNode diseases = item.get("diseases");
+                    if (diseases != null && diseases.isArray()) {
+                        diseases.forEach(d -> {
+                            if (StringUtils.hasText(d.asText())) {
+                                codes.add(d.asText().trim().toUpperCase(Locale.ROOT));
+                            }
+                        });
+                    }
                 }
             }
+            b.familyHistoryCollected(true)
+                    .familyHistoryCodes(codes)
+                    .fhDiabetes(codes.contains("FH_DIABETES"))
+                    .fhHypertension(codes.contains("FH_HYPERTENSION"))
+                    .fhAscvd(codes.stream().anyMatch(FH_ASCVD::contains))
+                    .fhEarlyAscvd(codes.contains("FH_EARLY_MI"));
         }
-        // 兼容其它文本字段误写
+
+        // 现有疾病
+        JsonNode pi = root.get("presentIllness");
+        if (pi != null && pi.isArray()) {
+            b.presentIllnessCollected(true);
+            pi.forEach(n -> {
+                if (n != null && StringUtils.hasText(n.asText())) {
+                    illness.add(n.asText().trim().toUpperCase(Locale.ROOT));
+                }
+            });
+        }
         String other = text(root, "presentIllnessOther");
         if (StringUtils.hasText(other)) {
             String s = other.toLowerCase(Locale.ROOT);
-            if (s.contains("糖尿病") || s.contains("diabetes")) {
-                diabetes = true;
+            if (s.contains("糖尿病")) {
+                illness.add("DIABETES");
             }
-            if (s.contains("高血压") || s.contains("hypertension")) {
-                hypertension = true;
+            if (s.contains("高血压")) {
+                illness.add("HYPERTENSION");
             }
-            if (s.contains("肥胖") || s.contains("obesity")) {
-                obesity = true;
+            if (s.contains("肥胖")) {
+                illness.add("OBESITY");
             }
         }
-        return new PresentIllnessFlags(diabetes, hypertension, obesity, codes);
-    }
+        b.presentIllness(Set.copyOf(illness));
 
-    private DiabetesControlExtras resolveDiabetesControlExtras(
-            String tenantId,
-            String peopleId,
-            DiseaseFlags diseases,
-            PresentIllnessFlags presentIllness) {
-        Set<String> hits = new LinkedHashSet<>();
-        for (String code : presentIllness.codes) {
-            String category = comorbidityCategory(code);
-            if (category != null) {
-                hits.add(category);
-            }
-        }
-        if (diseases.hypertension) {
-            hits.add("HYPERTENSION");
-        }
-
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime from14 = now.minusDays(14);
-        List<VitalRecord> glucoseRows = vitalRecordMapper.listByRange(
-                tenantId, peopleId, MetricTypeEnum.BLOOD_GLUCOSE.name(), from14, now);
-        int hypoCount = 0;
-        boolean anyGlucose14d = false;
-        for (VitalRecord row : glucoseRows) {
-            if (row == null || row.getValue() == null) {
-                continue;
-            }
-            anyGlucose14d = true;
-            if (row.getValue().compareTo(HYPO_THRESHOLD) < 0) {
-                hypoCount++;
-            }
-        }
-
-        boolean endStage = false;
-        boolean archiveHypoFallback = false;
-        for (DiseaseArchiveViewDto row : diseaseArchiveService.list(tenantId, peopleId)) {
-            if (!DISEASE_DIABETES.equalsIgnoreCase(row.getDiseaseCode()) || row.getContentJson() == null) {
-                continue;
-            }
-            JsonNode content = contentNode(row.getContentJson());
-            if (content == null) {
-                continue;
-            }
-            if (content.path("endStageChronicDisease").asBoolean(false)
-                    || content.path("endStageChronic").asBoolean(false)) {
-                endStage = true;
-            }
-            if (!anyGlucose14d) {
-                int monthCount = content.path("hypoglycemiaCountLastMonth").asInt(0);
-                String reaction = text(content, "hypoglycemiaReaction");
-                if (monthCount >= 2 || "FREQUENT".equalsIgnoreCase(reaction)) {
-                    archiveHypoFallback = true;
-                }
-            }
-        }
-
-        return new DiabetesControlExtras(hypoCount, archiveHypoFallback, new ArrayList<>(hits), endStage);
-    }
-
-    private static String comorbidityCategory(String code) {
-        if (!StringUtils.hasText(code) || !COMORBIDITY_CODES.contains(code)) {
-            return null;
-        }
-        if ("OSTEOARTHRITIS".equals(code) || "RHEUMATOID_ARTHRITIS".equals(code)) {
-            return "ARTHRITIS";
-        }
-        return code;
-    }
-
-    private static JsonNode contentNode(Object contentJson) {
-        if (contentJson == null) {
-            return null;
-        }
-        if (contentJson instanceof JsonNode node) {
-            return node;
-        }
-        if (contentJson instanceof String s) {
-            return StringUtils.hasText(s) ? JsonUtils.readTree(s) : null;
-        }
-        return JsonUtils.readTree(JsonUtils.toJson(contentJson));
-    }
-
-    private LipidPick resolveLipids(String tenantId, String peopleId) {
-        List<LabLatestNumeric> rows =
-                labResultItemMapper.listLatestNumericByPeople(tenantId, peopleId, LIPID_CODES);
-        BigDecimal hdl = null;
-        String hdlUnit = null;
-        LocalDateTime hdlAt = null;
-        BigDecimal tg = null;
-        String tgUnit = null;
-        LocalDateTime tgAt = null;
-        BigDecimal tc = null;
-        String tcUnit = null;
-        LocalDateTime tcAt = null;
-        BigDecimal ldl = null;
-        String ldlUnit = null;
-        LocalDateTime ldlAt = null;
-        BigDecimal fpg = null;
-        LocalDateTime fpgAt = null;
-        BigDecimal ua = null;
-        String uaUnit = null;
-        LocalDateTime uaAt = null;
-        BigDecimal hba1c = null;
-        LocalDateTime hba1cAt = null;
-        Set<String> seen = new HashSet<>();
-        for (LabLatestNumeric row : rows) {
-            if (row == null || !StringUtils.hasText(row.getItemCode()) || row.getValueNum() == null) {
-                continue;
-            }
-            String code = row.getItemCode();
-            if (!seen.add(code)) {
-                continue;
-            }
-            switch (code) {
-                case "HDL_C" -> {
-                    hdl = row.getValueNum();
-                    hdlUnit = row.getUnit();
-                    hdlAt = row.getRecordedAt();
-                }
-                case "TG" -> {
-                    tg = row.getValueNum();
-                    tgUnit = row.getUnit();
-                    tgAt = row.getRecordedAt();
-                }
-                case "TC" -> {
-                    tc = row.getValueNum();
-                    tcUnit = row.getUnit();
-                    tcAt = row.getRecordedAt();
-                }
-                case "LDL_C" -> {
-                    ldl = row.getValueNum();
-                    ldlUnit = row.getUnit();
-                    ldlAt = row.getRecordedAt();
-                }
-                case "FPG" -> {
-                    fpg = row.getValueNum();
-                    fpgAt = row.getRecordedAt();
-                }
-                case "UA" -> {
-                    ua = row.getValueNum();
-                    uaUnit = row.getUnit();
-                    uaAt = row.getRecordedAt();
-                }
-                case "HBA1C" -> {
-                    hba1c = row.getValueNum();
-                    hba1cAt = row.getRecordedAt();
-                }
-                default -> {
-                    /* ignore */
-                }
-            }
-        }
-        return new LipidPick(
-                hdl,
-                hdlUnit,
-                hdlAt,
-                tg,
-                tgUnit,
-                tgAt,
-                tc,
-                tcUnit,
-                tcAt,
-                ldl,
-                ldlUnit,
-                ldlAt,
-                fpg,
-                fpgAt,
-                ua,
-                uaUnit,
-                uaAt,
-                hba1c,
-                hba1cAt);
-    }
-
-    private ArchiveExtras resolveArchiveExtras(String tenantId, String peopleId) {
-        PeopleBasicArchive archive = basicArchiveMapper.findByTenantAndPeople(tenantId, peopleId);
-        if (archive == null || !StringUtils.hasText(archive.getContentJson())) {
-            return ArchiveExtras.empty();
-        }
-        JsonNode root = JsonUtils.readTree(archive.getContentJson());
-
-        String exerciseFreq = text(root.path("exercise"), "frequency");
-        boolean exerciseCollected = StringUtils.hasText(exerciseFreq);
-
-        JsonNode lifestyle = root.get("lifestyle");
-        String smokingStatus = null;
-        boolean smokingCollected = false;
-        String drinkingStatus = null;
-        String drinkingFrequency = null;
-        String drinkingAmount = null;
-        boolean drinkingCollected = false;
-        if (lifestyle != null && !lifestyle.isNull()) {
-            JsonNode smoking = lifestyle.get("smoking");
-            if (smoking != null && smoking.isObject()) {
-                smokingStatus = text(smoking, "status");
-                smokingCollected = StringUtils.hasText(smokingStatus);
-            } else if (smoking != null && smoking.isTextual()) {
-                smokingStatus = smoking.asText();
-                smokingCollected = StringUtils.hasText(smokingStatus);
-            }
-            JsonNode drinking = lifestyle.get("drinking");
-            if (drinking != null && drinking.isObject()) {
-                drinkingStatus = text(drinking, "status");
-                drinkingFrequency = text(drinking, "frequency");
-                drinkingAmount = text(drinking, "amountPerDay");
-                drinkingCollected = StringUtils.hasText(drinkingStatus);
-            } else if (drinking != null && drinking.isTextual()) {
-                drinkingStatus = drinking.asText();
-                drinkingCollected = StringUtils.hasText(drinkingStatus);
-            }
-        }
-
-        JsonNode diet = root.get("diet");
-        String dietType = null;
-        String dietPreference = null;
-        boolean dietCollected = false;
-        if (diet != null && diet.isObject()) {
-            dietType = text(diet, "type");
-            dietPreference = text(diet, "preference");
-            dietCollected = StringUtils.hasText(dietType)
-                    || StringUtils.hasText(dietPreference)
-                    || StringUtils.hasText(text(diet, "habit"))
-                    || StringUtils.hasText(text(diet, "appetite"));
-        }
-
+        // 既往史：糖尿病前期
         String pastStatus = text(root, "pastHistoryStatus");
         JsonNode pastItems = root.get("pastHistoryItems");
         boolean pastCollected = "none".equalsIgnoreCase(pastStatus)
                 || "has".equalsIgnoreCase(pastStatus)
                 || (pastItems != null && !pastItems.isNull());
-        Boolean prediabetes = null;
+        b.pastHistoryCollected(pastCollected);
         if (pastCollected) {
-            prediabetes = false;
-            if (pastItems != null && pastItems.isObject()) {
-                JsonNode diseases = pastItems.get("diseases");
-                if (diseases != null && diseases.isArray()) {
-                    for (JsonNode item : diseases) {
-                        if (looksLikePrediabetes(text(item, "name"))
-                                || looksLikePrediabetes(text(item, "code"))) {
-                            prediabetes = true;
-                            break;
-                        }
-                    }
-                }
-            } else if (pastItems != null && pastItems.isArray()) {
-                for (JsonNode item : pastItems) {
-                    if (looksLikePrediabetes(text(item, "name")) || looksLikePrediabetes(text(item, "code"))) {
-                        prediabetes = true;
+            boolean pre = looksLikePrediabetes(text(root, "pastHistory"));
+            JsonNode list = pastItems != null && pastItems.isObject() ? pastItems.get("diseases") : pastItems;
+            if (list != null && list.isArray()) {
+                for (JsonNode item : list) {
+                    if (looksLikePrediabetes(item.isTextual() ? item.asText() : text(item, "name"))
+                            || looksLikePrediabetes(text(item, "code"))) {
+                        pre = true;
                         break;
                     }
                 }
             }
-            if (!Boolean.TRUE.equals(prediabetes) && looksLikePrediabetes(text(root, "pastHistory"))) {
-                prediabetes = true;
-            }
+            b.prediabetesInArchive(pre);
         }
 
-        return new ArchiveExtras(
-                pastCollected,
-                prediabetes,
-                exerciseCollected,
-                exerciseFreq,
-                smokingCollected,
-                smokingStatus,
-                drinkingCollected,
-                drinkingStatus,
-                drinkingFrequency,
-                drinkingAmount,
-                dietCollected,
-                dietType,
-                dietPreference);
+        // 生活方式
+        b.exerciseFrequency(text(root.path("exercise"), "frequency"));
+        JsonNode lifestyle = root.get("lifestyle");
+        if (lifestyle != null && lifestyle.isObject()) {
+            JsonNode smoking = lifestyle.get("smoking");
+            b.smokingStatus(smoking == null ? null : smoking.isObject() ? text(smoking, "status") : smoking.asText(null));
+            JsonNode drinking = lifestyle.get("drinking");
+            if (drinking != null && drinking.isObject()) {
+                b.drinkingStatus(text(drinking, "status"))
+                        .drinkingFrequency(text(drinking, "frequency"))
+                        .drinkingAmountPerDay(text(drinking, "amountPerDay"));
+            } else if (drinking != null && drinking.isTextual()) {
+                b.drinkingStatus(drinking.asText());
+            }
+        }
+        JsonNode diet = root.get("diet");
+        if (diet != null && diet.isObject()) {
+            String type = text(diet, "type");
+            String pref = text(diet, "preference");
+            b.dietType(type).dietPreference(pref);
+            b.dietCollected(StringUtils.hasText(type) || StringUtils.hasText(pref)
+                    || StringUtils.hasText(text(diet, "habit")));
+        }
+        return illness;
     }
 
-    private FamilyHistoryFh resolveFamilyHistory(String tenantId, String peopleId) {
-        PeopleBasicArchive archive = basicArchiveMapper.findByTenantAndPeople(tenantId, peopleId);
-        if (archive == null || !StringUtils.hasText(archive.getContentJson())) {
-            return new FamilyHistoryFh(false, null, null, null, null);
-        }
-        JsonNode root = JsonUtils.readTree(archive.getContentJson());
-        String status = text(root, "familyHistoryStatus");
-        JsonNode items = root.get("familyHistoryItems");
+    // ---------------------------------------------------------------- 病种档案
 
-        if ("none".equalsIgnoreCase(status)) {
-            return new FamilyHistoryFh(true, false, false, false, false);
-        }
-        if (items != null && items.isArray() && items.isEmpty() && !"has".equalsIgnoreCase(status)) {
-            return new FamilyHistoryFh(true, false, false, false, false);
-        }
-
-        if (!"has".equalsIgnoreCase(status) && (items == null || !items.isArray())) {
-            return new FamilyHistoryFh(false, null, null, null, null);
-        }
-        if (items == null || !items.isArray()) {
-            return new FamilyHistoryFh(true, false, false, false, false);
-        }
-
+    private void loadDiseaseArchives(
+            AssessmentContext.AssessmentContextBuilder b,
+            String tenantId,
+            String peopleId,
+            Set<String> illness,
+            boolean seen14d) {
         boolean dm = false;
         boolean htn = false;
-        boolean ascvd = false;
-        boolean earlyAscvd = false;
-        for (JsonNode item : items) {
-            String level = text(item, "kinshipLevel");
-            if (!"1".equals(level)) {
-                continue;
-            }
-            JsonNode diseases = item.get("diseases");
-            if (diseases == null || !diseases.isArray()) {
-                continue;
-            }
-            for (JsonNode d : diseases) {
-                String code = d.asText();
-                if (FH_DIABETES.equals(code)) {
+        boolean obesity = false;
+        boolean endStage = false;
+        boolean hypoFallback = false;
+        List<PeopleDiseaseArchive> rows = diseaseArchiveMapper.listByTenantAndPeople(tenantId, peopleId);
+        for (PeopleDiseaseArchive row : rows == null ? List.<PeopleDiseaseArchive>of() : rows) {
+            String code = row.getDiseaseCode() == null ? "" : row.getDiseaseCode().toLowerCase(Locale.ROOT);
+            JsonNode content = StringUtils.hasText(row.getContentJson()) ? JsonUtils.readTree(row.getContentJson()) : null;
+            switch (code) {
+                case "diabetes" -> {
                     dm = true;
+                    if (content != null) {
+                        endStage = content.path("endStageChronicDisease").asBoolean(false)
+                                || content.path("endStageChronic").asBoolean(false);
+                        int month = content.path("hypoglycemiaCountLastMonth").asInt(0);
+                        hypoFallback = !seen14d
+                                && (month >= 2 || "FREQUENT".equalsIgnoreCase(text(content, "hypoglycemiaReaction")));
+                    }
                 }
-                if (FH_HYPERTENSION.equals(code)) {
+                case "hypertension" -> {
                     htn = true;
+                    if (content != null) {
+                        b.archiveHighestSbp(number(content, "highestSystolic"))
+                                .archiveHighestDbp(number(content, "highestDiastolic"))
+                                .archiveCvRisk(text(content, "cvRiskStratification"));
+                    }
                 }
-                if (FH_ASCVD.contains(code)) {
-                    ascvd = true;
-                }
-                if (FH_EARLY_MI.equals(code)) {
-                    earlyAscvd = true;
+                case "obesity" -> obesity = true;
+                default -> {
+                    /* 其它病种不参与 */
                 }
             }
         }
-        return new FamilyHistoryFh(true, dm, htn, ascvd, earlyAscvd);
+        b.hasDiabetesArchive(dm).hasHypertensionArchive(htn).hasObesityArchive(obesity);
+
+        List<String> comorbidity = new ArrayList<>();
+        for (String c : illness) {
+            if (COMORBIDITY_CODES.contains(c)) {
+                String cat = "OSTEOARTHRITIS".equals(c) || "RHEUMATOID_ARTHRITIS".equals(c) ? "ARTHRITIS" : c;
+                if (!comorbidity.contains(cat)) {
+                    comorbidity.add(cat);
+                }
+            }
+        }
+        if (htn && !comorbidity.contains("HYPERTENSION")) {
+            comorbidity.add("HYPERTENSION");
+        }
+        b.diabetesComorbidityHits(comorbidity).diabetesEndStageChronic(endStage).hypoArchiveFallbackHit(hypoFallback);
+    }
+
+    // ---------------------------------------------------------------- 用药 / 事实
+
+    private void loadMedications(AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId) {
+        Set<String> cats = new LinkedHashSet<>();
+        List<PeopleMedication> meds = medicationMapper.listByPeople(tenantId, peopleId, "ACTIVE");
+        for (PeopleMedication m : meds == null ? List.<PeopleMedication>of() : meds) {
+            String cat = null;
+            if (StringUtils.hasText(m.getDrugCode())) {
+                DrugCatalogItemDto item = drugCatalogService.findByCode(m.getDrugCode());
+                cat = item == null ? null : item.getCategory();
+            }
+            if (!StringUtils.hasText(cat)) {
+                cat = guessCategory(m.getDrugName());
+            }
+            if (StringUtils.hasText(cat)) {
+                cats.add(cat.trim().toUpperCase(Locale.ROOT));
+            }
+        }
+        b.activeDrugCategories(Set.copyOf(cats));
+    }
+
+    /** 无目录编码的自录药品按通用名后缀粗分。 */
+    static String guessCategory(String name) {
+        if (!StringUtils.hasText(name)) {
+            return null;
+        }
+        if (name.contains("他汀") || name.contains("贝特") || name.contains("依折麦布")) {
+            return "LIPID";
+        }
+        if (name.contains("沙坦") || name.contains("普利") || name.contains("地平") || name.contains("洛尔")
+                || name.contains("噻嗪") || name.contains("吲达帕胺")) {
+            return "BP";
+        }
+        if (name.contains("二甲双胍") || name.contains("格列") || name.contains("胰岛素") || name.contains("列汀")
+                || name.contains("阿卡波糖") || name.contains("鲁肽") || name.contains("格列净")) {
+            return "DM";
+        }
+        return null;
+    }
+
+    private void loadFacts(AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId) {
+        Map<InputField, FactValue> facts = new EnumMap<>(InputField.class);
+        for (PeopleAssessmentFact row : storeMapper.listFacts(tenantId, peopleId)) {
+            InputField f = InputField.parse(row.getFieldCode());
+            if (f == null || !StringUtils.hasText(row.getValueJson())) {
+                continue;
+            }
+            JsonNode node = JsonUtils.readTree(row.getValueJson()).get("value");
+            facts.put(f, new FactValue(toJava(node), row.getSource(), row.getRecordedAt()));
+        }
+        b.facts(facts);
+    }
+
+    static Object toJava(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (node.isArray()) {
+            List<String> out = new ArrayList<>();
+            node.forEach(n -> out.add(n.asText()));
+            return out;
+        }
+        if (node.isNumber()) {
+            return node.decimalValue();
+        }
+        return node.asText();
+    }
+
+    // ---------------------------------------------------------------- 工具
+
+    static String normalizeGender(String g) {
+        if (!StringUtils.hasText(g)) {
+            return null;
+        }
+        String s = g.trim().toUpperCase(Locale.ROOT);
+        if ("MALE".equals(s) || "M".equals(s) || "男".equals(g.trim())) {
+            return "MALE";
+        }
+        if ("FEMALE".equals(s) || "F".equals(s) || "女".equals(g.trim())) {
+            return "FEMALE";
+        }
+        return null;
     }
 
     private static boolean looksLikePrediabetes(String raw) {
@@ -617,13 +548,23 @@ public class AssessmentContextBuilder {
             return false;
         }
         String s = raw.toLowerCase(Locale.ROOT);
-        return s.contains("糖尿病前期")
-                || s.contains("糖耐量")
-                || s.contains("空腹血糖受损")
-                || s.contains("ifg")
-                || s.contains("igt")
-                || s.contains("igr")
-                || s.contains("prediabetes");
+        return s.contains("糖尿病前期") || s.contains("糖耐量") || s.contains("空腹血糖受损")
+                || s.contains("ifg") || s.contains("igt") || s.contains("prediabetes");
+    }
+
+    private static BigDecimal number(JsonNode node, String field) {
+        JsonNode v = node.get(field);
+        if (v == null || v.isNull()) {
+            return null;
+        }
+        if (v.isNumber()) {
+            return v.decimalValue();
+        }
+        try {
+            return StringUtils.hasText(v.asText()) ? new BigDecimal(v.asText().trim()) : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String text(JsonNode node, String field) {
@@ -631,70 +572,6 @@ public class AssessmentContextBuilder {
             return null;
         }
         JsonNode v = node.get(field);
-        return v == null || v.isNull() ? null : v.asText();
-    }
-
-    private record MetricPick(BigDecimal value, LocalDateTime at) {}
-
-    private record GlucosePick(
-            BigDecimal fasting, LocalDateTime fastingAt, BigDecimal postprandial, LocalDateTime postprandialAt) {}
-
-    private record FamilyHistoryFh(
-            boolean collected,
-            Boolean firstDegreeDiabetes,
-            Boolean firstDegreeHypertension,
-            Boolean firstDegreeAscvd,
-            Boolean earlyAscvd) {}
-
-    private record DiseaseFlags(boolean diabetes, boolean hypertension, boolean obesity) {}
-
-    private record PresentIllnessFlags(
-            boolean diabetes, boolean hypertension, boolean obesity, List<String> codes) {}
-
-    private record DiabetesControlExtras(
-            int hypoEvents14d,
-            boolean hypoArchiveFallbackHit,
-            List<String> comorbidityHits,
-            boolean endStageChronic) {}
-
-    private record LipidPick(
-            BigDecimal hdl,
-            String hdlUnit,
-            LocalDateTime hdlAt,
-            BigDecimal tg,
-            String tgUnit,
-            LocalDateTime tgAt,
-            BigDecimal tc,
-            String tcUnit,
-            LocalDateTime tcAt,
-            BigDecimal ldl,
-            String ldlUnit,
-            LocalDateTime ldlAt,
-            BigDecimal fpg,
-            LocalDateTime fpgAt,
-            BigDecimal ua,
-            String uaUnit,
-            LocalDateTime uaAt,
-            BigDecimal hba1c,
-            LocalDateTime hba1cAt) {}
-
-    private record ArchiveExtras(
-            boolean pastHistoryCollected,
-            Boolean prediabetes,
-            boolean exerciseCollected,
-            String exerciseFrequency,
-            boolean smokingCollected,
-            String smokingStatus,
-            boolean drinkingCollected,
-            String drinkingStatus,
-            String drinkingFrequency,
-            String drinkingAmountPerDay,
-            boolean dietCollected,
-            String dietType,
-            String dietPreference) {
-        static ArchiveExtras empty() {
-            return new ArchiveExtras(
-                    false, null, false, null, false, null, false, null, null, null, false, null, null);
-        }
+        return v == null || v.isNull() || !StringUtils.hasText(v.asText()) ? null : v.asText();
     }
 }

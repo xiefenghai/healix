@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
+import { MOBILE_OWNER_OPTIONS, formatMobileOwner } from '../../shared/mobile-owner'
 import { TABLE_COL } from '../../shared/table-columns'
+import { checkinStatus } from '../../shared/rewards'
 import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
 
 interface OrgPatientListItem {
@@ -28,6 +30,9 @@ interface OrgPatientListItem {
   primaryCareManagerName?: string | null
   archiveCompletenessPercent?: number | null
   watched?: boolean | null
+  streakDays?: number | null
+  todayActions?: number | null
+  inactiveDays?: number | null
 }
 
 interface CareTeamListItem {
@@ -69,21 +74,38 @@ const adherenceMode = computed(() => !!adherenceFilter.value)
 
 const archiveVisible = ref(false)
 const archiving = ref(false)
-const archiveForm = ref({
-  name: '',
-  noIdentity: false,
-  identityType: 'ID_CARD',
-  identityValue: '',
-  gender: '',
-  birthday: '' as string,
-  attachPeopleId: null as string | null,
-})
+function emptyArchiveForm() {
+  return {
+    name: '',
+    gender: '',
+    birthday: '' as string,
+    mobile: '',
+    mobileOwner: 'SELF',
+    noMobile: false,
+    identityType: 'ID_CARD',
+    identityValue: '',
+  }
+}
+const archiveForm = ref(emptyArchiveForm())
+const showIdentity = ref(false)
+
+interface DuplicateCandidate {
+  peopleId: string
+  displayName: string
+  gender?: string
+  birthday?: string
+  mobileMasked?: string | null
+  mobileOwner?: string | null
+  hasIdentity: boolean
+  inCurrentOrg: boolean
+}
+const duplicates = ref<DuplicateCandidate[]>([])
+const duplicateVisible = ref(false)
 
 const teamDialogPeopleId = ref<string | null>(null)
 const teamDialogPeopleName = ref<string | null>(null)
 const teamDialogCurrentTeamId = ref<string | null>(null)
 
-const attachCandidates = computed(() => baselineList.value.length ? baselineList.value : list.value)
 
 const totalCount = computed(() => baselineList.value.length)
 const unassignedCount = computed(
@@ -188,26 +210,17 @@ const summaryCards = computed(() => [
   },
 ])
 
+/** 填了有效身份证时，性别和出生日期以证件为准 */
 const archiveParsed = computed(() => {
-  if (archiveForm.value.noIdentity || archiveForm.value.identityType !== 'ID_CARD') return null
+  if (archiveForm.value.identityType !== 'ID_CARD') return null
   return parseIdCard(archiveForm.value.identityValue)
 })
 
-const archiveGenderLabel = computed(() => {
-  if (archiveParsed.value) return formatGender(archiveParsed.value.gender)
-  return archiveForm.value.gender ? formatGender(archiveForm.value.gender) : '-'
+watch(archiveParsed, (v) => {
+  if (!v) return
+  archiveForm.value.gender = v.gender
+  archiveForm.value.birthday = v.birthday
 })
-
-const archiveBirthdayLabel = computed(() => {
-  if (archiveParsed.value) return archiveParsed.value.birthday.slice(0, 7)
-  return archiveForm.value.birthday ? archiveForm.value.birthday.slice(0, 7) : '-'
-})
-
-const needManualDemographics = computed(
-  () =>
-    archiveForm.value.noIdentity
-    || (archiveForm.value.identityType !== 'ID_CARD' && !archiveForm.value.noIdentity),
-)
 
 function parseIdCard(raw: string) {
   const id = (raw || '').trim().toUpperCase()
@@ -404,56 +417,76 @@ watch(adherenceFilter, (v) => {
 })
 
 function openArchive() {
-  archiveForm.value = {
-    name: '',
-    noIdentity: false,
-    identityType: 'ID_CARD',
-    identityValue: '',
-    gender: '',
-    birthday: '',
-    attachPeopleId: null,
-  }
+  archiveForm.value = emptyArchiveForm()
+  showIdentity.value = false
   archiveVisible.value = true
 }
 
-async function submitArchive() {
-  if (!archiveForm.value.name.trim()) {
+function validateArchive(): boolean {
+  const f = archiveForm.value
+  if (!f.name.trim()) {
     ElMessage.warning('请填写姓名')
+    return false
+  }
+  const idValue = f.identityValue.trim()
+  if (idValue && f.identityType === 'ID_CARD' && !parseIdCard(idValue)) {
+    ElMessage.warning('身份证号格式不正确')
+    return false
+  }
+  if (!f.gender || !f.birthday) {
+    ElMessage.warning('请填写性别和出生日期')
+    return false
+  }
+  if (!f.noMobile && !f.mobile.trim()) {
+    ElMessage.warning('请填写联系电话，确实没有请勾选「暂无」')
+    return false
+  }
+  return true
+}
+
+async function submitArchive() {
+  if (!validateArchive()) return
+  const f = archiveForm.value
+  archiving.value = true
+  try {
+    const q = new URLSearchParams({ name: f.name.trim(), birthday: f.birthday })
+    if (!f.noMobile && f.mobile.trim()) q.set('mobile', f.mobile.trim())
+    const res = await api<{ data: DuplicateCandidate[] }>(`/api/b/v1/patients/archives/duplicates?${q}`)
+    duplicates.value = res.data ?? []
+  } catch {
+    duplicates.value = []
+  } finally {
+    archiving.value = false
+  }
+  if (duplicates.value.length) {
+    duplicateVisible.value = true
     return
   }
-  if (!archiveForm.value.noIdentity) {
-    if (!archiveForm.value.identityValue.trim()) {
-      ElMessage.warning('请填写证件号码')
-      return
-    }
-    if (archiveForm.value.identityType === 'ID_CARD' && !parseIdCard(archiveForm.value.identityValue)) {
-      ElMessage.warning('身份证号格式不正确')
-      return
-    }
-  }
-  if (needManualDemographics.value) {
-    if (!archiveForm.value.gender || !archiveForm.value.birthday) {
-      ElMessage.warning('请填写性别和出生日期')
-      return
-    }
-  }
+  await createArchive(null)
+}
+
+/** attachPeopleId：查重确认「就是此人」，复用已有档案入组本机构 */
+async function createArchive(attachPeopleId: string | null) {
+  const f = archiveForm.value
+  const idValue = f.identityValue.trim()
   archiving.value = true
   try {
     await api('/api/b/v1/patients/archives', {
       method: 'POST',
       body: JSON.stringify({
-        name: archiveForm.value.name.trim(),
-        attachPeopleId: archiveForm.value.attachPeopleId || undefined,
-        noIdentity: archiveForm.value.noIdentity,
-        identityType: archiveForm.value.noIdentity ? undefined : archiveForm.value.identityType,
-        identityValue: archiveForm.value.noIdentity
-          ? undefined
-          : archiveForm.value.identityValue.trim().toUpperCase(),
-        gender: needManualDemographics.value ? archiveForm.value.gender : undefined,
-        birthday: needManualDemographics.value ? archiveForm.value.birthday : undefined,
+        name: f.name.trim(),
+        attachPeopleId: attachPeopleId || undefined,
+        gender: f.gender,
+        birthday: f.birthday,
+        mobile: f.noMobile ? undefined : f.mobile.trim(),
+        mobileOwner: f.noMobile ? undefined : f.mobileOwner,
+        noMobile: f.noMobile,
+        identityType: idValue ? f.identityType : undefined,
+        identityValue: idValue ? idValue.toUpperCase() : undefined,
       }),
     })
-    ElMessage.success('建档成功')
+    ElMessage.success(attachPeopleId ? '已关联已有档案' : '建档成功')
+    duplicateVisible.value = false
     archiveVisible.value = false
     await Promise.all([load(), loadBaseline()])
   } catch (e) {
@@ -461,6 +494,22 @@ async function submitArchive() {
   } finally {
     archiving.value = false
   }
+}
+
+function duplicateLabel(d: DuplicateCandidate) {
+  const parts = [formatGender(d.gender), d.birthday ? String(d.birthday).slice(0, 10) : '']
+  if (d.mobileMasked) {
+    const owner = d.mobileOwner && d.mobileOwner !== 'SELF' ? `（${formatMobileOwner(d.mobileOwner)}）` : ''
+    parts.push(d.mobileMasked + owner)
+  }
+  if (d.hasIdentity) parts.push('已登记证件')
+  return parts.filter(Boolean).join(' · ')
+}
+
+function openExisting(d: DuplicateCandidate) {
+  duplicateVisible.value = false
+  archiveVisible.value = false
+  router.push({ path: `/workspace/patients/${d.peopleId}/archive`, query: { name: d.displayName } })
 }
 
 function openCareTeamDialog(row: OrgPatientListItem) {
@@ -588,8 +637,19 @@ onMounted(async () => {
                   <el-tag v-if="row.watched" size="small" type="warning" effect="plain" class="watch-tag">
                     关注
                   </el-tag>
+                  <span
+                    v-if="row.streakDays"
+                    class="flame-tag"
+                    :title="`连续打卡 ${row.streakDays} 天`"
+                  >🔥{{ row.streakDays }}</span>
+                  <span v-else-if="row.streakDays === 0" class="flame-tag flame-tag--out">已熄灭</span>
                 </div>
                 <div class="patient-meta">{{ patientMeta(row) }}</div>
+                <div
+                  v-if="checkinStatus(row)"
+                  class="checkin-status"
+                  :class="`checkin-status--${checkinStatus(row)!.tone}`"
+                >{{ checkinStatus(row)!.text }}</div>
               </div>
             </div>
           </template>
@@ -681,77 +741,91 @@ onMounted(async () => {
     </el-card>
 
     <el-dialog v-model="archiveVisible" title="患者建档" width="560px">
-      <el-form label-width="110px">
+      <el-form label-width="96px">
         <el-form-item label="姓名" required>
-          <el-input v-model="archiveForm.name" />
+          <el-input v-model="archiveForm.name" maxlength="64" />
         </el-form-item>
-        <el-form-item label="挂到已有患者">
-          <el-select
-            v-model="archiveForm.attachPeopleId"
-            clearable
-            filterable
-            placeholder="同人补证时选择（S1）"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="p in attachCandidates"
-              :key="p.peopleId"
-              :label="`${p.displayName} (#${p.peopleId})`"
-              :value="p.peopleId"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="暂无证件">
-          <el-switch v-model="archiveForm.noIdentity" />
-        </el-form-item>
-        <template v-if="!archiveForm.noIdentity">
-          <el-form-item label="证件类型" required>
-            <el-select v-model="archiveForm.identityType" style="width: 100%">
-              <el-option
-                v-for="opt in IDENTITY_OPTIONS"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="证件号码" required>
-            <el-input v-model="archiveForm.identityValue" />
-          </el-form-item>
-        </template>
-        <template v-if="needManualDemographics">
-          <el-form-item label="性别" required>
-            <el-select v-model="archiveForm.gender" style="width: 100%">
-              <el-option label="男" value="MALE" />
-              <el-option label="女" value="FEMALE" />
-              <el-option label="未知" value="UNKNOWN" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="出生日期" required>
-            <el-date-picker
-              v-model="archiveForm.birthday"
-              type="date"
-              value-format="YYYY-MM-DD"
-              style="width: 100%"
-            />
-          </el-form-item>
-        </template>
-        <el-row v-else :gutter="12">
+        <el-row :gutter="12">
           <el-col :span="12">
-            <el-form-item label="性别">
-              <span>{{ archiveGenderLabel }}</span>
+            <el-form-item label="性别" required>
+              <el-select v-model="archiveForm.gender" :disabled="!!archiveParsed" style="width: 100%">
+                <el-option label="男" value="MALE" />
+                <el-option label="女" value="FEMALE" />
+              </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="出生年月" label-width="80px">
-              <span>{{ archiveBirthdayLabel }}</span>
+            <el-form-item label="出生日期" required label-width="80px">
+              <el-date-picker
+                v-model="archiveForm.birthday"
+                type="date"
+                value-format="YYYY-MM-DD"
+                :disabled="!!archiveParsed"
+                style="width: 100%"
+              />
             </el-form-item>
           </el-col>
         </el-row>
+        <el-form-item label="联系电话" :required="!archiveForm.noMobile">
+          <div class="mobile-row">
+            <el-input
+              v-model="archiveForm.mobile"
+              :disabled="archiveForm.noMobile"
+              maxlength="20"
+              placeholder="手机或座机"
+              class="mobile-input"
+            />
+            <el-select
+              v-model="archiveForm.mobileOwner"
+              :disabled="archiveForm.noMobile"
+              class="owner-select"
+              title="这个号码是谁的"
+            >
+              <el-option v-for="o in MOBILE_OWNER_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
+            <el-checkbox v-model="archiveForm.noMobile">暂无</el-checkbox>
+          </div>
+          <div class="form-tip">老人没有手机可填子女号码并选「子女」；夫妻共用号码各自注明归属</div>
+        </el-form-item>
+
+        <el-button v-if="!showIdentity" link type="primary" class="id-toggle" @click="showIdentity = true">
+          + 补充证件信息（选填）
+        </el-button>
+        <template v-else>
+          <el-form-item label="证件类型">
+            <el-select v-model="archiveForm.identityType" style="width: 100%">
+              <el-option v-for="opt in IDENTITY_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="证件号码">
+            <el-input v-model="archiveForm.identityValue" placeholder="选填，可以后再补" />
+            <div class="form-tip">加密保存、仅显示脱敏号码；填写身份证会自动带出性别和出生日期</div>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="archiveVisible = false">取消</el-button>
         <el-button type="primary" :loading="archiving" @click="submitArchive">建档</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="duplicateVisible" title="可能是同一人" width="520px" append-to-body>
+      <p class="dup-tip">
+        租户内已有同名且出生日期或联系电话相同的档案。若是同一人，请直接关联，避免重复建档。
+      </p>
+      <div v-for="d in duplicates" :key="d.peopleId" class="dup-item">
+        <div class="dup-main">
+          <strong>{{ d.displayName }}</strong>
+          <span class="dup-meta">{{ duplicateLabel(d) }}</span>
+        </div>
+        <el-button v-if="d.inCurrentOrg" size="small" @click="openExisting(d)">已在本机构，查看</el-button>
+        <el-button v-else size="small" type="primary" :loading="archiving" @click="createArchive(d.peopleId)">
+          就是此人
+        </el-button>
+      </div>
+      <template #footer>
+        <el-button @click="duplicateVisible = false">返回修改</el-button>
+        <el-button :loading="archiving" @click="createArchive(null)">不是同一人，继续新建</el-button>
       </template>
     </el-dialog>
 
@@ -766,6 +840,50 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.mobile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.mobile-input {
+  flex: 1;
+}
+.owner-select {
+  width: 110px;
+}
+.form-tip {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+}
+.id-toggle {
+  margin: 0 0 12px 96px;
+}
+.dup-tip {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+.dup-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.dup-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dup-meta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
 .em {
   color: var(--ink-800);
   font-weight: 600;
@@ -848,6 +966,36 @@ onMounted(async () => {
 
 .watch-tag {
   font-weight: 500;
+}
+.flame-tag {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fff1e3;
+  color: #e0632a;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.flame-tag--out {
+  background: #f0f2f5;
+  color: #a0a8b3;
+  font-weight: 600;
+}
+.checkin-status {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.checkin-status--ok {
+  color: #0b7a66;
+}
+.checkin-status--idle {
+  color: #a0a8b3;
+}
+.checkin-status--warn {
+  color: #d03050;
 }
 
 .patient-meta {

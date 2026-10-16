@@ -14,6 +14,49 @@ const REFS = {
   BMI: { refLow: 18.5, refHigh: 23.9 },
 } as const
 
+/** 生理合理范围（与后端 VitalValueRules 一致）；超出拒绝保存 */
+const PLAUSIBLE: Record<string, { min: number; max: number; label: string }> = {
+  BLOOD_GLUCOSE: { min: 1, max: 35, label: '血糖' },
+  BLOOD_PRESSURE_SYS: { min: 60, max: 260, label: '收缩压' },
+  BLOOD_PRESSURE_DIA: { min: 30, max: 160, label: '舒张压' },
+  HEART_RATE: { min: 30, max: 220, label: '心率' },
+  WEIGHT: { min: 20, max: 300, label: '体重' },
+  HEIGHT: { min: 50, max: 250, label: '身高' },
+  WAIST: { min: 40, max: 200, label: '腰围' },
+  TEMPERATURE: { min: 34, max: 43, label: '体温' },
+  SLEEP_HOURS: { min: 0.5, max: 24, label: '睡眠时长' },
+  STEPS: { min: 1, max: 100000, label: '步数' },
+}
+
+/** 解析录入字符串；空串 / 非法返回 null（避免 Number('') === 0） */
+export function parseMetricInput(raw: string | null | undefined): number | null {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : null
+}
+
+/** 超出合理范围时返回提示文案，否则 null */
+export function vitalPlausibilityError(
+  metricType: string,
+  value: number | null | undefined,
+): string | null {
+  if (value == null || Number.isNaN(value)) return '请填写测量值'
+  const range = PLAUSIBLE[metricType]
+  if (!range) return null
+  if (value < range.min || value > range.max) {
+    return `${range.label}需在 ${range.min}–${range.max} 之间，请核对后重试`
+  }
+  return null
+}
+
+/** 血压成对：收缩压应高于舒张压 */
+export function bloodPressurePairError(sys: number, dia: number): string | null {
+  if (sys <= dia) return '收缩压应高于舒张压，请核对后重试'
+  return null
+}
+
 function formatRange(range: { refLow?: number | null; refHigh?: number | null }): string {
   const { refLow, refHigh } = range
   if (refLow != null && refHigh != null) return `${refLow}~${refHigh}`

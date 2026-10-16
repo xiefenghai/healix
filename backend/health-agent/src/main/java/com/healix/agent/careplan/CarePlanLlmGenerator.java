@@ -188,27 +188,57 @@ public class CarePlanLlmGenerator {
             goalSummary = exercise.path("goal").asText("管理方案");
         }
 
-        boolean noDisease = templateKey == CarePlanTemplateKeyEnum.GENERAL;
+        CarePlanTemplateKeyEnum key = templateKey == null
+                ? CarePlanTemplateKeyEnum.WELLNESS
+                : templateKey.canonical();
         boolean hypo = ctx != null && ctx.hypoglycemiaRisk();
         boolean incomplete = ctx == null || ctx.contextIncomplete();
-        List<String> tags = diseaseCodes != null && !diseaseCodes.isEmpty()
+        List<String> rawCodes = diseaseCodes != null && !diseaseCodes.isEmpty()
                 ? diseaseCodes
                 : (ctx == null ? List.of() : ctx.diseaseCodes());
+        var flags = com.healix.core.careplan.support.CarePlanDiseaseTags.detect(rawCodes);
+        List<String> tags =
+                com.healix.core.careplan.support.CarePlanDiseaseTags.mergeDisplayTags(rawCodes, flags);
+        boolean specialtyMismatch =
+                com.healix.core.careplan.support.CarePlanDiseaseTags.specialtyMismatch(key, rawCodes);
 
         ObjectNode snapshot = ctx != null && ctx.snapshot() != null
                 ? ctx.snapshot().deepCopy()
                 : JsonUtils.emptyObject();
-        snapshot.put("templateKey", templateKey.name());
+        snapshot.put("templateKey", key.name());
         snapshot.put("contextIncomplete", incomplete);
         snapshot.put("hypoglycemiaRisk", hypo);
+        snapshot.put("specialtyMismatch", specialtyMismatch);
         snapshot.put("generationMode", "LLM");
         if (StringUtils.hasText(summary)) {
             snapshot.put("summary", summary);
         }
+        JsonNode rationaleNode = root.get("rationale");
+        if (rationaleNode != null && rationaleNode.isObject()) {
+            snapshot.set("rationale", rationaleNode.deepCopy());
+        } else {
+            com.healix.core.careplan.support.CarePlanRationaleSupport.putOverview(
+                    snapshot,
+                    key,
+                    com.healix.core.careplan.support.CarePlanRationaleSupport.defaultOverview(
+                            key, specialtyMismatch),
+                    "diseaseArchive",
+                    "assessment",
+                    "llm");
+        }
+        ensureBlockRationale(exercise, "AI 根据患者档案与评估生成的运动安排");
+        ensureBlockRationale(diet, "AI 根据病种、过敏与用药生成的饮食安排");
+        ensureBlockRationale(execution, "AI 根据方案类型与病种标签编制的执行任务");
 
         GeneratedPlan plan = new GeneratedPlan(
-                templateKey, tags, exercise, diet, execution, snapshot, incomplete, noDisease, hypo);
+                key, tags, exercise, diet, execution, snapshot, incomplete, specialtyMismatch, hypo);
         return new LlmPlanResult(plan, summary, goalSummary, llm);
+    }
+
+    private static void ensureBlockRationale(ObjectNode block, String fallback) {
+        if (block != null && !StringUtils.hasText(block.path("rationale").asText(null))) {
+            block.put("rationale", fallback);
+        }
     }
 
     private static ObjectNode requireObject(JsonNode root, String field) {

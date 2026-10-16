@@ -24,11 +24,15 @@ const props = defineProps<{
   peopleId: string
   mode: CockpitSheetMode
   patientName?: string
+  /** 健康数据抽屉初始子页：metrics / trends / labs / exams */
+  observationsSub?: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  /** 管理报告或管理方案在抽屉内发布成功 */
   published: []
+  'care-plan-published': []
 }>()
 
 const visible = computed({
@@ -74,13 +78,21 @@ const title = computed(() => {
     <div v-if="peopleId && visible" class="sheet-body" :class="{ chat: mode === 'care-chat' }">
       <PatientArchiveView v-if="mode === 'archive'" :people-id="peopleId" />
       <PatientFollowupView v-else-if="mode === 'followups'" :people-id="peopleId" />
-      <PatientCarePlanView v-else-if="mode === 'care-plan'" :people-id="peopleId" />
+      <PatientCarePlanView
+        v-else-if="mode === 'care-plan'"
+        :people-id="peopleId"
+        @published="emit('care-plan-published')"
+      />
       <PatientHealthReportView
         v-else-if="mode === 'reports'"
         :people-id="peopleId"
         @published="emit('published')"
       />
-      <PatientObservationLayout v-else-if="mode === 'observations'" :people-id="peopleId" />
+      <PatientObservationLayout
+        v-else-if="mode === 'observations'"
+        :people-id="peopleId"
+        :initial-sub="observationsSub"
+      />
       <PatientChatView v-else-if="mode === 'care-chat'" :people-id="peopleId" />
       <PatientMedicationView v-else-if="mode === 'medications'" :people-id="peopleId" />
       <PatientAssessmentsView v-else-if="mode === 'assessments'" :people-id="peopleId" />

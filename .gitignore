@@ -63,5 +63,6 @@ deploy/docker/certs/
 *.pyc
 
 # Marketing / temp assets (not product code)
+docs/sales/
 healix-xiaohongshu*_assets/
 frontend-staff-public-tmp/

@@ -52,13 +52,13 @@ public class ExercisePlanLoader {
             boolean hypoglycemiaRisk) {
 
         public boolean diabetes() {
-            return diseaseKey == CarePlanTemplateKeyEnum.DIABETES
-                    || diseaseKey == CarePlanTemplateKeyEnum.DIABETES_HYPERTENSION;
+            CarePlanTemplateKeyEnum c = diseaseKey == null ? null : diseaseKey.canonical();
+            return c == CarePlanTemplateKeyEnum.DIABETES || c == CarePlanTemplateKeyEnum.COMPREHENSIVE;
         }
 
         public boolean hypertension() {
-            return diseaseKey == CarePlanTemplateKeyEnum.HYPERTENSION
-                    || diseaseKey == CarePlanTemplateKeyEnum.DIABETES_HYPERTENSION;
+            CarePlanTemplateKeyEnum c = diseaseKey == null ? null : diseaseKey.canonical();
+            return c == CarePlanTemplateKeyEnum.HYPERTENSION || c == CarePlanTemplateKeyEnum.COMPREHENSIVE;
         }
 
         /** 某日应打的运动任务（频率 + 执行窗口）。 */

@@ -5,6 +5,10 @@ export interface LifestyleStat {
   value: string
   sub?: string
   warn?: boolean
+  /** 较上期变化，如「较上期 +2 天」 */
+  delta?: string
+  /** 变化方向好坏：更好 / 更差 / 持平 */
+  trend?: 'BETTER' | 'WORSE' | 'FLAT'
 }
 
 export interface LifestyleSection {
@@ -31,6 +35,7 @@ interface LifestyleContent {
     avgSodiumMg?: Num
     redMeals?: number
     yellowMeals?: number
+    prev?: { recordDays?: Num; avgKcal?: Num; onTargetDays?: Num; avgSodiumMg?: Num }
   }
   exercise?: {
     activeDays?: number
@@ -41,6 +46,7 @@ interface LifestyleContent {
     redCount?: number
     yellowCount?: number
     categories?: Array<{ label?: string; min?: number }>
+    prev?: { activeDays?: Num; avgWeeklyActiveMin?: Num }
   }
 }
 
@@ -49,6 +55,22 @@ export function lifestyleSections(content?: Record<string, unknown> | null): Lif
   if (!ls) return []
   const days = Number(ls.dayCount || 0)
   return [dietSection(ls.diet, days), exerciseSection(ls.exercise, days)]
+}
+
+/** 与上期比较；higherBetter=null 时不评价好坏。flat 为视作持平的阈值。 */
+function delta(
+  cur: Num,
+  prev: Num,
+  unit: string,
+  higherBetter: boolean | null,
+  flat = 1,
+): Pick<LifestyleStat, 'delta' | 'trend'> {
+  if (cur == null || prev == null) return {}
+  const d = Math.round(Number(cur) - Number(prev))
+  if (Math.abs(d) < flat) return { delta: '与上期持平', trend: 'FLAT' }
+  const text = `较上期 ${d > 0 ? '+' : ''}${d}${unit}`
+  if (higherBetter == null) return { delta: text }
+  return { delta: text, trend: d > 0 === higherBetter ? 'BETTER' : 'WORSE' }
 }
 
 function dietSection(d: LifestyleContent['diet'], days: number): LifestyleSection {
@@ -64,6 +86,7 @@ function dietSection(d: LifestyleContent['diet'], days: number): LifestyleSectio
     label: '记录天数',
     value: `${recordDays}/${days} 天`,
     sub: `三餐记全 ${d.completeDays || 0} 天`,
+    ...delta(recordDays, d.prev?.recordDays ?? null, ' 天', true),
   })
   section.stats.push({
     label: '日均热量',
@@ -74,12 +97,14 @@ function dietSection(d: LifestyleContent['diet'], days: number): LifestyleSectio
         : d.avgKcal != null
           ? '未设热量目标'
           : '三餐记全后统计',
+    ...(d.targetKcal != null ? delta(d.onTargetDays ?? null, d.prev?.onTargetDays ?? null, ' 天达标', true) : {}),
   })
   section.stats.push({
     label: '日均钠',
     value: d.avgSodiumMg != null ? `${d.avgSodiumMg} mg` : '-',
     sub: `建议 <${SODIUM_LIMIT_MG} mg`,
     warn: d.avgSodiumMg != null && d.avgSodiumMg > SODIUM_LIMIT_MG,
+    ...delta(d.avgSodiumMg ?? null, d.prev?.avgSodiumMg ?? null, ' mg', false, 100),
   })
   section.stats.push({
     label: '需注意餐次',
@@ -109,6 +134,7 @@ function exerciseSection(e: LifestyleContent['exercise'], days: number): Lifesty
     label: '运动天数',
     value: `${activeDays}/${days} 天`,
     sub: `共 ${e.sessionCount || 0} 次`,
+    ...delta(activeDays, e.prev?.activeDays ?? null, ' 天', true),
   })
   section.stats.push({
     label: '总时长',
@@ -120,6 +146,7 @@ function exerciseSection(e: LifestyleContent['exercise'], days: number): Lifesty
     value: `${avg} 分钟`,
     sub: target ? `计划 ${target} 分钟/周` : `参考 ${WHO_WEEKLY_ACTIVE_MIN} 分钟/周`,
     warn: target != null && target > 0 && avg < target,
+    ...delta(avg, e.prev?.avgWeeklyActiveMin ?? null, ' 分钟', true, 10),
   })
   section.stats.push({
     label: '运动中不适',

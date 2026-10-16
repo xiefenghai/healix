@@ -121,7 +121,7 @@ public final class DiabetesControlLabelRules {
                     targets,
                     redHits,
                     yellowHits,
-                    "立即就医，紧急干预",
+                    "建议尽快安排医师复诊，加强血糖监测",
                     "URGENT_CARE",
                     in,
                     Map.of());
@@ -143,7 +143,7 @@ public final class DiabetesControlLabelRules {
                     targets,
                     redHits,
                     yellowHits,
-                    "建议就医复评，加强监测",
+                    "建议安排医师复评，加强血糖监测",
                     "ADJUST_THERAPY",
                     in,
                     Map.of());

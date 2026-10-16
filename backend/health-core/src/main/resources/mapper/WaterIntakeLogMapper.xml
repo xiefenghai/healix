@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.water.mapper.WaterIntakeLogMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, biz_date, amount_ml, source, recorded_at,
+        recorded_by_people_id, recorded_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO water_intake_log(
+            id, tenant_id, people_id, biz_date, amount_ml, source, recorded_at,
+            recorded_by_people_id, recorded_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{bizDate}, #{amountMl}, #{source}, #{recordedAt},
+            #{recordedByPeopleId}, #{recordedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="findById" resultType="com.healix.core.water.domain.WaterIntakeLog">
+        SELECT <include refid="cols"/>
+        FROM water_intake_log
+        WHERE id = #{id}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <update id="softDelete">
+        UPDATE water_intake_log
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateEntry">
+        UPDATE water_intake_log
+        SET amount_ml = #{amountMl},
+            source = #{source},
+            recorded_at = #{recordedAt},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listByPeopleDate" resultType="com.healix.core.water.domain.WaterIntakeLog">
+        SELECT <include refid="cols"/>
+        FROM water_intake_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date = #{bizDate}
+          AND is_deleted = 0
+        ORDER BY COALESCE(recorded_at, gmt_created) ASC
+    </select>
+
+    <select id="sumByPeopleDate" resultType="java.lang.Integer">
+        SELECT COALESCE(SUM(amount_ml), 0)
+        FROM water_intake_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date = #{bizDate}
+          AND is_deleted = 0
+    </select>
+
+    <select id="listByPeopleRange" resultType="com.healix.core.water.domain.WaterIntakeLog">
+        SELECT <include refid="cols"/>
+        FROM water_intake_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date &gt;= #{from}
+          AND biz_date &lt;= #{to}
+          AND is_deleted = 0
+        ORDER BY biz_date ASC, COALESCE(recorded_at, gmt_created) ASC
+    </select>
+</mapper>

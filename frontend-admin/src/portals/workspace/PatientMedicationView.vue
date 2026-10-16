@@ -39,6 +39,56 @@ interface Medication {
   hasAdverseReaction?: boolean
   remark?: string
   status?: string
+  drugCode?: string | null
+  prn?: boolean
+  suggestedSlots?: string[]
+  slotsCustom?: boolean
+  verified?: boolean | null
+  allergyConflict?: string | null
+  stopReason?: string | null
+  openFeedbackCount?: number
+}
+
+interface Feedback {
+  id: string
+  medicationId: string
+  drugName?: string
+  kind: string
+  kindLabel?: string
+  symptomLabels?: string[]
+  severity?: string | null
+  content?: string | null
+  status: 'OPEN' | 'HANDLED'
+  reply?: string | null
+  handledByName?: string | null
+  handledAt?: string | null
+  gmtCreated?: string
+}
+
+interface AdherenceCell {
+  date: string
+  slot: string
+  status: string
+  takenAt?: string | null
+  backfill: boolean
+  count: number
+}
+
+interface Adherence {
+  from: string
+  to: string
+  stats: {
+    due: number
+    taken: number
+    missed: number
+    skipped: number
+    unrecorded: number
+    ratePercent: number | null
+    onTimePercent: number | null
+    prnCount: number
+  }
+  days: { date: string }[]
+  meds: { medicationId: string; drugName: string; prn: boolean; slots: string[]; cells: AdherenceCell[] }[]
 }
 
 interface Intake {
@@ -52,6 +102,19 @@ interface Intake {
 }
 
 const TIMING_PRESETS = ['晨起', '饭前', '饭后', '睡前', '痛时服'] as const
+const SLOT_OPTIONS = [
+  { value: 'MORNING', label: '早' },
+  { value: 'NOON', label: '午' },
+  { value: 'EVENING', label: '晚' },
+  { value: 'BEDTIME', label: '睡前' },
+] as const
+const STOP_REASON_LABELS: Record<string, string> = {
+  IMPROVED: '自觉好转',
+  SIDE_EFFECT: '副作用',
+  DOCTOR: '医生让停',
+  OTHER: '其他',
+}
+const SEVERITY_LABELS: Record<string, string> = { MILD: '轻度', MODERATE: '中度', SEVERE: '重度' }
 
 const props = defineProps<{
   peopleId?: string
@@ -84,7 +147,14 @@ const form = reactive({
   hasAdverseReaction: false,
   remark: '',
   source: 'MANUAL',
+  drugCode: '' as string,
+  slots: [] as string[],
+  slotsCustom: false,
 })
+
+const adherence = ref<Adherence | null>(null)
+const feedback = ref<Feedback[]>([])
+const feedbackFilter = ref<'OPEN' | 'ALL'>('OPEN')
 
 const intakeVisible = ref(false)
 const intakeMed = ref<Medication | null>(null)
@@ -203,6 +273,11 @@ function statusLabel(status?: string) {
   return status === 'STOPPED' ? '已停用' : '在用'
 }
 
+function rowSourceLabel(row: Medication) {
+  if (row.source === 'PATIENT') return row.verified ? '自添加·已核对' : '自添加·待核对'
+  return sourceLabel(row.source)
+}
+
 function sourceLabel(source?: string) {
   if (source === 'PATIENT') return '患者自添加'
   if (source === 'PRESCRIPTION') return '院外用药'
@@ -222,6 +297,7 @@ function timeSlotLabel(slot: string) {
     NOON: '午',
     EVENING: '晚',
     BEDTIME: '睡前',
+    PRN: '需要时',
     OTHER: '其他',
   }
   return map[slot] ?? slot
@@ -257,6 +333,7 @@ async function searchDrugCatalog(query: string, cb: (items: DrugCatalogItem[]) =
 }
 
 function applyDrugCatalog(item: DrugCatalogItem) {
+  form.drugCode = item.code
   form.drugName = item.displayName
   if (item.defaultDoseAmount) form.doseAmount = item.defaultDoseAmount
   if (item.defaultDoseUnit) form.doseUnit = item.defaultDoseUnit
@@ -324,6 +401,9 @@ function resetForm() {
   form.hasAdverseReaction = false
   form.remark = ''
   form.source = 'MANUAL'
+  form.drugCode = ''
+  form.slots = []
+  form.slotsCustom = false
   editingId.value = null
 }
 
@@ -356,6 +436,9 @@ function openEdit(row: Medication) {
     form.hasAdverseReaction = !!row.hasAdverseReaction
     form.remark = row.remark ?? ''
     form.source = row.source ?? 'MANUAL'
+    form.drugCode = row.drugCode ?? ''
+    form.slotsCustom = !!row.slotsCustom
+    form.slots = row.slotsCustom ? [...(row.suggestedSlots ?? [])] : []
     dialogVisible.value = true
   })
 }
@@ -379,6 +462,8 @@ async function loadList() {
       `/api/b/v1/patients/${peopleId.value}/medications${q}`,
     )
     list.value = res.data ?? []
+    void loadAdherence()
+    void loadFeedback()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载用药失败')
   } finally {
@@ -424,6 +509,15 @@ async function save() {
       courseDays: form.courseMode === 'days' ? form.courseDays : undefined,
       hasAdverseReaction: form.hasAdverseReaction,
       remark: form.remark.trim() || undefined,
+      drugCode: form.drugCode || null,
+      slots:
+        form.frequency === 'PRN'
+          ? null
+          : form.slots.length
+            ? SLOT_OPTIONS.map((o) => o.value).filter((v) => form.slots.includes(v))
+            : form.slotsCustom
+              ? []
+              : null,
     }
     if (editingId.value) {
       await api(`/api/b/v1/patients/${peopleId.value}/medications/${editingId.value}`, {
@@ -445,6 +539,118 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+async function verify(row: Medication) {
+  try {
+    await api(`/api/b/v1/patients/${peopleId.value}/medications/${row.id}/verify`, { method: 'POST' })
+    ElMessage.success('已核对')
+    await loadList()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '核对失败')
+  }
+}
+
+async function loadAdherence() {
+  try {
+    const res = await api<{ data: Adherence }>(`/api/b/v1/patients/${peopleId.value}/medications/adherence?days=14`)
+    adherence.value = res.data
+  } catch {
+    adherence.value = null
+  }
+}
+
+async function loadFeedback() {
+  try {
+    const q = feedbackFilter.value === 'OPEN' ? '?status=OPEN' : ''
+    const res = await api<{ data: Feedback[] }>(`/api/b/v1/patients/${peopleId.value}/medication-feedback${q}`)
+    feedback.value = res.data ?? []
+  } catch {
+    feedback.value = []
+  }
+}
+
+async function handleFeedback(row: Feedback) {
+  let reply: string
+  try {
+    const res = await ElMessageBox.prompt(
+      '回复会显示在患者该药的详情页，并关闭对应的工作台任务。',
+      `处理反馈 · ${row.drugName || ''}`,
+      {
+        inputType: 'textarea',
+        inputPlaceholder: '如：已电话沟通，建议暂停并复诊；或：可改到晚饭后服用',
+        inputValidator: (v: string) => (!!v && v.trim().length > 0 && v.trim().length <= 500) || '请填写 1-500 字',
+        confirmButtonText: '提交',
+      },
+    )
+    reply = String(res.value).trim()
+  } catch {
+    return
+  }
+  try {
+    await api(`/api/b/v1/patients/${peopleId.value}/medication-feedback/${row.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ reply }),
+    })
+    ElMessage.success('已处理')
+    await loadList()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '处理失败')
+  }
+}
+
+function feedbackDetail(row: Feedback) {
+  const parts: string[] = []
+  if (row.symptomLabels?.length) parts.push(row.symptomLabels.join('、'))
+  if (row.severity) parts.push(SEVERITY_LABELS[row.severity] || row.severity)
+  if (row.content) parts.push(row.content)
+  return parts.join(' · ') || '-'
+}
+
+function fmtTime(dt?: string | null) {
+  return dt ? dt.replace('T', ' ').slice(5, 16) : '-'
+}
+
+function slotsLabel(row: Medication) {
+  if (row.prn) return '需要时'
+  return (row.suggestedSlots ?? []).map((s) => timeSlotLabel(s)).join('、') || '-'
+}
+
+/** 网格行：定时药按时段拆行，PRN 一行显示次数 */
+const gridRows = computed(() => {
+  const a = adherence.value
+  if (!a) return []
+  const rows: { key: string; drugName: string; slot: string; cells: Record<string, AdherenceCell> }[] = []
+  for (const m of a.meds) {
+    const slots = m.prn ? ['PRN'] : m.slots
+    for (const slot of slots) {
+      const cells: Record<string, AdherenceCell> = {}
+      for (const c of m.cells) if (c.slot === slot || (m.prn && c.slot === 'PRN')) cells[c.date] = c
+      rows.push({ key: `${m.medicationId}|${slot}`, drugName: m.drugName, slot, cells })
+    }
+  }
+  return rows
+})
+
+function gridCellText(c?: AdherenceCell) {
+  if (!c) return ''
+  if (c.slot === 'PRN') return c.count ? `${c.count}次` : ''
+  switch (c.status) {
+    case 'TAKEN':
+      return (c.takenAt ? c.takenAt.slice(11, 16) : '✓') + (c.backfill ? '补' : '')
+    case 'MISSED':
+      return '漏'
+    case 'SKIPPED':
+      return '跳'
+    case 'UNRECORDED':
+      return '?'
+    default:
+      return ''
+  }
+}
+
+function gridCellClass(c?: AdherenceCell) {
+  return c ? `g-${c.status.toLowerCase()}` : ''
 }
 
 async function remove(row: Medication) {
@@ -504,6 +710,7 @@ async function saveIntake() {
 }
 
 watch(statusFilter, () => loadList())
+watch(feedbackFilter, () => loadFeedback())
 watch(
   () => [form.courseMode, form.courseDays, form.startDate] as const,
   () => {
@@ -584,11 +791,16 @@ watch(peopleId, async (id, prev) => {
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="数据来源" min-width="100" align="center">
+        <el-table-column label="服药时段" min-width="96" align="center">
+          <template #default="{ row }">{{ slotsLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="数据来源" min-width="120" align="center">
           <template #default="{ row }">
             <el-tag :type="sourceTagType(row.source)" size="small" effect="plain">
-              {{ sourceLabel(row.source) }}
+              {{ rowSourceLabel(row) }}
             </el-tag>
+            <div v-if="row.allergyConflict" class="flag-line danger" :title="row.allergyConflict">过敏冲突</div>
+            <div v-if="row.openFeedbackCount" class="flag-line warn">待处理反馈 {{ row.openFeedbackCount }}</div>
           </template>
         </el-table-column>
         <el-table-column label="状态" min-width="72" align="center">
@@ -596,11 +808,15 @@ watch(peopleId, async (id, prev) => {
             <el-tag :type="row.status === 'STOPPED' ? 'info' : 'success'" size="small" effect="plain">
               {{ statusLabel(row.status) }}
             </el-tag>
+            <div v-if="row.stopReason" class="flag-line">{{ STOP_REASON_LABELS[row.stopReason] || row.stopReason }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="168" align="center">
+        <el-table-column label="操作" width="200" align="center">
           <template #default="{ row }">
             <div class="row-actions">
+              <el-button v-if="row.source === 'PATIENT' && !row.verified" link type="warning" @click="verify(row)">
+                核对
+              </el-button>
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
               <el-button link type="primary" @click="openIntake(row)">依从性</el-button>
               <el-button link type="danger" @click="remove(row)">删除</el-button>
@@ -608,6 +824,84 @@ watch(peopleId, async (id, prev) => {
           </template>
         </el-table-column>
       </el-table>
+    </el-card>
+
+    <el-card shadow="never" class="section-card">
+      <template #header>
+        <div class="card-head">
+          <span class="section-title">用药反馈</span>
+          <el-radio-group v-model="feedbackFilter" size="small">
+            <el-radio-button value="OPEN">待处理</el-radio-button>
+            <el-radio-button value="ALL">全部</el-radio-button>
+          </el-radio-group>
+        </div>
+      </template>
+      <el-table :data="feedback" class="med-table" empty-text="暂无反馈">
+        <el-table-column label="时间" width="110">
+          <template #default="{ row }">{{ fmtTime(row.gmtCreated) }}</template>
+        </el-table-column>
+        <el-table-column label="药品" prop="drugName" min-width="120" show-overflow-tooltip />
+        <el-table-column label="类型" width="96">
+          <template #default="{ row }">
+            <el-tag
+              size="small"
+              effect="plain"
+              :type="row.kind === 'ALLERGY_CONFLICT' || row.severity === 'SEVERE' ? 'danger' : 'warning'"
+            >
+              {{ row.kindLabel || row.kind }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="内容" min-width="220">
+          <template #default="{ row }">
+            <div>{{ feedbackDetail(row) }}</div>
+            <div v-if="row.reply" class="fb-reply">{{ row.handledByName || '健管师' }}：{{ row.reply }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="120" align="center">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 'OPEN'" size="small" type="primary" @click="handleFeedback(row)">处理</el-button>
+            <span v-else class="muted">已处理 {{ fmtTime(row.handledAt) }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-if="adherence && gridRows.length" shadow="never" class="section-card">
+      <template #header>
+        <div class="card-head">
+          <span class="section-title">近 14 天服药</span>
+          <span class="grid-stats">
+            依从率 <b>{{ adherence.stats.ratePercent ?? '—' }}{{ adherence.stats.ratePercent != null ? '%' : '' }}</b>
+            · 按时率 <b>{{ adherence.stats.onTimePercent ?? '—' }}{{ adherence.stats.onTimePercent != null ? '%' : '' }}</b>
+            · 漏服 <b>{{ adherence.stats.missed }}</b>
+            · 未记录 <b>{{ adherence.stats.unrecorded }}</b>
+            <template v-if="adherence.stats.prnCount"> · 按需 {{ adherence.stats.prnCount }} 次</template>
+          </span>
+        </div>
+      </template>
+      <div class="grid-wrap">
+        <table class="adh-grid">
+          <thead>
+            <tr>
+              <th class="sticky">药品 / 时段</th>
+              <th v-for="d in adherence.days" :key="d.date">{{ d.date.slice(5) }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in gridRows" :key="r.key">
+              <td class="sticky">
+                <span class="g-name">{{ r.drugName }}</span>
+                <span class="g-slot">{{ r.slot === 'PRN' ? '需要时' : timeSlotLabel(r.slot) }}</span>
+              </td>
+              <td v-for="d in adherence.days" :key="d.date" :class="gridCellClass(r.cells[d.date])">
+                {{ gridCellText(r.cells[d.date]) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="grid-legend">时刻=已服 · 补=次日补记 · 漏=漏服 · 跳=跳过 · ?=未记录 · 空白=当天不需要服</p>
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="600px" destroy-on-close>
@@ -669,6 +963,14 @@ watch(peopleId, async (id, prev) => {
               :value="o.dictCode"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.frequency !== 'PRN'" label="服药时段">
+          <div class="timing-block">
+            <el-checkbox-group v-model="form.slots">
+              <el-checkbox v-for="o in SLOT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</el-checkbox>
+            </el-checkbox-group>
+            <div class="slot-hint">不勾选则按频次与用药时机自动安排，患者也可在手机上调整</div>
+          </div>
         </el-form-item>
         <el-form-item label="用药时机">
           <div class="timing-block">
@@ -769,7 +1071,6 @@ watch(peopleId, async (id, prev) => {
             <el-option label="午" value="NOON" />
             <el-option label="晚" value="EVENING" />
             <el-option label="睡前" value="BEDTIME" />
-            <el-option label="其他" value="OTHER" />
           </el-select>
         </el-form-item>
         <el-form-item label="结果">
@@ -965,6 +1266,101 @@ watch(peopleId, async (id, prev) => {
 
 .section-card :deep(.el-card__body) {
   padding: 0 20px 16px;
+}
+
+.flag-line {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--admin-muted);
+}
+.flag-line.danger {
+  color: #dc2626;
+  font-weight: 600;
+}
+.flag-line.warn {
+  color: #c2410c;
+}
+.fb-reply {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #0b7a66;
+}
+.muted {
+  font-size: 12px;
+  color: var(--admin-muted);
+}
+.slot-hint {
+  font-size: 12px;
+  color: var(--admin-muted);
+}
+.section-card + .section-card {
+  margin-top: 16px;
+}
+.grid-stats {
+  font-size: 13px;
+  color: var(--admin-text-secondary);
+}
+.grid-wrap {
+  overflow-x: auto;
+  padding-top: 12px;
+}
+.adh-grid {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 100%;
+}
+.adh-grid th,
+.adh-grid td {
+  border: 1px solid var(--admin-border, #e5e7eb);
+  padding: 6px 4px;
+  text-align: center;
+  white-space: nowrap;
+  min-width: 44px;
+}
+.adh-grid th {
+  background: #f8fafc;
+  font-weight: 600;
+  color: var(--admin-text-secondary);
+}
+.adh-grid .sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  text-align: left;
+  min-width: 150px;
+}
+.adh-grid th.sticky {
+  background: #f8fafc;
+}
+.g-name {
+  font-weight: 600;
+  margin-right: 6px;
+}
+.g-slot {
+  color: var(--admin-muted);
+}
+.g-taken {
+  background: #ecfdf5;
+  color: #047857;
+}
+.g-missed {
+  background: #fef2f2;
+  color: #dc2626;
+  font-weight: 600;
+}
+.g-skipped {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.g-unrecorded {
+  background: #fff7ed;
+  color: #c2410c;
+}
+.grid-legend {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--admin-muted);
 }
 
 .intake-list {

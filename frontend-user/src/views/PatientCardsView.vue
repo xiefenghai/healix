@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api, clearToken, setToken } from '../api/http'
@@ -10,18 +10,60 @@ interface PatientCard {
   displayName: string
   relation?: string
   identityValueMask?: string
+  gender?: string
+  birthday?: string | number[]
 }
 
 const router = useRouter()
 const cards = ref<PatientCard[]>([])
 const loading = ref(false)
 const showAdd = ref(false)
-const form = ref({
-  displayName: '',
-  identityType: 'ID_CARD',
-  identityValue: '',
-  relation: 'SELF',
-  mobile: '',
+function emptyForm() {
+  return {
+    displayName: '',
+    gender: '',
+    birthday: '',
+    identityType: 'ID_CARD',
+    identityValue: '',
+    relation: 'SELF',
+    mobile: '',
+    mobileOwner: 'SELF',
+  }
+}
+const form = ref(emptyForm())
+const showIdentity = ref(false)
+const showBirthdayPicker = ref(false)
+const showRelationSheet = ref(false)
+const showOwnerSheet = ref(false)
+const today = new Date()
+const minBirthday = new Date(1900, 0, 1)
+const birthdayPickerValue = ref<string[]>(['1960', '01', '01'])
+
+const ownerOptions = [
+  { text: '本人', value: 'SELF' },
+  { text: '配偶', value: 'SPOUSE' },
+  { text: '子女', value: 'CHILD' },
+  { text: '父母', value: 'PARENT' },
+  { text: '其他亲属', value: 'RELATIVE' },
+  { text: '其他', value: 'OTHER' },
+]
+const ownerLabelMap = Object.fromEntries(ownerOptions.map((o) => [o.value, o.text]))
+
+const parsedIdCard = computed(() => {
+  const v = form.value.identityValue.trim().toUpperCase()
+  if (!/^\d{17}[\dX]$/.test(v)) return null
+  const y = v.slice(6, 10)
+  const m = v.slice(10, 12)
+  const d = v.slice(12, 14)
+  const date = new Date(Number(y), Number(m) - 1, Number(d))
+  if (date.getFullYear() !== Number(y) || date.getMonth() !== Number(m) - 1 || date.getDate() !== Number(d)) return null
+  return { birthday: `${y}-${m}-${d}`, gender: Number(v[16]) % 2 === 1 ? 'MALE' : 'FEMALE' }
+})
+
+watch(parsedIdCard, (p) => {
+  if (!p) return
+  form.value.gender = p.gender
+  form.value.birthday = p.birthday
 })
 
 const relationOptions = [
@@ -34,15 +76,37 @@ const relationOptions = [
 
 const relationLabelMap = Object.fromEntries(relationOptions.map((o) => [o.value, o.text]))
 
-function cardLabel(c: PatientCard) {
-  const relation = relationLabelMap[c.relation || ''] || c.relation || ''
-  return [relation, c.identityValueMask].filter(Boolean).join(' · ')
+function ageOf(birthday?: string | number[]) {
+  if (!birthday) return null
+  const [y, m, d] = Array.isArray(birthday) ? birthday : String(birthday).split('-').map(Number)
+  if (!y) return null
+  let age = today.getFullYear() - y
+  if (today.getMonth() + 1 < m || (today.getMonth() + 1 === m && today.getDate() < d)) age--
+  return age >= 0 ? age : null
 }
 
-function cycleRelation() {
-  const order = relationOptions.map((o) => o.value)
-  const idx = order.indexOf(form.value.relation)
-  form.value.relation = order[(idx + 1) % order.length]
+function cardLabel(c: PatientCard) {
+  const relation = relationLabelMap[c.relation || ''] || c.relation || ''
+  const gender = c.gender === 'MALE' ? '男' : c.gender === 'FEMALE' ? '女' : ''
+  const age = ageOf(c.birthday)
+  return [relation, gender, age != null ? `${age} 岁` : '', c.identityValueMask].filter(Boolean).join(' · ')
+}
+
+function openAdd() {
+  form.value = emptyForm()
+  showIdentity.value = false
+  showAdd.value = true
+}
+
+function openBirthdayPicker() {
+  if (parsedIdCard.value) return
+  if (form.value.birthday) birthdayPickerValue.value = form.value.birthday.split('-')
+  showBirthdayPicker.value = true
+}
+
+function onBirthdayConfirm({ selectedValues }: { selectedValues: string[] }) {
+  form.value.birthday = selectedValues.join('-')
+  showBirthdayPicker.value = false
 }
 
 async function load() {
@@ -71,10 +135,25 @@ async function selectCard(card: PatientCard) {
 }
 
 async function addCard() {
+  const f = form.value
+  if (!f.displayName.trim()) return showToast('请填写姓名')
+  if (f.identityValue.trim() && !parsedIdCard.value) return showToast('身份证号格式不正确')
+  if (!f.gender) return showToast('请选择性别')
+  if (!f.birthday) return showToast('请选择出生日期')
+  const mobile = f.mobile.trim()
   try {
     const res = await api<{ data: { accessToken: string } }>('/api/c/v1/patient-cards', {
       method: 'POST',
-      body: JSON.stringify(form.value),
+      body: JSON.stringify({
+        displayName: f.displayName.trim(),
+        gender: f.gender,
+        birthday: f.birthday,
+        relation: f.relation,
+        identityType: f.identityValue.trim() ? f.identityType : null,
+        identityValue: f.identityValue.trim() || null,
+        mobile: mobile || null,
+        mobileOwner: mobile ? f.mobileOwner : null,
+      }),
     })
     setToken(res.data.accessToken)
     showToast('已添加就诊人')
@@ -113,7 +192,7 @@ onMounted(load)
       <van-empty v-if="!loading && !cards.length" description="还没有就诊人">
         <template #default>
           <div class="empty-actions">
-            <van-button type="primary" size="small" round @click="showAdd = true">添加就诊人</van-button>
+            <van-button type="primary" size="small" round @click="openAdd">添加就诊人</van-button>
             <van-button plain size="small" round @click="router.push('/activate')">用激活码添加</van-button>
           </div>
         </template>
@@ -133,7 +212,7 @@ onMounted(load)
         </van-cell>
       </van-cell-group>
       <div v-if="cards.length" class="actions">
-        <van-button block round type="primary" @click="showAdd = true">添加就诊人</van-button>
+        <van-button block round type="primary" @click="openAdd">添加就诊人</van-button>
         <van-button block round plain style="margin-top: 10px" @click="router.push('/activate')">激活码添加机构档案</van-button>
       </div>
       <div class="logout">
@@ -143,19 +222,81 @@ onMounted(load)
 
     <van-popup v-model:show="showAdd" position="bottom" round :style="{ padding: '16px' }">
       <h3>添加就诊人</h3>
-      <p class="tip">需填写证件。若该人已在机构建档，请改用激活码。</p>
-      <van-field v-model="form.displayName" label="姓名" />
-      <van-field v-model="form.identityValue" label="身份证号" />
-      <van-field v-model="form.mobile" label="手机" placeholder="选填" />
+      <p class="tip">填写姓名、性别和出生日期即可，身份证可以以后再补充。若该人已在机构建档，请改用激活码添加。</p>
+      <van-field v-model="form.displayName" label="姓名" placeholder="请输入姓名" maxlength="32" />
       <van-field
         is-link
         readonly
         label="关系"
         :model-value="relationLabelMap[form.relation] || form.relation"
-        @click="cycleRelation"
+        @click="showRelationSheet = true"
+      />
+      <van-field label="性别">
+        <template #input>
+          <van-radio-group v-model="form.gender" direction="horizontal" :disabled="!!parsedIdCard">
+            <van-radio name="MALE">男</van-radio>
+            <van-radio name="FEMALE">女</van-radio>
+          </van-radio-group>
+        </template>
+      </van-field>
+      <van-field
+        :is-link="!parsedIdCard"
+        readonly
+        label="出生日期"
+        placeholder="请选择"
+        :model-value="form.birthday"
+        @click="openBirthdayPicker"
+      />
+      <van-field v-model="form.mobile" type="tel" label="联系电话" placeholder="选填，没有可不填" maxlength="20" />
+      <van-field
+        v-if="form.mobile.trim()"
+        is-link
+        readonly
+        label="号码归属"
+        :model-value="ownerLabelMap[form.mobileOwner]"
+        @click="showOwnerSheet = true"
+      />
+      <van-cell
+        v-if="!showIdentity"
+        title="补充身份证（选填）"
+        is-link
+        @click="showIdentity = true"
+      />
+      <van-field
+        v-else
+        v-model="form.identityValue"
+        label="身份证号"
+        placeholder="选填，填写后自动识别性别和生日"
+        maxlength="18"
       />
       <van-button block type="primary" round style="margin-top: 12px" @click="addCard">保存</van-button>
     </van-popup>
+
+    <van-popup v-model:show="showBirthdayPicker" position="bottom" round>
+      <van-date-picker
+        v-model="birthdayPickerValue"
+        title="出生日期"
+        :min-date="minBirthday"
+        :max-date="today"
+        @confirm="onBirthdayConfirm"
+        @cancel="showBirthdayPicker = false"
+      />
+    </van-popup>
+    <van-action-sheet
+      v-model:show="showRelationSheet"
+      :actions="relationOptions.map((o) => ({ name: o.text, value: o.value }))"
+      cancel-text="取消"
+      close-on-click-action
+      @select="(a: { value: string }) => (form.relation = a.value)"
+    />
+    <van-action-sheet
+      v-model:show="showOwnerSheet"
+      title="这个号码是谁的"
+      :actions="ownerOptions.map((o) => ({ name: o.text, value: o.value }))"
+      cancel-text="取消"
+      close-on-click-action
+      @select="(a: { value: string }) => (form.mobileOwner = a.value)"
+    />
   </div>
 </template>
 

@@ -115,8 +115,8 @@ const lifestyleRows = computed(() => formatLifestyleRows(content.value, lifestyl
   margin: 12px 16px 0; color: var(--hx-muted); font-size: 13px; line-height: 1.5;
 }
 .card {
-  margin: 12px 16px; padding: 16px; border-radius: 16px; background: #fff;
-  box-shadow: var(--hx-shadow);
+  margin: 12px 16px; padding: 16px; border-radius: var(--hx-r-lg); background: #fff;
+  box-shadow: var(--hx-elev-2);
 }
 .card-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -124,10 +124,10 @@ const lifestyleRows = computed(() => formatLifestyleRows(content.value, lifestyl
 }
 h3 { margin: 0; font-size: 15px; }
 .link {
-  border: 0; background: transparent; color: var(--hx-primary, #0d9488);
+  border: 0; background: transparent; color: var(--hx-primary, var(--hx-teal-700));
   font-size: 13px; padding: 0;
 }
-.row + .row { margin-top: 14px; padding-top: 14px; border-top: 1px solid #f0f3f3; }
+.row + .row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hx-n-100); }
 .label { color: var(--hx-muted); font-size: 12px; margin-bottom: 4px; }
 .value { font-size: 14px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; }
 </style>

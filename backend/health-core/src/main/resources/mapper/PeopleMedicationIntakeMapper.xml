@@ -4,29 +4,66 @@
 <mapper namespace="com.healix.core.medication.mapper.PeopleMedicationIntakeMapper">
 
     <sql id="cols">
-        pk_id, id, tenant_id, people_id, medication_id, intake_date, time_slot, status, note,
-        recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        pk_id, id, tenant_id, people_id, medication_id, intake_date, time_slot, dose_seq, status,
+        taken_at, backfill, note, recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO people_medication_intake(
-            id, tenant_id, people_id, medication_id, intake_date, time_slot, status, note,
-            recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
+            id, tenant_id, people_id, medication_id, intake_date, time_slot, dose_seq, status,
+            taken_at, backfill, note, recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
-            #{id}, #{tenantId}, #{peopleId}, #{medicationId}, #{intakeDate}, #{timeSlot}, #{status}, #{note},
-            #{recordedByStaffId}, #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+            #{id}, #{tenantId}, #{peopleId}, #{medicationId}, #{intakeDate}, #{timeSlot},
+            COALESCE(#{doseSeq}, 1), #{status},
+            #{takenAt}, COALESCE(#{backfill}, 0), #{note}, #{recordedByStaffId}, #{isDeleted},
+            #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
     </insert>
 
     <update id="update">
         UPDATE people_medication_intake
         SET status = #{status},
+            taken_at = #{takenAt},
+            backfill = COALESCE(#{backfill}, 0),
             note = #{note},
             recorded_by_staff_id = #{recordedByStaffId},
             gmt_modified = #{gmtModified}
         WHERE id = #{id}
           AND is_deleted = 0
     </update>
+
+    <update id="softDelete">
+        UPDATE people_medication_intake
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateSlot">
+        UPDATE people_medication_intake
+        SET time_slot = #{timeSlot},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateSlotSeq">
+        UPDATE people_medication_intake
+        SET time_slot = #{timeSlot},
+            dose_seq = #{doseSeq},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
+        SELECT <include refid="cols"/>
+        FROM people_medication_intake
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
 
     <select id="findByMedDateSlot" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
         SELECT <include refid="cols"/>
@@ -35,7 +72,26 @@
           AND intake_date = #{intakeDate}
           AND time_slot = #{timeSlot}
           AND is_deleted = 0
+        ORDER BY dose_seq ASC
         LIMIT 1
+    </select>
+
+    <select id="maxDoseSeq" resultType="int">
+        SELECT COALESCE(MAX(dose_seq), 0)
+        FROM people_medication_intake
+        WHERE medication_id = #{medicationId}
+          AND intake_date = #{intakeDate}
+          AND time_slot = #{timeSlot}
+          AND is_deleted = 0
+    </select>
+
+    <select id="countByMedDateSlot" resultType="int">
+        SELECT COUNT(1)
+        FROM people_medication_intake
+        WHERE medication_id = #{medicationId}
+          AND intake_date = #{intakeDate}
+          AND time_slot = #{timeSlot}
+          AND is_deleted = 0
     </select>
 
     <select id="listByMedication" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
@@ -49,7 +105,22 @@
         <if test="to != null">
           AND intake_date &lt;= #{to}
         </if>
-        ORDER BY intake_date DESC, time_slot ASC
+        ORDER BY intake_date DESC, time_slot ASC, dose_seq ASC
+    </select>
+
+    <select id="listLegacyOtherByMedication" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
+        SELECT <include refid="cols"/>
+        FROM people_medication_intake
+        WHERE medication_id = #{medicationId}
+          AND time_slot = 'OTHER'
+          AND is_deleted = 0
+    </select>
+
+    <select id="listMedicationIdsWithLegacyOther" resultType="string">
+        SELECT DISTINCT medication_id
+        FROM people_medication_intake
+        WHERE time_slot = 'OTHER'
+          AND is_deleted = 0
     </select>
 
     <select id="listByPeopleDate" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
@@ -59,7 +130,7 @@
           AND people_id = #{peopleId}
           AND intake_date = #{intakeDate}
           AND is_deleted = 0
-        ORDER BY medication_id, time_slot
+        ORDER BY medication_id, time_slot, dose_seq
     </select>
 
     <select id="listByTenantPeopleIdsDate" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
@@ -72,7 +143,7 @@
           <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
               #{pid}
           </foreach>
-        ORDER BY people_id, medication_id, time_slot
+        ORDER BY people_id, medication_id, time_slot, dose_seq
     </select>
 
     <select id="listByPeopleRange" resultType="com.healix.core.medication.domain.PeopleMedicationIntake">
@@ -83,6 +154,6 @@
           AND is_deleted = 0
           AND intake_date &gt;= #{from}
           AND intake_date &lt;= #{to}
-        ORDER BY intake_date ASC, medication_id, time_slot
+        ORDER BY intake_date ASC, medication_id, time_slot, dose_seq
     </select>
 </mapper>

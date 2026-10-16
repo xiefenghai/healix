@@ -1,11 +1,14 @@
 package com.healix.core.observation.service;
 
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
 import com.healix.common.util.SnowflakeId;
 import com.healix.core.archive.service.ArchiveAccessService;
+import com.healix.core.careplan.service.CarePlanMetricCheckinSync;
+import com.healix.core.careplan.service.CarePlanMetricCheckinSync.MetricDay;
 import com.healix.core.observation.dto.MetricLatestSlotDto;
 import com.healix.core.observation.dto.MetricViewDto;
 import com.healix.core.observation.enums.HealthDataSourceEnum;
@@ -15,6 +18,7 @@ import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.enums.MetricTypeEnum;
 import com.healix.core.vitals.enums.VitalSourceEnum;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
+import com.healix.core.vitals.support.VitalValueRules;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -49,9 +53,11 @@ public class MetricService {
             MetricTypeEnum.SLEEP_HOURS.name());
 
     private final VitalRecordMapper vitalRecordMapper;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
     private final ArchiveAccessService archiveAccessService;
     private final FieldRevisionService fieldRevisionService;
     private final ObjectProvider<WorkspaceTaskGenerator> workspaceTaskGenerator;
+    private final ObjectProvider<CarePlanMetricCheckinSync> metricCheckinSync;
 
     public List<MetricViewDto> list(
             String tenantId,
@@ -123,6 +129,7 @@ public class MetricService {
     @Transactional
     public MetricViewDto create(
             String tenantId, String orgId, String peopleId, String staffId, MetricCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         VitalRecord row = buildRow(tenantId, orgId, peopleId, staffId, cmd, null);
         EntityMeta.onCreate(row);
@@ -143,6 +150,7 @@ public class MetricService {
                 "{}",
                 toRevisionJson(row));
         notifyWorkspaceTasks(tenantId, orgId, peopleId, List.of(row));
+        syncMetricTasks(tenantId, peopleId, List.of(MetricDay.of(row)), null);
         return toView(row);
     }
 
@@ -150,6 +158,7 @@ public class MetricService {
     @Transactional
     public List<MetricViewDto> createBatch(
             String tenantId, String orgId, String peopleId, String staffId, List<MetricCommand> items) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         if (items == null || items.isEmpty()) {
             throw new BusinessException("成组指标不能为空");
         }
@@ -195,6 +204,7 @@ public class MetricService {
             out.add(toView(row));
         }
         notifyWorkspaceTasks(tenantId, orgId, peopleId, written);
+        syncMetricTasks(tenantId, peopleId, written.stream().map(MetricDay::of).toList(), null);
         return out;
     }
 
@@ -206,9 +216,11 @@ public class MetricService {
             String staffId,
             String metricId,
             MetricCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         VitalRecord row = requireOwned(tenantId, peopleId, metricId);
         String oldJson = toRevisionJson(row);
+        MetricDay before = MetricDay.of(row);
         applyCommand(row, cmd);
         row.setOrgId(orgId);
         row.setRecordedByStaffId(staffId);
@@ -228,6 +240,7 @@ public class MetricService {
                 orgId,
                 oldJson,
                 toRevisionJson(row));
+        syncMetricTasks(tenantId, peopleId, List.of(before, MetricDay.of(row)), null);
         return toView(row);
     }
 
@@ -235,10 +248,12 @@ public class MetricService {
     @Transactional
     public MetricViewDto updateForPatient(
             String tenantId, String peopleId, String metricId, MetricCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         VitalRecord row = requireOwned(tenantId, peopleId, metricId);
         assertPatientOwned(row.getSource());
         String oldJson = toRevisionJson(row);
+        MetricDay before = MetricDay.of(row);
         applyCommand(row, cmd);
         EntityMeta.onUpdate(row);
         vitalRecordMapper.update(row);
@@ -255,19 +270,23 @@ public class MetricService {
                 null,
                 oldJson,
                 toRevisionJson(row));
+        syncMetricTasks(tenantId, peopleId, List.of(before, MetricDay.of(row)), peopleId);
         return toView(row);
     }
 
     /** C 端：用户删除自己上报的指标；血压成对可按 group 删除。 */
     @Transactional
     public void deleteForPatient(String tenantId, String peopleId, String metricId, boolean deleteGroup) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         VitalRecord row = requireOwned(tenantId, peopleId, metricId);
         assertPatientOwned(row.getSource());
+        List<MetricDay> affected = new ArrayList<>(List.of(MetricDay.of(row)));
         if (deleteGroup && StringUtils.hasText(row.getGroupId())) {
             List<VitalRecord> groupRows = vitalRecordMapper.listByGroupId(row.getGroupId());
             for (VitalRecord g : groupRows) {
                 assertPatientOwned(g.getSource());
+                affected.add(MetricDay.of(g));
             }
         }
         String snapshot = toRevisionJson(row);
@@ -286,6 +305,7 @@ public class MetricService {
                 bizKey,
                 null,
                 snapshot);
+        syncMetricTasks(tenantId, peopleId, affected, peopleId);
     }
 
     private void assertPatientOwned(String source) {
@@ -302,11 +322,14 @@ public class MetricService {
             String staffId,
             String metricId,
             boolean deleteGroup) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         VitalRecord row = requireOwned(tenantId, peopleId, metricId);
         String snapshot = toRevisionJson(row);
         String bizKey = StringUtils.hasText(row.getGroupId()) ? row.getGroupId() : row.getId();
+        List<MetricDay> affected = new ArrayList<>(List.of(MetricDay.of(row)));
         if (deleteGroup && StringUtils.hasText(row.getGroupId())) {
+            vitalRecordMapper.listByGroupId(row.getGroupId()).forEach(g -> affected.add(MetricDay.of(g)));
             vitalRecordMapper.softDeleteByGroupId(row.getGroupId());
         } else {
             vitalRecordMapper.softDelete(metricId);
@@ -320,6 +343,14 @@ public class MetricService {
                 bizKey,
                 orgId,
                 snapshot);
+        syncMetricTasks(tenantId, peopleId, affected, null);
+    }
+
+    private void syncMetricTasks(String tenantId, String peopleId, List<MetricDay> changed, String recordedByPeopleId) {
+        CarePlanMetricCheckinSync sync = metricCheckinSync.getIfAvailable();
+        if (sync != null) {
+            sync.onMetricsChanged(tenantId, peopleId, changed, recordedByPeopleId);
+        }
     }
 
     private VitalRecord buildRow(
@@ -361,6 +392,7 @@ public class MetricService {
         if (cmd.value() == null) {
             throw new BusinessException("指标值不能为空");
         }
+        VitalValueRules.assertPlausible(cmd.metricType().trim(), cmd.value());
     }
 
     private String buildExtraJson(MetricCommand cmd) {

@@ -8,7 +8,8 @@
         drug_name, usage_method, frequency, dose_amount, dose_unit,
         start_date, stop_date, timing_note, course_days,
         time_morning, time_noon, time_evening, time_bedtime,
-        has_adverse_reaction, remark, status, created_by_staff_id, updated_by_staff_id,
+        has_adverse_reaction, remark, status, drug_code, slots_json, verified_at, verified_by_staff_id,
+        allergy_conflict, stop_reason, created_by_staff_id, updated_by_staff_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
 
@@ -18,14 +19,16 @@
             drug_name, usage_method, frequency, dose_amount, dose_unit,
             start_date, stop_date, timing_note, course_days,
             time_morning, time_noon, time_evening, time_bedtime,
-            has_adverse_reaction, remark, status, created_by_staff_id, updated_by_staff_id,
+            has_adverse_reaction, remark, status, drug_code, slots_json, verified_at, verified_by_staff_id,
+            allergy_conflict, stop_reason, created_by_staff_id, updated_by_staff_id,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{prescriptionGroupId}, #{source},
             #{drugName}, #{usageMethod}, #{frequency}, #{doseAmount}, #{doseUnit},
             #{startDate}, #{stopDate}, #{timingNote}, #{courseDays},
             #{timeMorning}, #{timeNoon}, #{timeEvening}, #{timeBedtime},
-            #{hasAdverseReaction}, #{remark}, #{status}, #{createdByStaffId}, #{updatedByStaffId},
+            #{hasAdverseReaction}, #{remark}, #{status}, #{drugCode}, #{slotsJson}, #{verifiedAt}, #{verifiedByStaffId},
+            #{allergyConflict}, #{stopReason}, #{createdByStaffId}, #{updatedByStaffId},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
     </insert>
@@ -51,6 +54,12 @@
             has_adverse_reaction = #{hasAdverseReaction},
             remark = #{remark},
             status = #{status},
+            drug_code = #{drugCode},
+            slots_json = #{slotsJson},
+            verified_at = #{verifiedAt},
+            verified_by_staff_id = #{verifiedByStaffId},
+            allergy_conflict = #{allergyConflict},
+            stop_reason = #{stopReason},
             updated_by_staff_id = #{updatedByStaffId},
             gmt_modified = #{gmtModified}
         WHERE id = #{id}
@@ -98,6 +107,18 @@
               #{pid}
           </foreach>
         ORDER BY people_id, COALESCE(start_date, gmt_created) DESC
+    </select>
+
+    <select id="listPendingVerify" resultType="com.healix.core.medication.domain.PeopleMedication">
+        SELECT <include refid="cols"/>
+        FROM people_medication
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+          AND source = 'PATIENT'
+          AND verified_at IS NULL
+          AND status = 'ACTIVE'
+        ORDER BY gmt_created ASC
     </select>
 
     <update id="expireDueForActiveTenants">

@@ -2,11 +2,19 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api } from '../../shared/http'
+import { api, hasRole } from '../../shared/http'
 import { postSse } from '../../shared/agent-stream'
-import { onAgentCarePlanUpdated } from '../../shared/agent-events'
+import { emitAgentCarePlanUpdated, onAgentCarePlanUpdated } from '../../shared/agent-events'
+import { takeAgentDraft } from '../../shared/agent-draft-bus'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import CarePlanAiDisclaimer from '../../shared/CarePlanAiDisclaimer.vue'
+import {
+  asEnergyTarget,
+  ENERGY_SOURCE_LABELS,
+  energyGoalText,
+  energyMacroText,
+  type EnergyTarget,
+} from '../../shared/energy-target'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from '../../shared/CarePlanPreviewDialog.vue'
 import {
   CARE_PLAN_EXERCISE_TYPE_OPTIONS,
@@ -21,6 +29,8 @@ import {
   formatCarePlanTemplateKey,
   formatCarePlanTimeSlot,
   isAiGeneratedCarePlanSource,
+  parseSampleMeal,
+  sampleMealPayload,
 } from '../../shared/care-plan-labels'
 
 const carePlanTextareaAutosize = { minRows: 2, maxRows: 20 }
@@ -51,6 +61,11 @@ interface WeeklyDay {
   items: WeeklyItem[]
 }
 
+interface SampleMeal {
+  text: string
+  swapHint: string
+}
+
 interface ExecTask {
   code: string
   title: string
@@ -59,6 +74,10 @@ interface ExecTask {
   timeSlot: string
   relatedRef?: string
   enabled: boolean
+  /** 饮水任务每日目标毫升 */
+  targetMl?: number | null
+  /** 任务生成依据（B 端审阅） */
+  rationale?: string
 }
 
 interface CarePlanBundle {
@@ -91,6 +110,9 @@ interface CarePlanBundle {
     execution?: any
     contextSnapshot?: any
     publishedAt?: string
+    signStatus?: string
+    signedAt?: string
+    signedByStaffId?: string
     tasks?: Array<{
       id: string
       taskCode: string
@@ -99,6 +121,7 @@ interface CarePlanBundle {
       frequency?: string
       timeSlot?: string
       enabled: boolean
+      targetMl?: number | null
     }>
   } | null
 }
@@ -152,6 +175,9 @@ const router = useRouter()
 const props = defineProps<{
   /** 驾驶舱抽屉等场景传入；不传则走路由 params */
   peopleId?: string
+}>()
+const emit = defineEmits<{
+  published: []
 }>()
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
@@ -263,27 +289,51 @@ const editForm = reactive({
   goalSummary: '',
   /** 方案总结（contextSnapshot.summary） */
   planSummary: '',
+  /** 整份生成依据（contextSnapshot.rationale.overview） */
+  rationaleOverview: '',
   exerciseGoal: '',
+  exerciseRationale: '',
   exercisePrecautions: '',
   exerciseContraindications: '',
   exerciseReviewHint: '',
   weeklyPlan: [] as WeeklyDay[],
   dietPrinciples: '',
+  dietRationale: '',
   dietCalorieHint: '',
+  /** 服务端写入的热量目标；energyKcal 与之不同即视为方案内调整 */
+  energyTarget: null as EnergyTarget | null,
+  energyKcal: undefined as number | undefined,
+  syncDietGoal: true,
   dietNotes: '',
   dietRecommended: [] as FoodItem[],
   dietLimited: [] as FoodItem[],
   dietAllergensAvoid: [] as FoodItem[],
   dietIntolerances: [] as FoodItem[],
   sampleDay: {
-    breakfast: '',
-    lunch: '',
-    dinner: '',
-    snacks: '',
+    breakfast: { text: '', swapHint: '' } as SampleMeal,
+    lunch: { text: '', swapHint: '' } as SampleMeal,
+    dinner: { text: '', swapHint: '' } as SampleMeal,
+    snacks: { text: '', swapHint: '' } as SampleMeal,
   },
+  /** MON..SUN → 餐次 */
+  sampleWeek: {} as Record<string, Record<string, SampleMeal>>,
   horizonDays: 14,
+  executionRationale: '',
   tasks: [] as ExecTask[],
 })
+
+const canDoctorSign = computed(
+  () =>
+    hasRole('DOCTOR') &&
+    !!bundle.value?.activeVersion?.id &&
+    !bundle.value?.draft &&
+    bundle.value?.activeVersion?.signStatus !== 'SIGNED',
+)
+
+const recipePickerVisible = ref(false)
+const recipeList = ref<Array<{ id: string; name: string; energyKcalHint?: number }>>([])
+const recipeLoading = ref(false)
+const applyWeekWithRecipe = ref(true)
 
 const isDraftMode = computed(() => !!bundle.value?.draft)
 const currentPlanSource = computed(
@@ -331,6 +381,11 @@ function readPlanSummary(src?: { contextSnapshot?: any } | null): string {
   return typeof raw === 'string' ? raw.trim() : ''
 }
 
+function readRationaleOverview(src?: { contextSnapshot?: any } | null): string | undefined {
+  const raw = src?.contextSnapshot?.rationale?.overview
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined
+}
+
 function syncFormFromBundle() {
   const b = bundle.value
   const src = b?.draft || b?.activeVersion
@@ -338,7 +393,10 @@ function syncFormFromBundle() {
   editForm.title = b?.plan?.title || ''
   editForm.goalSummary = b?.plan?.goalSummary || src?.exercise?.goal || ''
   editForm.planSummary = readPlanSummary(src)
+  editForm.rationaleOverview = readRationaleOverview(src) || ''
   editForm.exerciseGoal = src?.exercise?.goal || ''
+  editForm.exerciseRationale =
+    typeof src?.exercise?.rationale === 'string' ? src.exercise.rationale : ''
   editForm.exercisePrecautions = Array.isArray(src?.exercise?.precautions)
     ? src!.exercise!.precautions.join('\n')
     : ''
@@ -350,22 +408,91 @@ function syncFormFromBundle() {
     ? JSON.parse(JSON.stringify(src!.exercise!.weeklyPlan))
     : []
   editForm.dietPrinciples = Array.isArray(src?.diet?.principles) ? src!.diet!.principles.join('\n') : ''
+  editForm.dietRationale = typeof src?.diet?.rationale === 'string' ? src.diet.rationale : ''
   editForm.dietCalorieHint = src?.diet?.calorieHint || ''
+  editForm.energyTarget = asEnergyTarget(src?.diet?.energyTarget)
+  editForm.energyKcal = editForm.energyTarget?.energyKcal
+  editForm.syncDietGoal = true
   editForm.dietNotes = src?.diet?.notes || ''
   editForm.dietRecommended = asFoodList(src?.diet?.recommended)
   editForm.dietLimited = asFoodList(src?.diet?.limited)
   editForm.dietAllergensAvoid = asFoodList(src?.diet?.allergensAvoid)
   editForm.dietIntolerances = asFoodList(src?.diet?.intolerances)
+  const sd = src?.diet?.sampleDay
   editForm.sampleDay = {
-    breakfast: src?.diet?.sampleDay?.breakfast || '',
-    lunch: src?.diet?.sampleDay?.lunch || '',
-    dinner: src?.diet?.sampleDay?.dinner || '',
-    snacks: src?.diet?.sampleDay?.snacks || '',
+    breakfast: parseSampleMeal(sd?.breakfast),
+    lunch: parseSampleMeal(sd?.lunch),
+    dinner: parseSampleMeal(sd?.dinner),
+    snacks: parseSampleMeal(sd?.snacks),
+  }
+  editForm.sampleWeek = {}
+  const sw = src?.diet?.sampleWeek
+  if (sw && typeof sw === 'object') {
+    for (const day of DAY_OPTIONS) {
+      const dayNode = (sw as Record<string, unknown>)[day.value]
+      if (!dayNode || typeof dayNode !== 'object') continue
+      const meals = dayNode as Record<string, unknown>
+      editForm.sampleWeek[day.value] = {
+        breakfast: parseSampleMeal(meals.breakfast),
+        lunch: parseSampleMeal(meals.lunch),
+        dinner: parseSampleMeal(meals.dinner),
+        snacks: parseSampleMeal(meals.snacks),
+      }
+    }
   }
   editForm.horizonDays = src?.execution?.horizonDays || 14
+  editForm.executionRationale =
+    typeof src?.execution?.rationale === 'string' ? src.execution.rationale : ''
   editForm.tasks = Array.isArray(src?.execution?.tasks)
-    ? JSON.parse(JSON.stringify(src!.execution!.tasks))
+    ? (JSON.parse(JSON.stringify(src!.execution!.tasks)) as ExecTask[])
     : []
+}
+
+function emptySampleMeals(): Record<string, SampleMeal> {
+  return {
+    breakfast: { text: '', swapHint: '' },
+    lunch: { text: '', swapHint: '' },
+    dinner: { text: '', swapHint: '' },
+    snacks: { text: '', swapHint: '' },
+  }
+}
+
+function syncSampleWeekFromDay() {
+  const base = {
+    breakfast: { ...editForm.sampleDay.breakfast },
+    lunch: { ...editForm.sampleDay.lunch },
+    dinner: { ...editForm.sampleDay.dinner },
+    snacks: { ...editForm.sampleDay.snacks },
+  }
+  const week: Record<string, Record<string, SampleMeal>> = {}
+  for (const day of DAY_OPTIONS) {
+    week[day.value] = JSON.parse(JSON.stringify(base))
+  }
+  editForm.sampleWeek = week
+  ElMessage.success('已将示例日同步到整周（可再按天微调）')
+}
+
+function sampleWeekPayload(): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {}
+  let any = false
+  for (const day of DAY_OPTIONS) {
+    const meals = editForm.sampleWeek[day.value]
+    if (!meals) continue
+    const row: Record<string, unknown> = {}
+    let dayAny = false
+    for (const k of ['breakfast', 'lunch', 'dinner', 'snacks'] as const) {
+      const p = sampleMealPayload(meals[k] || { text: '', swapHint: '' })
+      if (typeof p === 'string' ? p : p.text) {
+        row[k] = p
+        dayAny = true
+      }
+    }
+    if (dayAny) {
+      out[day.value] = row
+      any = true
+    }
+  }
+  return any ? out : undefined
 }
 
 async function load() {
@@ -518,6 +645,7 @@ async function openListDetail(row: CarePlanListItem) {
         title: row.title || b.plan?.title,
         goalSummary: b.plan?.goalSummary || d.exercise?.goal || row.goalSummary,
         summary: readPlanSummary(d),
+        rationaleOverview: readRationaleOverview(d),
         source: d.source,
         versionLabel: row.versionLabel,
         status: row.status,
@@ -536,6 +664,7 @@ async function openListDetail(row: CarePlanListItem) {
         title: row.title,
         goalSummary: row.goalSummary || v.exercise?.goal,
         summary: readPlanSummary(v),
+        rationaleOverview: readRationaleOverview(v),
         source: v.source,
         versionLabel: row.versionLabel,
         status: row.status,
@@ -543,6 +672,7 @@ async function openListDetail(row: CarePlanListItem) {
         diet: v.diet,
         execution: v.execution,
         publishedAt: v.publishedAt,
+        signStatus: v.signStatus,
         checkins: [],
         checkinsLoading: true,
       }
@@ -606,6 +736,7 @@ async function openVersionFromQuery() {
           execution?: any
           contextSnapshot?: any
           publishedAt?: string
+          signStatus?: string
         }
       }>(`/api/b/v1/patients/${peopleId.value}/care-plan/versions/${versionId}`),
       api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan`).catch(() => null),
@@ -616,6 +747,7 @@ async function openVersionFromQuery() {
       title: planRes?.data?.plan?.title,
       goalSummary: planRes?.data?.plan?.goalSummary || v.exercise?.goal,
       summary: readPlanSummary(v),
+      rationaleOverview: readRationaleOverview(v),
       source: v.source,
       versionLabel: v.versionLabel,
       status: currentId === versionId ? 'ACTIVE' : 'ARCHIVED',
@@ -623,6 +755,7 @@ async function openVersionFromQuery() {
       diet: v.diet,
       execution: v.execution,
       publishedAt: v.publishedAt,
+      signStatus: v.signStatus,
       checkins: [],
       checkinsLoading: true,
     }
@@ -780,33 +913,102 @@ function lines(text: string) {
     .filter(Boolean)
 }
 
+const energyEdited = computed(
+  () => !!editForm.energyKcal && editForm.energyKcal !== editForm.energyTarget?.energyKcal,
+)
+const energySource = computed<EnergyTarget['source'] | null>(() =>
+  energyEdited.value ? 'PLAN_EDIT' : (editForm.energyTarget?.source ?? null),
+)
+/** 手改的热量或估算值，发布时才需要选择是否同步为饮食目标 */
+const energyNeedsSync = computed(() => energySource.value === 'PLAN_EDIT' || energySource.value === 'ESTIMATED')
+
+function energyTargetPayload(): EnergyTarget | undefined {
+  const t = editForm.energyTarget
+  if (!editForm.energyKcal) return undefined
+  if (!energyEdited.value && t) return t
+  return {
+    energyKcal: editForm.energyKcal,
+    goalType: t?.goalType,
+    rateKgPerWeek: t?.rateKgPerWeek,
+    source: 'PLAN_EDIT',
+  }
+}
+
+function cloneJson<T>(v: T): T {
+  return v == null ? v : (JSON.parse(JSON.stringify(v)) as T)
+}
+
 function buildPayload() {
+  const src = bundle.value?.draft || bundle.value?.activeVersion
+  const exerciseRationale = editForm.exerciseRationale.trim()
+  const dietRationale = editForm.dietRationale.trim()
+  const executionRationale = editForm.executionRationale.trim()
+  // 在原草稿块上叠加表单字段，避免丢掉 targets 等未编辑字段导致依据被服务端清空
+  const exercise: Record<string, unknown> = {
+    ...(src?.exercise && typeof src.exercise === 'object' ? cloneJson(src.exercise) : {}),
+    goal: editForm.exerciseGoal,
+    precautions: lines(editForm.exercisePrecautions),
+    contraindications: lines(editForm.exerciseContraindications),
+    reviewHint: editForm.exerciseReviewHint,
+    weeklyPlan: editForm.weeklyPlan,
+  }
+  if (exerciseRationale) exercise.rationale = exerciseRationale
+  else delete exercise.rationale
+
+  const diet: Record<string, unknown> = {
+    ...(src?.diet && typeof src.diet === 'object' ? cloneJson(src.diet) : {}),
+    principles: lines(editForm.dietPrinciples),
+    calorieHint: editForm.dietCalorieHint,
+    energyTarget: energyTargetPayload(),
+    notes: editForm.dietNotes,
+    recommended: normalizeFoodList(editForm.dietRecommended),
+    limited: normalizeFoodList(editForm.dietLimited),
+    allergensAvoid: normalizeFoodList(editForm.dietAllergensAvoid),
+    intolerances: normalizeFoodList(editForm.dietIntolerances),
+    sampleDay: {
+      breakfast: sampleMealPayload(editForm.sampleDay.breakfast),
+      lunch: sampleMealPayload(editForm.sampleDay.lunch),
+      dinner: sampleMealPayload(editForm.sampleDay.dinner),
+      snacks: sampleMealPayload(editForm.sampleDay.snacks),
+    },
+  }
+  const week = sampleWeekPayload()
+  if (week) diet.sampleWeek = week
+  if (dietRationale) diet.rationale = dietRationale
+  else delete diet.rationale
+
+  const execution: Record<string, unknown> = {
+    ...(src?.execution && typeof src.execution === 'object' ? cloneJson(src.execution) : {}),
+    horizonDays: editForm.horizonDays || 14,
+    tasks: editForm.tasks.map((t) => {
+      const row: ExecTask = { ...t }
+      if (row.category === 'WATER' || row.code === 'WATER_LOG') {
+        const ml = Number(row.targetMl)
+        row.targetMl = Number.isFinite(ml) && ml > 0 ? Math.round(ml) : 1600
+        row.category = 'WATER'
+        row.code = row.code || 'WATER_LOG'
+      } else {
+        delete row.targetMl
+      }
+      if (typeof row.rationale === 'string') {
+        row.rationale = row.rationale.trim()
+        if (!row.rationale) delete row.rationale
+      }
+      return row
+    }),
+  }
+  if (executionRationale) execution.rationale = executionRationale
+  else delete execution.rationale
+
   return {
     version: editForm.version,
     title: editForm.title,
     goalSummary: editForm.goalSummary || editForm.exerciseGoal,
     summary: editForm.planSummary.trim(),
-    exercise: {
-      goal: editForm.exerciseGoal,
-      precautions: lines(editForm.exercisePrecautions),
-      contraindications: lines(editForm.exerciseContraindications),
-      reviewHint: editForm.exerciseReviewHint,
-      weeklyPlan: editForm.weeklyPlan,
-    },
-    diet: {
-      principles: lines(editForm.dietPrinciples),
-      calorieHint: editForm.dietCalorieHint,
-      notes: editForm.dietNotes,
-      recommended: normalizeFoodList(editForm.dietRecommended),
-      limited: normalizeFoodList(editForm.dietLimited),
-      allergensAvoid: normalizeFoodList(editForm.dietAllergensAvoid),
-      intolerances: normalizeFoodList(editForm.dietIntolerances),
-      sampleDay: { ...editForm.sampleDay },
-    },
-    execution: {
-      horizonDays: editForm.horizonDays || 14,
-      tasks: editForm.tasks,
-    },
+    rationaleOverview: editForm.rationaleOverview.trim(),
+    exercise,
+    diet,
+    execution,
   }
 }
 
@@ -854,6 +1056,69 @@ async function discardDraft() {
   }
 }
 
+async function signActiveVersion() {
+  const versionId = bundle.value?.activeVersion?.id
+  if (!versionId) return
+  try {
+    await ElMessageBox.prompt('请填写临床审阅意见（将写入修订留痕）', '医生签署方案', {
+      confirmButtonText: '确认签署',
+      cancelButtonText: '取消',
+      inputPlaceholder: '如：同意本阶段运动与饮食安排',
+      inputValidator: (v) => (!!v && v.trim().length >= 2) || '请填写至少 2 字意见',
+    }).then(async ({ value }) => {
+      saving.value = true
+      await api(`/api/b/v1/patients/${peopleId.value}/care-plan/versions/${versionId}/sign`, {
+        method: 'POST',
+        body: JSON.stringify({ note: value.trim() }),
+      })
+      ElMessage.success('已签署')
+      await load()
+      refreshAfterMutation()
+    })
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '签署失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function openRecipePicker() {
+  recipePickerVisible.value = true
+  recipeLoading.value = true
+  try {
+    const res = await api<{ data: { items: Array<{ id: string; name: string; energyKcalHint?: number }> } }>(
+      '/api/b/v1/recipes?status=ENABLED&page=1&size=50',
+    )
+    recipeList.value = res.data?.items || []
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '加载食谱失败')
+  } finally {
+    recipeLoading.value = false
+  }
+}
+
+async function applyRecipe(recipeId: string) {
+  if (!isDraftMode.value) {
+    ElMessage.warning('请先进入草稿编辑')
+    return
+  }
+  saving.value = true
+  try {
+    await api(`/api/b/v1/patients/${peopleId.value}/care-plan/draft/apply-recipe`, {
+      method: 'POST',
+      body: JSON.stringify({ recipeId, applyWeek: applyWeekWithRecipe.value }),
+    })
+    ElMessage.success('已应用到草稿示例日/周')
+    recipePickerVisible.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '应用失败')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function publish() {
   if (errorFlags.value.length) {
     ElMessage.error('存在 ERROR 级安全问题，请先修正后再发布')
@@ -875,12 +1140,18 @@ async function publish() {
   try {
     const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan/publish`, {
       method: 'POST',
-      body: JSON.stringify({ ackWarnCodes: ack, title: editForm.title || undefined }),
+      body: JSON.stringify({
+        ackWarnCodes: ack,
+        title: editForm.title || undefined,
+        syncDietGoal: energyNeedsSync.value ? editForm.syncDietGoal : undefined,
+      }),
     })
     bundle.value = res.data
     syncFormFromBundle()
     ElMessage.success('方案已发布')
     refreshAfterMutation()
+    emitAgentCarePlanUpdated(peopleId.value)
+    emit('published')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '发布失败')
   } finally {
@@ -928,7 +1199,16 @@ function addTask() {
     frequency: 'QD',
     timeSlot: 'EVENING',
     enabled: true,
+    targetMl: null,
   })
+}
+
+function onTaskCategoryChange(row: ExecTask) {
+  if (row.category === 'WATER') {
+    row.code = 'WATER_LOG'
+    if (!row.targetMl || row.targetMl <= 0) row.targetMl = 1600
+    if (!row.title?.trim()) row.title = `足量饮水，每日约 ${row.targetMl} ml`
+  }
 }
 
 function removeTask(idx: number) {
@@ -946,14 +1226,38 @@ watch(peopleId, () => {
   loadList()
   if (mainTab.value === 'compose') load()
 })
+
+/** 驾驶舱抽屉 / Agent 动作：优先进入可编辑草稿，而不是列表页 */
+async function preferComposeIfDraft() {
+  const draftHint = takeAgentDraft(peopleId.value, 'care-plan')
+  const wantCompose = !!(draftHint?.openCompose || draftHint?.openCreate)
+  const embedded = !!props.peopleId
+  const queryTab = String(route.query.mainTab || '')
+
+  if (queryTab === 'compose' || wantCompose) {
+    mainTab.value = 'compose'
+    await load()
+    return
+  }
+  if (queryTab) return
+  if (!embedded) return
+
+  await load()
+  if (bundle.value?.draft) {
+    mainTab.value = 'compose'
+  }
+}
+
 onMounted(() => {
   syncMainTabFromQuery()
   void loadList()
-  if (mainTab.value === 'compose') void load()
-  if (mainTab.value === 'checkins') {
-    void loadDailyCheckin()
-    void loadCheckinHistory()
-  }
+  void preferComposeIfDraft().then(() => {
+    if (mainTab.value === 'compose' && !bundle.value) void load()
+    if (mainTab.value === 'checkins') {
+      void loadDailyCheckin()
+      void loadCheckinHistory()
+    }
+  })
   void openVersionFromQuery().catch(() => undefined)
 })
 onUnmounted(() => {
@@ -1143,6 +1447,22 @@ watch(
         <span v-if="bundle?.activeVersion" class="meta-text">
           生效版 {{ bundle.activeVersion.versionLabel || ('V' + (bundle.activeVersion.schemaVersion || 1)) }}
         </span>
+        <el-tag
+          v-if="bundle?.activeVersion?.signStatus === 'SIGNED'"
+          size="small"
+          type="success"
+          effect="plain"
+        >
+          已医生签署
+        </el-tag>
+        <el-tag
+          v-else-if="bundle?.activeVersion"
+          size="small"
+          type="info"
+          effect="plain"
+        >
+          待医生签署
+        </el-tag>
         <span v-if="bundle?.draft" class="meta-text draft">编辑中草稿</span>
       </div>
       <div class="actions">
@@ -1155,11 +1475,21 @@ watch(
         >
           编辑
         </el-button>
+        <el-button v-if="bundle?.draft" :loading="saving" @click="openRecipePicker">应用食谱</el-button>
         <el-button v-if="bundle?.draft" :loading="saving" type="success" @click="saveDraft">
           保存草稿
         </el-button>
         <el-button v-if="bundle?.draft" :loading="saving" type="warning" @click="publish">
           发布
+        </el-button>
+        <el-button
+          v-if="canDoctorSign"
+          :loading="saving"
+          type="danger"
+          plain
+          @click="signActiveVersion"
+        >
+          医生签署
         </el-button>
         <el-button v-if="bundle?.draft" :loading="saving" @click="discardDraft">丢弃草稿</el-button>
       </div>
@@ -1183,7 +1513,7 @@ watch(
       :closable="false"
       class="flag"
     />
-    <CarePlanAiDisclaimer v-if="showAiDisclaimer && bundle?.plan" class="flag" />
+    <CarePlanAiDisclaimer v-if="showAiDisclaimer && bundle?.plan" :pending="isDraftMode" class="flag" />
 
     <el-empty v-if="!bundle?.plan && !loading" class="page-empty section-card" description="尚未创建管理方案">
       <el-button type="primary" @click="openGenerateDialog">AI 生成方案</el-button>
@@ -1226,6 +1556,24 @@ watch(
             <span class="hint">当前为已发布只读内容。修改请点「编辑」开新草稿。</span>
           </el-form-item>
         </el-form>
+        <div
+          v-if="isDraftMode || editForm.rationaleOverview"
+          class="rationale-box"
+        >
+          <div class="rationale-box-head">
+            <span class="rationale-badge">生成依据</span>
+            <span class="rationale-meta">仅健管师可见 · 不展示给患者</span>
+          </div>
+          <el-input
+            v-model="editForm.rationaleOverview"
+            :readonly="!isDraftMode"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 6 }"
+            placeholder="为何推荐该方案类型（档案病种、评估等）"
+            class="rationale-input"
+            :class="{ 'textarea-readonly': !isDraftMode }"
+          />
+        </div>
         </div>
       </div>
 
@@ -1271,6 +1619,23 @@ watch(
               :class="{ 'textarea-readonly': !isDraftMode }"
             />
           </el-form-item>
+          <div
+            v-if="isDraftMode || editForm.exerciseRationale"
+            class="rationale-box rationale-box--inline"
+          >
+            <div class="rationale-box-head">
+              <span class="rationale-badge">生成依据</span>
+            </div>
+            <el-input
+              v-model="editForm.exerciseRationale"
+              :readonly="!isDraftMode"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 4 }"
+              placeholder="本块运动安排的推荐理由"
+              class="rationale-input"
+              :class="{ 'textarea-readonly': !isDraftMode }"
+            />
+          </div>
           <el-form-item label="禁忌">
             <el-input
               v-model="editForm.exerciseContraindications"
@@ -1417,6 +1782,50 @@ watch(
               :class="{ 'textarea-readonly': !isDraftMode }"
             />
           </el-form-item>
+          <div
+            v-if="isDraftMode || editForm.dietRationale"
+            class="rationale-box rationale-box--inline"
+          >
+            <div class="rationale-box-head">
+              <span class="rationale-badge">生成依据</span>
+            </div>
+            <el-input
+              v-model="editForm.dietRationale"
+              :readonly="!isDraftMode"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 4 }"
+              placeholder="本块饮食安排的推荐理由"
+              class="rationale-input"
+              :class="{ 'textarea-readonly': !isDraftMode }"
+            />
+          </div>
+          <el-form-item label="每日热量">
+            <div class="energy-box">
+              <div class="energy-row">
+                <el-input-number
+                  v-model="editForm.energyKcal"
+                  :min="800"
+                  :max="5000"
+                  :step="50"
+                  :disabled="!isDraftMode"
+                  controls-position="right"
+                  placeholder="未设置"
+                />
+                <span>千卡</span>
+                <el-tag v-if="energySource" size="small" :type="energySource === 'PLAN_EDIT' ? 'warning' : 'info'">
+                  {{ ENERGY_SOURCE_LABELS[energySource] }}
+                </el-tag>
+              </div>
+              <p v-if="editForm.energyTarget && !energyEdited" class="energy-meta">
+                {{ energyMacroText(editForm.energyTarget) }} · {{ energyGoalText(editForm.energyTarget) }}
+              </p>
+              <p v-else-if="energyEdited" class="energy-meta">保存后按病种重算碳水 / 蛋白质 / 脂肪</p>
+              <p v-else class="energy-meta">患者档案缺少性别、出生日期、身高或体重，暂无法计算；可直接填写</p>
+              <el-checkbox v-if="isDraftMode && energyNeedsSync" v-model="editForm.syncDietGoal">
+                发布时同步为患者的饮食热量目标（同步后患者端不可自行修改）
+              </el-checkbox>
+            </div>
+          </el-form-item>
           <el-form-item label="热量提示">
             <el-input v-model="editForm.dietCalorieHint" :disabled="!isDraftMode" />
           </el-form-item>
@@ -1483,16 +1892,103 @@ watch(
             </div>
           </el-form-item>
           <el-form-item label="示例·早">
-            <el-input v-model="editForm.sampleDay.breakfast" :disabled="!isDraftMode" />
+            <div class="sample-meal">
+              <el-input
+                v-model="editForm.sampleDay.breakfast.text"
+                :disabled="!isDraftMode"
+                placeholder="示例内容"
+              />
+              <el-input
+                v-model="editForm.sampleDay.breakfast.swapHint"
+                :disabled="!isDraftMode"
+                placeholder="可替换（选填，每餐至多 1 条）"
+                class="sample-swap"
+              />
+            </div>
           </el-form-item>
           <el-form-item label="示例·午">
-            <el-input v-model="editForm.sampleDay.lunch" :disabled="!isDraftMode" />
+            <div class="sample-meal">
+              <el-input
+                v-model="editForm.sampleDay.lunch.text"
+                :disabled="!isDraftMode"
+                placeholder="示例内容"
+              />
+              <el-input
+                v-model="editForm.sampleDay.lunch.swapHint"
+                :disabled="!isDraftMode"
+                placeholder="可替换（选填）"
+                class="sample-swap"
+              />
+            </div>
           </el-form-item>
           <el-form-item label="示例·晚">
-            <el-input v-model="editForm.sampleDay.dinner" :disabled="!isDraftMode" />
+            <div class="sample-meal">
+              <el-input
+                v-model="editForm.sampleDay.dinner.text"
+                :disabled="!isDraftMode"
+                placeholder="示例内容"
+              />
+              <el-input
+                v-model="editForm.sampleDay.dinner.swapHint"
+                :disabled="!isDraftMode"
+                placeholder="可替换（选填）"
+                class="sample-swap"
+              />
+            </div>
           </el-form-item>
           <el-form-item label="示例·加餐">
-            <el-input v-model="editForm.sampleDay.snacks" :disabled="!isDraftMode" />
+            <div class="sample-meal">
+              <el-input
+                v-model="editForm.sampleDay.snacks.text"
+                :disabled="!isDraftMode"
+                placeholder="示例内容"
+              />
+              <el-input
+                v-model="editForm.sampleDay.snacks.swapHint"
+                :disabled="!isDraftMode"
+                placeholder="可替换（选填）"
+                class="sample-swap"
+              />
+            </div>
+          </el-form-item>
+          <el-form-item label="示例周">
+            <div class="sample-week">
+              <el-button
+                v-if="isDraftMode"
+                size="small"
+                @click="syncSampleWeekFromDay"
+              >
+                用示例日填充整周
+              </el-button>
+              <el-collapse v-if="Object.keys(editForm.sampleWeek).length">
+                <el-collapse-item
+                  v-for="day in DAY_OPTIONS"
+                  :key="day.value"
+                  :title="day.label"
+                  :name="day.value"
+                >
+                  <div
+                    v-for="slot in [
+                      { k: 'breakfast', l: '早' },
+                      { k: 'lunch', l: '午' },
+                      { k: 'dinner', l: '晚' },
+                      { k: 'snacks', l: '加餐' },
+                    ]"
+                    :key="slot.k"
+                    class="sample-meal week-meal"
+                  >
+                    <span class="week-slot">{{ slot.l }}</span>
+                    <el-input
+                      v-model="(editForm.sampleWeek[day.value] || emptySampleMeals())[slot.k as 'breakfast'].text"
+                      :disabled="!isDraftMode"
+                      size="small"
+                      @focus="editForm.sampleWeek[day.value] ||= emptySampleMeals()"
+                    />
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+              <div v-else class="food-hint">可点「用示例日填充整周」生成一周菜单后再按天微调。</div>
+            </div>
           </el-form-item>
           <el-form-item label="备注">
             <el-input
@@ -1519,6 +2015,23 @@ watch(
           <el-form-item label="周期(天)">
             <el-input-number v-model="editForm.horizonDays" :disabled="!isDraftMode" :min="1" :max="90" />
           </el-form-item>
+          <div
+            v-if="isDraftMode || editForm.executionRationale"
+            class="rationale-box rationale-box--inline"
+          >
+            <div class="rationale-box-head">
+              <span class="rationale-badge">生成依据</span>
+            </div>
+            <el-input
+              v-model="editForm.executionRationale"
+              :readonly="!isDraftMode"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 4 }"
+              placeholder="执行任务清单的推荐理由"
+              class="rationale-input"
+              :class="{ 'textarea-readonly': !isDraftMode }"
+            />
+          </div>
           <el-form-item label="任务">
             <div class="block">
               <el-table :data="editForm.tasks" size="small" border>
@@ -1527,14 +2040,23 @@ watch(
                     <el-switch v-model="row.enabled" :disabled="!isDraftMode" />
                   </template>
                 </el-table-column>
-                <el-table-column label="标题" min-width="140">
+                <el-table-column label="标题" min-width="160">
                   <template #default="{ row }">
-                    <el-input v-model="row.title" :disabled="!isDraftMode" />
+                    <div class="task-title-cell">
+                      <el-input v-model="row.title" :disabled="!isDraftMode" />
+                      <p v-if="row.rationale" class="task-rationale" :title="row.rationale">
+                        {{ row.rationale }}
+                      </p>
+                    </div>
                   </template>
                 </el-table-column>
                 <el-table-column label="类别" width="120">
                   <template #default="{ row }">
-                    <el-select v-model="row.category" :disabled="!isDraftMode">
+                    <el-select
+                      v-model="row.category"
+                      :disabled="!isDraftMode"
+                      @change="onTaskCategoryChange(row)"
+                    >
                       <el-option
                         v-for="opt in CARE_PLAN_TASK_CATEGORY_OPTIONS"
                         :key="opt.value"
@@ -1542,6 +2064,21 @@ watch(
                         :value="opt.value"
                       />
                     </el-select>
+                  </template>
+                </el-table-column>
+                <el-table-column label="目标 ml" width="120">
+                  <template #default="{ row }">
+                    <el-input-number
+                      v-if="row.category === 'WATER' || row.code === 'WATER_LOG'"
+                      v-model="row.targetMl"
+                      :disabled="!isDraftMode"
+                      :min="500"
+                      :max="3000"
+                      :step="100"
+                      controls-position="right"
+                      size="small"
+                    />
+                    <span v-else class="muted">—</span>
                   </template>
                 </el-table-column>
                 <el-table-column label="频率" width="130">
@@ -1585,6 +2122,9 @@ watch(
               <el-table-column prop="title" label="任务" />
               <el-table-column label="类别" width="100">
                 <template #default="{ row }">{{ formatCarePlanTaskCategory(row.category) }}</template>
+              </el-table-column>
+              <el-table-column label="目标 ml" width="100">
+                <template #default="{ row }">{{ row.targetMl ?? '—' }}</template>
               </el-table-column>
               <el-table-column label="频率" width="100">
                 <template #default="{ row }">{{ formatCarePlanFrequency(row.frequency) }}</template>
@@ -1700,6 +2240,32 @@ watch(
 
     </div>
 
+    <el-dialog v-model="recipePickerVisible" title="应用机构食谱" width="520px" destroy-on-close>
+      <el-checkbox v-model="applyWeekWithRecipe">同时写入示例周（若食谱含 week）</el-checkbox>
+      <el-table
+        v-loading="recipeLoading"
+        :data="recipeList"
+        size="small"
+        class="mt8"
+        max-height="360"
+        empty-text="暂无启用食谱，请先到「食谱库」新建"
+      >
+        <el-table-column prop="name" label="名称" min-width="140" />
+        <el-table-column label="热量" width="90">
+          <template #default="{ row }">{{ row.energyKcalHint ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column label="" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" text :loading="saving" @click="applyRecipe(row.id)">应用</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="recipePickerVisible = false">关闭</el-button>
+        <el-button link type="primary" @click="$router.push('/workspace/recipes')">去食谱库</el-button>
+      </template>
+    </el-dialog>
+
     <CarePlanPreviewDialog v-model="previewVisible" :data="previewData" />
   </div>
 </template>
@@ -1795,6 +2361,84 @@ watch(
 .section-ic--violet {
   background: var(--violet-50);
   color: var(--violet-500);
+}
+
+.rationale-box {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #e8edf4;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+.rationale-box--inline {
+  margin: 0 0 18px 96px;
+}
+
+.rationale-box-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.rationale-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.rationale-meta {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.rationale-input :deep(.el-textarea__inner) {
+  padding: 8px 10px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: none;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #64748b;
+}
+
+.rationale-input :deep(.el-textarea__inner:hover),
+.rationale-input :deep(.el-textarea__inner:focus) {
+  border-color: #cbd5e1;
+  background: #fff;
+}
+
+.rationale-input.textarea-readonly :deep(.el-textarea__inner) {
+  background: transparent;
+  cursor: default;
+}
+
+.task-title-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-rationale {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #94a3b8;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .page-empty {
@@ -2049,6 +2693,25 @@ watch(
   width: 100%;
 }
 
+.energy-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.energy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.energy-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .food-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -2061,6 +2724,21 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.sample-meal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.sample-swap :deep(.el-input__wrapper) {
+  background: var(--el-fill-color-light, #f5f7fa);
+}
+
+.muted {
+  color: var(--el-text-color-secondary);
 }
 
 .food-hint {

@@ -148,12 +148,12 @@ header p { margin: 6px 0 12px; color: var(--hx-muted); font-size: 13px; }
   align-self: flex-start;
   background: #fff;
   color: var(--hx-text);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
   border-bottom-left-radius: 6px;
 }
 .bubble.user {
   align-self: flex-end;
-  background: linear-gradient(145deg, #5cb8b8, #2b9e9e);
+  background: linear-gradient(145deg, var(--hx-teal-500), var(--hx-teal-600));
   color: #fff;
   border-bottom-right-radius: 6px;
 }
@@ -181,7 +181,7 @@ header p { margin: 6px 0 12px; color: var(--hx-muted); font-size: 13px; }
   background: #fff;
   border-radius: 18px;
   padding: 8px;
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 :deep(.van-button--primary) {
   background: var(--hx-teal);

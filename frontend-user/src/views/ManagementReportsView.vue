@@ -65,9 +65,7 @@ onMounted(() => void load())
 <style scoped>
 .page {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 12% -8%, rgba(92, 184, 184, 0.2), transparent 42%),
-    var(--hx-bg);
+  background: var(--hx-bg);
   padding-bottom: 24px;
 }
 .loading {
@@ -81,8 +79,8 @@ onMounted(() => void load())
   text-align: left;
   border: 0;
   background: var(--hx-card);
-  border-radius: var(--hx-radius);
-  box-shadow: var(--hx-shadow);
+  border-radius: var(--hx-r-lg);
+  box-shadow: var(--hx-elev-2);
   cursor: pointer;
 }
 .card-top {
@@ -97,7 +95,7 @@ onMounted(() => void load())
 .title {
   margin-top: 10px;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 800;
   color: var(--hx-text);
   line-height: 1.4;
 }

@@ -4,6 +4,7 @@ import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.archive.domain.PeopleDiseaseArchive;
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.core.archive.dto.DiseaseArchiveViewDto;
 import com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper;
 import com.healix.core.metadata.service.MetadataSyncService;
@@ -28,6 +29,7 @@ public class DiseaseArchiveService {
     private final ArchiveAccessService archiveAccessService;
     private final MetadataSyncService metadataSyncService;
     private final FieldRevisionService fieldRevisionService;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
 
     public List<DiseaseArchiveViewDto> list(String tenantId, String peopleId) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
@@ -119,6 +121,7 @@ public class DiseaseArchiveService {
 
         metadataSyncService.syncDiseaseArchive(
                 tenantId, peopleId, diseaseCode, normalized, META_BIZ, operator.sourceClientCode());
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         return toView(archive);
     }
 

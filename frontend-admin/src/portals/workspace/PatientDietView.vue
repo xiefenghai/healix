@@ -54,6 +54,7 @@ interface GoalStatus {
 
 interface MealItem {
   id?: string
+  foodCode?: string | null
   foodName: string
   amount?: number | null
   unit?: string | null
@@ -69,7 +70,9 @@ interface MealItem {
 
 interface Meal {
   id: string
+  mealDate: string
   mealType: string
+  eatenAt?: string | null
   source?: string
   nutrients: Nutrients
   estimatedKcalRatio?: number | null
@@ -113,6 +116,24 @@ const ACTIVITY_LABELS: Record<string, string> = {
 const SOURCE_LABELS: Record<string, string> = { MANUAL: '手动', PHOTO_AI: '拍照识别', TEXT_AI: '文字识别', STAFF: '医护代录' }
 const OIL_LABELS: Record<string, string> = { LOW: '少油', NORMAL: '', HIGH: '多油' }
 const SUMMARY_DAYS = 14
+const STAFF_BACKFILL_DAYS = 7
+
+interface FoodOption {
+  code: string
+  name: string
+  kind?: string
+  energyKcal?: number
+}
+
+interface ItemDraft {
+  key: number
+  custom: boolean
+  foodCode: string
+  foodName: string
+  grams: number | undefined
+  energyKcal: number | undefined
+  oilLevel: string | null
+}
 
 const route = useRoute()
 const peopleId = computed(() => String(route.params.peopleId || ''))
@@ -139,6 +160,14 @@ const form = reactive({
   energyKcal: undefined as number | undefined,
   note: '',
 })
+
+const mealDialog = ref(false)
+const mealSaving = ref(false)
+const editingMealId = ref<string | null>(null)
+const mealForm = reactive({ mealType: 'BREAKFAST', note: '', items: [] as ItemDraft[] })
+const foodOptions = ref<FoodOption[]>([])
+const foodSearching = ref(false)
+let draftSeq = 0
 
 const commentDraft = reactive<Record<string, string>>({})
 const commentSaving = ref<string | null>(null)
@@ -349,6 +378,102 @@ async function saveComment(m: Meal) {
   }
 }
 
+/** 代录仅限最近 7 天（与运动一致） */
+const canProxy = computed(() => selectedDate.value >= addDays(ymd(new Date()), -(STAFF_BACKFILL_DAYS - 1)))
+
+function newDraft(it?: MealItem): ItemDraft {
+  return {
+    key: ++draftSeq,
+    custom: !!it && !it.foodCode,
+    foodCode: it?.foodCode || '',
+    foodName: it?.foodName || '',
+    grams: it?.grams != null ? Math.round(it.grams) : undefined,
+    energyKcal: it && !it.foodCode && it.energyKcal != null ? Math.round(it.energyKcal) : undefined,
+    oilLevel: it?.oilLevel ?? null,
+  }
+}
+
+function openMealDialog(m?: Meal) {
+  editingMealId.value = m?.id ?? null
+  mealForm.mealType = m?.mealType || 'BREAKFAST'
+  mealForm.note = m?.note || ''
+  mealForm.items = m ? m.items.map(newDraft) : [newDraft()]
+  const seeded = new Map<string, FoodOption>()
+  for (const it of m?.items || []) {
+    if (it.foodCode) seeded.set(it.foodCode, { code: it.foodCode, name: it.foodName })
+  }
+  foodOptions.value = [...seeded.values()]
+  mealDialog.value = true
+}
+
+async function searchFoods(keyword: string) {
+  if (!keyword.trim()) return
+  foodSearching.value = true
+  try {
+    const res = await api<{ data: FoodOption[] }>(
+      `/api/b/v1/foods/search?keyword=${encodeURIComponent(keyword.trim())}&limit=20`,
+    )
+    foodOptions.value = res.data || []
+  } catch {
+    foodOptions.value = []
+  } finally {
+    foodSearching.value = false
+  }
+}
+
+function onFoodPicked(d: ItemDraft, code: string) {
+  const f = foodOptions.value.find((x) => x.code === code)
+  if (f) d.foodName = f.name
+  if (!d.grams) d.grams = 100
+}
+
+async function saveMeal() {
+  const items = mealForm.items.filter((d) => (d.custom ? d.foodName.trim() : d.foodCode))
+  if (!items.length) return ElMessage.warning('请至少添加一种食物')
+  if (items.some((d) => !d.grams)) return ElMessage.warning('请填写每种食物的克数')
+  if (items.some((d) => d.custom && !d.energyKcal)) return ElMessage.warning('未在食物库中的食物请填写估算热量')
+  mealSaving.value = true
+  try {
+    const body = {
+      mealDate: selectedDate.value,
+      mealType: mealForm.mealType,
+      note: mealForm.note.trim() || null,
+      source: 'STAFF',
+      items: items.map((d) =>
+        d.custom
+          ? { foodName: d.foodName.trim(), amount: d.grams, unit: 'g', grams: d.grams, energyKcal: d.energyKcal }
+          : { foodCode: d.foodCode, amount: d.grams, unit: 'g', grams: d.grams, oilLevel: d.oilLevel },
+      ),
+    }
+    await api(editingMealId.value ? `${base.value}/meals/${editingMealId.value}` : `${base.value}/meals`, {
+      method: editingMealId.value ? 'PUT' : 'POST',
+      body: JSON.stringify(body),
+    })
+    ElMessage.success('已保存')
+    mealDialog.value = false
+    await Promise.all([loadDay(), loadSummary()])
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    mealSaving.value = false
+  }
+}
+
+async function removeMeal(m: Meal) {
+  try {
+    await ElMessageBox.confirm(`删除 ${m.mealDate} 的${MEAL_LABELS[m.mealType] || ''}记录？`, '删除记录', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await api(`${base.value}/meals/${m.id}`, { method: 'DELETE' })
+    ElMessage.success('已删除')
+    await Promise.all([loadDay(), loadSummary()])
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
 function disabledDate(d: Date) {
   const today = new Date()
   today.setHours(23, 59, 59, 999)
@@ -457,14 +582,17 @@ onMounted(() => {
       <template #header>
         <div class="card-head">
           <span class="section-title">饮食明细</span>
-          <el-date-picker
-            v-model="selectedDate"
-            type="date"
-            value-format="YYYY-MM-DD"
-            :clearable="false"
-            :disabled-date="disabledDate"
-            size="small"
-          />
+          <div class="head-actions">
+            <el-date-picker
+              v-model="selectedDate"
+              type="date"
+              value-format="YYYY-MM-DD"
+              :clearable="false"
+              :disabled-date="disabledDate"
+              size="small"
+            />
+            <el-button v-if="canProxy" size="small" type="primary" @click="openMealDialog()">代录饮食</el-button>
+          </div>
         </div>
       </template>
 
@@ -501,6 +629,13 @@ onMounted(() => {
             </el-tag>
             <el-tag size="small" effect="plain">{{ SOURCE_LABELS[m.source || ''] || m.source }}</el-tag>
             <span v-if="m.estimatedKcalRatio" class="muted">估算占比 {{ Math.round(m.estimatedKcalRatio * 100) }}%</span>
+            <span class="meal-actions">
+              <template v-if="m.recordedByStaff && canProxy">
+                <el-button size="small" type="primary" link @click="openMealDialog(m)">编辑</el-button>
+                <el-button size="small" type="danger" link @click="removeMeal(m)">删除</el-button>
+              </template>
+              <span v-else-if="!m.recordedByStaff" class="muted">患者自录，仅可点评</span>
+            </span>
           </div>
           <el-table :data="m.items" size="small" class="items-table">
             <el-table-column label="食物" min-width="140">
@@ -533,7 +668,7 @@ onMounted(() => {
               {{ f.message }}
             </el-tag>
           </div>
-          <p v-if="m.note" class="muted">患者备注：{{ m.note }}</p>
+          <p v-if="m.note" class="muted">{{ m.recordedByStaff ? '代录备注' : '患者备注' }}：{{ m.note }}</p>
           <div class="comment-row">
             <el-input
               v-model="commentDraft[m.id]"
@@ -549,6 +684,63 @@ onMounted(() => {
         </div>
       </template>
     </el-card>
+
+    <el-dialog
+      v-model="mealDialog"
+      :title="editingMealId ? '编辑饮食记录' : `代录饮食 · ${selectedDate}`"
+      width="680px"
+      append-to-body
+    >
+      <el-form label-width="72px">
+        <el-form-item label="餐次" required>
+          <el-radio-group v-model="mealForm.mealType">
+            <el-radio-button v-for="(label, k) in MEAL_LABELS" :key="k" :value="k">{{ label }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="食物" required>
+          <div class="draft-list">
+            <div v-for="(d, i) in mealForm.items" :key="d.key" class="draft-row">
+              <el-select
+                v-if="!d.custom"
+                v-model="d.foodCode"
+                filterable
+                remote
+                :remote-method="searchFoods"
+                :loading="foodSearching"
+                placeholder="搜索食物库"
+                class="draft-food"
+                @change="(v: string) => onFoodPicked(d, v)"
+              >
+                <el-option v-for="f in foodOptions" :key="f.code" :label="f.name" :value="f.code">
+                  <span>{{ f.name }}</span>
+                  <span v-if="f.energyKcal != null" class="opt-kcal">{{ Math.round(f.energyKcal) }} kcal/100g</span>
+                </el-option>
+              </el-select>
+              <el-input v-else v-model="d.foodName" maxlength="50" placeholder="食物名称" class="draft-food" />
+              <el-input-number v-model="d.grams" :min="1" :max="3000" :controls="false" placeholder="克" class="draft-num" />
+              <span class="unit">g</span>
+              <template v-if="d.custom">
+                <el-input-number v-model="d.energyKcal" :min="1" :max="9000" :controls="false" placeholder="热量" class="draft-num" />
+                <span class="unit">kcal</span>
+              </template>
+              <el-button link size="small" @click="d.custom = !d.custom">{{ d.custom ? '从食物库选' : '手填估算' }}</el-button>
+              <el-button link type="danger" size="small" :disabled="mealForm.items.length === 1" @click="mealForm.items.splice(i, 1)">
+                移除
+              </el-button>
+            </div>
+            <el-button size="small" @click="mealForm.items.push(newDraft())">+ 添加食物</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="mealForm.note" maxlength="200" placeholder="如：电话随访时患者口述" />
+        </el-form-item>
+      </el-form>
+      <p class="legend">营养由食物库按克数计算；手填估算项需填写热量。代录的记录患者端只读。</p>
+      <template #footer>
+        <el-button @click="mealDialog = false">取消</el-button>
+        <el-button type="primary" :loading="mealSaving" @click="saveMeal">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="goalDialog" title="设定热量目标" width="560px" append-to-body>
       <el-form label-width="96px">
@@ -823,5 +1015,38 @@ onMounted(() => {
 }
 .preview .error {
   color: #e11d48;
+}
+.meal-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.draft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.draft-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.draft-food {
+  width: 220px;
+}
+.draft-num {
+  width: 84px;
+}
+.unit {
+  color: #8a94a6;
+  font-size: 12px;
+}
+.opt-kcal {
+  float: right;
+  margin-left: 12px;
+  color: #8a94a6;
+  font-size: 12px;
 }
 </style>

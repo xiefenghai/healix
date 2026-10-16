@@ -116,6 +116,102 @@ const filteredList = computed(() => {
   return list.value.filter((m) => DEFAULT_METRIC_TYPES.has(m.metricType))
 })
 
+interface TimeCluster {
+  key: string
+  time: string
+  sameSource: boolean
+  source?: string
+  rows: Metric[]
+}
+
+interface RecordDayGroup {
+  key: string
+  relative: string
+  dateText: string
+  count: number
+  clusters: TimeCluster[]
+}
+
+function dayKeyOf(v?: string) {
+  if (!v) return ''
+  return v.replace('T', ' ').slice(0, 10)
+}
+
+function clockOf(v?: string) {
+  if (!v) return ''
+  return v.replace('T', ' ').slice(11, 16)
+}
+
+function metricSortIndex(metricType: string) {
+  const i = LATEST_TYPE_ORDER.indexOf(metricType)
+  return i === -1 ? 99 : i
+}
+
+const recordGroups = computed((): RecordDayGroup[] => {
+  const byDay = new Map<string, Metric[]>()
+  for (const row of filteredList.value) {
+    const key = dayKeyOf(row.recordedAt) || 'unknown'
+    const bucket = byDay.get(key)
+    if (bucket) bucket.push(row)
+    else byDay.set(key, [row])
+  }
+  const today = new Date()
+  const ymd = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  }
+  const todayKey = ymd(today)
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  const yesterdayKey = ymd(yesterday)
+  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+  return [...byDay.entries()]
+    .map(([key, rows]) => {
+      const byTime = new Map<string, Metric[]>()
+      for (const row of rows) {
+        const timeKey = clockOf(row.recordedAt) || 'unknown'
+        const bucket = byTime.get(timeKey)
+        if (bucket) bucket.push(row)
+        else byTime.set(timeKey, [row])
+      }
+      const clusters: TimeCluster[] = [...byTime.entries()]
+        .sort((a, b) => b[0].localeCompare(a[0]))
+        .map(([time, items]) => {
+          items.sort((a, b) => metricSortIndex(a.metricType) - metricSortIndex(b.metricType))
+          const source = items[0]?.source
+          return {
+            key: `${key}-${time}`,
+            time: time === 'unknown' ? '时间未知' : time,
+            sameSource: items.every((item) => item.source === source),
+            source,
+            rows: items,
+          }
+        })
+      let relative = ''
+      let dateText = '时间未知'
+      if (key !== 'unknown') {
+        const [y, m, d] = key.split('-').map(Number)
+        const dt = new Date(y, (m || 1) - 1, d || 1)
+        dateText = `${m}月${d}日 ${week[dt.getDay()]}`
+        if (key === todayKey) relative = '今天'
+        else if (key === yesterdayKey) relative = '昨天'
+      }
+      return {
+        key,
+        relative,
+        dateText,
+        count: rows.length,
+        clusters,
+      }
+    })
+    .sort((a, b) => {
+      if (a.key === 'unknown') return 1
+      if (b.key === 'unknown') return -1
+      return b.key.localeCompare(a.key)
+    })
+})
+
 function sourceLabel(source?: string) {
   return formatHealthDataSource(source)
 }
@@ -281,8 +377,14 @@ function rowJudge(row: Metric) {
   return judgeValue(row.metricType, row.value, String(row.extra?.mealContext || ''))
 }
 
-function tableRowClass({ row }: { row: Metric }) {
-  return rowJudge(row).abnormal ? 'is-abnormal-row' : ''
+function contextText(row: Metric) {
+  const bp = String(row.extra?.bpContext || '')
+  if (bp) return bp === 'HOME' ? '家庭' : '诊室'
+  const meal = String(row.extra?.mealContext || '')
+  if (meal === 'FASTING') return '空腹'
+  if (meal === 'POSTPRANDIAL') return '餐后'
+  if (meal === 'RANDOM') return '随机'
+  return ''
 }
 
 function nowLocalInput() {
@@ -676,68 +778,64 @@ onMounted(() => {
           </el-radio-group>
         </div>
       </template>
-      <el-table :data="filteredList" stripe empty-text="暂无记录" :row-class-name="tableRowClass">
-        <el-table-column label="指标" min-width="120">
-          <template #default="{ row }">{{ metricLabel(row.metricType) }}</template>
-        </el-table-column>
-        <el-table-column label="数值" min-width="110">
-          <template #default="{ row }">
-            <span :class="{ 'value-abnormal': rowJudge(row).abnormal }">
-              {{ row.value }} {{ row.unit || '' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="参考范围" min-width="110">
-          <template #default="{ row }">
-            <span class="ref-text">{{ rowJudge(row).rangeText || '-' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="判定" width="88" align="center">
-          <template #default="{ row }">
-            <el-tag
-              v-if="rowJudge(row).abnormal"
-              type="danger"
-              size="small"
-              effect="dark"
-            >
-              {{ abnormalLabel(rowJudge(row).flag) }}
-            </el-tag>
-            <span v-else-if="rowJudge(row).rangeText" class="normal-mark">正常</span>
-            <span v-else class="ref-text">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="情境" min-width="100">
-          <template #default="{ row }">
-            <span v-if="row.extra?.bpContext">{{ row.extra.bpContext === 'HOME' ? '家庭' : '诊室' }}</span>
-            <span v-else-if="row.extra?.mealContext">
-              {{
-                row.extra.mealContext === 'FASTING'
-                  ? '空腹'
-                  : row.extra.mealContext === 'POSTPRANDIAL'
-                    ? '餐后'
-                    : '随机'
-              }}
-            </span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="时间" min-width="140">
-          <template #default="{ row }">{{ formatTime(row.recordedAt) }}</template>
-        </el-table-column>
-        <el-table-column label="来源" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag :type="sourceTagType(row.source)" size="small" effect="plain">
-              {{ sourceLabel(row.source) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">更正</el-button>
-            <el-button link type="danger" @click="removeRow(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-empty v-if="!recordGroups.length" description="暂无记录" :image-size="64" />
+      <div v-else class="record-days">
+        <section v-for="group in recordGroups" :key="group.key" class="day-group">
+          <div class="day-head">
+            <span v-if="group.relative" class="day-relative">{{ group.relative }}</span>
+            <span class="day-date">{{ group.dateText }}</span>
+            <span class="day-count">{{ group.count }} 条</span>
+          </div>
+          <div v-for="cluster in group.clusters" :key="cluster.key" class="time-cluster">
+            <div class="time-mark">
+              <span class="time-clock">{{ cluster.time }}</span>
+              <el-tag
+                v-if="cluster.sameSource"
+                :type="sourceTagType(cluster.source)"
+                size="small"
+                effect="plain"
+              >
+                {{ sourceLabel(cluster.source) }}
+              </el-tag>
+            </div>
+            <div class="time-rows">
+              <div
+                v-for="row in cluster.rows"
+                :key="row.id"
+                class="metric-row"
+                :class="{ 'metric-row--abnormal': rowJudge(row).abnormal }"
+              >
+                <span class="metric-name">{{ metricLabel(row.metricType) }}</span>
+                <span class="metric-value" :class="{ 'value-abnormal': rowJudge(row).abnormal }">
+                  {{ row.value }} {{ row.unit || '' }}
+                </span>
+                <span class="metric-ref">{{ rowJudge(row).rangeText || '—' }}</span>
+                <span class="metric-judge">
+                  <el-tag v-if="rowJudge(row).abnormal" type="danger" size="small" effect="dark">
+                    {{ abnormalLabel(rowJudge(row).flag) }}
+                  </el-tag>
+                  <span v-else-if="rowJudge(row).rangeText" class="normal-mark">正常</span>
+                  <span v-else class="ref-text">—</span>
+                </span>
+                <span class="metric-context">{{ contextText(row) || '—' }}</span>
+                <el-tag
+                  v-if="!cluster.sameSource"
+                  :type="sourceTagType(row.source)"
+                  size="small"
+                  effect="plain"
+                >
+                  {{ sourceLabel(row.source) }}
+                </el-tag>
+                <span v-else />
+                <span class="metric-actions">
+                  <el-button link type="primary" @click="openEdit(row)">更正</el-button>
+                  <el-button link type="danger" @click="removeRow(row)">删除</el-button>
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </el-card>
 
     <el-dialog v-model="editVisible" title="更正指标" width="480px" destroy-on-close>
@@ -954,8 +1052,128 @@ onMounted(() => {
   color: #0f766e;
 }
 
-:deep(.is-abnormal-row) {
-  --el-table-tr-bg-color: #fef2f2;
+.record-days {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.day-group {
+  border: 1px solid var(--ink-100, #f1f5f9);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.day-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+}
+
+.day-relative {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-900, #0f172a);
+}
+
+.day-date {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-700, #334155);
+}
+
+.day-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-400, #94a3b8);
+}
+
+.time-cluster {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.time-cluster + .time-cluster {
+  border-top: 1px dashed #e8eef2;
+}
+
+.time-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.time-clock {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-900, #0f172a);
+}
+
+.time-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1.1fr) minmax(88px, 1fr) minmax(88px, 1fr) 72px 56px auto minmax(96px, auto);
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.metric-row--abnormal {
+  background: #fef2f2;
+}
+
+.metric-name {
+  font-weight: 600;
+  color: var(--ink-800, #1e293b);
+}
+
+.metric-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.metric-ref,
+.metric-context {
+  font-size: 12px;
+  color: var(--admin-text-secondary, #64748b);
+}
+
+.metric-actions {
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+@media (max-width: 960px) {
+  .time-cluster {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .metric-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
 }
 
 .entry-form {

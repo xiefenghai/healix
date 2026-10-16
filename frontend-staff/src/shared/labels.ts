@@ -18,6 +18,12 @@ export const TASK_TYPE_OPTIONS = [
   { value: 'EXERCISE_ALERT', label: '运动不适' },
   { value: 'FOLLOW_UP', label: '定期随访' },
   { value: 'REPORT_REVIEW', label: '报告审阅' },
+  { value: 'MED_FEEDBACK', label: '用药反馈' },
+  { value: 'MED_VERIFY', label: '用药核对' },
+  { value: 'ASSESSMENT_ESCALATION', label: '评估升级' },
+  { value: 'ASSESSMENT_SUSPECTED', label: '疑似患病' },
+  { value: 'ARCHIVE_SELF_REPORT', label: '患者自报更新' },
+  { value: 'QUESTIONNAIRE_EXPIRED', label: '问卷未完成' },
 ] as const
 
 export const EXERCISE_DISPOSITION_OPTIONS = [

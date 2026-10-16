@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../shared/http'
 import { ageFromBirthday, formatGender } from '../shared/format'
+import { checkinStatus } from '../shared/rewards'
 
 type FilterTab = 'urgent' | 'watch' | 'mine' | 'all'
 
@@ -18,6 +19,9 @@ interface OrgPatientListItem {
   archiveCompletenessPercent?: number | null
   watched?: boolean | null
   clientLinked?: boolean
+  streakDays?: number | null
+  todayActions?: number | null
+  inactiveDays?: number | null
 }
 
 interface PriorityCard {
@@ -205,6 +209,13 @@ onMounted(load)
             <div class="top">
               <strong>{{ row.displayName }}</strong>
               <span v-if="row.watched" class="hx-chip warn">关注</span>
+              <span v-if="row.streakDays" class="flame">🔥{{ row.streakDays }}</span>
+              <span v-else-if="row.streakDays === 0" class="flame flame--out">已熄灭</span>
+              <span
+                v-if="checkinStatus(row)"
+                class="checkin"
+                :class="`checkin--${checkinStatus(row)!.tone}`"
+              >{{ checkinStatus(row)!.text }}</span>
             </div>
             <p class="meta hx-muted">{{ meta(row) || '—' }}</p>
             <div v-if="row.diseaseLabels?.length" class="chips">
@@ -241,6 +252,38 @@ onMounted(load)
 .top strong {
   font-size: 16px;
   color: var(--hx-ink);
+}
+.flame {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fff1e3;
+  color: #e0632a;
+  font-size: 12px;
+  font-weight: 700;
+}
+.flame--out {
+  background: #f0f3f5;
+  color: #a0aab4;
+  font-weight: 600;
+}
+.checkin {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.checkin--ok {
+  background: #e3f6ef;
+  color: #0b7a66;
+}
+.checkin--idle {
+  background: #f0f3f5;
+  color: #8a96a3;
+}
+.checkin--warn {
+  background: #fde7ea;
+  color: #c8324a;
 }
 .meta {
   margin: 4px 0 0;

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.recipe.mapper.OrgRecipeMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, name, description, tags_json, meal_json, week_json,
+        energy_kcal_hint, allergen_keywords_json, status,
+        created_by_staff_id, updated_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO org_recipe(
+            id, tenant_id, org_id, name, description, tags_json, meal_json, week_json,
+            energy_kcal_hint, allergen_keywords_json, status,
+            created_by_staff_id, updated_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{name}, #{description}, #{tagsJson}, #{mealJson}, #{weekJson},
+            #{energyKcalHint}, #{allergenKeywordsJson}, #{status},
+            #{createdByStaffId}, #{updatedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE org_recipe
+        SET name = #{name},
+            description = #{description},
+            tags_json = #{tagsJson},
+            meal_json = #{mealJson},
+            week_json = #{weekJson},
+            energy_kcal_hint = #{energyKcalHint},
+            allergen_keywords_json = #{allergenKeywordsJson},
+            status = #{status},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE org_recipe
+        SET is_deleted = 1, gmt_deleted = NOW(), gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.recipe.domain.OrgRecipe">
+        SELECT <include refid="cols"/>
+        FROM org_recipe
+        WHERE id = #{id}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByOrg" resultType="com.healix.core.recipe.domain.OrgRecipe">
+        SELECT <include refid="cols"/>
+        FROM org_recipe
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND is_deleted = 0
+          <if test="status != null and status != ''">
+              AND status = #{status}
+          </if>
+          <if test="keyword != null and keyword != ''">
+              AND (name LIKE CONCAT('%', #{keyword}, '%')
+                OR description LIKE CONCAT('%', #{keyword}, '%'))
+          </if>
+        ORDER BY gmt_modified DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countByOrg" resultType="long">
+        SELECT COUNT(1)
+        FROM org_recipe
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND is_deleted = 0
+          <if test="status != null and status != ''">
+              AND status = #{status}
+          </if>
+          <if test="keyword != null and keyword != ''">
+              AND (name LIKE CONCAT('%', #{keyword}, '%')
+                OR description LIKE CONCAT('%', #{keyword}, '%'))
+          </if>
+    </select>
+</mapper>

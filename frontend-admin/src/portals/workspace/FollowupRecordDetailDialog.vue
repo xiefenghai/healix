@@ -81,14 +81,7 @@ const exerciseEvents = computed<Record<string, unknown>[]>(() => {
   return Array.isArray(events) ? (events as Record<string, unknown>[]) : []
 })
 
-const detailDialogWidth = computed(() => {
-  if (!detail.value) return '560px'
-  if (detail.value.recordType === 'METRIC_REVIEW') return '640px'
-  if (contentText('followupType') === 'ROUTINE' || contentText('followupType') === 'ONBOARDING') {
-    return '640px'
-  }
-  return '560px'
-})
+const detailDialogWidth = computed(() => 'min(960px, 94vw)')
 
 watch(
   () => props.followupId,
@@ -234,8 +227,8 @@ function detailTitle() {
     v-model="open"
     title="随访详情"
     :width="detailDialogWidth"
-    destroy-on-close
     align-center
+    destroy-on-close
     class="followup-detail-dialog"
     @closed="onClosed"
   >

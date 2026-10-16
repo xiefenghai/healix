@@ -37,6 +37,31 @@ export async function runAgentCallApi(
     }
   }
 
+  if (apiKey === 'NUDGE_BATCH') {
+    const ids = Array.isArray(payload?.peopleIds)
+      ? (payload.peopleIds as unknown[]).filter((x): x is string => typeof x === 'string')
+      : []
+    if (!ids.length) throw new Error('没有可提醒的患者')
+    let sent = 0
+    for (const id of ids) {
+      try {
+        const res = await api<{ data: { sent?: boolean } }>(
+          `/api/b/v1/adherence/patients/${id}/nudge`,
+          { method: 'POST' },
+        )
+        if (res.data?.sent) sent++
+      } catch {
+        // 单人失败不影响其余
+      }
+    }
+    return {
+      message:
+        sent === ids.length
+          ? `已提醒 ${sent} 位患者`
+          : `已提醒 ${sent} / ${ids.length} 位患者（其余未激活或今日已提醒）`,
+    }
+  }
+
   if (apiKey === 'CREATE_FOLLOWUP') {
     const followupType =
       typeof payload?.followupType === 'string' ? payload.followupType : 'ROUTINE'
@@ -44,20 +69,23 @@ export async function runAgentCallApi(
       typeof payload?.draftContent === 'string' && payload.draftContent.trim()
         ? payload.draftContent.trim()
         : ''
+    const plannedAt = strPayload(payload, 'plannedAt')
     await api('/api/b/v1/followups', {
       method: 'POST',
       body: JSON.stringify({
         peopleId,
         followupType,
+        plannedAt: plannedAt || null,
         createTask: payload?.createTask !== false,
         completeNow: false,
         content: draft ? { followupType, guidance: draft } : { followupType },
       }),
     })
+    const when = plannedAt ? `（${plannedAt.slice(5, 16).replace('T', ' ')}）` : ''
     return {
       message: draft
-        ? '已创建随访待办（含指导草稿），请在随访页完善并办结'
-        : '已创建随访待办，请在随访页完善并办结',
+        ? `已创建随访待办${when}（含指导草稿），请在随访页完善并办结`
+        : `已创建随访待办${when}，请在随访页完善并办结`,
     }
   }
 
@@ -161,7 +189,7 @@ export async function runAgentCallApi(
 
 export function callApiDoneLabel(apiKey: string): string | null {
   if (apiKey === 'CREATE_FOLLOWUP') return '已创建随访待办'
-  if (apiKey === 'NUDGE') return '已发送提醒'
+  if (apiKey === 'NUDGE' || apiKey === 'NUDGE_BATCH') return '已发送提醒'
   if (apiKey === 'SEND_CARE_CHAT') return '已发送沟通'
   if (apiKey === 'CLAIM_TASK') return '已领取待办'
   if (apiKey === 'COMPLETE_TASK') return '已办结待办'

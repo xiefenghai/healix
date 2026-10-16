@@ -1,6 +1,8 @@
 package com.healix.agent.gateway;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.util.StringUtils;
 
@@ -11,7 +13,7 @@ import org.springframework.util.StringUtils;
  * <ul>
  *   <li>{@code OPEN_SHEET}：抽屉 mode（archive / followups / care-plan / …）
  *   <li>{@code NAVIGATE}：路由 path
- *   <li>{@code CALL_API}：API 键（NUDGE / CREATE_FOLLOWUP / PUBLISH_REPORT / PUBLISH_CARE_PLAN /
+ *   <li>{@code CALL_API}：API 键（NUDGE / NUDGE_BATCH / CREATE_FOLLOWUP / PUBLISH_REPORT / PUBLISH_CARE_PLAN /
  *       SEND_CARE_CHAT / CLAIM_TASK / COMPLETE_TASK），点击后调现有 B API 并回执
  *   <li>{@code TRIGGER_CAPABILITY}：会话内能力码（CARE_PLAN / REPORT_SUMMARY），点击后自动发带 hint 的消息
  * </ul>
@@ -54,6 +56,13 @@ public record AgentAction(
         return callApi(label, "NUDGE", peopleId, null);
     }
 
+    /** 机构会话里一次提醒多位患者（逐个调单人提醒接口）。 */
+    public static AgentAction nudgeBatch(String label, List<String> peopleIds) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("peopleIds", List.copyOf(peopleIds));
+        return callApi(label, "NUDGE_BATCH", null, payload);
+    }
+
     public static AgentAction createFollowupTask(String label, String peopleId, String followupType) {
         return createFollowupTask(label, peopleId, followupType, null);
     }
@@ -61,7 +70,16 @@ public record AgentAction(
     /** @param draftContent 可选：写入随访指导建议草稿（summary/content.guidance） */
     public static AgentAction createFollowupTask(
             String label, String peopleId, String followupType, String draftContent) {
+        return createFollowupTask(label, peopleId, followupType, draftContent, null);
+    }
+
+    /** @param plannedAt 可选：计划随访时间，随访待办以此为截止 */
+    public static AgentAction createFollowupTask(
+            String label, String peopleId, String followupType, String draftContent, LocalDateTime plannedAt) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        if (plannedAt != null) {
+            payload.put("plannedAt", plannedAt.withSecond(0).withNano(0).toString());
+        }
         // followupType = FollowupType（ROUTINE/…），不是 record_type 的 PERIODIC
         payload.put("followupType", StringUtils.hasText(followupType) ? followupType : "ROUTINE");
         payload.put("createTask", true);

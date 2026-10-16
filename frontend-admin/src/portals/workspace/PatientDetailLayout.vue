@@ -4,13 +4,17 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
+import { formatMobileOwner } from '../../shared/mobile-owner'
 import { confirmLeaveBasicArchive } from '../../shared/basic-archive-dirty'
 import { setArchiveCompletenessRefresh } from '../../shared/archive-completeness-refresh'
 import PatientBasicInfoEditor, {
   type PatientBasicInfo,
 } from '../../shared/PatientBasicInfoEditor.vue'
 import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
-import { allergyTick, fetchAllergySummary, type AllergySummary } from '../../shared/allergy'
+import AssessmentResultDetail from '../../shared/AssessmentResultDetail.vue'
+import AssessmentTrendChart from '../../shared/AssessmentTrendChart.vue'
+import type { AssessmentSnapshot } from '../../shared/assessment'
+import { allergyTick } from '../../shared/allergy'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -22,6 +26,7 @@ interface OrgPatientListItem {
   clientLinked?: boolean
   clientCardCount?: number
   mobile?: string | null
+  mobileOwner?: string | null
   address?: string | null
   educationLevel?: string | null
   maritalStatus?: string | null
@@ -57,30 +62,22 @@ interface AdherenceSummary {
   hasActivePlan: boolean
   streakDays: number
   riskLevel?: string
+  planTodayIncomplete?: boolean
+  medTodayIncomplete?: boolean
   medPercent?: number | null
 }
 
-interface AssessmentSnapshot {
-  engineCode: string
-  level?: string
-  levelLabel?: string
-  status?: string
-  advice?: string
-  assessedAt?: string
+interface AssessmentGroup {
+  diseaseCode: string
+  diseaseLabel: string
+  category: 'RISK' | 'SEVERITY'
+  applicable: boolean
+  latest?: AssessmentSnapshot | null
 }
 
 interface AssessmentOverview {
-  latest?: AssessmentSnapshot[]
-  availableEngines?: { engineCode: string }[]
+  groups?: AssessmentGroup[]
 }
-
-const RISK_ENGINES = [
-  { code: 'CDRS', short: '糖', title: '糖尿病' },
-  { code: 'HYPERTENSION_RISK', short: '压', title: '高血压' },
-  { code: 'OBESITY_SCREEN', short: '胖', title: '肥胖' },
-] as const
-
-const CONTROL_ENGINE_CODE = 'DIABETES_CONTROL_LABEL'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,39 +92,18 @@ const watching = ref(false)
 const basicInfoEditorRef = ref<{ openEdit: () => void } | null>(null)
 const revealMobile = ref(false)
 const careTeamDialogOpen = ref(false)
-const allergy = ref<AllergySummary | null>(null)
-
-const allergyTag = computed(() => {
-  const a = allergy.value
-  if (!a) return null
-  if (a.status === 'HAS') {
-    const names = a.bannerLabels.slice(0, 3).join('、') + (a.bannerLabels.length > 3 ? ` 等 ${a.bannerLabels.length} 项` : '')
-    return {
-      tone: 'rose',
-      text: `过敏：${names}`,
-      extra: a.pendingCount ? `${a.pendingCount} 条待确认` : '',
-      title: a.highRisk ? '含高危过敏，用药与饮食需特别注意' : '点击查看过敏史',
-    }
-  }
-  if (a.status === 'NKA') return { tone: 'teal', text: '无已知过敏', extra: '', title: '已确认无已知过敏' }
-  return { tone: 'muted', text: '过敏史未采集', extra: '', title: '点击去档案记录过敏史' }
-})
-
-function goAllergy() {
-  if (activeTab.value !== 'archive') void onNavClick('archive')
-}
-
 const NAV_ITEMS = [
   { name: 'archive', label: '患者档案' },
   { name: 'observations', label: '指标检验' },
+  { name: 'assessments', label: '疾病评估' },
   { name: 'care-plan', label: '管理方案' },
   { name: 'medications', label: '用药管理' },
   { name: 'diet', label: '饮食记录' },
   { name: 'exercise', label: '运动记录' },
-  { name: 'assessments', label: '风险评估' },
+  { name: 'lifestyle', label: '生活习惯' },
+  { name: 'adherence', label: '依从性分析' },
   { name: 'followups', label: '随访管理' },
   { name: 'health-reports', label: '健康报告' },
-  { name: 'adherence', label: '依从性分析' },
   { name: 'revisions', label: '修订审计' },
 ] as const
 
@@ -138,6 +114,7 @@ const activeTab = computed<NavName>(() => {
   if (path.includes('/medications')) return 'medications'
   if (path.includes('/diet')) return 'diet'
   if (path.includes('/exercise')) return 'exercise'
+  if (path.includes('/lifestyle')) return 'lifestyle'
   if (path.includes('/care-plan')) return 'care-plan'
   if (path.includes('/observations')) return 'observations'
   if (path.includes('/revisions')) return 'revisions'
@@ -202,7 +179,9 @@ const maskedMobile = computed(() => maskMobile(patient.value?.mobile))
 const mobileDisplay = computed(() => {
   const raw = patient.value?.mobile?.trim()
   if (!raw) return ''
-  return revealMobile.value ? raw : maskedMobile.value
+  const owner = patient.value?.mobileOwner
+  const suffix = owner && owner !== 'SELF' ? `（${formatMobileOwner(owner)}）` : ''
+  return (revealMobile.value ? raw : maskedMobile.value) + suffix
 })
 
 function parseBirthdayDate(birthday: unknown): Date | null {
@@ -229,10 +208,11 @@ function maskMobile(mobile: string | null | undefined) {
   return `${raw.slice(0, 3)}****${raw.slice(-4)}`
 }
 
-const cLinkLabel = computed(() => {
-  if (!patient.value) return ''
-  if (patient.value.clientLinked) return `C 端已激活`
-  return 'C 端未关联'
+const clientStatus = computed<{ text: string; tone: 'teal' | 'amber' | 'muted' }>(() => {
+  if (!patient.value) return { text: '-', tone: 'muted' }
+  if (patient.value.clientLinked) return { text: '已激活', tone: 'teal' }
+  if (latestInvite.value?.active) return { text: '已发激活码，待激活', tone: 'amber' }
+  return { text: '未激活', tone: 'muted' }
 })
 
 const completenessPercent = computed(() => completeness.value?.percent ?? 0)
@@ -273,145 +253,142 @@ const completenessHint = computed(() => {
   return `已填 ${completeness.value.filledCount}/${completeness.value.totalCount}`
 })
 
-function assessmentSeverity(level?: string, status?: string): number {
-  if (!level || status === 'INCOMPLETE') return 0
-  if (
-    level === 'HIGH'
-    || level === 'GRADE_3'
-    || level === 'GRADE_2'
-    || level.includes('SEVERE')
-    || level === 'EXTREME_OBESITY'
-  ) {
-    return 3
+type EvalTone = 'danger' | 'warning' | 'success' | 'info' | 'muted'
+
+function assessmentTagText(g: AssessmentGroup, label: string) {
+  if (g.category === 'SEVERITY') {
+    if (g.diseaseCode === 'diabetes') return `血糖${label}`
+    if (g.diseaseCode === 'obesity') return `肥胖分层${label}`
+    return `${g.diseaseLabel}${label}`
   }
-  if (
-    level === 'MID'
-    || level === 'GRADE_1'
-    || level === 'PREHYPERTENSION'
-    || level === 'OVERWEIGHT'
-    || level === 'MILD_OBESITY'
-    || level === 'MODERATE_OBESITY'
-  ) {
-    return 2
+  if (g.diseaseCode === 'obesity') {
+    const text = label.replace(/（.*）/, '')
+    return text === '正常' || text === '偏瘦' ? `体重${text}` : text
   }
-  return 1
+  return `${g.diseaseLabel}${label}`
 }
 
-const assessmentItems = computed(() => {
-  const latest = assessmentOverview.value?.latest || []
-  const byCode = new Map(latest.map((row) => [row.engineCode, row]))
-  const available = new Set(
-    (assessmentOverview.value?.availableEngines || []).map((e) => e.engineCode),
-  )
-  return RISK_ENGINES.map((meta) => {
-    const snap = byCode.get(meta.code)
-    const severity = assessmentSeverity(snap?.level, snap?.status)
-    let label = '未评'
-    if (snap?.status === 'INCOMPLETE') label = '缺项'
-    else if (snap?.levelLabel) label = snap.levelLabel
-    else if (snap?.level) label = snap.level
-    else if (!available.has(meta.code) && assessmentOverview.value) label = '不适用'
-    return {
-      ...meta,
-      label,
-      severity,
-      hasResult: Boolean(snap && snap.status !== 'INCOMPLETE' && snap.level),
-    }
-  })
-})
+type HeroTag = {
+  key: string
+  text: string
+  tone: EvalTone
+  title: string
+  snapshot: AssessmentSnapshot | null
+}
 
-const controlLabelSnap = computed(() => {
-  const rows = assessmentOverview.value?.latest || []
-  return rows.find((r) => r.engineCode === CONTROL_ENGINE_CODE) || null
-})
-
-const showControlLabel = computed(() => {
-  const engines = assessmentOverview.value?.availableEngines || []
-  return Boolean(controlLabelSnap.value || engines.some((e) => e.engineCode === CONTROL_ENGINE_CODE))
-})
-
-/** 参考「评估标签」行：分标 + 发病风险，一眼可扫 */
-const evalTags = computed(() => {
-  const tags: Array<{
-    key: string
-    text: string
-    tone: 'danger' | 'warning' | 'success' | 'info' | 'muted'
-    title: string
-  }> = []
-
-  if (showControlLabel.value) {
-    const snap = controlLabelSnap.value
-    if (snap?.status !== 'INCOMPLETE') {
-      const level = snap?.level
-      let tone: 'danger' | 'warning' | 'success' | 'info' | 'muted' = 'muted'
-      if (level === 'RED') tone = 'danger'
-      else if (level === 'YELLOW') tone = 'warning'
-      else if (level === 'GREEN' || level === 'NEAR_GREEN') tone = 'success'
-      else if (level === 'NONE') tone = 'info'
-      const label = !snap
-        ? '未评估'
-        : snap.level === 'NONE'
-          ? '未分标'
-          : snap.levelLabel || snap.level || '未评估'
-      tags.push({
-        key: CONTROL_ENGINE_CODE,
-        text: label.includes('血糖') ? label : `血糖${label}`,
-        tone,
-        title: snap?.advice || '血糖控制分标',
-      })
-    }
+function readySnapshot(raw: AssessmentSnapshot | null | undefined): AssessmentSnapshot | null {
+  if (!raw) return null
+  return {
+    ...raw,
+    dimensions: raw.dimensions ?? [],
+    items: raw.items ?? [],
+    factorGroups: (raw.factorGroups ?? []).map((g) => ({
+      ...g,
+      hits: g.hits ?? [],
+      unchecked: g.unchecked ?? [],
+    })),
+    missing: raw.missing ?? [],
+    comparisons: raw.comparisons ?? [],
+    notes: raw.notes ?? [],
+    provisional: !!raw.provisional,
+    legacy: !!raw.legacy,
   }
+}
 
-  for (const item of assessmentItems.value) {
-    if (item.label === '不适用' || item.label === '缺项') continue
-    let tone: 'danger' | 'warning' | 'success' | 'info' | 'muted' = 'muted'
-    if (item.severity >= 3) tone = 'danger'
-    else if (item.severity === 2) tone = 'warning'
-    else if (item.severity === 1) tone = 'success'
-    else if (item.label === '未评') tone = 'muted'
-
-    const text = item.hasResult
-      ? prefixedAssessmentLabel(item.title, item.label)
-      : `${item.title}未评估`
-
+function buildTags(category: AssessmentGroup['category']): HeroTag[] {
+  const tags: HeroTag[] = []
+  for (const g of assessmentOverview.value?.groups || []) {
+    if (!g.applicable || g.category !== category) continue
+    const snap = readySnapshot(g.latest)
+    if (!snap || snap.status !== 'COMPLETE' || !snap.levelLabel) {
+      tags.push({
+        key: g.diseaseCode,
+        text: `${g.diseaseLabel}待补充`,
+        tone: 'muted',
+        title: '缺少评估必需数据，可发送评估问卷补齐',
+        snapshot: snap,
+      })
+      continue
+    }
     tags.push({
-      key: item.code,
-      text,
-      tone,
-      title: item.title,
+      key: g.diseaseCode,
+      text: assessmentTagText(g, snap.levelLabel),
+      tone: (snap.tone as EvalTone) || 'muted',
+      title: snap.advice || g.diseaseLabel,
+      snapshot: snap,
     })
   }
   return tags
-})
-
-function prefixedAssessmentLabel(title: string, label: string) {
-  if (!label) return `${title}未评估`
-  if (label.includes(title)) return label
-  if (title === '高血压' && label.includes('血压')) return label
-  if (title === '肥胖' && (label.includes('肥胖') || label.includes('超重') || /bmi/i.test(label))) {
-    return label
-  }
-  return `${title}${label}`
 }
 
-const evalTagsAlert = computed(() => evalTags.value.some((t) => t.tone === 'danger'))
+/** 评估标签：未确诊病种的患病风险 */
+const riskTags = computed(() => buildTags('RISK'))
+/** 病情标签：已确诊病种的严重等级分层 */
+const conditionTags = computed(() => buildTags('SEVERITY'))
+const riskTagsAlert = computed(() => riskTags.value.some((t) => t.tone === 'danger'))
+const conditionTagsAlert = computed(() => conditionTags.value.some((t) => t.tone === 'danger'))
 
-const riskLevel = computed(() => adherence.value?.riskLevel || '')
-
-const riskLabel = computed(() => {
-  const r = riskLevel.value
-  if (r === 'HIGH') return '高风险'
-  if (r === 'MEDIUM') return '中风险'
-  if (r === 'LOW') return '低风险'
-  return '未评估'
-})
-
-const riskTone = computed(() => {
-  const r = riskLevel.value
-  if (r === 'HIGH') return 'poor'
-  if (r === 'MEDIUM') return 'fair'
-  if (r === 'LOW') return 'good'
-  return 'empty'
+/**
+ * 与依从看板同一口径：今日方案未完成、今日用药未打卡，或方案连续未完成达到 3 天，记为需跟进；
+ * 否则近 7 日方案完成率低于 60% 记为完成偏低；其余记为执行正常。
+ * 上面的评估/病情标签是患病风险，这张卡只看方案和用药有没有做。
+ */
+const followup = computed(() => {
+  const a = adherence.value
+  if (!a) {
+    return { value: '—', hint: '依从数据', tone: 'empty', title: '' }
+  }
+  if (!a.hasActivePlan) {
+    return {
+      value: '暂无方案',
+      hint: '还没有执行中的管理方案',
+      tone: 'empty',
+      title: '没有执行中的健康管理方案，不判断要不要跟进',
+    }
+  }
+  const streak = a.streakDays || 0
+  const planMiss = !!a.planTodayIncomplete
+  const medMiss = !!a.medTodayIncomplete
+  const level = a.riskLevel || ''
+  if (level === 'HIGH') {
+    const bits: string[] = []
+    if (planMiss) bits.push('今日方案任务还没打完')
+    if (medMiss) bits.push('今日用药还没打卡')
+    if (streak >= 3) bits.push(`方案已连续 ${streak} 天未完成`)
+    let value = '需跟进'
+    if (streak >= 3) value = `连续${streak}天`
+    else if (planMiss && medMiss) value = '今日未完成'
+    else if (planMiss) value = '方案未完成'
+    else if (medMiss) value = '用药未打卡'
+    return {
+      value,
+      hint: bits.join('，') || '今天没做完，或连续多天没做',
+      tone: 'poor',
+      title: '需跟进：今天方案或用药没做完，或方案连续未完成达到 3 天',
+    }
+  }
+  if (level === 'MEDIUM') {
+    return {
+      value: '完成偏低',
+      hint: '近 7 日完成率不到 60%',
+      tone: 'fair',
+      title: '今天已经做完，连续未完成也不到 3 天，但近 7 日方案完成率低于 60%',
+    }
+  }
+  if (a.percent == null) {
+    return {
+      value: '暂无任务',
+      hint: '近 7 日没有应打卡任务',
+      tone: 'empty',
+      title: '有执行中方案，但这 7 天没有应完成的任务',
+    }
+  }
+  return {
+    value: '执行正常',
+    hint: '今天已完成',
+    tone: 'good',
+    title: '今天方案和用药都已完成，连续未完成不到 3 天，近 7 日完成率不低于 60%',
+  }
 })
 
 function isoDay(d: Date) {
@@ -576,14 +553,9 @@ const metricCards = computed<MetricSparkCard[]>(() => {
   return cards.slice(0, 4)
 })
 
-const heroMeta = computed(() => {
-  const parts: string[] = []
-  if (patientAge.value && patientAge.value !== '-') parts.push(patientAge.value)
-  const gender = formatGender(patient.value?.gender)
-  if (gender && gender !== '-') parts.push(gender)
-  if (patient.value?.identityMask) parts.push(`身份证 ${patient.value.identityMask}`)
-  if (patient.value?.mobile) parts.push(`联系电话 ${mobileDisplay.value}`)
-  return parts.join(' · ')
+const genderText = computed(() => {
+  const g = formatGender(patient.value?.gender)
+  return g && g !== '-' ? g : '-'
 })
 
 async function loadPatient() {
@@ -660,6 +632,17 @@ async function loadMetricSummary() {
 function goAssessments() {
   switchTab('assessments')
 }
+
+const basisOpen = ref(false)
+const basisTag = ref<HeroTag | null>(null)
+
+function openBasis(tag: HeroTag) {
+  if (!tag.snapshot) return
+  basisTag.value = tag
+  basisOpen.value = true
+}
+
+const basisTitle = computed(() => (basisTag.value ? `${basisTag.value.text} · 评估依据` : '评估依据'))
 
 async function loadInvites() {
   if (!peopleId.value) return
@@ -744,6 +727,8 @@ function onBasicInfoUpdated(info: PatientBasicInfo) {
     ...patient.value,
     displayName: info.displayName,
     mobile: info.mobile,
+    mobileOwner: info.mobileOwner,
+    identityMask: info.identityMask ?? patient.value.identityMask,
     address: info.address,
     educationLevel: info.educationLevel,
     maritalStatus: info.maritalStatus,
@@ -769,6 +754,8 @@ function switchTab(name: string | number) {
     router.push({ path: `${base}/diet`, query })
   } else if (name === 'exercise') {
     router.push({ path: `${base}/exercise`, query })
+  } else if (name === 'lifestyle') {
+    router.push({ path: `${base}/lifestyle`, query })
   } else if (name === 'care-plan') {
     router.push({ path: `${base}/care-plan`, query })
   } else if (name === 'observations') {
@@ -794,24 +781,13 @@ function goChat() {
   void onNavClick('chat')
 }
 
-async function loadAllergy() {
-  if (!peopleId.value) return
-  try {
-    allergy.value = await fetchAllergySummary(peopleId.value)
-  } catch {
-    allergy.value = null
-  }
-}
-
 watch(allergyTick, () => {
-  void loadAllergy()
   void loadCompleteness()
 })
 
 watch(
   peopleId,
   async () => {
-    allergy.value = null
     await loadPatient()
     await loadInvites()
     await Promise.all([
@@ -819,7 +795,6 @@ watch(
       loadAdherenceSummary(),
       loadAssessmentSummary(),
       loadMetricSummary(),
-      loadAllergy(),
     ])
   },
   { immediate: false },
@@ -845,7 +820,6 @@ onMounted(async () => {
     loadAdherenceSummary(),
     loadAssessmentSummary(),
     loadMetricSummary(),
-    loadAllergy(),
   ])
 })
 
@@ -876,66 +850,115 @@ onBeforeUnmount(() => {
             <button type="button" class="text-btn" @click="openBasicInfoEdit">编辑资料</button>
           </h1>
 
-          <div v-if="heroMeta" class="hero-meta">
-            {{ heroMeta }}
-            <button
-              v-if="patient?.mobile"
-              type="button"
-              class="text-btn sm"
-              @click="revealMobile = !revealMobile"
-            >
-              {{ revealMobile ? '隐藏' : '显示' }}
-            </button>
-          </div>
-
-          <div class="hero-tags">
-            <button
-              type="button"
-              class="tag brand is-btn"
-              :disabled="!patient"
-              :title="patient?.careTeamName ? '变更健管组' : '加入健管组'"
-              @click="openCareTeamDialog"
-            >
-              <span class="dot" aria-hidden="true" />
-              {{ patient?.careTeamName || '未入组' }}
-              <span class="tag-action">{{ patient?.careTeamName ? '变更' : '加入' }}</span>
-            </button>
-            <span class="tag" :class="patient?.clientLinked ? 'teal' : 'muted'">
-              <span class="dot" aria-hidden="true" />
-              {{ cLinkLabel }}
-            </span>
-            <button
-              v-if="allergyTag"
-              type="button"
-              class="tag is-btn"
-              :class="[allergyTag.tone, { 'allergy-risk': allergy?.highRisk }]"
-              :title="allergyTag.title"
-              @click="goAllergy"
-            >
-              <span class="dot" aria-hidden="true" />
-              {{ allergyTag.text }}
-              <span v-if="allergyTag.extra" class="tag-action">{{ allergyTag.extra }}</span>
-            </button>
-          </div>
-
-          <div v-if="evalTags.length" class="eval-row">
-            <div class="eval-label" :class="{ alert: evalTagsAlert }">
-              <span v-if="evalTagsAlert" class="eval-dot" aria-hidden="true" />
-              评估标签
+          <dl class="hero-fields">
+            <div class="hf">
+              <dt>年龄</dt>
+              <dd>{{ patientAge }}</dd>
             </div>
-            <div class="eval-tags">
-              <button
-                v-for="tag in evalTags"
-                :key="tag.key"
-                type="button"
-                class="eval-tag"
-                :class="tag.tone"
-                :title="tag.title"
-                @click="goAssessments"
-              >
-                {{ tag.text }}
-                <span class="eval-q" aria-hidden="true">?</span>
-              </button>
+            <div class="hf">
+              <dt>性别</dt>
+              <dd>{{ genderText }}</dd>
+            </div>
+            <div class="hf">
+              <dt>身份证</dt>
+              <dd class="mono">{{ patient?.identityMask || '-' }}</dd>
+            </div>
+            <div class="hf">
+              <dt>联系电话</dt>
+              <dd class="mono">
+                {{ mobileDisplay || '-' }}
+                <button
+                  v-if="patient?.mobile"
+                  type="button"
+                  class="text-btn sm"
+                  @click="revealMobile = !revealMobile"
+                >
+                  {{ revealMobile ? '隐藏' : '显示' }}
+                </button>
+              </dd>
+            </div>
+            <div class="hf">
+              <dt>健管组</dt>
+              <dd>
+                <button
+                  type="button"
+                  class="tag brand is-btn"
+                  :disabled="!patient"
+                  :title="patient?.careTeamName ? '变更健管组' : '加入健管组'"
+                  @click="openCareTeamDialog"
+                >
+                  {{ patient?.careTeamName || '未入组' }}
+                  <span class="tag-action">{{ patient?.careTeamName ? '变更' : '加入' }}</span>
+                </button>
+              </dd>
+            </div>
+            <div class="hf">
+              <dt>C 端激活</dt>
+              <dd>
+                <span class="tag" :class="clientStatus.tone">
+                  <span class="dot" aria-hidden="true" />
+                  {{ clientStatus.text }}
+                </span>
+              </dd>
+            </div>
+          </dl>
+
+          <div v-if="assessmentOverview" class="eval-block">
+            <div class="eval-row">
+              <div class="eval-label risk" :class="{ alert: riskTagsAlert }" title="未确诊病种的患病风险评估">
+                <span v-if="riskTagsAlert" class="eval-dot" aria-hidden="true" />
+                评估标签
+              </div>
+              <div class="eval-tags">
+                <span
+                  v-for="tag in riskTags"
+                  :key="tag.key"
+                  class="eval-tag"
+                  :class="tag.tone"
+                >
+                  <button type="button" class="eval-tag-go" :title="tag.title" @click="goAssessments">
+                    {{ tag.text }}
+                  </button>
+                  <button
+                    v-if="tag.snapshot"
+                    type="button"
+                    class="eval-q"
+                    aria-label="查看评估依据"
+                    @click="openBasis(tag)"
+                  >
+                    ?
+                  </button>
+                </span>
+                <span v-if="!riskTags.length" class="eval-empty">无需做患病风险评估</span>
+              </div>
+            </div>
+            <div class="eval-row">
+              <div class="eval-label cond" :class="{ alert: conditionTagsAlert }" title="已确诊病种的严重等级分层">
+                <span v-if="conditionTagsAlert" class="eval-dot" aria-hidden="true" />
+                病情标签
+              </div>
+              <div class="eval-tags">
+                <span
+                  v-for="tag in conditionTags"
+                  :key="tag.key"
+                  class="eval-tag"
+                  :class="tag.tone"
+                >
+                  <button type="button" class="eval-tag-go" :title="tag.title" @click="goAssessments">
+                    {{ tag.text }}
+                  </button>
+                  <button
+                    v-if="tag.snapshot"
+                    type="button"
+                    class="eval-q"
+                    aria-label="查看评估依据"
+                    @click="openBasis(tag)"
+                  >
+                    ?
+                  </button>
+                </span>
+                <span v-if="!conditionTags.length" class="eval-empty">暂无确诊病种</span>
+              </div>
             </div>
           </div>
         </div>
@@ -982,12 +1005,13 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="summary-card"
-          :class="riskTone"
-          @click="onNavClick('assessments')"
+          :class="followup.tone"
+          :title="followup.title"
+          @click="onNavClick('adherence')"
         >
-          <span class="summary-label">风险</span>
-          <strong class="summary-val">{{ riskLabel }}</strong>
-          <span class="summary-hint">点进评估详情</span>
+          <span class="summary-label">执行跟进</span>
+          <strong class="summary-val is-text">{{ followup.value }}</strong>
+          <span class="summary-hint">{{ followup.hint }}</span>
         </button>
         <button
           type="button"
@@ -1075,6 +1099,36 @@ onBeforeUnmount(() => {
     </nav>
 
     <router-view />
+
+    <el-dialog
+      v-model="basisOpen"
+      :title="basisTitle"
+      width="760px"
+      append-to-body
+      class="assessment-basis-dialog"
+    >
+      <template v-if="basisTag?.snapshot">
+        <p v-if="basisTag.snapshot.advice" class="basis-advice">{{ basisTag.snapshot.advice }}</p>
+        <AssessmentTrendChart
+          v-if="basisTag.snapshot.engineCode"
+          :people-id="peopleId"
+          :engine-code="basisTag.snapshot.engineCode"
+          :current-id="basisTag.snapshot.id"
+        />
+        <div v-if="basisTag.snapshot.missing.length" class="basis-missing">
+          <div class="basis-missing-title">还缺这些数据，补齐后会重新评估</div>
+          <div v-for="m in basisTag.snapshot.missing" :key="m.field" class="basis-missing-item">
+            {{ m.label }}<span v-if="m.fillHint"> · {{ m.fillHint }}</span>
+          </div>
+        </div>
+        <AssessmentResultDetail :snapshot="basisTag.snapshot" />
+      </template>
+      <p class="basis-note">结果仅供健康管理参考，不作为诊断依据。</p>
+      <template #footer>
+        <el-button @click="basisOpen = false">关闭</el-button>
+        <el-button type="primary" @click="basisOpen = false; goAssessments()">打开疾病评估</el-button>
+      </template>
+    </el-dialog>
 
     <ChangeCareTeamDialog
       :people-id="careTeamDialogOpen ? peopleId : null"
@@ -1187,21 +1241,104 @@ onBeforeUnmount(() => {
   line-height: 1.25;
 }
 
-.hero-meta {
+.hero-fields {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 4px 6px;
-  margin-bottom: 8px;
-  font-size: 13px;
-  color: var(--ink-500);
-  font-variant-numeric: tabular-nums;
+  row-gap: 10px;
+  margin: 8px 0 0;
 }
 
-.hero-tags {
+.hf {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 22px;
+  border-left: 1px solid var(--ink-100, #eef2f6);
+}
+
+.hf:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+.hf dt {
+  font-size: 12px;
+  color: var(--ink-400, #94a3b8);
+  line-height: 1;
+}
+
+.hf dd {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  margin: 0;
+  min-height: 22px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-800, #1e293b);
+  white-space: nowrap;
+}
+
+.hf dd.mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.eval-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid var(--ink-100, #eef2f6);
+}
+
+.eval-block .eval-row {
+  margin-top: 0;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.eval-block .eval-label {
+  min-width: 76px;
+  padding-top: 0;
+  color: var(--ink-600, #475569);
+}
+
+.eval-block .eval-label::before {
+  content: '';
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: #3b82f6;
+}
+
+.eval-block .eval-label.cond::before {
+  background: #f97316;
+}
+
+.eval-block .eval-label.alert {
+  color: var(--ink-600, #475569);
+}
+
+.eval-block .eval-tag {
+  height: 24px;
+  padding: 0 4px 0 10px;
+  border-radius: 999px;
+}
+
+.eval-block .eval-q {
+  width: 13px;
+  height: 13px;
+  font-size: 9px;
+}
+
+.eval-empty {
+  font-size: 12px;
+  color: var(--ink-400, #94a3b8);
 }
 
 .tag {
@@ -1271,12 +1408,6 @@ onBeforeUnmount(() => {
   color: var(--ink-500);
 }
 
-.tag.allergy-risk {
-  background: #dc2626;
-  color: #fff;
-  font-weight: 600;
-}
-
 .eval-row {
   display: flex;
   align-items: flex-start;
@@ -1323,20 +1454,23 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   height: 26px;
-  padding: 0 10px;
+  padding: 0 6px 0 10px;
   border-radius: 4px;
   border: 1px solid var(--ink-200);
   background: #fff;
-  font: inherit;
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-600);
-  cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
 }
 
-.eval-tag:hover {
-  filter: brightness(0.98);
+.eval-tag-go {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
 .eval-q {
@@ -1344,12 +1478,49 @@ onBeforeUnmount(() => {
   place-items: center;
   width: 14px;
   height: 14px;
+  margin-left: 2px;
+  padding: 0;
   border-radius: 50%;
   border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
-  opacity: 0.7;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.eval-q:hover {
+  opacity: 1;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.basis-advice {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-800, #1e293b);
+}
+
+.basis-missing {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.basis-missing-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.basis-note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--ink-400, #94a3b8);
 }
 
 .eval-tag.danger {
@@ -1507,6 +1678,11 @@ onBeforeUnmount(() => {
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;
+}
+
+.summary-val.is-text {
+  font-size: 18px;
+  letter-spacing: 0;
 }
 
 .summary-val small {

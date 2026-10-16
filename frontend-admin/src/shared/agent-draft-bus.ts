@@ -5,6 +5,8 @@ export type AgentDraftPayload = {
   mode: string
   draftContent?: string
   openCreate?: boolean
+  /** 管理方案：打开抽屉时直接进入「制定新的方案」编辑草稿 */
+  openCompose?: boolean
   /** 管理报告审阅预填 */
   reportId?: string
   openReview?: boolean

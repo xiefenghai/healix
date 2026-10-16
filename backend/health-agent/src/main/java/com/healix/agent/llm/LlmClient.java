@@ -192,11 +192,17 @@ public class LlmClient {
 
     public LlmResponse chatWithImage(
             String scene, String systemPrompt, String userMessage, String imageBase64, String mimeType) {
+        return chatWithImages(scene, systemPrompt, userMessage, List.of(new VisionImage(imageBase64, mimeType)));
+    }
+
+    /** 多张图放在同一条用户消息里，模型一次看全（如同一餐的多角度照片）。 */
+    public LlmResponse chatWithImages(
+            String scene, String systemPrompt, String userMessage, List<VisionImage> images) {
         if (!enabled) {
             log.debug("[LLM] skipped scene={} reason=disabled", scene);
             return LlmResponse.disabled();
         }
-        if (!StringUtils.hasText(imageBase64)) {
+        if (images == null || images.isEmpty() || images.stream().anyMatch(i -> !StringUtils.hasText(i.base64()))) {
             log.debug("[LLM] skipped scene={} reason=empty_image", scene);
             return LlmResponse.disabled();
         }
@@ -204,17 +210,20 @@ public class LlmClient {
         String modelLabel = visionChatModel != null ? visionModelName : chatModelName;
         long started = System.currentTimeMillis();
         log.info(
-                "[LLM] start scene={} mode=vision provider={} model={} systemChars={} userChars={} imageBytes={}",
+                "[LLM] start scene={} mode=vision provider={} model={} systemChars={} userChars={} images={} imageBytes={}",
                 scene,
                 provider,
                 modelLabel,
                 length(systemPrompt),
                 length(userMessage),
-                imageBase64.length());
+                images.size(),
+                images.stream().mapToInt(i -> i.base64().length()).sum());
         try {
             if (deepSeekChatCompletionsClient != null && visionChatModel != null) {
-                String dataUrl = toImageDataUrl(imageBase64, mimeType);
-                var ds = deepSeekChatCompletionsClient.chatWithImage(scene, systemPrompt, userMessage, dataUrl);
+                List<String> dataUrls = images.stream()
+                        .map(i -> toImageDataUrl(i.base64(), i.mimeType()))
+                        .toList();
+                var ds = deepSeekChatCompletionsClient.chatWithImages(scene, systemPrompt, userMessage, dataUrls);
                 LlmResponse result = new LlmResponse(
                         ds.content(), ds.hasContent(), ds.promptTokens(), ds.completionTokens());
                 if (!StringUtils.hasText(result.content())) {
@@ -228,17 +237,20 @@ public class LlmClient {
                 logSuccess(scene, "vision", started, result, modelLabel);
                 return result;
             }
-            byte[] bytes = Base64.getDecoder().decode(stripDataUrl(imageBase64));
-            MimeType mediaType = StringUtils.hasText(mimeType)
-                    ? MimeTypeUtils.parseMimeType(mimeType)
-                    : MimeTypeUtils.IMAGE_JPEG;
-            Media media = Media.builder()
-                    .mimeType(mediaType)
-                    .data(new ByteArrayResource(bytes))
-                    .build();
+            List<Media> medias = new ArrayList<>();
+            for (VisionImage image : images) {
+                byte[] bytes = Base64.getDecoder().decode(stripDataUrl(image.base64()));
+                MimeType mediaType = StringUtils.hasText(image.mimeType())
+                        ? MimeTypeUtils.parseMimeType(image.mimeType())
+                        : MimeTypeUtils.IMAGE_JPEG;
+                medias.add(Media.builder()
+                        .mimeType(mediaType)
+                        .data(new ByteArrayResource(bytes))
+                        .build());
+            }
             UserMessage user = UserMessage.builder()
                     .text(userMessage)
-                    .media(media)
+                    .media(medias)
                     .build();
             List<Message> messages = List.of(new SystemMessage(systemPrompt), user);
             ChatResponse response = model.call(new Prompt(messages));
@@ -361,4 +373,6 @@ public class LlmClient {
     }
 
     public record ChatTurn(String user, String assistant) {}
+
+    public record VisionImage(String base64, String mimeType) {}
 }

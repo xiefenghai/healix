@@ -42,10 +42,7 @@ watch(
   min-height: 100vh;
   max-width: 375px;
   margin: 0 auto;
-  background:
-    radial-gradient(circle at 10% -10%, rgba(92, 184, 184, 0.28), transparent 42%),
-    radial-gradient(circle at 90% 0%, rgba(245, 166, 35, 0.16), transparent 36%),
-    var(--hx-bg);
+  background: var(--hx-bg);
 }
 .page-body {
   min-height: 100vh;

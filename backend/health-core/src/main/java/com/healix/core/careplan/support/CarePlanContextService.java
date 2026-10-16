@@ -1,5 +1,6 @@
 package com.healix.core.careplan.support;
 
+import com.healix.core.assessment.service.AssessmentPromptContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -45,6 +46,8 @@ public class CarePlanContextService {
     private final PeopleMedicationMapper medicationMapper;
     private final LabReportMapper labReportMapper;
     private final LabResultItemMapper labResultItemMapper;
+    private final CarePlanEnergyTargetService energyTargetService;
+    private final AssessmentPromptContext assessmentPromptContext;
 
     public record CarePlanContext(
             List<String> diseaseCodes,
@@ -188,6 +191,28 @@ public class CarePlanContextService {
         trace(tracer, "LabReport", "running", "读取近期检验报告");
         List<LabBrief> labs = loadRecentLabs(tenantId, peopleId, snapshot);
         trace(tracer, "LabReport", "done", labs.isEmpty() ? "无检验报告" : labs.size() + " 份报告");
+
+        trace(tracer, "DietGoal", "running", "读取饮食热量目标");
+        ObjectNode energyTarget = energyTargetService.promptContext(tenantId, peopleId);
+        if (energyTarget != null) {
+            snapshot.set("energyTarget", energyTarget);
+        }
+        trace(
+                tracer,
+                "DietGoal",
+                "done",
+                energyTarget != null && energyTarget.path("available").asBoolean()
+                        ? "每日 " + energyTarget.path("energyKcal").asInt() + " 千卡"
+                        : "暂无热量目标");
+
+        trace(tracer, "Assessment", "running", "读取疾病评估结果");
+        try {
+            ArrayNode assessments = assessmentPromptContext.summarize(tenantId, peopleId);
+            snapshot.set("assessments", assessments);
+            trace(tracer, "Assessment", "done", assessments.isEmpty() ? "暂无评估结果" : assessments.size() + " 项评估");
+        } catch (RuntimeException e) {
+            trace(tracer, "Assessment", "done", "评估结果读取失败，已跳过");
+        }
 
         snapshot.put("contextIncomplete", incomplete);
         snapshot.put("hypoglycemiaRisk", hypoRisk);

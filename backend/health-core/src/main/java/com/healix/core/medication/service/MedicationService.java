@@ -1,28 +1,35 @@
 package com.healix.core.medication.service;
 
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
 import com.healix.common.util.SnowflakeId;
 import com.healix.core.archive.service.ArchiveAccessService;
+import com.healix.core.job.support.JobCronSupport;
 import com.healix.core.medication.domain.PeopleMedication;
 import com.healix.core.medication.domain.PeopleMedicationIntake;
 import com.healix.core.medication.dto.MedicationIntakeViewDto;
 import com.healix.core.medication.dto.MedicationViewDto;
+import com.healix.core.medication.enums.MedicationFeedbackKindEnum;
 import com.healix.core.medication.enums.MedicationIntakeStatusEnum;
 import com.healix.core.medication.enums.MedicationSourceEnum;
 import com.healix.core.medication.enums.MedicationStatusEnum;
+import com.healix.core.medication.enums.MedicationStopReasonEnum;
 import com.healix.core.medication.enums.MedicationTimeSlotEnum;
 import com.healix.core.medication.mapper.PeopleMedicationIntakeMapper;
 import com.healix.core.medication.mapper.PeopleMedicationMapper;
-import com.healix.core.medication.support.MedicationFrequencySupport;
+import com.healix.core.medication.support.MedicationSlotRules;
 import com.healix.core.revision.enums.RevisionBizTypeEnum;
 import com.healix.core.revision.service.FieldRevisionService;
+import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,9 +43,13 @@ public class MedicationService {
     private static final String OPERATOR_PEOPLE = "PEOPLE";
 
     private final PeopleMedicationMapper medicationMapper;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
     private final PeopleMedicationIntakeMapper intakeMapper;
     private final ArchiveAccessService archiveAccessService;
     private final FieldRevisionService fieldRevisionService;
+    private final MedicationAllergyGuard allergyGuard;
+    private final MedicationFeedbackService feedbackService;
+    private final WorkspaceTaskGenerator workspaceTaskGenerator;
 
     @Transactional
     public List<MedicationViewDto> list(String tenantId, String orgId, String peopleId, String status) {
@@ -64,16 +75,33 @@ public class MedicationService {
         for (PeopleMedication row : rows) {
             expireIfNeeded(row);
         }
+        Map<String, Integer> openFeedback = feedbackService.openCountByMedication(tenantId, peopleId);
         return rows.stream()
                 .filter(row -> filter == null || filter.equalsIgnoreCase(row.getStatus()))
-                .map(this::toView)
+                .map(row -> {
+                    MedicationViewDto dto = toView(row);
+                    dto.setOpenFeedbackCount(openFeedback.getOrDefault(row.getId(), 0));
+                    return dto;
+                })
                 .toList();
+    }
+
+    /** C 端：单条用药详情。 */
+    @Transactional
+    public MedicationViewDto getForPatient(String tenantId, String peopleId, String medicationId) {
+        archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
+        expireIfNeeded(row);
+        MedicationViewDto dto = toView(row);
+        dto.setOpenFeedbackCount(
+                feedbackService.openCountByMedication(tenantId, peopleId).getOrDefault(medicationId, 0));
+        return dto;
     }
 
     public List<MedicationIntakeViewDto> listIntakesByDateForPatient(
             String tenantId, String peopleId, LocalDate intakeDate) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
-        LocalDate day = intakeDate != null ? intakeDate : LocalDate.now();
+        LocalDate day = intakeDate != null ? intakeDate : MedicationScheduleService.today();
         List<PeopleMedicationIntake> rows = intakeMapper.listByPeopleDate(tenantId, peopleId, day);
         List<MedicationIntakeViewDto> out = new ArrayList<>();
         for (PeopleMedicationIntake row : rows) {
@@ -83,27 +111,68 @@ public class MedicationService {
         return out;
     }
 
-    /** C 端患者自助服药打卡。 */
+    /** C 端患者自助服药打卡（定时药；今天或昨天）。 */
     @Transactional
     public MedicationIntakeViewDto upsertIntakeByPatient(
             String tenantId, String peopleId, String medicationId, IntakeCommand cmd) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         PeopleMedication med = requireOwned(tenantId, peopleId, medicationId);
-        if (cmd.intakeDate() == null) {
+        return upsertPatientIntake(med, cmd);
+    }
+
+    /** C 端：某时段批量打卡（「全部已服」）。 */
+    @Transactional
+    public List<MedicationIntakeViewDto> batchIntakeByPatient(
+            String tenantId, String peopleId, List<String> medicationIds, IntakeCommand cmd) {
+        archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        if (medicationIds == null || medicationIds.isEmpty()) {
+            throw new BusinessException("请选择药品");
+        }
+        List<MedicationIntakeViewDto> out = new ArrayList<>();
+        for (String id : medicationIds.stream().distinct().toList()) {
+            out.add(upsertPatientIntake(requireOwned(tenantId, peopleId, id), cmd));
+        }
+        return out;
+    }
+
+    private MedicationIntakeViewDto upsertPatientIntake(PeopleMedication med, IntakeCommand cmd) {
+        if (cmd == null || cmd.intakeDate() == null) {
             throw new BusinessException("服药日期不能为空");
         }
+        LocalDate day = cmd.intakeDate();
+        if (!MedicationScheduleService.isEditableDay(day)) {
+            throw new BusinessException("只能记录今天和昨天的服药");
+        }
+        if (MedicationSlotRules.isPrn(med)) {
+            throw new BusinessException("需要时服用的药请用「记录一次」");
+        }
+        List<String> slots = MedicationSlotRules.slotsOf(med);
         String slot = resolveTimeSlot(cmd.timeSlot());
+        if (!slots.contains(slot)) {
+            throw new BusinessException("该药没有「" + MedicationSlotRules.label(slot) + "」时段");
+        }
         String status = resolveIntakeStatus(cmd.status());
-        PeopleMedicationIntake existing =
-                intakeMapper.findByMedDateSlot(medicationId, cmd.intakeDate(), slot);
+        LocalDate today = MedicationScheduleService.today();
+        boolean backfill = day.isBefore(today);
+        LocalDateTime takenAt = null;
+        if (MedicationIntakeStatusEnum.TAKEN.name().equals(status)) {
+            takenAt = cmd.takenAt() != null ? cmd.takenAt() : (backfill ? null : LocalDateTime.now(JobCronSupport.ZONE));
+            if (takenAt != null && !takenAt.toLocalDate().equals(day)) {
+                throw new BusinessException("服药时间需在当天");
+            }
+        }
+        PeopleMedicationIntake existing = findSlotIntake(med, day, slot, slots);
         if (existing == null) {
             PeopleMedicationIntake row = new PeopleMedicationIntake();
-            row.setTenantId(tenantId);
-            row.setPeopleId(peopleId);
-            row.setMedicationId(medicationId);
-            row.setIntakeDate(cmd.intakeDate());
+            row.setTenantId(med.getTenantId());
+            row.setPeopleId(med.getPeopleId());
+            row.setMedicationId(med.getId());
+            row.setIntakeDate(day);
             row.setTimeSlot(slot);
+            row.setDoseSeq(1);
             row.setStatus(status);
+            row.setTakenAt(takenAt);
+            row.setBackfill(backfill ? 1 : 0);
             row.setNote(trimToNull(cmd.note(), 200));
             row.setRecordedByStaffId(null);
             EntityMeta.onCreate(row);
@@ -111,10 +180,82 @@ public class MedicationService {
             return toIntakeView(row, med.getDrugName());
         }
         existing.setStatus(status);
+        existing.setTakenAt(takenAt);
+        existing.setBackfill(backfill ? 1 : 0);
         existing.setNote(trimToNull(cmd.note(), 200));
+        existing.setRecordedByStaffId(null);
         EntityMeta.onUpdate(existing);
         intakeMapper.update(existing);
         return toIntakeView(existing, med.getDrugName());
+    }
+
+    /** 时段打卡行；兼容单时段药历史写在 OTHER 槽的记录（顺手迁到正确时段）。 */
+    private PeopleMedicationIntake findSlotIntake(PeopleMedication med, LocalDate day, String slot, List<String> slots) {
+        PeopleMedicationIntake row = intakeMapper.findByMedDateSlot(med.getId(), day, slot);
+        if (row != null || slots.size() != 1) {
+            return row;
+        }
+        PeopleMedicationIntake legacy = intakeMapper.findByMedDateSlot(med.getId(), day, MedicationSlotRules.OTHER);
+        if (legacy != null) {
+            intakeMapper.updateSlot(legacy.getId(), slot);
+            legacy.setTimeSlot(slot);
+        }
+        return legacy;
+    }
+
+    /** C 端：需要时服用的药记录一次。 */
+    @Transactional
+    public MedicationIntakeViewDto addPrnDoseByPatient(
+            String tenantId, String peopleId, String medicationId, LocalDate date, LocalDateTime takenAt) {
+        archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        PeopleMedication med = requireOwned(tenantId, peopleId, medicationId);
+        if (!MedicationSlotRules.isPrn(med)) {
+            throw new BusinessException("该药为定时服用，请按时段打卡");
+        }
+        LocalDate day = date != null ? date : MedicationScheduleService.today();
+        if (!MedicationScheduleService.isEditableDay(day)) {
+            throw new BusinessException("只能记录今天和昨天的服药");
+        }
+        String slot = MedicationSlotRules.PRN;
+        if (intakeMapper.countByMedDateSlot(medicationId, day, slot) >= MedicationScheduleService.PRN_DAILY_MAX) {
+            throw new BusinessException("今日已记录 " + MedicationScheduleService.PRN_DAILY_MAX + " 次，如仍需服用请先咨询健管师");
+        }
+        boolean backfill = day.isBefore(MedicationScheduleService.today());
+        LocalDateTime at = takenAt != null ? takenAt : (backfill ? null : LocalDateTime.now(JobCronSupport.ZONE));
+        if (at != null && !at.toLocalDate().equals(day)) {
+            throw new BusinessException("服药时间需在当天");
+        }
+        PeopleMedicationIntake row = new PeopleMedicationIntake();
+        row.setTenantId(tenantId);
+        row.setPeopleId(peopleId);
+        row.setMedicationId(medicationId);
+        row.setIntakeDate(day);
+        row.setTimeSlot(slot);
+        row.setDoseSeq(intakeMapper.maxDoseSeq(medicationId, day, slot) + 1);
+        row.setStatus(MedicationIntakeStatusEnum.TAKEN.name());
+        row.setTakenAt(at);
+        row.setBackfill(backfill ? 1 : 0);
+        EntityMeta.onCreate(row);
+        intakeMapper.insert(row);
+        return toIntakeView(row, med.getDrugName());
+    }
+
+    /** C 端：撤销一次打卡（今天或昨天）。 */
+    @Transactional
+    public void deleteIntakeByPatient(String tenantId, String peopleId, String medicationId, String intakeId) {
+        archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        requireOwned(tenantId, peopleId, medicationId);
+        PeopleMedicationIntake row = intakeMapper.findById(intakeId);
+        if (row == null || !medicationId.equals(row.getMedicationId())) {
+            throw new BusinessException(404, "服药记录不存在");
+        }
+        if (!MedicationScheduleService.isEditableDay(row.getIntakeDate())) {
+            throw new BusinessException("只能撤销今天和昨天的记录");
+        }
+        if (StringUtils.hasText(row.getRecordedByStaffId())) {
+            throw new BusinessException("健管师代录的记录不能撤销");
+        }
+        intakeMapper.softDelete(intakeId);
     }
 
     @Transactional
@@ -134,6 +275,7 @@ public class MedicationService {
             MedicationCommand cmd,
             String source,
             String prescriptionGroupId) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         validateCommand(cmd);
         PeopleMedication row = new PeopleMedication();
@@ -144,6 +286,7 @@ public class MedicationService {
         row.setSource(resolveSource(source));
         applyCommand(row, cmd);
         row.setStatus(resolveStatus(row.getStopDate(), cmd.status()));
+        row.setAllergyConflict(conflictOf(row));
         row.setCreatedByStaffId(staffId);
         row.setUpdatedByStaffId(staffId);
         EntityMeta.onCreate(row);
@@ -164,10 +307,36 @@ public class MedicationService {
         return toView(row);
     }
 
-    /** C 端：患者自助添加用药。 */
+    /** C 端：患者自助添加用药（待医护核对；命中药物过敏时提醒并通知健管师）。 */
     @Transactional
     public MedicationViewDto createByPatient(String tenantId, String peopleId, MedicationCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        PeopleMedication row = insertPatientMedication(tenantId, peopleId, cmd);
+        syncVerifyTask(tenantId, peopleId);
+        return toView(row);
+    }
+
+    /** C 端：拍照识别确认后批量添加。 */
+    @Transactional
+    public List<MedicationViewDto> createBatchByPatient(String tenantId, String peopleId, List<MedicationCommand> items) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
+        archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        if (items == null || items.isEmpty()) {
+            throw new BusinessException("药品不能为空");
+        }
+        if (items.size() > 10) {
+            throw new BusinessException("一次最多添加 10 种药");
+        }
+        List<MedicationViewDto> out = new ArrayList<>();
+        for (MedicationCommand item : items) {
+            out.add(toView(insertPatientMedication(tenantId, peopleId, item)));
+        }
+        syncVerifyTask(tenantId, peopleId);
+        return out;
+    }
+
+    private PeopleMedication insertPatientMedication(String tenantId, String peopleId, MedicationCommand cmd) {
         validateCommand(cmd);
         PeopleMedication row = new PeopleMedication();
         row.setTenantId(tenantId);
@@ -177,11 +346,11 @@ public class MedicationService {
         row.setSource(MedicationSourceEnum.PATIENT.name());
         applyCommand(row, cmd);
         row.setStatus(resolveStatus(row.getStopDate(), cmd.status()));
+        row.setAllergyConflict(conflictOf(row));
         row.setCreatedByStaffId(null);
         row.setUpdatedByStaffId(null);
         EntityMeta.onCreate(row);
         medicationMapper.insert(row);
-        String snapshot = toRevisionJson(row);
         fieldRevisionService.recordIfChanged(
                 tenantId,
                 peopleId,
@@ -193,20 +362,37 @@ public class MedicationService {
                 1,
                 null,
                 "{}",
-                snapshot);
-        return toView(row);
+                toRevisionJson(row));
+        reportAllergyConflict(row, null);
+        return row;
     }
 
-    /** C 端：患者修改本人用药。 */
+    /**
+     * C 端：患者修改本人用药。自添加药可改全部字段；医护开立药只改时段、服药时机与备注。
+     */
     @Transactional
     public MedicationViewDto updateByPatient(
             String tenantId, String peopleId, String medicationId, MedicationCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
-        validateCommand(cmd);
         PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
         String oldJson = toRevisionJson(row);
-        applyCommand(row, cmd);
-        row.setStatus(resolveStatus(row.getStopDate(), cmd.status()));
+        String oldConflict = row.getAllergyConflict();
+        if (isPatientOwned(row)) {
+            validateCommand(cmd);
+            boolean adverse = Integer.valueOf(1).equals(row.getHasAdverseReaction());
+            applyCommand(row, cmd);
+            if (adverse) {
+                row.setHasAdverseReaction(1);
+            }
+            row.setStatus(resolveStatus(row.getStopDate(), cmd.status()));
+            row.setAllergyConflict(conflictOf(row));
+        } else {
+            if (cmd == null) {
+                throw new BusinessException("参数不能为空");
+            }
+            applySchedulingFields(row, cmd);
+        }
         row.setUpdatedByStaffId(null);
         EntityMeta.onUpdate(row);
         medicationMapper.update(row);
@@ -222,6 +408,93 @@ public class MedicationService {
                 null,
                 oldJson,
                 toRevisionJson(row));
+        reportAllergyConflict(row, oldConflict);
+        syncVerifyTask(tenantId, peopleId);
+        return toView(row);
+    }
+
+    /** C 端：删除自添加药；医护开立药只能「我已停药」。 */
+    @Transactional
+    public void deleteByPatient(String tenantId, String peopleId, String medicationId) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
+        archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
+        if (!isPatientOwned(row)) {
+            throw new BusinessException(403, "医护开立的药不能删除，如已停药请点「我已停药」");
+        }
+        String snapshot = toRevisionJson(row);
+        medicationMapper.softDelete(medicationId, null);
+        fieldRevisionService.recordDeleted(
+                tenantId,
+                peopleId,
+                OPERATOR_PEOPLE,
+                peopleId,
+                RevisionBizTypeEnum.MEDICATION.name(),
+                medicationId,
+                null,
+                snapshot);
+        syncVerifyTask(tenantId, peopleId);
+    }
+
+    /** C 端：我已停药。立即停用并停止提醒，通知健管师。 */
+    @Transactional
+    public MedicationViewDto stopByPatient(
+            String tenantId, String peopleId, String medicationId, String reason, String note) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
+        archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
+        if (MedicationStatusEnum.STOPPED.name().equals(row.getStatus())) {
+            throw new BusinessException("该药已停用");
+        }
+        MedicationStopReasonEnum stopReason;
+        try {
+            stopReason = MedicationStopReasonEnum.valueOf(reason.trim().toUpperCase());
+        } catch (Exception e) {
+            throw new BusinessException("请选择停药原因");
+        }
+        String text = trimToNull(note, 200);
+        String oldJson = toRevisionJson(row);
+        LocalDate today = MedicationScheduleService.today();
+        row.setStatus(MedicationStatusEnum.STOPPED.name());
+        row.setStopDate(row.getStartDate() != null && row.getStartDate().isAfter(today) ? row.getStartDate() : today);
+        row.setStopReason(stopReason.name());
+        row.setUpdatedByStaffId(null);
+        EntityMeta.onUpdate(row);
+        medicationMapper.update(row);
+        fieldRevisionService.recordIfChanged(
+                tenantId,
+                peopleId,
+                OPERATOR_PEOPLE,
+                peopleId,
+                RevisionBizTypeEnum.MEDICATION.name(),
+                medicationId,
+                1,
+                1,
+                null,
+                oldJson,
+                toRevisionJson(row));
+        String content = "原因：" + stopReason.label() + (text == null ? "" : "；" + text);
+        feedbackService.record(row, MedicationFeedbackKindEnum.STOPPED, null, null, content);
+        syncVerifyTask(tenantId, peopleId);
+        return toView(row);
+    }
+
+    /** B 端：核对患者自添加的药。 */
+    @Transactional
+    public MedicationViewDto verify(String tenantId, String orgId, String peopleId, String staffId, String medicationId) {
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
+        if (!isPatientOwned(row)) {
+            throw new BusinessException("仅患者自添加的药需要核对");
+        }
+        if (row.getVerifiedAt() == null) {
+            row.setVerifiedAt(LocalDateTime.now(JobCronSupport.ZONE));
+            row.setVerifiedByStaffId(staffId);
+            row.setUpdatedByStaffId(staffId);
+            EntityMeta.onUpdate(row);
+            medicationMapper.update(row);
+        }
+        syncVerifyTask(tenantId, peopleId);
         return toView(row);
     }
 
@@ -233,6 +506,7 @@ public class MedicationService {
             String peopleId,
             String staffId,
             List<MedicationCommand> items) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         if (items == null || items.isEmpty()) {
             throw new BusinessException("药品不能为空");
         }
@@ -259,12 +533,17 @@ public class MedicationService {
             String staffId,
             String medicationId,
             MedicationCommand cmd) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         validateCommand(cmd);
         PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
         String oldJson = toRevisionJson(row);
         applyCommand(row, cmd);
         row.setStatus(resolveStatus(row.getStopDate(), cmd.status()));
+        if (MedicationStatusEnum.ACTIVE.name().equals(row.getStatus())) {
+            row.setStopReason(null);
+        }
+        row.setAllergyConflict(conflictOf(row));
         row.setUpdatedByStaffId(staffId);
         EntityMeta.onUpdate(row);
         medicationMapper.update(row);
@@ -280,11 +559,15 @@ public class MedicationService {
                 orgId,
                 oldJson,
                 toRevisionJson(row));
+        if (isPatientOwned(row)) {
+            syncVerifyTask(tenantId, peopleId);
+        }
         return toView(row);
     }
 
     @Transactional
     public void delete(String tenantId, String orgId, String peopleId, String staffId, String medicationId) {
+        assessmentDirtyMarker.mark(tenantId, peopleId);
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
         String snapshot = toRevisionJson(row);
@@ -298,6 +581,9 @@ public class MedicationService {
                 medicationId,
                 orgId,
                 snapshot);
+        if (isPatientOwned(row)) {
+            syncVerifyTask(tenantId, peopleId);
+        }
     }
 
     public List<MedicationIntakeViewDto> listIntakes(
@@ -317,7 +603,7 @@ public class MedicationService {
     public List<MedicationIntakeViewDto> listIntakesByDate(
             String tenantId, String orgId, String peopleId, LocalDate intakeDate) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
-        LocalDate day = intakeDate != null ? intakeDate : LocalDate.now();
+        LocalDate day = intakeDate != null ? intakeDate : MedicationScheduleService.today();
         List<PeopleMedicationIntake> rows = intakeMapper.listByPeopleDate(tenantId, peopleId, day);
         List<MedicationIntakeViewDto> out = new ArrayList<>();
         for (PeopleMedicationIntake row : rows) {
@@ -327,7 +613,7 @@ public class MedicationService {
         return out;
     }
 
-    /** 记录或更新某日某时段依从性（幂等 upsert）。 */
+    /** 记录或更新某日某时段依从性（幂等 upsert，健管师代录）。 */
     @Transactional
     public MedicationIntakeViewDto upsertIntake(
             String tenantId,
@@ -343,6 +629,7 @@ public class MedicationService {
         }
         String slot = resolveTimeSlot(cmd.timeSlot());
         String status = resolveIntakeStatus(cmd.status());
+        LocalDateTime takenAt = MedicationIntakeStatusEnum.TAKEN.name().equals(status) ? cmd.takenAt() : null;
         PeopleMedicationIntake existing =
                 intakeMapper.findByMedDateSlot(medicationId, cmd.intakeDate(), slot);
         if (existing == null) {
@@ -352,7 +639,10 @@ public class MedicationService {
             row.setMedicationId(medicationId);
             row.setIntakeDate(cmd.intakeDate());
             row.setTimeSlot(slot);
+            row.setDoseSeq(1);
             row.setStatus(status);
+            row.setTakenAt(takenAt);
+            row.setBackfill(0);
             row.setNote(trimToNull(cmd.note(), 200));
             row.setRecordedByStaffId(staffId);
             EntityMeta.onCreate(row);
@@ -373,6 +663,10 @@ public class MedicationService {
         }
         String oldJson = toIntakeRevisionJson(existing, med.getDrugName());
         existing.setStatus(status);
+        existing.setTakenAt(takenAt != null ? takenAt : existing.getTakenAt());
+        if (!MedicationIntakeStatusEnum.TAKEN.name().equals(status)) {
+            existing.setTakenAt(null);
+        }
         existing.setNote(trimToNull(cmd.note(), 200));
         existing.setRecordedByStaffId(staffId);
         EntityMeta.onUpdate(existing);
@@ -392,6 +686,36 @@ public class MedicationService {
         return toIntakeView(existing, med.getDrugName());
     }
 
+    /** 保存时比对药物过敏；新出现的冲突写反馈并开 HIGH 任务。 */
+    private void reportAllergyConflict(PeopleMedication row, String previousConflict) {
+        String conflict = row.getAllergyConflict();
+        if (!StringUtils.hasText(conflict) || Objects.equals(conflict, previousConflict)) {
+            return;
+        }
+        feedbackService.record(
+                row, MedicationFeedbackKindEnum.ALLERGY_CONFLICT, null, null, "档案过敏：" + conflict);
+    }
+
+    private String conflictOf(PeopleMedication row) {
+        List<String> hits = allergyGuard.check(row.getPeopleId(), row.getDrugCode(), row.getDrugName());
+        if (hits.isEmpty()) {
+            return null;
+        }
+        String joined = String.join("、", hits);
+        return joined.length() > 250 ? joined.substring(0, 250) : joined;
+    }
+
+    private void syncVerifyTask(String tenantId, String peopleId) {
+        List<String> names = medicationMapper.listPendingVerify(tenantId, peopleId).stream()
+                .map(PeopleMedication::getDrugName)
+                .toList();
+        workspaceTaskGenerator.syncMedicationVerify(tenantId, peopleId, names);
+    }
+
+    private static boolean isPatientOwned(PeopleMedication row) {
+        return MedicationSourceEnum.PATIENT.name().equals(row.getSource());
+    }
+
     private static String toRevisionJson(PeopleMedication row) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("drugName", row.getDrugName());
@@ -403,9 +727,11 @@ public class MedicationService {
         m.put("stopDate", row.getStopDate() == null ? null : row.getStopDate().toString());
         m.put("timingNote", row.getTimingNote());
         m.put("courseDays", row.getCourseDays());
+        m.put("slots", row.getSlotsJson());
         m.put("hasAdverseReaction", row.getHasAdverseReaction() != null && row.getHasAdverseReaction() == 1);
         m.put("remark", row.getRemark());
         m.put("status", row.getStatus());
+        m.put("stopReason", row.getStopReason());
         m.put("source", row.getSource());
         return JsonUtils.toJson(m);
     }
@@ -448,13 +774,15 @@ public class MedicationService {
 
     private void applyCommand(PeopleMedication row, MedicationCommand cmd) {
         row.setDrugName(cmd.drugName().trim());
+        if (cmd.drugCode() != null) {
+            row.setDrugCode(trimToNull(cmd.drugCode(), 64));
+        }
         row.setUsageMethod(cmd.usageMethod().trim());
         row.setFrequency(trimToNull(cmd.frequency(), 128));
         row.setDoseAmount(trimToNull(cmd.doseAmount(), 32));
         row.setDoseUnit(trimToNull(cmd.doseUnit(), 32));
         row.setStartDate(cmd.startDate());
         row.setStopDate(cmd.stopDate());
-        row.setTimingNote(trimToNull(cmd.timingNote(), 128));
         row.setCourseDays(cmd.courseDays());
         // 固定疗程未显式给停药日时，按开始日 + 疗程推算结束日（含首尾）
         if (row.getStopDate() == null
@@ -469,7 +797,16 @@ public class MedicationService {
         row.setTimeEvening(null);
         row.setTimeBedtime(null);
         row.setHasAdverseReaction(Boolean.TRUE.equals(cmd.hasAdverseReaction()) ? 1 : 0);
+        applySchedulingFields(row, cmd);
+    }
+
+    /** 作息相关字段：时段、服药时机、备注（患者对医护开立药也可改）。 */
+    private void applySchedulingFields(PeopleMedication row, MedicationCommand cmd) {
+        row.setTimingNote(trimToNull(cmd.timingNote(), 128));
         row.setRemark(trimToNull(cmd.remark(), 150));
+        if (cmd.slots() != null) {
+            row.setSlotsJson(MedicationSlotRules.isPrn(row) ? null : MedicationSlotRules.toJson(cmd.slots()));
+        }
     }
 
     private String resolveSource(String source) {
@@ -488,7 +825,7 @@ public class MedicationService {
      * 显式传入 STOPPED 始终尊重；显式 ACTIVE 若已过结束日则仍落为 STOPPED。
      */
     private String resolveStatus(LocalDate stopDate, String status) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = MedicationScheduleService.today();
         if (stopDate != null && stopDate.isBefore(today)) {
             return MedicationStatusEnum.STOPPED.name();
         }
@@ -504,16 +841,7 @@ public class MedicationService {
 
     /** 用药结束日：优先 stopDate；否则 startDate + courseDays - 1。 */
     public static LocalDate resolveEndDate(PeopleMedication row) {
-        if (row == null) {
-            return null;
-        }
-        if (row.getStopDate() != null) {
-            return row.getStopDate();
-        }
-        if (row.getCourseDays() != null && row.getCourseDays() > 0 && row.getStartDate() != null) {
-            return row.getStartDate().plusDays(row.getCourseDays() - 1L);
-        }
-        return null;
+        return row == null ? null : MedicationSlotRules.endDateOf(row);
     }
 
     /** 是否已过用药结束日（结束日当天仍有效）。 */
@@ -527,7 +855,7 @@ public class MedicationService {
         if (row == null || !MedicationStatusEnum.ACTIVE.name().equals(row.getStatus())) {
             return;
         }
-        if (!isPastEndDate(row, LocalDate.now())) {
+        if (!isPastEndDate(row, MedicationScheduleService.today())) {
             return;
         }
         row.setStatus(MedicationStatusEnum.STOPPED.name());
@@ -563,6 +891,7 @@ public class MedicationService {
         dto.setPeopleId(row.getPeopleId());
         dto.setPrescriptionGroupId(row.getPrescriptionGroupId());
         dto.setSource(row.getSource());
+        dto.setDrugCode(row.getDrugCode());
         dto.setDrugName(row.getDrugName());
         dto.setUsageMethod(row.getUsageMethod());
         dto.setFrequency(row.getFrequency());
@@ -575,9 +904,15 @@ public class MedicationService {
         dto.setHasAdverseReaction(row.getHasAdverseReaction() != null && row.getHasAdverseReaction() == 1);
         dto.setRemark(row.getRemark());
         dto.setStatus(row.getStatus());
-        dto.setPrn(MedicationFrequencySupport.isPrn(row.getFrequency()));
-        dto.setDueDoseCount(MedicationFrequencySupport.dosesPerDay(row.getFrequency()));
-        dto.setSuggestedSlots(MedicationFrequencySupport.suggestedSlots(row.getFrequency()));
+        dto.setPrn(MedicationSlotRules.isPrn(row));
+        dto.setDueDoseCount(MedicationSlotRules.dueCount(row));
+        dto.setSuggestedSlots(MedicationSlotRules.slotsOf(row));
+        dto.setSlotsCustom(!MedicationSlotRules.parseSlots(row.getSlotsJson()).isEmpty());
+        dto.setPatientEditable(isPatientOwned(row));
+        dto.setVerified(isPatientOwned(row) ? row.getVerifiedAt() != null : null);
+        dto.setVerifiedAt(row.getVerifiedAt());
+        dto.setAllergyConflict(row.getAllergyConflict());
+        dto.setStopReason(row.getStopReason());
         dto.setGmtCreated(row.getGmtCreated());
         dto.setGmtModified(row.getGmtModified());
         return dto;
@@ -590,7 +925,10 @@ public class MedicationService {
         dto.setDrugName(drugName);
         dto.setIntakeDate(row.getIntakeDate());
         dto.setTimeSlot(row.getTimeSlot());
+        dto.setDoseSeq(row.getDoseSeq());
         dto.setStatus(row.getStatus());
+        dto.setTakenAt(row.getTakenAt());
+        dto.setBackfill(Integer.valueOf(1).equals(row.getBackfill()));
         dto.setNote(row.getNote());
         dto.setGmtCreated(row.getGmtCreated());
         return dto;
@@ -623,7 +961,34 @@ public class MedicationService {
             Integer courseDays,
             Boolean hasAdverseReaction,
             String remark,
-            String status) {}
+            String status,
+            String drugCode,
+            /** 指定服药时段；null=不改，空列表=恢复按频次推导 */
+            List<String> slots) {
 
-    public record IntakeCommand(LocalDate intakeDate, String timeSlot, String status, String note) {}
+        public MedicationCommand(
+                String drugName,
+                String usageMethod,
+                String frequency,
+                String doseAmount,
+                String doseUnit,
+                LocalDate startDate,
+                LocalDate stopDate,
+                String timingNote,
+                Integer courseDays,
+                Boolean hasAdverseReaction,
+                String remark,
+                String status) {
+            this(drugName, usageMethod, frequency, doseAmount, doseUnit, startDate, stopDate, timingNote,
+                    courseDays, hasAdverseReaction, remark, status, null, null);
+        }
+    }
+
+    public record IntakeCommand(
+            LocalDate intakeDate, String timeSlot, String status, String note, LocalDateTime takenAt) {
+
+        public IntakeCommand(LocalDate intakeDate, String timeSlot, String status, String note) {
+            this(intakeDate, timeSlot, status, note, null);
+        }
+    }
 }
