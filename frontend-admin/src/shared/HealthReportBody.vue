@@ -21,6 +21,7 @@ import {
   templateTierLabel,
 } from './health-report-labels'
 import { lifestyleSections } from './report-lifestyle'
+import { dietChartHtml, exerciseChartHtml } from './report-print-charts'
 import { reportRewards } from './rewards'
 import {
   compareRate,
@@ -131,6 +132,8 @@ const metrics = computed(() => metricViews(content.value))
 const lifestyle = computed(() => lifestyleSections(content.value))
 const diet = computed(() => dietExtras(content.value))
 const exercise = computed(() => exerciseExtras(content.value))
+const dietChart = computed(() => dietChartHtml(content.value))
+const exerciseChart = computed(() => exerciseChartHtml(content.value))
 const observations = computed(() => observationViews(content.value))
 
 const followups = computed(() => {
@@ -614,6 +617,7 @@ onBeforeUnmount(() => disposeCharts())
           </div>
         </div>
         <template v-if="sec.key === 'diet'">
+          <div v-if="dietChart" class="chart-fig" v-html="dietChart" />
           <div v-if="diet.macros.length" class="sub-block">
             <div class="sub-title">三大营养素供能比<span class="sub-hint">实际 / 目标</span></div>
             <div v-for="r in diet.macros" :key="r.label" class="macro">
@@ -649,14 +653,7 @@ onBeforeUnmount(() => disposeCharts())
               <span v-for="t in exercise.types" :key="t.label" class="chip">{{ t.label }}</span>
             </div>
           </div>
-          <div v-if="exercise.weekly.length" class="sub-block">
-            <div class="sub-title">每周活动<span v-if="exercise.metText" class="sub-hint">{{ exercise.metText }}</span></div>
-            <div class="chips">
-              <span v-for="w in exercise.weekly" :key="w.label" class="chip" :class="{ 'chip--warn': w.met === false }">
-                {{ w.label }} <b>{{ w.display }}</b>
-              </span>
-            </div>
-          </div>
+          <div v-if="exerciseChart" class="chart-fig" v-html="exerciseChart" />
         </template>
       </template>
     </section>
@@ -1274,6 +1271,20 @@ onBeforeUnmount(() => disposeCharts())
 }
 .chart--sm {
   height: 200px;
+}
+.chart-fig {
+  margin-top: 12px;
+}
+.chart-fig :deep(.chart-cap) {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.chart-fig :deep(svg) {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .metric + .metric {

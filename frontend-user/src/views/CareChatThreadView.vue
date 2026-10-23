@@ -53,8 +53,12 @@ function formatTime(iso?: string) {
 
 async function scrollBottom() {
   await nextTick()
-  const el = listRef.value
-  if (el) el.scrollTop = el.scrollHeight
+  const pin = () => {
+    const el = listRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  }
+  pin()
+  requestAnimationFrame(pin)
 }
 
 async function markRead() {
@@ -74,12 +78,12 @@ async function load() {
     session.value = res.data
     messages.value = [...(res.data.messages || [])]
     await markRead()
-    await scrollBottom()
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
   } finally {
     loading.value = false
   }
+  await scrollBottom()
 }
 
 async function pollNew() {
@@ -200,9 +204,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--hx-bg, var(--hx-n-50));
 }
 .people {
@@ -217,8 +223,10 @@ onBeforeUnmount(() => {
 }
 .list {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 12px 16px 100px;
+  padding: 12px 16px 16px;
+  -webkit-overflow-scrolling: touch;
 }
 .row {
   display: flex;
@@ -253,8 +261,7 @@ onBeforeUnmount(() => {
   line-height: 1.45;
 }
 .composer {
-  position: sticky;
-  bottom: 0;
+  flex: none;
   display: flex;
   gap: 8px;
   align-items: flex-end;

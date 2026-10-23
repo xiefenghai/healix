@@ -64,6 +64,7 @@ public class BAdherenceController {
             @RequestParam(required = false) String risk,
             @RequestParam(required = false) String filter,
             @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Boolean unassigned,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ApiResult.ok(adherenceQueryService.pagePatients(
@@ -74,6 +75,7 @@ public class BAdherenceController {
                 risk,
                 filter,
                 keyword,
+                unassigned,
                 page,
                 size));
     }

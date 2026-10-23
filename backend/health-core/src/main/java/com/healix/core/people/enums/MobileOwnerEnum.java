@@ -34,4 +34,12 @@ public enum MobileOwnerEnum {
             throw new BusinessException(400, "号码归属不正确");
         }
     }
+
+    /** 新建时必须显式选择归属。 */
+    public static String require(String value) {
+        if (!StringUtils.hasText(value)) {
+            throw new BusinessException(400, "请选择号码归属");
+        }
+        return normalize(value);
+    }
 }

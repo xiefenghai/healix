@@ -63,7 +63,10 @@ const detailVisible = ref(false)
 const detailRow = ref<LabReport | null>(null)
 const ocrLoading = ref(false)
 const ocrHint = ref('')
+const ocrTimesBlocked = ref(false)
+const LAB_TIME_BLOCK_MESSAGE = '未识别出采样时间或报告时间，不能入库'
 const saveSource = ref<'STAFF' | 'STAFF_OCR'>('STAFF')
+const ocrImageKey = ref('')
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const form = reactive({
   specimenType: 'BLOOD' as 'BLOOD' | 'URINE',
@@ -249,6 +252,7 @@ function backToBrowse() {
   mode.value = 'list'
   editingId.value = null
   saveSource.value = 'STAFF'
+  ocrTimesBlocked.value = false
   ocrHint.value = ''
 }
 
@@ -419,6 +423,7 @@ function editFromDetail() {
 function openCreate() {
   editingId.value = null
   saveSource.value = 'STAFF'
+  ocrTimesBlocked.value = false
   ocrHint.value = ''
   form.sampledAt = nowLocalInput()
   form.reportedAt = nowLocalInput()
@@ -431,8 +436,10 @@ function openCreate() {
 function applyOcrDraft(draft: LabOcrDraft) {
   editingId.value = null
   saveSource.value = 'STAFF_OCR'
-  form.sampledAt = draft.sampledAt ? draft.sampledAt.slice(0, 16) : nowLocalInput()
-  form.reportedAt = draft.reportedAt ? draft.reportedAt.slice(0, 16) : nowLocalInput()
+  ocrImageKey.value = draft.imageKey || ''
+  ocrTimesBlocked.value = !draft.sampledAt || !draft.reportedAt
+  form.sampledAt = draft.sampledAt ? draft.sampledAt.slice(0, 16) : ''
+  form.reportedAt = draft.reportedAt ? draft.reportedAt.slice(0, 16) : ''
   form.note = draft.note || ''
   if (draft.specimenType === 'BLOOD' || draft.specimenType === 'URINE') {
     form.specimenType = draft.specimenType
@@ -459,7 +466,9 @@ function applyOcrDraft(draft: LabOcrDraft) {
     ? `已忽略 ${draft.ignoredItems.length} 项未映射项目`
     : ''
   const warn = draft.warnings?.length ? draft.warnings.join('；') : ''
-  ocrHint.value = [ignored, warn, '识别结果仅供参考，请核对后保存'].filter(Boolean).join('；')
+  ocrHint.value = ocrTimesBlocked.value
+    ? LAB_TIME_BLOCK_MESSAGE
+    : [ignored, warn, '识别结果仅供参考，请核对后保存'].filter(Boolean).join('；')
   mode.value = 'edit'
 }
 
@@ -517,6 +526,8 @@ function tryOpenOcrDraft() {
 function openEdit(row: LabReport) {
   editingId.value = row.id
   saveSource.value = 'STAFF'
+  ocrTimesBlocked.value = false
+  ocrImageKey.value = ''
   ocrHint.value = ''
   form.specimenType = (row.specimenType as 'BLOOD' | 'URINE') || 'BLOOD'
   form.sampledAt = row.sampledAt ? row.sampledAt.slice(0, 16) : ''
@@ -589,6 +600,10 @@ async function saveQuick() {
 }
 
 async function save() {
+  if (ocrTimesBlocked.value) {
+    ElMessage.warning(LAB_TIME_BLOCK_MESSAGE)
+    return
+  }
   const items = Object.values(form.itemsByCode)
     .filter((i) => isFilled(i))
     .map((i) => ({
@@ -613,6 +628,7 @@ async function save() {
       reportedAt: toApiDateTime(form.reportedAt),
       note: form.note || undefined,
       source: editingId.value ? undefined : saveSource.value,
+      imageKey: ocrImageKey.value || undefined,
       items,
     }
     if (editingId.value) {
@@ -978,14 +994,14 @@ onMounted(async () => {
         <div class="toolbar-right">
           <el-button :loading="ocrLoading" @click="openOcrPicker">拍照识别</el-button>
           <el-button @click="backToList">取消</el-button>
-          <el-button type="primary" :loading="saving" @click="save">保存报告</el-button>
+          <el-button type="primary" :loading="saving" :disabled="ocrTimesBlocked" @click="save">保存报告</el-button>
         </div>
       </div>
 
       <el-alert
         v-if="ocrHint"
         :title="ocrHint"
-        type="info"
+        :type="ocrTimesBlocked ? 'error' : 'info'"
         show-icon
         :closable="false"
         class="ocr-hint ai-tip"
@@ -999,6 +1015,7 @@ onMounted(async () => {
               type="datetime"
               value-format="YYYY-MM-DDTHH:mm"
               format="YYYY-MM-DD HH:mm"
+              :disabled="ocrTimesBlocked"
             />
           </el-form-item>
           <el-form-item label="报告时间">
@@ -1007,6 +1024,7 @@ onMounted(async () => {
               type="datetime"
               value-format="YYYY-MM-DDTHH:mm"
               format="YYYY-MM-DD HH:mm"
+              :disabled="ocrTimesBlocked"
             />
           </el-form-item>
           <el-form-item label="备注">

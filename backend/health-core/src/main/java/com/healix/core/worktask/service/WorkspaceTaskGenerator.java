@@ -21,17 +21,22 @@ import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.enums.MetricTypeEnum;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
+import com.healix.core.followup.catalog.FollowupRecordStatus;
 import com.healix.core.followup.catalog.FollowupRecordType;
+import com.healix.core.followup.catalog.FollowupType;
 import com.healix.core.followup.domain.FollowupRecord;
 import com.healix.core.followup.mapper.FollowupRecordMapper;
+import com.healix.core.followup.support.FollowupContentValidator;
 import com.healix.core.worktask.catalog.WorkspaceTaskCloseReason;
 import com.healix.core.worktask.catalog.WorkspaceTaskPriority;
 import com.healix.core.worktask.catalog.WorkspaceTaskStatus;
 import com.healix.core.worktask.catalog.WorkspaceTaskType;
 import com.healix.core.worktask.domain.WorkspaceTask;
 import com.healix.core.worktask.mapper.WorkspaceTaskMapper;
+import com.healix.core.worktask.support.InitialPlanGate;
 import com.healix.core.worktask.support.MetricAbnormalEvaluator;
 import com.healix.core.worktask.support.MetricAbnormalEvaluator.AbnormalHit;
+import com.healix.core.worktask.support.MetricEscalationRules;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -112,22 +117,36 @@ public class WorkspaceTaskGenerator {
                 }
                 continue;
             }
-            // 已入组但无 ACTIVE 方案即开单（不再要求入组次日）
+            // 已入组且无方案：首诊办结，或首诊/入组已超过随访时限，才开制定方案
             if (!hasActivePlan(tenantId, peopleId)) {
-                if (openIfAbsent(
-                        tenantId,
-                        orgId,
-                        peopleId,
-                        WorkspaceTaskType.PLAN_CREATE,
-                        peopleId,
-                        "JOB",
-                        scanDay,
-                        "入组后尚未发布管理方案",
-                        Map.of(
-                                "joinedAt",
-                                teamMember.getJoinedAt() == null ? null : teamMember.getJoinedAt().toString()),
-                        false)) {
-                    planOpened++;
+                FollowupRecord onboarding = findOnboarding(orgId, peopleId);
+                LocalDate joined = teamMember.getJoinedAt() == null
+                        ? (m.getJoinedAt() == null ? null : m.getJoinedAt().toLocalDate())
+                        : teamMember.getJoinedAt().toLocalDate();
+                String onboardingStatus = onboarding == null ? null : onboarding.getStatus();
+                LocalDate dueDay = onboarding == null || onboarding.getDueAt() == null
+                        ? null
+                        : onboarding.getDueAt().toLocalDate();
+                if (InitialPlanGate.ready(onboardingStatus, dueDay, joined, scanDay)) {
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("joinedAt", joined == null ? null : joined.toString());
+                    if (onboarding != null) {
+                        payload.put("onboardingFollowupId", onboarding.getId());
+                        payload.put("onboardingStatus", onboardingStatus);
+                    }
+                    if (openIfAbsent(
+                            tenantId,
+                            orgId,
+                            peopleId,
+                            WorkspaceTaskType.PLAN_CREATE,
+                            peopleId,
+                            "JOB",
+                            scanDay,
+                            InitialPlanGate.summary(onboardingStatus),
+                            payload,
+                            false)) {
+                        planOpened++;
+                    }
                 }
             } else {
                 LocalDate horizonEnd = activePlanHorizonEnd(tenantId, peopleId);
@@ -171,6 +190,31 @@ public class WorkspaceTaskGenerator {
         }
         return "方案 " + daysLeft + " 天后到期（" + horizonEnd.getMonthValue() + "月" + horizonEnd.getDayOfMonth()
                 + "日），请复评更新";
+    }
+
+    /**
+     * 加入机构且尚未进入健管组：立刻开分配健管组（公共池）。已在组内则不开。
+     * 凌晨扫描仍会补开当场失败的单。
+     */
+    @Transactional
+    public void ensureTeamAssignOnJoin(String tenantId, String orgId, String peopleId) {
+        if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(orgId) || !StringUtils.hasText(peopleId)) {
+            return;
+        }
+        if (careTeamMemberMapper.findPeopleInOrg(orgId, peopleId) != null) {
+            return;
+        }
+        openIfAbsent(
+                tenantId,
+                orgId,
+                peopleId,
+                WorkspaceTaskType.TEAM_ASSIGN,
+                peopleId,
+                "EVENT",
+                LocalDate.now(JobCronSupport.ZONE),
+                "尚未加入健管组",
+                Map.of(),
+                true);
     }
 
     @Transactional
@@ -299,6 +343,41 @@ public class WorkspaceTaskGenerator {
                 "FOLLOWUP",
                 LocalDate.now(JobCronSupport.ZONE),
                 "随访建议调整方案",
+                payload,
+                false);
+        open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);
+        return open == null ? null : open.getId();
+    }
+
+    /**
+     * 首诊办结后立刻开制定方案。已有生效方案或已有 OPEN 制定方案时不新开。
+     *
+     * @return 任务 id；不需要开单时为 null
+     */
+    @Transactional
+    public String ensurePlanCreateAfterOnboarding(
+            String tenantId, String orgId, String peopleId, String followupId) {
+        if (hasActivePlan(tenantId, peopleId)) {
+            return null;
+        }
+        WorkspaceTask open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);
+        if (open != null) {
+            return open.getId();
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (StringUtils.hasText(followupId)) {
+            payload.put("fromFollowupId", followupId);
+        }
+        payload.put("reason", "ONBOARDING_DONE");
+        openIfAbsent(
+                tenantId,
+                orgId,
+                peopleId,
+                WorkspaceTaskType.PLAN_CREATE,
+                peopleId,
+                "FOLLOWUP",
+                LocalDate.now(JobCronSupport.ZONE),
+                InitialPlanGate.summary("DONE"),
                 payload,
                 false);
         open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);
@@ -549,6 +628,7 @@ public class WorkspaceTaskGenerator {
         WorkspaceTask open = ensureSingleOpenMetricAlert(tenantId, orgId, peopleId);
         if (open != null) {
             appendHit(open, hit);
+            maybeEscalateMetric(open, MetricAbnormalEvaluator.extractHits(open.getPayloadJson()));
             return 2;
         }
         List<Map<String, Object>> hits = List.of(MetricAbnormalEvaluator.hitEntry(hit));
@@ -563,6 +643,13 @@ public class WorkspaceTaskGenerator {
                 MetricAbnormalEvaluator.buildSummary(hits),
                 MetricAbnormalEvaluator.aggregatePayload(new ArrayList<>(hits)),
                 false);
+        if (ok) {
+            WorkspaceTask created = taskMapper.findOpen(
+                    tenantId, orgId, WorkspaceTaskType.METRIC_ALERT.name(), peopleId);
+            if (created != null) {
+                maybeEscalateMetric(created, hits);
+            }
+        }
         return ok ? 1 : 0;
     }
 
@@ -656,6 +743,50 @@ public class WorkspaceTaskGenerator {
         open.setSummary(summary);
         open.setPayloadJson(payloadJson);
         return open;
+    }
+
+    /**
+     * 达升级条件时只抬高本张 METRIC_ALERT：摘要加前缀、payload 打标、优先级 HIGH。不另开随访。
+     */
+    private void maybeEscalateMetric(WorkspaceTask open, List<Map<String, Object>> hits) {
+        String reason = MetricEscalationRules.escalateReason(hits);
+        if (reason == null || open == null || !StringUtils.hasText(open.getId())) {
+            return;
+        }
+        String base = MetricAbnormalEvaluator.buildSummary(hits);
+        String summary = reason + " · " + base;
+        Map<String, Object> payload = new LinkedHashMap<>(MetricAbnormalEvaluator.aggregatePayload(hits));
+        payload.put("escalated", true);
+        payload.put("escalateReason", reason);
+        String payloadJson = JsonUtils.toJson(payload);
+        String priority = WorkspaceTaskPriority.HIGH.name();
+        taskMapper.updateAlertPresentation(open.getId(), summary, payloadJson, priority);
+        open.setSummary(summary);
+        open.setPayloadJson(payloadJson);
+        open.setPriority(priority);
+    }
+
+    private FollowupRecord findOnboarding(String orgId, String peopleId) {
+        List<FollowupRecord> rows =
+                followupRecordMapper.listByPeople(orgId, peopleId, FollowupRecordType.PERIODIC.name(), 50);
+        FollowupRecord open = null;
+        FollowupRecord cancelled = null;
+        for (FollowupRecord row : rows) {
+            Map<String, Object> content = JsonUtils.fromJson(row.getContentJson(), new TypeReference<>() {});
+            String type = content == null ? "" : FollowupContentValidator.str(content.get("followupType"));
+            if (!FollowupType.ONBOARDING.name().equals(type)) {
+                continue;
+            }
+            if (FollowupRecordStatus.DONE.matches(row.getStatus())) {
+                return row;
+            }
+            if (FollowupRecordStatus.OPEN.matches(row.getStatus()) && open == null) {
+                open = row;
+            } else if (FollowupRecordStatus.CANCELLED.matches(row.getStatus()) && cancelled == null) {
+                cancelled = row;
+            }
+        }
+        return open != null ? open : cancelled;
     }
 
     private void appendHit(WorkspaceTask open, AbnormalHit hit) {
@@ -1000,6 +1131,22 @@ public class WorkspaceTaskGenerator {
             return null;
         }
         return a.getPrimaryCareManagerStaffId();
+    }
+
+    /** 关联/改资料申请：有主管健管师就派给该人，否则进公共池。返回任务 id。 */
+    @Transactional
+    public String openPeopleRequestTask(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            WorkspaceTaskType type,
+            String bizKey,
+            String summary,
+            Map<String, Object> payload) {
+        LocalDate day = LocalDate.now(JobCronSupport.ZONE);
+        openIfAbsent(tenantId, orgId, peopleId, type, bizKey, "EVENT", day, summary, payload, false);
+        WorkspaceTask existing = taskMapper.findOpen(tenantId, orgId, type.name(), bizKey);
+        return existing == null ? null : existing.getId();
     }
 
     private String resolveOrgId(String tenantId, String orgId, String peopleId) {

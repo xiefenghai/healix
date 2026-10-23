@@ -74,9 +74,11 @@ interface MetricSlot {
   extra?: Record<string, unknown>
 }
 
+const TASK_PREVIEW = 6
 const route = useRoute()
 const router = useRouter()
 const peopleId = computed(() => String(route.params.peopleId || ''))
+const tasksOpen = ref(false)
 const loading = ref(false)
 const watching = ref(false)
 const nudging = ref(false)
@@ -107,6 +109,11 @@ const riskLabel = computed(() => {
   return ''
 })
 
+const openTasks = computed(() => focus.value?.openTasks || [])
+const visibleOpenTasks = computed(() =>
+  tasksOpen.value ? openTasks.value : openTasks.value.slice(0, TASK_PREVIEW),
+)
+
 function metricLabel(slot: MetricSlot) {
   const type = slot.metricType
   let base = type
@@ -133,6 +140,7 @@ function metricValue(slot: MetricSlot) {
 
 async function load() {
   loading.value = true
+  tasksOpen.value = false
   try {
     const [p, c, f, m] = await Promise.all([
       api<{ data: OrgPatientListItem }>(`/api/b/v1/patients/${peopleId.value}`),
@@ -416,10 +424,10 @@ onMounted(load)
         </button>
       </div>
 
-      <section v-if="focus?.openTasks?.length" class="tasks">
+      <section v-if="openTasks.length" class="tasks">
         <h3>未完成任务</h3>
         <article
-          v-for="t in focus.openTasks"
+          v-for="t in visibleOpenTasks"
           :key="t.id"
           class="task hx-row"
           @click="router.push(`/tasks/${t.id}`)"
@@ -432,6 +440,14 @@ onMounted(load)
             <p>{{ t.summary || t.taskTypeLabel }}</p>
           </div>
         </article>
+        <button
+          v-if="openTasks.length > TASK_PREVIEW"
+          type="button"
+          class="more-tasks"
+          @click="tasksOpen = !tasksOpen"
+        >
+          {{ tasksOpen ? '收起' : `查看全部 ${openTasks.length} 项` }}
+        </button>
       </section>
 
       <p class="hint hx-muted">档案编辑、OCR、组织管理请使用电脑端</p>
@@ -619,6 +635,18 @@ onMounted(load)
 .overdue {
   color: var(--hx-danger);
   font-size: 12px;
+  font-weight: 650;
+}
+.more-tasks {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  height: 36px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--hx-teal-deep);
+  font-size: 13px;
   font-weight: 650;
 }
 .hint {

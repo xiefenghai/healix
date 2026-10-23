@@ -38,6 +38,7 @@ const preview = ref('')
 const recognizing = ref(false)
 const saving = ref(false)
 const warnings = ref<string[]>([])
+const imageKey = ref('')
 const lines = ref<Line[]>([])
 let seq = 0
 
@@ -54,11 +55,12 @@ async function onFile(e: Event) {
   preview.value = URL.createObjectURL(file)
   recognizing.value = true
   try {
-    const res = await apiUpload<{ data: { items: OcrItem[]; warnings: string[] } }>(
+    const res = await apiUpload<{ data: { items: OcrItem[]; warnings: string[]; imageKey?: string } }>(
       '/api/c/v1/me/medications/ocr',
       await compressImage(file),
     )
     warnings.value = res.data.warnings || []
+    imageKey.value = res.data.imageKey || imageKey.value
     const next = (res.data.items || []).map(
       (it): Line => ({
         key: ++seq,
@@ -131,6 +133,7 @@ async function save() {
     await api('/api/c/v1/me/medications/batch', {
       method: 'POST',
       body: JSON.stringify({
+        imageKey: imageKey.value || undefined,
         items: items.map((l) => ({
           drugName: l.drugName.trim(),
           usageMethod: l.usageMethod,

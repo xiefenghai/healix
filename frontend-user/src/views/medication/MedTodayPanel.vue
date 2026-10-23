@@ -222,8 +222,8 @@ defineExpose({ reload: load })
           <div>
             <strong class="time">{{ slot.time }}</strong>
             <span class="slot-title">{{ MED_SLOT_TITLES[slot.slot] || slot.label }}</span>
-            <span v-if="!slot.pendingCount" class="slot-done">已完成</span>
-            <span v-else-if="slot.past" class="slot-late">{{ slot.pendingCount }} 种未记录</span>
+            <span v-if="slot.items.length && slot.items.every((i) => i.status === 'TAKEN')" class="slot-done">已完成</span>
+            <span v-else-if="slot.past && slot.pendingCount" class="slot-late">{{ slot.pendingCount }} 种未记录</span>
           </div>
           <van-button
             v-if="data.editable && slot.pendingCount > 0"
@@ -255,6 +255,16 @@ defineExpose({ reload: load })
           <span class="item-status" :class="[it.status?.toLowerCase(), { late: !it.status && slot.past }]">
             {{ statusText(slot, it) }}
           </span>
+          <van-button
+            v-if="data.editable && it.status === 'SKIPPED'"
+            round
+            size="small"
+            type="primary"
+            :loading="busy === `${slot.slot}|${it.medicationId}`"
+            @click="record(slot, it, 'TAKEN')"
+          >
+            改为已服
+          </van-button>
         </div>
       </section>
 
@@ -389,6 +399,9 @@ defineExpose({ reload: load })
 }
 .item:first-of-type {
   border-top: 0;
+}
+.item :deep(.van-button) {
+  flex: none;
 }
 .circle {
   flex: 0 0 28px;

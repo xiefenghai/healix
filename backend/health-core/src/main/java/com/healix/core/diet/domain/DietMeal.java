@@ -26,6 +26,8 @@ public class DietMeal extends BaseEntity {
     private String qualityLevel;
     private String flagsJson;
     private String note;
+    /** 原图对象键 JSON 数组 */
+    private String imageKeysJson;
     private String staffComment;
     private String commentStaffId;
     private LocalDateTime commentedAt;

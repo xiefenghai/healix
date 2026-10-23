@@ -25,6 +25,7 @@ public class MedicationViewDto {
     private Integer courseDays;
     private Boolean hasAdverseReaction;
     private String remark;
+    private String imageKey;
     private String status;
     /** 每日应服次数（= 定时时段数，PRN 为 0） */
     private int dueDoseCount;

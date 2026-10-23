@@ -8,6 +8,8 @@ import {
 } from './exam-panels'
 import {
   formatOcrDt,
+  LAB_TIME_BLOCK_MESSAGE,
+  labOcrUploadBlocked,
   MED_DOSE_UNIT_FALLBACK,
   MED_FREQUENCY_FALLBACK,
   MED_TIMING_PRESETS,
@@ -31,6 +33,9 @@ const medDoseUnitOptions = ref<MedDictOption[]>([...MED_DOSE_UNIT_FALLBACK])
 
 const editable = computed(() => props.review.status === 'pending')
 const saving = computed(() => props.review.status === 'saving')
+/** 图片本身没识别出时间：不能改时间、不能入库。 */
+const labTimeBlocked = computed(() => props.review.kind === 'LAB' && props.review.labTimesReady === false)
+const labUploadBlocked = computed(() => labOcrUploadBlocked(props.review))
 
 onMounted(() => {
   void loadMedDictOptions()
@@ -159,7 +164,7 @@ const timingSelectOptions = computed(() => {
         <label class="ocr-meta-field">
           <span class="ocr-meta-label">采样时间</span>
           <el-date-picker
-            v-if="editable"
+            v-if="editable && !labTimeBlocked"
             v-model="review.lab.sampledAt"
             type="datetime"
             size="small"
@@ -174,7 +179,7 @@ const timingSelectOptions = computed(() => {
         <label class="ocr-meta-field">
           <span class="ocr-meta-label">报告时间</span>
           <el-date-picker
-            v-if="editable"
+            v-if="editable && !labTimeBlocked"
             v-model="review.lab.reportedAt"
             type="datetime"
             size="small"
@@ -419,13 +424,19 @@ const timingSelectOptions = computed(() => {
       </div>
     </template>
 
+    <p v-if="labTimeBlocked" class="ocr-warn">{{ LAB_TIME_BLOCK_MESSAGE }}。请换一张写清采样时间和报告时间的图片。</p>
     <p v-if="review.warnings?.length" class="ocr-warn">{{ review.warnings.join('；') }}</p>
 
     <div v-if="editable || saving" class="ocr-actions">
       <button type="button" class="action-chip" :disabled="saving" @click="emit('discard')">
         取消
       </button>
-      <button type="button" class="action-chip primary" :disabled="saving" @click="emit('confirm')">
+      <button
+        type="button"
+        class="action-chip primary"
+        :disabled="saving || labUploadBlocked"
+        @click="emit('confirm')"
+      >
         {{
           saving
             ? '写入中…'

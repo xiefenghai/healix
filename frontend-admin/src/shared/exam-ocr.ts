@@ -8,6 +8,7 @@ export interface ExamOcrDraft {
   findings?: Record<string, unknown> | null
   ignoredFindings?: string[]
   warnings?: string[]
+  imageKey?: string
   fromOcr?: boolean
 }
 

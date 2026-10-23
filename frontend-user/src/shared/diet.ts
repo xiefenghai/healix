@@ -203,6 +203,7 @@ export interface DietDraft {
   mealType: MealType
   items: MealItem[]
   warnings: string[]
+  imageKeys?: string[]
 }
 
 export interface FrequentFood {

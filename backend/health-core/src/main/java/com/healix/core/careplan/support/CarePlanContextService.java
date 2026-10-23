@@ -23,6 +23,7 @@ import com.healix.core.people.mapper.PeopleBasicArchiveMapper;
 import com.healix.core.people.support.DiseaseCodeLabels;
 import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -83,11 +84,11 @@ public class CarePlanContextService {
             trace(tracer, "PeopleBasicArchive", "done", "未找到基础档案");
         } else {
             JsonNode content = JsonUtils.readTree(basic.getContentJson());
-            snapshot.set("basicArchive", summarizeBasic(content));
+            snapshot.set("basicArchive", CarePlanPromptContextSupport.summarizeBasicArchive(content));
             JsonNode present = content.get("presentIllness");
             if (present != null && present.isArray()) {
                 for (JsonNode n : present) {
-                    if (n != null && n.isTextual()) {
+                    if (n != null && n.isTextual() && CarePlanPromptContextSupport.isMeaningfulDiseaseCode(n.asText())) {
                         diseases.add(n.asText());
                     }
                 }
@@ -104,14 +105,15 @@ public class CarePlanContextService {
         Set<String> labeled = new LinkedHashSet<>();
         if (diseaseArchives != null) {
             for (PeopleDiseaseArchive a : diseaseArchives) {
-                if (a.getDiseaseCode() != null) {
+                if (a.getDiseaseCode() != null
+                        && CarePlanPromptContextSupport.isMeaningfulDiseaseCode(a.getDiseaseCode())) {
                     String code = a.getDiseaseCode();
                     diseases.add(code.toUpperCase(Locale.ROOT));
                     ObjectNode row = diseaseSnap.addObject();
                     row.put("code", code);
                     String label = DiseaseCodeLabels.label(code);
                     row.put("label", label);
-                    if (labeled.add(label)) {
+                    if (StringUtils.hasText(label) && labeled.add(label)) {
                         diseaseLabelSnap.add(label);
                     }
                 }
@@ -134,6 +136,10 @@ public class CarePlanContextService {
         }
         // 现病史里的英文 code 也转成中文标签，避免 Agent 原文复述
         for (String raw : new ArrayList<>(diseases)) {
+            if (!CarePlanPromptContextSupport.isMeaningfulDiseaseCode(raw)) {
+                diseases.remove(raw);
+                continue;
+            }
             String label = DiseaseCodeLabels.label(raw);
             if (StringUtils.hasText(label) && labeled.add(label)) {
                 diseaseLabelSnap.add(label);
@@ -254,41 +260,41 @@ public class CarePlanContextService {
         return sb.toString();
     }
 
-    private ObjectNode summarizeBasic(JsonNode content) {
-        ObjectNode o = JsonUtils.emptyObject();
-        o.set("presentIllness", content.path("presentIllness"));
-        if (content.has("diet")) {
-            o.set("diet", content.get("diet"));
-        }
-        if (content.has("exercise")) {
-            o.set("exercise", content.get("exercise"));
-        }
-        return o;
-    }
-
     private List<MetricBrief> loadLatestMetrics(String tenantId, String peopleId, ObjectNode snapshot) {
         List<VitalRecord> recent = vitalRecordMapper.listRecentForLatest(tenantId, peopleId, 120);
         Map<String, MetricBrief> slots = new LinkedHashMap<>();
+        Set<String> seenTypes = new LinkedHashSet<>();
         ArrayNode arr = snapshot.putArray("latestMetrics");
+        ArrayNode skipped = snapshot.putArray("skippedMetrics");
         if (recent == null) {
             return List.of();
         }
         for (VitalRecord row : recent) {
             String type = row.getMetricType();
-            if (!StringUtils.hasText(type) || slots.containsKey(type)) {
+            if (!StringUtils.hasText(type) || !seenTypes.add(type)) {
                 continue;
             }
-            // 每种指标保留最新一条（列表已按时间倒序）
-            String value = row.getValue() == null ? null : row.getValue().toPlainString();
+            BigDecimal raw = row.getValue();
+            if (!CarePlanPromptContextSupport.isMetricUsefulForPrompt(type, raw)) {
+                if (raw != null) {
+                    skipped.add(CarePlanPromptContextSupport.suspectMetricNote(type, raw, row.getUnit()));
+                }
+                continue;
+            }
+            String value = CarePlanPromptContextSupport.formatMetricValue(raw);
             MetricBrief brief = new MetricBrief(type, value, row.getUnit(), type);
             slots.put(type, brief);
             ObjectNode n = arr.addObject();
             n.put("metricType", type);
+            n.put("metricLabel", CarePlanPromptContextSupport.metricTypeLabel(type));
             n.put("value", value);
             n.put("unit", row.getUnit());
             if (slots.size() >= 12) {
                 break;
             }
+        }
+        if (skipped.isEmpty()) {
+            snapshot.remove("skippedMetrics");
         }
         return new ArrayList<>(slots.values());
     }
@@ -312,12 +318,8 @@ public class CarePlanContextService {
             ArrayNode itemArr = n.putArray("items");
             if (items != null) {
                 for (LabResultItem it : items) {
-                    String summary = it.getItemName()
-                            + "="
-                            + (it.getValueNum() != null
-                                    ? it.getValueNum().toPlainString()
-                                    : (it.getValueText() == null ? "" : it.getValueText()))
-                            + (it.getUnit() == null ? "" : it.getUnit());
+                    String summary = CarePlanPromptContextSupport.formatLabItemSummary(
+                            it.getItemName(), it.getValueNum(), it.getValueText(), it.getUnit());
                     summaries.add(summary);
                     itemArr.add(summary);
                     if (summaries.size() >= 8) {

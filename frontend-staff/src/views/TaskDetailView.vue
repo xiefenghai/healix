@@ -86,6 +86,13 @@ const isTeamAssign = computed(() => task.value?.taskType === 'TEAM_ASSIGN')
 const isPlanCreate = computed(() => task.value?.taskType === 'PLAN_CREATE')
 const isReportReview = computed(() => task.value?.taskType === 'REPORT_REVIEW')
 const isPlanReview = computed(() => task.value?.taskType === 'PLAN_REVIEW')
+const isSelfReport = computed(() => task.value?.taskType === 'ARCHIVE_SELF_REPORT')
+const isProfileLink = computed(() => task.value?.taskType === 'PROFILE_LINK')
+const selfReportChanges = computed(() => {
+  const changes = task.value?.payload?.changes
+  if (!Array.isArray(changes)) return []
+  return changes as Array<{ label?: string; currentText?: string | null; newText?: string | null }>
+})
 const canFillForm = computed(
   () => isMineOpen.value && (isNudge.value || isAlert.value || isFollowUp.value || isExercise.value),
 )
@@ -453,6 +460,51 @@ function goProcess() {
   if (processCta.value) void router.push(processCta.value.path)
 }
 
+function linkField(key: string) {
+  const payload = task.value?.payload
+  const value = payload?.[key]
+  return value == null || value === '' ? '—' : String(value)
+}
+
+async function decideLink(approve: boolean) {
+  submitting.value = true
+  try {
+    await api(`/api/b/v1/workspace/tasks/${taskId.value}/link-decision`, {
+      method: 'POST',
+      body: JSON.stringify({ approve }),
+    })
+    showToast(approve ? '已关联' : '已拒绝')
+    await load()
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '处理失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function ackSelfReport() {
+  if (!task.value) return
+  submitting.value = true
+  try {
+    const ok = await submitWithRetry(
+      () =>
+        api(`/api/b/v1/workspace/tasks/${taskId.value}/ack`, {
+          method: 'POST',
+        }),
+      { title: '办结失败' },
+    )
+    if (!ok) return
+    showToast('已核对办结')
+    await router.replace('/tasks')
+  } finally {
+    submitting.value = false
+  }
+}
+
+function goAdjustPlan() {
+  void router.push(`/tasks/${taskId.value}/care-plan`)
+}
+
 function staffName(s: OrgStaffItem) {
   return s.displayName || s.name || s.staffId
 }
@@ -504,6 +556,37 @@ onMounted(load)
           </span>
         </div>
       </section>
+
+      <section v-if="isProfileLink" class="hits hx-surface">
+        <h3>请核对是否同一人</h3>
+        <p>申请填写：{{ linkField('applicantName') }} · {{ linkField('applicantGender') }} · {{ linkField('applicantBirthday') }}</p>
+        <p>已有档案：{{ linkField('archiveName') }} · {{ linkField('archiveGender') }} · {{ linkField('archiveBirthday') }}</p>
+        <p class="hx-muted">本人号尾号 {{ linkField('mobileTail') }}</p>
+      </section>
+
+      <div v-if="isMineOpen && isProfileLink" class="actions stack">
+        <van-button block type="primary" round :loading="submitting" @click="decideLink(true)">关联此人</van-button>
+        <van-button block round plain type="primary" :loading="submitting" @click="decideLink(false)">不是同一人</van-button>
+      </div>
+
+      <section v-if="isSelfReport" class="hits hx-surface">
+        <h3>请核对是否调整方案</h3>
+        <p class="hx-muted self-report-lead">
+          患者在评估问卷里改了档案，系统已按患者填写更新。方案还合适就办结；要改方案先去调整，再回来办结。
+        </p>
+        <div v-for="(c, i) in selfReportChanges" :key="i" class="hit">
+          <strong>{{ c.label || '档案项' }}</strong>
+          <span>{{ c.currentText || '未填写' }} → {{ c.newText || '未填写' }}</span>
+        </div>
+        <p v-if="!selfReportChanges.length" class="hx-muted">{{ task.summary || '请到档案里核对本次更新' }}</p>
+      </section>
+
+      <div v-if="isMineOpen && isSelfReport" class="actions stack">
+        <van-button block type="primary" round :loading="submitting" @click="ackSelfReport">
+          无需调整，办结
+        </van-button>
+        <van-button block round plain type="primary" @click="goAdjustPlan">去调整方案</van-button>
+      </div>
 
       <div v-if="canClaim" class="actions">
         <van-button block type="primary" round :loading="claiming" @click="claim">领取任务</van-button>
@@ -766,8 +849,10 @@ onMounted(load)
   color: var(--hx-muted, #8a97a5);
   text-decoration: line-through;
 }
-.actions {
-  padding: 0 16px 12px;
+.actions.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .actions.row {
   display: grid;

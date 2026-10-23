@@ -12,6 +12,8 @@ import com.healix.core.observation.mapper.ExamReportMapper;
 import com.healix.core.observation.support.ExamTypeCatalog;
 import com.healix.core.revision.enums.RevisionBizTypeEnum;
 import com.healix.core.revision.service.FieldRevisionService;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,6 +33,7 @@ public class ExamReportService {
     private final ExamReportMapper examReportMapper;
     private final ArchiveAccessService archiveAccessService;
     private final FieldRevisionService fieldRevisionService;
+    private final ImageFileService imageFileService;
 
     public List<ExamReportViewDto> list(String tenantId, String orgId, String peopleId, String examType) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
@@ -235,6 +238,11 @@ public class ExamReportService {
         row.setExaminedAt(cmd.examinedAt() != null ? cmd.examinedAt() : LocalDateTime.now());
         row.setConclusion(blankToNull(cmd.conclusion()));
         row.setFindingsJson(cmd.findings() == null || cmd.findings().isEmpty() ? null : JsonUtils.toJson(cmd.findings()));
+        String imageKey = imageFileService.requireOwned(
+                row.getTenantId(), row.getPeopleId(), ObjectKeys.EXAM, cmd.imageKey());
+        if (imageKey != null) {
+            row.setImageKey(imageKey);
+        }
     }
 
     private void validate(ExamCommand cmd) {
@@ -268,6 +276,7 @@ public class ExamReportService {
                 row.getConclusion(),
                 parseFindings(row.getFindingsJson()),
                 source,
+                row.getImageKey(),
                 row.getGmtCreated());
     }
 
@@ -294,5 +303,15 @@ public class ExamReportService {
     }
 
     public record ExamCommand(
-            String examType, LocalDateTime examinedAt, String conclusion, Map<String, Object> findings) {}
+            String examType,
+            LocalDateTime examinedAt,
+            String conclusion,
+            Map<String, Object> findings,
+            String imageKey) {
+
+        public ExamCommand(
+                String examType, LocalDateTime examinedAt, String conclusion, Map<String, Object> findings) {
+            this(examType, examinedAt, conclusion, findings, null);
+        }
+    }
 }

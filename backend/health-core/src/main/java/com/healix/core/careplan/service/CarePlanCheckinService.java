@@ -213,6 +213,18 @@ public class CarePlanCheckinService {
         CarePlanTaskCheckin existing = checkinMapper.findByTaskDateSlot(task.getId(), day, slot);
         if (done) {
             if (existing != null) {
+                // 误触跳过后又补上记录：把跳过改回完成，员工代打的不动
+                if (CarePlanCheckinStatusEnum.SKIPPED.name().equals(existing.getStatus())
+                        && existing.getRecordedByStaffId() == null) {
+                    existing.setStatus(CarePlanCheckinStatusEnum.DONE.name());
+                    existing.setNote(SYSTEM_CHECKIN_NOTE);
+                    if (StringUtils.hasText(recordedByPeopleId)) {
+                        existing.setRecordedByPeopleId(recordedByPeopleId);
+                    }
+                    EntityMeta.onUpdate(existing);
+                    checkinMapper.update(existing);
+                    maybeClosePlanNudgeAfterCheckin(tenantId, peopleId, day, existing.getStatus());
+                }
                 return;
             }
             CarePlanTaskCheckin row = new CarePlanTaskCheckin();

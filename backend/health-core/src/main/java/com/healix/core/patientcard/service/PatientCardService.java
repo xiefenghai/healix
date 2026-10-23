@@ -10,6 +10,7 @@ import com.healix.core.identity.service.IdentityService;
 import com.healix.core.people.domain.PeopleIdentity;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.enums.MobileOwnerEnum;
+import com.healix.core.people.support.MobileNumbers;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
@@ -72,6 +73,18 @@ public class PatientCardService {
         return accountPatientMapper.countByPeople(peopleId);
     }
 
+    /** 证件已登记时返回所属 peopleId，没有则 null。 */
+    public String findIdentityOwnerPeopleId(String tenantId, String identityType, String identityValue) {
+        if (!StringUtils.hasText(identityValue)) {
+            return null;
+        }
+        IdentityBits bits = resolveIdentity(
+                tenantId, StringUtils.hasText(identityType) ? identityType : "ID_CARD", identityValue);
+        PeopleIdentity existing =
+                peopleIdentityMapper.findByTenantTypeHash(tenantId, bits.type().name(), bits.hash());
+        return existing == null ? null : existing.getPeopleId();
+    }
+
     /**
      * C 端自助添加就诊人：姓名 + 性别 + 出生日期即可，证件选填。
      *
@@ -110,7 +123,10 @@ public class PatientCardService {
         if (resolvedBirthday.isAfter(LocalDate.now())) {
             throw new BusinessException(400, "出生日期不能晚于今天");
         }
-        String mobileNorm = normalizeMobile(mobile);
+        String mobileNorm = MobileNumbers.requireSelf(mobile);
+        if (!"SELF".equals(MobileOwnerEnum.require(mobileOwner))) {
+            throw new BusinessException(400, "请填写本人手机号");
+        }
 
         if (bits != null) {
             if (accountPatientMapper.findByAccountAndIdentityHash(accountId, bits.type().name(), bits.hash()) != null) {

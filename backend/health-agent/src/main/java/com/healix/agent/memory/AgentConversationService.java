@@ -1,6 +1,7 @@
 package com.healix.agent.memory;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.healix.agent.extract.ChatExtractCard;
 import com.healix.agent.gateway.AgentAction;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
@@ -158,6 +159,120 @@ public class AgentConversationService {
 
     public void appendReceipt(String sessionId, String text) {
         insert(sessionId, "SYSTEM", text, "receipt", null);
+    }
+
+    /** 整理记录：用户消息保留全文，但不改会话标题。助手消息挂核对卡。 */
+    public String appendChatExtract(String sessionId, String userText, String assistantText, ChatExtractCard card) {
+        supersedeOpenExtracts(sessionId);
+        insert(sessionId, "USER", userText, "chat_extract", null);
+        AgentMessageEntity row = new AgentMessageEntity();
+        EntityMeta.onCreate(row);
+        row.setSessionId(sessionId);
+        row.setRole("ASSISTANT");
+        row.setToolName("chat_extract");
+        card.setMessageId(row.getId());
+        card.setStatus("OPEN");
+        Map<String, Object> payload = JsonUtils.mapper().convertValue(card, new TypeReference<Map<String, Object>>() {});
+        row.setContent(pack(
+                assistantText,
+                List.of(new AgentAction("chat_extract", card.getTitle(), null, card.getPeopleId(), payload))));
+        messageMapper.insert(row);
+        sessionMapper.touch(sessionId);
+        return row.getId();
+    }
+
+    public ChatExtractCard requireOpenExtract(String messageId, String staffId) {
+        AgentMessageEntity row = messageMapper.findById(messageId);
+        if (row == null) {
+            throw new BusinessException("核对卡不存在");
+        }
+        AgentSessionEntity session = sessionMapper.findById(row.getSessionId());
+        if (session == null || !staffId.equals(session.getStaffId())) {
+            throw new BusinessException("无权确认这张核对卡");
+        }
+        ChatExtractCard card = extractCard(unpack(row.getContent()).actions());
+        if (card == null) {
+            throw new BusinessException("核对卡不存在");
+        }
+        if (!"OPEN".equals(card.getStatus())) {
+            throw new BusinessException(closedExtractMessage(card.getStatus()));
+        }
+        if (!StringUtils.hasText(card.getPeopleId())) {
+            card.setPeopleId(session.getPeopleId());
+        }
+        card.setMessageId(row.getId());
+        return card;
+    }
+
+    public void saveChatExtract(String messageId, ChatExtractCard card) {
+        AgentMessageEntity row = messageMapper.findById(messageId);
+        if (row == null || card == null) {
+            return;
+        }
+        Parsed parsed = unpack(row.getContent());
+        Map<String, Object> payload = JsonUtils.mapper().convertValue(card, new TypeReference<Map<String, Object>>() {});
+        List<AgentAction> next = new ArrayList<>();
+        boolean replaced = false;
+        for (AgentAction action : parsed.actions()) {
+            if (!replaced && "chat_extract".equals(action.type())) {
+                next.add(new AgentAction(
+                        action.type(),
+                        card.getTitle() == null ? action.label() : card.getTitle(),
+                        action.path(),
+                        card.getPeopleId(),
+                        payload));
+                replaced = true;
+            } else {
+                next.add(action);
+            }
+        }
+        messageMapper.updateContent(messageId, pack(parsed.text(), next));
+    }
+
+    private static String closedExtractMessage(String status) {
+        if ("SUPERSEDED".equals(status)) {
+            return "这张核对卡已作废";
+        }
+        if ("DISCARDED".equals(status)) {
+            return "这张核对卡已经丢弃";
+        }
+        return "这张核对卡已经写入";
+    }
+
+    private void supersedeOpenExtracts(String sessionId) {
+        List<AgentMessageEntity> rows = messageMapper.listBySession(sessionId, MAX_MESSAGES);
+        for (AgentMessageEntity row : rows) {
+            Parsed parsed = unpack(row.getContent());
+            boolean open = false;
+            List<AgentAction> next = new ArrayList<>();
+            for (AgentAction action : parsed.actions()) {
+                if ("chat_extract".equals(action.type())
+                        && action.payload() != null
+                        && "OPEN".equals(String.valueOf(action.payload().get("status")))) {
+                    Map<String, Object> payload = new LinkedHashMap<>(action.payload());
+                    payload.put("status", "SUPERSEDED");
+                    next.add(new AgentAction(action.type(), action.label(), action.path(), action.peopleId(), payload));
+                    open = true;
+                } else {
+                    next.add(action);
+                }
+            }
+            if (open) {
+                messageMapper.updateContent(row.getId(), pack(parsed.text(), next));
+            }
+        }
+    }
+
+    private static ChatExtractCard extractCard(List<AgentAction> actions) {
+        if (actions == null) {
+            return null;
+        }
+        for (AgentAction action : actions) {
+            if ("chat_extract".equals(action.type()) && action.payload() != null) {
+                return JsonUtils.mapper().convertValue(action.payload(), ChatExtractCard.class);
+            }
+        }
+        return null;
     }
 
     private void maybeUpdateTitle(String sessionId, String userText) {

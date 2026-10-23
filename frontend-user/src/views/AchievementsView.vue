@@ -12,6 +12,7 @@ import {
   type RewardLedgerDay,
   type RewardSummary,
 } from '../shared/rewards'
+import { loadScienceOverview, type ScienceOverview } from '../shared/science'
 
 const router = useRouter()
 const loading = ref(true)
@@ -19,6 +20,8 @@ const summary = ref<RewardSummary | null>(null)
 const badges = ref<RewardBadge[]>([])
 const ledger = ref<RewardLedgerDay[]>([])
 const activeBadge = ref<RewardBadge | null>(null)
+const ledgerOpen = ref(false)
+const science = ref<ScienceOverview | null>(null)
 
 const earnedCount = computed(() => badges.value.filter((b) => b.earned).length)
 const levelPct = computed(() => Math.round((summary.value?.level?.progress ?? 0) * 100))
@@ -40,12 +43,14 @@ onMounted(async () => {
   try {
     summary.value = await loadRewardSummary()
     if (!summary.value) return
-    const [b, l] = await Promise.all([
+    const [b, l, s] = await Promise.all([
       api<{ data: RewardBadge[] }>('/api/c/v1/rewards/badges'),
       api<{ data: RewardLedgerDay[] }>('/api/c/v1/rewards/ledger?days=30'),
+      loadScienceOverview(),
     ])
     badges.value = b.data || []
     ledger.value = l.data || []
+    science.value = s
   } finally {
     loading.value = false
   }
@@ -89,6 +94,14 @@ async function togglePeer() {
         </div>
         <p class="flame-tip">{{ flameTip }}</p>
         <p class="flame-sub">最长 {{ summary.bestStreak }} 天 · 每连续 7 天得 1 张保护卡，漏打一天自动使用</p>
+      </section>
+
+      <section v-if="science?.enabled" class="card science-card" @click="router.push('/science')">
+        <strong>今日科普</strong>
+        <p v-if="science.holdText">{{ science.holdText }}</p>
+        <p v-else-if="science.canOpen">完成待办了，可以看今天的科普</p>
+        <p v-else-if="science.today">今天：{{ science.today.title }}</p>
+        <p v-else>已看 {{ science.watchedCount }} / {{ science.totalCount }}</p>
       </section>
 
       <section v-if="summary.level" class="card level-card">
@@ -169,29 +182,39 @@ async function togglePeer() {
         </div>
       </section>
 
-      <section class="card">
-        <div class="sec-head">
-          <h2><span>健康豆明细</span></h2>
-          <em>近 30 天</em>
-        </div>
-        <van-empty v-if="!ledger.length" description="还没有健康豆，完成今天的任务试试" image-size="56" />
-        <div v-for="day in ledger" :key="day.date" class="ledger-day">
-          <div class="ledger-date">
-            <span>{{ ledgerDayLabel(day.date) }}</span>
-            <strong :class="{ neg: day.total < 0 }">{{ day.total >= 0 ? '+' : '' }}{{ day.total }}</strong>
+      <section class="card ledger-fold">
+        <button
+          type="button"
+          class="ledger-toggle"
+          :aria-expanded="ledgerOpen"
+          @click="ledgerOpen = !ledgerOpen"
+        >
+          <div class="ledger-toggle-main">
+            <strong>健康豆明细</strong>
+            <span>近 30 天</span>
           </div>
-          <ul>
-            <li v-for="(it, i) in day.items" :key="i">
-              <span class="ico">{{ REWARD_TYPE_ICONS[it.bizType] || '•' }}</span>
-              <span class="ttl">{{ it.title }}</span>
-              <span class="pts" :class="{ neg: it.points < 0 }">{{ it.points > 0 ? '+' : '' }}{{ it.points }}</span>
-            </li>
-          </ul>
+          <em class="chev" :class="{ open: ledgerOpen }">›</em>
+        </button>
+        <div v-show="ledgerOpen" class="ledger-body">
+          <van-empty v-if="!ledger.length" description="还没有健康豆，完成今天的任务试试" image-size="56" />
+          <div v-for="day in ledger" :key="day.date" class="ledger-day">
+            <div class="ledger-date">
+              <span>{{ ledgerDayLabel(day.date) }}</span>
+              <strong :class="{ neg: day.total < 0 }">{{ day.total >= 0 ? '+' : '' }}{{ day.total }}</strong>
+            </div>
+            <ul>
+              <li v-for="(it, i) in day.items" :key="i">
+                <span class="ico">{{ REWARD_TYPE_ICONS[it.bizType] || '•' }}</span>
+                <span class="ttl">{{ it.title }}</span>
+                <span class="pts" :class="{ neg: it.points < 0 }">{{ it.points > 0 ? '+' : '' }}{{ it.points }}</span>
+              </li>
+            </ul>
+          </div>
+          <p class="rules">
+            每完成 1 项方案任务、服药、测量、饮食或运动记录 +5；阅读管理报告 +10；全勤日 +20；新徽章 +30；完成周挑战 +50；每日最多 80（全勤日、徽章、周挑战不计入上限）。
+            健管师代录不计；超过 24 小时补录不计；明显不合理的测量值不计。昨天漏打的任务今天可在「管理方案」里补打。
+          </p>
         </div>
-        <p class="rules">
-          每完成 1 项方案任务、服药、测量、饮食或运动记录 +5；阅读管理报告 +10；全勤日 +20；新徽章 +30；完成周挑战 +50；每日最多 80（全勤日、徽章、周挑战不计入上限）。
-          健管师代录不计；超过 24 小时补录不计；明显不合理的测量值不计。昨天漏打的任务今天可在「管理方案」里补打。
-        </p>
       </section>
     </template>
 
@@ -227,6 +250,20 @@ async function togglePeer() {
   background: linear-gradient(135deg, #ff9a3c 0%, #ff6a3d 55%, #f0466b 100%);
   box-shadow: 0 10px 24px rgba(240, 90, 60, 0.28);
   position: relative;
+}
+.science-card {
+  cursor: pointer;
+}
+.science-card strong {
+  display: block;
+  font-size: 15px;
+  color: #14362e;
+}
+.science-card p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #5f746c;
+  line-height: 1.4;
 }
 .flame-main {
   display: flex;
@@ -299,6 +336,51 @@ async function togglePeer() {
   border-radius: var(--hx-r-lg);
   background: #fff;
   box-shadow: var(--hx-elev-2);
+}
+.ledger-fold {
+  padding: 0;
+  overflow: hidden;
+}
+.ledger-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.ledger-toggle-main {
+  flex: 1;
+  min-width: 0;
+}
+.ledger-toggle-main strong {
+  display: block;
+  font-size: 16px;
+  color: var(--hx-text);
+}
+.ledger-toggle-main span {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--hx-muted);
+}
+.chev {
+  font-style: normal;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--hx-muted);
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+.chev.open {
+  transform: rotate(-90deg);
+}
+.ledger-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid #eef3f1;
 }
 .level-head {
   display: flex;

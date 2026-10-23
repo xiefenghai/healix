@@ -2,55 +2,80 @@ package com.healix.agent.memory;
 
 import com.healix.agent.llm.LlmClient.ChatTurn;
 import com.healix.common.constant.HealthConstants;
-import com.healix.common.util.JsonUtils;
-import java.time.Duration;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.memory.ChatMemory;
+import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
+/**
+ * 驾驶舱员工会话记忆：底层为 LangChain4j {@link MessageWindowChatMemory} + Redis。
+ */
 @Component
 @RequiredArgsConstructor
 public class StaffSessionStore {
 
-    private static final Duration TTL = Duration.ofHours(24);
-
-    private final StringRedisTemplate redisTemplate;
+    private final RedisChatMemoryStore chatMemoryStore;
 
     public List<ChatTurn> loadTurns(String sessionId) {
-        String raw = redisTemplate.opsForValue().get(key(sessionId));
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
-        SessionPayload payload = JsonUtils.fromJson(raw, SessionPayload.class);
-        if (payload == null || payload.turns == null) {
-            return List.of();
-        }
-        return payload.turns.stream().map(t -> new ChatTurn(t.user, t.assistant)).toList();
+        return toChatTurns(memory(sessionId).messages());
     }
 
     public void appendTurn(String sessionId, String userMessage, String assistantReply) {
-        List<Turn> turns = new ArrayList<>();
-        String raw = redisTemplate.opsForValue().get(key(sessionId));
-        if (raw != null && !raw.isBlank()) {
-            SessionPayload existing = JsonUtils.fromJson(raw, SessionPayload.class);
-            if (existing != null && existing.turns != null) {
-                turns.addAll(existing.turns);
+        ChatMemory memory = memory(sessionId);
+        if (StringUtils.hasText(userMessage)) {
+            memory.add(UserMessage.from(userMessage.trim()));
+        }
+        if (StringUtils.hasText(assistantReply)) {
+            memory.add(AiMessage.from(assistantReply.trim()));
+        }
+    }
+
+    public void clear(String sessionId) {
+        memory(sessionId).clear();
+    }
+
+    private ChatMemory memory(String sessionId) {
+        // 一轮 = user + ai 两条；窗口按消息条数计
+        int maxMessages = Math.max(4, HealthConstants.DEFAULT_STAFF_AGENT_SESSION_TURNS * 2);
+        return MessageWindowChatMemory.builder()
+                .id(sessionId)
+                .maxMessages(maxMessages)
+                .chatMemoryStore(chatMemoryStore)
+                .build();
+    }
+
+    /** 把 LC4j 消息压成 Spring AI / LlmClient 用的成对轮次。 */
+    static List<ChatTurn> toChatTurns(List<ChatMessage> messages) {
+        List<ChatTurn> out = new ArrayList<>();
+        if (messages == null || messages.isEmpty()) {
+            return out;
+        }
+        String pendingUser = null;
+        for (ChatMessage msg : messages) {
+            if (msg instanceof UserMessage user) {
+                if (pendingUser != null) {
+                    out.add(new ChatTurn(pendingUser, ""));
+                }
+                pendingUser = user.singleText();
+            } else if (msg instanceof AiMessage ai) {
+                String text = ai.text() == null ? "" : ai.text();
+                if (pendingUser != null) {
+                    out.add(new ChatTurn(pendingUser, text));
+                    pendingUser = null;
+                } else if (StringUtils.hasText(text)) {
+                    out.add(new ChatTurn("", text));
+                }
             }
         }
-        turns.add(new Turn(userMessage, assistantReply));
-        while (turns.size() > HealthConstants.DEFAULT_STAFF_AGENT_SESSION_TURNS) {
-            turns.remove(0);
+        if (pendingUser != null) {
+            out.add(new ChatTurn(pendingUser, ""));
         }
-        redisTemplate.opsForValue().set(key(sessionId), JsonUtils.toJson(new SessionPayload(turns)), TTL);
+        return out;
     }
-
-    private static String key(String sessionId) {
-        return HealthConstants.REDIS_STAFF_AGENT_SESSION_PREFIX + sessionId;
-    }
-
-    private record SessionPayload(List<Turn> turns) {}
-
-    private record Turn(String user, String assistant) {}
 }

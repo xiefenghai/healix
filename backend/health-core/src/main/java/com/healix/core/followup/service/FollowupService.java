@@ -213,6 +213,7 @@ public class FollowupService {
                 EntityMeta.onUpdate(reuse);
                 followupRecordMapper.updateOnComplete(reuse);
                 maybeOpenPlanCreateTask(tenantId, orgId, peopleId, reuse.getId(), normalized, reuse);
+                openPlanAfterOnboarding(tenantId, orgId, peopleId, reuse.getId(), followupType);
                 closeLinkedTaskIfOpen(reuse, staffId, now, actorAccountId);
                 closeMatchingOpenFollowUpTasks(
                         orgId, peopleId, followupType, staffId, now, actorAccountId, reuse.getId());
@@ -227,6 +228,7 @@ public class FollowupService {
             applyCompleteFields(record, normalized, staffId, now);
             followupRecordMapper.insert(record);
             maybeOpenPlanCreateTask(tenantId, orgId, peopleId, record.getId(), normalized, record);
+            openPlanAfterOnboarding(tenantId, orgId, peopleId, record.getId(), followupType);
             // 新建 DONE 仍关掉同人同类型工作台 FOLLOW_UP（排期/旧待办）
             closeMatchingOpenFollowUpTasks(
                     orgId, peopleId, followupType, staffId, now, actorAccountId, record.getId());
@@ -284,6 +286,8 @@ public class FollowupService {
                 FollowupType.require(String.valueOf(normalized.get("followupType")));
         closeMatchingOpenFollowUpTasks(
                 orgId, record.getPeopleId(), completedType, staffId, now, actorAccountId, record.getId());
+        openPlanAfterOnboarding(
+                requireTenantId(), orgId, record.getPeopleId(), record.getId(), completedType);
         audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_COMPLETE, record.getId(), record.getPeopleId(),
                 AuditDetails.of("recordType", record.getRecordType(), "source", record.getSource()));
         return toView(followupRecordMapper.findById(record.getId()));
@@ -639,6 +643,12 @@ public class FollowupService {
             audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_COMPLETE, record.getId(), task.getPeopleId(),
                     AuditDetails.of("recordType", "PERIODIC", "source", "WORKSPACE_TASK", "taskId", task.getId()));
         }
+        openPlanAfterOnboarding(
+                task.getTenantId(),
+                task.getOrgId(),
+                task.getPeopleId(),
+                followupIdForPlan,
+                FollowupType.require(FollowupContentValidator.str(normalized.get("followupType"))));
         workspaceTaskMapper.close(
                 task.getId(),
                 WorkspaceTaskStatus.DONE.name(),
@@ -888,6 +898,15 @@ public class FollowupService {
             ((Map<String, Object>) sectionMap).put("baselineVitalIds", vitalIds);
             record.setContentJson(JsonUtils.toJson(normalized));
         }
+    }
+
+    /** 首诊办结后立刻开制定方案；已有生效方案时由生成器跳过。 */
+    private void openPlanAfterOnboarding(
+            String tenantId, String orgId, String peopleId, String followupId, FollowupType type) {
+        if (type != FollowupType.ONBOARDING) {
+            return;
+        }
+        workspaceTaskGenerator.ensurePlanCreateAfterOnboarding(tenantId, orgId, peopleId, followupId);
     }
 
     /** 勾选建议调整方案时，确保工作台有 OPEN 的制定方案待办。 */

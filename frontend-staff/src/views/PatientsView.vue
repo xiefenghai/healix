@@ -19,6 +19,7 @@ interface OrgPatientListItem {
   archiveCompletenessPercent?: number | null
   watched?: boolean | null
   clientLinked?: boolean
+  joinedAt?: string | null
   streakDays?: number | null
   todayActions?: number | null
   inactiveDays?: number | null
@@ -210,7 +211,7 @@ onMounted(load)
               <strong>{{ row.displayName }}</strong>
               <span v-if="row.watched" class="hx-chip warn">关注</span>
               <span v-if="row.streakDays" class="flame">🔥{{ row.streakDays }}</span>
-              <span v-else-if="row.streakDays === 0" class="flame flame--out">已熄灭</span>
+              <span v-else-if="row.streakDays === 0" class="flame flame--out">打卡中断</span>
               <span
                 v-if="checkinStatus(row)"
                 class="checkin"

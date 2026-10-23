@@ -16,6 +16,8 @@ public enum IntentType {
     QUERY_FOLLOWUP,
     /** 管理报告 */
     QUERY_REPORT,
+    /** 对话里确认后记指标 */
+    RECORD_VITAL,
     CHITCHAT,
     UNKNOWN
 }

@@ -11,8 +11,15 @@ management:
     enabled: false
 
 healix:
+  sms:
+    # 开发环境没有短信服务商，验证码固定为 123456。生产环境不要配置此项。
+    mock-code: "123456"
+    log-code: true
   agent:
     enabled: true
+    llm:
+      # 开发环境默认打印 system/user 请求体与模型返回全文
+      log-request: ${AGENT_LLM_LOG_REQUEST:true}
     ocr:
       # 验证 OCR 时用 VISION（图→JSON 一步）；生产可改回 TEXT_LLM
       mode: ${AGENT_OCR_MODE:VISION}

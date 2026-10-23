@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.storage.mapper.StoredObjectMapper">
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO stored_object(
+            id, tenant_id, people_id, object_key, content_type, category,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{objectKey}, #{contentType}, #{category},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="findByKey" resultType="com.healix.core.storage.domain.StoredObject">
+        SELECT pk_id, id, tenant_id, people_id, object_key, content_type, category,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM stored_object
+        WHERE object_key = #{objectKey}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+</mapper>

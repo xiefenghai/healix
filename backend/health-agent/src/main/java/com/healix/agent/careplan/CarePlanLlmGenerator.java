@@ -4,12 +4,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.agent.llm.LlmClient;
+import com.healix.agent.llm.LlmClient.ChatTurn;
 import com.healix.agent.llm.LlmResponse;
+import com.healix.agent.skill.SkillMarkdown;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
+import com.healix.core.careplan.support.CarePlanPromptContextSupport;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry.GeneratedPlan;
 import com.healix.core.compliance.ComplianceText;
 import java.util.ArrayList;
@@ -40,16 +43,19 @@ public class CarePlanLlmGenerator {
             CarePlanContext ctx,
             String instruction,
             List<String> diseaseCodes,
+            List<ChatTurn> history,
             Consumer<AgentStreamEvent> sink) {
         if (!llmClient.isEnabled()) {
             log.info("[CarePlan] LLM disabled, will use template fallback templateKey={}", templateKey);
             return Optional.empty();
         }
+        List<ChatTurn> turns = history == null ? List.of() : history;
         log.info(
-                "[CarePlan] LLM generate start templateKey={} diseaseCodes={} instructionChars={} contextIncomplete={}",
+                "[CarePlan] LLM generate start templateKey={} diseaseCodes={} instructionChars={} historyTurns={} contextIncomplete={}",
                 templateKey,
                 diseaseCodes == null || diseaseCodes.isEmpty() ? "[]" : diseaseCodes,
                 instruction == null ? 0 : instruction.length(),
+                turns.size(),
                 ctx != null && ctx.contextIncomplete());
         CarePlanStreamSink.progress(sink, "正在加载方案生成指引…");
         String skill = loadSkillMarkdown();
@@ -63,7 +69,7 @@ public class CarePlanLlmGenerator {
                 "CARE_PLAN_GENERATE",
                 skill,
                 userMessage,
-                List.of(),
+                turns,
                 readable::onToken);
         return finalizeLlmResult(llm, templateKey, ctx, diseaseCodes, sink, thinkStarted, false);
     }
@@ -80,23 +86,28 @@ public class CarePlanLlmGenerator {
             JsonNode currentDiet,
             JsonNode currentExecution,
             String currentGoalSummary,
+            List<ChatTurn> history,
             Consumer<AgentStreamEvent> sink) {
         if (!llmClient.isEnabled()) {
             log.info("[CarePlan] LLM disabled, cannot revise templateKey={}", templateKey);
             return Optional.empty();
         }
+        List<ChatTurn> turns = history == null ? List.of() : history;
         log.info(
-                "[CarePlan] LLM revise start templateKey={} instructionChars={}",
+                "[CarePlan] LLM revise start templateKey={} instructionChars={} historyTurns={}",
                 templateKey,
-                instruction == null ? 0 : instruction.length());
+                instruction == null ? 0 : instruction.length(),
+                turns.size());
         CarePlanStreamSink.progress(sink, "正在加载方案修订指引…");
         String skill = loadSkillMarkdown() + "\n\n## 修订模式补充（硬性）\n"
                 + "1. 在 currentDraft 上按 revisionInstruction 局部调整；未提及部分保持原意与结构。\n"
                 + "2. mustPreserveConstraints / 草稿中的骨折·卧床·制动·禁止负重等安全限制必须保留，"
                 + "除非修订意见明确解除。\n"
                 + "3. 饮食/消化类修订优先改 diet，禁止把运动从安全制动改回常规有氧。\n"
-                + "4. goalSummary 须同时保留仍有效的安全限制与本次新增关注。\n"
-                + "5. 仍输出完整 exercise/diet/execution/summary/goalSummary JSON。\n";
+                + "4. 执行任务过多/过少类意见优先改 execution.tasks（删减或合并），勿无故整包重写运动饮食。\n"
+                + "5. goalSummary 须同时保留仍有效的安全限制与本次新增关注。\n"
+                + "6. 仍输出完整 exercise/diet/execution/summary/goalSummary JSON。\n"
+                + "7. 若有会话历史，结合上文理解「改哪里」，不要忽略健管师刚说过的约束。\n";
         String userMessage = buildReviseUserMessage(
                 templateKey,
                 ctx,
@@ -115,7 +126,7 @@ public class CarePlanLlmGenerator {
                 "CARE_PLAN_REVISE",
                 skill,
                 userMessage,
-                List.of(),
+                turns,
                 readable::onToken);
         return finalizeLlmResult(llm, templateKey, ctx, diseaseCodes, sink, thinkStarted, true);
     }
@@ -312,8 +323,9 @@ public class CarePlanLlmGenerator {
         if (StringUtils.hasText(instruction)) {
             payload.put("instruction", instruction);
         }
-        if (diseaseCodes != null && !diseaseCodes.isEmpty()) {
-            payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(diseaseCodes));
+        List<String> codes = sanitizeDiseaseCodes(diseaseCodes);
+        if (!codes.isEmpty()) {
+            payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(codes));
         }
         payload.set("patientContext", ctx == null ? JsonUtils.emptyObject() : ctx.snapshot());
         putAllergyGuard(payload, ctx);
@@ -325,6 +337,19 @@ public class CarePlanLlmGenerator {
                 %s
                 """
                 .formatted(JsonUtils.toJson(payload));
+    }
+
+    private static List<String> sanitizeDiseaseCodes(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(raw.size());
+        for (String code : raw) {
+            if (CarePlanPromptContextSupport.isMeaningfulDiseaseCode(code)) {
+                out.add(code);
+            }
+        }
+        return out;
     }
 
     private static void putAllergyGuard(ObjectNode payload, CarePlanContext ctx) {
@@ -349,8 +374,9 @@ public class CarePlanLlmGenerator {
         if (StringUtils.hasText(instruction)) {
             payload.put("revisionInstruction", instruction);
         }
-        if (diseaseCodes != null && !diseaseCodes.isEmpty()) {
-            payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(diseaseCodes));
+        List<String> codes = sanitizeDiseaseCodes(diseaseCodes);
+        if (!codes.isEmpty()) {
+            payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(codes));
         }
         payload.set("patientContext", ctx == null ? JsonUtils.emptyObject() : ctx.snapshot());
         putAllergyGuard(payload, ctx);
@@ -476,7 +502,9 @@ public class CarePlanLlmGenerator {
         try {
             Resource res = new ClassPathResource("skills/management-plan/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
-                return StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
+                String raw =
+                        StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
+                return SkillMarkdown.forLlm(raw);
             }
         } catch (Exception e) {
             log.debug("management-plan skill missing: {}", e.getMessage());

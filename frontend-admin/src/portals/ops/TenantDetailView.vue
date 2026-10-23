@@ -37,6 +37,9 @@ const staffList = ref<StaffAccountListItem[]>([])
 const registerVisible = ref(false)
 const registering = ref(false)
 const grantingId = ref<string | null>(null)
+const attachVisible = ref(false)
+const attaching = ref(false)
+const attachUsername = ref('')
 const registerForm = ref({
   username: '',
   password: '',
@@ -116,6 +119,34 @@ async function auditTabView() {
     tabAudited.value = true
   } catch {
     /* 只读账号也可进入 Tab，审计失败不阻断 */
+  }
+}
+
+function openAttach() {
+  attachUsername.value = ''
+  attachVisible.value = true
+}
+
+async function submitAttach() {
+  if (!canWrite) return
+  const username = attachUsername.value.trim()
+  if (!username) {
+    ElMessage.warning('请填写已有账号的用户名')
+    return
+  }
+  attaching.value = true
+  try {
+    await api(`/api/ops/v1/tenants/${tenantId.value}/tenant-admins`, {
+      method: 'POST',
+      body: JSON.stringify({ username }),
+    })
+    ElMessage.success('已加入本租户并设为租户管理员')
+    attachVisible.value = false
+    await Promise.all([loadStaff(), loadTenant()])
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '添加失败')
+  } finally {
+    attaching.value = false
   }
 }
 
@@ -343,6 +374,7 @@ onMounted(async () => {
             </el-select>
             <el-button @click="staffPage = 1; loadStaff()">查询</el-button>
             <div class="spacer" />
+            <el-button v-if="canWrite" @click="openAttach">添加已有账号</el-button>
             <el-button v-if="canWrite" type="primary" @click="openRegister">注册账号</el-button>
           </div>
 
@@ -394,6 +426,21 @@ onMounted(async () => {
         </el-card>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="attachVisible" title="添加已有账号" width="480px">
+      <p class="attach-hint">
+        填写平台超管或已有员工的用户名，加入当前租户并设为租户管理员。同一个账号可以同时属于多个租户。第一次加入的平台超管会沿用当时的平台密码，之后两边改密码互不影响。
+      </p>
+      <el-form label-width="80px" @submit.prevent="submitAttach">
+        <el-form-item label="用户名" required>
+          <el-input v-model="attachUsername" placeholder="已有员工登录名" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="attachVisible = false">取消</el-button>
+        <el-button type="primary" :loading="attaching" @click="submitAttach">加入并设为管理员</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="registerVisible" title="注册 B 端账号" width="520px">
       <el-form label-width="110px">
@@ -594,6 +641,12 @@ onMounted(async () => {
 .pager { margin-top: 12px; display: flex; justify-content: flex-end; }
 .role-tag { margin-right: 4px; }
 .muted { color: var(--admin-muted); font-size: 12px; }
+.attach-hint {
+  margin: 0 0 16px;
+  color: var(--admin-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
 
 @media (max-width: 640px) {
   .overview-grid {

@@ -98,6 +98,7 @@ interface DuplicateCandidate {
   mobileOwner?: string | null
   hasIdentity: boolean
   inCurrentOrg: boolean
+  confirmRequired?: boolean
 }
 const duplicates = ref<DuplicateCandidate[]>([])
 const duplicateVisible = ref(false)
@@ -438,7 +439,15 @@ function validateArchive(): boolean {
     return false
   }
   if (!f.noMobile && !f.mobile.trim()) {
-    ElMessage.warning('请填写联系电话，确实没有请勾选「暂无」')
+    ElMessage.warning('请填写本人手机号')
+    return false
+  }
+  if (f.noMobile && (!f.mobile.trim() || f.mobileOwner === 'SELF')) {
+    ElMessage.warning('无本人号时请填写联系人电话，并选择配偶、子女等归属')
+    return false
+  }
+  if (!f.noMobile && f.mobileOwner !== 'SELF') {
+    ElMessage.warning('建档请选择本人手机号')
     return false
   }
   return true
@@ -449,20 +458,29 @@ async function submitArchive() {
   const f = archiveForm.value
   archiving.value = true
   try {
-    const q = new URLSearchParams({ name: f.name.trim(), birthday: f.birthday })
-    if (!f.noMobile && f.mobile.trim()) q.set('mobile', f.mobile.trim())
-    const res = await api<{ data: DuplicateCandidate[] }>(`/api/b/v1/patients/archives/duplicates?${q}`)
-    duplicates.value = res.data ?? []
+    if (f.noMobile) {
+      duplicates.value = []
+    } else {
+      const q = new URLSearchParams({ name: f.name.trim(), birthday: f.birthday, mobile: f.mobile.trim() })
+      const res = await api<{ data: DuplicateCandidate[] }>(`/api/b/v1/patients/archives/duplicates?${q}`)
+      duplicates.value = res.data ?? []
+    }
   } catch {
     duplicates.value = []
   } finally {
     archiving.value = false
   }
-  if (duplicates.value.length) {
+  const needConfirm = duplicates.value.filter((d) => d.confirmRequired)
+  if (needConfirm.length) {
     duplicateVisible.value = true
     return
   }
-  await createArchive(null)
+  const auto = duplicates.value.find((d) => !d.confirmRequired)
+  if (auto?.inCurrentOrg) {
+    ElMessage.warning('该患者已在本机构')
+    return
+  }
+  await createArchive(auto?.peopleId ?? null)
 }
 
 /** attachPeopleId：查重确认「就是此人」，复用已有档案入组本机构 */
@@ -642,7 +660,7 @@ onMounted(async () => {
                     class="flame-tag"
                     :title="`连续打卡 ${row.streakDays} 天`"
                   >🔥{{ row.streakDays }}</span>
-                  <span v-else-if="row.streakDays === 0" class="flame-tag flame-tag--out">已熄灭</span>
+                  <span v-else-if="row.streakDays === 0" class="flame-tag flame-tag--out" title="打卡已中断">打卡中断</span>
                 </div>
                 <div class="patient-meta">{{ patientMeta(row) }}</div>
                 <div
@@ -766,26 +784,24 @@ onMounted(async () => {
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="联系电话" :required="!archiveForm.noMobile">
+        <el-form-item label="联系电话" required>
           <div class="mobile-row">
             <el-input
               v-model="archiveForm.mobile"
-              :disabled="archiveForm.noMobile"
               maxlength="20"
-              placeholder="手机或座机"
-              class="mobile-input"
-            />
-            <el-select
-              v-model="archiveForm.mobileOwner"
-              :disabled="archiveForm.noMobile"
-              class="owner-select"
-              title="这个号码是谁的"
-            >
-              <el-option v-for="o in MOBILE_OWNER_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
-            </el-select>
-            <el-checkbox v-model="archiveForm.noMobile">暂无</el-checkbox>
-          </div>
-          <div class="form-tip">老人没有手机可填子女号码并选「子女」；夫妻共用号码各自注明归属</div>
+              placeholder="本人手机号"
+            class="mobile-input"
+          />
+          <el-select
+            v-model="archiveForm.mobileOwner"
+            class="owner-select"
+            title="这个号码是谁的"
+          >
+            <el-option v-for="o in MOBILE_OWNER_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+          </el-select>
+          <el-checkbox v-model="archiveForm.noMobile">无本人号</el-checkbox>
+        </div>
+        <div class="form-tip">本人手机号用来和 C 端就诊人对上同一个人。没有本人号时填写联系人电话，患者再用激活码关联。</div>
         </el-form-item>
 
         <el-button v-if="!showIdentity" link type="primary" class="id-toggle" @click="showIdentity = true">
@@ -811,7 +827,7 @@ onMounted(async () => {
 
     <el-dialog v-model="duplicateVisible" title="可能是同一人" width="520px" append-to-body>
       <p class="dup-tip">
-        租户内已有同名且出生日期或联系电话相同的档案。若是同一人，请直接关联，避免重复建档。
+        这个本人手机号已有档案，但姓名或出生日期不一致。确认是同一人后再关联，不能用这个号码新建第二份。
       </p>
       <div v-for="d in duplicates" :key="d.peopleId" class="dup-item">
         <div class="dup-main">
@@ -820,12 +836,11 @@ onMounted(async () => {
         </div>
         <el-button v-if="d.inCurrentOrg" size="small" @click="openExisting(d)">已在本机构，查看</el-button>
         <el-button v-else size="small" type="primary" :loading="archiving" @click="createArchive(d.peopleId)">
-          就是此人
+          关联此人
         </el-button>
       </div>
       <template #footer>
         <el-button @click="duplicateVisible = false">返回修改</el-button>
-        <el-button :loading="archiving" @click="createArchive(null)">不是同一人，继续新建</el-button>
       </template>
     </el-dialog>
 

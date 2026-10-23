@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.core.compliance.ComplianceText;
 import com.healix.agent.llm.LlmResponse;
+import com.healix.agent.skill.SkillMarkdown;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
 import java.nio.charset.StandardCharsets;
@@ -472,7 +473,8 @@ public class ReportSummaryGenerator {
         try {
             Resource res = new ClassPathResource("skills/report-summary/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
-                return StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8);
+                return SkillMarkdown.forLlm(
+                        StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8));
             }
         } catch (Exception e) {
             log.debug("report-summary skill missing: {}", e.getMessage());

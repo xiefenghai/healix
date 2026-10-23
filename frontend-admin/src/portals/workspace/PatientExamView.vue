@@ -48,6 +48,7 @@ interface ExamOcrResult {
   findings?: Record<string, unknown> | null
   ignoredFindings?: string[]
   warnings?: string[]
+  imageKey?: string
 }
 
 const props = defineProps<{ peopleId?: string }>()
@@ -70,6 +71,7 @@ const detailRow = ref<ExamReport | null>(null)
 
 const ocrLoading = ref(false)
 const ocrHint = ref('')
+const ocrImageKey = ref('')
 const ocrFileRef = ref<HTMLInputElement | null>(null)
 
 const form = reactive({
@@ -345,6 +347,7 @@ function openOcrPicker() {
 
 /** 识别不出类型时保留当前选择，只回填结论与时间，避免把测量填到错误面板 */
 function applyOcr(data: ExamOcrResult) {
+  ocrImageKey.value = data.imageKey || ''
   const type = data.examType && EXAM_FINDING_FIELDS[data.examType] ? data.examType : ''
   if (type) {
     form.examType = type
@@ -412,6 +415,7 @@ function tryOpenOcrDraft() {
 
 function openEdit(row: ExamReport) {
   editingId.value = row.id
+  ocrImageKey.value = ''
   ocrHint.value = ''
   form.examType = row.examType
   form.examinedAt = row.examinedAt ? row.examinedAt.slice(0, 16) : nowLocalInput()
@@ -423,7 +427,13 @@ function openEdit(row: ExamReport) {
   mode.value = 'edit'
 }
 
-async function savePayload(examType: string, examinedAt: string, conclusion: string, rawFindings: Record<string, unknown>) {
+async function savePayload(
+  examType: string,
+  examinedAt: string,
+  conclusion: string,
+  rawFindings: Record<string, unknown>,
+  imageKey?: string,
+) {
   const findings = buildFindingsPayload(examType, rawFindings)
   if (!hasExamDraft(examType, findings, conclusion)) {
     ElMessage.warning('请填写结论或关键测量')
@@ -434,6 +444,7 @@ async function savePayload(examType: string, examinedAt: string, conclusion: str
     examinedAt: toApiDateTime(examinedAt),
     conclusion: conclusion.trim() || undefined,
     findings,
+    imageKey: imageKey || undefined,
   }
   if (editingId.value) {
     await api(`/api/b/v1/patients/${peopleId.value}/exam-reports/${editingId.value}`, {
@@ -471,7 +482,7 @@ async function saveQuick() {
 async function saveEdit() {
   saving.value = true
   try {
-    const ok = await savePayload(form.examType, form.examinedAt, form.conclusion, form.findings)
+    const ok = await savePayload(form.examType, form.examinedAt, form.conclusion, form.findings, ocrImageKey.value)
     if (!ok) return
     ElMessage.success('已保存')
     backToBrowse()

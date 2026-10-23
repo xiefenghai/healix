@@ -22,6 +22,7 @@ import {
   templateTierLabel,
 } from '../shared/management-report-labels'
 import { printReport } from '../shared/management-report-print'
+import { dietChartHtml, exerciseChartHtml } from '../shared/report-print-charts'
 import { lifestyleSections } from '../shared/report-lifestyle'
 import { hasReportRewards, type ReportRewards } from '../shared/rewards'
 import {
@@ -139,6 +140,8 @@ const metrics = computed(() => metricViews(content.value))
 const lifestyle = computed(() => lifestyleSections(content.value))
 const diet = computed(() => dietExtras(content.value))
 const exercise = computed(() => exerciseExtras(content.value))
+const dietChart = computed(() => dietChartHtml(content.value))
+const exerciseChart = computed(() => exerciseChartHtml(content.value))
 const observations = computed(() => observationViews(content.value))
 
 const followups = computed(() => {
@@ -220,15 +223,6 @@ function trendIcon(t: Trend) {
   if (t === 'WORSE') return '↓'
   return '→'
 }
-
-function weekBarHeight(value: number | null, max: number) {
-  if (value == null || max <= 0) return '4%'
-  return `${Math.max(4, Math.round((value / max) * 100))}%`
-}
-
-const exerciseWeekMax = computed(() =>
-  Math.max(exercise.value.target || 0, ...exercise.value.weekly.map((w) => w.value || 0)),
-)
 
 function formatFuTime(v?: unknown) {
   if (!v) return ''
@@ -715,6 +709,7 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-if="sec.key === 'diet'">
+            <div v-if="dietChart" class="chart-fig" v-html="dietChart" />
             <div v-if="diet.macros.length" class="sub-block">
               <div class="sub-title">三大营养素供能比<span class="sub-hint">实际 / 目标</span></div>
               <div v-for="r in diet.macros" :key="r.label" class="macro">
@@ -750,23 +745,7 @@ onBeforeUnmount(() => {
                 <span v-for="t in exercise.types" :key="t.label" class="chip">{{ t.label }}</span>
               </div>
             </div>
-            <div v-if="exercise.weekly.length" class="sub-block">
-              <div class="sub-title">每周活动分钟<span v-if="exercise.metText" class="sub-hint">{{ exercise.metText }}</span></div>
-              <div class="week-bars">
-                <div v-for="w in exercise.weekly" :key="w.label" class="week-bar">
-                  <div class="week-col">
-                    <i :class="w.met === false ? 'bar--fair' : 'bar--good'" :style="{ height: weekBarHeight(w.value, exerciseWeekMax) }" />
-                    <span
-                      v-if="exercise.target"
-                      class="week-target"
-                      :style="{ bottom: weekBarHeight(exercise.target, exerciseWeekMax) }"
-                    />
-                  </div>
-                  <div class="week-val">{{ w.value ?? 0 }}</div>
-                  <div class="week-lab">{{ w.label }}</div>
-                </div>
-              </div>
-            </div>
+            <div v-if="exerciseChart" class="chart-fig" v-html="exerciseChart" />
           </template>
         </template>
       </section>
@@ -1440,6 +1419,19 @@ onBeforeUnmount(() => {
   height: 176px;
   margin-top: 4px;
 }
+.chart-fig {
+  margin-top: 12px;
+}
+.chart-fig :deep(.chart-cap) {
+  font-size: 12px;
+  color: var(--hx-muted);
+  margin-bottom: 4px;
+}
+.chart-fig :deep(svg) {
+  width: 100%;
+  height: auto;
+  display: block;
+}
 
 .metric + .metric {
   margin-top: 16px;
@@ -1632,47 +1624,6 @@ onBeforeUnmount(() => {
 .chip--warn {
   background: var(--hx-warn-bg);
   color: var(--hx-warn);
-}
-.week-bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-}
-.week-bar {
-  flex: 1;
-  text-align: center;
-}
-.week-col {
-  position: relative;
-  height: 90px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-.week-col i {
-  width: 60%;
-  border-radius: 6px 6px 0 0;
-}
-.bar--good {
-  background: var(--hx-teal);
-}
-.bar--fair {
-  background: var(--hx-orange);
-}
-.week-target {
-  position: absolute;
-  left: 0;
-  right: 0;
-  border-top: 1px dashed var(--hx-n-800);
-}
-.week-val {
-  margin-top: 4px;
-  font-size: 12px;
-  font-weight: 600;
-}
-.week-lab {
-  font-size: 11px;
-  color: var(--hx-muted);
 }
 
 .fu-list {

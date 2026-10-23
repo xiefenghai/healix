@@ -81,6 +81,9 @@ healix:
       model: ${VISION_MODEL:deepseek-v4-flash-vision-exp}
     max-tokens: 8192
     timeout-seconds: 60
+    llm:
+      # 打印完整 system/user 请求体与模型返回；生产默认关，开发见 application-dev.yml
+      log-request: ${AGENT_LLM_LOG_REQUEST:false}
     ocr:
       mode: ${AGENT_OCR_MODE:TEXT_LLM}
   influx:
@@ -92,6 +95,9 @@ healix:
   job:
     tick-ms: ${JOB_TICK_MS:60000}
     timeout-minutes: ${JOB_TIMEOUT_MINUTES:8}
+  storage:
+    local:
+      dir: ${HEALIX_STORAGE_DIR:./data/objects}
 
 logging:
   level:

@@ -45,6 +45,7 @@ import com.healix.core.patient.enums.MembershipStatusEnum;
 import com.healix.core.people.enums.EducationLevelEnum;
 import com.healix.core.people.enums.MaritalStatusEnum;
 import com.healix.core.people.enums.MobileOwnerEnum;
+import com.healix.core.people.support.MobileNumbers;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
@@ -60,6 +61,7 @@ import com.healix.core.workspace.dto.CareTeamListItem;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.dto.OrgStaffItem;
 import com.healix.core.workspace.mapper.StaffPatientWatchMapper;
+import com.healix.core.followup.service.FollowupScheduleService;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -101,6 +103,7 @@ public class OrgWorkspaceService {
     private final IdCardCrypto idCardCrypto;
     private final AccountPatientMapper accountPatientMapper;
     private final ObjectProvider<WorkspaceTaskGenerator> workspaceTaskGenerator;
+    private final ObjectProvider<FollowupScheduleService> followupScheduleService;
     private final QuotaService quotaService;
     private final StaffPatientWatchMapper staffPatientWatchMapper;
     private final ObjectProvider<RewardQueryService> rewardQueryService;
@@ -501,7 +504,7 @@ public class OrgWorkspaceService {
         auditAddMember(actorAccountId, teamId, member);
         WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
         if (gen != null) {
-            StaffProfile actor = staffProfileMapper.findByAccountId(actorAccountId);
+            StaffProfile actor = staffProfileMapper.findByAccountAndTenant(actorAccountId, team.getTenantId());
             gen.onPatientJoinedTeam(
                     team.getTenantId(),
                     orgId,
@@ -562,7 +565,7 @@ public class OrgWorkspaceService {
 
         WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
         if (gen != null) {
-            StaffProfile actor = staffProfileMapper.findByAccountId(actorAccountId);
+            StaffProfile actor = staffProfileMapper.findByAccountAndTenant(actorAccountId, target.getTenantId());
             String actorStaffId = actor == null ? null : actor.getId();
             if (fromTeamId == null) {
                 gen.onPatientJoinedTeam(
@@ -843,11 +846,40 @@ public class OrgWorkspaceService {
         if (!StringUtils.hasText(name)) {
             throw new BusinessException(400, "请填写姓名");
         }
-        String mobileNorm = noMobile ? null : normalizeMobile(mobile);
-        if (!noMobile && mobileNorm == null && attachPeopleId == null) {
-            throw new BusinessException(400, "请填写联系电话，确实没有请勾选「暂无」");
+        boolean noSelf = noMobile;
+        String mobileNorm;
+        String ownerNorm;
+        if (noSelf) {
+            mobileNorm = MobileNumbers.requireContact(mobile);
+            ownerNorm = MobileOwnerEnum.require(mobileOwner);
+            if (MobileOwnerEnum.SELF.name().equals(ownerNorm)) {
+                throw new BusinessException(400, "无本人号时，请选择联系人归属");
+            }
+            if (attachPeopleId != null) {
+                throw new BusinessException(400, "无本人号不能按号码关联已有档案");
+            }
+        } else {
+            ownerNorm = MobileOwnerEnum.require(mobileOwner);
+            if (!MobileOwnerEnum.SELF.name().equals(ownerNorm)) {
+                throw new BusinessException(400, "建档请填写本人手机号");
+            }
+            mobileNorm = MobileNumbers.requireSelf(mobile);
+            List<PeopleProfile> holders = peopleProfileMapper.listBySelfMobile(tenantId, mobileNorm);
+            if (holders.size() > 1) {
+                throw new BusinessException(409, "这个本人号有多份档案，请租户管理员合并");
+            }
+            if (holders.size() == 1) {
+                PeopleProfile hit = holders.get(0);
+                boolean same = MobileNumbers.sameName(name, hit.getDisplayName())
+                        && birthday != null
+                        && birthday.equals(hit.getBirthday());
+                if (same || hit.getId().equals(attachPeopleId)) {
+                    attachPeopleId = hit.getId();
+                } else {
+                    throw new BusinessException(409, "该本人手机号已有档案，姓名或出生日期不一致，请确认是否为同一人");
+                }
+            }
         }
-        String ownerNorm = mobileNorm == null ? null : MobileOwnerEnum.normalize(mobileOwner);
         boolean hasIdentity = StringUtils.hasText(identityValue);
         PeopleProfile profile;
         boolean createdProfile = false;
@@ -895,6 +927,12 @@ public class OrgWorkspaceService {
                 profile = peopleProfileMapper.findById(existing.getPeopleId());
                 if (profile == null) {
                     throw new BusinessException(500, "证件数据异常，请联系管理员");
+                }
+                if (!noSelf
+                        && StringUtils.hasText(profile.getMobile())
+                        && MobileOwnerEnum.SELF.name().equals(profile.getMobileOwner())
+                        && !mobileNorm.equals(profile.getMobile())) {
+                    throw new BusinessException(409, "证件和手机号不是同一人，请联系租户管理员合并档案");
                 }
                 fillBlankDemographics(profile, payload.gender(), payload.birthday(), mobileNorm, ownerNorm);
                 EntityMeta.onUpdate(profile);
@@ -947,19 +985,23 @@ public class OrgWorkspaceService {
             String mobileMasked,
             String mobileOwner,
             boolean hasIdentity,
-            boolean inCurrentOrg) {}
+            boolean inCurrentOrg,
+            boolean confirmRequired) {}
 
     public List<DuplicateCandidate> findPossibleDuplicates(
             String orgId, String name, LocalDate birthday, String mobile) {
         requireOrgWorkspaceAccess(orgId);
         String tenantId = requireTenantId();
-        if (!StringUtils.hasText(name) || (birthday == null && !StringUtils.hasText(mobile))) {
+        String self = MobileNumbers.trySelf(mobile);
+        if (self == null) {
             return List.of();
         }
         List<DuplicateCandidate> out = new ArrayList<>();
-        for (PeopleProfile p : peopleProfileMapper.listPossibleDuplicates(
-                tenantId, name.trim(), birthday, normalizeBlank(mobile))) {
+        for (PeopleProfile p : peopleProfileMapper.listBySelfMobile(tenantId, self)) {
             PatientOrgMembership m = membershipMapper.findByOrgAndPeople(orgId, p.getId());
+            boolean same = MobileNumbers.sameName(name, p.getDisplayName())
+                    && birthday != null
+                    && birthday.equals(p.getBirthday());
             out.add(new DuplicateCandidate(
                     p.getId(),
                     p.getDisplayName(),
@@ -968,7 +1010,8 @@ public class OrgWorkspaceService {
                     maskMobile(p.getMobile()),
                     p.getMobileOwner(),
                     peopleIdentityMapper.findPrimaryMask(p.getId()) != null,
-                    m != null && MembershipStatusEnum.ACTIVE.matches(m.getStatus())));
+                    m != null && MembershipStatusEnum.ACTIVE.matches(m.getStatus()),
+                    !same));
         }
         return out;
     }
@@ -1371,6 +1414,14 @@ public class OrgWorkspaceService {
             EntityMeta.onCreate(membership);
             membership.setJoinedAt(membership.getGmtCreated());
             membershipMapper.insert(membership);
+            FollowupScheduleService followups = followupScheduleService.getIfAvailable();
+            if (followups != null) {
+                followups.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
+            }
+            WorkspaceTaskGenerator tasks = workspaceTaskGenerator.getIfAvailable();
+            if (tasks != null) {
+                tasks.ensureTeamAssignOnJoin(tenantId, orgId, peopleId);
+            }
         } else if (!MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
             throw new BusinessException(409, "该患者机构关系已退出，请联系管理员处理");
         }

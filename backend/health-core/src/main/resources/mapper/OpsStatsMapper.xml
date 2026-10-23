@@ -275,6 +275,76 @@
           </if>
     </select>
 
+    <sql id="taskItemWhere">
+        t.org_id = #{orgId}
+        AND t.is_deleted = 0
+        <choose>
+            <when test="kind == 'OVERDUE_OPEN'">
+                AND t.status = 'OPEN'
+                AND t.due_at IS NOT NULL
+                AND t.due_at &lt; #{now}
+                <include refid="openAssigneeFilter"/>
+            </when>
+            <otherwise>
+                AND t.status = 'DONE'
+                AND t.done_at &gt;= #{from}
+                AND t.done_at &lt; #{to}
+                <include refid="doneOwnerFilter"/>
+                <if test="kind == 'ON_TIME_SCOPE' or kind == 'ON_TIME' or kind == 'LATE'">
+                    AND t.due_at IS NOT NULL
+                </if>
+                <if test="kind == 'ON_TIME'">
+                    AND t.done_at &lt;= t.due_at
+                </if>
+                <if test="kind == 'LATE'">
+                    AND t.done_at &gt; t.due_at
+                </if>
+            </otherwise>
+        </choose>
+    </sql>
+
+    <select id="countTaskItems" resultType="long">
+        SELECT COUNT(1)
+        FROM workspace_task t
+        WHERE <include refid="taskItemWhere"/>
+    </select>
+
+    <select id="listTaskItems" resultType="com.healix.core.opsstats.dto.OpsStatsTaskItemDto">
+        SELECT
+            t.id,
+            t.people_id AS peopleId,
+            p.display_name AS peopleName,
+            t.task_type AS taskType,
+            t.title,
+            t.summary,
+            t.status,
+            t.assignee_staff_id AS assigneeStaffId,
+            asp.display_name AS assigneeName,
+            t.done_by_staff_id AS doneByStaffId,
+            dsp.display_name AS doneByName,
+            t.due_at AS dueAt,
+            t.done_at AS doneAt,
+            CASE
+                WHEN t.status = 'DONE' AND t.due_at IS NOT NULL AND t.done_at &lt;= t.due_at THEN 1
+                WHEN t.status = 'DONE' AND t.due_at IS NOT NULL AND t.done_at &gt; t.due_at THEN 0
+                ELSE NULL
+            END AS onTime
+        FROM workspace_task t
+        LEFT JOIN people_profile p ON p.id = t.people_id AND p.is_deleted = 0
+        LEFT JOIN staff_profile asp ON asp.id = t.assignee_staff_id AND asp.is_deleted = 0
+        LEFT JOIN staff_profile dsp ON dsp.id = t.done_by_staff_id AND dsp.is_deleted = 0
+        WHERE <include refid="taskItemWhere"/>
+        <choose>
+            <when test="kind == 'OVERDUE_OPEN'">
+                ORDER BY t.due_at ASC, t.id ASC
+            </when>
+            <otherwise>
+                ORDER BY t.done_at DESC, t.id DESC
+            </otherwise>
+        </choose>
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
     <select id="listStaffIdsInCareTeam" resultType="string">
         SELECT ctm.staff_id
         FROM care_team_member ctm

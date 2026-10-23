@@ -45,6 +45,7 @@ interface ExamOcrResult {
   findings?: Record<string, unknown> | null
   ignoredFindings?: string[]
   warnings?: string[]
+  imageKey?: string
 }
 const findings = reactive<Record<string, unknown>>(blankFindings(examType.value))
 
@@ -57,6 +58,7 @@ const fieldRows = computed<ExamFindingField[]>(() => EXAM_FINDING_FIELDS[examTyp
 const showTypeSwitch = computed(() => activePanel.value.examTypes.length > 1)
 const navTitle = computed(() => (isEdit.value ? '修改检查' : '添加检查'))
 const submitLabel = computed(() => (isEdit.value ? '保存修改' : '保存'))
+const ocrImageKey = ref('')
 
 function nowLocalInput() {
   const d = new Date()
@@ -116,6 +118,7 @@ function openOcrPicker() {
 
 /** OCR 识别不出类型时保留当前选择，只回填结论与时间 */
 function applyOcr(data: ExamOcrResult) {
+  ocrImageKey.value = data.imageKey || ''
   const type = data.examType && EXAM_FINDING_FIELDS[data.examType] ? data.examType : ''
   if (type) {
     const panel = EXAM_PANELS.find((p) => p.examTypes.includes(type)) || EXAM_PANELS[0]
@@ -177,6 +180,7 @@ async function submit() {
       examinedAt: toApiDateTime(form.examinedAt),
       conclusion: form.conclusion.trim() || undefined,
       findings: Object.keys(payloadFindings).length ? payloadFindings : undefined,
+      imageKey: ocrImageKey.value || undefined,
     }
     if (isEdit.value) {
       await api(`/api/c/v1/me/exams/${editId.value}`, {

@@ -175,7 +175,7 @@ public class BCockpitController {
                 SecurityUtils.requireCurrentOrgId(),
                 peopleId,
                 SecurityUtils.requireStaffId(),
-                new ConfirmCommand(request.kind(), lab, exam, med)));
+                new ConfirmCommand(request.kind(), lab, exam, med, request.imageKey())));
     }
 
     /** 兼容旧路径：等同 recognize（不再自动入库）。 */
@@ -194,7 +194,8 @@ public class BCockpitController {
                 true));
     }
 
-    public record ConfirmRequest(String kind, ConfirmLabBody lab, ConfirmExamBody exam, ConfirmMedBody med) {}
+    public record ConfirmRequest(
+            String kind, ConfirmLabBody lab, ConfirmExamBody exam, ConfirmMedBody med, String imageKey) {}
 
     public record ConfirmLabBody(
             String specimenType,

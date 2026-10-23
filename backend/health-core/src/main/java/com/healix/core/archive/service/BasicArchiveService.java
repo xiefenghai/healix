@@ -52,6 +52,18 @@ public class BasicArchiveService {
             int expectedVersion,
             String contentJson,
             ArchiveOperatorContext operator) {
+        return save(tenantId, peopleId, expectedVersion, contentJson, operator, null);
+    }
+
+    @Transactional
+    @RecordFieldRevision(bizType = "BASIC_ARCHIVE")
+    public ArchiveViewDto save(
+            String tenantId,
+            String peopleId,
+            int expectedVersion,
+            String contentJson,
+            ArchiveOperatorContext operator,
+            java.util.Map<String, String> quotesByPath) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         if (operator.orgId() != null) {
             archiveAccessService.assertStaffCanAccessPeople(tenantId, operator.orgId(), peopleId);
@@ -102,7 +114,8 @@ public class BasicArchiveService {
                 archive.getVersion(),
                 operator.orgId(),
                 oldJson,
-                normalized);
+                normalized,
+                quotesByPath);
 
         metadataSyncService.syncBasicArchive(
                 tenantId, peopleId, normalized, META_BIZ, operator.sourceClientCode());

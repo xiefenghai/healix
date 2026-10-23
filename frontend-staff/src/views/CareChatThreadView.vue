@@ -100,8 +100,12 @@ const patientLinked = computed(() => !!session.value?.patientLinked)
 
 async function scrollBottom() {
   await nextTick()
-  const el = listRef.value
-  if (el) el.scrollTop = el.scrollHeight
+  const pin = () => {
+    const el = listRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  }
+  pin()
+  requestAnimationFrame(pin)
 }
 
 async function markRead() {
@@ -133,12 +137,12 @@ async function load() {
     session.value = res.data
     messages.value = [...(res.data.messages || [])]
     await Promise.all([markRead(), loadFocusTasks()])
-    await scrollBottom()
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
   } finally {
     loading.value = false
   }
+  await scrollBottom()
 }
 
 async function pollNew() {
@@ -397,9 +401,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page {
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: transparent;
   animation: hx-enter 0.3s ease both;
 }
@@ -458,6 +464,7 @@ onBeforeUnmount(() => {
 }
 .list {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 12px 14px 96px;
   display: flex;

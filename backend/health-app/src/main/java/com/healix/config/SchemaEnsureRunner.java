@@ -19,6 +19,13 @@ public class SchemaEnsureRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // 同一登录账号可在多个租户各有一份人员档案
+        dropObsoleteIndex("staff_profile", "uk_staff_account");
+        ensureIndex(
+                "staff_profile",
+                "uk_staff_account_tenant",
+                "ALTER TABLE staff_profile ADD UNIQUE KEY uk_staff_account_tenant (account_id, tenant_id, gmt_deleted)");
+
         ensureTable(
                 "staff_patient_watch",
                 """
@@ -39,6 +46,69 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_staff_patient_watch_org_staff (org_id, staff_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """);
+
+        ensureTable(
+                "stored_object",
+                """
+                CREATE TABLE IF NOT EXISTS stored_object (
+                    pk_id         BIGINT       NOT NULL AUTO_INCREMENT,
+                    id            VARCHAR(32)  NOT NULL,
+                    tenant_id     VARCHAR(32)  NOT NULL,
+                    people_id     VARCHAR(32)  NOT NULL,
+                    object_key    VARCHAR(128) NOT NULL,
+                    content_type  VARCHAR(64)  NOT NULL,
+                    category      VARCHAR(16)  NOT NULL,
+                    is_deleted    TINYINT      NOT NULL DEFAULT 0,
+                    gmt_created   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted   DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_stored_object_id (id),
+                    UNIQUE KEY uk_stored_object_key (object_key)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """);
+        ensureTable(
+                "agent_confirm_card",
+                """
+                CREATE TABLE IF NOT EXISTS agent_confirm_card (
+                    pk_id         BIGINT       NOT NULL AUTO_INCREMENT,
+                    id            VARCHAR(32)  NOT NULL,
+                    tenant_id     VARCHAR(32)  NOT NULL,
+                    people_id     VARCHAR(32)  NOT NULL,
+                    card_type     VARCHAR(16)  NOT NULL,
+                    status        VARCHAR(16)  NOT NULL,
+                    payload_json  TEXT         NOT NULL,
+                    summary       VARCHAR(512) NOT NULL,
+                    expires_at    DATETIME     NOT NULL,
+                    is_deleted    TINYINT      NOT NULL DEFAULT 0,
+                    gmt_created   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted   DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_agent_confirm_card_id (id),
+                    KEY idx_agent_confirm_card_people (people_id, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """);
+        ensureColumn(
+                "field_revision_item",
+                "quote",
+                "ALTER TABLE field_revision_item ADD COLUMN quote VARCHAR(80) NULL COMMENT '确认时保留的原句' AFTER new_display");
+        ensureColumn(
+                "lab_report",
+                "image_key",
+                "ALTER TABLE lab_report ADD COLUMN image_key VARCHAR(128) NULL COMMENT '原图对象键' AFTER note");
+        ensureColumn(
+                "exam_report",
+                "image_key",
+                "ALTER TABLE exam_report ADD COLUMN image_key VARCHAR(128) NULL COMMENT '原图对象键' AFTER source");
+        ensureColumn(
+                "diet_meal",
+                "image_keys",
+                "ALTER TABLE diet_meal ADD COLUMN image_keys JSON NULL COMMENT '原图对象键列表' AFTER note");
+        ensureColumn(
+                "people_medication",
+                "image_key",
+                "ALTER TABLE people_medication ADD COLUMN image_key VARCHAR(128) NULL COMMENT '药盒或处方原图对象键' AFTER remark");
 
         ensureColumn(
                 "people_profile",
@@ -1008,6 +1078,31 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     UNIQUE KEY uk_reward_challenge_week (people_id, period_start, kind),
                     KEY idx_reward_challenge_people (people_id, period_start)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='周挑战'
+                """);
+        dropObsoleteTable("farm_state");
+        dropObsoleteTable("farm_card");
+        dropObsoleteTable("farm_video_card");
+        dropObsoleteTable("farm_video_unlock");
+        dropObsoleteTable("farm_home_visit");
+        ensureTable(
+                "science_daily",
+                """
+                CREATE TABLE IF NOT EXISTS science_daily (
+                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
+                    id VARCHAR(32) NOT NULL,
+                    tenant_id VARCHAR(32) NOT NULL,
+                    people_id VARCHAR(32) NOT NULL,
+                    biz_date DATE NOT NULL,
+                    clip_code VARCHAR(32) NOT NULL,
+                    watched TINYINT NOT NULL DEFAULT 0,
+                    is_deleted TINYINT NOT NULL DEFAULT 0,
+                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_science_daily_id (id),
+                    UNIQUE KEY uk_science_daily_people_day (people_id, biz_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='今日科普'
                 """);
     }
 

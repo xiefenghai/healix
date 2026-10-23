@@ -19,6 +19,7 @@ public class DietMealDto {
     private String qualityLevel;
     private List<DietFlagDto> flags;
     private String note;
+    private java.util.List<String> imageKeys;
     private String staffComment;
     private LocalDateTime commentedAt;
     private boolean recordedByStaff;

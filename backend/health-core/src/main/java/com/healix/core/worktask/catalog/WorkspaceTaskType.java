@@ -23,7 +23,9 @@ public enum WorkspaceTaskType {
     /** 患者问卷覆盖了档案已有值 */
     ARCHIVE_SELF_REPORT,
     /** 发给患者的评估问卷过期未填 */
-    QUESTIONNAIRE_EXPIRED;
+    QUESTIONNAIRE_EXPIRED,
+    /** 本人手机号对上，但姓名或生日不一致，需健管师确认后才能挂档 */
+    PROFILE_LINK;
 
     public boolean matches(String value) {
         return name().equals(value);
@@ -45,6 +47,7 @@ public enum WorkspaceTaskType {
             case ASSESSMENT_SUSPECTED -> "疑似患病";
             case ARCHIVE_SELF_REPORT -> "患者自报更新";
             case QUESTIONNAIRE_EXPIRED -> "问卷未完成";
+            case PROFILE_LINK -> "关联就诊人";
         };
     }
 
@@ -62,7 +65,8 @@ public enum WorkspaceTaskType {
             case METRIC_ALERT, TEAM_ASSIGN, EXERCISE_ALERT -> WorkspaceTaskPriority.HIGH;
             case FOLLOW_UP, PLAN_NUDGE, PLAN_CREATE, PLAN_REVIEW, MED_FEEDBACK, ASSESSMENT_ESCALATION,
                     ASSESSMENT_SUSPECTED -> WorkspaceTaskPriority.MEDIUM;
-            case REPORT_REVIEW, MED_VERIFY, ARCHIVE_SELF_REPORT, QUESTIONNAIRE_EXPIRED -> WorkspaceTaskPriority.LOW;
+            case REPORT_REVIEW, MED_VERIFY, ARCHIVE_SELF_REPORT, QUESTIONNAIRE_EXPIRED, PROFILE_LINK ->
+                    WorkspaceTaskPriority.LOW;
         };
     }
 
@@ -75,13 +79,14 @@ public enum WorkspaceTaskType {
             case TEAM_ASSIGN, EXERCISE_ALERT -> 1;
             case PLAN_CREATE, PLAN_NUDGE, METRIC_ALERT, FOLLOW_UP, REPORT_REVIEW, PLAN_REVIEW, MED_FEEDBACK, MED_VERIFY,
                     ASSESSMENT_ESCALATION, ASSESSMENT_SUSPECTED, ARCHIVE_SELF_REPORT, QUESTIONNAIRE_EXPIRED -> 3;
+            case PROFILE_LINK -> 7;
         };
     }
 
     /** 医生公共池不可见、不可领。 */
     public boolean doctorPublicHidden() {
         return this == TEAM_ASSIGN || this == PLAN_CREATE || this == REPORT_REVIEW || this == MED_VERIFY
-                || this == ARCHIVE_SELF_REPORT || this == QUESTIONNAIRE_EXPIRED;
+                || this == ARCHIVE_SELF_REPORT || this == QUESTIONNAIRE_EXPIRED || this == PROFILE_LINK;
     }
 
     public boolean requiresFormToClose() {

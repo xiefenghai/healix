@@ -25,6 +25,8 @@ import {
 } from '../shared/care-plan-labels'
 import { exerciseHowTo } from '../shared/exercise'
 import { printCarePlan } from '../shared/care-plan-print'
+import ScienceSheet from '../shared/ScienceSheet.vue'
+import { claimScienceOffer, type ScienceToday } from '../shared/science'
 
 const router = useRouter()
 const tab = ref<'today' | 'overview' | 'history'>('today')
@@ -34,6 +36,7 @@ const loading = ref(true)
 const today = ref<any>(null)
 const overview = ref<any>(null)
 const busyId = ref<string | null>(null)
+const scienceOffer = ref<ScienceToday | null>(null)
 const historyList = ref<any[]>([])
 const historyLoading = ref(false)
 const historyDetail = ref<any>(null)
@@ -301,6 +304,10 @@ function taskPending(task: any) {
   return task.checkinStatus !== 'DONE' && task.checkinStatus !== 'SKIPPED'
 }
 
+function taskSkipped(task: any) {
+  return task.checkinStatus === 'SKIPPED'
+}
+
 function formatHistoryTime(iso?: string) {
   if (!iso) return ''
   return String(iso).replace('T', ' ').slice(0, 16)
@@ -497,12 +504,19 @@ onMounted(async () => {
     today.value = t.data
     overview.value = o.data
     allergyItems.value = a?.data?.items || []
+    if (!dayOffset.value) await offerScience()
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
   } finally {
     loading.value = false
   }
 })
+
+async function offerScience() {
+  if (scienceOffer.value) return
+  const offer = await claimScienceOffer()
+  if (offer) scienceOffer.value = offer
+}
 
 async function checkin(taskId: string, status: string) {
   busyId.value = taskId
@@ -513,6 +527,7 @@ async function checkin(taskId: string, status: string) {
     })
     showToast({ type: 'success', message: status === 'DONE' ? (dayOffset.value ? '已补打' : '已完成') : '已跳过' })
     today.value = (await fetchDay()).data
+    if (status === 'DONE' && !dayOffset.value) await offerScience()
   } catch (e) {
     showToast(e instanceof Error ? e.message : '操作失败')
   } finally {
@@ -523,6 +538,7 @@ async function checkin(taskId: string, status: string) {
 
 <template>
   <div class="page">
+    <ScienceSheet v-if="scienceOffer" :offer="scienceOffer" @close="scienceOffer = null" />
     <van-nav-bar
       :title="planTitle"
       left-arrow
@@ -589,9 +605,9 @@ async function checkin(taskId: string, status: string) {
         <van-empty v-if="!todayTasks.length" :description="dayOffset ? '昨日无任务' : '今日暂无任务'" image-size="64" />
 
         <section v-else class="card list-card xhs-todo">
-          <div v-for="task in todayTasks" :key="task.id" class="item" :class="{ done: !taskPending(task) }">
-            <span class="hx-ck" :class="{ on: !taskPending(task) }" aria-hidden="true">
-              <van-icon v-if="!taskPending(task)" name="success" size="13" />
+          <div v-for="task in todayTasks" :key="task.id" class="item" :class="{ done: task.checkinStatus === 'DONE' }">
+            <span class="hx-ck" :class="{ on: task.checkinStatus === 'DONE' }" aria-hidden="true">
+              <van-icon v-if="task.checkinStatus === 'DONE'" name="success" size="13" />
             </span>
             <span class="hx-cat" :class="carePlanCategoryTone(task.category, task.taskCode)">
               {{ carePlanTaskCategoryLabel(task) }}
@@ -640,6 +656,27 @@ async function checkin(taskId: string, status: string) {
               </van-button>
               <van-button size="small" plain round :disabled="!!busyId" @click="checkin(task.id, 'SKIPPED')">
                 跳过
+              </van-button>
+            </div>
+            <div v-else-if="taskSkipped(task)" class="item-actions">
+              <van-button
+                v-if="carePlanTaskRecordPath(task)"
+                size="small"
+                type="primary"
+                round
+                @click="router.push(carePlanTaskRecordPath(task)!)"
+              >
+                {{ carePlanTaskRecordLabel(task) }}
+              </van-button>
+              <van-button
+                v-else
+                size="small"
+                type="primary"
+                round
+                :loading="busyId === task.id"
+                @click="checkin(task.id, 'DONE')"
+              >
+                改为完成
               </van-button>
             </div>
           </div>

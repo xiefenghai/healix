@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS staff_profile (
     gmt_deleted     DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
     PRIMARY KEY (pk_id),
     UNIQUE KEY uk_staff_profile_id (id),
-    UNIQUE KEY uk_staff_account (account_id, gmt_deleted),
+    UNIQUE KEY uk_staff_account_tenant (account_id, tenant_id, gmt_deleted),
     KEY idx_staff_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='B 端人员档案（归属租户）';
 
@@ -460,6 +460,7 @@ CREATE TABLE IF NOT EXISTS field_revision_item (
     new_value      JSON         NULL,
     old_display    VARCHAR(512) NULL,
     new_display    VARCHAR(512) NULL,
+    quote          VARCHAR(80)  NULL COMMENT '确认时保留的原句',
     is_deleted     TINYINT      NOT NULL DEFAULT 0,
     gmt_created    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     gmt_modified   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -556,6 +557,7 @@ CREATE TABLE IF NOT EXISTS lab_report (
     reported_at         DATETIME     NULL COMMENT '报告时间',
     source              VARCHAR(32)  NOT NULL DEFAULT 'MANUAL' COMMENT '来源：STAFF/STAFF_OCR/PATIENT/PATIENT_OCR（兼容 MANUAL/OCR）',
     note                VARCHAR(200) NULL COMMENT '备注',
+    image_key           VARCHAR(128) NULL COMMENT '原图对象键',
     created_by_staff_id VARCHAR(32)  NULL COMMENT '创建人员工业务ID',
     updated_by_staff_id VARCHAR(32)  NULL COMMENT '更新人员工业务ID',
     is_deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
@@ -603,6 +605,7 @@ CREATE TABLE IF NOT EXISTS exam_report (
     conclusion          VARCHAR(1000) NULL COMMENT '结论摘要',
     findings_json       JSON         NULL COMMENT '结构化关键测量',
     source              VARCHAR(32)  NOT NULL DEFAULT 'MANUAL' COMMENT '来源：STAFF/PATIENT（兼容 MANUAL）',
+    image_key           VARCHAR(128) NULL COMMENT '原图对象键',
     created_by_staff_id VARCHAR(32)  NULL COMMENT '创建人员工业务ID',
     updated_by_staff_id VARCHAR(32)  NULL COMMENT '更新人员工业务ID',
     is_deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
@@ -676,6 +679,25 @@ CREATE TABLE IF NOT EXISTS agent_interaction_log (
     KEY idx_agent_log_people_time (people_id, gmt_created),
     KEY idx_agent_log_tenant_time (tenant_id, gmt_created)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 交互日志';
+
+CREATE TABLE IF NOT EXISTS agent_confirm_card (
+    pk_id         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id            VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id     VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    people_id     VARCHAR(32)  NOT NULL COMMENT '患者业务ID',
+    card_type     VARCHAR(16)  NOT NULL COMMENT 'VITAL',
+    status        VARCHAR(16)  NOT NULL COMMENT 'PENDING/CONFIRMED/CANCELLED/EXPIRED',
+    payload_json  TEXT         NOT NULL COMMENT '确认时采用的结构化载荷',
+    summary       VARCHAR(512) NOT NULL COMMENT '给患者看的摘要',
+    expires_at    DATETIME     NOT NULL COMMENT '过期时间',
+    is_deleted    TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted   DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_agent_confirm_card_id (id),
+    KEY idx_agent_confirm_card_people (people_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管家确认卡';
 
 CREATE TABLE IF NOT EXISTS audit_log (
     pk_id               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
@@ -967,6 +989,7 @@ CREATE TABLE IF NOT EXISTS people_medication (
     time_bedtime            VARCHAR(32)    NULL COMMENT '用药时间-睡前（兼容旧字段，新录入不再使用）',
     has_adverse_reaction    TINYINT        NOT NULL DEFAULT 0 COMMENT '是否存在不良反应：0否 1是',
     remark                  VARCHAR(150)   NULL COMMENT '备注',
+    image_key               VARCHAR(128)   NULL COMMENT '药盒或处方原图对象键',
     status                  VARCHAR(16)    NOT NULL DEFAULT 'ACTIVE' COMMENT '状态：ACTIVE在用/STOPPED停用',
     drug_code               VARCHAR(64)    NULL COMMENT '药品目录编码',
     slots_json              VARCHAR(128)   NULL COMMENT '服药时段覆盖 ["MORNING","BEDTIME"]；空=按频次+时机推导',
@@ -1258,7 +1281,7 @@ CREATE TABLE IF NOT EXISTS workspace_task (
     summary                 VARCHAR(512) NULL COMMENT '列表摘要',
     payload_json            JSON         NULL COMMENT '类型特有快照',
     source                  VARCHAR(16)  NOT NULL DEFAULT 'JOB' COMMENT 'EVENT/JOB/MANUAL',
-    close_reason            VARCHAR(16)  NULL COMMENT 'CONDITION/FORM/EXPIRED/CANCEL',
+    close_reason            VARCHAR(16)  NULL COMMENT 'CONDITION/FORM/EXPIRED/CANCEL/REVIEWED',
     due_at                  DATETIME     NULL COMMENT '截止时间',
     opened_at               DATETIME     NOT NULL COMMENT '开单时间',
     done_at                 DATETIME     NULL COMMENT '关单时间',
@@ -1588,6 +1611,7 @@ CREATE TABLE IF NOT EXISTS diet_meal (
     quality_level           VARCHAR(8)   NULL COMMENT 'GREEN/YELLOW/RED',
     flags_json              JSON         NULL COMMENT '规则提示',
     note                    VARCHAR(200) NULL COMMENT '备注',
+    image_keys              JSON         NULL COMMENT '原图对象键列表',
     staff_comment           VARCHAR(500) NULL COMMENT '健管师点评',
     comment_staff_id        VARCHAR(32)  NULL COMMENT '点评员工',
     commented_at            DATETIME     NULL COMMENT '点评时间',
@@ -1853,6 +1877,23 @@ CREATE TABLE IF NOT EXISTS reward_challenge (
     KEY idx_reward_challenge_people (people_id, period_start)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='周挑战';
 
+CREATE TABLE IF NOT EXISTS science_daily (
+    pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id               VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    people_id               VARCHAR(32)  NOT NULL COMMENT '患者业务ID',
+    biz_date                DATE         NOT NULL COMMENT '科普当天，Asia/Shanghai',
+    clip_code               VARCHAR(32)  NOT NULL COMMENT '片库编码，见 ScienceCatalog',
+    watched                 TINYINT      NOT NULL DEFAULT 0 COMMENT '当天是否点过播放',
+    is_deleted              TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted             DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_science_daily_id (id),
+    UNIQUE KEY uk_science_daily_people_day (people_id, biz_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='今日科普';
+
 CREATE TABLE IF NOT EXISTS water_intake_log (
     pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
     id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
@@ -1939,3 +1980,77 @@ CREATE TABLE IF NOT EXISTS org_recipe (
     UNIQUE KEY uk_org_recipe_id (id),
     KEY idx_org_recipe_org (org_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='机构食谱库';
+
+CREATE TABLE IF NOT EXISTS people_mobile_state (
+    people_id          VARCHAR(32) NOT NULL COMMENT 'people_profile.id',
+    tenant_id          VARCHAR(32) NOT NULL COMMENT '所属租户',
+    no_self_mobile     TINYINT     NOT NULL DEFAULT 0 COMMENT '1=明确无本人号，走激活码',
+    demo_review_json   JSON        NULL COMMENT '待核对的姓名/性别/生日提交值',
+    gmt_modified       DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (people_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='本人号认人状态';
+
+CREATE TABLE IF NOT EXISTS people_link_request (
+    pk_id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                 VARCHAR(32)  NOT NULL COMMENT '业务主键',
+    tenant_id          VARCHAR(32)  NOT NULL COMMENT '所属租户',
+    account_id         VARCHAR(32)  NOT NULL COMMENT '提交申请的 C 端账号',
+    kind               VARCHAR(16)  NOT NULL COMMENT 'LINK/DEMOGRAPHIC',
+    status             VARCHAR(16)  NOT NULL COMMENT 'OPEN/APPROVED/REJECTED/WITHDRAWN/EXPIRED/DISMISSED',
+    mobile             VARCHAR(16)  NULL COMMENT '本人手机号',
+    source_people_id   VARCHAR(32)  NULL COMMENT '已有自建档案，通过后并入目标',
+    target_people_id   VARCHAR(32)  NULL COMMENT '号码所在档案',
+    org_id             VARCHAR(32)  NULL COMMENT '任务所在机构',
+    task_id            VARCHAR(32)  NULL COMMENT '工作台任务',
+    display_name       VARCHAR(64)  NULL COMMENT '申请填写的姓名',
+    gender             VARCHAR(16)  NULL COMMENT '申请填写的性别',
+    birthday           DATE         NULL COMMENT '申请填写的生日',
+    relation           VARCHAR(32)  NULL COMMENT '就诊人关系',
+    proposed_json      JSON         NULL COMMENT '资料修改申请值',
+    expire_at          DATETIME     NOT NULL COMMENT '未处理则关闭',
+    resolved_at        DATETIME     NULL COMMENT '办结时间',
+    is_deleted         TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除',
+    gmt_created        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    gmt_modified       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    gmt_deleted        DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_people_link_request_id (id),
+    KEY idx_people_link_request_account (account_id, status),
+    KEY idx_people_link_request_mobile (tenant_id, mobile, status),
+    KEY idx_people_link_request_expire (status, expire_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='就诊人关联与资料修改申请';
+
+CREATE TABLE IF NOT EXISTS mobile_otp (
+    pk_id         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id            VARCHAR(32)  NOT NULL COMMENT '业务主键',
+    tenant_id     VARCHAR(32)  NOT NULL COMMENT '所属租户',
+    account_id    VARCHAR(32)  NOT NULL COMMENT '接收验证码的账号',
+    mobile        VARCHAR(16)  NOT NULL COMMENT '本人手机号',
+    code_hash     VARCHAR(64)  NOT NULL COMMENT '验证码哈希',
+    expire_at     DATETIME     NOT NULL COMMENT '过期时间',
+    consumed_at   DATETIME     NULL COMMENT '使用或作废时间',
+    is_deleted    TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除',
+    gmt_created   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    gmt_modified  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    gmt_deleted   DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_mobile_otp_id (id),
+    KEY idx_mobile_otp_lookup (tenant_id, account_id, mobile, consumed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='本人手机号短信验证码';
+
+CREATE TABLE IF NOT EXISTS stored_object (
+    pk_id         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id            VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id     VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    people_id     VARCHAR(32)  NOT NULL COMMENT '患者业务ID',
+    object_key    VARCHAR(128) NOT NULL COMMENT '对象键',
+    content_type  VARCHAR(64)  NOT NULL COMMENT 'image/jpeg 等',
+    category      VARCHAR(16)  NOT NULL COMMENT 'lab/exam/diet/med',
+    is_deleted    TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted   DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_stored_object_id (id),
+    UNIQUE KEY uk_stored_object_key (object_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对象存储归属';

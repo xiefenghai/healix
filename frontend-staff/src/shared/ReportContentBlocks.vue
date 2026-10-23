@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { lifestyleSections } from './report-lifestyle'
+import { adherenceChartHtml, dietChartHtml, exerciseChartHtml, metricChartHtml } from './report-print-charts'
 import {
   compareRate,
   dietExtras,
@@ -74,6 +75,9 @@ const metrics = computed(() => metricViews(content.value))
 const lifestyle = computed(() => lifestyleSections(content.value))
 const diet = computed(() => dietExtras(content.value))
 const exercise = computed(() => exerciseExtras(content.value))
+const adherenceChart = computed(() => adherenceChartHtml(content.value))
+const dietChart = computed(() => dietChartHtml(content.value))
+const exerciseChart = computed(() => exerciseChartHtml(content.value))
 const observations = computed(() => observationViews(content.value))
 
 const followups = computed(() => {
@@ -204,16 +208,7 @@ function barWidth(rate?: number | null) {
       </div>
     </div>
 
-    <div v-if="plan.weekly.length" class="sub-block">
-      <div class="sub-title">每周方案完成率</div>
-      <div v-for="w in plan.weekly" :key="w.label" class="task">
-        <div class="row">
-          <span>{{ w.label }} <small class="hx-muted">{{ w.range }}</small></span>
-          <span class="strong" :class="`band--${rateBand(w.value)}`">{{ w.display }}</span>
-        </div>
-        <div class="track thin" :class="`rate--${rateBand(w.value)}`"><i class="rate-fill" :style="{ width: barWidth(w.value) }" /></div>
-      </div>
-    </div>
+    <div v-if="adherenceChart" class="chart-fig" v-html="adherenceChart" />
   </section>
 
   <section v-if="metrics.length" class="block">
@@ -243,6 +238,7 @@ function barWidth(rate?: number | null) {
           <small>{{ s.sub }}</small>
         </div>
       </div>
+      <div v-if="metricChartHtml(m)" class="chart-fig" v-html="metricChartHtml(m)" />
       <ul v-if="m.abnormalItems.length" class="abn-list">
         <li v-for="(a, i) in m.abnormalItems" :key="i"><span class="hx-muted">{{ a.time }}</span> {{ a.text }}</li>
       </ul>
@@ -263,6 +259,7 @@ function barWidth(rate?: number | null) {
         </div>
       </div>
       <template v-if="sec.key === 'diet'">
+        <div v-if="dietChart" class="chart-fig" v-html="dietChart" />
         <div v-if="diet.macros.length" class="sub-block">
           <div class="sub-title">三大营养素供能比<span class="sub-hint">实际 / 目标</span></div>
           <div v-for="r in diet.macros" :key="r.label" class="macro">
@@ -295,14 +292,7 @@ function barWidth(rate?: number | null) {
             <span v-for="t in exercise.types" :key="t.label" class="chip">{{ t.label }}</span>
           </div>
         </div>
-        <div v-if="exercise.weekly.length" class="sub-block">
-          <div class="sub-title">每周活动<span v-if="exercise.metText" class="sub-hint">{{ exercise.metText }}</span></div>
-          <div class="chips">
-            <span v-for="w in exercise.weekly" :key="w.label" class="chip" :class="{ 'chip--warn': w.met === false }">
-              {{ w.label }} <b>{{ w.display }}</b>
-            </span>
-          </div>
-        </div>
+        <div v-if="exerciseChart" class="chart-fig" v-html="exerciseChart" />
       </template>
     </template>
   </section>
@@ -346,6 +336,20 @@ function barWidth(rate?: number | null) {
 </template>
 
 <style scoped>
+.chart-fig {
+  margin-top: 10px;
+}
+.chart-fig :deep(.chart-cap) {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--hx-muted, #6b7a87);
+}
+.chart-fig :deep(svg) {
+  width: 100%;
+  height: auto;
+  display: block;
+}
 .kpi-grid,
 .block {
   --mark: #ffd84d;

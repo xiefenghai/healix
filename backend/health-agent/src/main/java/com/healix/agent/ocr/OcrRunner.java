@@ -3,6 +3,7 @@ package com.healix.agent.ocr;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
+import com.healix.agent.skill.SkillMarkdown;
 import com.healix.agent.support.AiUsageGuard;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
@@ -155,7 +156,8 @@ public class OcrRunner {
         try {
             Resource res = new ClassPathResource("skills/" + skill + "/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
-                return StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8);
+                return SkillMarkdown.forLlm(
+                        StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8));
             }
         } catch (Exception e) {
             log.debug("skill {} missing: {}", skill, e.getMessage());

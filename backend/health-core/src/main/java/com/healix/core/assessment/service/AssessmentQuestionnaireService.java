@@ -335,9 +335,11 @@ public class AssessmentQuestionnaireService {
 
     private void notifySelfReport(String tenantId, String peopleId, String submissionId, List<Conflict> conflicts) {
         try {
-            String summary = conflicts.stream()
-                    .map(c -> c.label() + "：" + c.currentText() + " → " + c.newText())
-                    .collect(Collectors.joining("；"));
+            String changes = conflicts.stream().map(AssessmentQuestionnaireService::changeLine).collect(Collectors.joining("；"));
+            String summary = "请核对是否调整方案：" + changes;
+            if (summary.length() > 240) {
+                summary = summary.substring(0, 240) + "…";
+            }
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("submissionId", submissionId);
             payload.put("changes", conflicts);
@@ -345,6 +347,12 @@ public class AssessmentQuestionnaireService {
         } catch (RuntimeException e) {
             log.warn("archive self report task failed people={}: {}", peopleId, e.getMessage());
         }
+    }
+
+    private static String changeLine(Conflict c) {
+        String from = StringUtils.hasText(c.currentText()) ? c.currentText() : "未填写";
+        String to = StringUtils.hasText(c.newText()) ? c.newText() : "未填写";
+        return c.label() + " " + from + " → " + to;
     }
 
     // ------------------------------------------------------------------ 校验与冲突

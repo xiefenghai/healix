@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.ocr.OcrRunner;
+import com.healix.agent.skill.SkillMarkdown;
 import com.healix.agent.support.AiUsageGuard;
 import com.healix.common.exception.BusinessException;
 import com.healix.core.diet.dto.DietDraftDto;
@@ -33,7 +34,7 @@ import org.springframework.util.StringUtils;
  * 饮食识别：照片（识图模型）或文字描述 → 食物名 + 克数草稿。
  *
  * <p>模型只负责「是什么、多少克」，营养值一律由食物库计算；未命中食物库的条目用模型估算能量兜底并标为 C 级。
- * 图片不落盘。
+ * 原图由调用方写入对象存储，本服务只返回识别草稿。
  */
 @Slf4j
 @Service
@@ -222,7 +223,8 @@ public class DietRecognitionService {
         try {
             Resource res = new ClassPathResource("skills/" + SKILL + "/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {
-                return StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8);
+                return SkillMarkdown.forLlm(
+                        StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8));
             }
         } catch (Exception e) {
             log.debug("skill {} missing: {}", SKILL, e.getMessage());

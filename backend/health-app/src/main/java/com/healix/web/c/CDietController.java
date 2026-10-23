@@ -18,6 +18,8 @@ import com.healix.core.diet.service.DietRecordService.FrequentFoodDto;
 import com.healix.core.diet.service.DietRecordService.MealInput;
 import com.healix.core.diet.service.DietRecordService.MealItemInput;
 import com.healix.core.diet.service.FoodCatalogService;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import com.healix.security.SecurityUtils;
 import java.io.IOException;
 import java.time.LocalDate;
@@ -50,6 +52,7 @@ public class CDietController {
     private final DietRecordService recordService;
     private final FoodCatalogService catalogService;
     private final DietRecognitionService recognitionService;
+    private final ImageFileService imageFileService;
 
     @GetMapping("/diet/goal")
     public ApiResult<DietGoalStatusDto> goal() {
@@ -103,7 +106,13 @@ public class CDietController {
     public ApiResult<DietMealDto> saveMealSlot(@RequestBody MealSlotRequest request) {
         String peopleId = SecurityUtils.requirePatientId();
         MealInput input = new MealInput(
-                request.mealDate(), request.mealType(), request.eatenAt(), request.source(), request.note(), request.items());
+                request.mealDate(),
+                request.mealType(),
+                request.eatenAt(),
+                request.source(),
+                request.note(),
+                request.items(),
+                request.imageKeys());
         return ApiResult.ok(recordService.saveSlot(
                 SecurityUtils.requireTenantId(), peopleId, request.mealIds(), input, Actor.patient(peopleId)));
     }
@@ -115,7 +124,8 @@ public class CDietController {
             LocalDateTime eatenAt,
             String source,
             String note,
-            List<MealItemInput> items) {}
+            List<MealItemInput> items,
+            List<String> imageKeys) {}
 
     @DeleteMapping("/diet/meals/{mealId}")
     public ApiResult<Void> deleteMeal(@PathVariable String mealId) {
@@ -124,7 +134,7 @@ public class CDietController {
         return ApiResult.ok(null);
     }
 
-    /** 拍照识别：同一餐可传多张 file，一次识别并合并重复食物；只返回草稿，图片不保存。 */
+    /** 拍照识别：同一餐可传多张 file，一次识别并合并重复食物；原图写入对象存储，确认保存时带回 imageKeys。 */
     @PostMapping(value = "/diet/recognize", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResult<DietDraftDto> recognizePhoto(
             @RequestParam("file") List<MultipartFile> files,
@@ -144,7 +154,13 @@ public class CDietController {
         if (photos.isEmpty()) {
             throw new BusinessException("请上传图片");
         }
-        return ApiResult.ok(recognitionService.recognizePhotos(photos, mealType, hint));
+        List<String> imageKeys = new ArrayList<>();
+        String tenantId = SecurityUtils.requireTenantId();
+        String peopleId = SecurityUtils.requirePatientId();
+        for (DietRecognitionService.Photo photo : photos) {
+            imageKeys.add(imageFileService.save(tenantId, peopleId, ObjectKeys.DIET, photo.bytes(), photo.mimeType()));
+        }
+        return ApiResult.ok(recognitionService.recognizePhotos(photos, mealType, hint).withImageKeys(imageKeys));
     }
 
     @PostMapping("/diet/recognize-text")
@@ -160,6 +176,12 @@ public class CDietController {
     public ApiResult<List<FoodItemDto>> searchFoods(
             @RequestParam(required = false) String keyword, @RequestParam(defaultValue = "20") int limit) {
         return ApiResult.ok(catalogService.search(keyword, limit));
+    }
+
+    /** 示例预填 / 自然语言菜名：用包含匹配落到库内条目（搜「豆腐炒青菜」可命中「豆腐」）。 */
+    @GetMapping("/foods/match")
+    public ApiResult<FoodItemDto> matchFood(@RequestParam String name) {
+        return ApiResult.ok(catalogService.matchDto(name).orElse(null));
     }
 
     @GetMapping("/foods/frequent")

@@ -17,7 +17,9 @@ import com.healix.core.opsstats.dto.OpsStatsSeriesPointDto;
 import com.healix.core.opsstats.dto.OpsStatsStaffAggRow;
 import com.healix.core.opsstats.dto.OpsStatsStaffRowDto;
 import com.healix.core.opsstats.dto.OpsStatsSummaryDto;
+import com.healix.common.result.PageResult;
 import com.healix.core.opsstats.dto.OpsStatsTaskAggRow;
+import com.healix.core.opsstats.dto.OpsStatsTaskItemDto;
 import com.healix.core.opsstats.dto.OpsStatsTypeSliceDto;
 import com.healix.core.opsstats.mapper.OpsStatsMapper;
 import com.healix.core.worktask.catalog.WorkspaceTaskType;
@@ -43,6 +45,9 @@ public class OpsStatsService {
 
     private static final int MAX_RANGE_DAYS = 90;
     private static final int RANK_LIMIT = 50;
+    private static final int TASK_PAGE_MAX = 50;
+    private static final Set<String> TASK_KINDS = Set.of(
+            "DONE", "ON_TIME_SCOPE", "ON_TIME", "LATE", "OVERDUE_OPEN");
     private static final String FOOTNOTE =
             "及时率按关单日、仅含有截止时间的办结；超期未结为此刻存量；取消/过期不计入办结；本组筛按办理人所属健管组。本页不作薪酬核算。";
 
@@ -92,6 +97,46 @@ public class OpsStatsService {
         dto.setSeries(toSeries(opsStatsMapper.seriesByDay(orgId, fromDt, toDt, team, scopedStaffId)));
         dto.setFootnote(FOOTNOTE);
         return dto;
+    }
+
+    /**
+     * 与汇总同一口径的任务明细。
+     * DONE=区间内办结；ON_TIME_SCOPE=计入及时率的有截止办结；ON_TIME / LATE=其中及时或超时；
+     * OVERDUE_OPEN=此刻超期未结（不按关单区间）。
+     */
+    public PageResult<OpsStatsTaskItemDto> listTasks(
+            String orgId,
+            LocalDate from,
+            LocalDate to,
+            String careTeamId,
+            String staffId,
+            String kind,
+            int page,
+            int size) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        String normalized = kind == null ? "" : kind.trim().toUpperCase();
+        if (!TASK_KINDS.contains(normalized)) {
+            throw new BusinessException(400, "不支持的任务口径");
+        }
+        Range range = resolveRange(from, to);
+        boolean canRank = canViewRanking(orgId, requireStaffId());
+        String scopedStaffId = scopeStaffId(canRank, requireStaffId(), staffId);
+        String team = blankToNull(careTeamId);
+        LocalDateTime fromDt = range.from.atStartOfDay();
+        LocalDateTime toDt = range.to.plusDays(1).atStartOfDay();
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        int safePage = Math.max(1, page);
+        int safeSize = Math.min(TASK_PAGE_MAX, Math.max(1, size));
+        int offset = (safePage - 1) * safeSize;
+        long total = opsStatsMapper.countTaskItems(orgId, fromDt, toDt, now, team, scopedStaffId, normalized);
+        List<OpsStatsTaskItemDto> items = total == 0
+                ? List.of()
+                : opsStatsMapper.listTaskItems(
+                        orgId, fromDt, toDt, now, team, scopedStaffId, normalized, safeSize, offset);
+        for (OpsStatsTaskItemDto item : items) {
+            item.setTaskTypeLabel(typeLabel(item.getTaskType()));
+        }
+        return new PageResult<>(total, items);
     }
 
     public List<OpsStatsSeriesPointDto> series(

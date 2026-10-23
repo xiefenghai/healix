@@ -26,6 +26,8 @@ import com.healix.core.diet.support.DietContextLoader.DietContext;
 import com.healix.core.diet.support.DietGoalJson;
 import com.healix.core.diet.support.DietRuleEngine;
 import com.healix.core.diet.support.DietRuleEngine.RuleItem;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -73,6 +75,7 @@ public class DietRecordService {
     private final DietRuleEngine ruleEngine;
     private final CarePlanCheckinService checkinService;
     private final PlatformTransactionManager transactionManager;
+    private final ImageFileService imageFileService;
 
     /**
      * 明细输入。foodCode 命中食物库时营养由服务端按克数计算，客户端营养值忽略；
@@ -100,7 +103,19 @@ public class DietRecordService {
             LocalDateTime eatenAt,
             String source,
             String note,
-            List<MealItemInput> items) {}
+            List<MealItemInput> items,
+            List<String> imageKeys) {
+
+        public MealInput(
+                LocalDate mealDate,
+                String mealType,
+                LocalDateTime eatenAt,
+                String source,
+                String note,
+                List<MealItemInput> items) {
+            this(mealDate, mealType, eatenAt, source, note, items, null);
+        }
+    }
 
     /** 录入人：患者本人或医护代录（二选一）。 */
     public record Actor(String peopleId, String staffId) {
@@ -354,6 +369,17 @@ public class DietRecordService {
         meal.setQualityLevel(DietRuleEngine.qualityOf(flags));
         meal.setFlagsJson(JsonUtils.toJson(flags));
         meal.setNote(StringUtils.hasText(input.note()) ? input.note().trim() : null);
+        if (input.imageKeys() != null) {
+            List<String> keys = input.imageKeys().stream()
+                    .filter(StringUtils::hasText)
+                    .map(String::trim)
+                    .distinct()
+                    .limit(6)
+                    .map(key -> imageFileService.requireOwned(
+                            meal.getTenantId(), meal.getPeopleId(), ObjectKeys.DIET, key))
+                    .toList();
+            meal.setImageKeysJson(keys.isEmpty() ? null : JsonUtils.toJson(keys));
+        }
         return computed.stream().map(ComputedItem::row).toList();
     }
 
@@ -520,6 +546,7 @@ public class DietRecordService {
         d.setQualityLevel(m.getQualityLevel());
         d.setFlags(parseFlags(m.getFlagsJson()));
         d.setNote(m.getNote());
+        d.setImageKeys(parseImageKeys(m.getImageKeysJson()));
         d.setStaffComment(m.getStaffComment());
         d.setCommentedAt(m.getCommentedAt());
         d.setRecordedByStaff(StringUtils.hasText(m.getRecordedByStaffId()));
@@ -546,6 +573,18 @@ public class DietRecordService {
         d.setConfidence(it.getConfidence());
         d.setGramsConfirmed(it.getGramsConfirmed() == null || it.getGramsConfirmed() == 1);
         return d;
+    }
+
+    private static List<String> parseImageKeys(String json) {
+        if (!StringUtils.hasText(json)) {
+            return List.of();
+        }
+        try {
+            List<String> list = JsonUtils.fromJson(json, new TypeReference<List<String>>() {});
+            return list == null ? List.of() : list;
+        } catch (RuntimeException e) {
+            return List.of();
+        }
     }
 
     private static List<DietFlagDto> parseFlags(String json) {

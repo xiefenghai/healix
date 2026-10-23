@@ -4,18 +4,21 @@ import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
+import com.healix.common.util.SnowflakeId;
 import com.healix.core.careplan.service.CarePlanMetricCheckinSync;
 import com.healix.core.observation.enums.HealthDataSourceEnum;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.enums.MetricTypeEnum;
+import com.healix.core.vitals.enums.VitalSourceEnum;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
 import com.healix.core.vitals.support.VitalValueRules;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +96,137 @@ public class VitalService {
         }
         return record;
     }
+
+    /**
+     * 一次写入多条患者自测。血压成对共用 groupId，异常待办只评估这一次。
+     *
+     * @param syncPlanCheckin 为 false 时不把监测任务打成完成（管家确认记指标）
+     */
+    @Transactional
+    public List<VitalRecord> recordPatientReadings(
+            String peopleId,
+            List<PatientReading> readings,
+            LocalDateTime recordedAt,
+            boolean syncPlanCheckin) {
+        if (readings == null || readings.isEmpty()) {
+            throw new BusinessException("没有可记的指标");
+        }
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile == null) {
+            throw new BusinessException("患者不存在");
+        }
+        if (profile.getTenantId() == null) {
+            throw new BusinessException("患者未归属租户");
+        }
+        String groupId = SnowflakeId.nextBizId();
+        List<VitalRecord> written = new ArrayList<>();
+        for (PatientReading reading : readings) {
+            VitalValueRules.assertPlausible(reading.metricType(), reading.value());
+            VitalRecord row = new VitalRecord();
+            row.setTenantId(profile.getTenantId());
+            row.setPeopleId(peopleId);
+            row.setMetricType(reading.metricType());
+            row.setValue(reading.value());
+            row.setUnit(reading.unit());
+            row.setSource(reading.source());
+            row.setGroupId(groupId);
+            row.setExtraJson(buildExtraJson(reading.mealContext(), reading.bpContext()));
+            EntityMeta.onCreate(row);
+            row.setRecordedAt(recordedAt != null ? recordedAt : row.getGmtCreated());
+            vitalRecordMapper.insert(row);
+            written.add(row);
+        }
+        assessmentDirtyMarker.mark(profile.getTenantId(), peopleId);
+        WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+        if (gen != null) {
+            gen.onVitalsWritten(profile.getTenantId(), null, peopleId, written);
+        }
+        if (syncPlanCheckin) {
+            CarePlanMetricCheckinSync sync = metricCheckinSync.getIfAvailable();
+            if (sync != null) {
+                sync.onMetricsChanged(
+                        profile.getTenantId(),
+                        peopleId,
+                        written.stream().map(CarePlanMetricCheckinSync.MetricDay::of).toList(),
+                        peopleId);
+            }
+        }
+        return written;
+    }
+
+    /**
+     * 健管师从对话核对卡确认的一批指标。每条自带测量时间；血压成对由调用方传入同一个 groupId。
+     */
+    @Transactional
+    public List<VitalRecord> recordStaffExtract(String tenantId, String orgId, String peopleId, String staffId, List<StaffExtractReading> readings) {
+        if (readings == null || readings.isEmpty()) {
+            return List.of();
+        }
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile == null || profile.getTenantId() == null || !tenantId.equals(profile.getTenantId())) {
+            throw new BusinessException("患者不存在");
+        }
+        List<VitalRecord> written = new ArrayList<>();
+        for (StaffExtractReading reading : readings) {
+            VitalValueRules.assertPlausible(reading.metricType(), reading.value());
+            VitalRecord row = new VitalRecord();
+            row.setTenantId(tenantId);
+            row.setPeopleId(peopleId);
+            row.setOrgId(orgId);
+            row.setMetricType(reading.metricType());
+            row.setValue(reading.value());
+            row.setUnit(reading.unit());
+            row.setSource(VitalSourceEnum.STAFF.name());
+            row.setGroupId(reading.groupId());
+            row.setNote(reading.note());
+            row.setRecordedByStaffId(staffId);
+            row.setExtraJson(buildExtraJson(reading.mealContext(), reading.bpContext()));
+            EntityMeta.onCreate(row);
+            if (reading.recordedAt() == null) {
+                throw new BusinessException("请补上测量时间");
+            }
+            row.setRecordedAt(reading.recordedAt());
+            vitalRecordMapper.insert(row);
+            written.add(row);
+        }
+        assessmentDirtyMarker.mark(tenantId, peopleId);
+        WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+        if (gen != null) {
+            gen.onVitalsWritten(tenantId, orgId, peopleId, written);
+        }
+        CarePlanMetricCheckinSync sync = metricCheckinSync.getIfAvailable();
+        if (sync != null) {
+            sync.onMetricsChanged(
+                    tenantId,
+                    peopleId,
+                    written.stream().map(CarePlanMetricCheckinSync.MetricDay::of).toList(),
+                    null);
+        }
+        return written;
+    }
+
+    public boolean existsAtMinute(String tenantId, String peopleId, String metricType, LocalDateTime recordedAt) {
+        if (recordedAt == null) {
+            return false;
+        }
+        LocalDateTime from = recordedAt.withSecond(0).withNano(0);
+        return vitalRecordMapper.countAtMinute(tenantId, peopleId, metricType, from, from.plusMinutes(1)) > 0;
+    }
+
+    /** 健管师核对后写入的一条指标。 */
+    public record StaffExtractReading(
+            String metricType,
+            BigDecimal value,
+            String unit,
+            LocalDateTime recordedAt,
+            String groupId,
+            String note,
+            String mealContext,
+            String bpContext) {}
+
+    /** 患者一次测量中的一条指标。 */
+    public record PatientReading(
+            String metricType, BigDecimal value, String unit, String source, String mealContext, String bpContext) {}
 
     private String buildExtraJson(String mealContext, String bpContext) {
         Map<String, Object> extra = new LinkedHashMap<>();

@@ -22,6 +22,7 @@ import com.healix.core.patientcard.mapper.AccountPatientMapper;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -76,6 +77,10 @@ public class IdentityService {
         return profile;
     }
 
+    public List<StaffProfile> listStaffByAccount(String accountId) {
+        return staffProfileMapper.listByAccountId(accountId);
+    }
+
     public StaffProfile requireStaff(String staffId) {
         StaffProfile profile = staffProfileMapper.findById(staffId);
         if (profile == null) {
@@ -106,6 +111,41 @@ public class IdentityService {
         if (staffOrgBindingMapper.countBinding(staffId, orgId) <= 0) {
             throw new BusinessException("员工未绑定该机构");
         }
+    }
+
+    /** 用本人登录手机号注册。用户名即规范化后的手机号，登录只校验验证码。 */
+    @Transactional
+    public PeopleAccount registerByMobile(String tenantId, String mobile) {
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new BusinessException(400, "请指定租户");
+        }
+        if (peopleAccountMapper.findByTenantAndUsername(tenantId, mobile) != null) {
+            throw new BusinessException(409, "该手机号已注册，请直接登录");
+        }
+        PeopleAccount account = new PeopleAccount();
+        account.setTenantId(tenantId);
+        account.setUsername(mobile);
+        account.setPasswordHash(passwordEncoder.encode(UUID.randomUUID().toString()));
+        account.setStatus(EnableStatusEnum.ACTIVE.name());
+        EntityMeta.onCreate(account);
+        peopleAccountMapper.insert(account);
+        return account;
+    }
+
+    public PeopleAccount requireByMobile(String tenantId, String mobile) {
+        PeopleAccount account = peopleAccountMapper.findByTenantAndUsername(tenantId, mobile);
+        if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
+            throw new BusinessException(401, "请先注册");
+        }
+        return account;
+    }
+
+    public PeopleAccount requirePeopleAccountById(String accountId) {
+        PeopleAccount account = peopleAccountMapper.findById(accountId);
+        if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
+            throw new BusinessException(401, "账号不可用");
+        }
+        return account;
     }
 
     /** 仅创建 C 端登录账号（不创建 people / 就诊人）。 */

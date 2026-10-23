@@ -19,6 +19,7 @@ import com.healix.core.identity.enums.StaffRoleEnum;
 import com.healix.core.identity.mapper.StaffOrgBindingMapper;
 import com.healix.core.identity.mapper.StaffProfileMapper;
 import com.healix.core.job.support.JobCronSupport;
+import com.healix.core.patientcard.service.PeopleLinkService;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.portal.enums.PortalEnum;
@@ -66,6 +67,7 @@ public class WorkspaceTaskService {
 
     private final OrgWorkspaceService orgWorkspaceService;
     private final WorkspaceTaskMapper taskMapper;
+    private final PeopleLinkService peopleLinkService;
     private final FollowupRecordMapper followupRecordMapper;
     private final FollowupService followupService;
     private final PeopleProfileMapper peopleProfileMapper;
@@ -246,6 +248,69 @@ public class WorkspaceTaskService {
                         "peopleId", task.getPeopleId(),
                         "closeReason", "CANCEL",
                         "reason", reason.trim()));
+        return toDetail(requireTask(orgId, id));
+    }
+
+    /** 患者自报更新：健管师核对改动后办结。档案已在问卷提交时写回，这里不再改档案。 */
+    @Transactional
+    public WorkspaceTaskDetailDto acknowledge(String orgId, String id, String actorAccountId) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        WorkspaceTask task = requireTask(orgId, id);
+        assertOpen(task);
+        if (WorkspaceTaskType.require(task.getTaskType()) != WorkspaceTaskType.ARCHIVE_SELF_REPORT) {
+            throw new BusinessException(400, "该类任务请按原流程处理");
+        }
+        String staffId = requireStaffId();
+        if (!isTenantAdmin() && !staffId.equals(task.getAssigneeStaffId())) {
+            throw new BusinessException(403, "请先领取任务");
+        }
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        taskMapper.close(
+                id,
+                WorkspaceTaskStatus.DONE.name(),
+                WorkspaceTaskCloseReason.REVIEWED.name(),
+                now,
+                staffId,
+                now);
+        audit(actorAccountId, AuditActionEnum.WORKSPACE_TASK_DONE, "workspace_task", id, task.getPeopleId(),
+                AuditDetails.of(
+                        "taskType", task.getTaskType(),
+                        "peopleId", task.getPeopleId(),
+                        "closeReason", WorkspaceTaskCloseReason.REVIEWED.name()));
+        return toDetail(requireTask(orgId, id));
+    }
+
+    /** 本人号对上但姓名或生日不一致：通过则挂卡，拒绝则不建档。 */
+    @Transactional
+    public WorkspaceTaskDetailDto decideProfileLink(String orgId, String id, boolean approve, String actorAccountId) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        WorkspaceTask task = requireTask(orgId, id);
+        assertOpen(task);
+        if (WorkspaceTaskType.require(task.getTaskType()) != WorkspaceTaskType.PROFILE_LINK) {
+            throw new BusinessException(400, "该类任务请按原流程处理");
+        }
+        String staffId = requireStaffId();
+        if (!isTenantAdmin() && !staffId.equals(task.getAssigneeStaffId())) {
+            throw new BusinessException(403, "请先领取任务");
+        }
+        JsonNode payload = JsonUtils.readTree(task.getPayloadJson());
+        String requestId = payload == null || payload.get("requestId") == null
+                ? null
+                : payload.get("requestId").asText();
+        if (!StringUtils.hasText(requestId)) {
+            throw new BusinessException(400, "申请数据不完整");
+        }
+        peopleLinkService.decide(requestId, approve);
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        taskMapper.close(
+                id,
+                approve ? WorkspaceTaskStatus.DONE.name() : WorkspaceTaskStatus.CANCELLED.name(),
+                approve ? WorkspaceTaskCloseReason.REVIEWED.name() : WorkspaceTaskCloseReason.CANCEL.name(),
+                now,
+                staffId,
+                now);
+        audit(actorAccountId, AuditActionEnum.WORKSPACE_TASK_DONE, "workspace_task", id, task.getPeopleId(),
+                AuditDetails.of("taskType", task.getTaskType(), "approve", approve));
         return toDetail(requireTask(orgId, id));
     }
 
@@ -588,7 +653,7 @@ public class WorkspaceTaskService {
             case MED_FEEDBACK, MED_VERIFY -> "/workspace/patients/" + peopleId + "/medications" + qs;
             case ASSESSMENT_ESCALATION, ASSESSMENT_SUSPECTED, QUESTIONNAIRE_EXPIRED ->
                     "/workspace/patients/" + peopleId + "/assessments" + qs;
-            case ARCHIVE_SELF_REPORT -> "/workspace/patients/" + peopleId + "/archive" + qs;
+            case ARCHIVE_SELF_REPORT, PROFILE_LINK -> "/workspace/patients/" + peopleId + "/archive" + qs;
         };
     }
 

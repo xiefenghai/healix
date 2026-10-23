@@ -2,7 +2,7 @@
  * 管理报告导出：按详情页的卡片版式渲染打印文档，交由浏览器输出 PDF。
  *
  * 走浏览器打印而非服务端渲染，是为了让中文字体与分页直接复用系统能力，
- * 无需在后端内嵌 CJK 字体。图表在打印稿里用进度条代替。
+ * 无需在后端内嵌 CJK 字体。趋势图画成 SVG，避免 canvas 进不了 PDF。
  */
 import {
   formatHealthReportPeriodType,
@@ -29,6 +29,7 @@ import {
   reportKpis,
   reportMilestones,
 } from './report-view'
+import { adherenceChartHtml, dietChartHtml, exerciseChartHtml, metricChartHtml } from './report-print-charts'
 
 export interface PrintableReport {
   id: string
@@ -246,26 +247,10 @@ function buildAdherence(content: Record<string, unknown>): string {
         .join('')}`
     : ''
 
-  const weekly = plan.weekly.length ? buildWeekRates(plan.weekly) : ''
-
   return card(
     '执行情况',
-    insightLine(insights.plan || insights.med) + rates + streak + tasks + medDays + drugs + weekly,
+    insightLine(insights.plan || insights.med) + rates + streak + tasks + medDays + drugs + adherenceChartHtml(content),
   )
-}
-
-function buildWeekRates(weekly: { label: string; display: string; value: number | null }[]): string {
-  const bars = weekly
-    .map((w) => {
-      const h = widthOf(w.value)
-      return `<div class="week">
-        <div class="week-col"><i class="fill fill--${bandOf(w.value)}" style="height:${h}"></i></div>
-        <div class="week-val">${esc(w.display)}</div>
-        <div class="week-lab">${esc(w.label)}</div>
-      </div>`
-    })
-    .join('')
-  return `<div class="sub-title">每周方案完成率</div><div class="weeks">${bars}</div>`
 }
 
 function buildMetrics(content: Record<string, unknown>): string {
@@ -299,6 +284,7 @@ function buildMetrics(content: Record<string, unknown>): string {
         ${stats ? `<div class="stat-row">${stats}</div>` : ''}
         ${m.prevText ? `<div class="metric-prev">${delta(m.prevText, m.trend)}</div>` : ''}
         ${slots ? `<div class="slot-row">${slots}</div>` : ''}
+        ${metricChartHtml(m)}
         ${abn ? `<ul class="abn">${abn}</ul>` : ''}
       </div>`
     })
@@ -351,21 +337,11 @@ function buildLifestyle(content: Record<string, unknown>): string {
         const flags = diet.flags.length ? `<div class="sub-title">需注意的原因</div>${chips(diet.flags, true)}` : ''
         const foods = diet.foods.length ? `<div class="sub-title">常吃的食物</div>${chips(diet.foods.map((f) => ({ ...f, label: `${f.label} ×${f.count}` })), false)}` : ''
         const notes = diet.notes.length ? `<p class="muted">${esc(diet.notes.join(' · '))}</p>` : ''
-        extra = macros + flags + foods + notes
+        extra = dietChartHtml(content) + macros + flags + foods + notes
       }
       if (sec.key === 'exercise') {
         const types = exercise.types.length ? `<div class="sub-title">主要运动</div>${chips(exercise.types, false)}` : ''
-        const max = Math.max(exercise.target || 0, ...exercise.weekly.map((w) => w.value || 0), 1)
-        const bars = exercise.weekly.length
-          ? `<div class="sub-title">每周活动分钟${exercise.metText ? `<span class="hint">${esc(exercise.metText)}</span>` : ''}</div><div class="weeks">${exercise.weekly
-              .map((w) => {
-                const h = `${Math.max(8, Math.round(((w.value || 0) / max) * 100))}%`
-                const cls = w.met === false ? 'fair' : 'good'
-                return `<div class="week"><div class="week-col"><i class="fill fill--${cls}" style="height:${h}"></i></div><div class="week-val">${w.value ?? 0}</div><div class="week-lab">${esc(w.label)}</div></div>`
-              })
-              .join('')}</div>`
-          : ''
-        extra = types + bars
+        extra = types + exerciseChartHtml(content)
       }
       return card(sec.title, insightLine(insights[sec.key]) + boxes + extra)
     })
@@ -521,6 +497,9 @@ const PRINT_CSS = `
   .week-col { height: 72px; display: flex; align-items: flex-end; justify-content: center; }
   .week-col .fill { width: 18px; border-radius: 6px 6px 2px 2px; }
   .week-val, .week-lab { font-size: 10px; color: #5b6a77; }
+  .chart-fig { margin-top: 8px; break-inside: avoid; }
+  .chart-cap { margin: 0 0 2px; font-size: 12px; font-weight: 800; color: #5b6a77; }
+  .chart-fig svg { width: 100%; height: auto; display: block; }
   .stat-row, .slot-row, .ls-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .stat, .slot, .ls { padding: 8px; border-radius: 10px; background: #f7fafb; break-inside: avoid; }
   .stat-val, .slot-val, .ls-value { font-size: 16px; font-weight: 900; }

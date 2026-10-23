@@ -114,6 +114,17 @@
         LIMIT #{limit}
     </select>
 
+    <select id="countAtMinute" resultType="int">
+        SELECT COUNT(1)
+        FROM vital_record
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND metric_type = #{metricType}
+          AND is_deleted = 0
+          AND recorded_at &gt;= #{from}
+          AND recorded_at &lt; #{to}
+    </select>
+
     <select id="averageValue" resultType="java.lang.Double">
         SELECT AVG(value)
         FROM vital_record

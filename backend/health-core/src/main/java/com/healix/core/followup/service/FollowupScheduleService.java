@@ -1,11 +1,13 @@
 package com.healix.core.followup.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.careplan.domain.CarePlan;
 import com.healix.core.careplan.mapper.CarePlanMapper;
 import com.healix.core.followup.catalog.FollowupRecordSource;
+import com.healix.core.followup.support.FollowupContentValidator;
 import com.healix.core.govern.enums.FeatureFlagKeyEnum;
 import com.healix.core.govern.service.FeatureFlagService;
 import com.healix.core.followup.catalog.FollowupRecordStatus;
@@ -36,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -45,11 +48,16 @@ import org.springframework.util.StringUtils;
  *
  * <p>不依赖 RequestContext，可由 Job 调用。已有 OPEN 定期随访的患者跳过，
  * 保证同一患者同时只有一张待办定期随访。
+ *
+ * <p>入组当场开首诊失败时，同一 Job 在入组日起 {@link #ONBOARDING_COMPENSATE_DAYS} 天内补开。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class FollowupScheduleService {
+
+    /** 入组后缺少首诊时，定时任务继续补偿的天数（含入组当天）。 */
+    public static final int ONBOARDING_COMPENSATE_DAYS = 7;
 
     private final TenantMapper tenantMapper;
     private final OrganizationMapper organizationMapper;
@@ -60,9 +68,13 @@ public class FollowupScheduleService {
     private final CarePlanMapper carePlanMapper;
     private final FeatureFlagService featureFlagService;
     private final FollowupScheduleRuleService scheduleRuleService;
+    private final ObjectProvider<FollowupScheduleService> self;
 
     public record ScheduleCounts(
             int orgs, int scanned, int created, int skippedOpen, int skippedNotDue, int skippedDisabled) {}
+
+    /** 首诊补偿：新开随访、给已有随访补工作台任务、跳过、当场仍失败。 */
+    public record OnboardingCompensateCounts(int scanned, int created, int repaired, int skipped, int failed) {}
 
     public ScheduleCounts scanAll(LocalDate day) {
         LocalDate scanDay = day != null ? day : LocalDate.now(JobCronSupport.ZONE);
@@ -127,6 +139,213 @@ public class FollowupScheduleService {
             }
         }
         return new ScheduleCounts(1, scanned, created, skippedOpen, skippedNotDue, skippedDisabled);
+    }
+
+    /**
+     * 补偿入组首诊：活跃成员在入组日起 {@link #ONBOARDING_COMPENSATE_DAYS} 天内仍没有入组/首诊时补开。
+     *
+     * <p>已有 OPEN 或 DONE 的不新开；OPEN 缺工作台任务时不限入组日，直接补任务。
+     * 更早入组且从未有过首诊的不补，避免给早已在管的患者追开一张首诊。
+     */
+    public OnboardingCompensateCounts compensateMissingOnboarding(LocalDate day) {
+        LocalDate scanDay = day != null ? day : LocalDate.now(JobCronSupport.ZONE);
+        int scanned = 0;
+        int created = 0;
+        int repaired = 0;
+        int skipped = 0;
+        int failed = 0;
+        FollowupScheduleService svc = self.getIfAvailable();
+        if (svc == null) {
+            svc = this;
+        }
+        for (Tenant tenant : tenantMapper.listByStatus("ACTIVE")) {
+            for (Organization org : organizationMapper.listByTenant(tenant.getId())) {
+                for (PatientOrgMembership m : membershipMapper.listActiveByOrg(org.getId())) {
+                    if (!MembershipStatusEnum.ACTIVE.matches(m.getStatus())
+                            || !StringUtils.hasText(m.getPeopleId())) {
+                        continue;
+                    }
+                    scanned++;
+                    String peopleId = m.getPeopleId();
+                    FollowupRecord existing = findOnboardingPeriodic(org.getId(), peopleId);
+                    boolean recent = withinOnboardingCompensateWindow(joinDay(m), scanDay);
+                    if (existing == null && !recent) {
+                        skipped++;
+                        continue;
+                    }
+                    if (existing != null && FollowupRecordStatus.DONE.matches(existing.getStatus())) {
+                        skipped++;
+                        continue;
+                    }
+                    boolean missingTask = existing != null && !StringUtils.hasText(existing.getWorkspaceTaskId());
+                    String taskId = svc.ensureOnboardingOnJoin(tenant.getId(), org.getId(), peopleId);
+                    if (existing == null) {
+                        if (StringUtils.hasText(taskId)) {
+                            created++;
+                        } else {
+                            failed++;
+                        }
+                    } else if (missingTask && StringUtils.hasText(taskId)) {
+                        repaired++;
+                    } else {
+                        skipped++;
+                    }
+                }
+            }
+        }
+        log.info(
+                "onboarding compensate day={} scanned={} created={} repaired={} skipped={} failed={}",
+                scanDay,
+                scanned,
+                created,
+                repaired,
+                skipped,
+                failed);
+        return new OnboardingCompensateCounts(scanned, created, repaired, skipped, failed);
+    }
+
+    /** 入组日落在扫描日往前 {@link #ONBOARDING_COMPENSATE_DAYS} 天（含当天）内。 */
+    public static boolean withinOnboardingCompensateWindow(LocalDate joinedDay, LocalDate scanDay) {
+        if (joinedDay == null || scanDay == null) {
+            return false;
+        }
+        return !joinedDay.isBefore(scanDay.minusDays(ONBOARDING_COMPENSATE_DAYS - 1L));
+    }
+
+    private static LocalDate joinDay(PatientOrgMembership membership) {
+        if (membership.getJoinedAt() != null) {
+            return membership.getJoinedAt().toLocalDate();
+        }
+        return membership.getGmtCreated() == null ? null : membership.getGmtCreated().toLocalDate();
+    }
+
+    /**
+     * 患者新入组机构后立即开「入组/首诊随访」+ 工作台 FOLLOW_UP（幂等）。
+     *
+     * <p>不等定期排期 Job：默认间隔 30/90 天才会开常规回访，首诊应在入组当天出现。
+     * 已有 OPEN 或 DONE 的入组/首诊则跳过；OPEN 缺任务时补开。
+     *
+     * @return 工作台任务 ID；跳过或失败时为 null
+     */
+    @Transactional
+    public String ensureOnboardingOnJoin(String tenantId, String orgId, String peopleId) {
+        if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(orgId) || !StringUtils.hasText(peopleId)) {
+            return null;
+        }
+        FollowupRecord existing = findOnboardingPeriodic(orgId, peopleId);
+        if (existing != null) {
+            if (FollowupRecordStatus.DONE.matches(existing.getStatus())) {
+                return null;
+            }
+            if (FollowupRecordStatus.OPEN.matches(existing.getStatus())) {
+                if (StringUtils.hasText(existing.getWorkspaceTaskId())) {
+                    return existing.getWorkspaceTaskId();
+                }
+                LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+                String taskId = openOnboardingTask(tenantId, orgId, peopleId, existing);
+                if (StringUtils.hasText(taskId)) {
+                    followupRecordMapper.updateWorkspaceTaskId(existing.getId(), taskId, now);
+                }
+                return taskId;
+            }
+        }
+
+        LocalDate day = LocalDate.now(JobCronSupport.ZONE);
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        FollowupType followupType = FollowupType.ONBOARDING;
+
+        FollowupRecord record = new FollowupRecord();
+        record.setTenantId(tenantId);
+        record.setOrgId(orgId);
+        record.setPeopleId(peopleId);
+        record.setRecordType(FollowupRecordType.PERIODIC.name());
+        record.setSource(FollowupRecordSource.MEMBERSHIP_JOIN.name());
+        record.setStatus(FollowupRecordStatus.OPEN.name());
+        record.setTitle(followupType.label());
+        record.setSummary("入组后首诊随访");
+        record.setPlannedAt(day.atTime(LocalTime.of(9, 0)));
+        record.setAssigneeStaffId(resolveAssignee(tenantId, peopleId));
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("followupType", followupType.name());
+        record.setContentJson(JsonUtils.toJson(content));
+        record.setDueAt(day.plusDays(Math.max(0, WorkspaceTaskType.FOLLOW_UP.dueDaysInclusive() - 1))
+                .atTime(LocalTime.of(23, 59, 59)));
+        EntityMeta.onCreate(record);
+
+        try {
+            followupRecordMapper.insert(record);
+            String taskId = openOnboardingTask(tenantId, orgId, peopleId, record);
+            if (StringUtils.hasText(taskId)) {
+                followupRecordMapper.updateWorkspaceTaskId(record.getId(), taskId, now);
+            }
+            log.info(
+                    "onboarding followup opened tenant={} org={} people={} followupId={} taskId={}",
+                    tenantId,
+                    orgId,
+                    peopleId,
+                    record.getId(),
+                    taskId);
+            return taskId;
+        } catch (RuntimeException ex) {
+            log.warn(
+                    "ensure onboarding followup failed org={} people={}: {}",
+                    orgId,
+                    peopleId,
+                    ex.getMessage());
+            return null;
+        }
+    }
+
+    private FollowupRecord findOnboardingPeriodic(String orgId, String peopleId) {
+        List<FollowupRecord> rows =
+                followupRecordMapper.listByPeople(orgId, peopleId, FollowupRecordType.PERIODIC.name(), 50);
+        FollowupRecord open = null;
+        for (FollowupRecord row : rows) {
+            Map<String, Object> content = JsonUtils.fromJson(row.getContentJson(), new TypeReference<>() {});
+            String t = content == null ? "" : FollowupContentValidator.str(content.get("followupType"));
+            if (!FollowupType.ONBOARDING.name().equals(t)) {
+                continue;
+            }
+            if (FollowupRecordStatus.DONE.matches(row.getStatus())) {
+                return row;
+            }
+            if (FollowupRecordStatus.OPEN.matches(row.getStatus()) && open == null) {
+                open = row;
+            }
+        }
+        return open;
+    }
+
+    private String openOnboardingTask(
+            String tenantId, String orgId, String peopleId, FollowupRecord record) {
+        WorkspaceTaskType type = WorkspaceTaskType.FOLLOW_UP;
+        String bizKey = "FU:" + record.getId();
+        WorkspaceTask existing = workspaceTaskMapper.findOpen(tenantId, orgId, type.name(), bizKey);
+        if (existing != null) {
+            return existing.getId();
+        }
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        WorkspaceTask row = new WorkspaceTask();
+        row.setTenantId(tenantId);
+        row.setOrgId(orgId);
+        row.setPeopleId(peopleId);
+        row.setTaskType(type.name());
+        row.setBizKey(bizKey);
+        row.setStatus(WorkspaceTaskStatus.OPEN.name());
+        row.setPriority(type.defaultPriority().name());
+        row.setAssigneeStaffId(resolveAssignee(tenantId, peopleId));
+        row.setTitle(type.label());
+        row.setSummary(FollowupType.ONBOARDING.label());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("followupId", record.getId());
+        payload.put("followupType", FollowupType.ONBOARDING.name());
+        row.setPayloadJson(JsonUtils.toJson(payload));
+        row.setSource(FollowupRecordSource.MEMBERSHIP_JOIN.name());
+        row.setOpenedAt(now);
+        row.setDueAt(record.getDueAt());
+        EntityMeta.onCreate(row);
+        workspaceTaskMapper.insert(row);
+        return row.getId();
     }
 
     /**

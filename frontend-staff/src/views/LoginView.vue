@@ -13,6 +13,8 @@ const password = ref('')
 const mfaCode = ref('')
 const mfaRequired = ref(false)
 const loading = ref(false)
+const selectedTenantId = ref('')
+const tenantChoices = ref<Array<{ tenantId: string; tenantName: string }>>([])
 
 function isMfaPrompt(message: string) {
   return message.includes('动态验证码')
@@ -26,16 +28,33 @@ async function submit() {
   loading.value = true
   clearSession()
   try {
-    const res = await api<{
-      data: { accessToken: string; roles: string[]; currentOrgId: string | null }
+    const body = {
+      username: username.value.trim(),
+      password: password.value,
+      ...(mfaCode.value.trim() ? { mfaCode: mfaCode.value.trim() } : {}),
+      ...(selectedTenantId.value ? { tenantId: selectedTenantId.value } : {}),
+    }
+    let res = await api<{
+      data: {
+        accessToken: string | null
+        roles: string[] | null
+        currentOrgId: string | null
+        tenants?: Array<{ tenantId: string; tenantName: string }> | null
+      }
     }>('/api/b/v1/auth/login', {
       method: 'POST',
-      body: JSON.stringify({
-        username: username.value.trim(),
-        password: password.value,
-        ...(mfaCode.value.trim() ? { mfaCode: mfaCode.value.trim() } : {}),
-      }),
+      body: JSON.stringify(body),
     })
+    if (!res.data.accessToken) {
+      const choices = res.data.tenants ?? []
+      if (choices.length <= 1) {
+        throw new Error('请选择要进入的租户')
+      }
+      tenantChoices.value = choices
+      selectedTenantId.value = choices[0].tenantId
+      showToast('该账号加入了多个租户，请选择')
+      return
+    }
     setSession({
       token: res.data.accessToken,
       roles: res.data.roles ?? [],
@@ -73,8 +92,29 @@ async function submit() {
     <section class="panel">
       <h2>欢迎回来</h2>
       <p class="lead">用手机处理待办、沟通与随访</p>
-      <van-field v-model="username" label="账号" placeholder="用户名" clearable />
+      <van-field
+        v-model="username"
+        label="账号"
+        placeholder="用户名"
+        clearable
+        @update:model-value="tenantChoices = []; selectedTenantId = ''"
+      />
       <van-field v-model="password" type="password" label="密码" placeholder="密码" />
+      <van-radio-group v-if="tenantChoices.length" v-model="selectedTenantId" class="tenants">
+        <van-cell-group inset>
+          <van-cell
+            v-for="item in tenantChoices"
+            :key="item.tenantId"
+            :title="item.tenantName"
+            clickable
+            @click="selectedTenantId = item.tenantId"
+          >
+            <template #right-icon>
+              <van-radio :name="item.tenantId" />
+            </template>
+          </van-cell>
+        </van-cell-group>
+      </van-radio-group>
       <van-field
         v-if="mfaRequired"
         v-model="mfaCode"
@@ -146,6 +186,9 @@ async function submit() {
   margin: 6px 4px 14px;
   font-size: 13px;
   color: var(--hx-muted);
+}
+.tenants {
+  margin: 12px 0 4px;
 }
 .submit {
   margin-top: 12px;

@@ -13,6 +13,7 @@ public record LabReportViewDto(
         LocalDateTime reportedAt,
         String source,
         String note,
+        String imageKey,
         List<LabItemViewDto> items,
         LocalDateTime gmtCreated) {
 

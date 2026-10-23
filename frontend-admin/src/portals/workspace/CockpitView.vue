@@ -31,6 +31,8 @@ import { AGENT_LOGO, AGENT_NAME } from '../../shared/agent-brand'
 import { debounce } from '../../shared/debounce'
 import AgentCarePlanCard from '../../shared/AgentCarePlanCard.vue'
 import AgentOcrReviewCard from '../../shared/AgentOcrReviewCard.vue'
+import ChatExtractReviewCard from '../../shared/ChatExtractReviewCard.vue'
+import { asChatExtract, blockPlainEnter, chatExtractFromActions, type ChatExtractReview } from '../../shared/chat-extract'
 import AgentReportReviewCard from '../../shared/AgentReportReviewCard.vue'
 import {
   buildCarePlanChatPreview,
@@ -44,6 +46,8 @@ import {
   buildOcrReview,
   buildReportReview,
   formatOcrDt,
+  LAB_TIME_BLOCK_MESSAGE,
+  labOcrUploadBlocked,
   MED_DOSE_UNIT_FALLBACK,
   MED_FREQUENCY_FALLBACK,
   MED_USAGE_OPTIONS,
@@ -187,6 +191,7 @@ interface ChatMessage {
   elapsedMs?: number | null
   reportReview?: ReportReviewPreview
   carePlanPreview?: CarePlanChatPreview
+  chatExtract?: ChatExtractReview
 }
 
 type TabKey = 'urgent' | 'watch' | 'mine'
@@ -266,6 +271,7 @@ function abortActiveChat(reason = 'focus-switch') {
   uploading.value = false
 }
 const reportFileRef = ref<HTMLInputElement | null>(null)
+const imageDropActive = ref(false)
 const imagePreviewUrl = ref<string | null>(null)
 
 function openImagePreview(url?: string | null) {
@@ -1028,6 +1034,7 @@ function applySessionBundle(
       content: m.content,
       at: m.createdAt ? String(m.createdAt).slice(11, 16) : nowClock(),
       actions: m.actions?.length ? m.actions : undefined,
+      chatExtract: chatExtractFromActions(m.actions) || undefined,
     }
   })
   const incoming = dropOrphanUserTurns(collapseDuplicateBriefings(mapped))
@@ -1361,7 +1368,9 @@ async function loadCapabilities() {
 
 /** 芯片展示：GENERAL_CHAT 随是否选中患者切换文案；单据录入 / 完成待办为本地能力 */
 const capabilityChips = computed(() => {
-  const chips = capabilities.value.map((c) => {
+  const chips = capabilities.value
+    .filter((c) => c.code !== 'CHAT_EXTRACT')
+    .map((c) => {
     if (c.code === 'GENERAL_CHAT') {
       const hasPatient = !!focusPeopleId.value
       return {
@@ -1453,6 +1462,35 @@ function quickCapability(code: string, label: string) {
 }
 
 /** @param keepInput 自动追问时保留输入框内容 */
+function onComposerEnter() {
+  if (blockPlainEnter(input.value)) {
+    ElMessage.info('请点「整理这段记录」。要提问请缩短文字后再发送')
+    return
+  }
+  void sendMessage(input.value)
+}
+
+function organizeRecord() {
+  const text = input.value
+  if (!focusPeopleId.value) {
+    ElMessage.info('请先选择患者')
+    return
+  }
+  if (!text.trim()) {
+    ElMessage.info('请先粘贴一段记录')
+    return
+  }
+  if (text.trim().length > 4000) {
+    ElMessage.info('请拆短后再贴')
+    return
+  }
+  void sendMessage(text, false, 'CHAT_EXTRACT')
+}
+
+function visibleActions(msg: ChatMessage) {
+  return (msg.actions || []).filter((action) => action.type !== 'chat_extract')
+}
+
 async function sendMessage(
   text: string,
   keepInput = false,
@@ -1648,6 +1686,21 @@ async function sendMessage(
         if (
           stillBound() &&
           boundPeopleId &&
+          data.capability === 'CHAT_EXTRACT' &&
+          data.extracted
+        ) {
+          const card = asChatExtract(data.extracted)
+          if (card?.restoreInput) {
+            removeMessagePair(userRow, row)
+            input.value = userText
+            ElMessage.info(data.reply || '请先选择患者')
+            return
+          }
+          if (card) row.chatExtract = card
+        }
+        if (
+          stillBound() &&
+          boundPeopleId &&
           (data.capability === 'OCR_LAB' ||
             data.capability === 'OCR_EXAM' ||
             data.capability === 'OCR_MED') &&
@@ -1702,6 +1755,12 @@ async function sendMessage(
       },
       onError: (msg) => {
         if (!stillBound()) return
+        if (effectiveHint === 'CHAT_EXTRACT') {
+          removeMessagePair(userRow, rowAt())
+          input.value = userText
+          ElMessage.error(msg || '这次没整理成功')
+          return
+        }
         const row = rowAt()
         if (!(row.content || '').trim()) {
           row.content = msg || '生成失败，请重试'
@@ -1724,6 +1783,7 @@ async function sendMessage(
         removeMessagePair(userRow, assistantRow)
       }
     } else {
+      if (effectiveHint === 'CHAT_EXTRACT') input.value = userText
       removeMessagePair(userRow, assistantRow)
       if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl)
       ElMessage.error(e instanceof Error ? e.message : '发送失败')
@@ -2244,12 +2304,80 @@ function openReportUpload() {
   reportFileRef.value?.click()
 }
 
+function dragHasFile(e: DragEvent) {
+  const types = e.dataTransfer?.types
+  if (!types) return false
+  return Array.from(types).includes('Files')
+}
+
+function resetImageDrop() {
+  imageDropActive.value = false
+}
+
+function onAgentDragEnter(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  e.preventDefault()
+  imageDropActive.value = true
+}
+
+function onAgentDragOver(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onAgentDragLeave(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  const next = e.relatedTarget
+  const current = e.currentTarget
+  if (next instanceof Node && current instanceof Node && current.contains(next)) return
+  imageDropActive.value = false
+}
+
+function imageDropHint() {
+  if (!focusPeopleId.value) return '请先从左侧选择患者，再松开图片'
+  if (isArchivedSession.value) return '请先继续当前会话，再松开图片'
+  if (uploading.value || sending.value) return '正在处理，请稍候再拖入'
+  return '松开即可开始识别'
+}
+
+async function onAgentDrop(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  e.preventDefault()
+  resetImageDrop()
+  const files = Array.from(e.dataTransfer?.files || [])
+  const file = files.find((item) => item.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(item.name))
+  if (!file) {
+    ElMessage.warning('请拖入 JPG、PNG 或 WEBP 图片')
+    return
+  }
+  if (files.length > 1) {
+    ElMessage.info('一次识别一张，已开始解析第一张图片')
+  }
+  await ingestReportImage(file)
+}
+
 async function onReportFile(e: Event) {
   const inputEl = e.target as HTMLInputElement
   const file = inputEl.files?.[0]
   inputEl.value = ''
-  const peopleId = focusPeopleId.value
-  if (!file || !peopleId || uploading.value || sending.value) return
+  if (!file) return
+  await ingestReportImage(file)
+}
+
+async function ingestReportImage(file: File) {
+  if (uploading.value || sending.value) {
+    ElMessage.info('正在处理上一张图片，请稍候')
+    return
+  }
+  if (isArchivedSession.value) {
+    ElMessage.info('当前为历史会话，请先点击「继续此会话」')
+    return
+  }
+  if (!focusPeopleId.value) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
   if (file.size > 5 * 1024 * 1024) {
     ElMessage.warning('图片大小不能超过 5MB')
     return
@@ -2316,6 +2444,10 @@ function applyOcrExtracted(
 async function confirmOcr(msg: ChatMessage) {
   const review = msg.ocrReview
   if (!review || review.status !== 'pending' || !review.peopleId) return
+  if (labOcrUploadBlocked(review)) {
+    ElMessage.warning(LAB_TIME_BLOCK_MESSAGE)
+    return
+  }
 
   const kindLabel =
     review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药单' : '检查报告'
@@ -2668,7 +2800,16 @@ onUnmounted(() => {
       </section>
 
       <!-- 中：健管智能体 -->
-      <section class="col center">
+      <section
+        class="col center"
+        :class="{ 'drop-active': imageDropActive }"
+        @dragenter="onAgentDragEnter"
+        @dragover="onAgentDragOver"
+        @dragleave="onAgentDragLeave"
+        @drop="onAgentDrop"
+        @dragend="resetImageDrop"
+      >
+        <div v-if="imageDropActive" class="drop-mask">{{ imageDropHint() }}</div>
         <div class="chat-head">
           <div class="ai-avatar" aria-hidden="true">
             <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
@@ -2763,7 +2904,7 @@ onUnmounted(() => {
             v-for="(msg, idx) in threadMessages"
             :key="idx"
             class="msg-row"
-            :class="msg.role"
+            :class="[msg.role, { 'has-extract': msg.chatExtract }]"
           >
             <div v-if="msg.role === 'assistant'" class="msg-avatar ai" aria-hidden="true">
               <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
@@ -2820,9 +2961,15 @@ onUnmounted(() => {
                 @confirm="confirmOcr(msg)"
                 @discard="discardOcr(msg)"
               />
-              <div v-if="msg.actions?.length" class="bubble-actions">
+              <ChatExtractReviewCard
+                v-if="msg.chatExtract && focusPeopleId"
+                :review="msg.chatExtract"
+                :people-id="focusPeopleId"
+                :gender="focus?.gender"
+              />
+              <div v-if="visibleActions(msg).length" class="bubble-actions">
                 <button
-                  v-for="(a, ai) in msg.actions"
+                  v-for="(a, ai) in visibleActions(msg)"
                   :key="ai"
                   type="button"
                   class="action-chip"
@@ -2876,11 +3023,19 @@ onUnmounted(() => {
               resize="none"
               :disabled="isArchivedSession"
               placeholder="问问健管智能体，或让他帮你写方案、起话术…"
-              @keydown.enter.exact.prevent="sendMessage(input)"
+              @keydown.enter.exact.prevent="onComposerEnter"
             />
             <div class="composer-bar">
               <div class="composer-send">
-                <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+                <span class="hint">Enter 发送 · 长文字请点整理这段记录</span>
+                <button
+                  type="button"
+                  class="send-btn ghost"
+                  :disabled="sending || uploading || isArchivedSession || !input.trim()"
+                  @click="organizeRecord"
+                >
+                  整理这段记录
+                </button>
                 <button
                   type="button"
                   class="send-btn"
@@ -3385,6 +3540,32 @@ onUnmounted(() => {
   border: 1px solid var(--ink-200);
   border-radius: var(--admin-radius, 12px);
   box-shadow: var(--admin-shadow);
+}
+
+.col.center {
+  position: relative;
+}
+
+.col.center.drop-active {
+  border-color: var(--brand-500, #2c7ef8);
+}
+
+.drop-mask {
+  position: absolute;
+  inset: 8px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 2px dashed var(--brand-500, #2c7ef8);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--brand-700, #1d4ed8);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
 }
 
 .col-head {
@@ -4198,6 +4379,14 @@ onUnmounted(() => {
   max-width: min(760px, 96%);
 }
 
+.msg-row.assistant.has-extract {
+  max-width: min(1080px, 100%);
+}
+
+.msg-row.assistant.has-extract .bubble {
+  width: 100%;
+}
+
 .msg-row.user {
   align-self: flex-end;
   flex-direction: row-reverse;
@@ -4993,6 +5182,16 @@ onUnmounted(() => {
 .send-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.send-btn.ghost {
+  background: #fff;
+  color: var(--brand-600, #1d4ed8);
+  border: 1px solid var(--brand-200, #bfdbfe);
+}
+
+.send-btn.ghost:hover:not(:disabled) {
+  background: var(--brand-50, #eff6ff);
 }
 
 .send-btn svg {

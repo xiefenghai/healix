@@ -14,6 +14,12 @@ public interface WorkspaceTaskMapper {
 
     int updatePayload(@Param("id") String id, @Param("summary") String summary, @Param("payloadJson") String payloadJson);
 
+    int updateAlertPresentation(
+            @Param("id") String id,
+            @Param("summary") String summary,
+            @Param("payloadJson") String payloadJson,
+            @Param("priority") String priority);
+
     int claim(
             @Param("id") String id,
             @Param("staffId") String staffId,

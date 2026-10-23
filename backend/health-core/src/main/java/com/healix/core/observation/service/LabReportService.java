@@ -18,6 +18,8 @@ import com.healix.core.observation.mapper.LabResultItemMapper;
 import com.healix.core.observation.support.LabItemCodeMapper;
 import com.healix.core.revision.enums.RevisionBizTypeEnum;
 import com.healix.core.revision.service.FieldRevisionService;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -43,6 +45,7 @@ public class LabReportService {
     private final FieldRevisionService fieldRevisionService;
     private final DictService dictService;
     private final LabItemCodeMapper labItemCodeMapper;
+    private final ImageFileService imageFileService;
 
     public List<LabReportViewDto> list(String tenantId, String orgId, String peopleId) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
@@ -333,11 +336,24 @@ public class LabReportService {
         return "N";
     }
 
+    private static boolean isOcrSource(String source) {
+        if (!StringUtils.hasText(source)) {
+            return false;
+        }
+        String normalized = source.trim().toUpperCase(java.util.Locale.ROOT);
+        return "OCR".equals(normalized) || "STAFF_OCR".equals(normalized) || "PATIENT_OCR".equals(normalized);
+    }
+
     private void applyHeader(LabReport row, LabReportCommand cmd) {
         row.setSpecimenType(StringUtils.hasText(cmd.specimenType()) ? cmd.specimenType().trim() : "BLOOD");
         row.setSampledAt(cmd.sampledAt());
         row.setReportedAt(cmd.reportedAt() != null ? cmd.reportedAt() : LocalDateTime.now());
         row.setNote(blankToNull(cmd.note()));
+        String imageKey = imageFileService.requireOwned(
+                row.getTenantId(), row.getPeopleId(), ObjectKeys.LAB, cmd.imageKey());
+        if (imageKey != null) {
+            row.setImageKey(imageKey);
+        }
     }
 
     private void validateCommand(LabReportCommand cmd) {
@@ -346,6 +362,9 @@ public class LabReportService {
         }
         if (cmd.items() == null || cmd.items().isEmpty()) {
             throw new BusinessException("请至少填写一项检验结果");
+        }
+        if (isOcrSource(cmd.source()) && (cmd.sampledAt() == null || cmd.reportedAt() == null)) {
+            throw new BusinessException("未识别出采样时间或报告时间，不能入库");
         }
         for (LabItemCommand item : cmd.items()) {
             if (item == null || !StringUtils.hasText(item.itemCode())) {
@@ -391,6 +410,7 @@ public class LabReportService {
                 row.getReportedAt(),
                 source,
                 row.getNote(),
+                row.getImageKey(),
                 itemViews,
                 row.getGmtCreated());
     }
@@ -446,7 +466,19 @@ public class LabReportService {
             LocalDateTime reportedAt,
             String note,
             String source,
-            List<LabItemCommand> items) {}
+            List<LabItemCommand> items,
+            String imageKey) {
+
+        public LabReportCommand(
+                String specimenType,
+                LocalDateTime sampledAt,
+                LocalDateTime reportedAt,
+                String note,
+                String source,
+                List<LabItemCommand> items) {
+            this(specimenType, sampledAt, reportedAt, note, source, items, null);
+        }
+    }
 
     public record LabItemCommand(
             String itemCode,

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.patientcard.mapper.PeopleLinkRequestMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, account_id, kind, status, mobile, source_people_id, target_people_id,
+        org_id, task_id, display_name, gender, birthday, relation, proposed_json, expire_at, resolved_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_link_request(
+            id, tenant_id, account_id, kind, status, mobile, source_people_id, target_people_id,
+            org_id, task_id, display_name, gender, birthday, relation, proposed_json, expire_at, resolved_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{accountId}, #{kind}, #{status}, #{mobile}, #{sourcePeopleId}, #{targetPeopleId},
+            #{orgId}, #{taskId}, #{displayName}, #{gender}, #{birthday}, #{relation}, #{proposedJson},
+            #{expireAt}, #{resolvedAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE people_link_request
+        SET status = #{status},
+            task_id = #{taskId},
+            resolved_at = #{resolvedAt},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.patientcard.domain.PeopleLinkRequest">
+        SELECT <include refid="cols"/> FROM people_link_request
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findOpenLink" resultType="com.healix.core.patientcard.domain.PeopleLinkRequest">
+        SELECT <include refid="cols"/> FROM people_link_request
+        WHERE tenant_id = #{tenantId}
+          AND account_id = #{accountId}
+          AND mobile = #{mobile}
+          AND kind = 'LINK'
+          AND status = 'OPEN'
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findOpenDemographic" resultType="com.healix.core.patientcard.domain.PeopleLinkRequest">
+        SELECT <include refid="cols"/> FROM people_link_request
+        WHERE account_id = #{accountId}
+          AND target_people_id = #{peopleId}
+          AND kind = 'DEMOGRAPHIC'
+          AND status = 'OPEN'
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="countOpenLink" resultType="int">
+        SELECT COUNT(1) FROM people_link_request
+        WHERE account_id = #{accountId} AND kind = 'LINK' AND status = 'OPEN' AND is_deleted = 0
+    </select>
+
+    <select id="listVisible" resultType="com.healix.core.patientcard.domain.PeopleLinkRequest">
+        SELECT <include refid="cols"/> FROM people_link_request
+        WHERE account_id = #{accountId}
+          AND is_deleted = 0
+          AND status IN ('OPEN', 'REJECTED')
+        ORDER BY gmt_created DESC
+        LIMIT 20
+    </select>
+
+    <select id="listExpired" resultType="com.healix.core.patientcard.domain.PeopleLinkRequest">
+        SELECT <include refid="cols"/> FROM people_link_request
+        WHERE status = 'OPEN' AND expire_at &lt; #{now} AND is_deleted = 0
+        ORDER BY expire_at
+        LIMIT #{limit}
+    </select>
+</mapper>

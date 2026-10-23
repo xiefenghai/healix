@@ -10,8 +10,10 @@ const router = useRouter()
 const loggedIn = computed(() => !!getToken())
 const activationCode = ref('')
 const displayName = ref('')
-const username = ref('')
-const password = ref('')
+const birthday = ref('')
+const mobile = ref('')
+const otpCode = ref('')
+const sending = ref(false)
 const agreeTerms = ref(false)
 const agreeSensitive = ref(false)
 const loading = ref(false)
@@ -70,7 +72,31 @@ async function offerMergeSelfCard(cardId?: string) {
   }
 }
 
+async function sendCode() {
+  if (!/^1\d{10}$/.test(mobile.value.trim())) {
+    showToast('请输入 11 位手机号')
+    return
+  }
+  sending.value = true
+  try {
+    const tenantId = await resolveTenantId(api)
+    await api('/api/c/v1/auth/mobile-otp', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId, mobile: mobile.value.trim() }),
+    })
+    showToast('验证码已发送')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '发送失败')
+  } finally {
+    sending.value = false
+  }
+}
+
 async function submit() {
+  if (!displayName.value.trim() || !birthday.value) {
+    showToast('请填写档案姓名和出生日期')
+    return
+  }
   if (!loggedIn.value && (!agreeTerms.value || !agreeSensitive.value)) {
     showToast('请先阅读并勾选同意相关协议')
     return
@@ -81,11 +107,12 @@ async function submit() {
     const body: Record<string, string | undefined> = {
       tenantId,
       activationCode: activationCode.value,
-      displayName: displayName.value || undefined,
+      displayName: displayName.value.trim(),
+      birthday: birthday.value,
     }
     if (!loggedIn.value) {
-      body.username = username.value
-      body.password = password.value
+      body.mobile = mobile.value.trim()
+      body.otpCode = otpCode.value.trim()
     }
     const res = await api<{ data: TokenData }>('/api/c/v1/auth/activate', {
       method: 'POST',
@@ -110,9 +137,14 @@ async function submit() {
       <p class="hint">健管师已为你建档时，用激活码开通，并绑定到同一份档案。</p>
       <van-field v-model="activationCode" label="激活码" placeholder="如 A3K9-7X2M" />
       <van-field v-model="displayName" label="档案姓名" placeholder="与建档姓名一致" />
+      <van-field v-model="birthday" label="出生日期" placeholder="YYYY-MM-DD" />
       <template v-if="!loggedIn">
-        <van-field v-model="username" label="用户名" placeholder="设置登录账号" />
-        <van-field v-model="password" type="password" label="密码" placeholder="设置密码" />
+        <van-field v-model="mobile" type="tel" label="手机号" placeholder="用于登录" maxlength="11" />
+        <van-field v-model="otpCode" type="digit" label="验证码" placeholder="6 位验证码" maxlength="6">
+          <template #button>
+            <van-button size="small" type="primary" plain :loading="sending" @click="sendCode">获取验证码</van-button>
+          </template>
+        </van-field>
         <LegalConsent v-model:terms="agreeTerms" v-model:sensitive="agreeSensitive" />
       </template>
       <van-button round block type="primary" :loading="loading" @click="submit">

@@ -32,20 +32,39 @@ public class CarePlanSkill implements AgentSkill {
     public AgentResponse execute(AgentSkillContext ctx) {
         AgentChatCommand cmd = ctx.command();
         String instruction = StringUtils.hasText(cmd.message()) ? cmd.message() : "生成管理方案";
-        CarePlanBundleDto bundle = carePlanAgentService.generate(
-                cmd.tenantId(),
-                cmd.orgId(),
-                cmd.peopleId(),
-                cmd.staffId(),
-                instruction,
-                null,
-                null,
-                true);
+        boolean revise = !CarePlanSkill.wantsFullRegenerate(cmd.message())
+                && (CarePlanSkill.matchesReviseMessage(cmd.message())
+                        || (!CarePlanSkill.matchesGenerateMessage(cmd.message())
+                                && StringUtils.hasText(cmd.message())));
+        CarePlanBundleDto bundle;
+        if (revise) {
+            bundle = carePlanAgentService.reviseStream(
+                    cmd.tenantId(),
+                    cmd.orgId(),
+                    cmd.peopleId(),
+                    cmd.staffId(),
+                    instruction,
+                    null,
+                    ctx.history() == null ? List.of() : ctx.history());
+        } else {
+            bundle = carePlanAgentService.generateStream(
+                    cmd.tenantId(),
+                    cmd.orgId(),
+                    cmd.peopleId(),
+                    cmd.staffId(),
+                    instruction,
+                    null,
+                    null,
+                    true,
+                    null,
+                    true,
+                    ctx.history() == null ? List.of() : ctx.history());
+        }
         return new AgentResponse(
                 ctx.sessionId(),
                 AgentCapability.CARE_PLAN.name(),
-                "CARE_PLAN_GENERATE",
-                "已为患者生成管理方案草稿，请审阅后发布。",
+                revise ? "CARE_PLAN_REVISE" : "CARE_PLAN_GENERATE",
+                revise ? "已按你的要求修订管理方案草稿，请审阅后发布。" : "已为患者生成管理方案草稿，请审阅后发布。",
                 List.of(
                         AgentAction.openSheet("编辑方案草稿", "care-plan", cmd.peopleId()),
                         AgentAction.publishCarePlan("确认发布方案", cmd.peopleId()),
@@ -98,6 +117,17 @@ public class CarePlanSkill implements AgentSkill {
                 "强度调低",
                 "少跑步",
                 "多步行",
+                "任务太多",
+                "待办太多",
+                "任务太少",
+                "精简待办",
+                "精简任务",
+                "减少任务",
+                "删掉几个任务",
+                "少一点任务",
+                "任务减半",
+                "改一下执行",
+                "调整任务",
                 "revise plan",
                 "revise care");
     }

@@ -63,6 +63,7 @@ const TASK_TYPES = [
   { value: 'ASSESSMENT_ESCALATION', label: '评估升级' },
   { value: 'ASSESSMENT_SUSPECTED', label: '疑似患病' },
   { value: 'ARCHIVE_SELF_REPORT', label: '患者自报更新' },
+  { value: 'PROFILE_LINK', label: '关联就诊人' },
   { value: 'QUESTIONNAIRE_EXPIRED', label: '问卷未完成' },
 ]
 
@@ -291,29 +292,6 @@ function highlightMetricSummary(summary?: string) {
   )
 }
 
-function formActionLabel(row: WorkspaceTaskItem) {
-  return row.taskType === 'METRIC_ALERT' || row.taskType === 'EXERCISE_ALERT' || row.taskType === 'FOLLOW_UP'
-    ? '处理'
-    : '填单'
-}
-
-function processActionLabel(row: WorkspaceTaskItem) {
-  switch (row.taskType) {
-    case 'TEAM_ASSIGN':
-      return '分配健管组'
-    case 'PLAN_CREATE':
-      return '制定方案'
-    case 'REPORT_REVIEW':
-      return '审阅'
-    case 'MED_FEEDBACK':
-      return '处理反馈'
-    case 'MED_VERIFY':
-      return '核对用药'
-    default:
-      return '去办理'
-  }
-}
-
 function isMineOpen(row: WorkspaceTaskItem) {
   const me = getStaffId()
   return row.status === 'OPEN' && !!row.assigneeStaffId && !!me && row.assigneeStaffId === me
@@ -333,7 +311,9 @@ function canProcess(row: WorkspaceTaskItem) {
       row.taskType === 'PLAN_CREATE' ||
       row.taskType === 'REPORT_REVIEW' ||
       row.taskType === 'MED_FEEDBACK' ||
-      row.taskType === 'MED_VERIFY')
+      row.taskType === 'MED_VERIFY' ||
+      row.taskType === 'ARCHIVE_SELF_REPORT' ||
+      row.taskType === 'PROFILE_LINK')
   )
 }
 
@@ -343,6 +323,14 @@ function openJoinTeam(row: WorkspaceTaskItem) {
 }
 
 async function processTask(row: WorkspaceTaskItem) {
+  if (row.taskType === 'ARCHIVE_SELF_REPORT') {
+    openSelfReport(row)
+    return
+  }
+  if (row.taskType === 'PROFILE_LINK') {
+    openLinkReview(row)
+    return
+  }
   if (row.taskType === 'TEAM_ASSIGN') {
     openJoinTeam(row)
     return
@@ -483,7 +471,98 @@ interface WorkspaceTaskDetail {
     carePlanVersionId?: string
     carePlanId?: string
     healthReportId?: string
+    changes?: SelfReportChange[]
   } | null
+}
+
+interface SelfReportChange {
+  label?: string
+  currentText?: string | null
+  newText?: string | null
+}
+
+const selfReportOpen = ref(false)
+const selfReportLoading = ref(false)
+const selfReportBusy = ref(false)
+const selfReportTask = ref<WorkspaceTaskItem | null>(null)
+const selfReportChanges = ref<SelfReportChange[]>([])
+
+function openSelfReport(row: WorkspaceTaskItem) {
+  selfReportTask.value = row
+  selfReportChanges.value = []
+  selfReportOpen.value = true
+  selfReportLoading.value = true
+  void api<{ data: WorkspaceTaskDetail }>(`/api/b/v1/workspace/tasks/${row.id}`)
+    .then((res) => {
+      const changes = res.data.payload?.changes
+      selfReportChanges.value = Array.isArray(changes) ? changes : []
+    })
+    .catch((e) => {
+      ElMessage.error(e instanceof Error ? e.message : '加载变更失败')
+    })
+    .finally(() => {
+      selfReportLoading.value = false
+    })
+}
+
+async function ackSelfReport() {
+  const row = selfReportTask.value
+  if (!row) return
+  selfReportBusy.value = true
+  try {
+    await api(`/api/b/v1/workspace/tasks/${row.id}/ack`, { method: 'POST' })
+    ElMessage.success('已核对办结')
+    selfReportOpen.value = false
+    void load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '办结失败')
+  } finally {
+    selfReportBusy.value = false
+  }
+}
+
+function goAdjustPlan() {
+  const row = selfReportTask.value
+  if (!row?.peopleId) return
+  selfReportOpen.value = false
+  router.push(`/workspace/patients/${row.peopleId}/care-plan`)
+}
+
+const linkOpen = ref(false)
+const linkBusy = ref(false)
+const linkTask = ref<WorkspaceTaskItem | null>(null)
+const linkPayload = ref<Record<string, string>>({})
+
+function openLinkReview(row: WorkspaceTaskItem) {
+  linkTask.value = row
+  linkPayload.value = {}
+  linkOpen.value = true
+  void api<{ data: { payload?: Record<string, string> } }>(`/api/b/v1/workspace/tasks/${row.id}`)
+    .then((res) => {
+      linkPayload.value = res.data.payload || {}
+    })
+    .catch((e) => {
+      ElMessage.error(e instanceof Error ? e.message : '加载申请失败')
+    })
+}
+
+async function decideLink(approve: boolean) {
+  const row = linkTask.value
+  if (!row) return
+  linkBusy.value = true
+  try {
+    await api(`/api/b/v1/workspace/tasks/${row.id}/link-decision`, {
+      method: 'POST',
+      body: JSON.stringify({ approve }),
+    })
+    ElMessage.success(approve ? '已关联' : '已拒绝')
+    linkOpen.value = false
+    void load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '处理失败')
+  } finally {
+    linkBusy.value = false
+  }
 }
 
 function openPatient(row: WorkspaceTaskItem) {
@@ -571,6 +650,14 @@ async function openPlanVersionPreview(peopleId: string, versionId: string, peopl
 
 /** 已办/待办：制定方案→方案弹窗；报告审阅→报告弹窗；随访类→随访详情；分配健管组→入组弹窗；否则跳转 */
 async function openDetail(row: WorkspaceTaskItem) {
+  if (row.status === 'OPEN' && row.taskType === 'ARCHIVE_SELF_REPORT') {
+    openSelfReport(row)
+    return
+  }
+  if (row.status === 'OPEN' && row.taskType === 'PROFILE_LINK') {
+    openLinkReview(row)
+    return
+  }
   if (row.status === 'OPEN' && row.taskType === 'TEAM_ASSIGN' && isMineOpen(row)) {
     openJoinTeam(row)
     return
@@ -881,7 +968,7 @@ onMounted(async () => {
                 size="small"
                 @click="formTaskId = row.id"
               >
-                {{ formActionLabel(row) }}
+                处理
               </el-button>
               <el-button
                 v-if="canProcess(row)"
@@ -889,7 +976,7 @@ onMounted(async () => {
                 size="small"
                 @click="processTask(row)"
               >
-                {{ processActionLabel(row) }}
+                处理
               </el-button>
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
               <el-button
@@ -974,6 +1061,56 @@ onMounted(async () => {
     />
 
     <CarePlanPreviewDialog v-model="planPreviewVisible" :data="planPreviewData" />
+
+    <el-dialog
+      v-model="selfReportOpen"
+      title="患者更新了档案"
+      width="480px"
+      @closed="selfReportTask = null"
+    >
+      <p class="self-report-lead">
+        患者在评估问卷里改了下面的内容，档案已按患者填写更新。请核对这次改动：方案还合适就办结；需要改方案再去调整，调整完回到这里办结。
+      </p>
+      <div v-loading="selfReportLoading" class="self-report-list">
+        <div v-for="(c, i) in selfReportChanges" :key="i" class="self-report-row">
+          <b>{{ c.label || '档案项' }}</b>
+          <span>{{ c.currentText || '未填写' }} → {{ c.newText || '未填写' }}</span>
+        </div>
+        <p v-if="!selfReportLoading && !selfReportChanges.length" class="self-report-fallback">
+          {{ selfReportTask?.summary || '请到档案里核对本次更新' }}
+        </p>
+      </div>
+      <template #footer>
+        <el-button @click="goAdjustPlan">去调整方案</el-button>
+        <el-button
+          v-if="selfReportTask && isMineOpen(selfReportTask)"
+          type="primary"
+          :loading="selfReportBusy"
+          @click="ackSelfReport"
+        >
+          无需调整，办结
+        </el-button>
+        <el-button v-else type="primary" disabled>请先领取后再办结</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="linkOpen" title="核对是否同一人" width="480px" @closed="linkTask = null">
+      <p>本人号尾号 {{ linkPayload.mobileTail || '—' }}。确认是同一人后再关联。拒绝后不会新建档案。</p>
+      <p>申请填写：{{ linkPayload.applicantName }} · {{ linkPayload.applicantGender }} · {{ linkPayload.applicantBirthday }}</p>
+      <p>已有档案：{{ linkPayload.archiveName }} · {{ linkPayload.archiveGender }} · {{ linkPayload.archiveBirthday }}</p>
+      <template #footer>
+        <el-button :loading="linkBusy" @click="decideLink(false)">不是同一人</el-button>
+        <el-button
+          v-if="linkTask && isMineOpen(linkTask)"
+          type="primary"
+          :loading="linkBusy"
+          @click="decideLink(true)"
+        >
+          关联此人
+        </el-button>
+        <el-button v-else type="primary" disabled>请先领取后再关联</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="assignOpen" title="分派任务" width="420px">
       <el-select v-model="assignStaffId" filterable placeholder="选择处理人" style="width: 100%">
@@ -1196,6 +1333,24 @@ onMounted(async () => {
 .row-actions :deep(.el-button--small) {
   padding: 5px 8px;
 }
+
+.self-report-lead {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--hx-n-700, #3d5160);
+}
+.self-report-list { min-height: 48px; }
+.self-report-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-top: 1px solid var(--hx-n-100, #eef2f4);
+}
+.self-report-row b { font-size: 13px; }
+.self-report-row span { font-size: 13px; color: var(--hx-n-800, #243642); }
+.self-report-fallback { margin: 0; font-size: 13px; color: var(--hx-n-700, #3d5160); }
 
 .action-slot--release {
   display: inline-flex;

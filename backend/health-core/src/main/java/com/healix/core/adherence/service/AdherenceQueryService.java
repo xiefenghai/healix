@@ -5,6 +5,7 @@ import com.healix.core.adherence.dto.AdherenceDayPointDto;
 import com.healix.core.adherence.dto.AdherenceLifestyleMetricsDto;
 import com.healix.core.adherence.dto.AdherenceMedMetricsDto;
 import com.healix.core.adherence.dto.AdherenceOverviewDto;
+import com.healix.core.adherence.dto.AdherenceTeamSliceDto;
 import com.healix.core.adherence.dto.AdherencePatientDetailDto;
 import com.healix.core.adherence.dto.AdherencePatientItemDto;
 import com.healix.core.adherence.dto.AdherencePatientSummaryDto;
@@ -34,6 +35,8 @@ import com.healix.core.medication.support.MedicationFrequencySupport;
 import com.healix.core.medication.support.MedicationSlotRules;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.service.OrgWorkspaceService;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -84,21 +87,68 @@ public class AdherenceQueryService {
         int medIncomplete = 0;
         int streakGe3 = 0;
         int lifestyleInactive = 0;
+        int planDue = 0;
+        int planDone = 0;
+        int medDue = 0;
+        int medTaken = 0;
+        int dietLogged = 0;
+        int exerciseLogged = 0;
+        Map<String, TeamAcc> teams = new HashMap<>();
         for (AdherencePatientItemDto item : all) {
-            if (AdherenceRiskLevelEnum.HIGH.name().equals(item.getRiskLevel())) {
+            boolean high = AdherenceRiskLevelEnum.HIGH.name().equals(item.getRiskLevel());
+            if (high) {
                 followUp++;
             }
             if (isLifestyleInactive(item)) {
                 lifestyleInactive++;
             }
-            if (item.getPlan() != null && item.getPlan().isTodayIncomplete()) {
+            AdherenceLifestyleMetricsDto lifestyle = item.getLifestyle();
+            boolean dietToday = lifestyle != null && lifestyle.isDietToday();
+            boolean exerciseToday = lifestyle != null && lifestyle.isExerciseToday();
+            if (dietToday) {
+                dietLogged++;
+            }
+            if (exerciseToday) {
+                exerciseLogged++;
+            }
+            AdherencePlanMetricsDto plan = item.getPlan();
+            boolean planGap = plan != null && plan.isTodayIncomplete();
+            boolean streakHigh = plan != null && plan.getStreakDays() >= STREAK_HIGH_THRESHOLD;
+            if (planGap) {
                 planIncomplete++;
             }
-            if (item.getMed() != null && item.getMed().isTodayIncomplete()) {
+            if (streakHigh) {
+                streakGe3++;
+            }
+            int due = plan == null ? 0 : plan.getDue();
+            int done = plan == null ? 0 : plan.getDone();
+            planDue += due;
+            planDone += done;
+            AdherenceMedMetricsDto med = item.getMed();
+            boolean medGap = med != null && med.isTodayIncomplete();
+            if (medGap) {
                 medIncomplete++;
             }
-            if (item.getPlan() != null && item.getPlan().getStreakDays() >= STREAK_HIGH_THRESHOLD) {
-                streakGe3++;
+            int medDueDoses = med == null ? 0 : med.getDueDoseCount();
+            int medTakenDoses = med == null ? 0 : med.getTakenDoseCount();
+            medDue += medDueDoses;
+            medTaken += medTakenDoses;
+
+            String teamKey = StringUtils.hasText(item.getCareTeamId()) ? item.getCareTeamId() : "";
+            TeamAcc acc = teams.computeIfAbsent(teamKey, key -> new TeamAcc(key, item.getCareTeamName()));
+            acc.patients++;
+            acc.planDue += due;
+            acc.planDone += done;
+            acc.medDue += medDueDoses;
+            acc.medTaken += medTakenDoses;
+            if (high) {
+                acc.followUp++;
+            }
+            if (planGap) {
+                acc.planIncomplete++;
+            }
+            if (medGap) {
+                acc.medIncomplete++;
             }
         }
         out.setFollowUpCount(followUp);
@@ -106,7 +156,77 @@ public class AdherenceQueryService {
         out.setMedIncompleteCount(medIncomplete);
         out.setStreakGe3Count(streakGe3);
         out.setLifestyleInactiveCount(lifestyleInactive);
+        out.setPlanDueSum(planDue);
+        out.setPlanDoneSum(planDone);
+        out.setPlanRate(rateRatio(planDone, planDue));
+        out.setMedDueDoseSum(medDue);
+        out.setMedTakenDoseSum(medTaken);
+        out.setMedRate(rateRatio(medTaken, medDue));
+        out.setDietLoggedCount(dietLogged);
+        out.setExerciseLoggedCount(exerciseLogged);
+        out.setTeams(teams.values().stream()
+                .map(TeamAcc::toDto)
+                .sorted(teamSliceComparator())
+                .toList());
         return out;
+    }
+
+    private static Double rateRatio(int numerator, int denominator) {
+        if (denominator <= 0) {
+            return null;
+        }
+        return BigDecimal.valueOf(numerator)
+                .divide(BigDecimal.valueOf(denominator), 4, RoundingMode.HALF_UP)
+                .doubleValue();
+    }
+
+    /** 完成率从低到高，没有应打任务的组排在后面，未入组放最后。 */
+    private static Comparator<AdherenceTeamSliceDto> teamSliceComparator() {
+        return Comparator.comparing((AdherenceTeamSliceDto s) -> !StringUtils.hasText(s.getCareTeamId()))
+                .thenComparing(s -> s.getPlanRate() == null)
+                .thenComparing(s -> s.getPlanRate() == null ? 1d : s.getPlanRate())
+                .thenComparing(s -> s.getCareTeamName() == null ? "" : s.getCareTeamName());
+    }
+
+    private static final class TeamAcc {
+        private final String careTeamId;
+        private final String careTeamName;
+        private int patients;
+        private int planDue;
+        private int planDone;
+        private int medDue;
+        private int medTaken;
+        private int followUp;
+        private int planIncomplete;
+        private int medIncomplete;
+
+        private TeamAcc(String careTeamId, String careTeamName) {
+            this.careTeamId = careTeamId;
+            if (StringUtils.hasText(careTeamName)) {
+                this.careTeamName = careTeamName;
+            } else if (careTeamId.isEmpty()) {
+                this.careTeamName = "未入组";
+            } else {
+                this.careTeamName = "未命名健管组";
+            }
+        }
+
+        private AdherenceTeamSliceDto toDto() {
+            AdherenceTeamSliceDto dto = new AdherenceTeamSliceDto();
+            dto.setCareTeamId(careTeamId.isEmpty() ? null : careTeamId);
+            dto.setCareTeamName(careTeamName);
+            dto.setPatientCount(patients);
+            dto.setPlanDueSum(planDue);
+            dto.setPlanDoneSum(planDone);
+            dto.setPlanRate(rateRatio(planDone, planDue));
+            dto.setMedDueDoseSum(medDue);
+            dto.setMedTakenDoseSum(medTaken);
+            dto.setMedRate(rateRatio(medTaken, medDue));
+            dto.setFollowUpCount(followUp);
+            dto.setPlanIncompleteCount(planIncomplete);
+            dto.setMedIncompleteCount(medIncomplete);
+            return dto;
+        }
     }
 
     /** 日快照聚合：人数口径与 {@link #overview} 一致，另带方案/用药的分子分母求和。 */
@@ -191,10 +311,11 @@ public class AdherenceQueryService {
             String risk,
             String filter,
             String keyword,
+            Boolean unassigned,
             int page,
             int size) {
         LocalDate day = date != null ? date : LocalDate.now();
-        List<AdherencePatientItemDto> all = buildUniverse(tenantId, orgId, day, careTeamId, keyword);
+        List<AdherencePatientItemDto> all = buildUniverse(tenantId, orgId, day, careTeamId, keyword, unassigned);
         AdherenceFilterEnum filterEnum = parseFilter(filter);
         AdherenceRiskLevelEnum riskEnum = parseRisk(risk);
         List<AdherencePatientItemDto> filtered = all.stream()
@@ -648,7 +769,12 @@ public class AdherenceQueryService {
 
     private List<AdherencePatientItemDto> buildUniverse(
             String tenantId, String orgId, LocalDate day, String careTeamId, String keyword) {
-        return buildUniverse(tenantId, orgId, day, careTeamId, keyword, false);
+        return buildUniverse(tenantId, orgId, day, careTeamId, keyword, null, false);
+    }
+
+    private List<AdherencePatientItemDto> buildUniverse(
+            String tenantId, String orgId, LocalDate day, String careTeamId, String keyword, Boolean unassigned) {
+        return buildUniverse(tenantId, orgId, day, careTeamId, keyword, unassigned, false);
     }
 
     private List<AdherencePatientItemDto> buildUniverse(
@@ -658,11 +784,22 @@ public class AdherenceQueryService {
             String careTeamId,
             String keyword,
             boolean systemCaller) {
+        return buildUniverse(tenantId, orgId, day, careTeamId, keyword, null, systemCaller);
+    }
+
+    private List<AdherencePatientItemDto> buildUniverse(
+            String tenantId,
+            String orgId,
+            LocalDate day,
+            String careTeamId,
+            String keyword,
+            Boolean unassigned,
+            boolean systemCaller) {
         List<OrgPatientListItem> patients = systemCaller
                 ? orgWorkspaceService.listOrgPatientsSystem(
-                        tenantId, orgId, blankToNull(keyword), blankToNull(careTeamId), null)
+                        tenantId, orgId, blankToNull(keyword), blankToNull(careTeamId), unassigned)
                 : orgWorkspaceService.listOrgPatients(
-                        orgId, blankToNull(keyword), blankToNull(careTeamId), null);
+                        orgId, blankToNull(keyword), blankToNull(careTeamId), unassigned);
         if (patients.isEmpty()) {
             return List.of();
         }

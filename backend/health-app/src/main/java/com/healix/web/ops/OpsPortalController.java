@@ -114,6 +114,15 @@ public class OpsPortalController {
                 opsAccountId));
     }
 
+    /** 把已有员工账号加入本租户并设为租户管理员。同一登录名可加入多个租户。 */
+    @PostMapping("/tenants/{tenantId}/tenant-admins")
+    public ApiResult<GrantTenantAdminResult> attachTenantAdmin(
+            @PathVariable String tenantId, @RequestBody @Validated AttachTenantAdminRequest request) {
+        String opsAccountId = SecurityUtils.requireContext().getAccountId();
+        return ApiResult.ok(opsTenantAdminService.attachExistingAsTenantAdmin(
+                tenantId, request.username(), opsAccountId));
+    }
+
     /** 为指定员工授予 TENANT_ADMIN 角色。 */
     @PostMapping("/tenants/{tenantId}/staff/{staffId}/roles/tenant-admin")
     public ApiResult<GrantTenantAdminResult> grantTenantAdmin(
@@ -234,6 +243,9 @@ public class OpsPortalController {
             String title,
             Boolean grantTenantAdmin,
             String bindDefaultOrgId) {
+    }
+
+    public record AttachTenantAdminRequest(@NotBlank String username) {
     }
 
     public record RegisterStaffRequest(

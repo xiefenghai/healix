@@ -37,21 +37,6 @@ public class PatientCardMergeService {
             String sourceCardId, String displayName, LocalDate birthday, Map<String, Integer> counts) {}
 
     public MergeCandidate findCandidate(String accountId, String targetCardId) {
-        AccountPatient target = patientCardService.requireOwnedCard(accountId, targetCardId);
-        PeopleProfile targetPeople = peopleProfileMapper.findById(target.getPeopleId());
-        if (targetPeople == null || targetPeople.getBirthday() == null) {
-            return null;
-        }
-        for (AccountPatient card : accountPatientMapper.listByAccount(accountId)) {
-            if (card.getId().equals(target.getId())) {
-                continue;
-            }
-            PeopleProfile p = peopleProfileMapper.findById(card.getPeopleId());
-            if (p != null && samePerson(p, targetPeople) && selfOwned(p, targetPeople)) {
-                var preview = patientMergeService.preview(p.getTenantId(), p.getId());
-                return new MergeCandidate(card.getId(), p.getDisplayName(), p.getBirthday(), preview.counts());
-            }
-        }
         return null;
     }
 

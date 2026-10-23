@@ -7,6 +7,8 @@ import com.healix.agent.gateway.AgentResponse;
 import com.healix.agent.ocr.LabOcrRecognitionService;
 import com.healix.common.exception.BusinessException;
 import com.healix.core.observation.dto.LabOcrPrefillDto;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -23,6 +25,7 @@ import org.springframework.util.StringUtils;
 public class OcrLabSkill implements AgentSkill {
 
     private final LabOcrRecognitionService labOcrRecognitionService;
+    private final ImageFileService imageFileService;
 
     @Override
     public AgentCapability capability() {
@@ -52,6 +55,10 @@ public class OcrLabSkill implements AgentSkill {
             byte[] bytes = decodeImage(cmd.imageBase64());
             String mime = StringUtils.hasText(cmd.imageMimeType()) ? cmd.imageMimeType() : "image/jpeg";
             LabOcrPrefillDto prefill = labOcrRecognitionService.recognize(bytes, mime);
+            if (StringUtils.hasText(cmd.tenantId()) && StringUtils.hasText(cmd.peopleId())) {
+                prefill = prefill.withImageKey(
+                        imageFileService.save(cmd.tenantId(), cmd.peopleId(), ObjectKeys.LAB, bytes, mime));
+            }
             return new AgentResponse(
                     ctx.sessionId(),
                     AgentCapability.OCR_LAB.name(),

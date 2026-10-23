@@ -9,8 +9,29 @@ import IcpFooter from '../shared/IcpFooter.vue'
 const router = useRouter()
 const route = useRoute()
 const username = ref('')
-const password = ref('')
+const otpCode = ref('')
+const sending = ref(false)
 const loading = ref(false)
+
+async function sendCode() {
+  if (!/^1\d{10}$/.test(username.value.trim())) {
+    showToast('请输入 11 位手机号')
+    return
+  }
+  sending.value = true
+  try {
+    const tenantId = await resolveTenantId(api)
+    await api('/api/c/v1/auth/mobile-otp', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId, mobile: username.value.trim() }),
+    })
+    showToast('验证码已发送')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '发送失败')
+  } finally {
+    sending.value = false
+  }
+}
 
 async function submit() {
   loading.value = true
@@ -20,7 +41,11 @@ async function submit() {
       '/api/c/v1/auth/login',
       {
         method: 'POST',
-        body: JSON.stringify({ tenantId, username: username.value, password: password.value }),
+        body: JSON.stringify({
+          tenantId,
+          mobile: username.value.trim(),
+          otpCode: otpCode.value.trim(),
+        }),
       },
     )
     setToken(res.data.accessToken)
@@ -46,8 +71,12 @@ async function submit() {
     </div>
     <div class="card">
       <h2>欢迎回来</h2>
-      <van-field v-model="username" label="账号" placeholder="请输入用户名" />
-      <van-field v-model="password" type="password" label="密码" placeholder="请输入密码" />
+      <van-field v-model="username" type="tel" label="手机号" placeholder="请输入手机号" maxlength="11" />
+      <van-field v-model="otpCode" type="digit" label="验证码" placeholder="6 位验证码" maxlength="6">
+        <template #button>
+          <van-button size="small" type="primary" plain :loading="sending" @click="sendCode">获取验证码</van-button>
+        </template>
+      </van-field>
       <van-button round block type="primary" :loading="loading" @click="submit">登录</van-button>
       <button class="link" type="button" @click="router.push('/activate')">已有建档？激活账号</button>
       <button class="link" type="button" @click="router.push('/register')">没有账号？去注册</button>

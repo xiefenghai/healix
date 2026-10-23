@@ -22,6 +22,8 @@ import com.healix.core.medication.service.MedicationService;
 import com.healix.core.medication.service.MedicationService.IntakeCommand;
 import com.healix.core.medication.service.MedicationService.MedicationCommand;
 import com.healix.core.medication.support.MedicationSlotRules;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import com.healix.security.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -62,6 +64,7 @@ public class CMedicationController {
     private final MedicationAllergyGuard allergyGuard;
     private final DrugCatalogService drugCatalogService;
     private final MedOcrRecognitionService medOcrRecognitionService;
+    private final ImageFileService imageFileService;
 
     // ------------------------------------------------------------------ 药箱
 
@@ -89,7 +92,9 @@ public class CMedicationController {
     /** 拍照识别确认后批量添加。 */
     @PostMapping("/medications/batch")
     public ApiResult<List<MedicationViewDto>> createBatch(@RequestBody @Validated BatchCreateRequest request) {
-        List<MedicationCommand> items = request.items().stream().map(r -> toCommand(r, true)).toList();
+        List<MedicationCommand> items = request.items().stream()
+                .map(r -> toCommand(r, true).withImageKey(request.imageKey()))
+                .toList();
         return ApiResult.ok(medicationService.createBatchByPatient(tenantId(), peopleId(), items));
     }
 
@@ -146,7 +151,10 @@ public class CMedicationController {
             throw new BusinessException("请上传图片");
         }
         try {
-            return ApiResult.ok(medOcrRecognitionService.recognize(file.getBytes(), file.getContentType()));
+            byte[] bytes = file.getBytes();
+            MedOcrPrefillDto prefill = medOcrRecognitionService.recognize(bytes, file.getContentType());
+            String key = imageFileService.save(tenantId(), peopleId(), ObjectKeys.MED, bytes, file.getContentType());
+            return ApiResult.ok(prefill.withImageKey(key));
         } catch (IOException e) {
             throw new BusinessException("读取图片失败");
         }
@@ -271,7 +279,8 @@ public class CMedicationController {
             @Size(max = 64) String drugCode,
             List<String> slots) {}
 
-    public record BatchCreateRequest(@NotEmpty @Size(max = 10) List<@NotNull @Valid CreateMedicationRequest> items) {}
+    public record BatchCreateRequest(
+            @NotEmpty @Size(max = 10) List<@NotNull @Valid CreateMedicationRequest> items, String imageKey) {}
 
     public record IntakeRequest(
             LocalDate intakeDate,

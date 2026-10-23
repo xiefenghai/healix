@@ -19,6 +19,8 @@ public enum FeatureFlagKeyEnum {
     PATIENT_FOLLOWUP_REQUEST("C 端申请回访", true),
     /** C 端健康豆 / 火苗 / 徽章 */
     PATIENT_REWARDS("C 端激励体系", true),
+    /** C 端今日科普（完成待办后按片库顺序观看） */
+    SCIENCE_DAILY("C 端今日科普", true),
     /** 租户白标（Logo / 主色 / 应用名） */
     WHITE_LABEL("白标定制", false),
     /** 方案发布后需医生复核签署 */

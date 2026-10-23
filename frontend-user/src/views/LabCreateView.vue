@@ -36,6 +36,7 @@ interface OcrResult {
   items?: OcrItem[]
   ignoredItems?: Array<{ rawName: string; reason?: string }>
   warnings?: string[]
+  imageKey?: string
 }
 
 const route = useRoute()
@@ -49,7 +50,10 @@ const pageLoading = ref(false)
 const saving = ref(false)
 const ocrLoading = ref(false)
 const ocrHint = ref('')
+const ocrTimesBlocked = ref(false)
+const LAB_TIME_BLOCK_MESSAGE = '未识别出采样时间或报告时间，不能入库'
 const saveSource = ref<'PATIENT' | 'PATIENT_OCR'>('PATIENT')
+const ocrImageKey = ref('')
 const specimenOverride = ref<'BLOOD' | 'URINE' | ''>('')
 const catalog = ref<DictItem[]>([])
 const activePanelKey = ref(LAB_PANELS[0].key)
@@ -173,8 +177,10 @@ function openOcrPicker() {
 
 function applyOcr(data: OcrResult) {
   saveSource.value = 'PATIENT_OCR'
-  form.sampledAt = data.sampledAt ? String(data.sampledAt).slice(0, 16) : nowLocalInput()
-  form.reportedAt = data.reportedAt ? String(data.reportedAt).slice(0, 16) : nowLocalInput()
+  ocrImageKey.value = data.imageKey || ''
+  ocrTimesBlocked.value = !data.sampledAt || !data.reportedAt
+  form.sampledAt = data.sampledAt ? String(data.sampledAt).slice(0, 16) : ''
+  form.reportedAt = data.reportedAt ? String(data.reportedAt).slice(0, 16) : ''
   form.note = data.note || ''
   if (data.specimenType === 'BLOOD' || data.specimenType === 'URINE') {
     specimenOverride.value = data.specimenType
@@ -204,7 +210,9 @@ function applyOcr(data: OcrResult) {
 
   const ignored = data.ignoredItems?.length ? `已忽略 ${data.ignoredItems.length} 项未映射项目` : ''
   const warn = data.warnings?.length ? data.warnings.join('；') : ''
-  ocrHint.value = [ignored, warn, '识别结果仅供参考，请核对后提交'].filter(Boolean).join('；')
+  ocrHint.value = ocrTimesBlocked.value
+    ? LAB_TIME_BLOCK_MESSAGE
+    : [ignored, warn, '识别结果仅供参考，请核对后提交'].filter(Boolean).join('；')
 }
 
 async function onOcrFileChange(e: Event) {
@@ -295,6 +303,10 @@ function applyExisting(data: any) {
 }
 
 async function submit() {
+  if (ocrTimesBlocked.value) {
+    showToast(LAB_TIME_BLOCK_MESSAGE)
+    return
+  }
   if (!form.reportedAt) {
     showToast('请填写报告时间')
     return
@@ -313,6 +325,7 @@ async function submit() {
       reportedAt: toApiDateTime(form.reportedAt),
       note: form.note || undefined,
       source: saveSource.value,
+      imageKey: ocrImageKey.value || undefined,
       items,
     }
     if (isEdit.value) {
@@ -417,12 +430,12 @@ onMounted(async () => {
       <h2>报告信息</h2>
       <van-field label="采样时间">
         <template #input>
-          <input v-model="form.sampledAt" type="datetime-local" class="datetime" />
+          <input v-model="form.sampledAt" type="datetime-local" class="datetime" :disabled="ocrTimesBlocked" />
         </template>
       </van-field>
       <van-field label="报告时间" required>
         <template #input>
-          <input v-model="form.reportedAt" type="datetime-local" class="datetime" />
+          <input v-model="form.reportedAt" type="datetime-local" class="datetime" :disabled="ocrTimesBlocked" />
         </template>
       </van-field>
       <van-field v-model="form.note" label="备注" maxlength="100" placeholder="选填" />
@@ -452,7 +465,7 @@ onMounted(async () => {
     </section>
 
     <div class="footer">
-      <van-button round block type="primary" :loading="saving" @click="submit">{{ submitLabel }}</van-button>
+      <van-button round block type="primary" :loading="saving" :disabled="ocrTimesBlocked" @click="submit">{{ submitLabel }}</van-button>
     </div>
     </template>
   </div>

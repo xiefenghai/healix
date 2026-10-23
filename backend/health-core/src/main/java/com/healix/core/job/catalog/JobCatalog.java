@@ -52,7 +52,7 @@ public class JobCatalog {
             new JobCatalogSpec(
                     FOLLOWUP_SCHEDULE_SCAN,
                     "定期随访排期",
-                    "按距上次定期随访（或入组）的间隔，自动生成待办定期随访与工作台任务",
+                    "按距上次定期随访（或入组）的间隔生成待办定期随访；并补偿近 7 天入组但缺少首诊随访的患者",
                     "0 45 0 * * *",
                     "{\"batchSize\":200}"),
             new JobCatalogSpec(

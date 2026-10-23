@@ -19,7 +19,7 @@ public class IntentRouter {
         if (containsAny(msg, "吃药", "服药", "用药", "药物", "漏服", "停药", "medication", "pill")) {
             return IntentType.QUERY_MEDICATION;
         }
-        if (containsAny(msg, "方案", "打卡", "今日任务", "今天要做", "care plan", "checkin")) {
+        if (containsAny(msg, "方案", "打卡", "今日任务", "今天要做", "还有什么要做", "还没做", "未完成", "care plan", "checkin")) {
             return IntentType.QUERY_PLAN;
         }
         if (containsAny(msg, "随访", "回访", "复诊", "预约", "followup", "follow-up")) {

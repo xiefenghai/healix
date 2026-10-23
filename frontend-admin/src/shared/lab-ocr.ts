@@ -19,6 +19,7 @@ export interface LabOcrDraft {
   items: LabOcrItem[]
   ignoredItems?: Array<{ rawName: string; reason?: string }>
   warnings?: string[]
+  imageKey?: string
   fromOcr?: boolean
 }
 

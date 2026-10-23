@@ -27,27 +27,23 @@ function emptyForm() {
     identityValue: '',
     relation: 'SELF',
     mobile: '',
-    mobileOwner: 'SELF',
+    otpCode: '',
   }
 }
 const form = ref(emptyForm())
+const loginMobile = ref('')
+const requests = ref<{ id: string; status: string; displayName: string; message: string }[]>([])
+const sending = ref(false)
+const needOtp = computed(() => {
+  const mobile = form.value.mobile.replace(/\D/g, '').replace(/^86/, '')
+  return /^1\d{10}$/.test(mobile) && mobile !== loginMobile.value
+})
 const showIdentity = ref(false)
 const showBirthdayPicker = ref(false)
 const showRelationSheet = ref(false)
-const showOwnerSheet = ref(false)
 const today = new Date()
 const minBirthday = new Date(1900, 0, 1)
 const birthdayPickerValue = ref<string[]>(['1960', '01', '01'])
-
-const ownerOptions = [
-  { text: '本人', value: 'SELF' },
-  { text: '配偶', value: 'SPOUSE' },
-  { text: '子女', value: 'CHILD' },
-  { text: '父母', value: 'PARENT' },
-  { text: '其他亲属', value: 'RELATIVE' },
-  { text: '其他', value: 'OTHER' },
-]
-const ownerLabelMap = Object.fromEntries(ownerOptions.map((o) => [o.value, o.text]))
 
 const parsedIdCard = computed(() => {
   const v = form.value.identityValue.trim().toUpperCase()
@@ -112,12 +108,36 @@ function onBirthdayConfirm({ selectedValues }: { selectedValues: string[] }) {
 async function load() {
   loading.value = true
   try {
-    const res = await api<{ data: PatientCard[] }>('/api/c/v1/patient-cards')
-    cards.value = res.data || []
+    const [cardRes, accountRes, requestRes] = await Promise.all([
+      api<{ data: PatientCard[] }>('/api/c/v1/patient-cards'),
+      api<{ data: { mobile?: string } }>('/api/c/v1/account'),
+      api<{ data: { id: string; status: string; displayName: string; message: string }[] }>(
+        '/api/c/v1/patient-link-requests',
+      ),
+    ])
+    cards.value = cardRes.data || []
+    loginMobile.value = accountRes.data?.mobile || ''
+    requests.value = requestRes.data || []
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function sendOtp() {
+  if (!needOtp.value) return
+  sending.value = true
+  try {
+    await api('/api/c/v1/mobile-otp', {
+      method: 'POST',
+      body: JSON.stringify({ mobile: form.value.mobile.trim() }),
+    })
+    showToast('验证码已发送')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '发送失败')
+  } finally {
+    sending.value = false
   }
 }
 
@@ -140,9 +160,14 @@ async function addCard() {
   if (f.identityValue.trim() && !parsedIdCard.value) return showToast('身份证号格式不正确')
   if (!f.gender) return showToast('请选择性别')
   if (!f.birthday) return showToast('请选择出生日期')
+  if (!f.relation) return showToast('请选择和账号的关系')
   const mobile = f.mobile.trim()
+  if (!/^1\d{10}$/.test(mobile.replace(/\D/g, '').replace(/^86/, ''))) return showToast('请填写本人手机号')
+  if (needOtp.value && !f.otpCode.trim()) return showToast('请填写验证码')
   try {
-    const res = await api<{ data: { accessToken: string } }>('/api/c/v1/patient-cards', {
+    const res = await api<{
+      data: { outcome?: string; message?: string; accessToken?: string }
+    }>('/api/c/v1/patient-cards', {
       method: 'POST',
       body: JSON.stringify({
         displayName: f.displayName.trim(),
@@ -151,16 +176,31 @@ async function addCard() {
         relation: f.relation,
         identityType: f.identityValue.trim() ? f.identityType : null,
         identityValue: f.identityValue.trim() || null,
-        mobile: mobile || null,
-        mobileOwner: mobile ? f.mobileOwner : null,
+        mobile,
+        otpCode: needOtp.value ? f.otpCode.trim() : null,
       }),
     })
-    setToken(res.data.accessToken)
-    showToast('已添加就诊人')
+    if (res.data.outcome === 'PENDING') {
+      showToast(res.data.message || '已交给健康管理团队核对')
+      showAdd.value = false
+      await load()
+      return
+    }
+    if (res.data.accessToken) setToken(res.data.accessToken)
+    showToast(res.data.outcome === 'LINKED' ? '已关联已有档案' : '已添加就诊人')
     showAdd.value = false
     await router.replace('/home')
   } catch (e) {
     showToast(e instanceof Error ? e.message : '添加失败')
+  }
+}
+
+async function withdraw(id: string) {
+  try {
+    await api(`/api/c/v1/patient-link-requests/${id}/withdraw`, { method: 'POST' })
+    await load()
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '撤回失败')
   }
 }
 
@@ -189,7 +229,7 @@ onMounted(load)
   <div class="page">
     <van-nav-bar title="就诊人" left-arrow @click-left="router.back()" />
     <div class="body">
-      <van-empty v-if="!loading && !cards.length" description="还没有就诊人">
+      <van-empty v-if="!loading && !cards.length && !requests.length" description="还没有就诊人">
         <template #default>
           <div class="empty-actions">
             <van-button type="primary" size="small" round @click="openAdd">添加就诊人</van-button>
@@ -197,7 +237,19 @@ onMounted(load)
           </div>
         </template>
       </van-empty>
-      <van-cell-group v-else inset>
+      <van-cell-group v-if="requests.length" inset style="margin-bottom: 12px">
+        <van-cell
+          v-for="r in requests"
+          :key="r.id"
+          :title="r.displayName || '关联申请'"
+          :label="r.message"
+        >
+          <template v-if="r.status === 'OPEN'" #right-icon>
+            <van-button size="mini" plain @click.stop="withdraw(r.id)">撤回</van-button>
+          </template>
+        </van-cell>
+      </van-cell-group>
+      <van-cell-group v-if="cards.length" inset>
         <van-cell
           v-for="c in cards"
           :key="c.id"
@@ -211,7 +263,7 @@ onMounted(load)
           </template>
         </van-cell>
       </van-cell-group>
-      <div v-if="cards.length" class="actions">
+      <div v-if="cards.length || requests.length" class="actions">
         <van-button block round type="primary" @click="openAdd">添加就诊人</van-button>
         <van-button block round plain style="margin-top: 10px" @click="router.push('/activate')">激活码添加机构档案</van-button>
       </div>
@@ -222,7 +274,7 @@ onMounted(load)
 
     <van-popup v-model:show="showAdd" position="bottom" round :style="{ padding: '16px' }">
       <h3>添加就诊人</h3>
-      <p class="tip">填写姓名、性别和出生日期即可，身份证可以以后再补充。若该人已在机构建档，请改用激活码添加。</p>
+      <p class="tip">请填写本人手机号、姓名、性别和出生日期。和账号的关系只用于称呼，不参与认人。号码已有档案且姓名、生日一致时会直接关联。</p>
       <van-field v-model="form.displayName" label="姓名" placeholder="请输入姓名" maxlength="32" />
       <van-field
         is-link
@@ -247,15 +299,19 @@ onMounted(load)
         :model-value="form.birthday"
         @click="openBirthdayPicker"
       />
-      <van-field v-model="form.mobile" type="tel" label="联系电话" placeholder="选填，没有可不填" maxlength="20" />
+      <van-field v-model="form.mobile" type="tel" label="本人手机号" placeholder="11 位手机号" maxlength="11" />
       <van-field
-        v-if="form.mobile.trim()"
-        is-link
-        readonly
-        label="号码归属"
-        :model-value="ownerLabelMap[form.mobileOwner]"
-        @click="showOwnerSheet = true"
-      />
+        v-if="needOtp"
+        v-model="form.otpCode"
+        type="digit"
+        label="验证码"
+        placeholder="6 位验证码"
+        maxlength="6"
+      >
+        <template #button>
+          <van-button size="small" type="primary" plain :loading="sending" @click="sendOtp">获取验证码</van-button>
+        </template>
+      </van-field>
       <van-cell
         v-if="!showIdentity"
         title="补充身份证（选填）"
@@ -288,14 +344,6 @@ onMounted(load)
       cancel-text="取消"
       close-on-click-action
       @select="(a: { value: string }) => (form.relation = a.value)"
-    />
-    <van-action-sheet
-      v-model:show="showOwnerSheet"
-      title="这个号码是谁的"
-      :actions="ownerOptions.map((o) => ({ name: o.text, value: o.value }))"
-      cancel-text="取消"
-      close-on-click-action
-      @select="(a: { value: string }) => (form.mobileOwner = a.value)"
     />
   </div>
 </template>

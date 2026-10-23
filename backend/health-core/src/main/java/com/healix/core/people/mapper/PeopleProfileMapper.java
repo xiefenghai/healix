@@ -18,6 +18,9 @@ public interface PeopleProfileMapper {
     List<PeopleProfile> searchByTenant(
             @Param("tenantId") String tenantId, @Param("keyword") String keyword, @Param("limit") int limit);
 
+    List<PeopleProfile> listBySelfMobile(
+            @Param("tenantId") String tenantId, @Param("mobile") String mobile);
+
     List<PeopleProfile> listPossibleDuplicates(
             @Param("tenantId") String tenantId,
             @Param("displayName") String displayName,

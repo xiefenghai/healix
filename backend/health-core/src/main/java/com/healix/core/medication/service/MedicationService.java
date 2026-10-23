@@ -22,6 +22,8 @@ import com.healix.core.medication.mapper.PeopleMedicationMapper;
 import com.healix.core.medication.support.MedicationSlotRules;
 import com.healix.core.revision.enums.RevisionBizTypeEnum;
 import com.healix.core.revision.service.FieldRevisionService;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -50,6 +52,7 @@ public class MedicationService {
     private final MedicationAllergyGuard allergyGuard;
     private final MedicationFeedbackService feedbackService;
     private final WorkspaceTaskGenerator workspaceTaskGenerator;
+    private final ImageFileService imageFileService;
 
     @Transactional
     public List<MedicationViewDto> list(String tenantId, String orgId, String peopleId, String status) {
@@ -797,6 +800,11 @@ public class MedicationService {
         row.setTimeEvening(null);
         row.setTimeBedtime(null);
         row.setHasAdverseReaction(Boolean.TRUE.equals(cmd.hasAdverseReaction()) ? 1 : 0);
+        String imageKey = imageFileService.requireOwned(
+                row.getTenantId(), row.getPeopleId(), ObjectKeys.MED, cmd.imageKey());
+        if (imageKey != null) {
+            row.setImageKey(imageKey);
+        }
         applySchedulingFields(row, cmd);
     }
 
@@ -903,6 +911,7 @@ public class MedicationService {
         dto.setCourseDays(row.getCourseDays());
         dto.setHasAdverseReaction(row.getHasAdverseReaction() != null && row.getHasAdverseReaction() == 1);
         dto.setRemark(row.getRemark());
+        dto.setImageKey(row.getImageKey());
         dto.setStatus(row.getStatus());
         dto.setPrn(MedicationSlotRules.isPrn(row));
         dto.setDueDoseCount(MedicationSlotRules.dueCount(row));
@@ -964,7 +973,27 @@ public class MedicationService {
             String status,
             String drugCode,
             /** 指定服药时段；null=不改，空列表=恢复按频次推导 */
-            List<String> slots) {
+            List<String> slots,
+            String imageKey) {
+
+        public MedicationCommand(
+                String drugName,
+                String usageMethod,
+                String frequency,
+                String doseAmount,
+                String doseUnit,
+                LocalDate startDate,
+                LocalDate stopDate,
+                String timingNote,
+                Integer courseDays,
+                Boolean hasAdverseReaction,
+                String remark,
+                String status,
+                String drugCode,
+                List<String> slots) {
+            this(drugName, usageMethod, frequency, doseAmount, doseUnit, startDate, stopDate, timingNote,
+                    courseDays, hasAdverseReaction, remark, status, drugCode, slots, null);
+        }
 
         public MedicationCommand(
                 String drugName,
@@ -980,7 +1009,13 @@ public class MedicationService {
                 String remark,
                 String status) {
             this(drugName, usageMethod, frequency, doseAmount, doseUnit, startDate, stopDate, timingNote,
-                    courseDays, hasAdverseReaction, remark, status, null, null);
+                    courseDays, hasAdverseReaction, remark, status, null, null, null);
+        }
+
+        public MedicationCommand withImageKey(String imageKey) {
+            return new MedicationCommand(
+                    drugName, usageMethod, frequency, doseAmount, doseUnit, startDate, stopDate, timingNote,
+                    courseDays, hasAdverseReaction, remark, status, drugCode, slots, imageKey);
         }
     }
 

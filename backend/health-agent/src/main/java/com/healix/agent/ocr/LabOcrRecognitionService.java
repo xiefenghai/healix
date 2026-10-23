@@ -188,6 +188,7 @@ public class LabOcrRecognitionService {
 
     private static LocalDateTime parseDateTime(String raw, List<String> warnings, String label) {
         if (!StringUtils.hasText(raw)) {
+            warnings.add("未识别出" + label);
             return null;
         }
         try {

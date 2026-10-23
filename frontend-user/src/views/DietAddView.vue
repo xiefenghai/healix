@@ -92,6 +92,7 @@ let appendingPhotos = false
 const showPhotoSheet = ref(false)
 const photoHint = ref('')
 const photoBatch = ref(0)
+const photoImageKeys = ref<string[]>([])
 
 let seq = 0
 
@@ -382,6 +383,7 @@ async function recognizePhoto() {
     const prev = photoBatch.value
     if (prev && res.data.items.length) lines.value = lines.value.filter((l) => l.batch !== prev)
     photoBatch.value = ++seq
+    photoImageKeys.value = res.data.imageKeys || []
     await applyDraft(res.data, 'PHOTO_AI', photoBatch.value)
   } catch (err) {
     showToast(err instanceof Error ? err.message : '识别失败')
@@ -482,6 +484,7 @@ function saveSlot(items: ReturnType<typeof toPayloadItem>[]) {
       mealType: mealType.value,
       source: source.value,
       note: note.value.trim() || null,
+      imageKeys: photoImageKeys.value.length ? photoImageKeys.value : undefined,
       items,
     }),
   })
@@ -504,6 +507,47 @@ async function remove() {
   } catch (e) {
     showToast(e instanceof Error ? e.message : '删除失败')
   }
+}
+
+/** 去掉「半碗」等份量词，便于匹配库内菜名。 */
+function stripPortionWords(name: string): string {
+  return name
+    .replace(/(一小|大半|半|一|两|二|三)?([碗杯碟盘份袋])/g, '')
+    .replace(/适量|少许/g, '')
+    .trim()
+}
+
+/**
+ * 按示例菜名落到食物库：
+ * 1) 搜索精确/前缀；2) 后端 matchByName（「豆腐炒青菜」→「豆腐」）；
+ * 组合菜名整道不在库时，仍尽量落到主料。
+ */
+async function resolveFoodByName(name: string): Promise<FoodItem | undefined> {
+  const candidates = [...new Set([name.trim(), stripPortionWords(name)].filter(Boolean))]
+  for (const q of candidates) {
+    try {
+      const res = await api<{ data: FoodItem[] }>(
+        `/api/c/v1/me/foods/search?keyword=${encodeURIComponent(q)}&limit=8`,
+      )
+      const list = res.data || []
+      if (list.length) {
+        const norm = q.replace(/\s/g, '')
+        const exact = list.find((f) => f.name === q || f.name.replace(/\s/g, '') === norm)
+        return exact ?? list[0]
+      }
+    } catch {
+      /* 再试 match */
+    }
+    try {
+      const res = await api<{ data: FoodItem | null }>(
+        `/api/c/v1/me/foods/match?name=${encodeURIComponent(q)}`,
+      )
+      if (res.data) return res.data
+    } catch {
+      /* 下个候选 */
+    }
+  }
+  return undefined
 }
 
 async function applySamplePrefill() {
@@ -542,19 +586,35 @@ async function applySamplePrefill() {
       .split(/[+＋、，,；;]/)
       .map((s) => s.trim())
       .filter(Boolean)
-    for (const name of parts) {
-      lines.value.push({
-        key: ++seq,
-        foodName: name,
-        amount: 100,
-        unit: 'g',
-        oilLevel: 'NORMAL',
-        estKcal: '',
-        gramsConfirmed: false,
-      })
+    const resolved = await Promise.all(parts.map(async (name) => ({ name, food: await resolveFoodByName(name) })))
+    let unmatched = 0
+    for (const { name, food } of resolved) {
+      if (food) {
+        addFood(food)
+        // 列表仍显示方案原文；热量按命中的库条目计算
+        const last = lines.value[lines.value.length - 1]
+        if (last) last.foodName = name
+      } else {
+        unmatched++
+        lines.value.push({
+          key: ++seq,
+          foodName: name,
+          amount: 100,
+          unit: 'g',
+          oilLevel: 'NORMAL',
+          estKcal: '',
+          gramsConfirmed: true,
+        })
+      }
     }
     source.value = 'MANUAL'
-    showToast({ type: 'success', message: `已预填 ${parts.length} 项，请确认后保存` })
+    showToast({
+      type: 'success',
+      message:
+        unmatched > 0
+          ? `已预填 ${parts.length} 项，其中 ${unmatched} 项未匹配食物库，请补热量`
+          : `已预填 ${parts.length} 项，请确认后保存`,
+    })
   } catch (e) {
     showToast(e instanceof Error ? e.message : '预填失败')
   }

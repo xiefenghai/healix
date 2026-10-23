@@ -11,4 +11,5 @@ public class RevisionItemViewDto {
     private String newValue;
     private String oldDisplay;
     private String newDisplay;
+    private String quote;
 }

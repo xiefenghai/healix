@@ -70,6 +70,10 @@ public class DeepSeekChatCompletionsClient {
                 length(userPrompt),
                 imageDataUrls.size(),
                 maxTokens);
+        log.info(
+                "请求LLM，模型名称： {},输入：{}",
+                model,
+                formatVisionInput(systemPrompt, userPrompt, imageDataUrls == null ? 0 : imageDataUrls.size()));
         String raw = restClient
                 .post()
                 .uri("/chat/completions")
@@ -78,6 +82,7 @@ public class DeepSeekChatCompletionsClient {
                 .body(String.class);
 
         VisionChatResult result = parseResponse(raw);
+        log.info("模型：{},返回:{}", model, result.content() == null ? "" : result.content());
         log.info(
                 "[DeepSeek] success scene={} model={} elapsedMs={} finishReason={} contentChars={} reasoningChars={} promptTokens={} completionTokens={}",
                 scene,
@@ -160,6 +165,16 @@ public class DeepSeekChatCompletionsClient {
 
     private static int length(String text) {
         return text == null ? 0 : text.length();
+    }
+
+    private static String formatVisionInput(String systemPrompt, String userPrompt, int imageCount) {
+        return "[system] "
+                + (systemPrompt == null ? "" : systemPrompt)
+                + "\n[user] "
+                + (userPrompt == null ? "" : userPrompt)
+                + "\n[images] count="
+                + imageCount
+                + " (base64 omitted)";
     }
 
     private static String truncate(String text, int max) {

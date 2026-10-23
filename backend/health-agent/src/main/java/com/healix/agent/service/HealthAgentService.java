@@ -1,5 +1,6 @@
 package com.healix.agent.service;
 
+import com.healix.agent.card.AgentConfirmCardService;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.log.AgentInteractionLog;
@@ -48,6 +49,7 @@ public class HealthAgentService {
     private final AgentInteractionLogMapper interactionLogMapper;
     private final IdentityService identityService;
     private final LlmClient llmClient;
+    private final AgentConfirmCardService confirmCardService;
 
     @Value("${healix.agent.enabled:false}")
     private boolean agentLlmEnabled;
@@ -55,6 +57,16 @@ public class HealthAgentService {
     /** 全局关闭 C 端开放问答（与租户级 AI_PATIENT_AGENT 叠加）；不影响 B 端 AI 与 OCR */
     @Value("${healix.agent.patient-enabled:true}")
     private boolean patientAgentEnabled;
+
+    /** 清掉这段对话的短期记忆，并作废未确认的卡。页面上的气泡由 C 端自己换掉。 */
+    @Transactional
+    public void startNew(String patientId) {
+        if (patientId == null) {
+            throw new IllegalArgumentException("缺少患者 ID");
+        }
+        confirmCardService.discardPending(patientId);
+        chatMemoryStore.clear(patientId);
+    }
 
     @Transactional
     public AgentChatResponse chat(String patientId, String userMessage) {
@@ -72,15 +84,31 @@ public class HealthAgentService {
             throw new BusinessException("请先加入机构后再使用 Agent");
         }
         String tenantId = profile.getTenantId();
+        AgentConfirmCardService.PrepareResult prepared = confirmCardService.prepare(tenantId, patientId, userMessage);
+        if (prepared.handled()) {
+            String finalReply = safetyValidator.validate(tenantId, patientId, prepared.reply());
+            persistLog(
+                    tenantId,
+                    patientId,
+                    IntentType.RECORD_VITAL,
+                    userMessage,
+                    "record-vital",
+                    prepared.reply(),
+                    prepared.reply(),
+                    finalReply);
+            chatMemoryStore.appendTurn(patientId, userMessage, finalReply);
+            return new AgentChatResponse(IntentType.RECORD_VITAL.name(), finalReply, List.of(), prepared.cards());
+        }
         aiUsageGuard.check(tenantId, FeatureFlagKeyEnum.AI_PATIENT_AGENT, QuotaKeyEnum.AI_CALL_MONTHLY);
 
         IntentType intent = intentRouter.route(userMessage);
-        List<String> memory = chatMemoryStore.asContextBlock(patientId);
+        List<LlmClient.ChatTurn> history = chatMemoryStore.loadTurns(patientId);
+        List<String> memoryBlock = chatMemoryStore.asContextBlock(patientId);
         // RAG 未接入：知识块预留空列表
         List<String> knowledge = List.of();
         PatientBizTools.ToolOutput tools = invokeToolsIfNeeded(tenantId, patientId, intent);
         String toolResult = tools.text();
-        String promptSnapshot = buildPromptSnapshot(userMessage, memory, knowledge, toolResult, intent);
+        String promptSnapshot = buildPromptSnapshot(userMessage, memoryBlock, knowledge, toolResult, intent);
 
         String draftReply;
         if (agentLlmEnabled && llmClient.isEnabled()) {
@@ -95,17 +123,6 @@ public class HealthAgentService {
                     %s
                     """
                             .formatted(toolResult.isBlank() ? "(暂无可用数据)" : toolResult);
-            var history = memory.stream()
-                    .map(s -> {
-                        int sep = s.indexOf(" | A: ");
-                        if (sep < 0) {
-                            return new LlmClient.ChatTurn(s, "");
-                        }
-                        String user = s.startsWith("U: ") ? s.substring(3, sep) : s.substring(0, sep);
-                        String assistant = s.substring(sep + 5);
-                        return new LlmClient.ChatTurn(user, assistant);
-                    })
-                    .toList();
             LlmResponse llm = llmClient.chat(systemPrompt, userMessage, history);
             draftReply = llm.fromLlm() && llm.content() != null
                     ? llm.content()
@@ -117,13 +134,13 @@ public class HealthAgentService {
         String finalReply = safetyValidator.validate(tenantId, patientId, draftReply);
         persistLog(tenantId, patientId, intent, userMessage, promptSnapshot, toolResult, draftReply, finalReply);
         chatMemoryStore.appendTurn(patientId, userMessage, finalReply);
-        return new AgentChatResponse(intent.name(), finalReply, tools.actions());
+        return new AgentChatResponse(intent.name(), finalReply, tools.actions(), List.of());
     }
 
     /**
      * 按意图组合业务只读工具。返回的文本进 LLM system prompt，动作回给 C 端渲染成按钮。
      *
-     * <p>每个意图都带上今日方案/用药，患者最常问的「我今天还有什么要做」不必来回追问。
+     * <p>打卡按钮只在患者正在问今日任务或用药、且确实还有未完成项时出现。
      */
     private PatientBizTools.ToolOutput invokeToolsIfNeeded(String tenantId, String patientId, IntentType intent) {
         List<PatientBizTools.ToolOutput> parts = new ArrayList<>();
@@ -162,7 +179,32 @@ public class HealthAgentService {
                 parts.add(patientBizTools.medicationToday(tenantId, patientId));
             }
         }
-        return merge(parts);
+        PatientBizTools.ToolOutput merged = merge(parts);
+        return new PatientBizTools.ToolOutput(merged.text(), visibleActions(intent, merged.actions()));
+    }
+
+    /**
+     * 「去打卡 / 去服药打卡」只跟完成任务的话题走。问指标、报告或闲聊时不挂这两个按钮。
+     */
+    static List<AgentQuickAction> visibleActions(IntentType intent, List<AgentQuickAction> actions) {
+        return switch (intent) {
+            case QUERY_PLAN, SET_REMINDER -> actions.stream()
+                    .filter(action -> "去打卡".equals(action.label()) || "去服药打卡".equals(action.label()))
+                    .toList();
+            case QUERY_MEDICATION -> actions.stream()
+                    .filter(action -> "去服药打卡".equals(action.label()))
+                    .toList();
+            default -> actions.stream()
+                    .filter(action -> !isCheckinAction(action.label()))
+                    .toList();
+        };
+    }
+
+    private static boolean isCheckinAction(String label) {
+        return "去打卡".equals(label)
+                || "去服药打卡".equals(label)
+                || "查看方案".equals(label)
+                || "管理用药".equals(label);
     }
 
     private static PatientBizTools.ToolOutput merge(List<PatientBizTools.ToolOutput> parts) {
@@ -255,6 +297,10 @@ public class HealthAgentService {
         interactionLogMapper.insert(logEntity);
     }
 
-    public record AgentChatResponse(String intent, String reply, List<AgentQuickAction> actions) {
+    public record AgentChatResponse(
+            String intent,
+            String reply,
+            List<AgentQuickAction> actions,
+            List<AgentConfirmCardService.AgentConfirmCardView> cards) {
     }
 }

@@ -14,4 +14,27 @@ public record ObservationOcrPreviewDto(
         List<String> warnings,
         LabOcrPrefillDto lab,
         ExamOcrPrefillDto exam,
-        MedOcrPrefillDto med) {}
+        MedOcrPrefillDto med,
+        String imageKey) {
+
+    public ObservationOcrPreviewDto(
+            String kind,
+            String title,
+            List<String> warnings,
+            LabOcrPrefillDto lab,
+            ExamOcrPrefillDto exam,
+            MedOcrPrefillDto med) {
+        this(kind, title, warnings, lab, exam, med, null);
+    }
+
+    public ObservationOcrPreviewDto withImageKey(String imageKey) {
+        return new ObservationOcrPreviewDto(
+                kind,
+                title,
+                warnings,
+                lab == null ? null : lab.withImageKey(imageKey),
+                exam == null ? null : exam.withImageKey(imageKey),
+                med == null ? null : med.withImageKey(imageKey),
+                imageKey);
+    }
+}

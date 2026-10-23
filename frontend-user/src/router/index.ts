@@ -61,6 +61,7 @@ const router = createRouter({
     },
     { path: '/care-plan', component: () => import('../views/CarePlanView.vue'), meta: { hideTab: true } },
     { path: '/achievements', component: () => import('../views/AchievementsView.vue'), meta: { hideTab: true } },
+    { path: '/science', component: () => import('../views/ScienceView.vue'), meta: { hideTab: true } },
     { path: '/medications', component: () => import('../views/MedicationsView.vue'), meta: { hideTab: true } },
     {
       path: '/medications/reminder',

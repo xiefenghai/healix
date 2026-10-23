@@ -34,6 +34,8 @@ public class PeopleMedication extends BaseEntity {
     private String timeBedtime;
     private Integer hasAdverseReaction;
     private String remark;
+    /** 药盒或处方原图对象键 */
+    private String imageKey;
     private String status;
     /** 药品目录编码 */
     private String drugCode;

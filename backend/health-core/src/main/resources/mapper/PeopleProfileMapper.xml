@@ -42,6 +42,17 @@
         LIMIT #{limit}
     </select>
 
+    <select id="listBySelfMobile" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND mobile_owner = 'SELF'
+          AND mobile = #{mobile}
+        ORDER BY id DESC
+        LIMIT 10
+    </select>
+
     <!-- 建档查重：同名且（同生日或同号码） -->
     <select id="listPossibleDuplicates" resultType="com.healix.core.people.domain.PeopleProfile">
         SELECT <include refid="cols"/>

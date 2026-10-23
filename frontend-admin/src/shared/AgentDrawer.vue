@@ -16,6 +16,8 @@ import {
 import AgentActivityPanel from './AgentActivityPanel.vue'
 import AgentCarePlanCard from './AgentCarePlanCard.vue'
 import AgentOcrReviewCard from './AgentOcrReviewCard.vue'
+import ChatExtractReviewCard from './ChatExtractReviewCard.vue'
+import { asChatExtract, blockPlainEnter, chatExtractFromActions, type ChatExtractReview } from './chat-extract'
 import AgentReportReviewCard from './AgentReportReviewCard.vue'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from './CarePlanPreviewDialog.vue'
 import {
@@ -32,6 +34,8 @@ import {
   buildOcrReview,
   buildReportReview,
   formatOcrDt,
+  LAB_TIME_BLOCK_MESSAGE,
+  labOcrUploadBlocked,
   MED_DOSE_UNIT_FALLBACK,
   MED_FREQUENCY_FALLBACK,
   MED_USAGE_OPTIONS,
@@ -79,6 +83,7 @@ interface ChatMessage {
   ocrReview?: OcrReview
   reportReview?: ReportReviewPreview
   carePlanPreview?: CarePlanChatPreview
+  chatExtract?: ChatExtractReview
 }
 
 const props = defineProps<{
@@ -253,6 +258,13 @@ function applyAgentResult(
     emit('care-plan-updated')
   }
   if (
+    data.capability === 'CHAT_EXTRACT' &&
+    data.extracted
+  ) {
+    const card = asChatExtract(data.extracted)
+    if (card && !card.restoreInput) row.chatExtract = card
+  }
+  if (
     (data.capability === 'OCR_LAB' ||
       data.capability === 'OCR_EXAM' ||
       data.capability === 'OCR_MED') &&
@@ -287,6 +299,7 @@ async function sendMessage(
     capabilityHint ||
     (!image && stickyHint ? stickyHint : null)
   const userText = message.trim() || (image ? '请识别这张单据' : '')
+  const extractMode = effectiveHint === 'CHAT_EXTRACT'
   const isCarePlan = effectiveHint === 'CARE_PLAN'
   messages.value.push({
     role: 'user',
@@ -356,6 +369,13 @@ async function sendMessage(
           void scrollToBottom()
         },
         onResult: (payload) => {
+          const data = payload as { capability?: string; reply?: string; extracted?: { restoreInput?: boolean } }
+          if (extractMode && data.extracted?.restoreInput) {
+            messages.value.splice(Math.max(0, assistantIdx - 1), 2)
+            input.value = userText
+            ElMessage.info(data.reply || '请先粘贴一段记录')
+            return
+          }
           const row = messages.value[assistantIdx]
           if (row) applyAgentResult(row, payload, image?.previewUrl)
           void scrollToBottom()
@@ -367,10 +387,19 @@ async function sendMessage(
           finishAllActivity(row.activity)
           if (meta?.elapsedMs != null) row.elapsedMs = meta.elapsedMs
         },
-        onError: (msg) => ElMessage.error(msg),
+        onError: (msg) => {
+          if (extractMode) {
+            messages.value.splice(Math.max(0, assistantIdx - 1), 2)
+            input.value = userText
+            ElMessage.error(msg || '这次没整理成功')
+            return
+          }
+          ElMessage.error(msg)
+        },
       },
     )
   } catch (e) {
+    if (extractMode) input.value = userText
     messages.value.splice(assistantIdx, 1)
     ElMessage.error(e instanceof Error ? e.message : '发送失败')
   } finally {
@@ -577,6 +606,10 @@ function closeImagePreview() {
 async function confirmOcr(msg: ChatMessage) {
   const review = msg.ocrReview
   if (!review || review.status !== 'pending' || !review.peopleId) return
+  if (labOcrUploadBlocked(review)) {
+    ElMessage.warning(LAB_TIME_BLOCK_MESSAGE)
+    return
+  }
   const kindLabel =
     review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药单' : '检查报告'
   const timeHint =
@@ -716,6 +749,35 @@ async function openCarePlanPreview() {
   }
 }
 
+function onComposerEnter() {
+  if (blockPlainEnter(input.value)) {
+    ElMessage.info('请点「整理这段记录」。要提问请缩短文字后再发送')
+    return
+  }
+  void sendMessage(input.value)
+}
+
+function organizeRecord() {
+  const text = input.value
+  if (!props.peopleId) {
+    ElMessage.info('请先选择患者')
+    return
+  }
+  if (!text.trim()) {
+    ElMessage.info('请先粘贴一段记录')
+    return
+  }
+  if (text.trim().length > 4000) {
+    ElMessage.info('请拆短后再贴')
+    return
+  }
+  void sendMessage(text, 'CHAT_EXTRACT')
+}
+
+function visibleActions(msg: ChatMessage) {
+  return (msg.actions || []).filter((action) => action.type !== 'chat_extract')
+}
+
 async function scrollToBottom() {
   await nextTick()
   if (chatBodyRef.value) {
@@ -732,6 +794,7 @@ function applySessionBundle(bundle: SessionBundlePayload) {
       role: (r === 'user' ? 'user' : 'assistant') as ChatMessage['role'],
       content: m.content,
       actions: m.actions?.length ? m.actions : undefined,
+      chatExtract: chatExtractFromActions(m.actions) || undefined,
     }
   })
 }
@@ -860,7 +923,7 @@ watch(
   <el-drawer
     v-model="drawerVisible"
     direction="rtl"
-    size="440px"
+    size="1080px"
     :with-header="false"
     :append-to-body="true"
     class="agent-drawer-host"
@@ -941,7 +1004,7 @@ watch(
           v-for="(msg, idx) in messages"
           :key="idx"
           class="msg-row"
-          :class="msg.role"
+          :class="[msg.role, { 'has-extract': !!msg.chatExtract }]"
         >
           <div v-if="msg.role === 'assistant'" class="msg-avatar" aria-hidden="true">
             <img :src="AGENT_LOGO" :alt="AGENT_NAME" />
@@ -1011,9 +1074,14 @@ watch(
               @discard="discardOcr(msg)"
             />
 
-            <div v-if="msg.actions?.length" class="bubble-actions">
+            <ChatExtractReviewCard
+              v-if="msg.chatExtract && peopleId"
+              :review="msg.chatExtract"
+              :people-id="peopleId"
+            />
+            <div v-if="visibleActions(msg).length" class="bubble-actions">
               <button
-                v-for="(act, i) in msg.actions"
+                v-for="(act, i) in visibleActions(msg)"
                 :key="i"
                 type="button"
                 class="action-chip"
@@ -1041,10 +1109,18 @@ watch(
             resize="none"
             :disabled="sending || isArchivedSession"
             placeholder="问问健管智能体，或让他帮你写方案…"
-            @keydown.enter.exact.prevent="sendMessage(input)"
+            @keydown.enter.exact.prevent="onComposerEnter"
           />
           <div class="composer-bar">
-            <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+            <span class="hint">Enter 发送 · 长文字请点整理这段记录</span>
+            <button
+              type="button"
+              class="send-btn ghost"
+              :disabled="sending || uploading || isArchivedSession || !input.trim()"
+              @click="organizeRecord"
+            >
+              整理这段记录
+            </button>
             <button
               type="button"
               class="send-btn"
@@ -1412,6 +1488,12 @@ watch(
   border-top-left-radius: 6px;
 }
 
+.msg-row.has-extract .bubble {
+  max-width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
 .bubble.user {
   max-width: 88%;
   background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
@@ -1705,6 +1787,16 @@ watch(
 .send-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.send-btn.ghost {
+  background: #fff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.send-btn.ghost:hover:not(:disabled) {
+  background: #eff6ff;
 }
 
 .send-btn svg {

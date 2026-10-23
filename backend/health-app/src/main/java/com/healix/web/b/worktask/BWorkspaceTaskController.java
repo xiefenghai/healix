@@ -93,6 +93,22 @@ public class BWorkspaceTaskController {
                 SecurityUtils.requireContext().getAccountId()));
     }
 
+    @PostMapping("/{id}/ack")
+    public ApiResult<WorkspaceTaskDetailDto> acknowledge(@PathVariable String id) {
+        return ApiResult.ok(workspaceTaskService.acknowledge(
+                SecurityUtils.requireCurrentOrgId(), id, SecurityUtils.requireContext().getAccountId()));
+    }
+
+    @PostMapping("/{id}/link-decision")
+    public ApiResult<WorkspaceTaskDetailDto> decideLink(
+            @PathVariable String id, @RequestBody @Validated LinkDecisionRequest request) {
+        return ApiResult.ok(workspaceTaskService.decideProfileLink(
+                SecurityUtils.requireCurrentOrgId(),
+                id,
+                Boolean.TRUE.equals(request.approve()),
+                SecurityUtils.requireContext().getAccountId()));
+    }
+
     @PostMapping("/{id}/forms")
     public ApiResult<WorkspaceTaskDetailDto> submitForm(
             @PathVariable String id, @RequestBody Map<String, Object> content) {
@@ -117,4 +133,6 @@ public class BWorkspaceTaskController {
     public record AssignRequest(@NotBlank String staffId) {}
 
     public record ReasonRequest(@NotBlank String reason) {}
+
+    public record LinkDecisionRequest(Boolean approve) {}
 }
