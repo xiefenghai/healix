@@ -254,18 +254,18 @@ const overdueInList = computed(
 
 const summaryCards = computed(() => [
   {
-    key: 'PUBLIC' as const,
-    label: '公共任务池',
-    value: summary.value?.publicOpenCount ?? 0,
-    hint: '待领取',
-    tone: 'muted' as const,
-  },
-  {
     key: 'MINE' as const,
     label: '我的待办',
     value: summary.value?.mineOpenCount ?? 0,
     hint: '已领取未办结',
     tone: 'brand' as const,
+  },
+  {
+    key: 'PUBLIC' as const,
+    label: '公共任务池',
+    value: summary.value?.publicOpenCount ?? 0,
+    hint: '待领取',
+    tone: 'muted' as const,
   },
   {
     key: 'DONE' as const,
@@ -797,7 +797,7 @@ onMounted(async () => {
         <h1>工作台任务</h1>
         <p>
           点击上方卡片可快速切换任务池
-          · 公共 {{ summary?.publicOpenCount ?? 0 }} · 我的 {{ summary?.mineOpenCount ?? 0 }}
+          · 我的 {{ summary?.mineOpenCount ?? 0 }} · 公共 {{ summary?.publicOpenCount ?? 0 }}
           · {{ getCurrentOrgName() || '-' }}
         </p>
       </div>
@@ -835,8 +835,8 @@ onMounted(async () => {
     <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-radio-group :model-value="pool" @change="(v: string) => switchPool(v as Pool)">
-          <el-radio-button value="PUBLIC">公共池</el-radio-button>
           <el-radio-button value="MINE">我的待办</el-radio-button>
+          <el-radio-button value="PUBLIC">公共池</el-radio-button>
           <el-radio-button value="DONE">今日已办</el-radio-button>
           <el-radio-button v-if="isAdmin" value="ALL">全部</el-radio-button>
         </el-radio-group>
