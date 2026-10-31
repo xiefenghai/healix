@@ -117,6 +117,11 @@ const router = createRouter({
           meta: { requireOrg: true, fullscreen: true },
         },
         {
+          path: 'intake-responses/:responseId',
+          component: () => import('../portals/workspace/PatientIntakeDetailView.vue'),
+          meta: { requireOrg: true, fullscreen: true },
+        },
+        {
           path: 'patients/:peopleId',
           component: () => import('../portals/workspace/PatientDetailLayout.vue'),
           meta: { requireOrg: true },

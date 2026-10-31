@@ -62,6 +62,10 @@
       "version": 1
     },
     {
+      "code": "INTAKE_AI_SUMMARY",
+      "version": 1
+    },
+    {
       "code": "CONSENT",
       "version": 1
     }

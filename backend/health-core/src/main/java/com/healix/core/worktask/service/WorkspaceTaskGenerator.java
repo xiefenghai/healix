@@ -20,6 +20,7 @@ import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.enums.MetricTypeEnum;
+import com.healix.core.vitals.enums.VitalSourceEnum;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
 import com.healix.core.followup.catalog.FollowupRecordStatus;
 import com.healix.core.followup.catalog.FollowupRecordType;
@@ -101,19 +102,22 @@ public class WorkspaceTaskGenerator {
             String peopleId = m.getPeopleId();
             CareTeamMember teamMember = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
             if (teamMember == null) {
-                // 扫描时尚未入组即开单（不再要求建档次日）
-                if (openIfAbsent(
-                        tenantId,
-                        orgId,
-                        peopleId,
-                        WorkspaceTaskType.TEAM_ASSIGN,
-                        peopleId,
-                        "JOB",
-                        scanDay,
-                        "尚未加入健管组",
-                        Map.of("joinedAt", m.getJoinedAt() == null ? null : m.getJoinedAt().toString()),
-                        true)) {
-                    teamOpened++;
+                // 未进健管组：仅当入组/首诊已办结才补开分配单（引导先做首诊）
+                FollowupRecord onboarding = findOnboarding(orgId, peopleId);
+                if (onboarding != null && FollowupRecordStatus.DONE.matches(onboarding.getStatus())) {
+                    if (openIfAbsent(
+                            tenantId,
+                            orgId,
+                            peopleId,
+                            WorkspaceTaskType.TEAM_ASSIGN,
+                            peopleId,
+                            "JOB",
+                            scanDay,
+                            "尚未加入健管组",
+                            Map.of("joinedAt", m.getJoinedAt() == null ? null : m.getJoinedAt().toString()),
+                            true)) {
+                        teamOpened++;
+                    }
                 }
                 continue;
             }
@@ -193,8 +197,9 @@ public class WorkspaceTaskGenerator {
     }
 
     /**
-     * 加入机构且尚未进入健管组：立刻开分配健管组（公共池）。已在组内则不开。
-     * 凌晨扫描仍会补开当场失败的单。
+     * 尚未进入健管组时开「分配健管组」（公共池）。已在组内则不开。
+     *
+     * <p>正常由首诊办结触发；凌晨扫描仅对「首诊已 DONE」的未入组患者补开。
      */
     @Transactional
     public void ensureTeamAssignOnJoin(String tenantId, String orgId, String peopleId) {
@@ -550,6 +555,11 @@ public class WorkspaceTaskGenerator {
         if (written == null || written.isEmpty()) {
             return;
         }
+        // 首诊问卷基线（INTAKE）不进指标异常待办，由入组/首诊随访覆盖
+        List<VitalRecord> alertable = written.stream().filter(r -> !isIntakeVital(r)).toList();
+        if (alertable.isEmpty()) {
+            return;
+        }
         String resolvedOrg = resolveOrgId(tenantId, orgId, peopleId);
         if (!StringUtils.hasText(resolvedOrg)) {
             return;
@@ -561,15 +571,18 @@ public class WorkspaceTaskGenerator {
         LocalDateTime from = LocalDateTime.now(JobCronSupport.ZONE).minusYears(5);
         List<VitalRecord> heights = vitalRecordMapper.listByPeople(
                 tenantId, peopleId, MetricTypeEnum.HEIGHT.name(), from, LocalDateTime.now(JobCronSupport.ZONE), 50);
-        List<VitalRecord> groupExtras = new ArrayList<>(written);
+        List<VitalRecord> groupExtras = new ArrayList<>(alertable);
         Set<String> groupIds = new HashSet<>();
-        for (VitalRecord row : written) {
+        for (VitalRecord row : alertable) {
             if (StringUtils.hasText(row.getGroupId())) {
                 groupIds.add(row.getGroupId());
             }
         }
         for (String gid : groupIds) {
             for (VitalRecord g : vitalRecordMapper.listByGroupId(gid)) {
+                if (isIntakeVital(g)) {
+                    continue;
+                }
                 if (groupExtras.stream().noneMatch(x -> x.getId().equals(g.getId()))) {
                     groupExtras.add(g);
                 }
@@ -578,7 +591,7 @@ public class WorkspaceTaskGenerator {
         List<AbnormalHit> hits = metricAbnormalEvaluator.evaluate(groupExtras, heights);
         Set<String> writtenIds = new HashSet<>();
         Set<String> writtenGroups = new HashSet<>();
-        for (VitalRecord row : written) {
+        for (VitalRecord row : alertable) {
             writtenIds.add(row.getId());
             if (StringUtils.hasText(row.getGroupId())) {
                 writtenGroups.add(row.getGroupId());
@@ -588,7 +601,7 @@ public class WorkspaceTaskGenerator {
         ensureSingleOpenMetricAlert(tenantId, resolvedOrg, peopleId);
         for (AbnormalHit hit : hits) {
             if (!writtenIds.contains(hit.sourceRecordId()) && !writtenGroups.contains(hit.sourceRecordId())) {
-                boolean weightWritten = written.stream()
+                boolean weightWritten = alertable.stream()
                         .anyMatch(r -> MetricTypeEnum.WEIGHT.matches(r.getMetricType())
                                 && r.getId().equals(hit.sourceRecordId()));
                 if (!weightWritten) {
@@ -602,7 +615,9 @@ public class WorkspaceTaskGenerator {
     private int[] backfillMetrics(String tenantId, String orgId, String peopleId, LocalDate scanDay) {
         LocalDateTime from = scanDay.minusDays(METRIC_BACKFILL_DAYS).atStartOfDay();
         LocalDateTime to = scanDay.plusDays(1).atStartOfDay();
-        List<VitalRecord> records = vitalRecordMapper.listByPeople(tenantId, peopleId, null, from, to, 500);
+        List<VitalRecord> records = vitalRecordMapper.listByPeople(tenantId, peopleId, null, from, to, 500).stream()
+                .filter(r -> !isIntakeVital(r))
+                .toList();
         List<VitalRecord> heights = vitalRecordMapper.listByPeople(
                 tenantId, peopleId, MetricTypeEnum.HEIGHT.name(), from.minusYears(5), to, 50);
         ensureSingleOpenMetricAlert(tenantId, orgId, peopleId);
@@ -764,6 +779,11 @@ public class WorkspaceTaskGenerator {
         open.setSummary(summary);
         open.setPayloadJson(payloadJson);
         open.setPriority(priority);
+    }
+
+    /** 首诊问卷写入的基线指标：不生成 METRIC_ALERT。 */
+    private static boolean isIntakeVital(VitalRecord row) {
+        return row != null && VitalSourceEnum.INTAKE.matches(row.getSource());
     }
 
     private FollowupRecord findOnboarding(String orgId, String peopleId) {

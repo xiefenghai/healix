@@ -66,7 +66,20 @@ function pick(q: Question, code: string) {
 
 function onNumber(q: Question, v: string) {
   touched.add(q.field)
-  answers[q.field] = v
+  if (v === '' || v === '-' || v === '.' || v === '-.') {
+    answers[q.field] = v === '-' || v === '-.' ? '' : v
+    return
+  }
+  const n = Number(v)
+  if (!Number.isFinite(n)) {
+    answers[q.field] = v
+    return
+  }
+  const lo = q.min ?? 0
+  let next = n
+  if (next < lo) next = lo
+  if (q.max != null && next > q.max) next = q.max
+  answers[q.field] = String(next)
 }
 
 function buildAnswers(): Record<string, unknown> | null {
@@ -171,6 +184,8 @@ onMounted(load)
             v-if="q.type === 'NUMBER'"
             :model-value="answers[q.field] as string"
             type="number"
+            :min="q.min ?? 0"
+            :max="q.max"
             :placeholder="q.min != null && q.max != null ? `${q.min}–${q.max}` : '请输入'"
             class="q-input"
             @update:model-value="(v: string) => onNumber(q, v)"

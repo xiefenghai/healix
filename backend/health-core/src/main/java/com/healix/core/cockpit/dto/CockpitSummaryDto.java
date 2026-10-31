@@ -15,6 +15,8 @@ public class CockpitSummaryDto {
     private int watchCount;
     /** 左栏「我的在办」人数（有我名下 OPEN 任务的人） */
     private int mineCount;
+    /** 左栏「待入组」人数（公海首诊 + 待分配健管组） */
+    private int intakeCount;
     /** 当前员工可见范围内：待审阅方案草稿数 */
     private int pendingCarePlanDraftCount;
     /** 当前员工可见范围内：待审阅报告草稿数 */

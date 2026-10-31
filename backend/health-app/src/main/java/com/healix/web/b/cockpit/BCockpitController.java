@@ -66,7 +66,7 @@ public class BCockpitController {
 
     /**
      * 我的患者：当前员工作为主责健管师的健管组下患者列表（可 keyword 筛选）。
-     * 返回结构与 /priority 优先卡一致，便于左栏三 Tab 共用同一套卡片。
+     * 返回结构与 /priority 优先卡一致，便于左栏 Tab 共用同一套卡片。
      */
     @GetMapping("/my-patients")
     public ApiResult<List<CockpitPriorityCardDto>> myPatients(

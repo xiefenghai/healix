@@ -245,6 +245,7 @@
 
     {"code": "staff.keyFollowups", "label": "重点跟进事项", "type": "TEXT", "maxLength": 400, "staffOnly": true},
     {"code": "staff.referral", "label": "转介建议", "type": "MULTI", "options": "referral", "exclusive": ["NONE"], "staffOnly": true},
-    {"code": "staff.note", "label": "健管师备注", "type": "TEXT", "maxLength": 400, "staffOnly": true}
+    {"code": "staff.note", "label": "健管师备注", "type": "TEXT", "maxLength": 400, "staffOnly": true},
+    {"code": "staff.aiSummary", "label": "首诊/随访 AI 总结", "type": "TEXT", "maxLength": 4000, "staffOnly": true}
   ]
 }

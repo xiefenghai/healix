@@ -1,0 +1,13 @@
+{
+  "code": "INTAKE_AI_SUMMARY",
+  "version": 1,
+  "title": "AI 总结",
+  "script": "【内部】根据本次首诊作答生成案头总结，供办结与交接；可修改后再提交，请勿对客户朗读。",
+  "items": [
+    {
+      "field": "staff.aiSummary",
+      "label": "首诊 AI 总结",
+      "level": "STAFF"
+    }
+  ]
+}

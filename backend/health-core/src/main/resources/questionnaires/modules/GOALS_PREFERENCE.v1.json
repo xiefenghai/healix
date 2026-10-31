@@ -2,7 +2,7 @@
   "code": "GOALS_PREFERENCE",
   "version": 1,
   "title": "诉求与目标",
-  "script": "您这次最想达到什么效果？用您自己的话说就行。",
+  "script": "这次您最希望达到什么效果？用您自己的话说就好，我们按您的目标来一起定节奏。",
   "items": [
     {
       "field": "goal.primaryAppeal",
@@ -38,7 +38,7 @@
             "always": true
           },
           "severity": "CAUTION",
-          "planEffect": "校验：目标 BMI < 18.5 不可提交；命中 BLOCK 高亮时不可设"
+          "planEffect": "校验：目标 BMI < 18.5 不可提交；命中阻断级高亮时不可设"
         }
       ]
     },
@@ -56,7 +56,7 @@
             "always": true
           },
           "severity": "CAUTION",
-          "planEffect": "校验：平均每周 > 约 1 kg → WARN：建议延长期限或调整目标"
+          "planEffect": "校验：平均每周 > 约 1 kg → 警告：建议延长期限或调整目标"
         }
       ]
     },

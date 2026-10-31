@@ -334,7 +334,7 @@ public class FollowupScheduleService {
         row.setStatus(WorkspaceTaskStatus.OPEN.name());
         row.setPriority(type.defaultPriority().name());
         row.setAssigneeStaffId(resolveAssignee(tenantId, peopleId));
-        row.setTitle(type.label());
+        row.setTitle(FollowupType.ONBOARDING.label());
         row.setSummary(FollowupType.ONBOARDING.label());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("followupId", record.getId());
@@ -479,7 +479,7 @@ public class FollowupScheduleService {
         // 患者主动开口，抬到 HIGH（高于类型默认 MEDIUM）
         row.setPriority(WorkspaceTaskPriority.HIGH.name());
         row.setAssigneeStaffId(resolveAssignee(tenantId, peopleId));
-        row.setTitle(type.label());
+        row.setTitle(followupType.label());
         row.setSummary(reason != null ? "患者申请回访：" + reason : "患者申请回访");
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("followupId", record.getId());
@@ -574,7 +574,7 @@ public class FollowupScheduleService {
         row.setStatus(WorkspaceTaskStatus.OPEN.name());
         row.setPriority(type.defaultPriority().name());
         row.setAssigneeStaffId(resolveAssignee(tenantId, peopleId));
-        row.setTitle(type.label());
+        row.setTitle(followupType.label());
         row.setSummary(followupType.label() + "（定期排期）");
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("followupId", record.getId());

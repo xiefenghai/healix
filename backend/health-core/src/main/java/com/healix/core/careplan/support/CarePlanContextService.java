@@ -248,11 +248,23 @@ public class CarePlanContextService {
             trace(tracer, "HealthGoal", "done", "目标模式 " + goalsNode.path("mode").asText("-"));
         }
 
-        JsonNode highlights = loadLatestHighlights(tenantId, peopleId);
-        if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
-            snapshot.set("highlights", highlights);
-            applyHighlightHints(snapshot, highlights, goalsNode);
-            trace(tracer, "IntakeHighlights", "done", "高亮命中 " + highlights.size() + " 项");
+        ObjectNode intakeBrief = loadLatestIntakeBrief(tenantId, peopleId);
+        if (intakeBrief != null) {
+            snapshot.set("intakeBrief", intakeBrief);
+            JsonNode highlights = intakeBrief.get("highlights");
+            if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
+                snapshot.set("highlights", highlights);
+                applyHighlightHints(snapshot, highlights, goalsNode);
+                trace(tracer, "IntakeHighlights", "done", "高亮命中 " + highlights.size() + " 项");
+            }
+            String aiHint = intakeBrief.path("aiSummary").asText("");
+            trace(
+                    tracer,
+                    "IntakeBrief",
+                    "done",
+                    StringUtils.hasText(aiHint)
+                            ? "已附首诊 AI 总结 " + Math.min(aiHint.length(), 40) + " 字…"
+                            : "已附首诊元数据（无 AI 总结）");
         }
 
         List<String> diseaseList = new ArrayList<>(diseases);
@@ -328,7 +340,13 @@ public class CarePlanContextService {
         }
     }
 
-    private JsonNode loadLatestHighlights(String tenantId, String peopleId) {
+    private static final String FIELD_STAFF_AI_SUMMARY = "staff.aiSummary";
+    private static final int AI_SUMMARY_MAX_CHARS = 2000;
+
+    /**
+     * 最近一次已提交首诊/待补：元数据 + AI 案头总结 + 高亮（不塞全量 answers）。
+     */
+    private ObjectNode loadLatestIntakeBrief(String tenantId, String peopleId) {
         try {
             List<QuestionnaireResponse> rows = questionnaireResponseMapper.listByPeople(tenantId, peopleId);
             for (QuestionnaireResponse r : rows) {
@@ -338,18 +356,54 @@ public class CarePlanContextService {
                 if (!"INTAKE".equals(r.getPurpose()) && !"SUPPLEMENT".equals(r.getPurpose())) {
                     continue;
                 }
-                if (!StringUtils.hasText(r.getHighlightsJson())) {
-                    continue;
+                ObjectNode brief = JsonUtils.emptyObject();
+                brief.put("responseId", r.getId());
+                brief.put("purpose", r.getPurpose());
+                if (r.getSubmittedAt() != null) {
+                    brief.put("submittedAt", r.getSubmittedAt().toString());
                 }
-                JsonNode n = JsonUtils.readTree(r.getHighlightsJson());
-                if (n != null && n.isArray() && !n.isEmpty()) {
-                    return n;
+                if (StringUtils.hasText(r.getQuestionnaireCode())) {
+                    brief.put("questionnaireCode", r.getQuestionnaireCode());
                 }
+                String aiSummary = extractAiSummary(r.getAnswersJson());
+                if (StringUtils.hasText(aiSummary)) {
+                    brief.put("aiSummary", aiSummary);
+                }
+                if (StringUtils.hasText(r.getHighlightsJson())) {
+                    JsonNode highlights = JsonUtils.readTree(r.getHighlightsJson());
+                    if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
+                        brief.set("highlights", highlights);
+                    }
+                }
+                return brief;
             }
         } catch (RuntimeException e) {
-            log.warn("[CarePlan] load highlights failed peopleId={}", peopleId, e);
+            log.warn("[CarePlan] load intakeBrief failed peopleId={}", peopleId, e);
         }
         return null;
+    }
+
+    private static String extractAiSummary(String answersJson) {
+        if (!StringUtils.hasText(answersJson)) {
+            return null;
+        }
+        JsonNode answers = JsonUtils.readTree(answersJson);
+        if (answers == null || !answers.isObject()) {
+            return null;
+        }
+        JsonNode v = answers.get(FIELD_STAFF_AI_SUMMARY);
+        if (v == null || v.isNull()) {
+            return null;
+        }
+        String text = v.isTextual() ? v.asText() : v.toString();
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        String t = text.trim();
+        if (t.length() > AI_SUMMARY_MAX_CHARS) {
+            return t.substring(0, AI_SUMMARY_MAX_CHARS) + "…";
+        }
+        return t;
     }
 
     /** 高亮 → 称重频次等生成提示；BLOCK 时强制目标模式不可为 LOSS。 */

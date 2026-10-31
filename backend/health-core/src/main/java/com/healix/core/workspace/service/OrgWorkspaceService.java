@@ -1416,11 +1416,8 @@ public class OrgWorkspaceService {
             membershipMapper.insert(membership);
             FollowupScheduleService followups = followupScheduleService.getIfAvailable();
             if (followups != null) {
+                // 先开入组/首诊；分配健管组等首诊办结后再开
                 followups.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
-            }
-            WorkspaceTaskGenerator tasks = workspaceTaskGenerator.getIfAvailable();
-            if (tasks != null) {
-                tasks.ensureTeamAssignOnJoin(tenantId, orgId, peopleId);
             }
         } else if (!MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
             throw new BusinessException(409, "该患者机构关系已退出，请联系管理员处理");

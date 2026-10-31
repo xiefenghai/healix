@@ -2,7 +2,7 @@
   "code": "DIET_BEHAVIOR",
   "version": 1,
   "title": "饮食行为",
-  "script": "我想了解一下您平时一天怎么吃，不用怕说得不好，越真实方案越好执行。",
+  "script": "想了解一下您平时一天大概怎么吃。按真实情况说就好，没有对错，这样定出来的饮食建议才好坚持。",
   "items": [
     {
       "field": "basic.diet.mealRegularity",

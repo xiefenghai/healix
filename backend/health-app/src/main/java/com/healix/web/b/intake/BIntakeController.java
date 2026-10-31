@@ -1,6 +1,7 @@
 package com.healix.web.b.intake;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.healix.agent.followup.FollowupSummaryGenerator.FollowupSummaryDraft;
 import com.healix.common.result.ApiResult;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.archive.service.ArchiveAccessService;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -40,6 +42,7 @@ public class BIntakeController {
     private final ProgramEnrollmentService enrollmentService;
     private final FollowupService followupService;
     private final FieldCatalog fieldCatalog;
+    private final IntakeAiSummaryService intakeAiSummaryService;
 
     /** 客户页首诊卡片：待补题数。 */
     @GetMapping("/patients/{peopleId}/intake/status")
@@ -131,17 +134,49 @@ public class BIntakeController {
         QuestionnaireResponseView submitted = responseService.submit(id, staffId, resolutions);
         if (submitted.getFollowupRecordId() != null && !submitted.getFollowupRecordId().isBlank()) {
             try {
+                String aiSummary = extractAiSummary(submitted.getAnswers());
                 followupService.completeOnboardingByIntake(
                         SecurityUtils.requireCurrentOrgId(),
                         submitted.getFollowupRecordId(),
                         submitted.getId(),
                         submitted.getChannel(),
-                        SecurityUtils.requireContext().getAccountId());
+                        SecurityUtils.requireContext().getAccountId(),
+                        aiSummary);
             } catch (Exception e) {
                 log.warn("首诊作答已提交，但自动办结随访失败 responseId={}: {}", submitted.getId(), e.getMessage());
             }
         }
         return ApiResult.ok(submitted);
+    }
+
+    /** 根据当前草稿/已填答案生成 AI 案头总结（不自动落库；前端写入 staff.aiSummary 后随草稿/提交保存）。 */
+    @PostMapping("/questionnaire-responses/{id}/ai-summary")
+    public ApiResult<AiSummaryResponse> aiSummary(
+            @PathVariable String id, @RequestBody(required = false) AiSummaryRequest body) {
+        QuestionnaireResponseView existing = responseService.get(id);
+        archiveAccessService.assertStaffCanAccessPeople(
+                SecurityUtils.requireTenantId(), SecurityUtils.requireCurrentOrgId(), existing.getPeopleId());
+        JsonNode answersOverride = body == null ? null : body.answers();
+        FollowupSummaryDraft draft =
+                intakeAiSummaryService.generate(id, SecurityUtils.requireTenantId(), answersOverride);
+        return ApiResult.ok(new AiSummaryResponse(
+                draft.summary(),
+                draft.keyPoints(),
+                draft.risks(),
+                draft.nextActions(),
+                draft.fromLlm(),
+                draft.note()));
+    }
+
+    private static String extractAiSummary(JsonNode answers) {
+        if (answers == null || !answers.isObject()) {
+            return null;
+        }
+        JsonNode n = answers.get(IntakeAiSummaryService.FIELD_AI_SUMMARY);
+        if (n == null || n.isNull() || !StringUtils.hasText(n.asText())) {
+            return null;
+        }
+        return n.asText().trim();
     }
 
     @GetMapping("/patients/{peopleId}/enrollments")
@@ -169,4 +204,14 @@ public class BIntakeController {
     public record SaveDraftRequest(JsonNode answers, String programCode, String channel) {}
 
     public record SubmitRequest(JsonNode conflictResolutions) {}
+
+    public record AiSummaryRequest(JsonNode answers) {}
+
+    public record AiSummaryResponse(
+            String summary,
+            List<String> keyPoints,
+            List<String> risks,
+            List<String> nextActions,
+            boolean fromLlm,
+            String note) {}
 }

@@ -842,7 +842,12 @@ onMounted(() => {
       <el-form label-width="88px">
         <el-form-item label="指标">{{ metricLabel(editing.metricType) }}</el-form-item>
         <el-form-item label="数值">
-          <el-input-number v-model="editing.value" :precision="2" controls-position="right" />
+          <el-input-number
+            v-model="editing.value"
+            :min="0"
+            :precision="2"
+            controls-position="right"
+          />
           <span class="unit" style="margin-left: 8px">{{ editing.unit }}</span>
         </el-form-item>
         <el-form-item v-if="editing.metricType?.startsWith('BLOOD_PRESSURE')" label="情境">

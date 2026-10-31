@@ -2,7 +2,7 @@
   "code": "WL_RISK_SCREEN",
   "version": 1,
   "title": "减重风险筛查",
-  "script": "接下来几个问题是为了让方案更安全，不舒服的可以不回答。",
+  "script": "接下来有几题是为了让方案更安全。如果触到您不想谈的话题，可以直接说跳过，我们完全理解。",
   "items": [
     {
       "field": "basic.psych.eatingDisorderHistory",

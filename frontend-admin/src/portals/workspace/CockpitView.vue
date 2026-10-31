@@ -60,6 +60,7 @@ interface Summary {
   openTaskCount: number
   overdueCount: number
   urgentCount?: number
+  intakeCount?: number
   watchCount?: number
   mineCount?: number
   rewardWeekPoints?: number | null
@@ -194,7 +195,7 @@ interface ChatMessage {
   chatExtract?: ChatExtractReview
 }
 
-type TabKey = 'urgent' | 'watch' | 'mine'
+type TabKey = 'urgent' | 'intake' | 'watch' | 'mine'
 
 type ChipKind = 'tasks' | 'overdue'
 
@@ -238,6 +239,7 @@ const summary = ref<Summary>({
   openTaskCount: 0,
   overdueCount: 0,
   urgentCount: 0,
+  intakeCount: 0,
   watchCount: 0,
   mineCount: 0,
 })
@@ -686,6 +688,8 @@ const threadMessages = computed(() =>
 
 /** 有对话后默认收起简报，把纵向空间留给聊天；可手动展开 */
 const briefingCollapsed = ref(false)
+/** 刷新简报请求中（防连点，并配合占位打字动画） */
+const briefingLoading = ref(false)
 const briefingPreview = computed(() => {
   const raw = (briefingMsg.value?.content || '').replace(/\s+/g, ' ').trim()
   if (!raw) return '点击展开查看今日建议'
@@ -976,24 +980,27 @@ async function loadBriefing(force = false) {
       { type: 'REFRESH', label: '刷新今日建议' },
     ]
     const content = sanitizeBriefingText(b.text)
-    if (force) {
-      messages.value = []
-    }
-    if (messages.value.length === 0) {
-      messages.value.push({
-        role: 'system',
-        content,
-        at: nowClock(),
-        actions,
-      })
+    if (force || messages.value.length === 0) {
+      messages.value = [
+        {
+          role: 'system',
+          content,
+          at: nowClock(),
+          actions,
+          streaming: false,
+        },
+      ]
       await persistVisibleMessage(null, content, actions, 'briefing')
     }
   } catch (e) {
-    messages.value.push({
-      role: 'system',
-      content: '今日简报暂时不可用，请查看左侧优先名单。',
-      at: nowClock(),
-    })
+    messages.value = [
+      {
+        role: 'system',
+        content: '今日简报暂时不可用，请查看左侧优先名单。',
+        at: nowClock(),
+        streaming: false,
+      },
+    ]
     ElMessage.warning(e instanceof Error ? e.message : '简报加载失败')
   }
 }
@@ -1855,7 +1862,7 @@ function runAction(action: AgentAction) {
   }
   if (action.type === 'SET_COCKPIT_TAB' && action.path) {
     const next = action.path as TabKey
-    if (next === 'urgent' || next === 'watch' || next === 'mine') {
+    if (next === 'urgent' || next === 'intake' || next === 'watch' || next === 'mine') {
       tab.value = next
       sheetOpen.value = false
       void refreshBriefing()
@@ -2238,15 +2245,29 @@ async function openSheet(mode: CockpitSheetMode, peopleId?: string, observations
 }
 
 async function refreshBriefing() {
+  if (briefingLoading.value) return
+  briefingLoading.value = true
   revokeMessageBlobs()
-  messages.value = []
+  // 请求返回前先占位，避免会话区空白
+  messages.value = [
+    {
+      role: 'system',
+      content: '',
+      streaming: true,
+      at: nowClock(),
+    },
+  ]
   orgSessionId.value = null
   patientSessionId.value = null
   orgSessionCache = null
   writeOrgCacheToStorage(null)
   sessionStatus.value = 'ACTIVE'
   briefingCollapsed.value = false
-  await loadBriefing(true)
+  try {
+    await loadBriefing(true)
+  } finally {
+    briefingLoading.value = false
+  }
 }
 
 async function scrollToBottom() {
@@ -2597,7 +2618,7 @@ onMounted(async () => {
     await loadBriefing(false)
     const qPeople = typeof route.query.peopleId === 'string' ? route.query.peopleId : ''
     const qTab = typeof route.query.tab === 'string' ? route.query.tab : ''
-    if (qTab === 'urgent' || qTab === 'watch' || qTab === 'mine') {
+    if (qTab === 'urgent' || qTab === 'intake' || qTab === 'watch' || qTab === 'mine') {
       tab.value = qTab
     }
     // 仅 URL 显式带 peopleId 时恢复患者焦点；避免 sessionStorage 残留导致刷新后看不到机构会话
@@ -2611,7 +2632,7 @@ onMounted(async () => {
       }
     }
     if (qTab === 'mine') void searchPatients()
-    else if (qTab === 'urgent' || qTab === 'watch') void loadPriority()
+    else if (qTab === 'urgent' || qTab === 'intake' || qTab === 'watch') void loadPriority()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '驾驶舱加载失败')
   }
@@ -2643,7 +2664,9 @@ onUnmounted(() => {
                   ? '主责健管组 · 可搜索'
                   : tab === 'watch'
                     ? '个人重点关注患者'
-                    : `智能排序 · 占比 ${urgentShare}`
+                    : tab === 'intake'
+                      ? '先完成首诊，再分配健管组'
+                      : `智能排序 · 占比 ${urgentShare}`
               }}
             </p>
           </div>
@@ -2674,6 +2697,17 @@ onUnmounted(() => {
           >
             <span class="tab-label">立即处理</span>
             <span v-if="summary.urgentCount" class="count">{{ summary.urgentCount }}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'intake'"
+            :class="{ active: tab === 'intake' }"
+            title="待入组：先做首诊，再分配健管组"
+            @click="tab = 'intake'"
+          >
+            <span class="tab-label">待入组</span>
+            <span v-if="summary.intakeCount" class="count">{{ summary.intakeCount }}</span>
           </button>
           <button
             type="button"
@@ -2782,13 +2816,27 @@ onUnmounted(() => {
           />
           <el-empty
             v-else-if="tab !== 'mine' && !loading && !listCards.length"
-            :description="tab === 'watch' ? '暂无重点关注患者，可在患者详情页添加' : '本 Tab 暂无优先对象'"
+            :description="
+              tab === 'watch'
+                ? '暂无重点关注患者，可在患者详情页添加'
+                : tab === 'intake'
+                  ? '暂无待入组患者'
+                  : '本 Tab 暂无优先对象'
+            "
             :image-size="52"
           />
         </div>
 
         <button v-if="tab === 'urgent'" type="button" class="view-all" @click="goTasks">
           查看全部优先患者 →
+        </button>
+        <button
+          v-else-if="tab === 'intake'"
+          type="button"
+          class="view-all"
+          @click="router.push('/workspace/tasks?pool=PUBLIC')"
+        >
+          去公共池处理 →
         </button>
         <button
           v-else-if="tab === 'watch'"
@@ -2843,7 +2891,13 @@ onUnmounted(() => {
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
-            <button type="button" class="icon-btn" title="刷新简报" @click="refreshBriefing">
+            <button
+              type="button"
+              class="icon-btn"
+              title="刷新简报"
+              :disabled="briefingLoading || sending"
+              @click="refreshBriefing"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                 <path d="M3 3v5h5" />
@@ -2874,10 +2928,13 @@ onUnmounted(() => {
             <template v-if="!briefingCollapsed">
               <div
                 v-if="briefingMsg.streaming && !(briefingMsg.streamContent || briefingMsg.content)"
-                class="typing"
+                class="briefing-loading"
                 aria-label="生成中"
               >
-                <span /><span /><span />
+                <div class="typing">
+                  <span /><span /><span />
+                </div>
+                <p class="briefing-loading-hint">正在生成今日简报…</p>
               </div>
               <div v-else class="briefing-text md-body" v-html="messageHtml(briefingMsg)" />
               <div v-if="briefingMsg.actions?.length" class="bubble-actions">
@@ -3632,7 +3689,7 @@ onUnmounted(() => {
 
 .priority-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
   margin: 10px 10px 0;
   padding: 4px;
@@ -3645,8 +3702,8 @@ onUnmounted(() => {
   min-width: 0;
   border: 0;
   background: transparent;
-  padding: 6px 2px;
-  font-size: 11.5px;
+  padding: 6px 1px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--ink-500);
   border-radius: 6px;
@@ -3655,7 +3712,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
 }
 
 .priority-tabs .tab-label {
@@ -4315,6 +4372,21 @@ onUnmounted(() => {
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.briefing-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 2px 0;
+}
+
+.briefing-loading-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-500);
 }
 
 .briefing-text {

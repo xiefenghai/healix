@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { api } from './http'
+import { toggleExclusiveMulti } from './intake'
 
 const props = defineProps<{
   field: string
@@ -8,6 +9,9 @@ const props = defineProps<{
   type?: string
   unit?: string
   options?: string | null
+  min?: number | null
+  max?: number | null
+  exclusive?: string[] | null
   modelValue: unknown
   prefilled?: boolean
   dirty?: boolean
@@ -24,6 +28,25 @@ const optionCache = new Map<string, Array<{ code: string; label: string }>>()
 
 const isChoice = computed(() => props.type === 'ENUM' || props.type === 'MULTI')
 const isMulti = computed(() => props.type === 'MULTI')
+
+const numberMin = computed(() =>
+  props.min != null && Number.isFinite(Number(props.min)) ? Number(props.min) : 0,
+)
+const numberMax = computed(() =>
+  props.max != null && Number.isFinite(Number(props.max)) ? Number(props.max) : undefined,
+)
+
+const isBirthdayField = computed(() => {
+  const f = props.field || ''
+  return f === 'birthday' || f === 'profile.birthday' || f.endsWith('.birthday')
+})
+
+const todayIso = computed(() => {
+  const t = new Date()
+  const m = String(t.getMonth() + 1).padStart(2, '0')
+  const d = String(t.getDate()).padStart(2, '0')
+  return `${t.getFullYear()}-${m}-${d}`
+})
 
 onMounted(loadOptions)
 watch(() => props.options, loadOptions)
@@ -62,10 +85,9 @@ function pickEnum(code: string) {
 }
 
 function toggleMulti(code: string) {
-  const cur = new Set(selectedCodes())
-  if (cur.has(code)) cur.delete(code)
-  else cur.add(code)
-  emit('update:modelValue', Array.from(cur))
+  const prev = selectedCodes()
+  const available = optionItems.value.map((o) => o.code)
+  emit('update:modelValue', toggleExclusiveMulti(prev, code, props.exclusive, available))
 }
 
 function onNumber(e: Event) {
@@ -74,12 +96,31 @@ function onNumber(e: Event) {
     emit('update:modelValue', null)
     return
   }
-  const n = Number(raw)
-  emit('update:modelValue', Number.isFinite(n) ? n : raw)
+  let n = Number(raw)
+  if (!Number.isFinite(n)) {
+    emit('update:modelValue', raw)
+    return
+  }
+  if (n < numberMin.value) n = numberMin.value
+  if (numberMax.value != null && n > numberMax.value) n = numberMax.value
+  emit('update:modelValue', n)
 }
 
 function onText(e: Event) {
   emit('update:modelValue', (e.target as HTMLInputElement).value)
+}
+
+function onDateInput(e: Event) {
+  const raw = (e.target as HTMLInputElement).value
+  if (!raw) {
+    emit('update:modelValue', null)
+    return
+  }
+  if (isBirthdayField.value && raw > todayIso.value) {
+    emit('update:modelValue', null)
+    return
+  }
+  emit('update:modelValue', raw)
 }
 </script>
 
@@ -108,8 +149,12 @@ function onText(e: Event) {
     <div v-else-if="type === 'NUMBER'" class="fi-num">
       <input
         type="number"
+        :min="numberMin"
+        :max="numberMax"
+        step="any"
         :value="modelValue == null ? '' : String(modelValue)"
         @input="onNumber"
+        @blur="onNumber"
       />
       <span v-if="unit" class="fi-unit">{{ unit }}</span>
     </div>
@@ -117,8 +162,9 @@ function onText(e: Event) {
     <input
       v-else-if="type === 'DATE'"
       type="date"
+      :max="isBirthdayField ? todayIso : undefined"
       :value="modelValue == null ? '' : String(modelValue)"
-      @input="onText"
+      @input="onDateInput"
     />
 
     <input

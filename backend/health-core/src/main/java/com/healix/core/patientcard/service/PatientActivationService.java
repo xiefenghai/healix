@@ -15,7 +15,6 @@ import com.healix.core.patient.domain.PatientCareAssignment;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.enums.MembershipStatusEnum;
 import com.healix.core.followup.service.FollowupScheduleService;
-import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.patientcard.domain.AccountPatient;
@@ -54,7 +53,6 @@ public class PatientActivationService {
     private final AuditService auditService;
     private final IdentityService identityService;
     private final FollowupScheduleService followupScheduleService;
-    private final WorkspaceTaskGenerator workspaceTaskGenerator;
 
     @Transactional
     public PeopleActivationInvite issue(
@@ -243,8 +241,8 @@ public class PatientActivationService {
         }
 
         if (newlyJoined) {
+            // 先开入组/首诊；分配健管组等首诊办结后再开
             followupScheduleService.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
-            workspaceTaskGenerator.ensureTeamAssignOnJoin(tenantId, orgId, peopleId);
         }
     }
 

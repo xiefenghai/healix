@@ -42,6 +42,7 @@ import com.healix.core.worktask.dto.WorkspaceTaskQuery;
 import com.healix.core.worktask.dto.WorkspaceTaskSummaryDto;
 import com.healix.core.worktask.mapper.WorkspaceTaskMapper;
 import com.healix.core.worktask.support.MetricAbnormalEvaluator;
+import com.healix.core.worktask.support.WorkspaceTaskLabels;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -559,7 +560,7 @@ public class WorkspaceTaskService {
         }
         WorkspaceTaskType type = WorkspaceTaskType.require(row.getTaskType());
         dto.setTaskType(type.name());
-        dto.setTaskTypeLabel(type.label());
+        dto.setTaskTypeLabel(WorkspaceTaskLabels.of(type, row.getPayloadJson()));
         dto.setSummary(row.getSummary());
         dto.setPool(row.getAssigneeStaffId() == null ? "PUBLIC" : "MINE");
         dto.setStatus(row.getStatus());

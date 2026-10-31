@@ -48,6 +48,12 @@ public class QuestionnaireResponseView {
         private String type;
         private String unit;
         private String options;
+        /** 数值题下限（来自 field-catalog） */
+        private java.math.BigDecimal min;
+        /** 数值题上限（来自 field-catalog） */
+        private java.math.BigDecimal max;
+        /** 多选互斥项，如 NONE / UNKNOWN（选中后清空其他） */
+        private java.util.List<String> exclusive;
         private boolean sensitive;
         private JsonNode showIf;
         private JsonNode highlights;

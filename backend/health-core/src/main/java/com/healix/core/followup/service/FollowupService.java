@@ -296,11 +296,19 @@ public class FollowupService {
     /** 首诊问卷提交后自动办结关联的 ONBOARDING 随访（含关任务、开制定方案）。 */
     @Transactional
     public FollowupRecordViewDto completeOnboardingByIntake(
-            String orgId, String followupId, String intakeResponseId, String channel, String actorAccountId) {
+            String orgId,
+            String followupId,
+            String intakeResponseId,
+            String channel,
+            String actorAccountId,
+            String aiSummary) {
         Map<String, Object> section = new LinkedHashMap<>();
         section.put("nextAction", "CREATE_PLAN");
         section.put("intakeResponseId", intakeResponseId);
         section.put("archiveWritten", true);
+        if (StringUtils.hasText(aiSummary)) {
+            section.put("aiSummary", aiSummary.trim());
+        }
         Map<String, Object> content = new LinkedHashMap<>();
         content.put("followupType", FollowupType.ONBOARDING.name());
         content.put("contactTarget", "PATIENT");
@@ -725,7 +733,7 @@ public class FollowupService {
             assignee = a.getPrimaryCareManagerStaffId();
         }
         row.setAssigneeStaffId(assignee);
-        row.setTitle(type.label());
+        row.setTitle(followupType.label());
         row.setSummary(StringUtils.hasText(record.getSummary()) ? record.getSummary() : followupType.label());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("followupId", record.getId());
@@ -930,13 +938,17 @@ public class FollowupService {
         }
     }
 
-    /** 首诊办结后立刻开制定方案；已有生效方案时由生成器跳过。 */
+    /**
+     * 首诊办结后：立刻开制定方案；若尚未进健管组则再开「分配健管组」（公海）。
+     * 已有生效方案 / 已在组内时由生成器跳过。
+     */
     private void openPlanAfterOnboarding(
             String tenantId, String orgId, String peopleId, String followupId, FollowupType type) {
         if (type != FollowupType.ONBOARDING) {
             return;
         }
         workspaceTaskGenerator.ensurePlanCreateAfterOnboarding(tenantId, orgId, peopleId, followupId);
+        workspaceTaskGenerator.ensureTeamAssignOnJoin(tenantId, orgId, peopleId);
     }
 
     /** 勾选建议调整方案时，确保工作台有 OPEN 的制定方案待办。 */
@@ -1017,6 +1029,7 @@ public class FollowupService {
     private FollowupRecordViewDto toView(FollowupRecord rec) {
         FollowupRecordViewDto v = new FollowupRecordViewDto();
         v.setId(rec.getId());
+        v.setPeopleId(rec.getPeopleId());
         v.setRecordType(rec.getRecordType());
         try {
             v.setRecordTypeLabel(FollowupRecordType.require(rec.getRecordType()).label());

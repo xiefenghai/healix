@@ -287,6 +287,8 @@ public final class FollowupContentValidator {
         putClip(section, raw, "adverseNote", TEXT_MAX);
         putClip(section, raw, "retestNote", TEXT_MAX);
         putClip(section, raw, "gapNote", TEXT_MAX);
+        putClip(section, raw, "aiSummary", 4000);
+        putClip(section, raw, "intakeResponseId", 64);
         String lifestyle = str(raw.get("lifestyleLevel"));
         if (LIFESTYLE_LEVELS.contains(lifestyle)) {
             section.put("lifestyleLevel", lifestyle);
@@ -402,6 +404,10 @@ public final class FollowupContentValidator {
         String typeCode = str(normalized.get("followupType"));
         Map<String, Object> section = asMap(normalized.get("section"));
         if ("ONBOARDING".equals(typeCode)) {
+            String aiSummary = str(section.get("aiSummary"));
+            if (StringUtils.hasText(aiSummary)) {
+                return clip(aiSummary, 200);
+            }
             String next = str(section.get("nextAction"));
             String head = switch (next) {
                 case "SUPPLEMENT_ARCHIVE" -> "需补档案";
@@ -546,6 +552,10 @@ public final class FollowupContentValidator {
         List<Map<String, Object>> baseline = validateBaselineMetrics(raw.get("baselineMetrics"));
         if (!baseline.isEmpty()) {
             section.put("baselineMetrics", baseline);
+        }
+        String aiSummary = clip(str(raw.get("aiSummary")), 4000);
+        if (StringUtils.hasText(aiSummary)) {
+            section.put("aiSummary", aiSummary);
         }
         return section;
     }

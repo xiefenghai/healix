@@ -95,7 +95,7 @@ const isExercise = computed(() => task.value?.taskType === 'EXERCISE_ALERT')
 const dialogTitle = computed(() => {
   if (isAlert.value) return '指标异常处理'
   if (isExercise.value) return '运动不适处理'
-  if (isFollowUp.value) return '定期随访'
+  if (isFollowUp.value) return task.value?.taskTypeLabel || '定期随访'
   return task.value?.taskTypeLabel || '填单'
 })
 

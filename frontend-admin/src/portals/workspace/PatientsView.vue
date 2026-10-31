@@ -229,10 +229,29 @@ function parseIdCard(raw: string) {
   const y = id.slice(6, 10)
   const m = id.slice(10, 12)
   const d = id.slice(12, 14)
+  const birth = new Date(Number(y), Number(m) - 1, Number(d))
+  if (
+    birth.getFullYear() !== Number(y) ||
+    birth.getMonth() !== Number(m) - 1 ||
+    birth.getDate() !== Number(d)
+  ) {
+    return null
+  }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  birth.setHours(0, 0, 0, 0)
+  if (birth.getTime() > today.getTime()) return null
   const birthday = `${y}-${m}-${d}`
   const genderCode = Number(id.charAt(16))
   const gender = Number.isNaN(genderCode) ? 'UNKNOWN' : genderCode % 2 === 1 ? 'MALE' : 'FEMALE'
   return { birthday, gender }
+}
+
+function disabledBirthdayDate(d: Date) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  return x.getTime() > today.getTime()
 }
 
 function formatTime(iso?: string) {
@@ -436,6 +455,10 @@ function validateArchive(): boolean {
   }
   if (!f.gender || !f.birthday) {
     ElMessage.warning('请填写性别和出生日期')
+    return false
+  }
+  if (disabledBirthdayDate(new Date(f.birthday))) {
+    ElMessage.warning('出生日期不能晚于今天')
     return false
   }
   if (!f.noMobile && !f.mobile.trim()) {
@@ -779,6 +802,7 @@ onMounted(async () => {
                 type="date"
                 value-format="YYYY-MM-DD"
                 :disabled="!!archiveParsed"
+                :disabled-date="disabledBirthdayDate"
                 style="width: 100%"
               />
             </el-form-item>

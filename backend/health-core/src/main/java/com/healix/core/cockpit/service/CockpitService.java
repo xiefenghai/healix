@@ -49,6 +49,8 @@ import com.healix.core.worktask.dto.WorkspaceTaskQuery;
 import com.healix.core.reward.dto.RewardViews.CockpitWeek;
 import com.healix.core.reward.service.RewardQueryService;
 import com.healix.core.worktask.mapper.WorkspaceTaskMapper;
+import com.healix.core.worktask.support.WorkspaceTaskLabels;
+import com.healix.core.followup.catalog.FollowupType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -69,7 +71,8 @@ import org.springframework.util.StringUtils;
 /**
  * 智能驾驶舱感知层：汇总摘要、按人聚合今日优先、焦点患者快照。
  *
- * <p>左栏优先名单只看当前员工名下（assignee）的 OPEN 任务，再按超期 / 优先级 / 待办数排序。
+ * <p>左栏「立即处理 / 我的」只看当前员工名下（assignee）的 OPEN 任务；
+ * 「待入组」看公海首诊与待分配健管组，引导先了解患者再分人。
  */
 @Service
 @RequiredArgsConstructor
@@ -77,7 +80,6 @@ public class CockpitService {
 
     private static final int TASK_FETCH = 100;
     private static final String PATIENT_REQUEST_LABEL = "申请回访";
-    private static final String PLAN_RENEW_LABEL = "方案待复评";
     private static final int BP_HIGH_SYS = 140;
     private static final int BP_HIGH_DIA = 90;
 
@@ -139,6 +141,7 @@ public class CockpitService {
         // 「我的关注」= 个人重点关注人数，与任务分桶无关
         dto.setWatchCount(staffPatientWatchMapper.countByStaffOrg(staffId, orgId));
         dto.setMineCount(mine);
+        dto.setIntakeCount(buildPendingIntakeCards(tenantId, orgId).size());
         dto.setPendingCarePlanDraftCount(pendingPlan);
         dto.setPendingReportDraftCount(pendingReport);
         RewardQueryService rewards = rewardQueryService.getIfAvailable();
@@ -154,7 +157,8 @@ public class CockpitService {
     /**
      * 左栏优先患者。
      *
-     * @param tab urgent = 我的高优在办；watch = 个人重点关注患者；mine = 我的全部在办；默认 urgent
+     * @param tab urgent = 我的高优在办；intake = 待入组（公海首诊 / 分配健管组）；
+     *     watch = 个人重点关注患者；mine = 我的全部在办；默认 urgent
      */
     public List<CockpitPriorityCardDto> priority(String tenantId, String orgId, String tab) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
@@ -162,6 +166,9 @@ public class CockpitService {
         String bucket = normalizeTab(tab);
         if ("watch".equals(bucket)) {
             return buildWatchedCards(orgId, staffId);
+        }
+        if ("intake".equals(bucket)) {
+            return buildPendingIntakeCards(tenantId, orgId);
         }
         return buildPriorityCards(tenantId, orgId, staffId).stream()
                 .filter(c -> matchTab(bucket, c))
@@ -519,6 +526,96 @@ public class CockpitService {
         return workspaceTaskMapper.listByQuery(mine);
     }
 
+    /**
+     * 待入组：公海 OPEN 的入组/首诊随访 + 分配健管组。
+     * 引导先做首诊了解情况，再分配健管组（首诊办结后才会开分配单）。
+     */
+    private List<CockpitPriorityCardDto> buildPendingIntakeCards(String tenantId, String orgId) {
+        Map<String, CockpitPriorityCardDto> byPeople = new HashMap<>();
+        List<String> exclude = doctorPublicExclude();
+        WorkspaceTaskQuery pub = baseOpenQuery(tenantId, orgId);
+        pub.setPool("PUBLIC");
+        pub.setExcludeTaskTypes(exclude.isEmpty() ? null : exclude);
+        pub.setPageSize(TASK_FETCH);
+        for (WorkspaceTask task : workspaceTaskMapper.listByQuery(pub)) {
+            if (task == null || !StringUtils.hasText(task.getTaskType())) {
+                continue;
+            }
+            WorkspaceTaskType type;
+            try {
+                type = WorkspaceTaskType.require(task.getTaskType());
+            } catch (IllegalArgumentException ex) {
+                continue;
+            }
+            boolean onboarding = WorkspaceTaskLabels.isOnboardingFollowUp(type, task.getPayloadJson());
+            boolean teamAssign = type == WorkspaceTaskType.TEAM_ASSIGN;
+            if (!onboarding && !teamAssign) {
+                continue;
+            }
+            CockpitPriorityCardDto card = ensureCard(byPeople, task.getPeopleId(), null);
+            if (!StringUtils.hasText(card.getDisplayName())) {
+                PeopleProfile p = peopleProfileMapper.findById(task.getPeopleId());
+                card.setDisplayName(p == null ? task.getPeopleId() : p.getDisplayName());
+            }
+            fillProfile(card);
+            fillTeamIfMissing(card, orgId, task.getPeopleId());
+            card.getTaskIds().add(task.getId());
+            addBadge(card, type.name());
+            addBadge(card, "PUBLIC");
+            if (onboarding) {
+                addBadge(card, "ONBOARDING");
+            }
+            String label = taskLabel(task, type);
+            addTaskType(card, type, label);
+            if (onboarding) {
+                card.getReasonDetails().add("请先完成首诊，了解情况后再分配健管组");
+            } else {
+                card.getReasonDetails().add("首诊已完成，请按患者情况分配健管组");
+            }
+            touchLatestTaskAt(card, task.getOpenedAt());
+            bumpMaxPriority(card, effectivePriority(task, type));
+            if (isOverdue(task)) {
+                addBadge(card, "OVERDUE");
+                card.setOverdueTaskCount(card.getOverdueTaskCount() + 1);
+            }
+        }
+
+        List<CockpitPriorityCardDto> all = new ArrayList<>();
+        for (CockpitPriorityCardDto card : byPeople.values()) {
+            int open = card.getTaskIds() == null ? 0 : card.getTaskIds().size();
+            if (open <= 0) {
+                continue;
+            }
+            fillCardDiseases(card, tenantId);
+            card.setOpenTaskCount(open);
+            if (!StringUtils.hasText(card.getMaxTaskPriority())) {
+                card.setMaxTaskPriority(WorkspaceTaskPriority.LOW.name());
+            }
+            card.setUrgencyScore(packUrgencyScore(card));
+            card.setTopReason(topReasonPendingIntake(card));
+            card.setBucket("intake");
+            all.add(card);
+        }
+        all.sort(Comparator.comparingInt(CockpitPriorityCardDto::getUrgencyScore)
+                .reversed()
+                .thenComparing(c -> c.getDisplayName() == null ? "" : c.getDisplayName()));
+        return all;
+    }
+
+    private static String topReasonPendingIntake(CockpitPriorityCardDto card) {
+        List<String> b = card.getBadges();
+        if (b.contains("ONBOARDING") || b.contains("FOLLOW_UP")) {
+            return "请先完成首诊";
+        }
+        if (b.contains("TEAM_ASSIGN")) {
+            return "待分配健管组";
+        }
+        if (b.contains("OVERDUE")) {
+            return "任务已超期";
+        }
+        return "待入组";
+    }
+
     /** 焦点面板：公共池 + 我的池中该患者的 OPEN（便于看到机构侧全部待办）。 */
     private List<WorkspaceTask> loadVisibleOpenTasks(
             String tenantId, String orgId, String staffId, List<String> exclude) {
@@ -596,14 +693,9 @@ public class CockpitService {
         }
     }
 
-    /** 方案到期前由扫描开出的 PLAN_CREATE 显示为「方案待复评」。 */
+    /** 展示文案：随访按 followupType 细分；方案复评见 {@link WorkspaceTaskLabels}。 */
     private static String taskLabel(WorkspaceTask task, WorkspaceTaskType type) {
-        if (type == WorkspaceTaskType.PLAN_CREATE
-                && StringUtils.hasText(task.getPayloadJson())
-                && task.getPayloadJson().contains("\"renew\":true")) {
-            return PLAN_RENEW_LABEL;
-        }
-        return type.label();
+        return WorkspaceTaskLabels.of(type, task.getPayloadJson());
     }
 
     private static void addTaskType(CockpitPriorityCardDto card, WorkspaceTaskType type, String label) {
@@ -888,10 +980,13 @@ public class CockpitService {
             return "打卡跟进";
         }
         if (b.contains("FOLLOW_UP")) {
+            if (card.getTaskTypeLabels().contains(FollowupType.ONBOARDING.label())) {
+                return FollowupType.ONBOARDING.label();
+            }
             return "定期随访";
         }
-        if (card.getTaskTypeLabels().contains(PLAN_RENEW_LABEL)) {
-            return PLAN_RENEW_LABEL;
+        if (card.getTaskTypeLabels().contains(WorkspaceTaskLabels.PLAN_RENEW_LABEL)) {
+            return WorkspaceTaskLabels.PLAN_RENEW_LABEL;
         }
         if (b.contains("PLAN_CREATE")) {
             return "待制定方案";
@@ -935,10 +1030,10 @@ public class CockpitService {
             return "urgent";
         }
         String t = tab.trim().toLowerCase(Locale.ROOT);
-        if ("urgent".equals(t) || "watch".equals(t) || "mine".equals(t)) {
+        if ("urgent".equals(t) || "intake".equals(t) || "watch".equals(t) || "mine".equals(t)) {
             return t;
         }
-        throw new BusinessException(400, "未知 tab，可选 urgent / watch / mine");
+        throw new BusinessException(400, "未知 tab，可选 urgent / intake / watch / mine");
     }
 
     private List<String> doctorPublicExclude() {

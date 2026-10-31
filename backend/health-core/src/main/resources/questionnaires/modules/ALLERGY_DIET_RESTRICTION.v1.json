@@ -2,7 +2,7 @@
   "code": "ALLERGY_DIET_RESTRICTION",
   "version": 1,
   "title": "过敏与忌口",
-  "script": "有没有吃了会过敏或者不舒服的东西？还有因为信仰或习惯不吃的？",
+  "script": "想确认一下：有没有吃了会过敏或不舒服的食物、药物？另外有没有因为信仰或习惯需要忌口的？我们会记在方案里避开。",
   "items": [
     {
       "field": "allergy.status",
@@ -30,7 +30,7 @@
     {
       "field": "allergy.drug",
       "label": "药物过敏",
-      "level": "LATER",
+      "level": "FIRST_VISIT",
       "showIf": {
         "field": "allergy.status",
         "eq": "HAS"

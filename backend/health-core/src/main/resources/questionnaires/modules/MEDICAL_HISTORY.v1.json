@@ -2,7 +2,7 @@
   "code": "MEDICAL_HISTORY",
   "version": 1,
   "title": "病史与用药",
-  "script": "接下来了解一下身体情况和在吃的药，有些药跟饮食和运动有关系，我们得心里有数。",
+  "script": "接下来想了解一下您的身体情况和正在用的药。有些药和饮食、运动有关，我们心里有数，后面安排会更稳妥。",
   "items": [
     {
       "field": "basic.presentIllness",
@@ -86,7 +86,7 @@
     {
       "field": "medication.current",
       "label": "在用药物明细",
-      "level": "LATER",
+      "level": "FIRST_VISIT",
       "showIf": {
         "field": "basic.medicationFlags",
         "notIn": [

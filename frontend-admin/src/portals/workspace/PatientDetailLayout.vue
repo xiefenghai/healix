@@ -871,6 +871,16 @@ onBeforeUnmount(() => {
               {{ intakeStatus?.hasSubmitted ? '再次首诊' : '开始首诊' }}
             </button>
             <button
+              v-if="intakeStatus?.latestSubmittedId"
+              type="button"
+              class="text-btn"
+              @click="
+                openInNewTab(router, `/workspace/intake-responses/${intakeStatus.latestSubmittedId}`)
+              "
+            >
+              查看首诊
+            </button>
+            <button
               v-if="intakeStatus && intakeStatus.hasSubmitted && intakeStatus.pendingCount > 0"
               type="button"
               class="text-btn pending"

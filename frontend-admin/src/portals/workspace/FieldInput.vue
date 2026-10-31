@@ -1,23 +1,41 @@
 <script setup lang="ts">
 /**
  * 首诊问卷字段输入：ENUM/MULTI 按钮组，NUMBER 带单位，TEXT/DATE/TIME 普通输入。
+ * LIST/OBJECT 中用药、过敏、家族史走专用编辑器，其余仍用文本兜底。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { loadDictOptions, type DictOption, type IntakeFieldType } from '../../shared/intake'
+import {
+  loadDictOptions,
+  toggleExclusiveMulti,
+  type DictOption,
+  type IntakeFieldType,
+} from '../../shared/intake'
+import type { FamilyHistoryEntry } from '../../shared/family-history-options'
+import FamilyHistoryEditor from './FamilyHistoryEditor.vue'
+import IntakeAllergyEditor from './IntakeAllergyEditor.vue'
+import IntakeMedicationEditor from './IntakeMedicationEditor.vue'
 
-const props = defineProps<{
-  field: string
-  type?: IntakeFieldType | null
-  unit?: string | null
-  /** 选项字典 parentCode */
-  options?: string | null
-  modelValue: unknown
-  /** 预填灰底 */
-  prefilled?: boolean
-  /** 相对预填已改黄底 */
-  dirty?: boolean
-  disabled?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    field: string
+    type?: IntakeFieldType | null
+    unit?: string | null
+    /** 选项字典 parentCode */
+    options?: string | null
+    /** 数值下限；未传时 NUMBER 默认 ≥0，避免体重/腰围等录入负数 */
+    min?: number | null
+    max?: number | null
+    /** 多选互斥码（没有 / 都没有 / 不清楚） */
+    exclusive?: string[] | null
+    modelValue: unknown
+    /** 预填灰底 */
+    prefilled?: boolean
+    /** 相对预填已改黄底 */
+    dirty?: boolean
+    disabled?: boolean
+  }>(),
+  { min: undefined, max: undefined, exclusive: undefined },
+)
 
 const emit = defineEmits<{
   (e: 'update:modelValue', v: unknown): void
@@ -25,6 +43,34 @@ const emit = defineEmits<{
 
 const dictOptions = ref<DictOption[]>([])
 const loadingOpts = ref(false)
+
+function asFamilyEntries(v: unknown): FamilyHistoryEntry[] {
+  if (v == null || v === '') return []
+  if (typeof v === 'string') {
+    const t = v.trim()
+    if (!t) return []
+    try {
+      return asFamilyEntries(JSON.parse(t))
+    } catch {
+      return []
+    }
+  }
+  if (!Array.isArray(v)) return []
+  return v
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x))
+    .map((o) => ({
+      kinshipLevel: String(o.kinshipLevel || '1') as FamilyHistoryEntry['kinshipLevel'],
+      member: String(o.member || ''),
+      diseases: Array.isArray(o.diseases) ? o.diseases.map(String) : [],
+      note: o.note ? String(o.note) : undefined,
+    }))
+    .filter((e) => e.member && e.diseases.length)
+}
+
+const familyEntries = computed({
+  get: () => asFamilyEntries(props.modelValue),
+  set: (v: FamilyHistoryEntry[]) => emit('update:modelValue', v),
+})
 
 async function loadOpts() {
   const parent = props.options || ''
@@ -76,17 +122,79 @@ function setEnum(code: string) {
 function toggleMulti(code: string) {
   if (props.disabled) return
   const prev = Array.isArray(props.modelValue) ? [...(props.modelValue as string[])] : []
-  const i = prev.indexOf(code)
-  if (i >= 0) prev.splice(i, 1)
-  else prev.push(code)
-  emit('update:modelValue', prev)
+  const available = choiceOptions.value.map((o) => o.code)
+  emit('update:modelValue', toggleExclusiveMulti(prev, code, props.exclusive, available))
+}
+
+const numberMin = computed(() => {
+  if (props.min != null && Number.isFinite(Number(props.min))) return Number(props.min)
+  return 0
+})
+
+const numberMax = computed(() => {
+  if (props.max != null && Number.isFinite(Number(props.max))) return Number(props.max)
+  return undefined
+})
+
+/** 心率/血压等为整数，体测与体重类保留 1 位小数 */
+const numberPrecision = computed(() => {
+  const u = (props.unit || '').toLowerCase()
+  if (
+    u.includes('mmhg') ||
+    u.includes('次') ||
+    u.includes('分钟') ||
+    u.includes('支') ||
+    u === '年' ||
+    u === 'ml'
+  ) {
+    return 0
+  }
+  return 1
+})
+
+function clampNumber(v: number): number {
+  let n = v
+  if (Number.isFinite(numberMin.value) && n < numberMin.value) n = numberMin.value
+  if (numberMax.value != null && Number.isFinite(numberMax.value) && n > numberMax.value) {
+    n = numberMax.value
+  }
+  return n
 }
 
 function onNumber(v: number | undefined) {
-  emit('update:modelValue', v == null || Number.isNaN(v) ? '' : v)
+  if (v == null || Number.isNaN(v)) {
+    emit('update:modelValue', '')
+    return
+  }
+  emit('update:modelValue', clampNumber(v))
 }
 
 function onText(v: string) {
+  emit('update:modelValue', v)
+}
+
+const isBirthdayField = computed(() => {
+  const f = props.field || ''
+  return f === 'birthday' || f === 'profile.birthday' || f.endsWith('.birthday')
+})
+
+/** 出生日期不可选今天之后 */
+function disabledBirthdayDate(d: Date) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  return x.getTime() > today.getTime()
+}
+
+function onDateChange(v: string | null) {
+  if (!v) {
+    emit('update:modelValue', '')
+    return
+  }
+  if (isBirthdayField.value && disabledBirthdayDate(new Date(v))) {
+    emit('update:modelValue', '')
+    return
+  }
   emit('update:modelValue', v)
 }
 </script>
@@ -133,7 +241,10 @@ function onText(v: string) {
           :model-value="modelValue === '' || modelValue == null ? undefined : Number(modelValue)"
           :disabled="disabled"
           controls-position="right"
-          :precision="1"
+          :min="numberMin"
+          :max="numberMax"
+          :precision="numberPrecision"
+          :step="numberPrecision === 0 ? 1 : 0.1"
           @update:model-value="onNumber"
         />
         <span v-if="unit" class="unit">{{ unit }}</span>
@@ -147,8 +258,9 @@ function onText(v: string) {
         value-format="YYYY-MM-DD"
         placeholder="选择日期"
         :disabled="disabled"
+        :disabled-date="isBirthdayField ? disabledBirthdayDate : undefined"
         style="width: 100%"
-        @update:model-value="(v: string | null) => emit('update:modelValue', v || '')"
+        @update:model-value="onDateChange"
       />
     </template>
 
@@ -164,6 +276,40 @@ function onText(v: string) {
       />
     </template>
 
+    <template v-else-if="field === 'medication.current'">
+      <IntakeMedicationEditor
+        :model-value="modelValue"
+        :disabled="disabled"
+        @update:model-value="(v) => emit('update:modelValue', v)"
+      />
+    </template>
+
+    <template v-else-if="field === 'basic.familyHistoryItems'">
+      <FamilyHistoryEditor
+        v-model:entries="familyEntries"
+        entries-only
+        :disabled="disabled"
+      />
+    </template>
+
+    <template v-else-if="field === 'allergy.food'">
+      <IntakeAllergyEditor
+        category="FOOD"
+        :model-value="modelValue"
+        :disabled="disabled"
+        @update:model-value="(v) => emit('update:modelValue', v)"
+      />
+    </template>
+
+    <template v-else-if="field === 'allergy.drug'">
+      <IntakeAllergyEditor
+        category="DRUG"
+        :model-value="modelValue"
+        :disabled="disabled"
+        @update:model-value="(v) => emit('update:modelValue', v)"
+      />
+    </template>
+
     <template v-else-if="type === 'LIST' || type === 'OBJECT'">
       <el-input
         type="textarea"
@@ -171,6 +317,19 @@ function onText(v: string) {
         :model-value="typeof modelValue === 'string' ? modelValue : modelValue == null ? '' : JSON.stringify(modelValue)"
         :disabled="disabled"
         placeholder="结构化字段，建议在档案页完善；此处可暂记文本"
+        @update:model-value="onText"
+      />
+    </template>
+
+    <template v-else-if="field === 'staff.aiSummary'">
+      <el-input
+        type="textarea"
+        :rows="10"
+        :model-value="modelValue == null ? '' : String(modelValue)"
+        :disabled="disabled"
+        maxlength="4000"
+        show-word-limit
+        placeholder="点击上方「生成总结」后可在此修改"
         @update:model-value="onText"
       />
     </template>

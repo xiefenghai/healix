@@ -2,7 +2,7 @@
   "code": "PSYCH_BASE",
   "version": 1,
   "title": "心理与情绪",
-  "script": "减重不只是吃和动，心情和压力也有关系，我们简单聊聊。",
+  "script": "减重不只关乎吃和动，心情、压力也会影响。如果您愿意，我们简单聊几句；不想说的可以跳过。",
   "items": [
     {
       "field": "basic.psych.stressLevel",

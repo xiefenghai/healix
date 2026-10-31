@@ -6,18 +6,21 @@ export interface ArchiveExtraField {
   type: string
   unit?: string
   options?: string | null
+  min?: number
+  max?: number
+  exclusive?: string[]
   sensitive?: boolean
 }
 
 export const WEIGHT_HISTORY_FIELDS: ArchiveExtraField[] = [
   { field: 'basic.weightHistory.triedBefore', label: '减重经历', type: 'ENUM', options: 'weightLossTried' },
   { field: 'basic.weightHistory.methods', label: '用过的减重方法', type: 'MULTI', options: 'weightLossMethods' },
-  { field: 'basic.weightHistory.maxLossKg', label: '最大减重幅度', type: 'NUMBER', unit: 'kg' },
+  { field: 'basic.weightHistory.maxLossKg', label: '最大减重幅度', type: 'NUMBER', unit: 'kg', min: 0, max: 100 },
   { field: 'basic.weightHistory.failReasons', label: '未坚持 / 反弹原因', type: 'MULTI', options: 'weightLossFailReasons' },
-  { field: 'basic.weightHistory.maxWeightKg', label: '成年后最高体重', type: 'NUMBER', unit: 'kg' },
-  { field: 'basic.weightHistory.minAdultWeightKg', label: '成年后最低体重', type: 'NUMBER', unit: 'kg' },
+  { field: 'basic.weightHistory.maxWeightKg', label: '成年后最高体重', type: 'NUMBER', unit: 'kg', min: 25, max: 300 },
+  { field: 'basic.weightHistory.minAdultWeightKg', label: '成年后最低体重', type: 'NUMBER', unit: 'kg', min: 25, max: 300 },
   { field: 'basic.weightHistory.recentTrend', label: '近 3–6 个月体重变化', type: 'ENUM', options: 'weightTrend' },
-  { field: 'basic.weightHistory.recentChangeKg', label: '近期变化幅度', type: 'NUMBER', unit: 'kg' },
+  { field: 'basic.weightHistory.recentChangeKg', label: '近期变化幅度', type: 'NUMBER', unit: 'kg', min: 0, max: 50 },
   { field: 'basic.weightHistory.expectedPace', label: '期望减重速度', type: 'ENUM', options: 'expectedPace' },
 ]
 

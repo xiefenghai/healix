@@ -17,6 +17,20 @@ const sending = ref(false)
 const agreeTerms = ref(false)
 const agreeSensitive = ref(false)
 const loading = ref(false)
+const showBirthdayPicker = ref(false)
+const today = new Date()
+const minBirthday = new Date(1900, 0, 1)
+const birthdayPickerValue = ref<string[]>(['1990', '01', '01'])
+
+function openBirthdayPicker() {
+  if (birthday.value) birthdayPickerValue.value = birthday.value.split('-')
+  showBirthdayPicker.value = true
+}
+
+function onBirthdayConfirm({ selectedValues }: { selectedValues: string[] }) {
+  birthday.value = selectedValues.join('-')
+  showBirthdayPicker.value = false
+}
 
 onMounted(() => {
   const q = new URLSearchParams(location.search)
@@ -97,6 +111,14 @@ async function submit() {
     showToast('请填写档案姓名和出生日期')
     return
   }
+  const birth = new Date(birthday.value)
+  const startToday = new Date()
+  startToday.setHours(0, 0, 0, 0)
+  birth.setHours(0, 0, 0, 0)
+  if (Number.isNaN(birth.getTime()) || birth.getTime() > startToday.getTime()) {
+    showToast('出生日期不能晚于今天')
+    return
+  }
   if (!loggedIn.value && (!agreeTerms.value || !agreeSensitive.value)) {
     showToast('请先阅读并勾选同意相关协议')
     return
@@ -137,7 +159,14 @@ async function submit() {
       <p class="hint">健管师已为你建档时，用激活码开通，并绑定到同一份档案。</p>
       <van-field v-model="activationCode" label="激活码" placeholder="如 A3K9-7X2M" />
       <van-field v-model="displayName" label="档案姓名" placeholder="与建档姓名一致" />
-      <van-field v-model="birthday" label="出生日期" placeholder="YYYY-MM-DD" />
+      <van-field
+        is-link
+        readonly
+        label="出生日期"
+        placeholder="请选择"
+        :model-value="birthday"
+        @click="openBirthdayPicker"
+      />
       <template v-if="!loggedIn">
         <van-field v-model="mobile" type="tel" label="手机号" placeholder="用于登录" maxlength="11" />
         <van-field v-model="otpCode" type="digit" label="验证码" placeholder="6 位验证码" maxlength="6">
@@ -154,6 +183,17 @@ async function submit() {
         没有激活码？先注册账号
       </button>
     </div>
+
+    <van-popup v-model:show="showBirthdayPicker" position="bottom" round>
+      <van-date-picker
+        v-model="birthdayPickerValue"
+        title="出生日期"
+        :min-date="minBirthday"
+        :max-date="today"
+        @confirm="onBirthdayConfirm"
+        @cancel="showBirthdayPicker = false"
+      />
+    </van-popup>
   </div>
 </template>
 

@@ -2,7 +2,7 @@
   "code": "BASIC_PROFILE",
   "version": 1,
   "title": "基础信息",
-  "script": "先跟您核对一下基本信息，方便后面给您定方案。",
+  "script": "先跟您确认一下基本信息，我们后面定方案会用到，有不对的地方随时改就好。",
   "items": [
     {
       "field": "profile.displayName",

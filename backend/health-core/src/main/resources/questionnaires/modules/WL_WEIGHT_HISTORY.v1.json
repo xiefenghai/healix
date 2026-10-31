@@ -2,7 +2,7 @@
   "code": "WL_WEIGHT_HISTORY",
   "version": 1,
   "title": "减重史",
-  "script": "以前减过重吗？之前的经验对我们很重要，能帮我们避开不适合您的方法。",
+  "script": "以前尝试过减重吗？您过去的经验对我们很重要，能帮我们少走弯路，避开不太适合您的方法。",
   "items": [
     {
       "field": "basic.weightHistory.triedBefore",

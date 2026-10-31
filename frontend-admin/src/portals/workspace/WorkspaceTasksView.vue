@@ -57,7 +57,7 @@ const TASK_TYPES = [
   { value: 'PLAN_NUDGE', label: '打卡跟进' },
   { value: 'METRIC_ALERT', label: '指标异常' },
   { value: 'EXERCISE_ALERT', label: '运动不适' },
-  { value: 'FOLLOW_UP', label: '定期随访' },
+  { value: 'FOLLOW_UP', label: '随访' },
   { value: 'REPORT_REVIEW', label: '报告审阅' },
   { value: 'MED_FEEDBACK', label: '用药反馈' },
   { value: 'MED_VERIFY', label: '用药核对' },

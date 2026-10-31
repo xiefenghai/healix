@@ -12,7 +12,7 @@ display_name: 管理方案生成
 
 | 内容 | 负责方 |
 |------|--------|
-| 患者档案、病种、过敏、指标、用药、检验 | 上下文工具（只读） |
+| 患者档案、病种、过敏、指标、用药、检验、目标、首诊摘要/高亮 | 上下文工具（只读） |
 | 运动 / 饮食 / 执行 / 总结文案 | LLM 按本 Skill 生成 |
 | Safety 评估、草稿落库、发布 | 业务服务（非本 Skill） |
 
@@ -54,7 +54,7 @@ display_name: 管理方案生成
 
 ## 编排步骤
 
-1. 拉取 `CarePlanContext`（档案、病种、过敏、用药、最近指标与检验）
+1. 拉取 `CarePlanContext`（档案生活方式摘要、病种、过敏、用药、指标与检验、目标 `goals`、首诊 `intakeBrief` / `highlights`）
 2. 使用服务端给定的模板键（五类之一）
 3. 结合 `instruction` 生成整包 JSON（含 rationale）；若为**修订模式**，在 `currentDraft` 上按 `revisionInstruction` 局部调整后仍输出完整 JSON
 4. 服务端 Safety 校验 → 写入 / 更新 `care_plan_draft`
@@ -88,7 +88,7 @@ display_name: 管理方案生成
   "rationale": {
     "templateKey": "COMPREHENSIVE",
     "overview": "为何选此类型、依据哪些档案/评估事实",
-    "sources": ["diseaseArchive", "assessment", "allergens", "meds", "vitals"]
+    "sources": ["diseaseArchive", "assessment", "allergens", "meds", "vitals", "goals", "intake"]
   }
 }
 ```
@@ -250,6 +250,12 @@ display_name: 管理方案生成
 生成时必须参考上下文中的：
 
 - 病种与合并症 → 决定模板倾向与安全提示
+- `patientContext.basicArchive` 生活方式摘要（饮食行为、运动习惯、睡眠、烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史等，含 `*Label` 中文）→ 个体化运动强度、示例餐与执行任务
+- `patientContext.goals`（目标模式、诉求、偏好、`weighFrequency` / `pace` / `lossBlocked`）→ 阶段目标与称重频次；`lossBlocked=true` 时不得以快速减重为主叙事
+- `patientContext.intakeBrief`（最近首诊/待补）与 `highlights`：
+  - 有 `aiSummary` 时优先吸收其中的要点、风险与下一步，落实到三块方案与 `summary`（**不要整段照抄**到患者可见正文）
+  - `highlights` 命中进食障碍 / 身材焦虑 / 运动限制 / 孕哺等 → 节奏更保守、称重勿过度强调每日、运动避禁忌
+  - `rationale` 可写「依据首诊…」，患者正文仍用行动化表述
 - 过敏原 → 写入 `allergensAvoid`，且不得出现在 `recommended`、`sampleDay` 与 `sampleWeek`（含 `swapHint`；以 `foodAllergyGuard` 为准）
 - 限水相关病情 → 不要生成 `WATER` 任务
 - 最近指标（血糖、血压、体重等）→ 调整运动强度与总结表述
@@ -257,6 +263,7 @@ display_name: 管理方案生成
 - 在用药物 → `diet.notes` 与执行计划中谨慎表述
 - `guidelineRecs` → 建议内容、量化约束与各块 `refs`（见「指南条目」）
 - `contextIncomplete=true` → 文案中可提示信息有限，但不拒绝生成
+- `rationale.sources` 可含 `intake`、`goals`、`diseaseArchive`、`assessment`、`allergens`、`meds`、`vitals`
 
 ## 六、禁止事项
 

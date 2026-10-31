@@ -282,6 +282,7 @@ function sourceLabel(source?: string) {
   if (source === 'PATIENT') return '患者自添加'
   if (source === 'PRESCRIPTION') return '院外用药'
   if (source === 'MANUAL') return '健管录入'
+  if (source === 'INTAKE') return '首诊采集'
   return source || '-'
 }
 

@@ -15,6 +15,15 @@ import {
   type KinshipLevel,
 } from '../../shared/family-history-options'
 
+const props = withDefaults(
+  defineProps<{
+    /** 首诊问卷明细题已有「有无家族史」独立题时，只展示条目编辑 */
+    entriesOnly?: boolean
+    disabled?: boolean
+  }>(),
+  { entriesOnly: false, disabled: false },
+)
+
 const entries = defineModel<FamilyHistoryEntry[]>('entries', { default: () => [] })
 /** 空字符串 = 未选择（新建档案不默认勾选「无家族史」） */
 const hasHistory = defineModel<'none' | 'has' | ''>('hasHistory', { default: '' })
@@ -43,6 +52,7 @@ const activeLevelMeta = computed(
 )
 
 function openDialog() {
+  if (props.disabled) return
   draft.memberPick = ''
   draft.diseases = []
   draft.note = ''
@@ -64,6 +74,7 @@ function toggleDisease(code: string) {
 }
 
 function removeEntry(index: number) {
+  if (props.disabled) return
   entries.value = entries.value.filter((_, i) => i !== index)
 }
 
@@ -92,29 +103,38 @@ function confirmDialog() {
 </script>
 
 <template>
-  <div class="fh-editor">
-    <el-radio-group v-model="hasHistory" class="fh-status">
+  <div class="fh-editor" :class="{ disabled }">
+    <el-radio-group v-if="!entriesOnly" v-model="hasHistory" class="fh-status" :disabled="disabled">
       <el-radio value="none">无家族史</el-radio>
       <el-radio value="has">有家族史</el-radio>
     </el-radio-group>
 
-    <p v-if="hasHistory === 'none' && entries.length" class="fh-unsaved-hint">
+    <p v-if="!entriesOnly && hasHistory === 'none' && entries.length" class="fh-unsaved-hint">
       已选「无家族史」，尚未保存；切换回「有家族史」可恢复下方 {{ entries.length }} 条记录
     </p>
 
-    <div v-if="hasHistory === 'has'" class="fh-body">
+    <div v-if="entriesOnly || hasHistory === 'has'" class="fh-body">
       <div class="fh-tags">
         <el-tag
           v-for="(entry, index) in entries"
           :key="`${entry.kinshipLevel}-${entry.member}-${index}`"
-          closable
+          :closable="!disabled"
           effect="plain"
           class="fh-tag"
           @close="removeEntry(index)"
         >
           {{ formatFamilyHistoryTag(entry) }}
         </el-tag>
-        <el-button class="fh-add" circle type="primary" plain @click="openDialog">+</el-button>
+        <el-button
+          class="fh-add"
+          circle
+          type="primary"
+          plain
+          :disabled="disabled"
+          @click="openDialog"
+        >
+          +
+        </el-button>
       </div>
       <p v-if="!entries.length" class="fh-hint">点击 + 添加家族史条目</p>
     </div>
@@ -189,6 +209,10 @@ function confirmDialog() {
 <style scoped>
 .fh-editor {
   width: 100%;
+}
+
+.fh-editor.disabled {
+  opacity: 0.85;
 }
 
 .fh-status {

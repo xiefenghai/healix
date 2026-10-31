@@ -6,6 +6,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.allergy.dto.AllergyItemDto;
+import com.healix.core.allergy.dto.AllergySummaryDto;
+import com.healix.core.allergy.enums.AllergyCategoryEnum;
+import com.healix.core.allergy.enums.AllergyStatusEnum;
+import com.healix.core.allergy.service.AllergyService;
+import com.healix.core.allergy.service.AllergyService.AllergyCommand;
 import com.healix.core.consent.domain.PeopleConsent;
 import com.healix.core.consent.mapper.PeopleConsentMapper;
 import com.healix.core.field.ArchiveFields;
@@ -17,6 +23,11 @@ import com.healix.core.field.FieldWriteSource;
 import com.healix.core.field.PeopleFieldService;
 import com.healix.core.goal.domain.PeopleHealthGoal;
 import com.healix.core.goal.mapper.PeopleHealthGoalMapper;
+import com.healix.core.medication.dto.MedicationViewDto;
+import com.healix.core.medication.enums.MedicationSourceEnum;
+import com.healix.core.medication.enums.MedicationStatusEnum;
+import com.healix.core.medication.service.MedicationService;
+import com.healix.core.medication.service.MedicationService.MedicationCommand;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.program.domain.PeopleProgramEnrollment;
@@ -77,6 +88,13 @@ public class QuestionnaireResponseService {
     private final ProgramEnrollmentService enrollmentService;
     private final PeopleHealthGoalMapper goalMapper;
     private final PeopleConsentMapper consentMapper;
+    private final MedicationService medicationService;
+    private final AllergyService allergyService;
+
+    private static final String FIELD_MEDICATION_CURRENT = "medication.current";
+    private static final String FIELD_ALLERGY_STATUS = "allergy.status";
+    private static final String FIELD_ALLERGY_FOOD = "allergy.food";
+    private static final String FIELD_ALLERGY_DRUG = "allergy.drug";
 
     public QuestionnaireResponseView get(String id) {
         QuestionnaireResponse row = require(id);
@@ -100,6 +118,10 @@ public class QuestionnaireResponseService {
         view.setHasSubmitted(submitted != null);
         if (submitted != null) {
             view.setSubmittedVersion(submitted.getQuestionnaireVersion());
+            view.setLatestSubmittedId(submitted.getId());
+            if (submitted.getSubmittedAt() != null) {
+                view.setSubmittedAt(submitted.getSubmittedAt().toString());
+            }
         }
         if (submitted == null) {
             return view;
@@ -364,8 +386,14 @@ public class QuestionnaireResponseService {
                 case METRIC -> metrics.put(code, value);
                 case GOAL -> goals.put(code, value);
                 case CONSENT -> consents.put(code, value);
+                case MEDICATION -> {
+                    /* 见 writeMedications */
+                }
+                case ALLERGY -> {
+                    /* 见 writeAllergies */
+                }
                 default -> {
-                    /* allergy/medication/lab/staff/measure：专属写或仅作答 */
+                    /* lab/staff/measure：专属写或仅作答 */
                 }
             }
         }
@@ -378,6 +406,12 @@ public class QuestionnaireResponseService {
         writeMetrics(row, metrics, prefill, source);
         writeGoals(row, goals, source);
         writeConsents(row, consents, source);
+        if (filter == null || filter.contains(FIELD_MEDICATION_CURRENT)) {
+            if (isVisible(row, FIELD_MEDICATION_CURRENT, answersLookup(answers))) {
+                writeMedications(row, answers.get(FIELD_MEDICATION_CURRENT), source);
+            }
+        }
+        writeAllergies(row, answers, filter, source);
     }
 
     private boolean isVisible(QuestionnaireResponse row, String field, Function<String, JsonNode> lookup) {
@@ -467,6 +501,242 @@ public class QuestionnaireResponseService {
                     now,
                     VitalSourceEnum.INTAKE.name());
         }
+    }
+
+    /**
+     * 首诊「在用药物明细」→ 用药清单：有 id 则更新，无 id 则新建（来源 INTAKE）。
+     * 从列表移除的已有药不自动停用，避免误伤。
+     */
+    private void writeMedications(QuestionnaireResponse row, JsonNode value, FieldWriteSource source) {
+        if (value == null || value.isNull() || value.isMissingNode() || ArchiveFields.isEmpty(value)) {
+            return;
+        }
+        if (!value.isArray()) {
+            return; // 旧文本答案忽略，避免脏写
+        }
+        String staffId = source.updatedById();
+        String orgId = row.getOrgId();
+        String tenantId = row.getTenantId();
+        String peopleId = row.getPeopleId();
+        for (JsonNode item : value) {
+            if (item == null || !item.isObject()) {
+                continue;
+            }
+            String drugName = textOrNull(item.get("drugName"));
+            if (!StringUtils.hasText(drugName)) {
+                drugName = textOrNull(item.get("name"));
+            }
+            if (!StringUtils.hasText(drugName)) {
+                continue;
+            }
+            String usage = textOrNull(item.get("usageMethod"));
+            if (!StringUtils.hasText(usage)) {
+                usage = "ORAL";
+            }
+            MedicationCommand cmd = new MedicationCommand(
+                    drugName.trim(),
+                    usage.trim(),
+                    textOrNull(item.get("frequency")),
+                    textOrNull(item.get("doseAmount")),
+                    textOrNull(item.get("doseUnit")),
+                    parseLocalDate(item.get("startDate")),
+                    parseLocalDate(item.get("stopDate")),
+                    textOrNull(item.get("timingNote")),
+                    parsePositiveInt(item.get("courseDays")),
+                    item.path("hasAdverseReaction").asBoolean(false),
+                    textOrNull(item.get("remark")),
+                    MedicationStatusEnum.ACTIVE.name(),
+                    textOrNull(item.get("drugCode")),
+                    parseSlots(item.get("slots")));
+            String existingId = textOrNull(item.get("id"));
+            if (StringUtils.hasText(existingId)) {
+                try {
+                    medicationService.update(tenantId, orgId, peopleId, staffId, existingId, cmd);
+                    continue;
+                } catch (BusinessException ex) {
+                    // id 失效则新建
+                }
+            }
+            medicationService.create(
+                    tenantId,
+                    orgId,
+                    peopleId,
+                    staffId,
+                    cmd,
+                    MedicationSourceEnum.INTAKE.name(),
+                    null);
+        }
+    }
+
+    /**
+     * 过敏：先写食物/药物明细（条目同步会把档案标成 HAS），再写 NKA/UNKNOWN 状态。
+     * HAS 不可经 setStatus 直写；无明细时仅保留答题，不改档案。
+     */
+    private void writeAllergies(
+            QuestionnaireResponse row, ObjectNode answers, Set<String> filter, FieldWriteSource source) {
+        Function<String, JsonNode> lookup = answersLookup(answers);
+        boolean touchFood = filter == null || filter.contains(FIELD_ALLERGY_FOOD);
+        boolean touchDrug = filter == null || filter.contains(FIELD_ALLERGY_DRUG);
+        boolean touchStatus = filter == null || filter.contains(FIELD_ALLERGY_STATUS);
+        if (touchFood && isVisible(row, FIELD_ALLERGY_FOOD, lookup)) {
+            writeAllergyItems(row, answers.get(FIELD_ALLERGY_FOOD), AllergyCategoryEnum.FOOD, source);
+        }
+        if (touchDrug && isVisible(row, FIELD_ALLERGY_DRUG, lookup)) {
+            writeAllergyItems(row, answers.get(FIELD_ALLERGY_DRUG), AllergyCategoryEnum.DRUG, source);
+        }
+        if (touchStatus && isVisible(row, FIELD_ALLERGY_STATUS, lookup)) {
+            writeAllergyStatus(row, answers.get(FIELD_ALLERGY_STATUS), source);
+        }
+    }
+
+    private void writeAllergyItems(
+            QuestionnaireResponse row, JsonNode value, AllergyCategoryEnum category, FieldWriteSource source) {
+        if (value == null || value.isNull() || value.isMissingNode() || ArchiveFields.isEmpty(value)) {
+            return;
+        }
+        if (!value.isArray()) {
+            return;
+        }
+        String staffId = source.updatedById();
+        String orgId = row.getOrgId();
+        String tenantId = row.getTenantId();
+        String peopleId = row.getPeopleId();
+        for (JsonNode item : value) {
+            if (item == null || !item.isObject()) {
+                continue;
+            }
+            AllergyCommand cmd = toAllergyCommand(item, category);
+            if (cmd == null) {
+                continue;
+            }
+            String existingId = textOrNull(item.get("id"));
+            if (StringUtils.hasText(existingId)) {
+                try {
+                    allergyService.updateByStaff(tenantId, orgId, peopleId, staffId, existingId, cmd);
+                    continue;
+                } catch (BusinessException ex) {
+                    // id 失效则新建
+                }
+            }
+            allergyService.createByStaff(tenantId, orgId, peopleId, staffId, cmd);
+        }
+    }
+
+    private AllergyCommand toAllergyCommand(JsonNode item, AllergyCategoryEnum category) {
+        String allergenName = textOrNull(item.get("allergenName"));
+        if (!StringUtils.hasText(allergenName)) {
+            allergenName = textOrNull(item.get("name"));
+        }
+        if (!StringUtils.hasText(allergenName) && !StringUtils.hasText(textOrNull(item.get("allergenCode")))) {
+            return null;
+        }
+        String allergyType = textOrNull(item.get("allergyType"));
+        if (!StringUtils.hasText(allergyType)) {
+            allergyType = "ALLERGY";
+        }
+        String severity = textOrNull(item.get("severity"));
+        if (!StringUtils.hasText(severity)) {
+            severity = "UNKNOWN";
+        }
+        String clinicalStatus = textOrNull(item.get("clinicalStatus"));
+        if (!StringUtils.hasText(clinicalStatus)) {
+            clinicalStatus = "ACTIVE";
+        }
+        String verification = textOrNull(item.get("verification"));
+        if (!StringUtils.hasText(verification)) {
+            verification = "CONFIRMED";
+        }
+        return new AllergyCommand(
+                category.name(),
+                textOrNull(item.get("allergenCode")),
+                allergenName == null ? null : allergenName.trim(),
+                allergyType.trim(),
+                parseStringList(item.get("reactions")),
+                textOrNull(item.get("reactionNote")),
+                severity.trim(),
+                clinicalStatus.trim(),
+                verification.trim(),
+                textOrNull(item.get("onsetText")),
+                parseLocalDate(item.get("lastOccurrence")),
+                textOrNull(item.get("note")));
+    }
+
+    private void writeAllergyStatus(QuestionnaireResponse row, JsonNode value, FieldWriteSource source) {
+        if (value == null || value.isNull() || value.isMissingNode() || ArchiveFields.isEmpty(value)) {
+            return;
+        }
+        String status = value.asText("").trim().toUpperCase(java.util.Locale.ROOT);
+        if (!StringUtils.hasText(status)) {
+            return;
+        }
+        // HAS 由条目写入后 syncProfile 标记；setStatus 禁止直写 HAS
+        if (AllergyStatusEnum.HAS.name().equals(status)) {
+            return;
+        }
+        if (!AllergyStatusEnum.NKA.name().equals(status) && !AllergyStatusEnum.UNKNOWN.name().equals(status)) {
+            return;
+        }
+        try {
+            allergyService.setStatusByStaff(
+                    row.getTenantId(), row.getOrgId(), row.getPeopleId(), source.updatedById(), status);
+        } catch (BusinessException ex) {
+            // 仍有生效条目时无法标 NKA：保留条目，不阻断整份问卷提交
+            if (!AllergyStatusEnum.NKA.name().equals(status)) {
+                throw ex;
+            }
+        }
+    }
+
+    private static List<String> parseStringList(JsonNode n) {
+        if (n == null || n.isNull() || !n.isArray() || n.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (JsonNode s : n) {
+            if (s != null && StringUtils.hasText(s.asText())) {
+                out.add(s.asText().trim());
+            }
+        }
+        return out;
+    }
+
+    private static LocalDate parseLocalDate(JsonNode n) {
+        if (n == null || n.isNull() || !StringUtils.hasText(n.asText())) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(n.asText().trim());
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private static Integer parsePositiveInt(JsonNode n) {
+        if (n == null || n.isNull() || n.isMissingNode()) {
+            return null;
+        }
+        int v = n.isNumber() ? n.asInt() : 0;
+        if (!n.isNumber()) {
+            try {
+                v = Integer.parseInt(n.asText().trim());
+            } catch (Exception ex) {
+                return null;
+            }
+        }
+        return v > 0 ? v : null;
+    }
+
+    private static List<String> parseSlots(JsonNode n) {
+        if (n == null || n.isNull() || !n.isArray() || n.isEmpty()) {
+            return null;
+        }
+        List<String> out = new ArrayList<>();
+        for (JsonNode s : n) {
+            if (s != null && StringUtils.hasText(s.asText())) {
+                out.add(s.asText().trim());
+            }
+        }
+        return out.isEmpty() ? List.of() : out;
     }
 
     private void writeGoals(QuestionnaireResponse row, Map<String, JsonNode> goals, FieldWriteSource source) {
@@ -590,6 +860,8 @@ public class QuestionnaireResponseService {
         peopleFieldService.ensureMigrated(tenantId, peopleId);
         ObjectNode out = JsonUtils.emptyObject();
         PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        AllergySummaryDto allergySummary = null;
+        boolean allergyLoaded = false;
         for (ModuleItem item : catalog.itemsOf(q)) {
             String code = item.field();
             FieldStore store;
@@ -634,12 +906,159 @@ public class QuestionnaireResponseService {
                         out.set(code, cell);
                     }
                 }
+                case MEDICATION -> {
+                    if (!FIELD_MEDICATION_CURRENT.equals(code)) {
+                        break;
+                    }
+                    ArrayNode meds = medicationPrefillArray(tenantId, peopleId);
+                    if (!meds.isEmpty()) {
+                        cell.set("value", meds);
+                        cell.put("sourceBizCode", "MEDICATION");
+                        out.set(code, cell);
+                    }
+                }
+                case ALLERGY -> {
+                    if (!allergyLoaded) {
+                        allergySummary = allergyService.summaryForPatient(tenantId, peopleId);
+                        allergyLoaded = true;
+                    }
+                    if (FIELD_ALLERGY_STATUS.equals(code)) {
+                        // 未询问不预填，避免首诊把「未采」当成已答
+                        if (allergySummary != null
+                                && StringUtils.hasText(allergySummary.status())
+                                && !AllergyStatusEnum.UNKNOWN.name().equals(allergySummary.status())) {
+                            cell.put("value", allergySummary.status());
+                            cell.put("sourceBizCode", "ALLERGY");
+                            out.set(code, cell);
+                        }
+                    } else if (FIELD_ALLERGY_FOOD.equals(code) || FIELD_ALLERGY_DRUG.equals(code)) {
+                        String want =
+                                FIELD_ALLERGY_FOOD.equals(code)
+                                        ? AllergyCategoryEnum.FOOD.name()
+                                        : AllergyCategoryEnum.DRUG.name();
+                        ArrayNode arr = allergyPrefillArray(allergySummary, want);
+                        if (!arr.isEmpty()) {
+                            cell.set("value", arr);
+                            cell.put("sourceBizCode", "ALLERGY");
+                            out.set(code, cell);
+                        }
+                    }
+                }
                 default -> {
                     /* goal/consent 等无预填或后续补 */
                 }
             }
         }
         return out;
+    }
+
+    private ArrayNode allergyPrefillArray(AllergySummaryDto summary, String category) {
+        ArrayNode arr = JsonUtils.mapper().createArrayNode();
+        if (summary == null || summary.items() == null) {
+            return arr;
+        }
+        for (AllergyItemDto m : summary.items()) {
+            if (m == null || !category.equals(m.category()) || !StringUtils.hasText(m.allergenName())) {
+                continue;
+            }
+            ObjectNode o = JsonUtils.emptyObject();
+            o.put("id", m.id());
+            o.put("category", m.category());
+            if (StringUtils.hasText(m.allergenCode())) {
+                o.put("allergenCode", m.allergenCode());
+            }
+            o.put("allergenName", m.allergenName());
+            if (StringUtils.hasText(m.allergyType())) {
+                o.put("allergyType", m.allergyType());
+            }
+            ArrayNode reactions = o.putArray("reactions");
+            if (m.reactions() != null) {
+                for (String r : m.reactions()) {
+                    if (StringUtils.hasText(r)) {
+                        reactions.add(r);
+                    }
+                }
+            }
+            if (StringUtils.hasText(m.reactionNote())) {
+                o.put("reactionNote", m.reactionNote());
+            }
+            if (StringUtils.hasText(m.severity())) {
+                o.put("severity", m.severity());
+            }
+            if (StringUtils.hasText(m.clinicalStatus())) {
+                o.put("clinicalStatus", m.clinicalStatus());
+            }
+            if (StringUtils.hasText(m.verification())) {
+                o.put("verification", m.verification());
+            }
+            if (StringUtils.hasText(m.onsetText())) {
+                o.put("onsetText", m.onsetText());
+            }
+            if (m.lastOccurrence() != null) {
+                o.put("lastOccurrence", m.lastOccurrence().toString());
+            }
+            if (StringUtils.hasText(m.note())) {
+                o.put("note", m.note());
+            }
+            arr.add(o);
+        }
+        return arr;
+    }
+
+    private ArrayNode medicationPrefillArray(String tenantId, String peopleId) {
+        ArrayNode arr = JsonUtils.mapper().createArrayNode();
+        List<MedicationViewDto> rows =
+                medicationService.listForPatient(tenantId, peopleId, MedicationStatusEnum.ACTIVE.name());
+        for (MedicationViewDto m : rows) {
+            if (m == null || !StringUtils.hasText(m.getDrugName())) {
+                continue;
+            }
+            ObjectNode o = JsonUtils.emptyObject();
+            o.put("id", m.getId());
+            o.put("drugName", m.getDrugName());
+            if (StringUtils.hasText(m.getDrugCode())) {
+                o.put("drugCode", m.getDrugCode());
+            }
+            if (StringUtils.hasText(m.getUsageMethod())) {
+                o.put("usageMethod", m.getUsageMethod());
+            }
+            if (StringUtils.hasText(m.getFrequency())) {
+                o.put("frequency", m.getFrequency());
+            }
+            if (StringUtils.hasText(m.getDoseAmount())) {
+                o.put("doseAmount", m.getDoseAmount());
+            }
+            if (StringUtils.hasText(m.getDoseUnit())) {
+                o.put("doseUnit", m.getDoseUnit());
+            }
+            if (StringUtils.hasText(m.getTimingNote())) {
+                o.put("timingNote", m.getTimingNote());
+            }
+            if (m.getStartDate() != null) {
+                o.put("startDate", m.getStartDate().toString());
+            }
+            if (m.getStopDate() != null) {
+                o.put("stopDate", m.getStopDate().toString());
+            }
+            if (m.getCourseDays() != null && m.getCourseDays() > 0) {
+                o.put("courseDays", m.getCourseDays());
+                o.put("courseMode", "days");
+            } else {
+                o.put("courseMode", "long");
+            }
+            o.put("hasAdverseReaction", Boolean.TRUE.equals(m.getHasAdverseReaction()));
+            if (StringUtils.hasText(m.getRemark())) {
+                o.put("remark", m.getRemark());
+            }
+            if (m.getSuggestedSlots() != null && !m.getSuggestedSlots().isEmpty() && m.isSlotsCustom()) {
+                ArrayNode slots = o.putArray("slots");
+                for (String s : m.getSuggestedSlots()) {
+                    slots.add(s);
+                }
+            }
+            arr.add(o);
+        }
+        return arr;
     }
 
     private static JsonNode readProfile(PeopleProfile profile, String code) {
@@ -879,6 +1298,11 @@ public class QuestionnaireResponseService {
                         iv.setType(def.type().name());
                         iv.setUnit(def.unit());
                         iv.setOptions(def.options());
+                        iv.setMin(def.min());
+                        iv.setMax(def.max());
+                        if (def.exclusive() != null && !def.exclusive().isEmpty()) {
+                            iv.setExclusive(def.exclusive());
+                        }
                     });
                     if (it.showIf() != null) {
                         iv.setShowIf(JsonUtils.mapper().valueToTree(showIfToMap(it.showIf())));

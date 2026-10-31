@@ -23,8 +23,16 @@ class CarePlanPromptContextSupportTest {
                 """
                 {
                   "presentIllness": ["NONE", "DIABETES", "HYPERTENSION"],
-                  "diet": {"type": "OTHER", "habit": "FAIR", "preference": "火锅", "note": "111"},
-                  "exercise": {"type": "打游戏", "frequency": "NONE", "intensity": "MODERATE", "durationMin": 0}
+                  "diet": {"type": "OTHER", "habit": "FAIR", "preference": "火锅", "note": "111",
+                    "restriction": ["NO_SEAFOOD", "NONE"], "sugaryDrinks": "DAILY_1"},
+                  "exercise": {"type": "打游戏", "frequency": "NONE", "intensity": "MODERATE", "durationMin": 0},
+                  "lifestyle": {"activityLevel": "SEDENTARY", "smoking": {"status": "NEVER"}},
+                  "sleep": {"hours": 6, "lateNight": "MOST_DAYS"},
+                  "psych": {"stressLevel": "HIGH", "bodyAnxiety": "SEVERE"},
+                  "medical": {"exerciseRestriction": ["DOCTOR_LIMIT", "NONE"], "jointIssues": ["KNEE"]},
+                  "women": {"reproductiveStatus": "NONE"},
+                  "weightHistory": {"triedBefore": "MULTIPLE", "expectedPace": "ASAP"},
+                  "medicationFlags": ["ANTIHYPERTENSIVE", "NONE"]
                 }
                 """);
         JsonNode basic = CarePlanPromptContextSupport.summarizeBasicArchive(content);
@@ -32,8 +40,20 @@ class CarePlanPromptContextSupportTest {
         assertThat(basic.path("presentIllnessLabels").toString()).contains("糖尿病", "高血压");
         assertThat(basic.path("diet").path("typeLabel").asText()).isEqualTo("其他");
         assertThat(basic.path("diet").path("habitLabel").asText()).isEqualTo("一般");
+        assertThat(basic.path("diet").path("sugaryDrinksLabel").asText()).contains("每天");
+        assertThat(basic.path("diet").path("restrictionLabels").toString()).contains("不吃海鲜");
+        assertThat(basic.path("diet").path("restriction").toString()).doesNotContain("NONE");
         assertThat(basic.path("exercise").path("frequencyLabel").asText()).isEqualTo("基本不运动");
         assertThat(basic.path("exercise").path("intensityLabel").asText()).isEqualTo("中度");
+        assertThat(basic.path("lifestyle").path("activityLevelLabel").asText()).contains("久坐");
+        assertThat(basic.path("lifestyle").path("smoking").path("statusLabel").asText()).isEqualTo("从不");
+        assertThat(basic.path("sleep").path("lateNightLabel").asText()).contains("大多数");
+        assertThat(basic.path("psych").path("stressLevelLabel").asText()).contains("压力");
+        assertThat(basic.path("psych").path("bodyAnxietyLabel").asText()).contains("经常");
+        assertThat(basic.path("medical").path("jointIssuesLabels").toString()).contains("膝");
+        assertThat(basic.path("women").path("reproductiveStatusLabel").asText()).isEqualTo("都没有");
+        assertThat(basic.path("weightHistory").path("triedBeforeLabel").asText()).contains("多次");
+        assertThat(basic.path("medicationFlagsLabels").toString()).contains("降压");
     }
 
     @Test

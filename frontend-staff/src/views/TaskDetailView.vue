@@ -100,7 +100,8 @@ const formTitle = computed(() => {
   if (isNudge.value) return '打卡跟进'
   if (isAlert.value) return '指标异常处理'
   if (isExercise.value) return '运动不适处理'
-  return '定期随访'
+  if (isFollowUp.value) return task.value?.taskTypeLabel || '定期随访'
+  return task.value?.taskTypeLabel || '填单'
 })
 const canProcessFlow = computed(
   () =>

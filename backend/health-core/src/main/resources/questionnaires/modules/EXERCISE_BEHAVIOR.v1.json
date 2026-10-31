@@ -2,7 +2,7 @@
   "code": "EXERCISE_BEHAVIOR",
   "version": 1,
   "title": "运动行为",
-  "script": "平时运动多吗？哪个时间段比较方便？我们按您的时间来排。",
+  "script": "平时有运动习惯吗？哪个时间段对您比较方便？我们尽量按您的节奏来安排，不强求一下子做很多。",
   "items": [
     {
       "field": "basic.exercise.frequency",

@@ -1920,6 +1920,9 @@ onBeforeUnmount(() => {
               :type="f.type"
               :unit="f.unit"
               :options="f.options"
+              :min="f.min"
+              :max="f.max"
+              :exclusive="f.exclusive"
               :model-value="extraAnswers[f.field]"
               @update:model-value="(v) => (extraAnswers[f.field] = v)"
             />
@@ -1940,6 +1943,9 @@ onBeforeUnmount(() => {
               :type="f.type"
               :unit="f.unit"
               :options="f.options"
+              :min="f.min"
+              :max="f.max"
+              :exclusive="f.exclusive"
               :model-value="extraAnswers[f.field]"
               @update:model-value="(v) => (extraAnswers[f.field] = v)"
             />
@@ -1959,6 +1965,9 @@ onBeforeUnmount(() => {
               :type="f.type"
               :unit="f.unit"
               :options="f.options"
+              :min="f.min"
+              :max="f.max"
+              :exclusive="f.exclusive"
               :model-value="extraAnswers[f.field]"
               @update:model-value="(v) => (extraAnswers[f.field] = v)"
             />

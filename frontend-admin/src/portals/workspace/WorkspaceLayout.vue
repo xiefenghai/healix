@@ -56,11 +56,16 @@ const orgSwitchable = computed(() => {
   return !!getCurrentOrgId()
 })
 const isCockpit = computed(() => route.path.startsWith('/workspace/cockpit'))
-const isIntakeWorkspace = computed(() => /\/workspace\/patients\/[^/]+\/intake(?:\/|$)/.test(route.path))
+const isIntakeWorkspace = computed(
+  () =>
+    /\/workspace\/patients\/[^/]+\/intake(?:\/|$)/.test(route.path) ||
+    /\/workspace\/intake-responses\/[^/]+/.test(route.path),
+)
 const hideSiderEffective = computed(() => hideSider.value || isIntakeWorkspace.value)
 const flushContent = computed(() => isCockpit.value || isIntakeWorkspace.value)
 
 const pageTitle = computed(() => {
+  if (/\/workspace\/intake-responses\//.test(route.path)) return '首诊详情'
   if (isIntakeWorkspace.value) return '首诊问卷'
   if (route.path.startsWith('/workspace/cockpit')) return '智能驾驶舱'
   if (route.path.startsWith('/workspace/tasks')) return '工作台任务'

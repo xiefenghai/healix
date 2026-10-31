@@ -8,21 +8,27 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { debounce } from '../../shared/debounce'
 import {
   calcBmi,
+  FIELD_STAFF_AI_SUMMARY,
   collectLocalHighlights,
   formatAnswerBrief,
+  formatIntakeAiSummaryText,
   formatPrefillSource,
+  generateIntakeAiSummary,
   isAnswerEmpty,
+  loadIntakeOptionMaps,
   matchShowIf,
   mergePrefillIntoAnswers,
   openIntake,
   openIntakeSupplement,
   saveIntakeDraft,
+  severityLabel,
   submitIntake,
   valuesEqual,
   type IntakeCompleteness,
   type IntakeHighlightHit,
   type IntakeItemView,
   type IntakeModuleView,
+  type IntakeOptionMaps,
   type IntakePrefillCell,
   type IntakeProgramCode,
   type QuestionnaireResponseView,
@@ -52,6 +58,7 @@ const programCode = ref<IntakeProgramCode>('WEIGHT_LOSS')
 const quickMode = ref(true)
 const activeModule = ref('')
 const modules = ref<IntakeModuleView[]>([])
+const optionMaps = ref<IntakeOptionMaps>({})
 const prefill = ref<Record<string, IntakePrefillCell>>({})
 const answers = reactive<Record<string, unknown>>({})
 const completeness = ref<IntakeCompleteness>({})
@@ -59,6 +66,14 @@ const serverHighlights = ref<IntakeHighlightHit[]>([])
 const summaryOpen = ref(false)
 const riskAck = ref(false)
 const hydrated = ref(false)
+const aiSummaryGenerating = ref(false)
+const aiSummaryMeta = ref<{ fromLlm: boolean; note?: string | null } | null>(null)
+const aiSummaryExtras = ref<{
+  keyPoints: string[]
+  risks: string[]
+  nextActions: string[]
+} | null>(null)
+let aiSummaryAutoTried = false
 
 const fieldLabelMap = computed(() => {
   const m = new Map<string, string>()
@@ -68,13 +83,26 @@ const fieldLabelMap = computed(() => {
   return m
 })
 
+const fieldItemMap = computed(() => {
+  const m = new Map<string, IntakeItemView>()
+  for (const mod of modules.value) {
+    for (const it of mod.items) m.set(it.field, it)
+  }
+  return m
+})
+
 function labelOf(field: string) {
   return fieldLabelMap.value.get(field) || field
 }
 
+function displayAnswer(field: string, value: unknown) {
+  return formatAnswerBrief(value, fieldItemMap.value.get(field), optionMaps.value)
+}
+
 function levelAllowed(level: string) {
   if (!quickMode.value) return true
-  return level === 'REQUIRED' || level === 'FIRST_VISIT'
+  // 健管师补充 / AI 总结在精简模式下仍展示
+  return level === 'REQUIRED' || level === 'FIRST_VISIT' || level === 'STAFF'
 }
 
 function itemVisible(item: IntakeItemView) {
@@ -149,6 +177,50 @@ function goNextModule() {
   if (i >= 0 && i < visibleModules.value.length - 1) {
     activeModule.value = visibleModules.value[i + 1].code
   }
+}
+
+async function runAiSummary(force = false) {
+  if (!responseId.value || status.value !== 'DRAFT' || aiSummaryGenerating.value) return
+  if (!force && !isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) return
+  aiSummaryGenerating.value = true
+  try {
+    const draft = await generateIntakeAiSummary(responseId.value, { ...answers })
+    answers[FIELD_STAFF_AI_SUMMARY] = formatIntakeAiSummaryText(draft)
+    aiSummaryMeta.value = { fromLlm: draft.fromLlm, note: draft.note }
+    aiSummaryExtras.value = {
+      keyPoints: draft.keyPoints || [],
+      risks: draft.risks || [],
+      nextActions: draft.nextActions || [],
+    }
+    scheduleSave()
+    if (draft.note) ElMessage.info(draft.note)
+    else if (draft.fromLlm) ElMessage.success('已生成 AI 总结，可继续修改')
+    else ElMessage.warning('已生成模板总结，建议润色后提交')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '生成总结失败')
+  } finally {
+    aiSummaryGenerating.value = false
+  }
+}
+
+watch(activeModule, (code) => {
+  if (code !== 'INTAKE_AI_SUMMARY' || status.value !== 'DRAFT') return
+  if (aiSummaryAutoTried) return
+  if (!isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) return
+  aiSummaryAutoTried = true
+  void runAiSummary(false)
+})
+
+function isInternalScript(script?: string | null) {
+  const s = (script || '').trim()
+  return s.startsWith('【内部】') || s.startsWith('（不对客户说）')
+}
+
+function displayScript(script?: string | null) {
+  const s = (script || '').trim()
+  if (s.startsWith('【内部】')) return s.replace(/^【内部】\s*/, '')
+  if (s.startsWith('（不对客户说）')) return s.replace(/^（不对客户说）\s*/, '') || '仅供健管师查看'
+  return s
 }
 
 const localCompleteness = computed(() => {
@@ -267,6 +339,9 @@ function applyView(view: QuestionnaireResponseView, seedAnswers: boolean) {
   prefill.value = (view.prefill || {}) as Record<string, IntakePrefillCell>
   completeness.value = view.completeness || {}
   serverHighlights.value = view.highlights || []
+  void loadIntakeOptionMaps(view.modules).then((maps) => {
+    optionMaps.value = maps
+  })
 
   if (seedAnswers) {
     const merged = mergePrefillIntoAnswers(view.answers || {}, prefill.value)
@@ -292,6 +367,9 @@ async function bootstrap() {
   if (!peopleId.value) return
   loading.value = true
   hydrated.value = false
+  aiSummaryAutoTried = false
+  aiSummaryMeta.value = null
+  aiSummaryExtras.value = null
   try {
     await loadPatientName()
     const view = isSupplement.value
@@ -408,7 +486,12 @@ async function doSubmit(conflictResolutions?: Record<string, unknown>) {
     status.value = view.status || 'SUBMITTED'
     summaryOpen.value = false
     ElMessage.success(isSupplement.value ? '待补问卷已提交' : '首诊已提交')
-    await router.push(`/workspace/patients/${peopleId.value}/assessments`)
+    // 首诊多为新标签打开：提交后关掉本页，回到原患者页签
+    await new Promise((r) => setTimeout(r, 350))
+    window.close()
+    if (!window.closed) {
+      await router.push(`/workspace/patients/${peopleId.value}/archive`)
+    }
   } catch (e) {
     const msg = (e as Error).message || '提交失败'
     if (msg.includes('冲突')) {
@@ -549,9 +632,42 @@ onBeforeUnmount(() => {
               </el-button>
             </div>
           </div>
-          <div v-if="currentModule.script" class="script">
-            <span class="script-label">沟通话术</span>
-            <p>{{ currentModule.script }}</p>
+          <div
+            v-if="currentModule.script"
+            class="script"
+            :class="{ internal: isInternalScript(currentModule.script) }"
+          >
+            <span class="script-label">
+              {{ isInternalScript(currentModule.script) ? '内部提示' : '沟通话术' }}
+            </span>
+            <p>{{ displayScript(currentModule.script) }}</p>
+          </div>
+
+          <div v-if="currentModule.code === 'INTAKE_AI_SUMMARY'" class="ai-summary-bar">
+            <div class="ai-summary-actions">
+              <el-button
+                type="primary"
+                :loading="aiSummaryGenerating"
+                :disabled="status !== 'DRAFT'"
+                @click="runAiSummary(true)"
+              >
+                {{ isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY]) ? '生成总结' : '重新生成' }}
+              </el-button>
+              <span v-if="aiSummaryMeta" class="ai-meta">
+                {{ aiSummaryMeta.fromLlm ? '来源：AI' : '来源：模板' }}
+                <template v-if="aiSummaryMeta.note"> · {{ aiSummaryMeta.note }}</template>
+              </span>
+            </div>
+            <div v-if="aiSummaryExtras?.keyPoints?.length" class="ai-chips">
+              <span class="ai-chip-label">要点</span>
+              <span v-for="(k, i) in aiSummaryExtras.keyPoints" :key="`kp-${i}`" class="ai-chip">{{ k }}</span>
+            </div>
+            <ul v-if="aiSummaryExtras?.risks?.length" class="ai-list risks">
+              <li v-for="(r, i) in aiSummaryExtras.risks" :key="`risk-${i}`">{{ r }}</li>
+            </ul>
+            <ul v-if="aiSummaryExtras?.nextActions?.length" class="ai-list next">
+              <li v-for="(a, i) in aiSummaryExtras.nextActions" :key="`act-${i}`">{{ a }}</li>
+            </ul>
           </div>
 
           <div
@@ -601,6 +717,9 @@ onBeforeUnmount(() => {
                   :type="it.type"
                   :unit="it.unit"
                   :options="it.options"
+                  :min="it.min"
+                  :max="it.max"
+                  :exclusive="it.exclusive"
                   :model-value="answers[it.field]"
                   :prefilled="isPrefillTone(it.field)"
                   :dirty="isDirty(it.field)"
@@ -669,7 +788,7 @@ onBeforeUnmount(() => {
               :class="severityClass(h.severity)"
             >
               <div class="hit-title">{{ labelOf(h.field) }}</div>
-              <div class="hit-meta">{{ h.severity || '提示' }}</div>
+              <div class="hit-meta">{{ severityLabel(h.severity) }}</div>
               <p v-if="h.followUp">{{ h.followUp }}</p>
               <p v-if="h.planEffect" class="plan">方案影响：{{ h.planEffect }}</p>
               <button type="button" class="hit-jump" @click="jumpToField(h.field)">去查看</button>
@@ -719,7 +838,7 @@ onBeforeUnmount(() => {
             <li v-for="row in changeRows" :key="row.field">
               <b>{{ row.label }}</b>
               <span class="muted">（{{ row.source }}）</span>
-              ：{{ formatAnswerBrief(row.from) }} → {{ formatAnswerBrief(row.to) }}
+              ：{{ displayAnswer(row.field, row.from) }} → {{ displayAnswer(row.field, row.to) }}
             </li>
           </ul>
           <p v-else class="ok">无相对预填的修改</p>
@@ -729,11 +848,19 @@ onBeforeUnmount(() => {
           <h4>高亮汇总</h4>
           <ul v-if="highlightHits.length">
             <li v-for="(h, i) in highlightHits" :key="`s-${h.field}-${i}`">
-              {{ labelOf(h.field) }} · {{ h.severity }}
+              {{ labelOf(h.field) }} · {{ severityLabel(h.severity) }}
               <span v-if="h.planEffect"> — {{ h.planEffect }}</span>
             </li>
           </ul>
           <p v-else class="ok">无</p>
+        </section>
+
+        <section>
+          <h4>AI 总结</h4>
+          <p v-if="!isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])" class="ai-preview">
+            {{ String(answers[FIELD_STAFF_AI_SUMMARY]) }}
+          </p>
+          <p v-else class="muted">尚未生成；可在「AI 总结」模块生成后提交，也可直接提交。</p>
         </section>
       </div>
       <template #footer>
@@ -755,8 +882,8 @@ onBeforeUnmount(() => {
 .intake {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 56px);
-  min-height: 480px;
+  height: 100%;
+  min-height: 0;
   background: var(--ink-50);
 }
 
@@ -765,24 +892,32 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 12px 16px;
+  padding: 10px 16px;
   background: #fff;
   border-bottom: 1px solid var(--ink-200);
+  flex-shrink: 0;
 }
 
 .top-left {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 180px;
+  min-width: 160px;
 }
 
 .back {
-  border: none;
-  background: transparent;
-  color: var(--ink-500);
+  border: 1px solid var(--ink-200);
+  background: #fff;
+  color: var(--ink-600);
   cursor: pointer;
   font-size: 13px;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.back:hover {
+  border-color: var(--ink-300);
+  color: var(--ink-800);
 }
 
 .who {
@@ -807,26 +942,86 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex: 1;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .mode {
-  margin-left: 4px;
+  margin-left: 0;
 }
 
-.progress {
+.pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
   font-size: 12px;
   color: var(--ink-600);
+  background: var(--ink-50);
+  border: 1px solid var(--ink-200);
+  white-space: nowrap;
+}
+
+.pill.warn {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.pill.soft {
+  color: #b45309;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.pill.pct {
+  position: relative;
+  overflow: hidden;
+  min-width: 64px;
+  justify-content: center;
+  padding: 0 12px;
+  color: var(--ink-700);
+  font-variant-numeric: tabular-nums;
+}
+
+.pct-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--brand-500) 22%, transparent);
+  pointer-events: none;
+}
+
+.pill.pct em {
+  position: relative;
+  font-style: normal;
+  font-weight: 600;
 }
 
 .top-right {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-left: auto;
 }
 
 .save {
   font-size: 12px;
   color: var(--ink-400);
+  white-space: nowrap;
+}
+
+.save.ok {
+  color: #059669;
 }
 
 .save.err {
@@ -836,15 +1031,24 @@ onBeforeUnmount(() => {
 .body {
   flex: 1;
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr) 260px;
+  grid-template-columns: 220px minmax(0, 1fr) 280px;
   min-height: 0;
 }
 
 .nav {
   overflow: auto;
-  padding: 12px 8px;
+  padding: 12px 10px;
   border-right: 1px solid var(--ink-200);
   background: #fff;
+}
+
+.nav-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-400);
+  padding: 4px 10px 10px;
 }
 
 .nav-item {
@@ -856,7 +1060,7 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 13px;
   color: var(--ink-700);
   cursor: pointer;
@@ -871,6 +1075,49 @@ onBeforeUnmount(() => {
   background: var(--brand-50);
   color: var(--brand-700);
   font-weight: 600;
+}
+
+.nav-idx {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-500);
+  background: var(--ink-100);
+  flex-shrink: 0;
+}
+
+.nav-item.on .nav-idx {
+  background: var(--brand-100);
+  color: var(--brand-700);
+}
+
+.nav-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nav-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-fill {
+  font-size: 11px;
+  color: var(--ink-400);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-item.on .nav-fill {
+  color: var(--brand-600);
 }
 
 .nav-item .dot {
@@ -901,7 +1148,39 @@ onBeforeUnmount(() => {
 
 .form {
   overflow: auto;
-  padding: 20px 24px 40px;
+  padding: 18px 24px 40px;
+  min-width: 0;
+}
+
+.form-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.form-head-text {
+  min-width: 0;
+}
+
+.mod-kicker {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--ink-400);
+}
+
+.mod-title {
+  margin: 0;
+  font-size: 18px;
+  color: var(--ink-800);
+  line-height: 1.3;
+}
+
+.form-nav {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .script {
@@ -909,50 +1188,223 @@ onBeforeUnmount(() => {
   color: var(--ink-600);
   background: #fff;
   border: 1px solid var(--ink-200);
+  border-left: 3px solid var(--brand-400);
   border-radius: 10px;
   padding: 12px 14px;
   margin-bottom: 16px;
   line-height: 1.55;
 }
 
-.mod-title {
-  margin: 0 0 14px;
-  font-size: 18px;
-  color: var(--ink-800);
+.script.internal {
+  border-left-color: #94a3b8;
+  background: #f8fafc;
+  color: var(--ink-500);
+}
+
+.script.internal .script-label {
+  color: #64748b;
+}
+
+.script-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--brand-600);
+  margin-bottom: 4px;
+}
+
+.ai-summary-bar {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--ink-200);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.ai-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.ai-meta {
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.ai-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--ink-700);
+  line-height: 1.5;
+}
+
+.ai-list.risks {
+  color: #b45309;
+}
+
+.ai-list.next {
+  color: var(--brand-700, #0f766e);
+}
+
+.ai-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.ai-chip-label {
+  font-size: 12px;
+  color: var(--ink-400);
+  margin-right: 2px;
+}
+
+.ai-chip {
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--ink-100, #f1f5f9);
+  color: var(--ink-700);
+  max-width: 100%;
+}
+
+.ai-preview {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-700);
+  max-height: 220px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.script p {
+  margin: 0;
 }
 
 .q {
   background: #fff;
   border: 1px solid var(--ink-200);
-  border-radius: 10px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 14px 14px 12px;
   margin-bottom: 10px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.q.prefill {
+  background: color-mix(in srgb, var(--ink-50) 70%, #fff);
+}
+
+.q.dirty {
+  background: #fffbeb;
+  border-color: #fde68a;
 }
 
 .q.hit {
   border-color: #f59e0b;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 35%, transparent);
 }
 
 .q.req.hit {
   border-color: #ef4444;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #ef4444 30%, transparent);
 }
 
 .q-head {
   display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.q-no {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-500);
+  background: var(--ink-100);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.q.filled .q-no {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.q-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.q-label-row {
+  display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  align-items: flex-start;
-  margin-bottom: 6px;
 }
 
 .q-label {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 560;
   color: var(--ink-800);
+  line-height: 1.4;
+}
+
+.star {
+  color: #ef4444;
+  font-style: normal;
+  margin-right: 2px;
+}
+
+.q-tags {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
+  flex-shrink: 0;
+}
+
+.tag {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: var(--ink-600);
+  background: var(--ink-100);
+  white-space: nowrap;
+}
+
+.tag-soft {
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.prefill-note {
+  font-size: 12px;
+  color: var(--ink-400);
+  display: flex;
   align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dirty-note {
+  color: #b45309;
 }
 
 .restore {
@@ -961,13 +1413,21 @@ onBeforeUnmount(() => {
   color: var(--brand-600);
   font-size: 12px;
   cursor: pointer;
+  padding: 0;
   white-space: nowrap;
 }
 
-.prefill-note {
-  font-size: 12px;
-  color: var(--ink-400);
-  margin-bottom: 6px;
+.restore:hover {
+  text-decoration: underline;
+}
+
+.form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--ink-200);
 }
 
 .side {
@@ -980,37 +1440,125 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.card {
+.panel {
   border: 1px solid var(--ink-200);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px;
+  background: #fff;
 }
 
-.card h3 {
+.panel h3 {
   margin: 0 0 10px;
   font-size: 13px;
   color: var(--ink-700);
 }
 
-.bmi {
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.panel-head h3 {
+  margin: 0;
+}
+
+.badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.bmi-panel {
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 70%);
+}
+
+.bmi-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.bmi-value {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink-800);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.bmi-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.bmi-band {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--ink-100);
+  color: var(--ink-600);
+}
+
+.bmi-band.ok {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.bmi-band.warn {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.bmi-band.danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.bmi-rows {
   margin: 0;
   display: grid;
   gap: 8px;
 }
 
-.bmi > div {
+.bmi-rows > div {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   font-size: 13px;
 }
 
-.bmi dt {
+.bmi-rows dt {
   color: var(--ink-500);
 }
 
-.bmi dd {
+.bmi-rows dd {
   margin: 0;
   color: var(--ink-800);
+  font-variant-numeric: tabular-nums;
+}
+
+.bmi-rows small {
+  color: var(--ink-400);
+  margin-left: 2px;
 }
 
 .hits {
@@ -1020,8 +1568,8 @@ onBeforeUnmount(() => {
 }
 
 .hit-card {
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: 10px;
+  padding: 10px;
   font-size: 12px;
   line-height: 1.45;
   border: 1px solid var(--ink-200);
@@ -1033,7 +1581,7 @@ onBeforeUnmount(() => {
 }
 
 .hit-card.sev-warn {
-  background: var(--amber-50);
+  background: #fffbeb;
   border-color: #fde68a;
 }
 
@@ -1048,7 +1596,12 @@ onBeforeUnmount(() => {
 
 .hit-meta {
   color: var(--ink-500);
-  margin-bottom: 4px;
+  margin: 2px 0 6px;
+}
+
+.hit-card p {
+  margin: 0 0 4px;
+  color: var(--ink-700);
 }
 
 .hit-card .plan {
@@ -1056,9 +1609,38 @@ onBeforeUnmount(() => {
   color: var(--ink-600);
 }
 
+.hit-jump {
+  margin-top: 8px;
+  border: none;
+  background: transparent;
+  color: var(--brand-600);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.hit-jump:hover {
+  text-decoration: underline;
+}
+
+.risk-panel {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.risk-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-700);
+}
+
 .muted {
+  margin: 0;
   font-size: 12px;
   color: var(--ink-400);
+  line-height: 1.5;
 }
 
 .sum section {
@@ -1092,24 +1674,35 @@ onBeforeUnmount(() => {
   font-size: inherit;
 }
 
+.link:hover {
+  text-decoration: underline;
+}
+
 .changes li {
   margin-bottom: 4px;
+}
+
+@media (max-width: 1100px) {
+  .body {
+    grid-template-columns: 190px minmax(0, 1fr) 240px;
+  }
 }
 
 @media (max-width: 960px) {
   .body {
     grid-template-columns: 1fr;
+    overflow: auto;
   }
 
   .nav,
   .side {
     border: none;
-    max-height: 200px;
+    max-height: 220px;
   }
 
   .intake {
     height: auto;
-    min-height: calc(100vh - 56px);
+    min-height: 100%;
   }
 }
 </style>

@@ -10,6 +10,9 @@ import lombok.Setter;
 @Setter
 public class IntakeStatusView {
     private boolean hasSubmitted;
+    /** 最近一次已提交首诊/补填作答 ID，供只读详情 */
+    private String latestSubmittedId;
+    private String submittedAt;
     private String questionnaireCode;
     private Integer submittedVersion;
     private int latestVersion;

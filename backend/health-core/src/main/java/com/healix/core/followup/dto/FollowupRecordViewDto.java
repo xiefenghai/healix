@@ -7,6 +7,7 @@ import lombok.Data;
 @Data
 public class FollowupRecordViewDto {
     private String id;
+    private String peopleId;
     private String recordType;
     private String recordTypeLabel;
     private String source;

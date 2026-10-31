@@ -2,7 +2,7 @@
   "code": "SLEEP_SUBSTANCE",
   "version": 1,
   "title": "睡眠与烟酒",
-  "script": "睡眠和作息对体重影响很大，简单问几句。",
+  "script": "睡眠和作息对体重和精力影响不小，想跟您简单了解几句平时几点睡、睡得怎么样。",
   "items": [
     {
       "field": "basic.lifestyle.activityLevel",

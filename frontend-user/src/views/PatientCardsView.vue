@@ -53,6 +53,10 @@ const parsedIdCard = computed(() => {
   const d = v.slice(12, 14)
   const date = new Date(Number(y), Number(m) - 1, Number(d))
   if (date.getFullYear() !== Number(y) || date.getMonth() !== Number(m) - 1 || date.getDate() !== Number(d)) return null
+  const startToday = new Date()
+  startToday.setHours(0, 0, 0, 0)
+  date.setHours(0, 0, 0, 0)
+  if (date.getTime() > startToday.getTime()) return null
   return { birthday: `${y}-${m}-${d}`, gender: Number(v[16]) % 2 === 1 ? 'MALE' : 'FEMALE' }
 })
 
@@ -160,6 +164,15 @@ async function addCard() {
   if (f.identityValue.trim() && !parsedIdCard.value) return showToast('身份证号格式不正确')
   if (!f.gender) return showToast('请选择性别')
   if (!f.birthday) return showToast('请选择出生日期')
+  {
+    const birth = new Date(f.birthday)
+    const startToday = new Date()
+    startToday.setHours(0, 0, 0, 0)
+    birth.setHours(0, 0, 0, 0)
+    if (Number.isNaN(birth.getTime()) || birth.getTime() > startToday.getTime()) {
+      return showToast('出生日期不能晚于今天')
+    }
+  }
   if (!f.relation) return showToast('请选择和账号的关系')
   const mobile = f.mobile.trim()
   if (!/^1\d{10}$/.test(mobile.replace(/\D/g, '').replace(/^86/, ''))) return showToast('请填写本人手机号')

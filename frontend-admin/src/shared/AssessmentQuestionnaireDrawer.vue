@@ -197,7 +197,7 @@ async function submit(confirmOverrides: string[] = []) {
             <el-input-number
               v-if="q.type === 'NUMBER'"
               :model-value="answers[q.field] as number | undefined"
-              :min="q.min ?? undefined"
+              :min="q.min ?? 0"
               :max="q.max ?? undefined"
               :precision="1"
               :step="1"
