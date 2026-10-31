@@ -15,6 +15,8 @@ import AssessmentResultDetail from '../../shared/AssessmentResultDetail.vue'
 import AssessmentTrendChart from '../../shared/AssessmentTrendChart.vue'
 import type { AssessmentSnapshot } from '../../shared/assessment'
 import { allergyTick } from '../../shared/allergy'
+import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
+import { openInNewTab } from '../../shared/open-route'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -321,9 +323,9 @@ function buildTags(category: AssessmentGroup['category']): HeroTag[] {
   return tags
 }
 
-/** 评估标签：未确诊病种的患病风险 */
+/** 评估标签：未患病种的患病风险 */
 const riskTags = computed(() => buildTags('RISK'))
-/** 病情标签：已确诊病种的严重等级分层 */
+/** 病情标签：已患病种的严重等级分层 */
 const conditionTags = computed(() => buildTags('SEVERITY'))
 const riskTagsAlert = computed(() => riskTags.value.some((t) => t.tone === 'danger'))
 const conditionTagsAlert = computed(() => conditionTags.value.some((t) => t.tone === 'danger'))
@@ -795,6 +797,7 @@ watch(
       loadAdherenceSummary(),
       loadAssessmentSummary(),
       loadMetricSummary(),
+      loadIntakeStatus(),
     ])
   },
   { immediate: false },
@@ -809,6 +812,17 @@ watch(activeTab, (tab, prev) => {
   }
 })
 
+const intakeStatus = ref<IntakeStatusView | null>(null)
+
+async function loadIntakeStatus() {
+  if (!peopleId.value) return
+  try {
+    intakeStatus.value = await getIntakeStatus(peopleId.value)
+  } catch {
+    intakeStatus.value = null
+  }
+}
+
 onMounted(async () => {
   setArchiveCompletenessRefresh(() => {
     void loadCompleteness()
@@ -820,6 +834,7 @@ onMounted(async () => {
     loadAdherenceSummary(),
     loadAssessmentSummary(),
     loadMetricSummary(),
+    loadIntakeStatus(),
   ])
 })
 
@@ -848,6 +863,26 @@ onBeforeUnmount(() => {
           <h1 class="hero-name">
             {{ patient?.displayName || '患者' }}
             <button type="button" class="text-btn" @click="openBasicInfoEdit">编辑资料</button>
+            <button
+              type="button"
+              class="text-btn"
+              @click="openInNewTab(router, `/workspace/patients/${peopleId}/intake`)"
+            >
+              {{ intakeStatus?.hasSubmitted ? '再次首诊' : '开始首诊' }}
+            </button>
+            <button
+              v-if="intakeStatus && intakeStatus.hasSubmitted && intakeStatus.pendingCount > 0"
+              type="button"
+              class="text-btn pending"
+              @click="
+                openInNewTab(router, {
+                  path: `/workspace/patients/${peopleId}/intake`,
+                  query: { purpose: 'SUPPLEMENT' },
+                })
+              "
+            >
+              {{ intakeStatus.pendingCount }} 项待补
+            </button>
           </h1>
 
           <dl class="hero-fields">
@@ -905,7 +940,7 @@ onBeforeUnmount(() => {
 
           <div v-if="assessmentOverview" class="eval-block">
             <div class="eval-row">
-              <div class="eval-label risk" :class="{ alert: riskTagsAlert }" title="未确诊病种的患病风险评估">
+              <div class="eval-label risk" :class="{ alert: riskTagsAlert }" title="未患病种的患病风险评估">
                 <span v-if="riskTagsAlert" class="eval-dot" aria-hidden="true" />
                 评估标签
               </div>
@@ -933,7 +968,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="eval-row">
-              <div class="eval-label cond" :class="{ alert: conditionTagsAlert }" title="已确诊病种的严重等级分层">
+              <div class="eval-label cond" :class="{ alert: conditionTagsAlert }" title="已患病种的严重等级分层">
                 <span v-if="conditionTagsAlert" class="eval-dot" aria-hidden="true" />
                 病情标签
               </div>
@@ -957,7 +992,7 @@ onBeforeUnmount(() => {
                     ?
                   </button>
                 </span>
-                <span v-if="!conditionTags.length" class="eval-empty">暂无确诊病种</span>
+                <span v-if="!conditionTags.length" class="eval-empty">暂无已患病种</span>
               </div>
             </div>
           </div>
@@ -1634,6 +1669,10 @@ onBeforeUnmount(() => {
 
 .text-btn:hover {
   text-decoration: underline;
+}
+
+.text-btn.pending {
+  color: #c2410c;
 }
 
 /* ── Summary strip ────────────────────────────────── */

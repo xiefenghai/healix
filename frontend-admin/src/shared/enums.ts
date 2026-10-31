@@ -22,6 +22,7 @@ export const TenantStatus = {
 export const StaffRole = {
   TENANT_ADMIN: 'TENANT_ADMIN',
   CARE_MANAGER: 'CARE_MANAGER',
+  NUTRITIONIST: 'NUTRITIONIST',
   DOCTOR: 'DOCTOR',
   TENANT_OPERATOR: 'TENANT_OPERATOR',
 } as const
@@ -48,6 +49,7 @@ const TENANT_STATUS_LABELS: Record<string, string> = {
 const ROLE_LABELS: Record<string, string> = {
   TENANT_ADMIN: '租户管理员',
   CARE_MANAGER: '健管师',
+  NUTRITIONIST: '营养师',
   DOCTOR: '医生',
   TENANT_OPERATOR: '运营',
   ORG_ADMIN: '机构管理员（已废弃）',
@@ -108,6 +110,7 @@ export const ENABLE_STATUS_OPTIONS = [
 /** 机构工作台可新开的医护角色 */
 export const ORG_CLINICAL_ROLE_OPTIONS = [
   { label: ROLE_LABELS.CARE_MANAGER, value: StaffRole.CARE_MANAGER },
+  { label: ROLE_LABELS.NUTRITIONIST, value: StaffRole.NUTRITIONIST },
   { label: ROLE_LABELS.DOCTOR, value: StaffRole.DOCTOR },
 ]
 

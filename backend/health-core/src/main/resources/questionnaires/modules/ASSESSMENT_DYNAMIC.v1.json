@@ -1,0 +1,8 @@
+{
+  "code": "ASSESSMENT_DYNAMIC",
+  "version": 1,
+  "title": "评估补填",
+  "script": "根据评估还缺的信息，补问下面几题。",
+  "dynamic": true,
+  "items": []
+}

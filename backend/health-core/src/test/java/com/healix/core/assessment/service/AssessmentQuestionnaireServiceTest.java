@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -71,7 +71,7 @@ class AssessmentQuestionnaireServiceTest {
     @Test
     void answerTextUsesOptionLabels() {
         assertEquals("糖尿病、高血压",
-                AssessmentQuestionnaireService.answerText(InputField.FAMILY_HISTORY, List.of("FH_DIABETES", "FH_HYPERTENSION")));
-        assertEquals("170 cm", AssessmentQuestionnaireService.answerText(InputField.HEIGHT, new BigDecimal("170.0")));
+                AssessmentQuestionnaireService.answerText(AssessmentFields.FAMILY_HISTORY, List.of("FH_DIABETES", "FH_HYPERTENSION")));
+        assertEquals("170 cm", AssessmentQuestionnaireService.answerText(AssessmentFields.HEIGHT, new BigDecimal("170.0")));
     }
 }

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.consent.mapper.PeopleConsentMapper">
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, consent_code, given, method,
+        source_ref_id, recorded_by_type, recorded_by_id, recorded_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+    <select id="findByPeopleAndCode" resultType="com.healix.core.consent.domain.PeopleConsent">
+        SELECT <include refid="cols"/> FROM people_consent
+        WHERE people_id = #{peopleId} AND consent_code = #{consentCode} AND is_deleted = 0
+        LIMIT 1
+    </select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_consent(
+            id, tenant_id, org_id, people_id, consent_code, given, method,
+            source_ref_id, recorded_by_type, recorded_by_id, recorded_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{consentCode}, #{given}, #{method},
+            #{sourceRefId}, #{recordedByType}, #{recordedById}, #{recordedAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+    <update id="update">
+        UPDATE people_consent SET
+            given = #{given},
+            method = #{method},
+            source_ref_id = #{sourceRefId},
+            recorded_by_type = #{recordedByType},
+            recorded_by_id = #{recordedById},
+            recorded_at = #{recordedAt},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

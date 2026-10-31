@@ -1,10 +1,13 @@
 package com.healix.core.careplan.template;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
+import com.healix.core.careplan.guideline.GuidelineCheck;
+import com.healix.core.careplan.guideline.GuidelineMatch;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.support.CarePlanContextService.MetricBrief;
@@ -32,7 +35,8 @@ public class CarePlanTemplateRegistry {
             boolean contextIncomplete,
             /** 专项类型与档案确诊不符（原 noDiseaseTag 语义已废弃） */
             boolean specialtyMismatch,
-            boolean hypoglycemiaRisk) {
+            boolean hypoglycemiaRisk,
+            GuidelineMatch guidelines) {
 
         /** @deprecated 使用 {@link #specialtyMismatch()} */
         @Deprecated
@@ -89,6 +93,8 @@ public class CarePlanTemplateRegistry {
                 CarePlanRationaleSupport.defaultOverview(templateKey, specialtyMismatch),
                 "diseaseArchive",
                 "template");
+        GuidelineMatch guidelines = ctx == null || ctx.guidelines() == null ? GuidelineMatch.DISABLED : ctx.guidelines();
+        GuidelineCheck.attachTemplateRefs(exercise, diet, execution, guidelines);
 
         return new GeneratedPlan(
                 templateKey,
@@ -99,7 +105,8 @@ public class CarePlanTemplateRegistry {
                 snapshot,
                 incomplete,
                 specialtyMismatch,
-                hypo);
+                hypo,
+                guidelines);
     }
 
     private static int walkDurationMin(CarePlanTemplateKeyEnum key, boolean hypoRisk) {
@@ -353,18 +360,42 @@ public class CarePlanTemplateRegistry {
                     MetricTaskRules.REF_BP,
                     "档案含高血压，叠加家庭血压监测"));
         }
-        if (flags.obesity()) {
+        if (flags.obesity() || key == CarePlanTemplateKeyEnum.OBESITY) {
+            boolean weeklyWeigh = preferWeeklyWeigh(ctx);
             tasks.add(task(
                     "WEIGHT_LOG",
-                    "记录体重",
+                    weeklyWeigh ? "每周记录体重" : "记录体重",
                     "OTHER",
-                    "QD",
+                    weeklyWeigh ? "QW" : "QD",
                     "MORNING",
                     MetricTaskRules.REF_WEIGHT,
-                    "档案含肥胖，每日记录体重"));
+                    weeklyWeigh
+                            ? "进食障碍/身材焦虑等高亮命中：称重改为每周"
+                            : (flags.obesity() ? "档案含肥胖，每日记录体重" : "减重管理：每日记录体重")));
         }
         exec.put("rationale", "执行清单含基础生活任务，并按档案病种标签叠加监测");
         return exec;
+    }
+
+    /** 首诊高亮或 goals.weighFrequency=WEEKLY 时改为每周称重。 */
+    private static boolean preferWeeklyWeigh(CarePlanContext ctx) {
+        if (ctx == null || ctx.snapshot() == null) {
+            return false;
+        }
+        JsonNode goals = ctx.snapshot().get("goals");
+        if (goals != null && "WEEKLY".equalsIgnoreCase(goals.path("weighFrequency").asText(""))) {
+            return true;
+        }
+        JsonNode highlights = ctx.snapshot().get("highlights");
+        if (highlights != null && highlights.isArray()) {
+            for (JsonNode h : highlights) {
+                String field = h.path("field").asText("");
+                if (field.contains("eatingDisorder") || field.contains("bodyAnxiety")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static Double weightKg(CarePlanContext ctx) {

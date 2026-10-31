@@ -11,6 +11,9 @@ management:
     enabled: false
 
 healix:
+  guideline:
+    # 开发环境让未审定的种子条目进匹配，便于联调；生产只用已审定条目
+    allow-draft: ${GUIDELINE_ALLOW_DRAFT:true}
   sms:
     # 开发环境没有短信服务商，验证码固定为 123456。生产环境不要配置此项。
     mock-code: "123456"

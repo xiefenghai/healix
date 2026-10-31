@@ -13,7 +13,11 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-const WORDS = ['处方', '诊断', '医嘱', '确诊', '治疗方案', '开药', '疗效', '治愈', '根治', '病历']
+const WORDS = [
+  '处方', '诊断', '医嘱', '确诊', '治疗方案', '开药', '疗效', '治愈', '根治', '病历',
+  // 依据库只代表「参照公开指南」，不得包装成专家/医生背书
+  '专家认证', '医生制定', '权威认证',
+]
 
 /** 同一分句内、词之前出现这些，视为否定 / 免责语境（「不构成医学诊断或处方」） */
 const NEGATIONS = ['不做', '不构成', '非', '不要', '不得', '禁止', '避免', '不替代', '不给', '不涉及', '不提供', '不作', '不开', '并非', '不能', '勿']
@@ -26,6 +30,8 @@ const ALLOW_FILES = new Map([
   ['backend/health-agent/src/main/java/com/healix/agent/gateway/StaffAgentGateway.java', '意图识别关键词（输入侧）'],
   ['backend/health-agent/src/main/java/com/healix/agent/careplan/CarePlanLlmGenerator.java', '健管师指令中的约束识别关键词（输入侧）'],
   ['backend/health-core/src/main/java/com/healix/core/compliance/ComplianceText.java', 'AI 输出过滤词表本身'],
+  ['backend/health-agent/src/main/java/com/healix/agent/extract/ChatScreenshotDetector.java', '截图单据识别关键词（输入侧）'],
+  ['backend/health-core/src/main/java/com/healix/core/assessment/catalog/InputField.java', '问卷询问患者既往被诊断情况（输入侧）'],
 ])
 
 const SCAN_ROOTS = [

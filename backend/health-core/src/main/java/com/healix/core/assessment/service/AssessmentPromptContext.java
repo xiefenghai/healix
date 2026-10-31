@@ -12,6 +12,9 @@ import com.healix.core.assessment.domain.PeopleAssessmentLatest;
 import com.healix.core.assessment.domain.PeopleAssessmentSnapshot;
 import com.healix.core.assessment.mapper.AssessmentStoreMapper;
 import com.healix.core.assessment.mapper.PeopleAssessmentSnapshotMapper;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -53,6 +56,20 @@ public class AssessmentPromptContext {
                     }
                 }
             }
+        }
+        return out;
+    }
+
+    /** 各病种当前统一等级（取该病种各引擎最高），键为大写病种编码。 */
+    public Map<String, AssessmentTier> tiersByDisease(String tenantId, String peopleId) {
+        Map<String, AssessmentTier> out = new LinkedHashMap<>();
+        for (PeopleAssessmentLatest row : storeMapper.listLatest(tenantId, peopleId)) {
+            AssessmentTier tier = AssessmentTier.parse(row.getTier());
+            if (!row.effective() || !AssessmentStatus.COMPLETE.name().equals(row.getStatus()) || tier == null
+                    || !StringUtils.hasText(row.getDiseaseCode())) {
+                continue;
+            }
+            out.merge(row.getDiseaseCode().trim().toUpperCase(Locale.ROOT), tier, AssessmentTier::max);
         }
         return out;
     }

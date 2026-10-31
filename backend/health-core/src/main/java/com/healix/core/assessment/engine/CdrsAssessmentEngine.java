@@ -12,7 +12,7 @@ import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentEngineCode;
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentResult;
 import com.healix.core.assessment.support.AssessmentResult.Dimension;
@@ -25,7 +25,6 @@ import com.healix.core.assessment.support.RuleSheet;
 import com.healix.core.assessment.support.RuleSheet.Section;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -40,15 +39,16 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
 
     public static final String RULE_PACK = "CDRS-2020.3";
     private static final GuidelineRef GUIDELINE = new GuidelineRef("中国2型糖尿病防治指南", "2020", 2020);
-    private static final Set<InputField> REQUIRED = EnumSet.of(
-            InputField.GENDER, InputField.BIRTHDAY, InputField.HEIGHT, InputField.WEIGHT,
-            InputField.WAIST, InputField.BLOOD_PRESSURE, InputField.FAMILY_HISTORY);
-    private static final Set<InputField> INPUTS = EnumSet.of(
-            InputField.GENDER, InputField.BIRTHDAY, InputField.HEIGHT, InputField.WEIGHT, InputField.WAIST,
-            InputField.BLOOD_PRESSURE, InputField.FAMILY_HISTORY, InputField.GLUCOSE, InputField.HBA1C,
-            InputField.LIPIDS, InputField.EXERCISE, InputField.PRESENT_ILLNESS, InputField.PREDIABETES,
-            InputField.GDM_HISTORY, InputField.STEROID_DIABETES, InputField.PCOS, InputField.ACANTHOSIS,
-            InputField.PSYCH_DRUGS, InputField.ANTIHYPERTENSIVE, InputField.STATIN);
+    private static final Set<String> REQUIRED = Set.of(
+            AssessmentFields.GENDER, AssessmentFields.BIRTHDAY, AssessmentFields.HEIGHT, AssessmentFields.WEIGHT,
+            AssessmentFields.WAIST, AssessmentFields.BLOOD_PRESSURE_SYS, AssessmentFields.BLOOD_PRESSURE_DIA,
+            AssessmentFields.FAMILY_HISTORY);
+    private static final Set<String> INPUTS = Set.of(
+            AssessmentFields.GENDER, AssessmentFields.BIRTHDAY, AssessmentFields.HEIGHT, AssessmentFields.WEIGHT, AssessmentFields.WAIST,
+            AssessmentFields.BLOOD_PRESSURE_SYS, AssessmentFields.BLOOD_PRESSURE_DIA, AssessmentFields.FAMILY_HISTORY,
+            AssessmentFields.GLUCOSE, AssessmentFields.HBA1C, AssessmentFields.TC, AssessmentFields.TG, AssessmentFields.LDL_C,
+            AssessmentFields.HDL_C, AssessmentFields.EXERCISE, AssessmentFields.PRESENT_ILLNESS, AssessmentFields.GDM_HISTORY,
+            AssessmentFields.STEROID_DIABETES, AssessmentFields.ACANTHOSIS, AssessmentFields.MEDICATION_FLAGS);
 
     @Override
     public String code() {
@@ -89,12 +89,12 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
     }
 
     @Override
-    public Set<InputField> inputs() {
+    public Set<String> inputs() {
         return INPUTS;
     }
 
     @Override
-    public Set<InputField> requiredInputs() {
+    public Set<String> requiredInputs() {
         return REQUIRED;
     }
 
@@ -197,18 +197,18 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
         return new Suspicion(
                 AssessmentDisease.DIABETES.code(),
                 AssessmentDisease.DIABETES.label(),
-                String.join("、", hits) + "，疑似已患糖尿病，建议确诊并建立糖尿病档案");
+                String.join("、", hits) + "，疑似已患糖尿病，建议就医确认并建立糖尿病档案");
     }
 
     static FactorCollector highRiskFactors(AssessmentContext ctx) {
         FactorCollector c = new FactorCollector("DM_HIGH_RISK", "糖尿病高危人群因素");
         Integer age = ctx.getAgeYears();
         if (age == null) {
-            c.unchecked(InputField.BIRTHDAY, "年龄≥40岁");
+            c.unchecked(AssessmentFields.BIRTHDAY, "年龄≥40岁");
         } else if (age >= 40) {
             c.hit("AGE_GE_40", "年龄≥40岁", age + " 岁", SRC_ARCHIVE);
         }
-        c.check(ctx.prediabetes(), InputField.PREDIABETES, "PREDIABETES", "糖尿病前期史", null, SRC_ARCHIVE);
+        c.check(ctx.prediabetes(), AssessmentFields.PRESENT_ILLNESS, "PREDIABETES", "糖尿病前期史", null, SRC_ARCHIVE);
 
         boolean bmi24 = Fmt.ge(ctx.getBmi(), "24");
         Boolean central = ctx.centralObesity();
@@ -217,13 +217,13 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
                     + (Boolean.TRUE.equals(central) ? (bmi24 ? "；" : "") + "腰围 " + Fmt.num(ctx.getWaistCm()) + " cm" : "");
             c.hit("OVERWEIGHT_OR_CENTRAL", "超重/肥胖或中心性肥胖", detail, SRC_METRIC);
         } else if (ctx.getBmi() == null && central == null) {
-            c.unchecked(InputField.WEIGHT, "超重/肥胖或中心性肥胖");
+            c.unchecked(AssessmentFields.WEIGHT, "超重/肥胖或中心性肥胖");
         }
-        c.check(ctx.sedentary(), InputField.EXERCISE, "SEDENTARY", "久坐少动", "基本不运动", SRC_ARCHIVE);
+        c.check(ctx.sedentary(), AssessmentFields.EXERCISE, "SEDENTARY", "久坐少动", "基本不运动", SRC_ARCHIVE);
         c.check(ctx.isFamilyHistoryCollected() ? ctx.getFhDiabetes() : null,
-                InputField.FAMILY_HISTORY, "FH_DIABETES", "一级亲属糖尿病史", null, SRC_ARCHIVE);
+                AssessmentFields.FAMILY_HISTORY, "FH_DIABETES", "一级亲属糖尿病史", null, SRC_ARCHIVE);
         if (!ctx.isMale()) {
-            c.fact(ctx, InputField.GDM_HISTORY, "GDM", "妊娠期糖尿病史");
+            c.fact(ctx, AssessmentFields.GDM_HISTORY, "GDM", "妊娠期糖尿病史");
         }
 
         Boolean htn = null;
@@ -231,7 +231,7 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
         String htnSrc = SRC_ARCHIVE;
         if (ctx.hasKnownHypertension()) {
             htn = true;
-            htnDetail = "已确诊高血压";
+            htnDetail = "已患高血压";
         } else if (Fmt.ge(ctx.getSbp(), "140") || Fmt.ge(ctx.getDbp(), "90")) {
             htn = true;
             htnDetail = "血压 " + Fmt.bp(ctx);
@@ -243,7 +243,7 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
         } else if (ctx.getSbp() != null) {
             htn = false;
         }
-        c.check(htn, InputField.BLOOD_PRESSURE, "HYPERTENSION", "高血压或正在降压治疗", htnDetail, htnSrc);
+        c.check(htn, AssessmentFields.BLOOD_PRESSURE_SYS, "HYPERTENSION", "高血压或正在降压治疗", htnDetail, htnSrc);
 
         Boolean lipid = null;
         String lipidDetail = null;
@@ -258,7 +258,7 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
         } else if (ctx.getHdlC() != null || ctx.getTg() != null) {
             lipid = false;
         }
-        c.check(lipid, InputField.LIPIDS, "DYSLIPIDEMIA", "血脂异常或正在调脂治疗", lipidDetail, lipidSrc);
+        c.check(lipid, AssessmentFields.TC, "DYSLIPIDEMIA", "血脂异常或正在调脂治疗", lipidDetail, lipidSrc);
 
         Boolean ascvd = null;
         if (ctx.hasIllness("CHD") == Boolean.TRUE || ctx.hasIllness("STROKE") == Boolean.TRUE) {
@@ -266,13 +266,25 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
         } else if (ctx.isPresentIllnessCollected()) {
             ascvd = false;
         }
-        c.check(ascvd, InputField.PRESENT_ILLNESS, "ASCVD", "动脉粥样硬化性心血管病", "冠心病/脑卒中", SRC_ARCHIVE);
-        c.fact(ctx, InputField.STEROID_DIABETES, "STEROID_DM", "一过性类固醇糖尿病史");
+        c.check(ascvd, AssessmentFields.PRESENT_ILLNESS, "ASCVD", "动脉粥样硬化性心血管病", "冠心病/脑卒中", SRC_ARCHIVE);
+        c.fact(ctx, AssessmentFields.STEROID_DIABETES, "STEROID_DM", "一过性类固醇糖尿病史");
         if (!ctx.isMale()) {
-            c.fact(ctx, InputField.PCOS, "PCOS", "多囊卵巢综合征");
+            c.check(
+                    ctx.hasIllness(AssessmentFields.ILLNESS_PCOS),
+                    AssessmentFields.PRESENT_ILLNESS,
+                    "PCOS",
+                    "多囊卵巢综合征",
+                    null,
+                    SRC_ARCHIVE);
         }
-        c.fact(ctx, InputField.ACANTHOSIS, "ACANTHOSIS", "黑棘皮症");
-        c.fact(ctx, InputField.PSYCH_DRUGS, "PSYCH_DRUGS", "长期抗精神病药/抗抑郁药");
+        c.fact(ctx, AssessmentFields.ACANTHOSIS, "ACANTHOSIS", "黑棘皮症");
+        c.check(
+                ctx.hasMedicationFlag(AssessmentFields.MED_PSYCH),
+                AssessmentFields.MEDICATION_FLAGS,
+                "PSYCH_DRUGS",
+                "长期抗精神病药/抗抑郁药",
+                null,
+                SRC_ARCHIVE);
         if (Boolean.TRUE.equals(ctx.lipidTherapy()) && !c.has("STATIN")) {
             c.hit("STATIN", "他汀类药物治疗", ctx.onDrug("LIPID") ? "在用调脂药" : "问卷：是", SRC_DERIVED);
         }
@@ -282,7 +294,7 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
     @Override
     public RuleSheet ruleSheet() {
         return new RuleSheet(
-                "适用 20–74 岁未确诊糖尿病者。总分 0–51；评分 ≥25 或命中任一高危因素 → 高风险，15–24 → 中风险，<15 → 低风险。",
+                "适用 20–74 岁未患糖尿病者。总分 0–51；评分 ≥25 或命中任一高危因素 → 高风险，15–24 → 中风险，<15 → 低风险。",
                 List.of(
                         Section.table("年龄", List.of("年龄（岁）", "分值"), List.of(
                                 List.of("20–24", "0"), List.of("25–34", "4"), List.of("35–39", "8"), List.of("40–44", "11"),
@@ -305,7 +317,7 @@ public class CdrsAssessmentEngine implements AssessmentEngine {
                                 "血脂异常（HDL-C≤0.91 和/或 TG≥2.22 mmol/L）或正在调脂治疗", "动脉粥样硬化性心血管病",
                                 "一过性类固醇糖尿病史", "多囊卵巢综合征或黑棘皮症", "长期抗精神病药/抗抑郁药或他汀类药物治疗"))),
                 List.of("收缩压取近 4 周均值（至少 2 次）；不足时取最新一次",
-                        "空腹血糖≥7.0、餐后血糖≥11.1 或 HbA1c≥6.5% 提示疑似已患病，建议确诊建档"));
+                        "空腹血糖≥7.0、餐后血糖≥11.1 或 HbA1c≥6.5% 提示疑似已患病，建议就医确认后建档"));
     }
 
     static int scoreAge(int age) {

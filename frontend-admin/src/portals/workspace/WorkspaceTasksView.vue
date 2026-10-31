@@ -10,6 +10,7 @@ import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import CarePlanPreviewDialog, {
   type CarePlanPreviewData,
 } from '../../shared/CarePlanPreviewDialog.vue'
+import { openInNewTab } from '../../shared/open-route'
 
 interface CareTeamListItem {
   id: string
@@ -341,6 +342,44 @@ async function processTask(row: WorkspaceTaskItem) {
   }
   // PLAN_CREATE 等：跳转 deepLink
   openPatient(row)
+}
+
+/** 首诊 FOLLOW_UP 进全屏工作台，其余仍走填单弹窗。 */
+async function openFormTask(row: WorkspaceTaskItem) {
+  if (row.taskType !== 'FOLLOW_UP') {
+    formTaskId.value = row.id
+    return
+  }
+  try {
+    const res = await api<{
+      data: {
+        peopleId?: string
+        payload?: Record<string, unknown>
+        followups?: Array<{ id: string; status?: string; content?: Record<string, unknown> }>
+      }
+    }>(`/api/b/v1/workspace/tasks/${row.id}`)
+    const people = res.data.peopleId || row.peopleId
+    const payloadType =
+      typeof res.data.payload?.followupType === 'string' ? res.data.payload.followupType : ''
+    const openFu =
+      (res.data.followups || []).find((f) => f.status === 'OPEN') || (res.data.followups || [])[0]
+    const contentType =
+      openFu?.content && typeof openFu.content.followupType === 'string'
+        ? openFu.content.followupType
+        : ''
+    const followupType = contentType || payloadType
+    if (followupType === 'ONBOARDING' && people && openFu?.id) {
+      openInNewTab(router, {
+        path: `/workspace/patients/${people}/intake`,
+        query: { followupRecordId: openFu.id },
+      })
+      return
+    }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '加载任务失败')
+    return
+  }
+  formTaskId.value = row.id
 }
 
 function statusLabel(status?: string) {
@@ -966,7 +1005,7 @@ onMounted(async () => {
                 v-if="canForm(row)"
                 type="primary"
                 size="small"
-                @click="formTaskId = row.id"
+                @click="openFormTask(row)"
               >
                 处理
               </el-button>

@@ -5,7 +5,7 @@ import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentEngineCode;
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentResult;
 import com.healix.core.assessment.support.AssessmentResult.Dimension;
@@ -17,7 +17,6 @@ import com.healix.core.assessment.support.HypertensionRiskRules;
 import com.healix.core.assessment.support.RuleSheet;
 import com.healix.core.assessment.support.RuleSheet.Section;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -32,13 +31,14 @@ public class HypertensionAssessmentEngine implements AssessmentEngine {
 
     public static final String RULE_PACK = "HTN-RISK-2019.2";
     private static final GuidelineRef GUIDELINE = new GuidelineRef("中国高血压健康管理规范", "2019", 2019);
-    private static final Set<InputField> REQUIRED = EnumSet.of(InputField.BLOOD_PRESSURE);
-    private static final Set<InputField> INPUTS = EnumSet.of(
-            InputField.BLOOD_PRESSURE, InputField.GENDER, InputField.BIRTHDAY, InputField.HEIGHT, InputField.WEIGHT,
-            InputField.WAIST, InputField.FAMILY_HISTORY, InputField.HIGH_SALT, InputField.DRINKING, InputField.SMOKING,
-            InputField.PASSIVE_SMOKING, InputField.EXERCISE, InputField.CHRONIC_STRESS, InputField.GLUCOSE,
-            InputField.PREDIABETES, InputField.LIPIDS, InputField.HEART_RATE, InputField.URIC_ACID,
-            InputField.EARLY_MENOPAUSE, InputField.ANTIHYPERTENSIVE);
+    private static final Set<String> REQUIRED = Set.of(AssessmentFields.BLOOD_PRESSURE_SYS, AssessmentFields.BLOOD_PRESSURE_DIA);
+    private static final Set<String> INPUTS = Set.of(
+            AssessmentFields.BLOOD_PRESSURE_SYS, AssessmentFields.BLOOD_PRESSURE_DIA, AssessmentFields.GENDER,
+            AssessmentFields.BIRTHDAY, AssessmentFields.HEIGHT, AssessmentFields.WEIGHT, AssessmentFields.WAIST,
+            AssessmentFields.FAMILY_HISTORY, AssessmentFields.HIGH_SALT, AssessmentFields.DRINKING, AssessmentFields.SMOKING,
+            AssessmentFields.PASSIVE_SMOKING, AssessmentFields.EXERCISE, AssessmentFields.CHRONIC_STRESS, AssessmentFields.GLUCOSE,
+            AssessmentFields.PRESENT_ILLNESS, AssessmentFields.TC, AssessmentFields.TG, AssessmentFields.LDL_C, AssessmentFields.HDL_C,
+            AssessmentFields.HEART_RATE, AssessmentFields.URIC_ACID, AssessmentFields.EARLY_MENOPAUSE, AssessmentFields.MEDICATION_FLAGS);
 
     @Override
     public String code() {
@@ -79,12 +79,12 @@ public class HypertensionAssessmentEngine implements AssessmentEngine {
     }
 
     @Override
-    public Set<InputField> inputs() {
+    public Set<String> inputs() {
         return INPUTS;
     }
 
     @Override
-    public Set<InputField> requiredInputs() {
+    public Set<String> requiredInputs() {
         return REQUIRED;
     }
 
@@ -98,7 +98,7 @@ public class HypertensionAssessmentEngine implements AssessmentEngine {
         List<Missing> missing = FactorCollector.missing(ctx, REQUIRED);
         Suspicion therapySuspicion = Boolean.TRUE.equals(ctx.antihypertensiveTherapy())
                 ? new Suspicion(AssessmentDisease.HYPERTENSION.code(), AssessmentDisease.HYPERTENSION.label(),
-                        "正在服用降压药，疑似已患高血压，建议确诊并建立高血压档案")
+                        "正在服用降压药，疑似已患高血压，建议就医确认并建立高血压档案")
                 : null;
         if (!missing.isEmpty()) {
             return AssessmentResult.builder()
@@ -122,7 +122,7 @@ public class HypertensionAssessmentEngine implements AssessmentEngine {
         if (rank >= 1) {
             level = "HIGH";
             suspicion = new Suspicion(AssessmentDisease.HYPERTENSION.code(), AssessmentDisease.HYPERTENSION.label(),
-                    "血压 " + Fmt.bp(ctx) + " 达" + HypertensionRiskRules.bpGradeLabel(grade) + "，疑似高血压，建议确诊并建立高血压档案");
+                    "血压 " + Fmt.bp(ctx) + " 达" + HypertensionRiskRules.bpGradeLabel(grade) + "，疑似高血压，建议就医确认并建立高血压档案");
             advice = suspicion.reason() + (cvHigh ? "；合并危险因素，心脑血管病风险高危，建议尽快安排医师就诊" : "");
         } else if (cvHigh) {
             level = "HIGH";
@@ -166,7 +166,7 @@ public class HypertensionAssessmentEngine implements AssessmentEngine {
     @Override
     public RuleSheet ruleSheet() {
         return new RuleSheet(
-                "适用未确诊高血压者。高风险：血压达 1 级及以上（疑似高血压），或心脑血管病风险高危组合；中风险：高血压前期或命中任一易患因素；低风险：其余。",
+                "适用未患高血压者。高风险：血压达 1 级及以上（疑似高血压），或心脑血管病风险高危组合；中风险：高血压前期或命中任一易患因素；低风险：其余。",
                 List.of(
                         Section.table("血压分级（收缩压/舒张压取较高一级）", List.of("分级", "收缩压 mmHg", "舒张压 mmHg"), List.of(
                                 List.of("正常", "<120", "<80"), List.of("高血压前期", "120–139", "80–89"),
@@ -182,6 +182,6 @@ public class HypertensionAssessmentEngine implements AssessmentEngine {
                                 "早发绝经（<50岁）")),
                         Section.table("心脑血管病风险高危组合", List.of("血压分级", "主要危险因素"), List.of(
                                 List.of("3级", "不论"), List.of("2级", "≥1 个"), List.of("前期或 1 级", "≥3 个")))),
-                List.of("血压取近 4 周均值（至少 2 次）；不足时取最新一次", "正在服降压药提示疑似已患病，建议确诊建档"));
+                List.of("血压取近 4 周均值（至少 2 次）；不足时取最新一次", "正在服降压药提示疑似已患病，建议就医确认后建档"));
     }
 }

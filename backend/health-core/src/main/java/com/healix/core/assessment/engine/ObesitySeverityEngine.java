@@ -9,7 +9,7 @@ import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentEngineCode;
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentResult;
 import com.healix.core.assessment.support.AssessmentResult.Dimension;
@@ -21,7 +21,6 @@ import com.healix.core.assessment.support.HypertensionSeverityRules;
 import com.healix.core.assessment.support.RuleSheet;
 import com.healix.core.assessment.support.RuleSheet.Section;
 import java.math.BigDecimal;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -35,12 +34,12 @@ public class ObesitySeverityEngine implements AssessmentEngine {
     public static final String RULE_PACK = "OBESITY-SEV-2024.1-PROVISIONAL";
     static final String PROVISIONAL_NOTE = "暂定口径，待医学团队校准：BMI 分度与并发症分期取较高者";
     private static final GuidelineRef GUIDELINE = new GuidelineRef("肥胖症诊疗指南（2024年版）", "2024", 2024);
-    private static final Set<InputField> REQUIRED = EnumSet.of(InputField.HEIGHT, InputField.WEIGHT);
-    private static final Set<InputField> INPUTS = EnumSet.of(
-            InputField.GENDER, InputField.HEIGHT, InputField.WEIGHT, InputField.WAIST, InputField.BLOOD_PRESSURE,
-            InputField.GLUCOSE, InputField.HBA1C, InputField.LIPIDS, InputField.LIVER, InputField.URIC_ACID,
-            InputField.PRESENT_ILLNESS, InputField.OSA, InputField.PCOS, InputField.PREDIABETES,
-            InputField.DM_COMPLICATIONS);
+    private static final Set<String> REQUIRED = Set.of(AssessmentFields.HEIGHT, AssessmentFields.WEIGHT);
+    private static final Set<String> INPUTS = Set.of(
+            AssessmentFields.GENDER, AssessmentFields.HEIGHT, AssessmentFields.WEIGHT, AssessmentFields.WAIST,
+            AssessmentFields.BLOOD_PRESSURE_SYS, AssessmentFields.BLOOD_PRESSURE_DIA, AssessmentFields.GLUCOSE,
+            AssessmentFields.HBA1C, AssessmentFields.TC, AssessmentFields.TG, AssessmentFields.LDL_C, AssessmentFields.HDL_C,
+            AssessmentFields.ALT, AssessmentFields.URIC_ACID, AssessmentFields.PRESENT_ILLNESS, AssessmentFields.DM_COMPLICATIONS);
 
     @Override
     public String code() {
@@ -87,12 +86,12 @@ public class ObesitySeverityEngine implements AssessmentEngine {
     }
 
     @Override
-    public Set<InputField> inputs() {
+    public Set<String> inputs() {
         return INPUTS;
     }
 
     @Override
-    public Set<InputField> requiredInputs() {
+    public Set<String> requiredInputs() {
         return REQUIRED;
     }
 
@@ -127,8 +126,12 @@ public class ObesitySeverityEngine implements AssessmentEngine {
             }
         }
         if (Boolean.TRUE.equals(HypertensionSeverityRules.diabetesWithComplications(ctx))) {
-            stage3.hit("DM_COMPLICATIONS", "糖尿病并发症",
-                    String.join("、", ctx.factList(InputField.DM_COMPLICATIONS)), FactorCollector.SRC_QUESTIONNAIRE);
+            List<String> dmc = ctx.factList(AssessmentFields.DM_COMPLICATIONS);
+            stage3.hit(
+                    "DM_COMPLICATIONS",
+                    "糖尿病并发症",
+                    dmc == null || dmc.isEmpty() ? null : String.join("、", dmc),
+                    FactorCollector.SRC_QUESTIONNAIRE);
         }
 
         FactorCollector stage2 = new FactorCollector("STAGE_2", "2 期：已患相关慢病");
@@ -146,34 +149,46 @@ public class ObesitySeverityEngine implements AssessmentEngine {
             }
         }
         if (!ctx.isPresentIllnessCollected()) {
-            stage2.unchecked(InputField.PRESENT_ILLNESS, "相关慢病（现有疾病）");
+            stage2.unchecked(AssessmentFields.PRESENT_ILLNESS, "相关慢病（现有疾病）");
         }
-        stage2.fact(ctx, InputField.OSA, "OSA", "睡眠呼吸暂停");
+        stage2.check(
+                ctx.hasIllness(AssessmentFields.ILLNESS_OSA),
+                AssessmentFields.PRESENT_ILLNESS,
+                "OSA",
+                "睡眠呼吸暂停",
+                null,
+                SRC_ARCHIVE);
         if (!ctx.isMale()) {
-            stage2.fact(ctx, InputField.PCOS, "PCOS", "多囊卵巢综合征");
+            stage2.check(
+                    ctx.hasIllness(AssessmentFields.ILLNESS_PCOS),
+                    AssessmentFields.PRESENT_ILLNESS,
+                    "PCOS",
+                    "多囊卵巢综合征",
+                    null,
+                    SRC_ARCHIVE);
         }
 
         FactorCollector stage1 = new FactorCollector("STAGE_1", "1 期：亚临床异常");
         String grade = ctx.getSbp() == null ? null : HypertensionRiskRules.classifyBpGrade(ctx.getSbp(), ctx.getDbp());
         if (!ctx.hasKnownHypertension()) {
             if (grade == null) {
-                stage1.unchecked(InputField.BLOOD_PRESSURE, "血压偏高");
+                stage1.unchecked(AssessmentFields.BLOOD_PRESSURE_SYS, "血压偏高");
             } else if (HypertensionRiskRules.gradeRank(grade) >= 0) {
                 stage1.hit("BP_ELEVATED", "血压偏高", Fmt.bp(ctx), SRC_METRIC);
             }
         }
         if (!ctx.hasKnownDiabetes()) {
-            stage1.check(HypertensionRiskRules.impairedGlucose(ctx), InputField.GLUCOSE, "IMPAIRED_GLUCOSE",
+            stage1.check(HypertensionRiskRules.impairedGlucose(ctx), AssessmentFields.GLUCOSE, "IMPAIRED_GLUCOSE",
                     "空腹血糖受损/糖耐量异常", null, SRC_METRIC);
         }
         if (ctx.getAlt() == null) {
-            stage1.unchecked(InputField.LIVER, "转氨酶升高");
+            stage1.unchecked(AssessmentFields.ALT, "转氨酶升高");
         } else if (Fmt.gt(ctx.getAlt(), "40")) {
             stage1.hit("ALT_HIGH", "转氨酶升高", "ALT " + Fmt.num(ctx.getAlt()) + " U/L", SRC_LAB);
         }
         if (!stage2.has("HYPERLIPIDEMIA")) {
             if (ctx.getTc() == null && ctx.getTg() == null && ctx.getLdlC() == null && ctx.getHdlC() == null) {
-                stage1.unchecked(InputField.LIPIDS, "血脂异常");
+                stage1.unchecked(AssessmentFields.TC, "血脂异常");
             } else if (Fmt.ge(ctx.getTg(), "1.7") || Fmt.ge(ctx.getTc(), "5.2") || Fmt.ge(ctx.getLdlC(), "3.4")
                     || Fmt.lt(ctx.getHdlC(), "1.0")) {
                 stage1.hit("LIPID_ABNORMAL", "血脂异常", null, SRC_LAB);
@@ -259,7 +274,7 @@ public class ObesitySeverityEngine implements AssessmentEngine {
     @Override
     public RuleSheet ruleSheet() {
         return new RuleSheet(
-                "适用已确诊肥胖者。BMI 分度与并发症分期分别定级，取较高者。",
+                "适用已患肥胖者。BMI 分度与并发症分期分别定级，取较高者。",
                 List.of(
                         Section.table("BMI 分度", List.of("分度", "BMI kg/m²", "等级"), List.of(
                                 List.of("轻度", "28.0–32.4", "低"), List.of("中度", "32.5–37.4", "中"),

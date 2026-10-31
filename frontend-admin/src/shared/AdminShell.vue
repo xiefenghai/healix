@@ -18,11 +18,14 @@ const props = withDefaults(
     title: string
     menus: ShellMenuItem[]
     hideSider?: boolean
+    /** 全屏业务页（如首诊工作台）隐藏壳顶栏 */
+    hideTopbar?: boolean
     orgSwitchable?: boolean
     flushContent?: boolean
   }>(),
   {
     flushContent: false,
+    hideTopbar: false,
   },
 )
 
@@ -76,8 +79,8 @@ function onSwitchOrg() {
 </script>
 
 <template>
-  <div class="shell">
-    <header class="topbar">
+  <div class="shell" :class="{ 'no-topbar': hideTopbar }">
+    <header v-if="!hideTopbar" class="topbar">
       <div class="left">
         <div class="crumbs">
           <span class="crumb-muted">机构工作台</span>
@@ -158,6 +161,7 @@ function onSwitchOrg() {
                 <el-icon v-else-if="m.icon === 'timer'"><Timer /></el-icon>
                 <el-icon v-else-if="m.icon === 'merge'"><Connection /></el-icon>
                 <el-icon v-else-if="m.icon === 'dish'"><Dish /></el-icon>
+                <el-icon v-else-if="m.icon === 'reading'"><Reading /></el-icon>
                 <el-icon v-else><Menu /></el-icon>
                 <template v-if="!collapsed">
                   <span class="menu-label">{{ m.label }}</span>
@@ -202,6 +206,15 @@ function onSwitchOrg() {
 .shell {
   min-height: 100vh;
   background: var(--admin-bg);
+}
+
+.shell.no-topbar .body {
+  min-height: 100vh;
+  height: 100vh;
+}
+
+.shell.no-topbar .content.flush {
+  height: 100vh;
 }
 
 .topbar {

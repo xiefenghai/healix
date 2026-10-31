@@ -2,10 +2,9 @@ package com.healix.core.assessment.service;
 
 import com.healix.core.assessment.catalog.AssessmentCategory;
 import com.healix.core.assessment.catalog.AssessmentDisease;
-import com.healix.core.assessment.catalog.InputField;
 import com.healix.core.assessment.engine.AssessmentEngine;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,9 +42,9 @@ public class AssessmentEngineRegistry {
                 .orElse(null);
     }
 
-    /** 若干引擎的输入字段并集。 */
-    public static Set<InputField> inputsOf(List<AssessmentEngine> list) {
-        Set<InputField> out = EnumSet.noneOf(InputField.class);
+    /** 若干引擎的输入字段编码并集。 */
+    public static Set<String> inputsOf(List<AssessmentEngine> list) {
+        Set<String> out = new LinkedHashSet<>();
         list.forEach(e -> out.addAll(e.inputs()));
         return out;
     }

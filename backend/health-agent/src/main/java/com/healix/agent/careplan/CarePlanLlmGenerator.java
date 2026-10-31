@@ -10,6 +10,7 @@ import com.healix.agent.skill.SkillMarkdown;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
+import com.healix.core.careplan.guideline.GuidelineMatch;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.support.CarePlanPromptContextSupport;
@@ -241,8 +242,9 @@ public class CarePlanLlmGenerator {
         ensureBlockRationale(diet, "AI 根据病种、过敏与用药生成的饮食安排");
         ensureBlockRationale(execution, "AI 根据方案类型与病种标签编制的执行任务");
 
+        GuidelineMatch guidelines = ctx == null || ctx.guidelines() == null ? GuidelineMatch.DISABLED : ctx.guidelines();
         GeneratedPlan plan = new GeneratedPlan(
-                key, tags, exercise, diet, execution, snapshot, incomplete, specialtyMismatch, hypo);
+                key, tags, exercise, diet, execution, snapshot, incomplete, specialtyMismatch, hypo, guidelines);
         return new LlmPlanResult(plan, summary, goalSummary, llm);
     }
 
@@ -327,8 +329,9 @@ public class CarePlanLlmGenerator {
         if (!codes.isEmpty()) {
             payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(codes));
         }
-        payload.set("patientContext", ctx == null ? JsonUtils.emptyObject() : ctx.snapshot());
+        payload.set("patientContext", patientContext(ctx));
         putAllergyGuard(payload, ctx);
+        putGuidelineRecs(payload, ctx);
         return """
                 请根据以下输入生成完整管理方案 JSON。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
@@ -350,6 +353,23 @@ public class CarePlanLlmGenerator {
             }
         }
         return out;
+    }
+
+    /** 快照里的 guideline 只有 code 列表，可引用条目单独以 guidelineRecs 给出。 */
+    private static ObjectNode patientContext(CarePlanContext ctx) {
+        if (ctx == null || ctx.snapshot() == null) {
+            return JsonUtils.emptyObject();
+        }
+        ObjectNode copy = ctx.snapshot().deepCopy();
+        copy.remove("guideline");
+        return copy;
+    }
+
+    private static void putGuidelineRecs(ObjectNode payload, CarePlanContext ctx) {
+        if (ctx == null || ctx.guidelines() == null || !ctx.guidelines().enabled()) {
+            return;
+        }
+        payload.set("guidelineRecs", ctx.guidelines().toPrompt());
     }
 
     private static void putAllergyGuard(ObjectNode payload, CarePlanContext ctx) {
@@ -378,8 +398,9 @@ public class CarePlanLlmGenerator {
         if (!codes.isEmpty()) {
             payload.set("diseaseCodes", JsonUtils.mapper().valueToTree(codes));
         }
-        payload.set("patientContext", ctx == null ? JsonUtils.emptyObject() : ctx.snapshot());
+        payload.set("patientContext", patientContext(ctx));
         putAllergyGuard(payload, ctx);
+        putGuidelineRecs(payload, ctx);
         ObjectNode draft = JsonUtils.emptyObject();
         draft.set("exercise", currentExercise == null ? JsonUtils.emptyObject() : currentExercise);
         draft.set("diet", currentDiet == null ? JsonUtils.emptyObject() : currentDiet);

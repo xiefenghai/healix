@@ -1,7 +1,7 @@
 package com.healix.core.assessment.dto;
 
-import com.healix.core.assessment.catalog.InputField;
 import com.healix.core.assessment.dto.AssessmentOverviewDto.QuestionnaireRequestDto;
+import com.healix.core.field.FieldOption;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -30,7 +30,7 @@ public final class AssessmentQuestionnaireDto {
             String unit,
             BigDecimal min,
             BigDecimal max,
-            List<InputField.Option> options,
+            List<FieldOption> options,
             String audience,
             boolean required,
             boolean missing,

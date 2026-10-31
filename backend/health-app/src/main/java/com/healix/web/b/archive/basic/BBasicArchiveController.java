@@ -6,6 +6,7 @@ import com.healix.core.archive.dto.ArchiveViewDto;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.archive.service.ArchiveOperatorContext;
 import com.healix.core.archive.service.BasicArchiveService;
+import com.healix.core.field.SensitiveFieldMask;
 import com.healix.security.SecurityUtils;
 import com.healix.web.b.archive.SaveArchiveRequest;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +37,9 @@ public class BBasicArchiveController {
         String tenantId = SecurityUtils.requireTenantId();
         String orgId = SecurityUtils.requireCurrentOrgId();
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
-        return ApiResult.ok(basicArchiveService.get(tenantId, peopleId));
+        boolean canViewSensitive =
+                SensitiveFieldMask.anyRoleCanView(SecurityUtils.requireContext().getRoles());
+        return ApiResult.ok(basicArchiveService.get(tenantId, peopleId, canViewSensitive));
     }
 
     /** 保存患者基础档案；写入字段修订历史并同步元数据索引。 */

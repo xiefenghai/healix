@@ -1,0 +1,102 @@
+{
+  "code": "WL_WEIGHT_HISTORY",
+  "version": 1,
+  "title": "减重史",
+  "script": "以前减过重吗？之前的经验对我们很重要，能帮我们避开不适合您的方法。",
+  "items": [
+    {
+      "field": "basic.weightHistory.triedBefore",
+      "label": "以前减过重吗？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "eq": "MULTIPLE"
+          },
+          "severity": "CAUTION",
+          "planEffect": "体重反复的客户节奏更保守，重点防反弹"
+        }
+      ]
+    },
+    {
+      "field": "basic.weightHistory.methods",
+      "label": "以前用过哪些方法？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.weightHistory.triedBefore",
+        "notIn": [
+          "NEVER",
+          "NONE"
+        ]
+      },
+      "highlights": [
+        {
+          "when": {
+            "eq": "SURGERY"
+          },
+          "severity": "CAUTION",
+          "planEffect": "术后营养需求特殊，需了解术式与时间"
+        }
+      ]
+    },
+    {
+      "field": "basic.weightHistory.maxLossKg",
+      "label": "最多一次减了多少？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.weightHistory.triedBefore",
+        "notIn": [
+          "NEVER",
+          "NONE"
+        ]
+      }
+    },
+    {
+      "field": "basic.weightHistory.failReasons",
+      "label": "之前没坚持下来或反弹的原因？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.weightHistory.triedBefore",
+        "notIn": [
+          "NEVER",
+          "NONE"
+        ]
+      }
+    },
+    {
+      "field": "basic.weightHistory.maxWeightKg",
+      "label": "成年后最重的时候多少斤 / 公斤？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.weightHistory.minAdultWeightKg",
+      "label": "成年后最轻的时候？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.weightHistory.recentTrend",
+      "label": "最近 3–6 个月体重有变化吗？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "eq": "DOWN_UNINTENDED"
+          },
+          "severity": "REFER",
+          "planEffect": "不明原因体重下降，建议先就医"
+        }
+      ]
+    },
+    {
+      "field": "basic.weightHistory.recentChangeKg",
+      "label": "大概变了多少？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.weightHistory.recentTrend",
+        "notIn": [
+          "STABLE"
+        ]
+      }
+    }
+  ]
+}

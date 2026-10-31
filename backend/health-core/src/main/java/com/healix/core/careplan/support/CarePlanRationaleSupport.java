@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import org.springframework.util.StringUtils;
 
@@ -49,14 +50,17 @@ public final class CarePlanRationaleSupport {
         }
     }
 
-    /** 递归去掉 rationale 字段（C 端）。 */
+    /** 仅健管师可见的字段：生成理由、指南引用、条目匹配快照。 */
+    private static final List<String> STAFF_ONLY = List.of("rationale", "refs", "guideline");
+
+    /** 递归去掉仅健管师可见的字段（C 端）。 */
     public static JsonNode strip(JsonNode node) {
         if (node == null || node.isNull()) {
             return node;
         }
         if (node.isObject()) {
             ObjectNode copy = ((ObjectNode) node).deepCopy();
-            copy.remove("rationale");
+            copy.remove(STAFF_ONLY);
             Iterator<Map.Entry<String, JsonNode>> it = copy.fields();
             while (it.hasNext()) {
                 Map.Entry<String, JsonNode> e = it.next();
@@ -75,7 +79,7 @@ public final class CarePlanRationaleSupport {
     }
 
     /**
-     * 若新块相对旧块（忽略 rationale）有实质变更，则清空新块及其子树的 rationale。
+     * 若新块相对旧块（忽略 rationale / refs）有实质变更，则清空新块及其子树的 rationale 与 refs。
      */
     public static ObjectNode clearIfContentChanged(JsonNode oldBlock, JsonNode newBlock) {
         if (newBlock == null || !newBlock.isObject()) {
@@ -101,7 +105,7 @@ public final class CarePlanRationaleSupport {
         }
         if (node.isObject()) {
             ObjectNode o = (ObjectNode) node;
-            o.remove("rationale");
+            o.remove(List.of("rationale", "refs"));
             o.fields().forEachRemaining(e -> stripInPlace(e.getValue()));
         } else if (node.isArray()) {
             for (JsonNode child : node) {
@@ -122,7 +126,7 @@ public final class CarePlanRationaleSupport {
                     default -> "按健康管理生成。";
                 };
         if (specialtyMismatch) {
-            return base + "注意：档案未见与专项完全匹配的确诊，请健管师核对。";
+            return base + "注意：档案未见与专项完全匹配的病种，请健管师核对。";
         }
         return base;
     }

@@ -6,6 +6,7 @@ import com.healix.core.dict.enums.DictTypeEnum;
 import com.healix.core.dict.mapper.SysDictMapper;
 import com.healix.core.dict.service.DictService;
 import com.healix.core.dict.support.DictFieldSchemas;
+import com.healix.core.field.FieldCatalog;
 import com.healix.core.metadata.enums.MetaDataCodeEnum;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
 public class DictSeedRunner implements ApplicationRunner {
 
     private final SysDictMapper sysDictMapper;
+    private final FieldCatalog fieldCatalog;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -135,6 +137,20 @@ public class DictSeedRunner implements ApplicationRunner {
         ensureMedicationFrequencyOptions();
         ensureDrugCatalog();
         ensureObservationDicts();
+        ensureFieldCatalogOptions();
+    }
+
+    /** 字段目录里的新选项集（幂等；已存在的不覆盖，机构可改文案）。 */
+    private void ensureFieldCatalogOptions() {
+        fieldCatalog.catalogOptionSets().forEach((set, options) -> {
+            for (int i = 0; i < options.size(); i++) {
+                seedOptionIfAbsent(set, options.get(i).code(), options.get(i).label(), 1000 - i * 10);
+            }
+        });
+        seedOptionIfAbsent("presentIllness", "PREDIABETES", "糖尿病前期（血糖偏高）", 224);
+        seedOptionIfAbsent("presentIllness", "PCOS", "多囊卵巢综合征", 122);
+        seedOptionIfAbsent("presentIllness", "OSA", "睡眠呼吸暂停", 121);
+        log.warn("Ensured field catalog dict options");
     }
 
     /** 生活方式 / 社会史选项（幂等；对齐临床结构化字段）。 */

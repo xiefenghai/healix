@@ -1639,6 +1639,7 @@ async function sendMessage(
           reply?: string
           actions?: AgentAction[]
           capability?: string
+          intent?: string
           extracted?: unknown
         }
         const row = rowAt()

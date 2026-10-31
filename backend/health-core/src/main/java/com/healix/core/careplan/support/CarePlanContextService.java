@@ -8,6 +8,14 @@ import com.healix.common.util.JsonUtils;
 import com.healix.core.archive.domain.PeopleDiseaseArchive;
 import com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper;
 import com.healix.core.allergy.enums.AllergyStatusEnum;
+import com.healix.core.careplan.guideline.GuidelineFacts;
+import com.healix.core.careplan.guideline.GuidelineMatch;
+import com.healix.core.careplan.guideline.GuidelineMatcher;
+import com.healix.core.people.domain.PeopleProfile;
+import com.healix.core.people.mapper.PeopleProfileMapper;
+import com.healix.core.water.support.WaterIntakeRules;
+import java.time.Period;
+import lombok.extern.slf4j.Slf4j;
 import com.healix.core.allergy.service.AllergyQueryService;
 import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.medication.domain.PeopleMedication;
@@ -18,9 +26,13 @@ import com.healix.core.observation.domain.LabReport;
 import com.healix.core.observation.domain.LabResultItem;
 import com.healix.core.observation.mapper.LabReportMapper;
 import com.healix.core.observation.mapper.LabResultItemMapper;
+import com.healix.core.goal.domain.PeopleHealthGoal;
+import com.healix.core.goal.mapper.PeopleHealthGoalMapper;
 import com.healix.core.people.domain.PeopleBasicArchive;
 import com.healix.core.people.mapper.PeopleBasicArchiveMapper;
 import com.healix.core.people.support.DiseaseCodeLabels;
+import com.healix.core.questionnaire.domain.QuestionnaireResponse;
+import com.healix.core.questionnaire.mapper.QuestionnaireResponseMapper;
 import com.healix.core.vitals.domain.VitalRecord;
 import com.healix.core.vitals.mapper.VitalRecordMapper;
 import java.math.BigDecimal;
@@ -36,6 +48,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CarePlanContextService {
@@ -49,7 +62,12 @@ public class CarePlanContextService {
     private final LabResultItemMapper labResultItemMapper;
     private final CarePlanEnergyTargetService energyTargetService;
     private final AssessmentPromptContext assessmentPromptContext;
+    private final PeopleProfileMapper peopleProfileMapper;
+    private final GuidelineMatcher guidelineMatcher;
+    private final PeopleHealthGoalMapper healthGoalMapper;
+    private final QuestionnaireResponseMapper questionnaireResponseMapper;
 
+    /** @param guidelines 本次适用的指南条目；条目库未上线时为 {@link GuidelineMatch#DISABLED} */
     public record CarePlanContext(
             List<String> diseaseCodes,
             List<FoodAllergen> foodAllergens,
@@ -59,7 +77,8 @@ public class CarePlanContextService {
             List<LabBrief> recentLabs,
             boolean contextIncomplete,
             boolean hypoglycemiaRisk,
-            ObjectNode snapshot) {}
+            ObjectNode snapshot,
+            GuidelineMatch guidelines) {}
 
     public record MetricBrief(String metricType, String value, String unit, String slotKey) {}
 
@@ -222,9 +241,34 @@ public class CarePlanContextService {
 
         snapshot.put("contextIncomplete", incomplete);
         snapshot.put("hypoglycemiaRisk", hypoRisk);
+
+        ObjectNode goalsNode = loadGoals(tenantId, peopleId);
+        if (goalsNode != null) {
+            snapshot.set("goals", goalsNode);
+            trace(tracer, "HealthGoal", "done", "目标模式 " + goalsNode.path("mode").asText("-"));
+        }
+
+        JsonNode highlights = loadLatestHighlights(tenantId, peopleId);
+        if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
+            snapshot.set("highlights", highlights);
+            applyHighlightHints(snapshot, highlights, goalsNode);
+            trace(tracer, "IntakeHighlights", "done", "高亮命中 " + highlights.size() + " 项");
+        }
+
+        List<String> diseaseList = new ArrayList<>(diseases);
+        GuidelineMatch guidelines = GuidelineMatch.DISABLED;
+        try {
+            guidelines = guidelineMatcher.match(guidelineFacts(tenantId, peopleId, diseaseList, hypoRisk, metrics, snapshot));
+        } catch (RuntimeException e) {
+            log.warn("[CarePlan] guideline match failed peopleId={}", peopleId, e);
+        }
+        if (guidelines.enabled()) {
+            snapshot.set("guideline", guidelines.toSnapshot());
+            trace(tracer, "GuidelineLibrary", "done", "适用指南条目 " + guidelines.matched().size() + " 条");
+        }
         trace(tracer, "loadCarePlanContext", "done", "上下文加载完成");
         return new CarePlanContext(
-                new ArrayList<>(diseases),
+                diseaseList,
                 allergens,
                 allergyStatus,
                 medNames,
@@ -232,7 +276,220 @@ public class CarePlanContextService {
                 labs,
                 incomplete,
                 hypoRisk,
-                snapshot);
+                snapshot,
+                guidelines);
+    }
+
+    private ObjectNode loadGoals(String tenantId, String peopleId) {
+        try {
+            PeopleHealthGoal goal = healthGoalMapper.findLatestByPeople(tenantId, peopleId);
+            if (goal == null) {
+                return null;
+            }
+            ObjectNode node = JsonUtils.emptyObject();
+            if (StringUtils.hasText(goal.getGoalMode())) {
+                node.put("mode", goal.getGoalMode());
+                node.put("phase", goal.getGoalMode());
+            }
+            if (StringUtils.hasText(goal.getPrimaryAppeal())) {
+                node.put("primaryAppeal", goal.getPrimaryAppeal());
+            }
+            if (StringUtils.hasText(goal.getAppealText())) {
+                node.put("appealText", goal.getAppealText());
+            }
+            if (goal.getDoctorAdvised() != null) {
+                node.put("doctorAdvised", goal.getDoctorAdvised() == 1);
+            }
+            if (StringUtils.hasText(goal.getGoalsJson())) {
+                JsonNode rawGoals = JsonUtils.readTree(goal.getGoalsJson());
+                if (rawGoals != null && rawGoals.isArray()) {
+                    node.set("items", rawGoals);
+                } else if (rawGoals != null && rawGoals.isObject()) {
+                    ArrayNode items = JsonUtils.mapper().createArrayNode();
+                    rawGoals.fields().forEachRemaining(e -> {
+                        if (e.getValue() != null && e.getValue().isObject()) {
+                            ObjectNode item = e.getValue().deepCopy();
+                            if (!item.has("metric")) {
+                                item.put("metric", e.getKey());
+                            }
+                            items.add(item);
+                        }
+                    });
+                    node.set("items", items);
+                }
+            }
+            if (StringUtils.hasText(goal.getPreferencesJson())) {
+                node.set("preferences", JsonUtils.readTree(goal.getPreferencesJson()));
+            }
+            return node;
+        } catch (RuntimeException e) {
+            log.warn("[CarePlan] load goals failed peopleId={}", peopleId, e);
+            return null;
+        }
+    }
+
+    private JsonNode loadLatestHighlights(String tenantId, String peopleId) {
+        try {
+            List<QuestionnaireResponse> rows = questionnaireResponseMapper.listByPeople(tenantId, peopleId);
+            for (QuestionnaireResponse r : rows) {
+                if (!"SUBMITTED".equals(r.getStatus())) {
+                    continue;
+                }
+                if (!"INTAKE".equals(r.getPurpose()) && !"SUPPLEMENT".equals(r.getPurpose())) {
+                    continue;
+                }
+                if (!StringUtils.hasText(r.getHighlightsJson())) {
+                    continue;
+                }
+                JsonNode n = JsonUtils.readTree(r.getHighlightsJson());
+                if (n != null && n.isArray() && !n.isEmpty()) {
+                    return n;
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("[CarePlan] load highlights failed peopleId={}", peopleId, e);
+        }
+        return null;
+    }
+
+    /** 高亮 → 称重频次等生成提示；BLOCK 时强制目标模式不可为 LOSS。 */
+    private static void applyHighlightHints(ObjectNode snapshot, JsonNode highlights, ObjectNode goalsNode) {
+        boolean eatingDisorder = false;
+        boolean bodyAnxiety = false;
+        boolean blockLoss = false;
+        for (JsonNode h : highlights) {
+            String sev = h.path("severity").asText("");
+            String field = h.path("field").asText("");
+            if ("BLOCK".equals(sev)) {
+                blockLoss = true;
+            }
+            if (field.contains("eatingDisorder")) {
+                eatingDisorder = true;
+            }
+            if (field.contains("bodyAnxiety") || field.contains("bodySatisfaction")) {
+                bodyAnxiety = true;
+            }
+        }
+        ObjectNode goals = goalsNode != null ? goalsNode : JsonUtils.emptyObject();
+        if (eatingDisorder || bodyAnxiety) {
+            goals.put("weighFrequency", "WEEKLY");
+            goals.put("pace", "进食障碍/身材焦虑命中：称重改为每周，节奏更保守");
+        } else if (!goals.has("weighFrequency")) {
+            goals.put("weighFrequency", "DAILY");
+        }
+        if (blockLoss) {
+            goals.put("lossBlocked", true);
+            if ("LOSS".equals(goals.path("mode").asText())) {
+                goals.put("mode", "MAINTAIN");
+                goals.put("phase", "MAINTAIN");
+            }
+        }
+        snapshot.set("goals", goals);
+    }
+
+    private GuidelineFacts guidelineFacts(
+            String tenantId,
+            String peopleId,
+            List<String> diseaseCodes,
+            boolean hypoRisk,
+            List<MetricBrief> metrics,
+            ObjectNode snapshot) {
+        Set<String> tags = new LinkedHashSet<>(CarePlanDiseaseTags.detect(diseaseCodes).tags());
+        Integer age = null;
+        String sex = null;
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile != null) {
+            if (profile.getBirthday() != null) {
+                age = Period.between(profile.getBirthday(), LocalDate.now()).getYears();
+            }
+            sex = normalizeSex(profile.getGender());
+        }
+        Set<String> highlightFields = new LinkedHashSet<>();
+        boolean pregnantOrLactating = false;
+        boolean eatingDisorderRisk = false;
+        boolean exerciseRestricted = false;
+        JsonNode highlights = snapshot.get("highlights");
+        if (highlights != null && highlights.isArray()) {
+            for (JsonNode h : highlights) {
+                String field = h.path("field").asText("");
+                if (StringUtils.hasText(field)) {
+                    highlightFields.add(field);
+                }
+                String sev = h.path("severity").asText("");
+                if ("basic.women.reproductiveStatus".equals(field) && ("BLOCK".equals(sev) || "CAUTION".equals(sev))) {
+                    pregnantOrLactating = "BLOCK".equals(sev) || pregnantOrLactating;
+                }
+                if (field.contains("eatingDisorder") && ("BLOCK".equals(sev) || "REFER".equals(sev) || "CAUTION".equals(sev))) {
+                    eatingDisorderRisk = true;
+                }
+                if (field.contains("exerciseRestriction")) {
+                    exerciseRestricted = true;
+                }
+            }
+        }
+        // 从基础档案摘要再兜底（无高亮作答时）
+        JsonNode basic = snapshot.get("basicArchive");
+        if (basic != null && basic.isObject()) {
+            String repro = basic.path("women").path("reproductiveStatus").asText("");
+            if ("PREGNANT".equalsIgnoreCase(repro) || "LACTATING".equalsIgnoreCase(repro)) {
+                pregnantOrLactating = true;
+            }
+            String ed = basic.path("psych").path("eatingDisorderHistory").asText("");
+            if ("YES".equalsIgnoreCase(ed) || "UNSURE".equalsIgnoreCase(ed)) {
+                eatingDisorderRisk = true;
+            }
+            String ex = basic.path("medical").path("exerciseRestriction").asText("");
+            if (StringUtils.hasText(ex) && !"NONE".equalsIgnoreCase(ex) && !"NO".equalsIgnoreCase(ex)) {
+                exerciseRestricted = true;
+            }
+        }
+        return new GuidelineFacts(
+                tags,
+                hypoRisk,
+                WaterIntakeRules.fluidRestricted(diseaseCodes, snapshot),
+                bmi(metrics),
+                age,
+                sex,
+                assessmentPromptContext.tiersByDisease(tenantId, peopleId),
+                pregnantOrLactating,
+                eatingDisorderRisk,
+                exerciseRestricted,
+                Set.copyOf(highlightFields));
+    }
+
+    static Double bmi(List<MetricBrief> metrics) {
+        Double weight = null;
+        Double height = null;
+        for (MetricBrief m : metrics) {
+            try {
+                if ("WEIGHT".equals(m.metricType())) {
+                    weight = Double.parseDouble(m.value());
+                } else if ("HEIGHT".equals(m.metricType())) {
+                    height = Double.parseDouble(m.value());
+                }
+            } catch (NumberFormatException ignored) {
+                // 非数值读数不参与 BMI
+            }
+        }
+        if (weight == null || height == null || height <= 0) {
+            return null;
+        }
+        double meters = height / 100.0;
+        return Math.round(weight / (meters * meters) * 10) / 10.0;
+    }
+
+    private static String normalizeSex(String g) {
+        if (!StringUtils.hasText(g)) {
+            return null;
+        }
+        String s = g.trim().toUpperCase(Locale.ROOT);
+        if ("MALE".equals(s) || "M".equals(s) || "男".equals(g.trim())) {
+            return "MALE";
+        }
+        if ("FEMALE".equals(s) || "F".equals(s) || "女".equals(g.trim())) {
+            return "FEMALE";
+        }
+        return null;
     }
 
     private static void trace(CarePlanLoadTracer tracer, String tool, String status, String detail) {

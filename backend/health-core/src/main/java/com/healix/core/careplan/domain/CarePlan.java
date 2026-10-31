@@ -17,4 +17,12 @@ public class CarePlan extends BaseEntity {
     private Integer version;
     private String createdByStaffId;
     private String updatedByStaffId;
+    /** 最近一次审核通过时间 */
+    private java.time.LocalDateTime reviewedAt;
+    private String reviewedByStaffId;
+    /** ACCEPTED / NEED_MODIFY / NEED_REGENERATE */
+    private String lastCommResult;
+    private java.time.LocalDateTime lastCommAt;
+    private String lastCommFollowupId;
+    private String lastCommNote;
 }

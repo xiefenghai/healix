@@ -4,7 +4,7 @@ import static com.healix.core.assessment.support.FactorCollector.SRC_ARCHIVE;
 import static com.healix.core.assessment.support.FactorCollector.SRC_LAB;
 import static com.healix.core.assessment.support.FactorCollector.SRC_METRIC;
 
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -76,13 +76,13 @@ public final class HypertensionSeverityRules {
         FactorCollector c = new FactorCollector("HTN_RF", "心血管危险因素");
         Integer age = ctx.getAgeYears();
         if (age == null || !ctx.hasGender()) {
-            c.unchecked(age == null ? InputField.BIRTHDAY : InputField.GENDER, "年龄（男>55 / 女>65）");
+            c.unchecked(age == null ? AssessmentFields.BIRTHDAY : AssessmentFields.GENDER, "年龄（男>55 / 女>65）");
         } else if ((ctx.isMale() && age > 55) || (ctx.isFemale() && age > 65)) {
             c.hit("AGE", "年龄（男>55 / 女>65）", age + " 岁", SRC_ARCHIVE);
         }
-        c.check(HypertensionRiskRules.smokingIncludingPassive(ctx), InputField.SMOKING, "SMOKING", "吸烟或被动吸烟",
+        c.check(HypertensionRiskRules.smokingIncludingPassive(ctx), AssessmentFields.SMOKING, "SMOKING", "吸烟或被动吸烟",
                 HypertensionRiskRules.smokingDetail(ctx), SRC_ARCHIVE);
-        c.check(HypertensionRiskRules.impairedGlucose(ctx), InputField.GLUCOSE, "IMPAIRED_GLUCOSE",
+        c.check(HypertensionRiskRules.impairedGlucose(ctx), AssessmentFields.GLUCOSE, "IMPAIRED_GLUCOSE",
                 "糖耐量受损或空腹血糖异常", HypertensionRiskRules.glucoseDetail(ctx), SRC_METRIC);
         Boolean lipid = null;
         if (Fmt.ge(ctx.getTc(), "5.2") || Fmt.ge(ctx.getLdlC(), "3.4") || Fmt.lt(ctx.getHdlC(), "1.0")) {
@@ -90,9 +90,9 @@ public final class HypertensionSeverityRules {
         } else if (ctx.getTc() != null || ctx.getLdlC() != null || ctx.getHdlC() != null) {
             lipid = false;
         }
-        c.check(lipid, InputField.LIPIDS, "DYSLIPIDEMIA", "血脂异常（TC≥5.2 / LDL-C≥3.4 / HDL-C<1.0）",
+        c.check(lipid, AssessmentFields.TC, "DYSLIPIDEMIA", "血脂异常（TC≥5.2 / LDL-C≥3.4 / HDL-C<1.0）",
                 HypertensionRiskRules.lipidDetail(ctx), SRC_LAB);
-        c.check(ctx.isFamilyHistoryCollected() ? ctx.getFhEarlyAscvd() : null, InputField.FAMILY_HISTORY,
+        c.check(ctx.isFamilyHistoryCollected() ? ctx.getFhEarlyAscvd() : null, AssessmentFields.FAMILY_HISTORY,
                 "EARLY_CVD_FH", "早发心血管病家族史", null, SRC_ARCHIVE);
         boolean bmi28 = Fmt.ge(ctx.getBmi(), "28");
         Boolean central = ctx.centralObesity();
@@ -100,9 +100,9 @@ public final class HypertensionSeverityRules {
             c.hit("OBESITY", "腹型肥胖或 BMI≥28",
                     bmi28 ? "BMI " + Fmt.num(ctx.getBmi()) : "腰围 " + Fmt.num(ctx.getWaistCm()) + " cm", SRC_METRIC);
         } else if (ctx.getBmi() == null && central == null) {
-            c.unchecked(InputField.WEIGHT, "腹型肥胖或 BMI≥28");
+            c.unchecked(AssessmentFields.WEIGHT, "腹型肥胖或 BMI≥28");
         }
-        c.fact(ctx, InputField.HCY_HIGH, "HCY", "高同型半胱氨酸（≥15 μmol/L）");
+        c.fact(ctx, AssessmentFields.HCY_HIGH, "HCY", "高同型半胱氨酸（≥15 μmol/L）");
         return c;
     }
 
@@ -123,12 +123,12 @@ public final class HypertensionSeverityRules {
             c.hit("UACR_30_300", "尿白蛋白/肌酐比 30–300 mg/g", Fmt.num(uacr), SRC_LAB);
         }
         if (egfr == null && uacr == null && cr == null) {
-            c.unchecked(InputField.RENAL, "肾功能（eGFR / 尿白蛋白肌酐比）");
+            c.unchecked(AssessmentFields.CR, "肾功能（eGFR / 尿白蛋白肌酐比）");
         }
-        c.fact(ctx, InputField.LVH, "LVH", "左心室肥厚");
-        c.fact(ctx, InputField.CAROTID_PLAQUE, "CAROTID", "颈动脉内中膜增厚或斑块");
-        c.fact(ctx, InputField.PWV_HIGH, "PWV", "脉搏波传导速度增快");
-        c.fact(ctx, InputField.ABI_LOW, "ABI", "踝臂指数 <0.9");
+        c.fact(ctx, AssessmentFields.LVH, "LVH", "左心室肥厚");
+        c.fact(ctx, AssessmentFields.CAROTID_PLAQUE, "CAROTID", "颈动脉内中膜增厚或斑块");
+        c.fact(ctx, AssessmentFields.PWV_HIGH, "PWV", "脉搏波传导速度增快");
+        c.fact(ctx, AssessmentFields.ABI_LOW, "ABI", "踝臂指数 <0.9");
         return c;
     }
 
@@ -145,7 +145,7 @@ public final class HypertensionSeverityRules {
             }
         }
         if (!ctx.isPresentIllnessCollected()) {
-            c.unchecked(InputField.PRESENT_ILLNESS, "心脑血管病 / 慢性肾病（现有疾病）");
+            c.unchecked(AssessmentFields.PRESENT_ILLNESS, "心脑血管病 / 慢性肾病（现有疾病）");
         }
         if (Fmt.lt(ctx.getEgfr(), "30")) {
             c.hit("EGFR_LT_30", "eGFR <30（慢性肾病 ≥4 期）", Fmt.num(ctx.getEgfr()), SRC_LAB);
@@ -153,12 +153,17 @@ public final class HypertensionSeverityRules {
         if (Fmt.gt(ctx.getUacr(), "300")) {
             c.hit("UACR_GT_300", "尿白蛋白/肌酐比 >300 mg/g", Fmt.num(ctx.getUacr()), SRC_LAB);
         }
-        c.fact(ctx, InputField.PERIPHERAL_ARTERY_DISEASE, "PAD", "外周血管疾病");
-        c.fact(ctx, InputField.ADVANCED_RETINOPATHY, "RETINOPATHY", "视网膜病变（出血/渗出/视乳头水肿）");
+        c.fact(ctx, AssessmentFields.PERIPHERAL_ARTERY_DISEASE, "PAD", "外周血管疾病");
+        c.fact(ctx, AssessmentFields.ADVANCED_RETINOPATHY, "RETINOPATHY", "视网膜病变（出血/渗出/视乳头水肿）");
         if (ctx.hasKnownDiabetes()) {
             Boolean dmc = diabetesWithComplications(ctx);
-            c.check(dmc, InputField.DM_COMPLICATIONS, "DM_WITH_COMPLICATIONS", "有并发症的糖尿病",
-                    dmc == Boolean.TRUE ? String.join("、", ctx.factList(InputField.DM_COMPLICATIONS)) : null,
+            List<String> dmcList = ctx.factList(AssessmentFields.DM_COMPLICATIONS);
+            c.check(
+                    dmc,
+                    AssessmentFields.DM_COMPLICATIONS,
+                    "DM_WITH_COMPLICATIONS",
+                    "有并发症的糖尿病",
+                    dmc == Boolean.TRUE && dmcList != null ? String.join("、", dmcList) : null,
                     FactorCollector.SRC_QUESTIONNAIRE);
         }
         return c;
@@ -166,10 +171,10 @@ public final class HypertensionSeverityRules {
 
     /** 糖尿病并发症：问卷多选；未答为 null。 */
     public static Boolean diabetesWithComplications(AssessmentContext ctx) {
-        List<String> list = ctx.factList(InputField.DM_COMPLICATIONS);
-        if (list == null || list.isEmpty() || list.contains(InputField.Question.UNKNOWN)) {
+        List<String> list = ctx.factList(AssessmentFields.DM_COMPLICATIONS);
+        if (list == null || list.isEmpty() || list.contains(AssessmentContext.UNKNOWN)) {
             return null;
         }
-        return list.stream().anyMatch(s -> !InputField.Question.NONE.equals(s));
+        return list.stream().anyMatch(s -> !AssessmentContext.NONE.equals(s));
     }
 }

@@ -1,0 +1,18 @@
+{
+  "code": "CONSENT",
+  "version": 1,
+  "title": "隐私授权",
+  "script": "您刚才告诉我们的健康信息，我们只用于给您制定和调整健康管理方案，会严格保密，您同意吗？",
+  "items": [
+    {
+      "field": "consent.sensitiveHealth",
+      "label": "已向客户说明并取得敏感健康信息处理同意",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "consent.method",
+      "label": "授权方式",
+      "level": "REQUIRED"
+    }
+  ]
+}

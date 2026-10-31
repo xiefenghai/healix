@@ -11,9 +11,11 @@ import com.healix.core.assessment.catalog.AssessmentCategory;
 import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentTriggerSource;
 import com.healix.core.assessment.domain.AssessmentQuestionnaireRequest;
-import com.healix.core.assessment.domain.AssessmentQuestionnaireSubmission;
 import com.healix.core.assessment.domain.PeopleAssessmentLatest;
 import com.healix.core.assessment.domain.PeopleAssessmentSnapshot;
+import com.healix.core.questionnaire.domain.QuestionnaireResponse;
+import com.healix.core.questionnaire.mapper.QuestionnaireResponseMapper;
+import com.healix.core.questionnaire.service.QuestionnaireResponseService;
 import com.healix.core.assessment.dto.AssessmentOverviewDto;
 import com.healix.core.assessment.dto.AssessmentOverviewDto.DiseaseGroupDto;
 import com.healix.core.assessment.dto.AssessmentOverviewDto.QuestionnaireBriefDto;
@@ -46,6 +48,7 @@ public class AssessmentOrchestrator {
     private final AssessmentViewMapper viewMapper;
     private final PeopleAssessmentSnapshotMapper snapshotMapper;
     private final AssessmentStoreMapper storeMapper;
+    private final QuestionnaireResponseMapper questionnaireResponseMapper;
     private final ArchiveAccessService archiveAccessService;
     private final DiseaseArchiveService diseaseArchiveService;
     private final AuditService auditService;
@@ -104,11 +107,12 @@ public class AssessmentOrchestrator {
             }
             dto.getGroups().add(g);
         }
-        AssessmentQuestionnaireSubmission sub = storeMapper.findLatestSubmission(tenantId, peopleId);
+        QuestionnaireResponse sub = questionnaireResponseMapper.findLatestSubmitted(
+                tenantId, peopleId, QuestionnaireResponseService.PURPOSE_ASSESSMENT);
         if (sub != null) {
             QuestionnaireBriefDto q = new QuestionnaireBriefDto();
             q.setId(sub.getId());
-            q.setPortal(sub.getPortal());
+            q.setPortal("PEOPLE".equalsIgnoreCase(sub.getFilledByType()) ? "C" : "B");
             q.setSubmittedAt(sub.getSubmittedAt());
             dto.setLastQuestionnaire(q);
         }

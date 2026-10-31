@@ -1,0 +1,103 @@
+{
+  "code": "GOALS_PREFERENCE",
+  "version": 1,
+  "title": "诉求与目标",
+  "script": "您这次最想达到什么效果？用您自己的话说就行。",
+  "items": [
+    {
+      "field": "goal.primaryAppeal",
+      "label": "这次最想解决什么问题？",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "goal.appealText",
+      "label": "客户原话",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "goal.doctorAdvised",
+      "label": "是医生建议减重的吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "goal.mode",
+      "label": "目标类型",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "goal.targetWeightKg",
+      "label": "希望减到多少？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "goal.mode",
+        "eq": "LOSS"
+      },
+      "highlights": [
+        {
+          "when": {
+            "always": true
+          },
+          "severity": "CAUTION",
+          "planEffect": "校验：目标 BMI < 18.5 不可提交；命中 BLOCK 高亮时不可设"
+        }
+      ]
+    },
+    {
+      "field": "goal.targetDate",
+      "label": "希望什么时候达到？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "goal.mode",
+        "eq": "LOSS"
+      },
+      "highlights": [
+        {
+          "when": {
+            "always": true
+          },
+          "severity": "CAUTION",
+          "planEffect": "校验：平均每周 > 约 1 kg → WARN：建议延长期限或调整目标"
+        }
+      ]
+    },
+    {
+      "field": "goal.targetWaistCm",
+      "label": "腰围目标",
+      "level": "LATER"
+    },
+    {
+      "field": "goal.targetBodyFat",
+      "label": "体脂率目标",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.mode",
+        "eq": "BODY_COMPOSITION"
+      }
+    },
+    {
+      "field": "goal.exerciseMinutesPerDay",
+      "label": "每天能拿出多少时间运动？",
+      "level": "LATER"
+    },
+    {
+      "field": "goal.dietEffort",
+      "label": "饮食上能做多大调整？",
+      "level": "LATER"
+    },
+    {
+      "field": "goal.followupChannel",
+      "label": "希望怎么跟进？",
+      "level": "LATER"
+    },
+    {
+      "field": "goal.followupFrequency",
+      "label": "希望多久沟通一次？",
+      "level": "LATER"
+    },
+    {
+      "field": "goal.constraints",
+      "label": "经济或时间上有什么限制？",
+      "level": "LATER"
+    }
+  ]
+}

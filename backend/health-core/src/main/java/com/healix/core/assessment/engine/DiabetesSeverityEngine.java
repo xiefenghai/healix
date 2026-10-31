@@ -5,7 +5,7 @@ import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentEngineCode;
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentResult;
 import com.healix.core.assessment.support.AssessmentResult.Dimension;
@@ -23,14 +23,13 @@ import com.healix.core.assessment.support.RuleSheet.Section;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
- * 糖尿病严重等级分层（血糖控制分标：红 / 黄 / 绿 / 准绿 / 无标）。仅已确诊糖尿病适用。
+ * 糖尿病严重等级分层（血糖控制分标：红 / 黄 / 绿 / 准绿 / 无标）。仅已患糖尿病适用。
  *
  * <p>统一等级：红 → 很高，黄 → 中，绿与准绿 → 低，无标 → 无数据。
  */
@@ -38,8 +37,8 @@ import org.springframework.stereotype.Component;
 public class DiabetesSeverityEngine implements AssessmentEngine {
 
     private static final GuidelineRef GUIDELINE = new GuidelineRef("糖尿病血糖控制分标管理规则", "2024.1", 2024);
-    private static final Set<InputField> INPUTS =
-            EnumSet.of(InputField.BIRTHDAY, InputField.GLUCOSE, InputField.HBA1C, InputField.PRESENT_ILLNESS);
+    private static final Set<String> INPUTS =
+            Set.of(AssessmentFields.BIRTHDAY, AssessmentFields.GLUCOSE, AssessmentFields.HBA1C, AssessmentFields.PRESENT_ILLNESS);
     private static final Map<String, String> HIT_LABELS = Map.of(
             "HYPO_14D", "近 14 天低血糖 ≥2 次",
             "HYPO_ARCHIVE_FALLBACK", "档案自填低血糖频繁（近 14 天无监测）",
@@ -90,12 +89,12 @@ public class DiabetesSeverityEngine implements AssessmentEngine {
     }
 
     @Override
-    public Set<InputField> inputs() {
+    public Set<String> inputs() {
         return INPUTS;
     }
 
     @Override
-    public Set<InputField> requiredInputs() {
+    public Set<String> requiredInputs() {
         return Set.of();
     }
 
@@ -148,7 +147,7 @@ public class DiabetesSeverityEngine implements AssessmentEngine {
                 .items(items)
                 .factorGroups(groups)
                 .missing(noData
-                        ? List.of(FactorCollector.missingOf(InputField.HBA1C), FactorCollector.missingOf(InputField.GLUCOSE))
+                        ? List.of(FactorCollector.missingOf(AssessmentFields.HBA1C), FactorCollector.missingOf(AssessmentFields.GLUCOSE))
                         : List.of())
                 .build();
     }
@@ -175,7 +174,7 @@ public class DiabetesSeverityEngine implements AssessmentEngine {
     @Override
     public RuleSheet ruleSheet() {
         return new RuleSheet(
-                "适用已确诊糖尿病者，取近 90 天数据。优先级：无标 → 红标 → 黄标 → 绿标 → 准绿标。",
+                "适用已患糖尿病者，取近 90 天数据。优先级：无标 → 红标 → 黄标 → 绿标 → 准绿标。",
                 List.of(
                         Section.table("目标值分组", List.of("分组", "HbA1c", "空腹血糖", "非空腹血糖"), List.of(
                                 List.of("① 年龄<65岁", "<7.0%", "<7.0", "<10.0"),

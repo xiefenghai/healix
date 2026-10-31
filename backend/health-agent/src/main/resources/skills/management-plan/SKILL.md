@@ -27,6 +27,19 @@ display_name: 管理方案生成
 - **方案正文是给患者看的**：`exercise` / `diet` / `execution` / `summary` / `goalSummary` 中**不得**出现「高风险」「很高危」「分层」「中危」等等级用语，也不得复述评分；用「需要重点控制血压」「建议加强体重管理」这类行动化表述
 - **生成理由 `rationale` 仅给健管师审阅**：可以点明评估等级（如很高危），须引用档案/评估/过敏等事实，禁止编造数值
 
+### 指南条目（`guidelineRecs`）
+
+输入含 `guidelineRecs` 时，它是服务端按患者情况筛出的、可引用的指南推荐条目（`code` / `kind` / `block` / `recommendation` / `patientHint` / `constraint` / `source`）：
+
+- **运动、饮食、执行三块各输出 `refs`**：填写本块所依据条目的 `code`，只能使用 `guidelineRecs` 里出现且 `block` 对应的 code；关键任务（如监测任务）可在任务上带 `refs`
+- **`kind=SAFETY` 的 `constraint` 是硬约束**，必须满足（如单次运动时长、强度上限）；违反会被服务端拦截、无法发布
+- **`kind=TARGET` 的 `constraint` 默认满足**（如每周中等强度分钟数、监测任务）；确需个体化偏离时，在该块 `rationale` 写明原因
+- 建议内容以 `recommendation` 为准，不自行编造指南结论；面向患者的正文参考 `patientHint` 写成行动化表述，**不写指南名称与条目编码**
+- `rationale` 可点明依据要点（如「按高血压限盐与家庭血压监测建议」），不转抄指南原文
+- 未出现在 `guidelineRecs` 的建议可以写，但不得声称有指南依据
+
+无 `guidelineRecs` 时不输出 `refs`，按下文原则生成。
+
 ## 方案类型（templateKey）
 
 | 键 | 含义 |
@@ -63,11 +76,12 @@ display_name: 管理方案生成
 
 ```json
 {
-  "exercise": { "rationale": "块级生成依据…" },
-  "diet": { "rationale": "块级生成依据…" },
+  "exercise": { "rationale": "块级生成依据…", "refs": ["GEN.PA.AEROBIC"] },
+  "diet": { "rationale": "块级生成依据…", "refs": ["HTN.DIET.SALT"] },
   "execution": {
     "rationale": "块级生成依据…",
-    "tasks": [{ "code": "…", "title": "…", "rationale": "该任务依据…" }]
+    "refs": ["HTN.MON.HBPM"],
+    "tasks": [{ "code": "…", "title": "…", "rationale": "该任务依据…", "refs": ["HTN.MON.HBPM"] }]
   },
   "summary": "200字以内方案总结：阶段目标、核心干预、随访要点（勿写等级用语）",
   "goalSummary": "一句话目标，用于方案头",
@@ -137,8 +151,9 @@ display_name: 管理方案生成
 - `recommended` 与 `allergensAvoid` 的 `code` 集合**不得相交**（服务端 ERROR）
 - `foodAllergyGuard[].keywords`（type=ALLERGY）中的任一词**不得出现**在 `recommended`、`sampleDay` 与 `sampleWeek` 的正文及 `swapHint`（如鸡蛋过敏时不写「鸡蛋」「蒸蛋」，改用瘦肉/豆浆等替代）；服务端会按关键词全文检查并自动删除命中内容
 - 有食物过敏时，`notes` 中提醒患者「外出就餐注意询问菜品成分」；不耐受写入 `intolerances` 并在 `notes` 提示注意食用量，可少量但不作为主推
-- 糖尿病：控精制糖、规律三餐、增加膳食纤维
-- 高血压：低盐、限制腌制食品
+- 有 `guidelineRecs` 时饮食原则以 `block=diet` 的条目为准；无条目时：
+  - 糖尿病：控精制糖、规律三餐、增加膳食纤维
+  - 高血压：低盐、限制腌制食品
 - 合并症：取保守合并原则
 - 结合在用药物在 `notes` 中提示（如与降糖药相关的进餐时间）
 
@@ -240,6 +255,7 @@ display_name: 管理方案生成
 - 最近指标（血糖、血压、体重等）→ 调整运动强度与总结表述
 - `energyTarget` → 饮食 `calorieHint` 的热量数字（见「热量」）
 - 在用药物 → `diet.notes` 与执行计划中谨慎表述
+- `guidelineRecs` → 建议内容、量化约束与各块 `refs`（见「指南条目」）
 - `contextIncomplete=true` → 文案中可提示信息有限，但不拒绝生成
 
 ## 六、禁止事项
@@ -250,4 +266,5 @@ display_name: 管理方案生成
 4. 过敏食物出现在推荐列表或示例食谱
 5. 卧床/骨折场景推荐剧烈运动；多轮修订时因饮食意见而丢掉既有骨折/制动限制
 6. 在总结中承诺疗效或替代就医
+6b. 引用 `guidelineRecs` 以外的条目编码，或在患者可见正文中写指南名称、条目编码、「专家认证」「医生制定」等表述
 7. 面向患者的文案（标题、总结、建议、任务名）出现「处方」「诊断」「确诊」「医嘱」「治疗方案」等医疗用语：用「运动计划」「按时服药」「按时监测」「已患」等健康管理表述

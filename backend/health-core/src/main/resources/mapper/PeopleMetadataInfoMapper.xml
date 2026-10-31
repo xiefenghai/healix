@@ -3,32 +3,37 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.healix.core.metadata.mapper.PeopleMetadataInfoMapper">
 
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, metadata_code, metadata_value,
+        source_biz_code, source_client_code, source_ref_id, updated_by_type, updated_by_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
     <select id="findByPeopleAndCode" resultType="com.healix.core.metadata.domain.PeopleMetadataInfo">
-        SELECT pk_id, id, tenant_id, people_id, metadata_code, metadata_value,
-               source_biz_code, source_client_code,
-               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        SELECT <include refid="cols"/>
         FROM people_metadata_info
         WHERE people_id = #{peopleId} AND metadata_code = #{metadataCode} AND is_deleted = 0
         LIMIT 1
     </select>
 
-    <select id="listCodesByPrefix" resultType="string">
-        SELECT metadata_code
+    <select id="listByPrefix" resultType="com.healix.core.metadata.domain.PeopleMetadataInfo">
+        SELECT <include refid="cols"/>
         FROM people_metadata_info
         WHERE people_id = #{peopleId}
           AND tenant_id = #{tenantId}
           AND metadata_code LIKE CONCAT(#{codePrefix}, '%')
           AND is_deleted = 0
+        ORDER BY metadata_code
     </select>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO people_metadata_info(
             id, tenant_id, people_id, metadata_code, metadata_value,
-            source_biz_code, source_client_code,
+            source_biz_code, source_client_code, source_ref_id, updated_by_type, updated_by_id,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{peopleId}, #{metadataCode}, #{metadataValue},
-            #{sourceBizCode}, #{sourceClientCode},
+            #{sourceBizCode}, #{sourceClientCode}, #{sourceRefId}, #{updatedByType}, #{updatedById},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
     </insert>
@@ -38,6 +43,9 @@
         SET metadata_value = #{metadataValue},
             source_biz_code = #{sourceBizCode},
             source_client_code = #{sourceClientCode},
+            source_ref_id = #{sourceRefId},
+            updated_by_type = #{updatedByType},
+            updated_by_id = #{updatedById},
             gmt_modified = #{gmtModified}
         WHERE id = #{id} AND is_deleted = 0
     </update>

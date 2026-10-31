@@ -5,7 +5,7 @@ import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentEngineCode;
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentResult;
 import com.healix.core.assessment.support.AssessmentResult.Dimension;
@@ -17,7 +17,6 @@ import com.healix.core.assessment.support.RuleSheet;
 import com.healix.core.assessment.support.RuleSheet.Section;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -25,16 +24,16 @@ import org.springframework.stereotype.Component;
 /**
  * 肥胖筛查（患病风险），《肥胖症诊疗指南（2024年版）》。
  *
- * <p>BMI 正常 → 低；超重或中心性肥胖 → 中；BMI ≥28 → 高（疑似肥胖症，建议确诊）。
+ * <p>BMI 正常 → 低；超重或中心性肥胖 → 中；BMI ≥28 → 高（疑似肥胖症，建议就医确认）。
  */
 @Component
 public class ObesityRiskAssessmentEngine implements AssessmentEngine {
 
     public static final String RULE_PACK = "OBESITY-RISK-2024.3";
     private static final GuidelineRef GUIDELINE = new GuidelineRef("肥胖症诊疗指南", "2024", 2024);
-    private static final Set<InputField> REQUIRED = EnumSet.of(InputField.HEIGHT, InputField.WEIGHT);
-    private static final Set<InputField> INPUTS =
-            EnumSet.of(InputField.GENDER, InputField.HEIGHT, InputField.WEIGHT, InputField.WAIST, InputField.BODY_FAT);
+    private static final Set<String> REQUIRED = Set.of(AssessmentFields.HEIGHT, AssessmentFields.WEIGHT);
+    private static final Set<String> INPUTS =
+            Set.of(AssessmentFields.GENDER, AssessmentFields.HEIGHT, AssessmentFields.WEIGHT, AssessmentFields.WAIST, AssessmentFields.BODY_FAT);
 
     public static final String UNDERWEIGHT = "UNDERWEIGHT";
     public static final String NORMAL = "NORMAL";
@@ -83,12 +82,12 @@ public class ObesityRiskAssessmentEngine implements AssessmentEngine {
     }
 
     @Override
-    public Set<InputField> inputs() {
+    public Set<String> inputs() {
         return INPUTS;
     }
 
     @Override
-    public Set<InputField> requiredInputs() {
+    public Set<String> requiredInputs() {
         return REQUIRED;
     }
 
@@ -114,7 +113,7 @@ public class ObesityRiskAssessmentEngine implements AssessmentEngine {
         BigDecimal bmi = ctx.getBmi();
         String diagnosis = diagnoseByBmi(bmi);
         Boolean central = ctx.centralObesity();
-        BigDecimal bodyFat = ctx.factNumber(InputField.BODY_FAT);
+        BigDecimal bodyFat = ctx.factNumber(AssessmentFields.BODY_FAT);
         Boolean highFat = bodyFat == null || !ctx.hasGender() ? null : Fmt.gt(bodyFat, ctx.isMale() ? "25" : "30");
 
         String level = diagnosis;
@@ -126,7 +125,7 @@ public class ObesityRiskAssessmentEngine implements AssessmentEngine {
         switch (level) {
             case OBESITY -> {
                 suspicion = new Suspicion(AssessmentDisease.OBESITY.code(), AssessmentDisease.OBESITY.label(),
-                        "BMI " + Fmt.num(bmi) + "（≥28），疑似肥胖症，建议确诊并建立肥胖档案");
+                        "BMI " + Fmt.num(bmi) + "（≥28），疑似肥胖症，建议就医确认并建立肥胖档案");
                 advice = suspicion.reason() + (Boolean.TRUE.equals(central) ? "；同时存在中心性肥胖，代谢风险更高" : "");
             }
             case OVERWEIGHT -> advice = Boolean.TRUE.equals(central)
@@ -150,10 +149,10 @@ public class ObesityRiskAssessmentEngine implements AssessmentEngine {
 
         FactorCollector extra = new FactorCollector("OBESITY_AUX", "辅助指标");
         if (central == null) {
-            extra.unchecked(ctx.getWaistCm() == null ? InputField.WAIST : InputField.GENDER, "中心性肥胖（腰围）");
+            extra.unchecked(ctx.getWaistCm() == null ? AssessmentFields.WAIST : AssessmentFields.GENDER, "中心性肥胖（腰围）");
         }
         if (bodyFat == null) {
-            extra.unchecked(InputField.BODY_FAT, "体脂率");
+            extra.unchecked(AssessmentFields.BODY_FAT, "体脂率");
         }
         return AssessmentResult.builder()
                 .status(AssessmentStatus.COMPLETE)
@@ -193,7 +192,7 @@ public class ObesityRiskAssessmentEngine implements AssessmentEngine {
     @Override
     public RuleSheet ruleSheet() {
         return new RuleSheet(
-                "适用 18 岁及以上未确诊肥胖者。BMI≥28 → 高（疑似肥胖症，建议确诊）；超重或中心性肥胖 → 中；其余 → 低。",
+                "适用 18 岁及以上未患肥胖者。BMI≥28 → 高（疑似肥胖症，建议就医确认）；超重或中心性肥胖 → 中；其余 → 低。",
                 List.of(
                         Section.table("BMI 判定（中国成人）", List.of("BMI kg/m²", "判定", "等级"), List.of(
                                 List.of("<18.5", "偏瘦", "低"), List.of("18.5–23.9", "正常", "低（伴中心性肥胖为中）"),

@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentContext.FactValue;
 import com.healix.core.assessment.support.AssessmentResult;
@@ -106,8 +106,8 @@ class SeverityEnginesTest {
     void htnUsesQuestionnaireHighestBpWhenNoArchiveValue() {
         AssessmentContext ctx = htnPatient()
                 .facts(Map.of(
-                        InputField.HTN_MAX_SBP, new FactValue(new BigDecimal("185"), "QUESTIONNAIRE_PATIENT", LocalDateTime.now()),
-                        InputField.HTN_MAX_DBP, new FactValue(new BigDecimal("100"), "QUESTIONNAIRE_PATIENT", LocalDateTime.now())))
+                        AssessmentFields.HTN_MAX_SBP, new FactValue(new BigDecimal("185"), "QUESTIONNAIRE_PATIENT", LocalDateTime.now()),
+                        AssessmentFields.HTN_MAX_DBP, new FactValue(new BigDecimal("100"), "QUESTIONNAIRE_PATIENT", LocalDateTime.now())))
                 .build();
         AssessmentResult r = htn.evaluate(ctx);
         assertEquals("HIGH", r.getLevel());
@@ -149,7 +149,7 @@ class SeverityEnginesTest {
     void obesityDiabetesComplicationIsStage3() {
         AssessmentContext ctx = obesityPatient("29.0")
                 .hasDiabetesArchive(true)
-                .facts(Map.of(InputField.DM_COMPLICATIONS,
+                .facts(Map.of(AssessmentFields.DM_COMPLICATIONS,
                         new FactValue(List.of("NEPHROPATHY"), "QUESTIONNAIRE_STAFF", LocalDateTime.now())))
                 .build();
         assertEquals(AssessmentTier.HIGH, obesity.evaluate(ctx).getTier());

@@ -122,7 +122,7 @@ async function createArchive(g: AssessmentGroup) {
   try {
     await showConfirmDialog({
       title: `建立${disease}档案`,
-      message: `确认患者已确诊${disease}？建档后将切换为「${disease}严重等级分层」评估，并关闭疑似患病任务。`,
+      message: `确认患者已患${disease}？建档后将切换为「${disease}严重等级分层」评估，并关闭疑似患病任务。`,
       confirmButtonText: '确认建档',
     })
   } catch {
@@ -221,7 +221,7 @@ onMounted(load)
 
     <div v-else class="page-body">
       <p class="lead hx-muted">
-        未确诊看「患病风险」，已确诊看「严重分层」。结果仅供健康管理参考，患者端不展示。
+        未患病看「患病风险」，已患病看「严重分层」。结果仅供健康管理参考，患者端不展示。
       </p>
 
       <!-- 患病风险评估 -->
@@ -230,7 +230,7 @@ onMounted(load)
           <div class="sec-badge risk">风险</div>
           <div>
             <h2>患病风险评估</h2>
-            <p>尚未确诊的病种：评估是否易患 / 高危人群</p>
+            <p>尚未患有的病种：评估是否易患 / 高危人群</p>
           </div>
         </header>
 
@@ -262,7 +262,7 @@ onMounted(load)
             <div v-if="g.latest.suspicion" class="suspect">
               <p>{{ g.latest.suspicion.reason }}</p>
               <van-button size="small" type="danger" plain round @click="createArchive(g)">
-                已确诊，建立{{ g.latest.suspicion.diseaseLabel }}档案
+                确认已患，建立{{ g.latest.suspicion.diseaseLabel }}档案
               </van-button>
             </div>
 
@@ -351,12 +351,12 @@ onMounted(load)
           <div class="sec-badge sev">分层</div>
           <div>
             <h2>疾病严重等级分层</h2>
-            <p>已确诊的病种：评估当前管理分层与关注重点</p>
+            <p>已患的病种：评估当前管理分层与关注重点</p>
           </div>
         </header>
 
         <div v-if="!severityGroups.length" class="empty hx-surface">
-          暂无已确诊病种，建立病种档案后会出现在这里
+          暂无已患病种，建立病种档案后会出现在这里
         </div>
         <article
           v-for="g in severityGroups"

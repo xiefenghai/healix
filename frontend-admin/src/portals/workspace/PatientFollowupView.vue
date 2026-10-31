@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
 import { takeAgentDraft } from '../../shared/agent-draft-bus'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import FollowupSectionFields from './FollowupSectionFields.vue'
 import FollowupRecordDetailDialog from './FollowupRecordDetailDialog.vue'
-import PatientArchiveView from './PatientArchiveView.vue'
 import {
   FOLLOWUP_CONTACT_TARGET_OPTIONS,
   FOLLOWUP_METHOD_OPTIONS,
@@ -22,6 +21,7 @@ import {
   validateFollowupSection,
   type FollowupSection,
 } from '../../shared/followup-labels'
+import { openInNewTab } from '../../shared/open-route'
 
 interface FollowupItem {
   id: string
@@ -42,23 +42,25 @@ interface FollowupItem {
 }
 
 const route = useRoute()
+const router = useRouter()
 const props = defineProps<{
   /** 驾驶舱抽屉等场景传入；不传则走路由 params */
   peopleId?: string
 }>()
 const peopleId = () => String(props.peopleId || route.params.peopleId || '')
 const loading = ref(false)
+
+function goIntake(row: FollowupItem) {
+  openInNewTab(router, {
+    path: `/workspace/patients/${peopleId()}/intake`,
+    query: { followupRecordId: row.id },
+  })
+}
 const items = ref<FollowupItem[]>([])
 const createOpen = ref(false)
 const followupDetailId = ref<string | null>(null)
 const completingId = ref<string | null>(null)
 const submitting = ref(false)
-const createArchiveRef = ref<{ saveAllForFollowup: () => Promise<{ diseaseCodes: string[] }> } | null>(
-  null,
-)
-const completeArchiveRef = ref<{
-  saveAllForFollowup: () => Promise<{ diseaseCodes: string[] }>
-} | null>(null)
 
 const createForm = reactive({
   followupType: 'ROUTINE',
@@ -80,30 +82,15 @@ const completeForm = reactive({
   section: emptyFollowupSection(),
 })
 
-const createDialogWide = computed(
-  () => createForm.completeNow && createForm.followupType === 'ONBOARDING',
-)
-const completeDialogWide = computed(() => completeForm.followupType === 'ONBOARDING')
-
-function formatTime(v?: string) {
-  if (!v) return '-'
-  return String(v).replace('T', ' ').slice(0, 16)
-}
-
-async function applyOnboardingArchive(
-  panel: { saveAllForFollowup: () => Promise<{ diseaseCodes: string[] }> } | null,
-  section: FollowupSection,
-) {
-  if (!panel) throw new Error('档案编辑器未就绪，请稍候再试')
-  const { diseaseCodes } = await panel.saveAllForFollowup()
-  section.archiveWritten = true
-  section.diseaseCodes = diseaseCodes
-}
-
 /** 勾选「建议调整方案」后同步制定方案待办（不强制跳转） */
 function planAdjustSuccessMessage(base: string, suggested: boolean) {
   if (!suggested) return base
   return `${base}，已同步「制定方案」待办`
+}
+
+function formatTime(v?: string) {
+  if (!v) return '-'
+  return String(v).replace('T', ' ').slice(0, 16)
 }
 
 async function load() {
@@ -147,12 +134,53 @@ function consumeAgentDraft() {
 
 watch(
   () => createForm.followupType,
-  () => resetSection(createForm),
+  (t) => {
+    resetSection(createForm)
+    // 首诊只能先建待办，再在全屏工作台完成
+    if (t === 'ONBOARDING') {
+      createForm.completeNow = false
+      createForm.createTask = true
+    }
+  },
 )
 
 async function submitCreate() {
   if (!createForm.followupType) {
     ElMessage.warning('请选择随访类型')
+    return
+  }
+  // 首诊：只建 OPEN 随访，随后跳转全屏工作台
+  if (createForm.followupType === 'ONBOARDING') {
+    submitting.value = true
+    try {
+      const res = await api<{ data: { id: string } }>('/api/b/v1/followups', {
+        method: 'POST',
+        body: JSON.stringify({
+          peopleId: peopleId(),
+          followupType: 'ONBOARDING',
+          completeNow: false,
+          createTask: true,
+          content: { followupType: 'ONBOARDING' },
+        }),
+      })
+      createOpen.value = false
+      await load()
+      notifyCockpitTasksPossiblyChanged(peopleId())
+      const id = res.data?.id
+      if (id) {
+        openInNewTab(router, {
+          path: `/workspace/patients/${peopleId()}/intake`,
+          query: { followupRecordId: id },
+        })
+        ElMessage.success('已打开首诊工作台')
+      } else {
+        ElMessage.success('已创建首诊待办，请点「开始首诊」')
+      }
+    } catch (e) {
+      ElMessage.error(e instanceof Error ? e.message : '创建失败')
+    } finally {
+      submitting.value = false
+    }
     return
   }
   if (createForm.completeNow) {
@@ -168,9 +196,6 @@ async function submitCreate() {
   }
   submitting.value = true
   try {
-    if (createForm.completeNow && createForm.followupType === 'ONBOARDING') {
-      await applyOnboardingArchive(createArchiveRef.value, createForm.section)
-    }
     await api('/api/b/v1/followups', {
       method: 'POST',
       body: JSON.stringify({
@@ -257,6 +282,10 @@ function openDetail(row: FollowupItem) {
 const hydratingComplete = ref(false)
 
 async function openComplete(row: FollowupItem) {
+  if (row.followupType === 'ONBOARDING') {
+    goIntake(row)
+    return
+  }
   hydratingComplete.value = true
   completingId.value = row.id
   completeForm.followupType = row.followupType || 'ROUTINE'
@@ -335,11 +364,12 @@ async function submitComplete() {
     ElMessage.warning(err)
     return
   }
+  if (completeForm.followupType === 'ONBOARDING') {
+    ElMessage.warning('首诊请在全屏工作台提交问卷完成')
+    return
+  }
   submitting.value = true
   try {
-    if (completeForm.followupType === 'ONBOARDING') {
-      await applyOnboardingArchive(completeArchiveRef.value, completeForm.section)
-    }
     await api(`/api/b/v1/followups/${completingId.value}/complete`, {
       method: 'POST',
       body: JSON.stringify(
@@ -429,7 +459,15 @@ onMounted(async () => {
           <div class="actions">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
             <el-button
-              v-if="row.status === 'OPEN' && row.recordType === 'PERIODIC'"
+              v-if="row.status === 'OPEN' && row.followupType === 'ONBOARDING'"
+              link
+              type="primary"
+              @click="goIntake(row)"
+            >
+              开始首诊
+            </el-button>
+            <el-button
+              v-if="row.status === 'OPEN' && row.recordType === 'PERIODIC' && row.followupType !== 'ONBOARDING'"
               link
               type="primary"
               @click="openComplete(row)"
@@ -453,7 +491,7 @@ onMounted(async () => {
     <el-dialog
       v-model="createOpen"
       title="新建随访"
-      :width="createDialogWide ? '920px' : '680px'"
+      width="680px"
       destroy-on-close
       align-center
       class="followup-dialog"
@@ -469,85 +507,89 @@ onMounted(async () => {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="记录方式">
-          <el-radio-group v-model="createForm.completeNow">
-            <el-radio :value="true">当场处理</el-radio>
-            <el-radio :value="false">先建待办</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="!createForm.completeNow" label="同步工作台待办">
-          <el-switch v-model="createForm.createTask" />
-        </el-form-item>
-        <template v-if="createForm.completeNow">
-          <div class="form-row">
-            <el-form-item label="沟通对象" required class="form-col">
-              <el-select v-model="createForm.contactTarget" placeholder="请选择" style="width: 100%">
-                <el-option
-                  v-for="o in FOLLOWUP_CONTACT_TARGET_OPTIONS"
-                  :key="o.value"
-                  :label="o.label"
-                  :value="o.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="随访方式" required class="form-col">
-              <el-select v-model="createForm.followupMethod" placeholder="请选择" style="width: 100%">
-                <el-option
-                  v-for="o in FOLLOWUP_METHOD_OPTIONS"
-                  :key="o.value"
-                  :label="o.label"
-                  :value="o.value"
-                />
-              </el-select>
-            </el-form-item>
-          </div>
-          <div v-if="createForm.followupType === 'ONBOARDING'" class="archive-block">
-            <div class="archive-block-title">患者档案（提交时写回）</div>
-            <PatientArchiveView
-              ref="createArchiveRef"
-              :people-id="peopleId()"
-              embedded
-            />
-          </div>
-          <FollowupSectionFields
-            v-model="createForm.section"
-            :followup-type="createForm.followupType"
-          />
-          <el-form-item label="指导建议">
-            <el-input
-              v-model="createForm.guidance"
-              type="textarea"
-              :rows="2"
-              maxlength="400"
-              show-word-limit
-              placeholder="选填"
-            />
+        <el-alert
+          v-if="createForm.followupType === 'ONBOARDING'"
+          type="info"
+          :closable="false"
+          show-icon
+          title="入组/首诊在全屏工作台填写问卷完成，提交后将打开首诊页"
+          class="onboarding-tip"
+        />
+        <template v-if="createForm.followupType !== 'ONBOARDING'">
+          <el-form-item label="记录方式">
+            <el-radio-group v-model="createForm.completeNow">
+              <el-radio :value="true">当场处理</el-radio>
+              <el-radio :value="false">先建待办</el-radio>
+            </el-radio-group>
           </el-form-item>
-          <el-form-item v-if="createForm.followupType === 'ROUTINE'" label="建议调整方案">
-            <div class="switch-line">
-              <el-switch v-model="createForm.suggestPlanAdjust" />
-              <span class="switch-hint">开启后同步工作台「制定方案」待办</span>
+          <el-form-item v-if="!createForm.completeNow" label="同步工作台待办">
+            <el-switch v-model="createForm.createTask" />
+          </el-form-item>
+          <template v-if="createForm.completeNow">
+            <div class="form-row">
+              <el-form-item label="沟通对象" required class="form-col">
+                <el-select v-model="createForm.contactTarget" placeholder="请选择" style="width: 100%">
+                  <el-option
+                    v-for="o in FOLLOWUP_CONTACT_TARGET_OPTIONS"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="随访方式" required class="form-col">
+                <el-select v-model="createForm.followupMethod" placeholder="请选择" style="width: 100%">
+                  <el-option
+                    v-for="o in FOLLOWUP_METHOD_OPTIONS"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
+                </el-select>
+              </el-form-item>
             </div>
-          </el-form-item>
+            <FollowupSectionFields
+              v-model="createForm.section"
+              :followup-type="createForm.followupType"
+            />
+            <el-form-item label="指导建议">
+              <el-input
+                v-model="createForm.guidance"
+                type="textarea"
+                :rows="2"
+                maxlength="400"
+                show-word-limit
+                placeholder="选填"
+              />
+            </el-form-item>
+            <el-form-item v-if="createForm.followupType === 'ROUTINE'" label="建议调整方案">
+              <div class="switch-line">
+                <el-switch v-model="createForm.suggestPlanAdjust" />
+                <span class="switch-hint">开启后同步工作台「制定方案」待办</span>
+              </div>
+            </el-form-item>
+          </template>
         </template>
       </el-form>
       <template #footer>
         <el-button @click="createOpen = false">取消</el-button>
         <el-button
-          v-if="createForm.completeNow"
+          v-if="createForm.completeNow && createForm.followupType !== 'ONBOARDING'"
           :loading="submitting"
           @click="saveCreateDraft"
         >
           保存
         </el-button>
-        <el-button type="primary" :loading="submitting" @click="submitCreate">提交</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitCreate">
+          {{ createForm.followupType === 'ONBOARDING' ? '创建并开始首诊' : '提交' }}
+        </el-button>
       </template>
     </el-dialog>
 
     <el-dialog
       :model-value="!!completingId"
       title="处理随访"
-      :width="completeDialogWide ? '920px' : '720px'"
+      width="720px"
       destroy-on-close
       align-center
       class="followup-dialog followup-process-dialog"
@@ -559,7 +601,7 @@ onMounted(async () => {
           <el-form-item label="随访类型" required>
             <el-select v-model="completeForm.followupType" style="width: 100%">
               <el-option
-                v-for="o in FOLLOWUP_TYPE_OPTIONS"
+                v-for="o in FOLLOWUP_TYPE_OPTIONS.filter((x) => x.value !== 'ONBOARDING')"
                 :key="o.value"
                 :label="o.label"
                 :value="o.value"
@@ -588,15 +630,6 @@ onMounted(async () => {
               </el-select>
             </el-form-item>
           </div>
-        </div>
-
-        <div v-if="completeForm.followupType === 'ONBOARDING'" class="archive-block">
-          <div class="archive-block-title">患者档案（提交时写回）</div>
-          <PatientArchiveView
-            ref="completeArchiveRef"
-            :people-id="peopleId()"
-            embedded
-          />
         </div>
 
         <div class="form-block">
@@ -692,17 +725,8 @@ onMounted(async () => {
   grid-template-columns: 1fr 1fr;
   gap: 0 16px;
 }
-.archive-block {
-  margin: 8px 0 16px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-blank);
-}
-.archive-block-title {
-  margin-bottom: 10px;
-  font-weight: 600;
-  font-size: 14px;
+.onboarding-tip {
+  margin-bottom: 12px;
 }
 .form-col {
   margin-bottom: 14px;

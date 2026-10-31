@@ -4,10 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.archive.domain.PeopleDiseaseArchive;
 import com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper;
-import com.healix.core.assessment.catalog.InputField;
-import com.healix.core.assessment.domain.PeopleAssessmentFact;
-import com.healix.core.assessment.mapper.AssessmentStoreMapper;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext.FactValue;
+import com.healix.core.field.FieldValue;
+import com.healix.core.field.PeopleFieldService;
 import com.healix.core.medication.domain.PeopleMedication;
 import com.healix.core.medication.dto.DrugCatalogItemDto;
 import com.healix.core.medication.mapper.PeopleMedicationMapper;
@@ -31,10 +31,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -67,7 +70,7 @@ public class AssessmentContextBuilder {
     private final VitalRecordMapper vitalRecordMapper;
     private final PeopleMedicationMapper medicationMapper;
     private final DrugCatalogService drugCatalogService;
-    private final AssessmentStoreMapper storeMapper;
+    private final PeopleFieldService peopleFieldService;
 
     public AssessmentContext build(String tenantId, String peopleId) {
         LocalDateTime now = LocalDateTime.now();
@@ -129,6 +132,7 @@ public class AssessmentContextBuilder {
                     MetricTypeEnum.HEIGHT,
                     MetricTypeEnum.WEIGHT,
                     MetricTypeEnum.WAIST,
+                    MetricTypeEnum.BODY_FAT,
                     MetricTypeEnum.HEART_RATE,
                     MetricTypeEnum.BLOOD_PRESSURE_SYS,
                     MetricTypeEnum.BLOOD_PRESSURE_DIA)) {
@@ -141,6 +145,7 @@ public class AssessmentContextBuilder {
         MetricLatestSlotDto h = latest.get(MetricTypeEnum.HEIGHT);
         MetricLatestSlotDto w = latest.get(MetricTypeEnum.WEIGHT);
         MetricLatestSlotDto waist = latest.get(MetricTypeEnum.WAIST);
+        MetricLatestSlotDto bodyFat = latest.get(MetricTypeEnum.BODY_FAT);
         MetricLatestSlotDto hr = latest.get(MetricTypeEnum.HEART_RATE);
         if (h != null) {
             b.heightCm(h.value()).heightRecordedAt(h.recordedAt());
@@ -154,6 +159,9 @@ public class AssessmentContextBuilder {
         }
         if (waist != null) {
             b.waistCm(waist.value()).waistRecordedAt(waist.recordedAt());
+        }
+        if (bodyFat != null) {
+            b.bodyFat(bodyFat.value()).bodyFatRecordedAt(bodyFat.recordedAt());
         }
         if (hr != null) {
             b.heartRate(hr.value()).heartRateRecordedAt(hr.recordedAt());
@@ -396,6 +404,30 @@ public class AssessmentContextBuilder {
             b.dietType(type).dietPreference(pref);
             b.dietCollected(StringUtils.hasText(type) || StringUtils.hasText(pref)
                     || StringUtils.hasText(text(diet, "habit")));
+            Set<String> taste = new LinkedHashSet<>();
+            JsonNode tasteNode = diet.get("taste");
+            if (tasteNode != null && tasteNode.isArray()) {
+                tasteNode.forEach(n -> {
+                    if (n != null && StringUtils.hasText(n.asText())) {
+                        taste.add(n.asText().trim().toUpperCase(Locale.ROOT));
+                    }
+                });
+                b.dietTaste(taste).dietTasteCollected(true);
+            }
+        }
+        JsonNode psych = root.get("psych");
+        if (psych != null && psych.isObject()) {
+            b.stressLevel(text(psych, "stressLevel"));
+        }
+        JsonNode medFlags = root.get("medicationFlags");
+        if (medFlags != null && medFlags.isArray()) {
+            Set<String> flags = new LinkedHashSet<>();
+            medFlags.forEach(n -> {
+                if (n != null && StringUtils.hasText(n.asText())) {
+                    flags.add(n.asText().trim().toUpperCase(Locale.ROOT));
+                }
+            });
+            b.medicationFlags(flags).medicationFlagsCollected(true);
         }
         return illness;
     }
@@ -499,15 +531,60 @@ public class AssessmentContextBuilder {
         return null;
     }
 
+    private static final List<String> META_FACT_CODES = List.of(
+            AssessmentFields.PASSIVE_SMOKING,
+            AssessmentFields.GDM_HISTORY,
+            AssessmentFields.STEROID_DIABETES,
+            AssessmentFields.ACANTHOSIS,
+            AssessmentFields.EARLY_MENOPAUSE,
+            AssessmentFields.LVH,
+            AssessmentFields.CAROTID_PLAQUE,
+            AssessmentFields.PWV_HIGH,
+            AssessmentFields.ABI_LOW,
+            AssessmentFields.HCY_HIGH,
+            AssessmentFields.PERIPHERAL_ARTERY_DISEASE,
+            AssessmentFields.ADVANCED_RETINOPATHY,
+            AssessmentFields.DM_COMPLICATIONS,
+            AssessmentFields.HTN_MAX_SBP,
+            AssessmentFields.HTN_MAX_DBP,
+            AssessmentFields.HIGH_SALT,
+            AssessmentFields.CHRONIC_STRESS,
+            AssessmentFields.MEDICATION_FLAGS);
+
     private void loadFacts(AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId) {
-        Map<InputField, FactValue> facts = new EnumMap<>(InputField.class);
-        for (PeopleAssessmentFact row : storeMapper.listFacts(tenantId, peopleId)) {
-            InputField f = InputField.parse(row.getFieldCode());
-            if (f == null || !StringUtils.hasText(row.getValueJson())) {
+        Map<String, FactValue> facts = new LinkedHashMap<>();
+        for (String code : META_FACT_CODES) {
+            Optional<FieldValue> fv = peopleFieldService.read(tenantId, peopleId, code);
+            if (fv.isEmpty() || fv.get().value() == null || fv.get().value().isNull()) {
                 continue;
             }
-            JsonNode node = JsonUtils.readTree(row.getValueJson()).get("value");
-            facts.put(f, new FactValue(toJava(node), row.getSource(), row.getRecordedAt()));
+            FieldValue row = fv.get();
+            facts.put(code, new FactValue(toJava(row.value()), row.sourceBizCode(), row.gmtModified()));
+            if (AssessmentFields.HIGH_SALT.equals(code) && row.value().isArray()) {
+                Set<String> taste = new HashSet<>();
+                row.value().forEach(n -> {
+                    if (n != null && StringUtils.hasText(n.asText())) {
+                        taste.add(n.asText().trim().toUpperCase(Locale.ROOT));
+                    }
+                });
+                b.dietTaste(taste).dietTasteCollected(true);
+            }
+            if (AssessmentFields.CHRONIC_STRESS.equals(code) && row.value().isTextual()) {
+                b.stressLevel(row.value().asText());
+            }
+            if (AssessmentFields.MEDICATION_FLAGS.equals(code) && row.value().isArray()) {
+                Set<String> flags = new LinkedHashSet<>();
+                row.value().forEach(n -> {
+                    if (n != null && StringUtils.hasText(n.asText())) {
+                        flags.add(n.asText().trim().toUpperCase(Locale.ROOT));
+                    }
+                });
+                b.medicationFlags(flags).medicationFlagsCollected(true);
+            }
+        }
+        // 被动吸烟：档案 lifestyle.smoking.passive
+        if (!facts.containsKey(AssessmentFields.PASSIVE_SMOKING)) {
+            // 已由元数据覆盖；无则忽略
         }
         b.facts(facts);
     }

@@ -3,7 +3,6 @@ package com.healix.core.assessment.engine;
 import com.healix.core.assessment.catalog.AssessmentCategory;
 import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentResult;
 import com.healix.core.assessment.support.RuleSheet;
@@ -36,9 +35,11 @@ public interface AssessmentEngine {
 
     List<LevelDef> levels();
 
-    Set<InputField> inputs();
+    /** 本引擎用到的字段编码（见 {@link com.healix.core.assessment.catalog.AssessmentFields}）。 */
+    Set<String> inputs();
 
-    Set<InputField> requiredInputs();
+    /** 缺任一则 INCOMPLETE。 */
+    Set<String> requiredInputs();
 
     boolean applicable(AssessmentContext ctx);
 

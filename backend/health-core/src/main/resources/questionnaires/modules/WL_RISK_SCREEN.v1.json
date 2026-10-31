@@ -1,0 +1,81 @@
+{
+  "code": "WL_RISK_SCREEN",
+  "version": 1,
+  "title": "减重风险筛查",
+  "script": "接下来几个问题是为了让方案更安全，不舒服的可以不回答。",
+  "items": [
+    {
+      "field": "basic.psych.eatingDisorderHistory",
+      "label": "以前有没有出现过暴食、催吐，或者长时间刻意不吃饭的情况？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "in": [
+              "YES",
+              "UNSURE"
+            ]
+          },
+          "severity": "REFER",
+          "planEffect": "不设热量缺口，称重改为每周，方案中提示寻求专业帮助"
+        },
+        {
+          "when": {
+            "eq": "DECLINE"
+          },
+          "severity": "CAUTION",
+          "planEffect": "按保守方案处理"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.soughtHelp",
+      "label": "有没有因为这个找过医生或心理咨询？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.psych.eatingDisorderHistory",
+        "in": [
+          "YES",
+          "UNSURE"
+        ]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.bodySatisfaction",
+      "label": "对自己现在的身材满意吗？",
+      "level": "LATER",
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.bodyAnxiety",
+      "label": "会不会经常因为身材焦虑，影响心情或生活？",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": {
+            "eq": "SEVERE"
+          },
+          "severity": "REFER",
+          "planEffect": "称重改为每周，弱化体重数字，必要时建议心理支持"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.weightHistory.expectedPace",
+      "label": "希望多快看到效果？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "eq": "ASAP"
+          },
+          "severity": "CAUTION",
+          "planEffect": "沟通安全速度（每周约 0.5–1 kg），目标按安全速度设定"
+        }
+      ]
+    }
+  ]
+}

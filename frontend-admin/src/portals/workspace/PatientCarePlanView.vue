@@ -16,6 +16,13 @@ import {
   type EnergyTarget,
 } from '../../shared/energy-target'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from '../../shared/CarePlanPreviewDialog.vue'
+import GuidelineRefTags from '../../shared/GuidelineRefTags.vue'
+import {
+  generatedBeforeLibrary,
+  loadGuidelineLibrary,
+  refsOf,
+  type GuidelineLibraryView,
+} from '../../shared/guidelines'
 import {
   CARE_PLAN_EXERCISE_TYPE_OPTIONS,
   CARE_PLAN_FREQUENCY_OPTIONS,
@@ -80,6 +87,21 @@ interface ExecTask {
   rationale?: string
 }
 
+interface CarePlanCommHistoryItem {
+  round: number
+  followupId?: string
+  result?: string
+  resultLabel?: string
+  customerFeedback?: string | null
+  changePoints?: string | null
+  faceToFace?: boolean
+  followupMethod?: string | null
+  assigneeStaffId?: string | null
+  assigneeName?: string | null
+  completedAt?: string | null
+  draftId?: string | null
+}
+
 interface CarePlanBundle {
   plan?: {
     id: string
@@ -88,6 +110,11 @@ interface CarePlanBundle {
     goalSummary?: string
     currentVersionId?: string
     version?: number
+    reviewedAt?: string
+    reviewedByStaffId?: string
+    lastCommResult?: string
+    lastCommAt?: string
+    lastCommNote?: string
   } | null
   draft?: {
     id: string
@@ -99,6 +126,7 @@ interface CarePlanBundle {
     safetyFlags?: SafetyFlag[]
     contextSnapshot?: any
   } | null
+  communicationHistory?: CarePlanCommHistoryItem[]
   activeVersion?: {
     id: string
     versionNo: number
@@ -344,6 +372,17 @@ const safetyFlags = computed<SafetyFlag[]>(() => {
   const raw = bundle.value?.draft?.safetyFlags
   return Array.isArray(raw) ? raw : []
 })
+const guidelineLib = ref<GuidelineLibraryView | null>(null)
+const planSrc = computed(() => bundle.value?.draft || bundle.value?.activeVersion || null)
+const exerciseRefs = computed(() => refsOf(planSrc.value?.exercise))
+const dietRefs = computed(() => refsOf(planSrc.value?.diet))
+const executionRefs = computed(() => refsOf(planSrc.value?.execution))
+const planBeforeLibrary = computed(
+  () =>
+    !!planSrc.value &&
+    currentPlanSource.value !== 'MANUAL' &&
+    generatedBeforeLibrary(guidelineLib.value, planSrc.value.contextSnapshot),
+)
 const errorFlags = computed(() => safetyFlags.value.filter((f) => f.level === 'ERROR'))
 const warnFlags = computed(() => safetyFlags.value.filter((f) => f.level === 'WARN'))
 
@@ -1119,23 +1158,155 @@ async function applyRecipe(recipeId: string) {
   }
 }
 
-async function publish() {
+async function collectAckWarnCodes(): Promise<string[] | null> {
   if (errorFlags.value.length) {
-    ElMessage.error('存在 ERROR 级安全问题，请先修正后再发布')
-    return
+    ElMessage.error('存在 ERROR 级安全问题，请先修正')
+    return null
   }
   const ack = warnFlags.value.map((f) => f.code)
   if (ack.length) {
     try {
       await ElMessageBox.confirm(
-        `存在警告：\n${warnFlags.value.map((f) => `· ${f.message}`).join('\n')}\n\n确认后继续发布？`,
+        `存在警告：\n${warnFlags.value.map((f) => `· ${f.message}`).join('\n')}\n\n确认后继续？`,
         '确认警告',
         { type: 'warning' },
       )
     } catch {
+      return null
+    }
+  }
+  return ack
+}
+
+async function markReviewed() {
+  if (errorFlags.value.length) {
+    ElMessage.error('存在 ERROR 级安全问题，请先修正后再审核通过')
+    return
+  }
+  saving.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan/review`, {
+      method: 'POST',
+    })
+    bundle.value = res.data
+    syncFormFromBundle()
+    ElMessage.success('已审核通过，可发起客户沟通或当面接受')
+    refreshAfterMutation()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '审核失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function startCommunication() {
+  saving.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(
+      `/api/b/v1/patients/${peopleId.value}/care-plan/start-communication`,
+      { method: 'POST' },
+    )
+    bundle.value = res.data
+    syncFormFromBundle()
+    ElMessage.success('已进入沟通中，请记录沟通结果')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '发起沟通失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function recordCommunication(result: 'ACCEPTED' | 'NEED_MODIFY' | 'NEED_REGENERATE') {
+  let changePoints: string | undefined
+  let customerFeedback: string | undefined
+  if (result !== 'ACCEPTED') {
+    try {
+      const { value } = await ElMessageBox.prompt(
+        result === 'NEED_REGENERATE' ? '请填写重做要点（将带入下次生成说明）' : '请填写修改要点',
+        result === 'NEED_REGENERATE' ? '需重做' : '需修改',
+        { inputPattern: /\S+/, inputErrorMessage: '请填写要点' },
+      )
+      changePoints = value
+    } catch {
+      return
+    }
+  } else {
+    try {
+      const { value } = await ElMessageBox.prompt('客户反馈（可选）', '沟通·已接受', {
+        inputPlaceholder: '客户说了什么',
+        confirmButtonText: '确认并发布',
+      })
+      customerFeedback = value || undefined
+    } catch {
       return
     }
   }
+  const ack = result === 'ACCEPTED' ? await collectAckWarnCodes() : []
+  if (result === 'ACCEPTED' && ack == null) return
+  saving.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(
+      `/api/b/v1/patients/${peopleId.value}/care-plan/communication`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          result,
+          customerFeedback,
+          changePoints,
+          faceToFace: false,
+          ackWarnCodes: ack || [],
+          title: editForm.title || undefined,
+        }),
+      },
+    )
+    bundle.value = res.data
+    syncFormFromBundle()
+    ElMessage.success(
+      result === 'ACCEPTED' ? '客户已接受，方案已发布' : result === 'NEED_REGENERATE' ? '已记为需重做，请重新生成' : '已记为需修改',
+    )
+    refreshAfterMutation()
+    if (result === 'ACCEPTED') {
+      emitAgentCarePlanUpdated(peopleId.value)
+      emit('published')
+    }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '记录沟通失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function faceToFaceAccept() {
+  const ack = await collectAckWarnCodes()
+  if (ack == null) return
+  saving.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(
+      `/api/b/v1/patients/${peopleId.value}/care-plan/face-to-face-accept`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          ackWarnCodes: ack,
+          title: editForm.title || undefined,
+        }),
+      },
+    )
+    bundle.value = res.data
+    syncFormFromBundle()
+    ElMessage.success('当面沟通已接受，方案已发布')
+    refreshAfterMutation()
+    emitAgentCarePlanUpdated(peopleId.value)
+    emit('published')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '当面接受失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function publish() {
+  const ack = await collectAckWarnCodes()
+  if (ack == null) return
   saving.value = true
   try {
     const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan/publish`, {
@@ -1218,9 +1389,18 @@ function removeTask(idx: number) {
 function statusLabel(status?: string) {
   if (status === 'ACTIVE') return '已生效'
   if (status === 'DRAFT') return '仅草稿'
+  if (status === 'REVIEWED') return '已审核'
+  if (status === 'COMMUNICATING') return '沟通中'
   if (status === 'SUPERSEDED') return '已替代'
   return status || '未创建'
 }
+
+const planStatus = computed(() => bundle.value?.plan?.status)
+const canReview = computed(() => !!bundle.value?.draft && (planStatus.value === 'DRAFT' || planStatus.value === 'ACTIVE'))
+const canStartComm = computed(() => !!bundle.value?.draft && planStatus.value === 'REVIEWED')
+const canRecordComm = computed(
+  () => !!bundle.value?.draft && (planStatus.value === 'REVIEWED' || planStatus.value === 'COMMUNICATING'),
+)
 
 watch(peopleId, () => {
   loadList()
@@ -1251,6 +1431,9 @@ async function preferComposeIfDraft() {
 onMounted(() => {
   syncMainTabFromQuery()
   void loadList()
+  loadGuidelineLibrary()
+    .then((lib) => (guidelineLib.value = lib))
+    .catch(() => {})
   void preferComposeIfDraft().then(() => {
     if (mainTab.value === 'compose' && !bundle.value) void load()
     if (mainTab.value === 'checkins') {
@@ -1464,6 +1647,11 @@ watch(
           待医生签署
         </el-tag>
         <span v-if="bundle?.draft" class="meta-text draft">编辑中草稿</span>
+        <span v-if="bundle?.plan?.reviewedAt" class="meta-text">已审核 · {{ bundle.plan.reviewedAt }}</span>
+        <span v-if="bundle?.plan?.lastCommResult" class="meta-text">
+          沟通 {{ bundle.plan.lastCommResult }}
+          <template v-if="bundle.plan.lastCommNote"> · {{ bundle.plan.lastCommNote }}</template>
+        </span>
       </div>
       <div class="actions">
         <el-button :loading="saving" type="primary" @click="openGenerateDialog">AI 生成方案</el-button>
@@ -1479,7 +1667,27 @@ watch(
         <el-button v-if="bundle?.draft" :loading="saving" type="success" @click="saveDraft">
           保存草稿
         </el-button>
-        <el-button v-if="bundle?.draft" :loading="saving" type="warning" @click="publish">
+        <el-button v-if="canReview" :loading="saving" @click="markReviewed">审核通过</el-button>
+        <el-button v-if="canStartComm" :loading="saving" @click="startCommunication">发起沟通</el-button>
+        <el-button v-if="canRecordComm" :loading="saving" type="success" @click="faceToFaceAccept">
+          当面沟通·已接受
+        </el-button>
+        <el-dropdown v-if="canRecordComm" trigger="click" @command="recordCommunication">
+          <el-button :loading="saving">沟通结果</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="ACCEPTED">客户接受并发布</el-dropdown-item>
+              <el-dropdown-item command="NEED_MODIFY">需修改</el-dropdown-item>
+              <el-dropdown-item command="NEED_REGENERATE">需重做</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button
+          v-if="bundle?.draft && planStatus === 'COMMUNICATING' && bundle?.plan?.lastCommResult === 'ACCEPTED'"
+          :loading="saving"
+          type="warning"
+          @click="publish"
+        >
           发布
         </el-button>
         <el-button
@@ -1557,12 +1765,45 @@ watch(
           </el-form-item>
         </el-form>
         <div
+          v-if="bundle.communicationHistory && bundle.communicationHistory.length"
+          class="comm-history"
+        >
+          <div class="comm-history-head">
+            <span class="comm-history-title">沟通历史</span>
+            <span class="comm-history-meta">共 {{ bundle.communicationHistory.length }} 轮</span>
+          </div>
+          <ol class="comm-timeline">
+            <li
+              v-for="item in bundle.communicationHistory"
+              :key="item.followupId || item.round"
+              class="comm-item"
+            >
+              <div class="comm-round">第 {{ item.round }} 轮 · {{ item.resultLabel || item.result || '-' }}</div>
+              <div class="comm-meta">
+                <span v-if="item.assigneeName">{{ item.assigneeName }}</span>
+                <span v-if="item.faceToFace">当面</span>
+                <span v-else-if="item.followupMethod">{{ item.followupMethod }}</span>
+                <span v-if="item.completedAt">{{ item.completedAt }}</span>
+              </div>
+              <p v-if="item.customerFeedback" class="comm-line">客户：{{ item.customerFeedback }}</p>
+              <p v-if="item.changePoints" class="comm-line">修改要点：{{ item.changePoints }}</p>
+            </li>
+          </ol>
+        </div>
+        <div
           v-if="isDraftMode || editForm.rationaleOverview"
           class="rationale-box"
         >
           <div class="rationale-box-head">
             <span class="rationale-badge">生成依据</span>
             <span class="rationale-meta">仅健管师可见 · 不展示给患者</span>
+            <el-tooltip
+              v-if="planBeforeLibrary"
+              content="该方案生成时依据库尚未上线，未做条目匹配与校验；不回填，重新生成后带依据"
+              placement="top"
+            >
+              <el-tag size="small" type="info" effect="plain">生成于依据库上线前</el-tag>
+            </el-tooltip>
           </div>
           <el-input
             v-model="editForm.rationaleOverview"
@@ -1620,7 +1861,7 @@ watch(
             />
           </el-form-item>
           <div
-            v-if="isDraftMode || editForm.exerciseRationale"
+            v-if="isDraftMode || editForm.exerciseRationale || exerciseRefs.length"
             class="rationale-box rationale-box--inline"
           >
             <div class="rationale-box-head">
@@ -1635,6 +1876,7 @@ watch(
               class="rationale-input"
               :class="{ 'textarea-readonly': !isDraftMode }"
             />
+            <GuidelineRefTags :refs="exerciseRefs" />
           </div>
           <el-form-item label="禁忌">
             <el-input
@@ -1783,7 +2025,7 @@ watch(
             />
           </el-form-item>
           <div
-            v-if="isDraftMode || editForm.dietRationale"
+            v-if="isDraftMode || editForm.dietRationale || dietRefs.length"
             class="rationale-box rationale-box--inline"
           >
             <div class="rationale-box-head">
@@ -1798,6 +2040,7 @@ watch(
               class="rationale-input"
               :class="{ 'textarea-readonly': !isDraftMode }"
             />
+            <GuidelineRefTags :refs="dietRefs" />
           </div>
           <el-form-item label="每日热量">
             <div class="energy-box">
@@ -2016,7 +2259,7 @@ watch(
             <el-input-number v-model="editForm.horizonDays" :disabled="!isDraftMode" :min="1" :max="90" />
           </el-form-item>
           <div
-            v-if="isDraftMode || editForm.executionRationale"
+            v-if="isDraftMode || editForm.executionRationale || executionRefs.length"
             class="rationale-box rationale-box--inline"
           >
             <div class="rationale-box-head">
@@ -2031,6 +2274,7 @@ watch(
               class="rationale-input"
               :class="{ 'textarea-readonly': !isDraftMode }"
             />
+            <GuidelineRefTags :refs="executionRefs" />
           </div>
           <el-form-item label="任务">
             <div class="block">
@@ -2669,6 +2913,66 @@ watch(
 .hint {
   color: var(--admin-text-secondary);
   font-size: 13px;
+}
+
+.comm-history {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--admin-border, #e5e7eb);
+}
+
+.comm-history-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.comm-history-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.comm-history-meta {
+  font-size: 12px;
+  color: var(--admin-text-secondary);
+}
+
+.comm-timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comm-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--ink-50, #f8fafc);
+  border: 1px solid var(--admin-border, #e5e7eb);
+}
+
+.comm-round {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.comm-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--admin-text-secondary);
+}
+
+.comm-line {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--admin-text, #334155);
 }
 
 .block {

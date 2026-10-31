@@ -102,9 +102,19 @@ const router = createRouter({
           meta: { requireOrg: true },
         },
         {
+          path: 'guidelines',
+          component: () => import('../portals/workspace/GuidelineLibraryView.vue'),
+          meta: { requireOrg: true },
+        },
+        {
           path: 'ops-stats',
           component: () => import('../portals/workspace/OpsStatsView.vue'),
           meta: { requireOrg: true },
+        },
+        {
+          path: 'patients/:peopleId/intake',
+          component: () => import('../portals/workspace/PatientIntakeView.vue'),
+          meta: { requireOrg: true, fullscreen: true },
         },
         {
           path: 'patients/:peopleId',

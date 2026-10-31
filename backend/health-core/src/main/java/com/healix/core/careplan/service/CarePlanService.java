@@ -21,15 +21,18 @@ import com.healix.core.careplan.domain.CarePlanTask;
 import com.healix.core.careplan.domain.CarePlanVersion;
 import com.healix.common.result.PageResult;
 import com.healix.core.careplan.dto.CarePlanBundleDto;
+import com.healix.core.careplan.dto.CarePlanCommHistoryItemDto;
 import com.healix.core.careplan.dto.CarePlanListItemDto;
 import com.healix.core.careplan.dto.CarePlanDraftDto;
 import com.healix.core.careplan.dto.CarePlanHeadDto;
 import com.healix.core.careplan.dto.CarePlanTaskDto;
 import com.healix.core.careplan.dto.CarePlanVersionDto;
 import com.healix.core.careplan.dto.SafetyFlagDto;
+import com.healix.core.careplan.enums.CarePlanCommResultEnum;
 import com.healix.core.careplan.enums.CarePlanSourceEnum;
 import com.healix.core.careplan.enums.CarePlanStatusEnum;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
+import com.healix.core.careplan.guideline.GuidelineCheck;
 import com.healix.core.careplan.mapper.CarePlanDraftMapper;
 import com.healix.core.careplan.mapper.CarePlanMapper;
 import com.healix.core.careplan.mapper.CarePlanTaskMapper;
@@ -37,6 +40,13 @@ import com.healix.core.careplan.mapper.CarePlanVersionMapper;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
+import com.healix.core.followup.catalog.FollowupType;
+import com.healix.core.followup.domain.FollowupRecord;
+import com.healix.core.followup.dto.FollowupRecordViewDto;
+import com.healix.core.followup.mapper.FollowupRecordMapper;
+import com.healix.core.followup.service.FollowupService;
+import com.healix.core.identity.domain.StaffProfile;
+import com.healix.core.program.service.ProgramEnrollmentService;
 import com.healix.core.careplan.support.CarePlanDiseaseTags;
 import com.healix.core.careplan.support.CarePlanEnergyTargetService;
 import com.healix.core.careplan.support.CarePlanRationaleSupport;
@@ -100,6 +110,9 @@ public class CarePlanService {
     private final FeatureFlagService featureFlagService;
     private final AllergyQueryService allergyQueryService;
     private final CarePlanEnergyTargetService energyTargetService;
+    private final ProgramEnrollmentService programEnrollmentService;
+    private final ObjectProvider<FollowupService> followupService;
+    private final FollowupRecordMapper followupRecordMapper;
 
     public CarePlanBundleDto getBundle(String tenantId, String orgId, String peopleId) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
@@ -119,6 +132,7 @@ public class CarePlanService {
                 bundle.setActiveVersion(toVersionDto(ver, true));
             }
         }
+        bundle.setCommunicationHistory(loadCommunicationHistory(orgId, peopleId, plan.getId()));
         return bundle;
     }
 
@@ -235,6 +249,10 @@ public class CarePlanService {
                 ? diseaseCodesOverride
                 : ctx.diseaseCodes();
         CarePlanTemplateKeyEnum key = templateRegistry.resolveTemplateKey(diseaseCodes, templateKey);
+        if (key == CarePlanTemplateKeyEnum.OBESITY
+                && !programEnrollmentService.canGenerateWeightLossPlan(tenantId, orgId, peopleId)) {
+            throw new BusinessException(400, "请先完成减重项目首诊问卷后再生成减重管理方案");
+        }
         GeneratedPlan generated = templateRegistry.generate(key, ctx, instruction, diseaseCodes);
         return persistGenerated(
                 tenantId,
@@ -284,6 +302,8 @@ public class CarePlanService {
                 allergyQueryService.status(tenantId, peopleId),
                 generated.contextSnapshot(),
                 true);
+        flags.addAll(GuidelineCheck.apply(
+                generated.exercise(), generated.diet(), generated.execution(), generated.guidelines(), true));
         if (existing != null) {
             draftMapper.softDelete(existing.getId());
         }
@@ -308,6 +328,7 @@ public class CarePlanService {
                 : generated.exercise().path("goal").asText(null);
         plan.setGoalSummary(goal);
         plan.setTitle(buildDefaultTitle(generated.templateKey(), goal));
+        resetReviewIfNeeded(plan);
         plan.setUpdatedByStaffId(staffId);
         EntityMeta.onUpdate(plan);
         carePlanMapper.update(plan);
@@ -436,6 +457,7 @@ public class CarePlanService {
                 ctx.allergyStatus(),
                 snapshotNode,
                 requireRationale);
+        flags.addAll(GuidelineCheck.apply(exerciseNorm, dietNorm, executionNorm, ctx.guidelines(), requireRationale));
         draft.setExerciseJson(JsonUtils.toJson(exerciseNorm));
         draft.setDietJson(JsonUtils.toJson(dietNorm == null ? JsonUtils.emptyObject() : dietNorm));
         draft.setExecutionJson(JsonUtils.toJson(executionNorm));
@@ -458,11 +480,27 @@ public class CarePlanService {
         if (goalSummary != null) {
             plan.setGoalSummary(goalSummary);
         }
+        resetReviewIfNeeded(plan);
         plan.setUpdatedByStaffId(staffId);
         EntityMeta.onUpdate(plan);
         carePlanMapper.update(plan);
         recordRevision(tenantId, peopleId, staffId, orgId, plan.getId(), ver, ver + 1, oldSnap, draftContentSnap(draft));
         return getBundle(tenantId, orgId, peopleId);
+    }
+
+    /** 审核/沟通后改草稿：退回 DRAFT，须重新审核与沟通。 */
+    private static void resetReviewIfNeeded(CarePlan plan) {
+        String st = plan.getStatus();
+        if (CarePlanStatusEnum.REVIEWED.name().equals(st)
+                || CarePlanStatusEnum.COMMUNICATING.name().equals(st)) {
+            plan.setStatus(CarePlanStatusEnum.DRAFT.name());
+            plan.setReviewedAt(null);
+            plan.setReviewedByStaffId(null);
+            plan.setLastCommResult(null);
+            plan.setLastCommAt(null);
+            plan.setLastCommFollowupId(null);
+            plan.setLastCommNote(null);
+        }
     }
 
     /** 将方案总结写入 context_snapshot.summary，保留其余快照字段。 */
@@ -571,6 +609,183 @@ public class CarePlanService {
         return getBundle(tenantId, orgId, peopleId);
     }
 
+    /** 审核通过：草稿存在且无 ERROR 级安全项。 */
+    @Transactional
+    public CarePlanBundleDto markReviewed(String tenantId, String orgId, String peopleId, String staffId) {
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        CarePlan plan = requirePlan(tenantId, peopleId);
+        CarePlanDraft draft = draftMapper.findByPlanId(plan.getId());
+        if (draft == null) {
+            throw new BusinessException("无草稿可审核");
+        }
+        List<SafetyFlagDto> flags =
+                safetyService.parseFlags(draft.getSafetyFlagsJson() == null ? "[]" : draft.getSafetyFlagsJson());
+        boolean hasError = flags.stream().anyMatch(f -> "ERROR".equals(f.level()));
+        if (hasError) {
+            throw new BusinessException("请先处理全部 ERROR 后再审核通过");
+        }
+        plan.setStatus(CarePlanStatusEnum.REVIEWED.name());
+        plan.setReviewedAt(LocalDateTime.now());
+        plan.setReviewedByStaffId(staffId);
+        plan.setLastCommResult(null);
+        plan.setLastCommAt(null);
+        plan.setLastCommFollowupId(null);
+        plan.setLastCommNote(null);
+        plan.setUpdatedByStaffId(staffId);
+        EntityMeta.onUpdate(plan);
+        carePlanMapper.update(plan);
+        recordRevision(
+                tenantId,
+                peopleId,
+                staffId,
+                orgId,
+                plan.getId(),
+                0,
+                0,
+                "{}",
+                revisionSnapshot("action", "MARK_REVIEWED", "status", CarePlanStatusEnum.REVIEWED.name()));
+        return getBundle(tenantId, orgId, peopleId);
+    }
+
+    /** 发起客户沟通：REVIEWED → COMMUNICATING。 */
+    @Transactional
+    public CarePlanBundleDto startCommunication(String tenantId, String orgId, String peopleId, String staffId) {
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        CarePlan plan = requirePlan(tenantId, peopleId);
+        if (!CarePlanStatusEnum.REVIEWED.name().equals(plan.getStatus())) {
+            throw new BusinessException("请先审核通过后再发起沟通");
+        }
+        if (draftMapper.findByPlanId(plan.getId()) == null) {
+            throw new BusinessException("无草稿可沟通");
+        }
+        plan.setStatus(CarePlanStatusEnum.COMMUNICATING.name());
+        plan.setUpdatedByStaffId(staffId);
+        EntityMeta.onUpdate(plan);
+        carePlanMapper.update(plan);
+        return getBundle(tenantId, orgId, peopleId);
+    }
+
+    /**
+     * 记录沟通结果。接受 → 自动发布；需修改/需重做 → 回草稿并保留修改要点。
+     *
+     * @return 需重做时返回的 regenerateHint 已写入 lastCommNote，前端可带入生成说明
+     */
+    @Transactional
+    public CarePlanBundleDto recordCommunication(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String actorAccountId,
+            String resultCode,
+            String customerFeedback,
+            String changePoints,
+            boolean faceToFace,
+            List<String> ackWarnCodes,
+            String title) {
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        CarePlan plan = requirePlan(tenantId, peopleId);
+        if (!CarePlanStatusEnum.REVIEWED.name().equals(plan.getStatus())
+                && !CarePlanStatusEnum.COMMUNICATING.name().equals(plan.getStatus())) {
+            throw new BusinessException("当前状态不可记录沟通");
+        }
+        CarePlanDraft draft = draftMapper.findByPlanId(plan.getId());
+        if (draft == null) {
+            throw new BusinessException("无草稿");
+        }
+        CarePlanCommResultEnum result = CarePlanCommResultEnum.require(resultCode);
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("followupType", FollowupType.PLAN_COMMUNICATION.name());
+        content.put("contactTarget", "PATIENT");
+        content.put("followupMethod", faceToFace ? "FACE_TO_FACE" : "PHONE");
+        content.put(
+                "guidance",
+                StringUtils.hasText(customerFeedback) ? customerFeedback : ("沟通结果：" + result.name()));
+        Map<String, Object> section = new LinkedHashMap<>();
+        section.put("result", result.name());
+        section.put("planId", plan.getId());
+        section.put("draftId", draft.getId());
+        section.put("faceToFace", faceToFace);
+        if (StringUtils.hasText(customerFeedback)) {
+            section.put("customerFeedback", customerFeedback);
+        }
+        if (StringUtils.hasText(changePoints)) {
+            section.put("changePoints", changePoints);
+        }
+        content.put("section", section);
+
+        FollowupService followups = followupService.getObject();
+        FollowupRecordViewDto followup = followups.createPeriodic(
+                orgId,
+                peopleId,
+                FollowupType.PLAN_COMMUNICATION.name(),
+                LocalDateTime.now(),
+                false,
+                true,
+                content,
+                actorAccountId);
+
+        plan.setLastCommResult(result.name());
+        plan.setLastCommAt(LocalDateTime.now());
+        plan.setLastCommFollowupId(followup == null ? null : followup.getId());
+        plan.setLastCommNote(changePoints);
+        plan.setUpdatedByStaffId(staffId);
+
+        if (result == CarePlanCommResultEnum.ACCEPTED) {
+            plan.setStatus(CarePlanStatusEnum.COMMUNICATING.name());
+            EntityMeta.onUpdate(plan);
+            carePlanMapper.update(plan);
+            return publish(tenantId, orgId, peopleId, staffId, ackWarnCodes, title, null);
+        }
+
+        // 需修改 / 需重做：回草稿，须重新审核
+        plan.setStatus(CarePlanStatusEnum.DRAFT.name());
+        plan.setReviewedAt(null);
+        plan.setReviewedByStaffId(null);
+        EntityMeta.onUpdate(plan);
+        carePlanMapper.update(plan);
+        recordRevision(
+                tenantId,
+                peopleId,
+                staffId,
+                orgId,
+                plan.getId(),
+                0,
+                0,
+                "{}",
+                revisionSnapshot("action", "COMM_RESULT_" + result.name(), "note", changePoints));
+        return getBundle(tenantId, orgId, peopleId);
+    }
+
+    /** 当面沟通 · 已接受：补沟通记录并发布。 */
+    @Transactional
+    public CarePlanBundleDto faceToFaceAccept(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String actorAccountId,
+            List<String> ackWarnCodes,
+            String title) {
+        CarePlan plan = requirePlan(tenantId, peopleId);
+        if (CarePlanStatusEnum.DRAFT.name().equals(plan.getStatus())
+                || CarePlanStatusEnum.ACTIVE.name().equals(plan.getStatus())) {
+            markReviewed(tenantId, orgId, peopleId, staffId);
+        }
+        return recordCommunication(
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                actorAccountId,
+                CarePlanCommResultEnum.ACCEPTED.name(),
+                "当面沟通 · 已接受",
+                null,
+                true,
+                ackWarnCodes,
+                title);
+    }
+
     public CarePlanBundleDto publish(
             String tenantId,
             String orgId,
@@ -626,8 +841,23 @@ public class CarePlanService {
                 ctx.allergyStatus(),
                 publishSnapshot,
                 publishKey != null);
+        flags.addAll(GuidelineCheck.apply(exercise, diet, execution, ctx.guidelines(), publishKey != null));
+        if (ctx.guidelines().enabled() && publishSnapshot instanceof ObjectNode snapObj) {
+            // apply 会原地剔除无效引用，需回写
+            draft.setExerciseJson(JsonUtils.toJson(exercise));
+            draft.setDietJson(JsonUtils.toJson(diet));
+            draft.setExecutionJson(JsonUtils.toJson(execution));
+            snapObj.set("guideline", ctx.guidelines().toSnapshot());
+            draft.setContextSnapshotJson(JsonUtils.toJson(snapObj));
+        }
         draft.setSafetyFlagsJson(safetyService.toFlagsJson(flags));
         safetyService.assertPublishable(flags, ackWarnCodes);
+        if (plan.getReviewedAt() == null || !StringUtils.hasText(plan.getReviewedByStaffId())) {
+            throw new BusinessException(400, "请先完成方案审核后再发布");
+        }
+        if (!CarePlanCommResultEnum.ACCEPTED.name().equals(plan.getLastCommResult())) {
+            throw new BusinessException(400, "请先完成客户沟通且结果为「接受」后再发布");
+        }
 
         String oldStatus = plan.getStatus();
         String oldVersionId = plan.getCurrentVersionId();
@@ -1082,6 +1312,85 @@ public class CarePlanService {
         return JsonUtils.toJson(m);
     }
 
+    private List<CarePlanCommHistoryItemDto> loadCommunicationHistory(
+            String orgId, String peopleId, String planId) {
+        List<CarePlanCommHistoryItemDto> out = new ArrayList<>();
+        if (!StringUtils.hasText(planId)) {
+            return out;
+        }
+        List<FollowupRecord> rows = followupRecordMapper.listByPeople(orgId, peopleId, null, 100);
+        List<CarePlanCommHistoryItemDto> matched = new ArrayList<>();
+        for (FollowupRecord row : rows) {
+            JsonNode content = JsonUtils.readTree(
+                    row.getContentJson() == null || row.getContentJson().isBlank() ? "{}" : row.getContentJson());
+            String type = content.path("followupType").asText("");
+            if (!FollowupType.PLAN_COMMUNICATION.name().equals(type)) {
+                continue;
+            }
+            JsonNode section = content.path("section");
+            String sectionPlanId = section.path("planId").asText("");
+            if (StringUtils.hasText(sectionPlanId) && !planId.equals(sectionPlanId)) {
+                continue;
+            }
+            CarePlanCommHistoryItemDto item = new CarePlanCommHistoryItemDto();
+            item.setFollowupId(row.getId());
+            String result = section.path("result").asText(null);
+            item.setResult(result);
+            item.setResultLabel(commResultLabel(result));
+            item.setCustomerFeedback(textOrNull(section.path("customerFeedback")));
+            item.setChangePoints(textOrNull(section.path("changePoints")));
+            item.setFaceToFace(section.path("faceToFace").asBoolean(false));
+            item.setFollowupMethod(content.path("followupMethod").asText(null));
+            item.setDraftId(textOrNull(section.path("draftId")));
+            item.setAssigneeStaffId(row.getAssigneeStaffId());
+            if (StringUtils.hasText(row.getAssigneeStaffId())) {
+                StaffProfile staff = staffProfileMapper.findById(row.getAssigneeStaffId());
+                if (staff != null) {
+                    item.setAssigneeName(staff.getDisplayName());
+                }
+            }
+            if (item.getAssigneeName() == null && StringUtils.hasText(row.getCompletedByStaffId())) {
+                item.setAssigneeStaffId(row.getCompletedByStaffId());
+                StaffProfile staff = staffProfileMapper.findById(row.getCompletedByStaffId());
+                if (staff != null) {
+                    item.setAssigneeName(staff.getDisplayName());
+                }
+            }
+            LocalDateTime at = row.getCompletedAt() != null ? row.getCompletedAt() : row.getGmtCreated();
+            item.setCompletedAt(at == null ? null : at.toString());
+            matched.add(item);
+        }
+        // listByPeople 按完成时间 DESC；历史时间线升序编号
+        matched.sort(Comparator.comparing(
+                CarePlanCommHistoryItemDto::getCompletedAt, Comparator.nullsLast(String::compareTo)));
+        int round = 1;
+        for (CarePlanCommHistoryItemDto item : matched) {
+            item.setRound(round++);
+            out.add(item);
+        }
+        return out;
+    }
+
+    private static String commResultLabel(String result) {
+        if (result == null || result.isBlank()) {
+            return "-";
+        }
+        return switch (result) {
+            case "ACCEPTED" -> "客户接受";
+            case "NEED_MODIFY" -> "需修改";
+            case "NEED_REGENERATE" -> "需重做";
+            default -> result;
+        };
+    }
+
+    private static String textOrNull(JsonNode n) {
+        if (n == null || n.isNull() || n.isMissingNode()) {
+            return null;
+        }
+        String t = n.asText();
+        return t == null || t.isBlank() ? null : t;
+    }
+
     private CarePlanHeadDto toHead(CarePlan plan) {
         CarePlanHeadDto dto = new CarePlanHeadDto();
         dto.setId(plan.getId());
@@ -1092,6 +1401,12 @@ public class CarePlanService {
         dto.setDiseaseTags(JsonUtils.readTree(plan.getDiseaseTagsJson() == null ? "[]" : plan.getDiseaseTagsJson()));
         dto.setCurrentVersionId(plan.getCurrentVersionId());
         dto.setVersion(plan.getVersion());
+        dto.setReviewedAt(plan.getReviewedAt() == null ? null : plan.getReviewedAt().toString());
+        dto.setReviewedByStaffId(plan.getReviewedByStaffId());
+        dto.setLastCommResult(plan.getLastCommResult());
+        dto.setLastCommAt(plan.getLastCommAt() == null ? null : plan.getLastCommAt().toString());
+        dto.setLastCommFollowupId(plan.getLastCommFollowupId());
+        dto.setLastCommNote(plan.getLastCommNote());
         return dto;
     }
 

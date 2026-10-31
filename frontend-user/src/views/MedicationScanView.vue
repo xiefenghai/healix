@@ -164,7 +164,7 @@ async function save() {
       <img v-if="preview" :src="preview" alt="" />
       <div v-else class="shot-empty">
         <van-icon name="photograph" />
-        <strong>拍药盒、处方或用药清单</strong>
+        <strong>拍药盒或用药清单</strong>
         <span>识别后逐条确认，不会直接保存</span>
       </div>
       <input ref="fileInput" type="file" accept="image/*" hidden @change="onFile" />

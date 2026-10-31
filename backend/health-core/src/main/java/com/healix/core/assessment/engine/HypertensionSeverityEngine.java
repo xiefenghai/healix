@@ -5,7 +5,7 @@ import com.healix.core.assessment.catalog.AssessmentDisease;
 import com.healix.core.assessment.catalog.AssessmentEngineCode;
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentResult;
 import com.healix.core.assessment.support.AssessmentResult.Comparison;
@@ -17,7 +17,6 @@ import com.healix.core.assessment.support.RuleSheet;
 import com.healix.core.assessment.support.RuleSheet.Section;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -32,13 +31,15 @@ public class HypertensionSeverityEngine implements AssessmentEngine {
     public static final String RULE_PACK = "HTN-SEV-2018.1-PROVISIONAL";
     static final String PROVISIONAL_NOTE = "暂定口径，待医学团队校准：「中/高危」「高/很高危」两格暂取较高档";
     private static final GuidelineRef GUIDELINE = new GuidelineRef("中国高血压防治指南（2018年修订版）", "2018", 2018);
-    private static final Set<InputField> INPUTS = EnumSet.of(
-            InputField.HTN_MAX_SBP, InputField.HTN_MAX_DBP, InputField.BLOOD_PRESSURE, InputField.GENDER,
-            InputField.BIRTHDAY, InputField.SMOKING, InputField.PASSIVE_SMOKING, InputField.GLUCOSE,
-            InputField.PREDIABETES, InputField.LIPIDS, InputField.FAMILY_HISTORY, InputField.HEIGHT, InputField.WEIGHT,
-            InputField.WAIST, InputField.HCY_HIGH, InputField.RENAL, InputField.LVH, InputField.CAROTID_PLAQUE,
-            InputField.PWV_HIGH, InputField.ABI_LOW, InputField.PRESENT_ILLNESS, InputField.PERIPHERAL_ARTERY_DISEASE,
-            InputField.ADVANCED_RETINOPATHY, InputField.DM_COMPLICATIONS);
+    private static final Set<String> INPUTS = Set.of(
+            AssessmentFields.HTN_MAX_SBP, AssessmentFields.HTN_MAX_DBP, AssessmentFields.BLOOD_PRESSURE_SYS,
+            AssessmentFields.BLOOD_PRESSURE_DIA, AssessmentFields.GENDER, AssessmentFields.BIRTHDAY, AssessmentFields.SMOKING,
+            AssessmentFields.PASSIVE_SMOKING, AssessmentFields.GLUCOSE, AssessmentFields.PRESENT_ILLNESS, AssessmentFields.TC,
+            AssessmentFields.TG, AssessmentFields.LDL_C, AssessmentFields.HDL_C, AssessmentFields.FAMILY_HISTORY,
+            AssessmentFields.HEIGHT, AssessmentFields.WEIGHT, AssessmentFields.WAIST, AssessmentFields.HCY_HIGH,
+            AssessmentFields.CR, AssessmentFields.EGFR, AssessmentFields.UACR, AssessmentFields.LVH,
+            AssessmentFields.CAROTID_PLAQUE, AssessmentFields.PWV_HIGH, AssessmentFields.ABI_LOW,
+            AssessmentFields.PERIPHERAL_ARTERY_DISEASE, AssessmentFields.ADVANCED_RETINOPATHY, AssessmentFields.DM_COMPLICATIONS);
 
     @Override
     public String code() {
@@ -85,13 +86,13 @@ public class HypertensionSeverityEngine implements AssessmentEngine {
     }
 
     @Override
-    public Set<InputField> inputs() {
+    public Set<String> inputs() {
         return INPUTS;
     }
 
     /** 既往最高血压与近期血压二选一，在 evaluate 中判断。 */
     @Override
-    public Set<InputField> requiredInputs() {
+    public Set<String> requiredInputs() {
         return Set.of();
     }
 
@@ -120,8 +121,8 @@ public class HypertensionSeverityEngine implements AssessmentEngine {
                     .status(AssessmentStatus.INCOMPLETE)
                     .advice("缺少血压：请补充既往最高血压（问卷）或记录近期血压")
                     .missing(List.of(
-                            FactorCollector.missingOf(InputField.HTN_MAX_SBP),
-                            FactorCollector.missingOf(InputField.BLOOD_PRESSURE)))
+                            FactorCollector.missingOf(AssessmentFields.HTN_MAX_SBP),
+                            FactorCollector.missingOf(AssessmentFields.BLOOD_PRESSURE_SYS)))
                     .notes(List.of(PROVISIONAL_NOTE))
                     .build();
         }
@@ -201,7 +202,7 @@ public class HypertensionSeverityEngine implements AssessmentEngine {
             rows.add(row);
         }
         return new RuleSheet(
-                "适用已确诊高血压者。按血压分级与危险因素/靶器官损害/临床并发症查表得出低危、中危、高危、很高危。",
+                "适用已患高血压者。按血压分级与危险因素/靶器官损害/临床并发症查表得出低危、中危、高危、很高危。",
                 List.of(
                         Section.table("心血管风险分层表", headers, rows),
                         Section.bullets("危险因素", List.of(

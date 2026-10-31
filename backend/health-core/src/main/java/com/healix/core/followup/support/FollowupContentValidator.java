@@ -220,6 +220,7 @@ public final class FollowupContentValidator {
                     case PLAN_ADHERENCE -> validatePlanAdherenceSection(sectionRaw);
                     case MEDICATION -> validateMedicationSection(sectionRaw);
                     case SYMPTOM_METRIC -> validateSymptomMetricSection(sectionRaw);
+                    case PLAN_COMMUNICATION -> validatePlanCommunicationSection(sectionRaw);
                     case OTHER -> validateGenericSection(sectionRaw);
                 };
         out.put("section", section);
@@ -480,19 +481,65 @@ public final class FollowupContentValidator {
         return clip(str(section.get("content")), 200);
     }
 
+    private static final Set<String> PLAN_COMM_RESULTS =
+            Set.of("ACCEPTED", "NEED_MODIFY", "NEED_REGENERATE");
+
+    private static Map<String, Object> validatePlanCommunicationSection(Map<String, Object> raw) {
+        String result = str(raw.get("result"));
+        if (!PLAN_COMM_RESULTS.contains(result)) {
+            throw new BusinessException(400, "请选择沟通结果：接受 / 需修改 / 需重做");
+        }
+        Map<String, Object> section = new LinkedHashMap<>();
+        section.put("result", result);
+        String planId = str(raw.get("planId"));
+        if (StringUtils.hasText(planId)) {
+            section.put("planId", planId);
+        }
+        String draftId = str(raw.get("draftId"));
+        if (StringUtils.hasText(draftId)) {
+            section.put("draftId", draftId);
+        }
+        String channel = str(raw.get("channel"));
+        if (StringUtils.hasText(channel)) {
+            section.put("channel", clip(channel, 32));
+        }
+        String feedback = str(raw.get("customerFeedback"));
+        if (StringUtils.hasText(feedback)) {
+            section.put("customerFeedback", clip(feedback, TEXT_MAX));
+        }
+        String changePoints = str(raw.get("changePoints"));
+        if (StringUtils.hasText(changePoints)) {
+            section.put("changePoints", clip(changePoints, TEXT_MAX));
+        }
+        if (("NEED_MODIFY".equals(result) || "NEED_REGENERATE".equals(result))
+                && !StringUtils.hasText(changePoints)) {
+            throw new BusinessException(400, "需修改/需重做时请填写修改要点");
+        }
+        Boolean faceToFace = bool(raw.get("faceToFace"));
+        if (faceToFace != null) {
+            section.put("faceToFace", faceToFace);
+        }
+        return section;
+    }
+
     private static Map<String, Object> validateOnboardingSection(Map<String, Object> raw) {
         String nextAction = str(raw.get("nextAction"));
         if (!ONBOARDING_NEXT_ACTIONS.contains(nextAction)) {
             throw new BusinessException(400, "请选择下次动作");
         }
+        String intakeResponseId = str(raw.get("intakeResponseId"));
+        boolean hasIntake = StringUtils.hasText(intakeResponseId);
         Boolean archiveWritten = bool(raw.get("archiveWritten"));
-        if (archiveWritten == null || !archiveWritten) {
-            throw new BusinessException(400, "请先保存患者档案后再办结入组随访");
+        if (!hasIntake && (archiveWritten == null || !archiveWritten)) {
+            throw new BusinessException(400, "请先完成首诊问卷后再办结入组随访");
         }
         List<String> diseaseCodes = stringList(raw.get("diseaseCodes"));
         Map<String, Object> section = new LinkedHashMap<>();
         section.put("nextAction", nextAction);
         section.put("archiveWritten", true);
+        if (hasIntake) {
+            section.put("intakeResponseId", intakeResponseId);
+        }
         if (!diseaseCodes.isEmpty()) {
             section.put("diseaseCodes", diseaseCodes);
         }

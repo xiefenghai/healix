@@ -21,6 +21,7 @@ const BIZ_MENUS = [
   { path: '/workspace/care-chat', label: '患者沟通', icon: 'chat', group: '日常工作' },
   { path: '/workspace/adherence', label: '依从性看板', icon: 'chart', group: '日常工作' },
   { path: '/workspace/recipes', label: '食谱库', icon: 'dish', group: '日常工作' },
+  { path: '/workspace/guidelines', label: '依据来源', icon: 'reading', group: '日常工作' },
   { path: '/workspace/care-teams', label: '健管组', icon: 'team', group: '组织管理' },
   { path: '/workspace/staff', label: '成员管理', icon: 'staff', group: '组织管理' },
   { path: '/workspace/ops-stats', label: '运营统计', icon: 'data', group: '组织管理' },
@@ -55,13 +56,18 @@ const orgSwitchable = computed(() => {
   return !!getCurrentOrgId()
 })
 const isCockpit = computed(() => route.path.startsWith('/workspace/cockpit'))
+const isIntakeWorkspace = computed(() => /\/workspace\/patients\/[^/]+\/intake(?:\/|$)/.test(route.path))
+const hideSiderEffective = computed(() => hideSider.value || isIntakeWorkspace.value)
+const flushContent = computed(() => isCockpit.value || isIntakeWorkspace.value)
 
 const pageTitle = computed(() => {
+  if (isIntakeWorkspace.value) return '首诊问卷'
   if (route.path.startsWith('/workspace/cockpit')) return '智能驾驶舱'
   if (route.path.startsWith('/workspace/tasks')) return '工作台任务'
   if (route.path.startsWith('/workspace/care-chat')) return '患者沟通'
   if (route.path.startsWith('/workspace/adherence')) return '依从性看板'
   if (route.path.startsWith('/workspace/recipes')) return '食谱库'
+  if (route.path.startsWith('/workspace/guidelines')) return '依据来源'
   if (route.path.startsWith('/workspace/patients')) return '患者管理'
   if (route.path.startsWith('/workspace/care-teams')) return '健管组'
   if (route.path.startsWith('/workspace/staff')) return '成员管理'
@@ -201,9 +207,10 @@ onBeforeUnmount(() => {
   <AdminShell
     :title="pageTitle"
     :menus="menus"
-    :hide-sider="hideSider"
-    :org-switchable="orgSwitchable"
-    :flush-content="isCockpit"
+    :hide-sider="hideSiderEffective"
+    :hide-topbar="isIntakeWorkspace"
+    :org-switchable="orgSwitchable && !isIntakeWorkspace"
+    :flush-content="flushContent"
     @switch-org="switchOrg"
   >
     <template v-if="isCockpit" #chips>
@@ -217,7 +224,7 @@ onBeforeUnmount(() => {
       </button>
     </template>
     <RouterView />
-    <AgentFloatingRobot v-if="!isCockpit" />
+    <AgentFloatingRobot v-if="!isCockpit && !isIntakeWorkspace" />
   </AdminShell>
 </template>
 

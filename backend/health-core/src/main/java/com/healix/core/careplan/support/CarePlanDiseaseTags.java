@@ -95,9 +95,9 @@ public final class CarePlanDiseaseTags {
 
     public static String specialtyMismatchMessage(CarePlanTemplateKeyEnum key) {
         if (key == null) {
-            return "已选专项管理但档案未见对应确诊";
+            return "已选专项管理但档案未见对应病种";
         }
-        return "已选" + key.label() + "但档案未见对应确诊，请核对病种或改选方案类型";
+        return "已选" + key.label() + "但档案未见对应病种，请核对病种或改选方案类型";
     }
 
     /** 合并档案原始 code 与标准 tags，供 snapshot 展示 */

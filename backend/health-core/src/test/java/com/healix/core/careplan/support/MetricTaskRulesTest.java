@@ -29,6 +29,7 @@ class MetricTaskRulesTest {
     void metricTypesMapToTasks() {
         assertThat(MetricTaskRules.metricRefOfMetricType("BLOOD_GLUCOSE")).isEqualTo("BLOOD_GLUCOSE");
         assertThat(MetricTaskRules.metricRefOfMetricType("BLOOD_PRESSURE_DIA")).isEqualTo("BLOOD_PRESSURE");
-        assertThat(MetricTaskRules.metricRefOfMetricType("WEIGHT")).isNull();
+        assertThat(MetricTaskRules.metricRefOfMetricType("WEIGHT")).isEqualTo("WEIGHT");
+        assertThat(MetricTaskRules.metricRefOfMetricType("HEIGHT")).isNull();
     }
 }

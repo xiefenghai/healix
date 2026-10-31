@@ -5,7 +5,7 @@ import static com.healix.core.assessment.support.FactorCollector.SRC_LAB;
 import static com.healix.core.assessment.support.FactorCollector.SRC_METRIC;
 import static com.healix.core.assessment.support.FactorCollector.SRC_QUESTIONNAIRE;
 
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import java.math.BigDecimal;
 
 /**
@@ -68,7 +68,7 @@ public final class HypertensionRiskRules {
         }
         Integer age = ctx.getAgeYears();
         if (age == null) {
-            c.unchecked(InputField.BIRTHDAY, "年龄≥45岁");
+            c.unchecked(AssessmentFields.BIRTHDAY, "年龄≥45岁");
         } else if (age >= 45) {
             c.hit("AGE_GE_45", "年龄≥45岁", age + " 岁", SRC_ARCHIVE);
         }
@@ -80,17 +80,18 @@ public final class HypertensionRiskRules {
                             + (Boolean.TRUE.equals(central) ? (bmi24 ? "；" : "") + "腰围 " + Fmt.num(ctx.getWaistCm()) + " cm" : ""),
                     SRC_METRIC);
         } else if (ctx.getBmi() == null && central == null) {
-            c.unchecked(InputField.WEIGHT, "超重/肥胖或中心性肥胖");
+            c.unchecked(AssessmentFields.WEIGHT, "超重/肥胖或中心性肥胖");
         }
         c.check(ctx.isFamilyHistoryCollected() ? ctx.getFhHypertension() : null,
-                InputField.FAMILY_HISTORY, "FH_HYPERTENSION", "高血压家族史", null, SRC_ARCHIVE);
-        c.check(ctx.highSalt(), InputField.HIGH_SALT, "HIGH_SALT", "高盐饮食", null,
-                ctx.answered(InputField.HIGH_SALT) ? SRC_QUESTIONNAIRE : SRC_ARCHIVE);
-        c.check(ctx.heavyDrinking(), InputField.DRINKING, "HEAVY_DRINKING", "长期大量饮酒", null, SRC_ARCHIVE);
+                AssessmentFields.FAMILY_HISTORY, "FH_HYPERTENSION", "高血压家族史", null, SRC_ARCHIVE);
+        c.check(ctx.highSalt(), AssessmentFields.HIGH_SALT, "HIGH_SALT", "高盐饮食", null,
+                ctx.isDietTasteCollected() ? SRC_ARCHIVE : (ctx.answered(AssessmentFields.HIGH_SALT) ? SRC_QUESTIONNAIRE : SRC_ARCHIVE));
+        c.check(ctx.heavyDrinking(), AssessmentFields.DRINKING, "HEAVY_DRINKING", "长期大量饮酒", null, SRC_ARCHIVE);
         Boolean smoke = smokingIncludingPassive(ctx);
-        c.check(smoke, InputField.SMOKING, "SMOKING", "吸烟（含被动吸烟）", smokingDetail(ctx), SRC_ARCHIVE);
-        c.check(ctx.sedentary(), InputField.EXERCISE, "SEDENTARY", "缺乏体力活动", "基本不运动", SRC_ARCHIVE);
-        c.fact(ctx, InputField.CHRONIC_STRESS, "CHRONIC_STRESS", "长期精神紧张");
+        c.check(smoke, AssessmentFields.SMOKING, "SMOKING", "吸烟（含被动吸烟）", smokingDetail(ctx), SRC_ARCHIVE);
+        c.check(ctx.sedentary(), AssessmentFields.EXERCISE, "SEDENTARY", "缺乏体力活动", "基本不运动", SRC_ARCHIVE);
+        c.check(ctx.chronicStress(), AssessmentFields.CHRONIC_STRESS, "CHRONIC_STRESS", "长期精神紧张", null,
+                ctx.getStressLevel() != null ? SRC_ARCHIVE : SRC_QUESTIONNAIRE);
         return c;
     }
 
@@ -99,12 +100,12 @@ public final class HypertensionRiskRules {
         FactorCollector c = new FactorCollector("CV_MAJOR_RF", "心脑血管病主要危险因素");
         Integer age = ctx.getAgeYears();
         if (age == null || !ctx.hasGender()) {
-            c.unchecked(age == null ? InputField.BIRTHDAY : InputField.GENDER, "年龄（男>55 / 女>65）");
+            c.unchecked(age == null ? AssessmentFields.BIRTHDAY : AssessmentFields.GENDER, "年龄（男>55 / 女>65）");
         } else if ((ctx.isMale() && age > 55) || (ctx.isFemale() && age > 65)) {
             c.hit("AGE", "年龄（男>55 / 女>65）", age + " 岁", SRC_ARCHIVE);
         }
-        c.check(ctx.currentSmoker(), InputField.SMOKING, "SMOKING", "吸烟", smokingDetail(ctx), SRC_ARCHIVE);
-        c.check(impairedGlucose(ctx), InputField.GLUCOSE, "IMPAIRED_GLUCOSE", "糖耐量受损或空腹血糖异常",
+        c.check(ctx.currentSmoker(), AssessmentFields.SMOKING, "SMOKING", "吸烟", smokingDetail(ctx), SRC_ARCHIVE);
+        c.check(impairedGlucose(ctx), AssessmentFields.GLUCOSE, "IMPAIRED_GLUCOSE", "糖耐量受损或空腹血糖异常",
                 glucoseDetail(ctx), SRC_METRIC);
         Boolean lipid = null;
         if (Fmt.ge(ctx.getTc(), "5.7") || Fmt.gt(ctx.getLdlC(), "3.3") || Fmt.lt(ctx.getHdlC(), "1.0")) {
@@ -112,27 +113,27 @@ public final class HypertensionRiskRules {
         } else if (ctx.getTc() != null || ctx.getLdlC() != null || ctx.getHdlC() != null) {
             lipid = false;
         }
-        c.check(lipid, InputField.LIPIDS, "DYSLIPIDEMIA", "血脂异常（TC≥5.7 / LDL-C>3.3 / HDL-C<1.0）", lipidDetail(ctx), SRC_LAB);
+        c.check(lipid, AssessmentFields.TC, "DYSLIPIDEMIA", "血脂异常（TC≥5.7 / LDL-C>3.3 / HDL-C<1.0）", lipidDetail(ctx), SRC_LAB);
         c.check(ctx.isFamilyHistoryCollected() ? ctx.getFhEarlyAscvd() : null,
-                InputField.FAMILY_HISTORY, "EARLY_CVD_FH", "早发心血管病家族史", null, SRC_ARCHIVE);
+                AssessmentFields.FAMILY_HISTORY, "EARLY_CVD_FH", "早发心血管病家族史", null, SRC_ARCHIVE);
         boolean bmi28 = Fmt.ge(ctx.getBmi(), "28");
         Boolean central = ctx.centralObesity();
         if (bmi28 || Boolean.TRUE.equals(central)) {
             c.hit("OBESITY", "腹型肥胖或 BMI≥28",
                     bmi28 ? "BMI " + Fmt.num(ctx.getBmi()) : "腰围 " + Fmt.num(ctx.getWaistCm()) + " cm", SRC_METRIC);
         } else if (ctx.getBmi() == null && central == null) {
-            c.unchecked(InputField.WEIGHT, "腹型肥胖或 BMI≥28");
+            c.unchecked(AssessmentFields.WEIGHT, "腹型肥胖或 BMI≥28");
         }
-        c.check(ctx.sedentary(), InputField.EXERCISE, "SEDENTARY", "静坐生活方式", "基本不运动", SRC_ARCHIVE);
+        c.check(ctx.sedentary(), AssessmentFields.EXERCISE, "SEDENTARY", "静坐生活方式", "基本不运动", SRC_ARCHIVE);
         Boolean hr = ctx.getHeartRate() == null ? null : Fmt.gt(ctx.getHeartRate(), "80");
-        c.check(hr, InputField.HEART_RATE, "RESTING_HR", "静息心率>80次/分", Fmt.num(ctx.getHeartRate()) + " 次/分", SRC_METRIC);
+        c.check(hr, AssessmentFields.HEART_RATE, "RESTING_HR", "静息心率>80次/分", Fmt.num(ctx.getHeartRate()) + " 次/分", SRC_METRIC);
         Boolean ua = null;
         if (ctx.getUricAcid() != null && ctx.hasGender()) {
             ua = Fmt.gt(ctx.getUricAcid(), ctx.isMale() ? "420" : "360");
         }
-        c.check(ua, InputField.URIC_ACID, "HYPERURICEMIA", "高尿酸血症", Fmt.num(ctx.getUricAcid()) + " μmol/L", SRC_LAB);
+        c.check(ua, AssessmentFields.URIC_ACID, "HYPERURICEMIA", "高尿酸血症", Fmt.num(ctx.getUricAcid()) + " μmol/L", SRC_LAB);
         if (!ctx.isMale()) {
-            c.fact(ctx, InputField.EARLY_MENOPAUSE, "EARLY_MENOPAUSE", "早发绝经（<50岁）");
+            c.fact(ctx, AssessmentFields.EARLY_MENOPAUSE, "EARLY_MENOPAUSE", "早发绝经（<50岁）");
         }
         return c;
     }
@@ -146,7 +147,7 @@ public final class HypertensionRiskRules {
 
     public static Boolean smokingIncludingPassive(AssessmentContext ctx) {
         Boolean active = ctx.currentSmoker();
-        Boolean passive = ctx.fact(InputField.PASSIVE_SMOKING);
+        Boolean passive = ctx.yesNo(AssessmentFields.PASSIVE_SMOKING);
         if (Boolean.TRUE.equals(active) || Boolean.TRUE.equals(passive)) {
             return true;
         }
@@ -184,7 +185,7 @@ public final class HypertensionRiskRules {
         if (Boolean.TRUE.equals(ctx.currentSmoker())) {
             return "OCCASIONAL".equalsIgnoreCase(ctx.getSmokingStatus()) ? "偶尔吸烟" : "当前吸烟";
         }
-        if (Boolean.TRUE.equals(ctx.fact(InputField.PASSIVE_SMOKING))) {
+        if (Boolean.TRUE.equals(ctx.yesNo(AssessmentFields.PASSIVE_SMOKING))) {
             return "被动吸烟";
         }
         return null;

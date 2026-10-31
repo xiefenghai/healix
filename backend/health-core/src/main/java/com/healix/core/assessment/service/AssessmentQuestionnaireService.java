@@ -3,30 +3,24 @@ package com.healix.core.assessment.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.AuditDetails;
 import com.healix.common.util.JsonUtils;
 import com.healix.common.util.SnowflakeId;
-import com.healix.core.archive.dto.ArchiveViewDto;
-import com.healix.core.archive.dto.DiseaseArchiveViewDto;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.archive.service.ArchiveOperatorContext;
-import com.healix.core.archive.service.BasicArchiveService;
-import com.healix.core.archive.service.DiseaseArchiveService;
-import com.healix.core.assessment.catalog.AssessmentDisease;
+import com.healix.core.assessment.catalog.AssessmentFields;
+import com.healix.core.assessment.catalog.AssessmentFields.Audience;
+import com.healix.core.assessment.catalog.AssessmentFields.Spec;
 import com.healix.core.assessment.catalog.AssessmentTriggerSource;
-import com.healix.core.assessment.catalog.InputField;
-import com.healix.core.assessment.catalog.InputField.Audience;
-import com.healix.core.assessment.catalog.InputField.Question;
-import com.healix.core.assessment.catalog.InputField.ValueType;
-import com.healix.core.assessment.catalog.InputField.WriteBack;
+import com.healix.core.assessment.catalog.InputFieldMapping;
 import com.healix.core.assessment.domain.AssessmentQuestionnaireRequest;
-import com.healix.core.assessment.domain.AssessmentQuestionnaireSubmission;
-import com.healix.core.assessment.domain.PeopleAssessmentFact;
 import com.healix.core.assessment.dto.AssessmentOverviewDto;
 import com.healix.core.assessment.dto.AssessmentQuestionnaireDto.ActivityItem;
 import com.healix.core.assessment.dto.AssessmentQuestionnaireDto.Conflict;
 import com.healix.core.assessment.dto.AssessmentQuestionnaireDto.FillHint;
+import com.healix.core.assessment.dto.AssessmentQuestionnaireDto.Question;
 import com.healix.core.assessment.dto.AssessmentQuestionnaireDto.Section;
 import com.healix.core.assessment.dto.AssessmentQuestionnaireDto.SubmitCommand;
 import com.healix.core.assessment.dto.AssessmentQuestionnaireDto.SubmitResult;
@@ -37,6 +31,14 @@ import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentContextBuilder;
 import com.healix.core.audit.enums.AuditActionEnum;
 import com.healix.core.audit.service.AuditService;
+import com.healix.core.field.FieldCatalog;
+import com.healix.core.field.FieldDef;
+import com.healix.core.field.FieldOption;
+import com.healix.core.field.FieldOptionService;
+import com.healix.core.field.FieldStore;
+import com.healix.core.field.FieldType;
+import com.healix.core.field.FieldWriteSource;
+import com.healix.core.field.PeopleFieldService;
 import com.healix.core.notify.catalog.NotifyEventType;
 import com.healix.core.notify.dto.NotifyPublishCommand;
 import com.healix.core.notify.enums.NotifyAudience;
@@ -44,13 +46,17 @@ import com.healix.core.notify.service.NotifyFacade;
 import com.healix.core.observation.service.MetricService;
 import com.healix.core.observation.service.MetricService.MetricCommand;
 import com.healix.core.portal.enums.PortalEnum;
+import com.healix.core.questionnaire.QuestionnaireCatalog;
+import com.healix.core.questionnaire.QuestionnaireDef;
+import com.healix.core.questionnaire.domain.QuestionnaireResponse;
+import com.healix.core.questionnaire.mapper.QuestionnaireResponseMapper;
+import com.healix.core.questionnaire.service.QuestionnaireResponseService;
 import com.healix.core.vitals.service.VitalService;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -67,13 +73,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * 评估问卷：按「适用引擎所需字段」动态出题；提交后写回档案 / 指标 / 问卷事实并立即重算。
- *
- * <ul>
- *   <li>与档案已有值不一致的字段需二次确认，确认后以问卷为准（档案留修订记录）
- *   <li>患者覆盖档案值时给健管师开「患者自报更新」任务
- *   <li>健管师可向患者发送问卷请求：7 天有效，48 小时未填提醒一次，过期开任务
- * </ul>
+ * 评估补充问卷：按适用引擎缺字段动态出题；作答写入 {@code questionnaire_response}，字段走
+ * {@link PeopleFieldService} / 指标表。
  */
 @Slf4j
 @Service
@@ -83,8 +84,8 @@ public class AssessmentQuestionnaireService {
     public static final String PORTAL_B = "B";
     public static final String PORTAL_C = "C";
     public static final String C_LINK_PATH = "/assessment-questionnaire";
+    public static final String QUESTIONNAIRE_CODE = "ASSESSMENT_SUPPLEMENT";
     private static final int REQUEST_VALID_DAYS = 7;
-    private static final String HTN = AssessmentDisease.HYPERTENSION.code();
 
     private final AssessmentEngineRegistry registry;
     private final AssessmentContextBuilder contextBuilder;
@@ -92,8 +93,11 @@ public class AssessmentQuestionnaireService {
     private final AssessmentOrchestrator orchestrator;
     private final AssessmentStoreMapper storeMapper;
     private final ArchiveAccessService archiveAccessService;
-    private final BasicArchiveService basicArchiveService;
-    private final DiseaseArchiveService diseaseArchiveService;
+    private final FieldCatalog fieldCatalog;
+    private final FieldOptionService fieldOptionService;
+    private final PeopleFieldService peopleFieldService;
+    private final QuestionnaireCatalog questionnaireCatalog;
+    private final QuestionnaireResponseMapper responseMapper;
     private final MetricService metricService;
     private final VitalService vitalService;
     private final NotifyFacade notifyFacade;
@@ -114,59 +118,74 @@ public class AssessmentQuestionnaireService {
 
     private View buildView(String tenantId, String peopleId, String portal) {
         AssessmentContext ctx = contextBuilder.build(tenantId, peopleId);
-        Map<InputField, List<String>> usedBy = new EnumMap<>(InputField.class);
-        Set<InputField> required = new HashSet<>();
+        Map<String, List<String>> usedBy = new LinkedHashMap<>();
+        Set<String> required = new HashSet<>();
         for (AssessmentEngine engine : registry.all()) {
             if (!engine.applicable(ctx)) {
                 continue;
             }
-            for (InputField f : engine.inputs()) {
+            for (String f : engine.inputs()) {
                 usedBy.computeIfAbsent(f, k -> new ArrayList<>()).add(engine.label());
             }
             required.addAll(engine.requiredInputs());
         }
 
-        Map<String, List<com.healix.core.assessment.dto.AssessmentQuestionnaireDto.Question>> bySection =
-                new LinkedHashMap<>();
+        Map<String, List<Question>> bySection = new LinkedHashMap<>();
         for (String code : List.of("body", "lifestyle", "history", "professional")) {
             bySection.put(code, new ArrayList<>());
         }
         List<FillHint> hints = new ArrayList<>();
         int missing = 0;
-        for (InputField f : InputField.values()) {
-            List<String> engines = usedBy.get(f);
-            if (engines == null) {
+        Set<String> seen = new LinkedHashSet<>();
+        for (String rawCode : usedBy.keySet()) {
+            // 饮酒：引擎声明 status，问卷出频率题
+            String code = AssessmentFields.DRINKING.equals(rawCode)
+                    ? AssessmentFields.DRINKING_FREQUENCY
+                    : rawCode;
+            if (!seen.add(code)) {
                 continue;
             }
-            if (!f.inQuestionnaire()) {
-                if (f.fillHint() != null && !ctx.has(f)) {
-                    hints.add(new FillHint(f.name(), f.label(), f.fillHint(), engines));
+            List<String> engines = usedBy.containsKey(rawCode) ? usedBy.get(rawCode) : usedBy.get(code);
+            if (engines == null) {
+                engines = List.of();
+            }
+            Spec spec = AssessmentFields.find(code).orElse(null);
+            if (spec == null || !spec.inQuestionnaire()) {
+                if (spec != null && spec.fillHint() != null && !ctx.has(code)) {
+                    hints.add(new FillHint(code, spec.label(), spec.fillHint(), engines));
+                } else if (spec == null && AssessmentFields.fillHintOf(code) != null && !ctx.has(code)) {
+                    hints.add(new FillHint(
+                            code, AssessmentFields.labelOf(code), AssessmentFields.fillHintOf(code), engines));
                 }
                 continue;
             }
-            if (!visible(f, portal, ctx)) {
+            if (!visible(code, portal, ctx)) {
                 continue;
             }
-            boolean has = ctx.has(f);
+            FieldDef def = fieldCatalog.find(code).orElse(null);
+            if (def == null || def.readOnly()) {
+                continue;
+            }
+            boolean has = ctx.has(code);
             if (!has) {
                 missing++;
             }
-            Object current = ctx.currentValue(f);
-            Question q = f.question();
-            bySection.get(sectionOf(f)).add(new com.healix.core.assessment.dto.AssessmentQuestionnaireDto.Question(
-                    f.name(),
-                    f.label(),
-                    f.type().name(),
-                    q.text(),
-                    q.unit(),
-                    q.min(),
-                    q.max(),
-                    q.options(),
-                    f.audience().name(),
-                    required.contains(f),
+            Object current = ctx.currentValue(code);
+            List<FieldOption> options = fieldOptionService.options(tenantId, def);
+            bySection.get(sectionOf(spec)).add(new Question(
+                    code,
+                    spec.label(),
+                    def.type().name(),
+                    questionText(spec, def),
+                    def.unit(),
+                    def.min(),
+                    def.max(),
+                    options,
+                    spec.audience().name(),
+                    required.contains(code),
                     !has,
                     current,
-                    answerText(f, current),
+                    answerText(tenantId, code, current),
                     engines));
         }
         List<Section> sections = new ArrayList<>();
@@ -177,7 +196,8 @@ public class AssessmentQuestionnaireService {
         });
         int total = sections.stream().mapToInt(s -> s.questions().size()).sum();
         AssessmentQuestionnaireRequest req = storeMapper.findPendingRequest(tenantId, peopleId);
-        AssessmentQuestionnaireSubmission last = storeMapper.findLatestSubmission(tenantId, peopleId);
+        QuestionnaireResponse last = responseMapper.findLatestSubmitted(
+                tenantId, peopleId, QuestionnaireResponseService.PURPOSE_ASSESSMENT);
         return new View(
                 sections,
                 hints,
@@ -187,25 +207,22 @@ public class AssessmentQuestionnaireService {
                 last == null ? null : last.getSubmittedAt());
     }
 
-    private static boolean visible(InputField f, String portal, AssessmentContext ctx) {
-        if (f.audience() == Audience.STAFF && !PORTAL_B.equals(portal)) {
+    private static boolean visible(String code, String portal, AssessmentContext ctx) {
+        Spec spec = AssessmentFields.find(code).orElse(null);
+        if (spec == null) {
             return false;
         }
-        if (f == InputField.DM_COMPLICATIONS && !ctx.hasKnownDiabetes()) {
+        if (spec.audience() == Audience.STAFF && !PORTAL_B.equals(portal)) {
             return false;
         }
-        return !f.question().femaleOnly() || !ctx.isMale();
+        if (AssessmentFields.DM_COMPLICATIONS.equals(code) && !ctx.hasKnownDiabetes()) {
+            return false;
+        }
+        return !spec.femaleOnly() || !ctx.isMale();
     }
 
-    private static String sectionOf(InputField f) {
-        if (f.audience() == Audience.STAFF) {
-            return "professional";
-        }
-        return switch (f) {
-            case HEIGHT, WEIGHT, WAIST, BODY_FAT -> "body";
-            case SMOKING, PASSIVE_SMOKING, DRINKING, EXERCISE, HIGH_SALT, CHRONIC_STRESS -> "lifestyle";
-            default -> "history";
-        };
+    private static String sectionOf(Spec spec) {
+        return spec.section() == null ? "history" : spec.section();
     }
 
     private static String sectionTitle(String code) {
@@ -215,6 +232,10 @@ public class AssessmentQuestionnaireService {
             case "history" -> "疾病与用药史";
             default -> "专业检查（健管师填写）";
         };
+    }
+
+    private static String questionText(Spec spec, FieldDef def) {
+        return spec.label() != null ? spec.label() : def.label();
     }
 
     // ------------------------------------------------------------------ 提交
@@ -244,67 +265,66 @@ public class AssessmentQuestionnaireService {
             throw new BusinessException(400, "请至少回答一题");
         }
         AssessmentContext ctx = contextBuilder.build(tenantId, peopleId);
-        Map<InputField, Object> answers = normalizeAnswers(cmd.answers(), portal, ctx);
+        Map<String, Object> answers = normalizeAnswers(tenantId, cmd.answers(), portal, ctx);
         if (answers.isEmpty()) {
             throw new BusinessException(400, "请至少回答一题");
         }
 
         Set<String> confirmed = cmd.confirmOverrides() == null ? Set.of() : Set.copyOf(cmd.confirmOverrides());
-        List<Conflict> conflicts = detectConflicts(ctx, answers);
+        List<Conflict> conflicts = detectConflicts(tenantId, ctx, answers);
         List<Conflict> unconfirmed = conflicts.stream().filter(c -> !confirmed.contains(c.field())).toList();
         if (!unconfirmed.isEmpty()) {
             return new SubmitResult("CONFLICT", unconfirmed, null, null);
         }
 
         LocalDateTime now = LocalDateTime.now();
-        String submissionId = SnowflakeId.nextBizId();
-        ArchiveOperatorContext operator = PORTAL_B.equals(portal)
-                ? ArchiveOperatorContext.staff(staffId, orgId)
-                : ArchiveOperatorContext.people(peopleId);
-        String factSource = PORTAL_B.equals(portal) ? "QUESTIONNAIRE_STAFF" : "QUESTIONNAIRE_PATIENT";
-        String recordedBy = PORTAL_B.equals(portal) ? staffId : peopleId;
-
-        writeBasicArchive(tenantId, peopleId, answers, operator);
-        Set<InputField> asFacts = new LinkedHashSet<>();
-        writeDiseaseArchive(tenantId, peopleId, answers, operator, asFacts);
-        writeMetrics(tenantId, orgId, peopleId, staffId, portal, ctx, answers, now);
-        for (Map.Entry<InputField, Object> e : answers.entrySet()) {
-            InputField f = e.getKey();
-            if (f.writeBack() == WriteBack.FACT || asFacts.contains(f) || isUnknown(e.getValue())) {
-                PeopleAssessmentFact fact = new PeopleAssessmentFact();
-                fact.setId(SnowflakeId.nextBizId());
-                fact.setTenantId(tenantId);
-                fact.setPeopleId(peopleId);
-                fact.setFieldCode(f.name());
-                fact.setValueJson(JsonUtils.toJson(Map.of("value", e.getValue())));
-                fact.setSource(factSource);
-                fact.setSubmissionId(submissionId);
-                fact.setRecordedAt(now);
-                fact.setRecordedBy(recordedBy);
-                storeMapper.upsertFact(fact);
-            }
-        }
-
         AssessmentQuestionnaireRequest pending = storeMapper.findPendingRequest(tenantId, peopleId);
-        String requestId = pending != null && (PORTAL_C.equals(portal) || Objects.equals(pending.getId(), cmd.requestId()))
+        String requestId = pending != null
+                        && (PORTAL_C.equals(portal) || Objects.equals(pending.getId(), cmd.requestId()))
                 ? pending.getId()
                 : null;
 
-        AssessmentQuestionnaireSubmission sub = new AssessmentQuestionnaireSubmission();
-        sub.setId(submissionId);
-        sub.setTenantId(tenantId);
-        sub.setPeopleId(peopleId);
-        sub.setPortal(portal);
-        sub.setSubmittedBy(recordedBy);
-        sub.setRequestId(requestId);
-        Map<String, Object> answerJson = new LinkedHashMap<>();
-        answers.forEach((k, v) -> answerJson.put(k.name(), v));
-        sub.setAnswersJson(JsonUtils.toJson(answerJson));
-        sub.setOverridesJson(conflicts.isEmpty() ? null : JsonUtils.toJson(conflicts));
-        sub.setSubmittedAt(now);
-        storeMapper.insertSubmission(sub);
+        QuestionnaireDef q = questionnaireCatalog.latest(QUESTIONNAIRE_CODE);
+        QuestionnaireResponse row = new QuestionnaireResponse();
+        row.setTenantId(tenantId);
+        // questionnaire_response.org_id 非空；C 端用待填请求上的机构，否则占位
+        String responseOrgId = StringUtils.hasText(orgId)
+                ? orgId
+                : (pending != null && StringUtils.hasText(pending.getOrgId()) ? pending.getOrgId() : "0");
+        row.setOrgId(responseOrgId);
+        row.setPeopleId(peopleId);
+        row.setQuestionnaireCode(q.code());
+        row.setQuestionnaireVersion(q.version());
+        row.setPurpose(QuestionnaireResponseService.PURPOSE_ASSESSMENT);
+        row.setRequestId(requestId);
+        row.setStatus(QuestionnaireResponseService.STATUS_DRAFT);
+        row.setChannel(PORTAL_B.equals(portal) ? "ONSITE" : "WECHAT");
+        row.setPrefillJson("{}");
+        row.setAnswersJson(JsonUtils.toJson(answers));
+        row.setFilledByType(PORTAL_B.equals(portal) ? "STAFF" : "PEOPLE");
+        row.setFilledById(PORTAL_B.equals(portal) ? staffId : peopleId);
+        EntityMeta.onCreate(row);
+        responseMapper.insert(row);
+
+        ArchiveOperatorContext operator = PORTAL_B.equals(portal)
+                ? ArchiveOperatorContext.staff(staffId, orgId, "ASSESSMENT_QUESTIONNAIRE")
+                : ArchiveOperatorContext.people(peopleId, "ASSESSMENT_QUESTIONNAIRE");
+        FieldWriteSource source = operator.toFieldSource(row.getId());
+
+        writeAnswers(tenantId, orgId, peopleId, staffId, portal, ctx, answers, source, now);
+
+        ObjectNode snapshot = JsonUtils.emptyObject();
+        snapshot.put("questionnaire", q.key());
+        snapshot.set("answers", JsonUtils.mapper().valueToTree(answers));
+        row.setSnapshotJson(JsonUtils.toJson(snapshot));
+        row.setAnswersJson(JsonUtils.toJson(answers));
+        row.setChangesJson(conflicts.isEmpty() ? null : JsonUtils.toJson(conflicts));
+        row.setSubmittedAt(now);
+        row.setStatus(QuestionnaireResponseService.STATUS_SUBMITTED);
+        EntityMeta.onUpdate(row);
+        responseMapper.markSubmitted(row);
         if (requestId != null) {
-            storeMapper.markRequestSubmitted(requestId, submissionId, now);
+            storeMapper.markRequestSubmitted(requestId, row.getId(), now);
         }
 
         AssessmentRecomputeService.Outcome outcome =
@@ -316,21 +336,112 @@ public class AssessmentQuestionnaireService {
                 PORTAL_B.equals(portal) ? "STAFF" : "PATIENT",
                 tenantId,
                 AuditActionEnum.PATIENT_ASSESSMENT_QUESTIONNAIRE.name(),
-                "assessment_questionnaire_submission",
-                submissionId,
+                "questionnaire_response",
+                row.getId(),
                 peopleId,
                 AuditDetails.of(
-                        "fields", answers.keySet().stream().map(Enum::name).toList(),
+                        "fields", answers.keySet(),
                         "overrides", conflicts.stream().map(Conflict::field).toList(),
                         "requestId", requestId));
 
         if (PORTAL_C.equals(portal) && !conflicts.isEmpty()) {
-            notifySelfReport(tenantId, peopleId, submissionId, conflicts);
+            notifySelfReport(tenantId, peopleId, row.getId(), conflicts);
         }
         AssessmentOverviewDto overview = PORTAL_B.equals(portal)
                 ? orchestrator.buildOverview(tenantId, peopleId, outcome.context())
                 : null;
-        return new SubmitResult("OK", List.of(), submissionId, overview);
+        return new SubmitResult("OK", List.of(), row.getId(), overview);
+    }
+
+    private void writeAnswers(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String portal,
+            AssessmentContext ctx,
+            Map<String, Object> answers,
+            FieldWriteSource source,
+            LocalDateTime now) {
+        Map<String, JsonNode> meta = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : answers.entrySet()) {
+            String code = e.getKey();
+            Object raw = e.getValue();
+            if (isUnknown(raw)) {
+                continue;
+            }
+            FieldStore store;
+            try {
+                store = FieldStore.of(code);
+            } catch (IllegalArgumentException ex) {
+                continue;
+            }
+            if (store == FieldStore.METRIC) {
+                writeMetric(tenantId, orgId, peopleId, staffId, portal, ctx, code, raw, now);
+                continue;
+            }
+            if (store != FieldStore.BASIC && store != FieldStore.DISEASE) {
+                continue;
+            }
+            if (AssessmentFields.DRINKING.equals(code) || AssessmentFields.DRINKING_FREQUENCY.equals(code)) {
+                applyDrinking(meta, String.valueOf(raw));
+                continue;
+            }
+            meta.put(code, toJsonNode(raw));
+        }
+        if (!meta.isEmpty()) {
+            peopleFieldService.write(tenantId, peopleId, meta, source);
+        }
+    }
+
+    private void applyDrinking(Map<String, JsonNode> meta, String raw) {
+        String v = raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT);
+        if ("NEVER".equals(v) || AssessmentContext.NONE.equals(v)) {
+            meta.put(AssessmentFields.DRINKING_STATUS, JsonUtils.mapper().valueToTree("NEVER"));
+            meta.put(AssessmentFields.DRINKING_FREQUENCY, null);
+        } else {
+            meta.put(AssessmentFields.DRINKING_STATUS, JsonUtils.mapper().valueToTree("CURRENT"));
+            meta.put(AssessmentFields.DRINKING_FREQUENCY, JsonUtils.mapper().valueToTree(v));
+        }
+    }
+
+    private void writeMetric(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String portal,
+            AssessmentContext ctx,
+            String code,
+            Object raw,
+            LocalDateTime now) {
+        BigDecimal value = number(raw);
+        if (value == null) {
+            return;
+        }
+        String metricType = code.startsWith("metric.") ? code.substring("metric.".length()) : code;
+        BigDecimal current = switch (code) {
+            case AssessmentFields.HEIGHT -> ctx.getHeightCm();
+            case AssessmentFields.WEIGHT -> ctx.getWeightKg();
+            case AssessmentFields.WAIST -> ctx.getWaistCm();
+            case AssessmentFields.BODY_FAT -> ctx.getBodyFat();
+            default -> null;
+        };
+        if (current != null && current.compareTo(value) == 0) {
+            return;
+        }
+        FieldDef def = fieldCatalog.find(code).orElse(null);
+        String unit = def == null ? null : def.unit();
+        if (PORTAL_B.equals(portal)) {
+            metricService.create(
+                    tenantId,
+                    orgId,
+                    peopleId,
+                    staffId,
+                    new MetricCommand(metricType, value, unit, now, null, null, "评估问卷", null));
+        } else {
+            vitalService.record(peopleId, metricType, value, unit, now, "SELF");
+        }
     }
 
     private void notifySelfReport(String tenantId, String peopleId, String submissionId, List<Conflict> conflicts) {
@@ -355,95 +466,135 @@ public class AssessmentQuestionnaireService {
         return c.label() + " " + from + " → " + to;
     }
 
-    // ------------------------------------------------------------------ 校验与冲突
+    // ------------------------------------------------------------------ 校验
 
-    private Map<InputField, Object> normalizeAnswers(Map<String, Object> raw, String portal, AssessmentContext ctx) {
-        Map<InputField, Object> out = new EnumMap<>(InputField.class);
+    private Map<String, Object> normalizeAnswers(
+            String tenantId, Map<String, Object> raw, String portal, AssessmentContext ctx) {
+        Map<String, Object> out = new LinkedHashMap<>();
         for (Map.Entry<String, Object> e : raw.entrySet()) {
-            InputField f = InputField.parse(e.getKey());
-            if (f == null || !f.inQuestionnaire()) {
+            String code = resolveAnswerKey(e.getKey());
+            if (!AssessmentFields.inQuestionnaire(code)) {
                 throw new BusinessException(400, "未知题目: " + e.getKey());
             }
-            if (!visible(f, portal, ctx)) {
-                throw new BusinessException(400, f.label() + " 不可在此填写");
+            if (!visible(code, portal, ctx)) {
+                throw new BusinessException(400, AssessmentFields.labelOf(code) + " 不可在此填写");
             }
-            Object v = normalize(f, e.getValue());
+            FieldDef def = fieldCatalog.require(code);
+            Object v = normalize(tenantId, def, e.getValue());
             if (v != null) {
-                out.put(f, v);
+                out.put(code, v);
             }
         }
         return out;
     }
 
-    private static Object normalize(InputField f, Object raw) {
+    private static String resolveAnswerKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        List<String> codes = InputFieldMapping.resolve(key);
+        return codes.isEmpty() ? key : codes.get(0);
+    }
+
+    private Object normalize(String tenantId, FieldDef def, Object raw) {
         if (raw == null || (raw instanceof String s && s.isBlank())) {
             return null;
         }
-        Question q = f.question();
-        Set<String> codes = q.options().stream().map(InputField.Option::code).collect(Collectors.toSet());
-        switch (f.type()) {
+        List<FieldOption> options = fieldOptionService.options(tenantId, def);
+        Set<String> codes = options.stream().map(FieldOption::code).collect(Collectors.toSet());
+        return switch (def.type()) {
             case NUMBER -> {
                 BigDecimal n;
                 try {
                     n = new BigDecimal(String.valueOf(raw).trim());
                 } catch (NumberFormatException ex) {
-                    throw new BusinessException(400, f.label() + " 请填写数字");
+                    throw new BusinessException(400, def.label() + " 请填写数字");
                 }
-                if ((q.min() != null && n.compareTo(q.min()) < 0) || (q.max() != null && n.compareTo(q.max()) > 0)) {
+                if ((def.min() != null && n.compareTo(def.min()) < 0)
+                        || (def.max() != null && n.compareTo(def.max()) > 0)) {
                     throw new BusinessException(
-                            400, f.label() + " 应在 " + q.min().toPlainString() + "–" + q.max().toPlainString() + " " + q.unit() + " 之间");
+                            400,
+                            def.label()
+                                    + " 应在 "
+                                    + def.min().toPlainString()
+                                    + "–"
+                                    + def.max().toPlainString()
+                                    + (def.unit() == null ? "" : " " + def.unit())
+                                    + " 之间");
                 }
-                return n.stripTrailingZeros().scale() < 0 ? n.setScale(0) : n.stripTrailingZeros();
+                yield n.stripTrailingZeros().scale() < 0 ? n.setScale(0) : n.stripTrailingZeros();
             }
             case MULTI -> {
                 if (!(raw instanceof Collection<?> list)) {
-                    throw new BusinessException(400, f.label() + " 格式不正确");
+                    throw new BusinessException(400, def.label() + " 格式不正确");
                 }
                 List<String> picked = new ArrayList<>();
                 for (Object o : list) {
                     String c = String.valueOf(o).trim().toUpperCase(Locale.ROOT);
-                    if (!codes.contains(c)) {
-                        throw new BusinessException(400, f.label() + " 选项不正确: " + o);
+                    if (!codes.isEmpty() && !codes.contains(c)) {
+                        throw new BusinessException(400, def.label() + " 选项不正确: " + o);
                     }
                     if (!picked.contains(c)) {
                         picked.add(c);
                     }
                 }
                 if (picked.isEmpty()) {
-                    return null;
+                    yield null;
                 }
-                boolean exclusive = picked.contains(Question.NONE) || picked.contains(Question.UNKNOWN);
+                boolean exclusive = picked.stream().anyMatch(def.exclusive()::contains)
+                        || picked.contains(AssessmentContext.NONE)
+                        || picked.contains(AssessmentContext.UNKNOWN);
                 if (exclusive && picked.size() > 1) {
-                    throw new BusinessException(400, f.label() + "：「都没有 / 不清楚」不能与其他选项同时选择");
+                    throw new BusinessException(400, def.label() + "：互斥选项不能与其他选项同时选择");
                 }
-                return picked;
+                yield picked;
             }
-            default -> {
+            case ENUM -> {
                 String c = String.valueOf(raw).trim().toUpperCase(Locale.ROOT);
-                if (!codes.contains(c)) {
-                    throw new BusinessException(400, f.label() + " 选项不正确: " + raw);
+                if (!codes.isEmpty() && !codes.contains(c)) {
+                    throw new BusinessException(400, def.label() + " 选项不正确: " + raw);
                 }
-                return c;
+                yield c;
             }
-        }
+            default -> String.valueOf(raw).trim();
+        };
     }
 
-    private static List<Conflict> detectConflicts(AssessmentContext ctx, Map<InputField, Object> answers) {
+    private List<Conflict> detectConflicts(String tenantId, AssessmentContext ctx, Map<String, Object> answers) {
         List<Conflict> out = new ArrayList<>();
-        for (Map.Entry<InputField, Object> e : answers.entrySet()) {
-            InputField f = e.getKey();
+        for (Map.Entry<String, Object> e : answers.entrySet()) {
+            String code = e.getKey();
             Object next = e.getValue();
             if (isUnknown(next)) {
                 continue;
             }
-            Object current = switch (f.writeBack()) {
-                case ARCHIVE -> f == InputField.FAMILY_HISTORY && !ctx.isFamilyHistoryCollected() ? null : ctx.currentValue(f);
-                case DISEASE_ARCHIVE -> f == InputField.HTN_MAX_SBP ? ctx.getArchiveHighestSbp()
-                        : f == InputField.HTN_MAX_DBP ? ctx.getArchiveHighestDbp() : null;
-                default -> null;
-            };
+            FieldStore store;
+            try {
+                store = FieldStore.of(code);
+            } catch (IllegalArgumentException ex) {
+                continue;
+            }
+            if (store != FieldStore.BASIC && store != FieldStore.DISEASE) {
+                continue;
+            }
+            Object current = ctx.currentValue(code);
+            if (AssessmentFields.FAMILY_HISTORY.equals(code) && !ctx.isFamilyHistoryCollected()) {
+                current = null;
+            }
+            if (AssessmentFields.HTN_MAX_SBP.equals(code)) {
+                current = ctx.getArchiveHighestSbp();
+            }
+            if (AssessmentFields.HTN_MAX_DBP.equals(code)) {
+                current = ctx.getArchiveHighestDbp();
+            }
             if (current != null && !sameValue(current, next)) {
-                out.add(new Conflict(f.name(), f.label(), current, answerText(f, current), next, answerText(f, next)));
+                out.add(new Conflict(
+                        code,
+                        AssessmentFields.labelOf(code),
+                        current,
+                        answerText(tenantId, code, current),
+                        next,
+                        answerText(tenantId, code, next)));
             }
         }
         return out;
@@ -465,26 +616,56 @@ public class AssessmentQuestionnaireService {
 
     private static boolean isUnknown(Object v) {
         if (v instanceof Collection<?> c) {
-            return c.size() == 1 && Question.UNKNOWN.equals(String.valueOf(c.iterator().next()));
+            return c.size() == 1 && AssessmentContext.UNKNOWN.equals(String.valueOf(c.iterator().next()));
         }
-        return Question.UNKNOWN.equals(String.valueOf(v));
+        return AssessmentContext.UNKNOWN.equals(String.valueOf(v));
     }
 
-    static String answerText(InputField f, Object v) {
+    String answerText(String tenantId, String code, Object v) {
         if (v == null) {
             return null;
         }
-        if (f.type() == ValueType.NUMBER) {
+        FieldDef def = fieldCatalog.find(code).orElse(null);
+        if (def != null && def.type() == FieldType.NUMBER) {
             BigDecimal n = number(v);
-            String unit = f.question() == null || f.question().unit() == null ? "" : " " + f.question().unit();
+            String unit = def.unit() == null ? "" : " " + def.unit();
             return (n == null ? String.valueOf(v) : n.stripTrailingZeros().toPlainString()) + unit;
         }
-        Map<String, String> labels = f.question() == null
-                ? Map.of()
-                : f.question().options().stream()
-                        .collect(Collectors.toMap(InputField.Option::code, InputField.Option::label, (a, b) -> a));
+        Map<String, String> labels = Map.of();
+        if (def != null && def.choice()) {
+            labels = fieldOptionService.options(tenantId, def).stream()
+                    .collect(Collectors.toMap(FieldOption::code, FieldOption::label, (a, b) -> a));
+        }
         if (v instanceof Collection<?> c) {
-            return c.stream().map(o -> labels.getOrDefault(String.valueOf(o), String.valueOf(o)))
+            Map<String, String> finalLabels = labels;
+            return c.stream()
+                    .map(o -> finalLabels.getOrDefault(String.valueOf(o), String.valueOf(o)))
+                    .collect(Collectors.joining("、"));
+        }
+        return labels.getOrDefault(String.valueOf(v), String.valueOf(v));
+    }
+
+    /** 单测 / 静态调用兼容：无租户时用目录选项。 */
+    public static String answerText(String code, Object v) {
+        if (v == null) {
+            return null;
+        }
+        FieldCatalog catalog = new FieldCatalog();
+        FieldDef def = catalog.find(code).orElse(null);
+        if (def != null && def.type() == FieldType.NUMBER) {
+            BigDecimal n = number(v);
+            String unit = def.unit() == null ? "" : " " + def.unit();
+            return (n == null ? String.valueOf(v) : n.stripTrailingZeros().toPlainString()) + unit;
+        }
+        Map<String, String> labels = Map.of();
+        if (def != null && def.options() != null) {
+            labels = catalog.catalogOptions(def.options()).stream()
+                    .collect(Collectors.toMap(FieldOption::code, FieldOption::label, (a, b) -> a));
+        }
+        if (v instanceof Collection<?> c) {
+            Map<String, String> finalLabels = labels;
+            return c.stream()
+                    .map(o -> finalLabels.getOrDefault(String.valueOf(o), String.valueOf(o)))
                     .collect(Collectors.joining("、"));
         }
         return labels.getOrDefault(String.valueOf(v), String.valueOf(v));
@@ -497,212 +678,19 @@ public class AssessmentQuestionnaireService {
         if (v instanceof Number n) {
             return new BigDecimal(n.toString());
         }
-        return null;
-    }
-
-    // ------------------------------------------------------------------ 写回
-
-    private void writeBasicArchive(
-            String tenantId, String peopleId, Map<InputField, Object> answers, ArchiveOperatorContext operator) {
-        boolean touches = answers.keySet().stream().anyMatch(f -> f.writeBack() == WriteBack.ARCHIVE);
-        if (!touches) {
-            return;
-        }
-        ArchiveViewDto view = basicArchiveService.get(tenantId, peopleId);
-        JsonNode parsed = JsonUtils.readTree(JsonUtils.toJson(view.getContentJson()));
-        ObjectNode root = parsed instanceof ObjectNode o ? o.deepCopy() : JsonUtils.emptyObject();
-        String before = root.toString();
-        for (Map.Entry<InputField, Object> e : answers.entrySet()) {
-            Object v = e.getValue();
-            if (isUnknown(v)) {
-                continue;
-            }
-            switch (e.getKey()) {
-                case SMOKING -> obj(obj(root, "lifestyle"), "smoking").put("status", String.valueOf(v));
-                case DRINKING -> {
-                    ObjectNode drinking = obj(obj(root, "lifestyle"), "drinking");
-                    if (Question.NONE.equals(v) || "NEVER".equals(v)) {
-                        drinking.put("status", "NEVER");
-                        drinking.remove("frequency");
-                    } else {
-                        String status = drinking.path("status").asText("").toUpperCase(Locale.ROOT);
-                        if (!"CURRENT".equals(status) && !"OCCASIONAL".equals(status)) {
-                            drinking.put("status", "CURRENT");
-                        }
-                        drinking.put("frequency", String.valueOf(v));
-                    }
-                }
-                case EXERCISE -> obj(root, "exercise").put("frequency", String.valueOf(v));
-                case FAMILY_HISTORY -> applyFamilyHistory(root, toCodes(v));
-                case PRESENT_ILLNESS -> applyPresentIllness(root, toCodes(v));
-                default -> {
-                    /* 非基础档案字段 */
-                }
-            }
-        }
-        if (!before.equals(root.toString())) {
-            basicArchiveService.save(tenantId, peopleId, view.getVersion() == null ? 0 : view.getVersion(), root.toString(), operator);
+        try {
+            return v == null ? null : new BigDecimal(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
-    /** 只改一级亲属：问卷没选的病种从一级亲属条目移除，新增病种挂到「一级亲属·未细分」。 */
-    static void applyFamilyHistory(ObjectNode root, List<String> picked) {
-        Set<String> wanted = new LinkedHashSet<>(picked);
-        wanted.remove(Question.NONE);
-        ArrayNode items = root.get("familyHistoryItems") instanceof ArrayNode a ? a : root.putArray("familyHistoryItems");
-        ArrayNode kept = JsonUtils.mapper().createArrayNode();
-        Set<String> present = new HashSet<>();
-        ObjectNode unspecified = null;
-        for (JsonNode item : items) {
-            if (!(item instanceof ObjectNode o) || !"1".equals(o.path("kinshipLevel").asText("1"))) {
-                kept.add(item);
-                continue;
-            }
-            ArrayNode diseases = JsonUtils.mapper().createArrayNode();
-            for (JsonNode d : o.path("diseases")) {
-                String code = d.asText("").trim().toUpperCase(Locale.ROOT);
-                if (wanted.contains(code)) {
-                    diseases.add(code);
-                    present.add(code);
-                } else if (!isQuestionnaireFhCode(code)) {
-                    diseases.add(d.asText());
-                }
-            }
-            if (diseases.isEmpty()) {
-                continue;
-            }
-            o.set("diseases", diseases);
-            if ("UNSPECIFIED".equals(o.path("member").asText())) {
-                unspecified = o;
-            }
-            kept.add(o);
-        }
-        List<String> toAdd = wanted.stream().filter(c -> !present.contains(c)).toList();
-        if (!toAdd.isEmpty()) {
-            if (unspecified == null) {
-                unspecified = JsonUtils.mapper().createObjectNode();
-                unspecified.put("kinshipLevel", "1");
-                unspecified.put("member", "UNSPECIFIED");
-                unspecified.putArray("diseases");
-                unspecified.put("note", "评估问卷填写");
-                kept.add(unspecified);
-            }
-            ArrayNode diseases = (ArrayNode) unspecified.get("diseases");
-            toAdd.forEach(diseases::add);
-        }
-        root.set("familyHistoryItems", kept);
-        root.put("familyHistoryStatus", kept.isEmpty() ? "none" : "has");
-    }
-
-    private static boolean isQuestionnaireFhCode(String code) {
-        return InputField.FAMILY_HISTORY.question().options().stream().anyMatch(o -> o.code().equals(code));
-    }
-
-    /** 只替换问卷选项范围内的病种，其他现有疾病保持不变。 */
-    static void applyPresentIllness(ObjectNode root, List<String> picked) {
-        Set<String> optionCodes = InputField.PRESENT_ILLNESS.question().options().stream()
-                .map(InputField.Option::code)
-                .filter(c -> !Question.NONE.equals(c))
-                .collect(Collectors.toSet());
-        ArrayNode next = JsonUtils.mapper().createArrayNode();
-        Set<String> seen = new HashSet<>();
-        JsonNode current = root.get("presentIllness");
-        if (current != null && current.isArray()) {
-            for (JsonNode n : current) {
-                String c = n.asText("").trim().toUpperCase(Locale.ROOT);
-                if (!c.isEmpty() && !optionCodes.contains(c) && seen.add(c)) {
-                    next.add(c);
-                }
-            }
-        }
-        for (String c : picked) {
-            if (!Question.NONE.equals(c) && seen.add(c)) {
-                next.add(c);
-            }
-        }
-        root.set("presentIllness", next);
-    }
-
-    private void writeDiseaseArchive(
-            String tenantId,
-            String peopleId,
-            Map<InputField, Object> answers,
-            ArchiveOperatorContext operator,
-            Set<InputField> asFacts) {
-        BigDecimal sbp = answers.get(InputField.HTN_MAX_SBP) instanceof BigDecimal b ? b : null;
-        BigDecimal dbp = answers.get(InputField.HTN_MAX_DBP) instanceof BigDecimal b ? b : null;
-        if (sbp == null && dbp == null) {
-            return;
-        }
-        DiseaseArchiveViewDto view = diseaseArchiveService.get(tenantId, peopleId, HTN);
-        if (view.getVersion() == null || view.getVersion() == 0) {
-            if (sbp != null) {
-                asFacts.add(InputField.HTN_MAX_SBP);
-            }
-            if (dbp != null) {
-                asFacts.add(InputField.HTN_MAX_DBP);
-            }
-            return;
-        }
-        JsonNode parsed = JsonUtils.readTree(JsonUtils.toJson(view.getContentJson()));
-        ObjectNode root = parsed instanceof ObjectNode o ? o.deepCopy() : JsonUtils.emptyObject();
-        if (sbp != null) {
-            root.put("highestSystolic", sbp);
-        }
-        if (dbp != null) {
-            root.put("highestDiastolic", dbp);
-        }
-        diseaseArchiveService.save(tenantId, peopleId, HTN, view.getVersion(), root.toString(), operator);
-    }
-
-    private void writeMetrics(
-            String tenantId,
-            String orgId,
-            String peopleId,
-            String staffId,
-            String portal,
-            AssessmentContext ctx,
-            Map<InputField, Object> answers,
-            LocalDateTime now) {
-        for (InputField f : List.of(InputField.HEIGHT, InputField.WEIGHT, InputField.WAIST)) {
-            if (!(answers.get(f) instanceof BigDecimal value)) {
-                continue;
-            }
-            BigDecimal current = switch (f) {
-                case HEIGHT -> ctx.getHeightCm();
-                case WEIGHT -> ctx.getWeightKg();
-                default -> ctx.getWaistCm();
-            };
-            if (current != null && current.compareTo(value) == 0) {
-                continue;
-            }
-            String unit = f.question().unit();
-            if (PORTAL_B.equals(portal)) {
-                metricService.create(
-                        tenantId, orgId, peopleId, staffId,
-                        new MetricCommand(f.name(), value, unit, now, null, null, "评估问卷", null));
-            } else {
-                vitalService.record(peopleId, f.name(), value, unit, now, "SELF");
-            }
-        }
-    }
-
-    private static ObjectNode obj(ObjectNode parent, String key) {
-        JsonNode n = parent.get(key);
-        if (n instanceof ObjectNode o) {
-            return o;
-        }
-        return parent.putObject(key);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static List<String> toCodes(Object v) {
-        return v instanceof List<?> l ? (List<String>) l : List.of(String.valueOf(v));
+    private static JsonNode toJsonNode(Object v) {
+        return JsonUtils.mapper().valueToTree(v);
     }
 
     // ------------------------------------------------------------------ 发送请求
 
-    /** 健管师向患者发送问卷：同一患者只保留一份待填请求。 */
     @Transactional
     public AssessmentOverviewDto.QuestionnaireRequestDto sendRequest(
             String tenantId, String orgId, String peopleId, String staffId, List<String> fields) {
@@ -710,12 +698,15 @@ public class AssessmentQuestionnaireService {
         View view = buildView(tenantId, peopleId, PORTAL_C);
         List<String> missing = view.sections().stream()
                 .flatMap(s -> s.questions().stream())
-                .filter(com.healix.core.assessment.dto.AssessmentQuestionnaireDto.Question::missing)
-                .map(com.healix.core.assessment.dto.AssessmentQuestionnaireDto.Question::field)
+                .filter(Question::missing)
+                .map(Question::field)
                 .toList();
         List<String> picked = fields == null || fields.isEmpty()
                 ? missing
-                : fields.stream().filter(f -> InputField.parse(f) != null).distinct().toList();
+                : InputFieldMapping.convertFieldList(fields).stream()
+                        .filter(AssessmentFields::inQuestionnaire)
+                        .distinct()
+                        .toList();
         if (picked.isEmpty()) {
             throw new BusinessException(400, "患者可填写的信息都已齐全，无需发送问卷");
         }
@@ -744,22 +735,23 @@ public class AssessmentQuestionnaireService {
         return AssessmentOrchestrator.toRequestDto(req);
     }
 
-    /** 评估问卷活动列表：发送记录 + 提交记录，按时间倒序。 */
     public List<ActivityItem> listActivity(String tenantId, String orgId, String peopleId, int limit) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         int n = Math.min(Math.max(limit, 1), 50);
         List<AssessmentQuestionnaireRequest> requests = storeMapper.listRequests(tenantId, peopleId, n);
-        List<AssessmentQuestionnaireSubmission> submissions = storeMapper.listSubmissions(tenantId, peopleId, n);
+        List<QuestionnaireResponse> submissions = responseMapper.listSubmitted(
+                tenantId, peopleId, QuestionnaireResponseService.PURPOSE_ASSESSMENT, n);
         Set<String> coveredRequestIds = submissions.stream()
-                .map(AssessmentQuestionnaireSubmission::getRequestId)
+                .map(QuestionnaireResponse::getRequestId)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toCollection(HashSet::new));
 
         List<ActivityItem> items = new ArrayList<>();
-        for (AssessmentQuestionnaireSubmission sub : submissions) {
+        for (QuestionnaireResponse sub : submissions) {
             int answerCount = countAnswers(sub.getAnswersJson());
-            String portal = StringUtils.hasText(sub.getPortal()) ? sub.getPortal() : PORTAL_B;
-            String who = PORTAL_C.equals(portal) ? "患者填写" : "健管师填写";
+            boolean patient = "PEOPLE".equalsIgnoreCase(sub.getFilledByType());
+            String portal = patient ? PORTAL_C : PORTAL_B;
+            String who = patient ? "患者填写" : "健管师填写";
             items.add(new ActivityItem(
                     "SUBMISSION",
                     sub.getId(),
@@ -774,7 +766,6 @@ public class AssessmentQuestionnaireService {
                     sub.getSubmittedAt()));
         }
         for (AssessmentQuestionnaireRequest req : requests) {
-            // 已有对应提交时，列表里用提交记录展示，避免重复
             if (coveredRequestIds.contains(req.getId())
                     && AssessmentQuestionnaireRequest.SUBMITTED.equals(req.getStatus())) {
                 continue;
@@ -813,15 +804,18 @@ public class AssessmentQuestionnaireService {
         items.sort((a, b) -> {
             LocalDateTime ta = a.submittedAt() != null ? a.submittedAt() : a.createdAt();
             LocalDateTime tb = b.submittedAt() != null ? b.submittedAt() : b.createdAt();
-            if (ta == null && tb == null) return 0;
-            if (ta == null) return 1;
-            if (tb == null) return -1;
+            if (ta == null && tb == null) {
+                return 0;
+            }
+            if (ta == null) {
+                return 1;
+            }
+            if (tb == null) {
+                return -1;
+            }
             return tb.compareTo(ta);
         });
-        if (items.size() > n) {
-            return items.subList(0, n);
-        }
-        return items;
+        return items.size() > n ? items.subList(0, n) : items;
     }
 
     private static int countAnswers(String answersJson) {
@@ -834,7 +828,7 @@ public class AssessmentQuestionnaireService {
                 return node.size();
             }
         } catch (Exception ignored) {
-            // ignore malformed historical rows
+            // ignore
         }
         return 0;
     }
@@ -857,5 +851,100 @@ public class AssessmentQuestionnaireService {
                 .linkPath(C_LINK_PATH)
                 .payload(payload)
                 .build());
+    }
+
+    // ------------------------------------------------------------------ 兼容旧单测的家族史 / 现病史工具
+
+    /** 问卷管理的一级亲属病种；其它编码（如 FH_CANCER）保留不动。 */
+    private static final Set<String> QUESTIONNAIRE_FH_CODES = Set.of(
+            "FH_DIABETES",
+            "FH_HYPERTENSION",
+            "FH_CHD",
+            "FH_STROKE",
+            "FH_EARLY_MI",
+            AssessmentContext.NONE,
+            AssessmentContext.UNKNOWN);
+
+    /** @deprecated 写回已走 {@link PeopleFieldService}；保留给单测。 */
+    public static void applyFamilyHistory(ObjectNode root, List<String> picked) {
+        Set<String> wanted = new LinkedHashSet<>(picked);
+        wanted.remove(AssessmentContext.NONE);
+        ArrayNode items =
+                root.get("familyHistoryItems") instanceof ArrayNode a ? a : root.putArray("familyHistoryItems");
+        ArrayNode kept = JsonUtils.mapper().createArrayNode();
+        Set<String> present = new HashSet<>();
+        ObjectNode unspecified = null;
+        for (JsonNode item : items) {
+            if (!(item instanceof ObjectNode o) || !"1".equals(o.path("kinshipLevel").asText("1"))) {
+                kept.add(item);
+                continue;
+            }
+            ArrayNode diseases = JsonUtils.mapper().createArrayNode();
+            for (JsonNode d : o.path("diseases")) {
+                String code = d.asText("").trim().toUpperCase(Locale.ROOT);
+                if (wanted.contains(code)) {
+                    diseases.add(code);
+                    present.add(code);
+                } else if (!QUESTIONNAIRE_FH_CODES.contains(code)) {
+                    diseases.add(d.asText());
+                }
+            }
+            if (diseases.isEmpty()) {
+                continue;
+            }
+            o.set("diseases", diseases);
+            if ("UNSPECIFIED".equals(o.path("member").asText())) {
+                unspecified = o;
+            }
+            kept.add(o);
+        }
+        List<String> toAdd = wanted.stream().filter(c -> !present.contains(c)).toList();
+        if (!toAdd.isEmpty()) {
+            if (unspecified == null) {
+                unspecified = JsonUtils.mapper().createObjectNode();
+                unspecified.put("kinshipLevel", "1");
+                unspecified.put("member", "UNSPECIFIED");
+                unspecified.putArray("diseases");
+                unspecified.put("note", "评估问卷填写");
+                kept.add(unspecified);
+            }
+            ArrayNode diseases = (ArrayNode) unspecified.get("diseases");
+            toAdd.forEach(diseases::add);
+        }
+        root.set("familyHistoryItems", kept);
+        root.put("familyHistoryStatus", kept.isEmpty() ? "none" : "has");
+    }
+
+    /** @deprecated 写回已走 {@link PeopleFieldService}；保留给单测。 */
+    public static void applyPresentIllness(ObjectNode root, List<String> picked) {
+        Set<String> managed = Set.of(
+                "CHD",
+                "STROKE",
+                "HEART_FAILURE",
+                "ATRIAL_FIBRILLATION",
+                "CKD",
+                "HYPERLIPIDEMIA",
+                "NAFLD",
+                "OSTEOARTHRITIS",
+                AssessmentFields.ILLNESS_PREDIABETES,
+                AssessmentFields.ILLNESS_PCOS,
+                AssessmentFields.ILLNESS_OSA);
+        ArrayNode next = JsonUtils.mapper().createArrayNode();
+        Set<String> seen = new HashSet<>();
+        JsonNode current = root.get("presentIllness");
+        if (current != null && current.isArray()) {
+            for (JsonNode n : current) {
+                String c = n.asText("").trim().toUpperCase(Locale.ROOT);
+                if (!c.isEmpty() && !managed.contains(c) && seen.add(c)) {
+                    next.add(c);
+                }
+            }
+        }
+        for (String c : picked) {
+            if (!AssessmentContext.NONE.equals(c) && seen.add(c)) {
+                next.add(c);
+            }
+        }
+        root.set("presentIllness", next);
     }
 }

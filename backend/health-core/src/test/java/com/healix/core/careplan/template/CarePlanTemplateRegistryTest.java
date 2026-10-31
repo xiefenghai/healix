@@ -5,9 +5,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.allergy.enums.AllergyStatusEnum;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
+import com.healix.core.careplan.guideline.GuidelineCheck;
+import com.healix.core.careplan.guideline.GuidelineFacts;
+import com.healix.core.careplan.guideline.GuidelineLibrary;
+import com.healix.core.careplan.guideline.GuidelineMatch;
+import com.healix.core.careplan.guideline.GuidelineMatcher;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
+import com.healix.core.careplan.support.CarePlanDiseaseTags;
 import com.healix.core.careplan.support.MetricTaskRules;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CarePlanTemplateRegistryTest {
@@ -53,7 +62,36 @@ class CarePlanTemplateRegistryTest {
                 .isEqualTo(CarePlanTemplateKeyEnum.COMPREHENSIVE);
     }
 
+    @Test
+    void templateOutputPassesSeedGuidelinesWithRefsOnEveryBlock() {
+        GuidelineLibrary library = new GuidelineLibrary(true);
+        for (List<String> diseases : List.of(
+                List.<String>of(),
+                List.of("HYPERTENSION"),
+                List.of("DIABETES"),
+                List.of("OBESITY"),
+                List.of("DIABETES", "HYPERTENSION", "OBESITY"))) {
+            for (boolean hypo : List.of(false, true)) {
+                Set<String> tags = new LinkedHashSet<>(CarePlanDiseaseTags.detect(diseases).tags());
+                GuidelineMatch match = GuidelineMatcher.match(
+                        library, GuidelineFacts.basic(tags, hypo, false, null, null, null, Map.of()));
+                CarePlanContext ctx = ctx(diseases, hypo, match);
+                var plan = registry.generate(registry.resolveTemplateKey(diseases, null), ctx, null, null);
+                var flags = GuidelineCheck.apply(plan.exercise(), plan.diet(), plan.execution(), match, true);
+                assertThat(flags)
+                        .as("diseases=%s hypo=%s", diseases, hypo)
+                        .isEmpty();
+                assertThat(plan.exercise().path("refs").isArray()).isTrue();
+                assertThat(plan.diet().path("refs").isArray()).isTrue();
+            }
+        }
+    }
+
     private static CarePlanContext ctx(List<String> diseases) {
+        return ctx(diseases, false, GuidelineMatch.DISABLED);
+    }
+
+    private static CarePlanContext ctx(List<String> diseases, boolean hypo, GuidelineMatch match) {
         return new CarePlanContext(
                 diseases,
                 List.of(),
@@ -62,7 +100,8 @@ class CarePlanTemplateRegistryTest {
                 List.of(),
                 List.of(),
                 false,
-                false,
-                JsonUtils.emptyObject());
+                hypo,
+                JsonUtils.emptyObject(),
+                match);
     }
 }

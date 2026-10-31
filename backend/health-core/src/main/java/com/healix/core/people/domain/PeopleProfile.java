@@ -28,6 +28,9 @@ public class PeopleProfile extends BaseEntity {
     private String maritalStatus;
     /** 职业（自由文本） */
     private String occupation;
+    private String wechatId;
+    /** 作息类型：DAY/SHIFT/NIGHT/IRREGULAR */
+    private String workSchedule;
     private String allergensJson;
     private String chronicTagsJson;
     private String emergencyContactJson;

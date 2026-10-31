@@ -3,6 +3,7 @@
  *
  * 页边距为 0，避免浏览器把当前页面地址印在页脚。文件名用文档标题，并去掉路径非法字符。
  */
+import { guidelineIndex, loadGuidelineLibrary } from './guidelines'
 
 export interface PrintableCarePlanTask {
   title?: string
@@ -12,6 +13,7 @@ export interface PrintableCarePlanTask {
   enabled?: boolean
   targetMl?: number | null
   rationale?: string
+  refs?: string[]
 }
 
 export interface PrintableCarePlanCheckin {
@@ -37,6 +39,7 @@ export interface PrintableCarePlan {
   exercise?: {
     goal?: string
     rationale?: string
+    refs?: string[]
     precautions?: string[]
     contraindications?: string[]
     reviewHint?: string
@@ -45,6 +48,7 @@ export interface PrintableCarePlan {
   diet?: {
     principles?: string[] | string
     rationale?: string
+    refs?: string[]
     calorieHint?: string
     energyTarget?: {
       energyKcal?: number
@@ -65,6 +69,7 @@ export interface PrintableCarePlan {
   execution?: {
     horizonDays?: number
     rationale?: string
+    refs?: string[]
     tasks?: PrintableCarePlanTask[]
   }
   checkins?: PrintableCarePlanCheckin[]
@@ -75,6 +80,8 @@ export interface PrintableCarePlan {
   }
   /** 患者导出不包含健管师审阅用的生成依据 */
   audience?: 'staff' | 'patient'
+  /** 方案引用的指南条目（打印前由 printCarePlan 解析；仅 B 端导出附录） */
+  guidelineRefs?: Array<{ code: string; source: string; text: string }>
 }
 
 const FOOD_LABELS: Record<string, string> = {
@@ -567,6 +574,43 @@ function buildCheckins(plan: PrintableCarePlan, patient: boolean): string {
   )
 }
 
+function buildReferences(plan: PrintableCarePlan, patient: boolean): string {
+  const refs = plan.guidelineRefs ?? []
+  if (patient || !refs.length) return ''
+  const items = refs
+    .map((r) => `<li>${esc(r.text)}<div class="src">${esc(r.source)}</div></li>`)
+    .join('')
+  return card(
+    '参考依据',
+    'refs',
+    `<ul class="refs">${items}</ul><p class="why">条目为对公开指南推荐意见的转述，仅供健康管理参考，以指南原文为准。</p>`,
+  )
+}
+
+/** 三块及任务上引用的条目编码，按出现顺序去重。 */
+export function carePlanRefCodes(plan: PrintableCarePlan): string[] {
+  const codes = [
+    ...(plan.exercise?.refs ?? []),
+    ...(plan.diet?.refs ?? []),
+    ...(plan.execution?.refs ?? []),
+    ...(plan.execution?.tasks ?? []).flatMap((t) => t.refs ?? []),
+  ]
+  return [...new Set(codes.filter((c) => typeof c === 'string' && c))]
+}
+
+async function resolveGuidelineRefs(plan: PrintableCarePlan): Promise<PrintableCarePlan> {
+  if (plan.audience === 'patient' || plan.guidelineRefs) return plan
+  const codes = carePlanRefCodes(plan)
+  if (!codes.length) return plan
+  const lib = await loadGuidelineLibrary().catch(() => null)
+  const index = guidelineIndex(lib)
+  const guidelineRefs = codes.flatMap((code) => {
+    const rec = index.get(code)
+    return rec ? [{ code, source: rec.sourceLabel, text: rec.staffText }] : []
+  })
+  return { ...plan, guidelineRefs }
+}
+
 function card(title: string, tone: string, body: string): string {
   return `<section class="card card--${tone}"><h2>${title}</h2>${body}</section>`
 }
@@ -636,6 +680,9 @@ const PRINT_CSS = `
   .card--diet h2 { color: #15803d; }
   .card--execution h2, .card--summary h2 { color: #6d28d9; }
   .card--checkins h2 { color: #0f766e; }
+  .card--refs h2 { color: #475569; }
+  .refs li { margin-bottom: 4px; }
+  .refs .src { color: #64748b; font-size: 11px; }
   .badge {
     margin-left: 8px;
     padding: 1px 8px;
@@ -720,6 +767,7 @@ export function buildCarePlanPrintHtml(plan: PrintableCarePlan): string {
   ${buildDiet(plan, patient)}
   ${buildExecution(plan, patient)}
   ${buildCheckins(plan, patient)}
+  ${buildReferences(plan, patient)}
   <footer>本方案仅用于健康管理参考，不作为诊断依据；如有不适请及时就医。</footer>
   </div>
 </body>
@@ -727,7 +775,8 @@ export function buildCarePlanPrintHtml(plan: PrintableCarePlan): string {
 }
 
 /** 在隐藏 iframe 中打印，避免弹窗拦截与当前页面样式污染。 */
-export function printCarePlan(plan: PrintableCarePlan): Promise<boolean> {
+export async function printCarePlan(input: PrintableCarePlan): Promise<boolean> {
+  const plan = await resolveGuidelineRefs(input)
   return new Promise((resolve) => {
     const iframe = document.createElement('iframe')
     iframe.setAttribute('aria-hidden', 'true')

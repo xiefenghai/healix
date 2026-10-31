@@ -228,6 +228,8 @@ CREATE TABLE IF NOT EXISTS people_profile (
     education_level        VARCHAR(32)  NULL COMMENT '文化程度',
     marital_status         VARCHAR(32)  NULL COMMENT '婚姻状况',
     occupation             VARCHAR(64)  NULL COMMENT '职业',
+    wechat_id              VARCHAR(64)  NULL COMMENT '微信号',
+    work_schedule          VARCHAR(16)  NULL COMMENT '作息类型 DAY/SHIFT/NIGHT/IRREGULAR',
     allergens_json         JSON         NULL COMMENT '过敏原 JSON',
     chronic_tags_json      JSON         NULL COMMENT '慢性病标签 JSON',
     emergency_contact_json JSON         NULL COMMENT '紧急联系人 JSON',
@@ -417,8 +419,11 @@ CREATE TABLE IF NOT EXISTS people_metadata_info (
     people_id          VARCHAR(32)  NOT NULL,
     metadata_code      VARCHAR(100) NOT NULL,
     metadata_value     JSON         NOT NULL,
-    source_biz_code    VARCHAR(64)  NULL,
+    source_biz_code    VARCHAR(64)  NULL COMMENT '来源业务：INTAKE_QUESTIONNAIRE/ASSESSMENT_QUESTIONNAIRE/ARCHIVE_PAGE/C_LIFESTYLE/SYSTEM/LEGACY_ARCHIVE',
     source_client_code VARCHAR(64)  NULL,
+    source_ref_id      VARCHAR(32)  NULL COMMENT '来源单据，如作答 id',
+    updated_by_type    VARCHAR(16)  NULL COMMENT 'STAFF/PEOPLE/SYSTEM',
+    updated_by_id      VARCHAR(32)  NULL,
     is_deleted         TINYINT      NOT NULL DEFAULT 0,
     gmt_created        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     gmt_modified       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1099,7 +1104,7 @@ CREATE TABLE IF NOT EXISTS care_plan (
     id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
     tenant_id               VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
     people_id               VARCHAR(32)  NOT NULL COMMENT '患者业务ID',
-    status                  VARCHAR(16)  NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT/ACTIVE/SUPERSEDED/ARCHIVED',
+    status                  VARCHAR(16)  NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT/REVIEWED/COMMUNICATING/ACTIVE/SUPERSEDED/ARCHIVED',
     title                   VARCHAR(128) NULL COMMENT '方案标题',
     goal_summary            VARCHAR(512) NULL COMMENT '一句话目标',
     disease_tags_json       JSON         NULL COMMENT '关联病种 code 列表',
@@ -1107,6 +1112,12 @@ CREATE TABLE IF NOT EXISTS care_plan (
     version                 INT          NOT NULL DEFAULT 1 COMMENT '头乐观锁',
     created_by_staff_id     VARCHAR(32)  NULL,
     updated_by_staff_id     VARCHAR(32)  NULL,
+    reviewed_at             DATETIME     NULL COMMENT '审核通过时间',
+    reviewed_by_staff_id    VARCHAR(32)  NULL COMMENT '审核人',
+    last_comm_result        VARCHAR(24)  NULL COMMENT '最近沟通结果 ACCEPTED/NEED_MODIFY/NEED_REGENERATE',
+    last_comm_at            DATETIME     NULL COMMENT '最近沟通时间',
+    last_comm_followup_id   VARCHAR(32)  NULL COMMENT '最近沟通随访记录',
+    last_comm_note          VARCHAR(512) NULL COMMENT '沟通修改要点',
     is_deleted              TINYINT      NOT NULL DEFAULT 0,
     gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1401,41 +1412,6 @@ CREATE TABLE IF NOT EXISTS people_assessment_state (
     UNIQUE KEY uk_assessment_state_people (people_id),
     KEY idx_assessment_state_dirty (dirty_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估待重算标记';
-
-CREATE TABLE IF NOT EXISTS people_assessment_fact (
-    pk_id           BIGINT        NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
-    id              VARCHAR(32)   NOT NULL COMMENT '业务主键（雪花）',
-    tenant_id       VARCHAR(32)   NOT NULL COMMENT '所属租户业务ID',
-    people_id       VARCHAR(32)   NOT NULL COMMENT '患者业务ID',
-    field_code      VARCHAR(64)   NOT NULL COMMENT '评估输入字段编码',
-    value_json      JSON          NOT NULL COMMENT '{"value": ...}；UNKNOWN 表示不知道',
-    source          VARCHAR(32)   NOT NULL COMMENT 'QUESTIONNAIRE_STAFF/QUESTIONNAIRE_PATIENT',
-    submission_id   VARCHAR(32)   NULL COMMENT '来源问卷提交',
-    recorded_at     DATETIME      NOT NULL COMMENT '记录时间',
-    recorded_by     VARCHAR(32)   NULL COMMENT 'staffId / accountId',
-    gmt_created     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
-    gmt_modified    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
-    PRIMARY KEY (pk_id),
-    UNIQUE KEY uk_assessment_fact_id (id),
-    UNIQUE KEY uk_assessment_fact_field (people_id, field_code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估问卷补充事实（档案外字段，仅存最新值）';
-
-CREATE TABLE IF NOT EXISTS assessment_questionnaire_submission (
-    pk_id           BIGINT        NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
-    id              VARCHAR(32)   NOT NULL COMMENT '业务主键（雪花）',
-    tenant_id       VARCHAR(32)   NOT NULL COMMENT '所属租户业务ID',
-    people_id       VARCHAR(32)   NOT NULL COMMENT '患者业务ID',
-    portal          VARCHAR(8)    NOT NULL COMMENT 'B/C',
-    submitted_by    VARCHAR(32)   NULL COMMENT 'staffId / accountId',
-    request_id      VARCHAR(32)   NULL COMMENT '健管师发起的问卷请求',
-    answers_json    JSON          NOT NULL COMMENT '全部答案',
-    overrides_json  JSON          NULL COMMENT '确认覆盖的档案冲突项（新旧值）',
-    submitted_at    DATETIME      NOT NULL COMMENT '提交时间',
-    gmt_created     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
-    PRIMARY KEY (pk_id),
-    UNIQUE KEY uk_assessment_submission_id (id),
-    KEY idx_assessment_submission_people (tenant_id, people_id, submitted_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估问卷提交记录';
 
 CREATE TABLE IF NOT EXISTS assessment_questionnaire_request (
     pk_id           BIGINT        NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
@@ -2054,3 +2030,112 @@ CREATE TABLE IF NOT EXISTS stored_object (
     UNIQUE KEY uk_stored_object_id (id),
     UNIQUE KEY uk_stored_object_key (object_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对象存储归属';
+
+-- =============================================================================
+-- 首诊问卷 / 入组 / 目标 / 授权（字段统一后）
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS questionnaire_response (
+    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                      VARCHAR(32)   NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id               VARCHAR(32)   NOT NULL COMMENT '所属租户',
+    org_id                  VARCHAR(32)   NOT NULL COMMENT '所属机构',
+    people_id               VARCHAR(32)   NOT NULL COMMENT '客户',
+    questionnaire_code      VARCHAR(64)   NOT NULL COMMENT '问卷编码',
+    questionnaire_version   INT           NOT NULL COMMENT '问卷版本',
+    purpose                 VARCHAR(16)   NOT NULL COMMENT 'INTAKE/SUPPLEMENT/ASSESSMENT',
+    enrollment_id           VARCHAR(32)   NULL COMMENT '关联入组',
+    followup_record_id      VARCHAR(32)   NULL COMMENT '关联首诊随访',
+    request_id              VARCHAR(32)   NULL COMMENT '关联评估问卷请求',
+    status                  VARCHAR(16)   NOT NULL COMMENT 'DRAFT/SUBMITTED/VOID',
+    channel                 VARCHAR(16)   NULL COMMENT 'PHONE/WECHAT/ONSITE/VIDEO',
+    program_code            VARCHAR(32)   NULL COMMENT 'WEIGHT_LOSS/NONE',
+    prefill_json            JSON          NULL COMMENT '打开时预填值及来源',
+    answers_json            JSON          NULL COMMENT '当前答案',
+    snapshot_json           JSON          NULL COMMENT '提交快照',
+    changes_json            JSON          NULL COMMENT '相对预填的变更',
+    highlights_json         JSON          NULL COMMENT '命中的高亮',
+    completeness_json       JSON          NULL COMMENT '完整度',
+    filled_by_type          VARCHAR(16)   NULL COMMENT 'STAFF/PEOPLE',
+    filled_by_id            VARCHAR(32)   NULL,
+    submitted_at            DATETIME      NULL,
+    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_questionnaire_response_id (id),
+    KEY idx_qr_people_purpose (tenant_id, people_id, purpose, status),
+    KEY idx_qr_followup (followup_record_id),
+    KEY idx_qr_request (request_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='问卷作答（含草稿与提交快照）';
+
+CREATE TABLE IF NOT EXISTS people_program_enrollment (
+    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT,
+    id                      VARCHAR(32)   NOT NULL,
+    tenant_id               VARCHAR(32)   NOT NULL,
+    org_id                  VARCHAR(32)   NOT NULL,
+    people_id               VARCHAR(32)   NOT NULL,
+    program_code            VARCHAR(32)   NOT NULL COMMENT 'WEIGHT_LOSS/…',
+    status                  VARCHAR(16)   NOT NULL COMMENT 'ONBOARDING/ACTIVE/CLOSED/WITHDRAWN',
+    enrolled_at             DATETIME      NOT NULL COMMENT '选定项目时间',
+    onboarded_at            DATETIME      NULL COMMENT '首诊问卷提交时间',
+    closed_at               DATETIME      NULL,
+    owner_staff_id          VARCHAR(32)   NULL,
+    intake_response_id      VARCHAR(32)   NULL,
+    close_reason            VARCHAR(255)  NULL,
+    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_program_enrollment_id (id),
+    KEY idx_enrollment_people (tenant_id, org_id, people_id, program_code, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理项目入组';
+
+CREATE TABLE IF NOT EXISTS people_health_goal (
+    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT,
+    id                      VARCHAR(32)   NOT NULL,
+    tenant_id               VARCHAR(32)   NOT NULL,
+    org_id                  VARCHAR(32)   NOT NULL,
+    people_id               VARCHAR(32)   NOT NULL,
+    enrollment_id           VARCHAR(32)   NULL,
+    primary_appeal          VARCHAR(32)   NULL,
+    doctor_advised          TINYINT       NULL,
+    appeal_text             VARCHAR(500)  NULL,
+    goal_mode               VARCHAR(32)   NULL COMMENT 'LOSS/BODY_COMPOSITION/MAINTAIN',
+    goals_json              JSON          NULL,
+    preferences_json        JSON          NULL,
+    source                  VARCHAR(32)   NULL,
+    source_ref_id           VARCHAR(32)   NULL,
+    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_health_goal_id (id),
+    KEY idx_health_goal_people (tenant_id, people_id, enrollment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健康诉求与目标';
+
+CREATE TABLE IF NOT EXISTS people_consent (
+    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT,
+    id                      VARCHAR(32)   NOT NULL,
+    tenant_id               VARCHAR(32)   NOT NULL,
+    org_id                  VARCHAR(32)   NOT NULL,
+    people_id               VARCHAR(32)   NOT NULL,
+    consent_code            VARCHAR(64)   NOT NULL COMMENT 'sensitiveHealth 等',
+    given                   TINYINT       NOT NULL DEFAULT 0,
+    method                  VARCHAR(16)   NULL COMMENT 'ORAL/WRITTEN/ELECTRONIC',
+    source_ref_id           VARCHAR(32)   NULL,
+    recorded_by_type        VARCHAR(16)   NULL,
+    recorded_by_id          VARCHAR(32)   NULL,
+    recorded_at             DATETIME      NOT NULL,
+    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_people_consent_id (id),
+    UNIQUE KEY uk_people_consent_code (people_id, consent_code, gmt_deleted),
+    KEY idx_people_consent_people (tenant_id, people_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感信息授权';

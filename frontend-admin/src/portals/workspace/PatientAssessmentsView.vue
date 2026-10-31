@@ -146,7 +146,7 @@ async function createArchive(g: AssessmentGroup) {
   const disease = g.latest?.suspicion?.diseaseLabel || g.diseaseLabel
   try {
     await ElMessageBox.confirm(
-      `确认患者已确诊${disease}？建档后将切换为「${disease}严重等级分层」评估，并关闭疑似患病任务。`,
+      `确认患者已患${disease}？建档后将切换为「${disease}严重等级分层」评估，并关闭疑似患病任务。`,
       `建立${disease}档案`,
       { confirmButtonText: '确认建档', cancelButtonText: '取消' },
     )
@@ -260,7 +260,7 @@ onMounted(() => {
           plain
           @click="createArchive(g)"
         >
-          已确诊，建立档案
+          确认已患，建立档案
         </el-button>
         <template v-else>
           <el-button

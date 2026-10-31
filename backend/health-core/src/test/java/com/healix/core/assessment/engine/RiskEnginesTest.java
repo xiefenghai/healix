@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.healix.core.assessment.catalog.AssessmentStatus;
 import com.healix.core.assessment.catalog.AssessmentTier;
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentContext;
 import com.healix.core.assessment.support.AssessmentContext.FactValue;
 import com.healix.core.assessment.support.AssessmentResult;
@@ -91,7 +91,7 @@ class RiskEnginesTest {
     @Test
     void cdrsQuestionnaireFactCountsAsHighRisk() {
         AssessmentContext ctx = healthyAdult()
-                .facts(Map.of(InputField.GDM_HISTORY, new FactValue("YES", "QUESTIONNAIRE_PATIENT", LocalDateTime.now())))
+                .facts(Map.of(AssessmentFields.GDM_HISTORY, new FactValue("YES", "QUESTIONNAIRE_PATIENT", LocalDateTime.now())))
                 .build();
         assertEquals("HIGH", cdrs.evaluate(ctx).getLevel());
     }
@@ -100,7 +100,7 @@ class RiskEnginesTest {
     void cdrsIncompleteWithoutFamilyHistory() {
         AssessmentResult r = cdrs.evaluate(healthyAdult().familyHistoryCollected(false).fhDiabetes(null).build());
         assertEquals(AssessmentStatus.INCOMPLETE, r.getStatus());
-        assertTrue(r.getMissing().stream().anyMatch(m -> "FAMILY_HISTORY".equals(m.field())));
+        assertTrue(r.getMissing().stream().anyMatch(m -> AssessmentFields.FAMILY_HISTORY.equals(m.field())));
     }
 
     @Test

@@ -293,6 +293,36 @@ public class FollowupService {
         return toView(followupRecordMapper.findById(record.getId()));
     }
 
+    /** 首诊问卷提交后自动办结关联的 ONBOARDING 随访（含关任务、开制定方案）。 */
+    @Transactional
+    public FollowupRecordViewDto completeOnboardingByIntake(
+            String orgId, String followupId, String intakeResponseId, String channel, String actorAccountId) {
+        Map<String, Object> section = new LinkedHashMap<>();
+        section.put("nextAction", "CREATE_PLAN");
+        section.put("intakeResponseId", intakeResponseId);
+        section.put("archiveWritten", true);
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("followupType", FollowupType.ONBOARDING.name());
+        content.put("contactTarget", "PATIENT");
+        content.put("followupMethod", mapIntakeChannel(channel));
+        content.put("guidance", "首诊问卷已提交");
+        content.put("section", section);
+        return complete(orgId, followupId, content, actorAccountId);
+    }
+
+    private static String mapIntakeChannel(String channel) {
+        if (channel == null || channel.isBlank()) {
+            return "FACE_TO_FACE";
+        }
+        return switch (channel.trim().toUpperCase()) {
+            case "PHONE" -> "PHONE";
+            case "WECHAT" -> "WECHAT";
+            case "VIDEO" -> "ONLINE";
+            case "ONSITE" -> "FACE_TO_FACE";
+            default -> "FACE_TO_FACE";
+        };
+    }
+
     @Transactional
     public FollowupRecordViewDto cancel(String orgId, String id, String reason, String actorAccountId) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);

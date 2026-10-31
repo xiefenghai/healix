@@ -87,7 +87,7 @@ class CarePlanAllergenGuardTest {
         List<FoodAllergen> allergens = List.of(EGG, fish, soy, nut, LACTOSE);
         CarePlanContextService.CarePlanContext ctx = new CarePlanContextService.CarePlanContext(
                 List.of("diabetes"), allergens, AllergyStatusEnum.HAS, List.of(), List.of(), List.of(),
-                false, false, JsonUtils.emptyObject());
+                false, false, JsonUtils.emptyObject(), com.healix.core.careplan.guideline.GuidelineMatch.DISABLED);
         CarePlanTemplateRegistry registry = new CarePlanTemplateRegistry();
         ObjectNode diet = registry.generate(CarePlanTemplateKeyEnum.DIABETES, ctx, null, null).diet();
         assertTrue(CarePlanAllergenGuard.conflicts(diet, allergens).stream()

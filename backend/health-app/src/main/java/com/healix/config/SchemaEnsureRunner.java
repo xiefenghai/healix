@@ -1,5 +1,8 @@
 package com.healix.config;
 
+import com.healix.core.assessment.support.AssessmentLegacyMigrator;
+import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -108,7 +111,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
         ensureColumn(
                 "people_medication",
                 "image_key",
-                "ALTER TABLE people_medication ADD COLUMN image_key VARCHAR(128) NULL COMMENT '药盒或处方原图对象键' AFTER remark");
+                "ALTER TABLE people_medication ADD COLUMN image_key VARCHAR(128) NULL COMMENT '药盒或用药单原图对象键' AFTER remark");
 
         ensureColumn(
                 "people_profile",
@@ -240,6 +243,30 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "care_plan_version",
                 "title",
                 "ALTER TABLE care_plan_version ADD COLUMN title VARCHAR(128) NULL COMMENT '发布时标题快照' AFTER source");
+        ensureColumn(
+                "care_plan",
+                "reviewed_at",
+                "ALTER TABLE care_plan ADD COLUMN reviewed_at DATETIME NULL COMMENT '审核通过时间' AFTER updated_by_staff_id");
+        ensureColumn(
+                "care_plan",
+                "reviewed_by_staff_id",
+                "ALTER TABLE care_plan ADD COLUMN reviewed_by_staff_id VARCHAR(32) NULL COMMENT '审核人' AFTER reviewed_at");
+        ensureColumn(
+                "care_plan",
+                "last_comm_result",
+                "ALTER TABLE care_plan ADD COLUMN last_comm_result VARCHAR(24) NULL COMMENT '最近沟通结果' AFTER reviewed_by_staff_id");
+        ensureColumn(
+                "care_plan",
+                "last_comm_at",
+                "ALTER TABLE care_plan ADD COLUMN last_comm_at DATETIME NULL COMMENT '最近沟通时间' AFTER last_comm_result");
+        ensureColumn(
+                "care_plan",
+                "last_comm_followup_id",
+                "ALTER TABLE care_plan ADD COLUMN last_comm_followup_id VARCHAR(32) NULL COMMENT '最近沟通随访' AFTER last_comm_at");
+        ensureColumn(
+                "care_plan",
+                "last_comm_note",
+                "ALTER TABLE care_plan ADD COLUMN last_comm_note VARCHAR(512) NULL COMMENT '沟通修改要点' AFTER last_comm_followup_id");
 
         ensureTable(
                 "care_plan",
@@ -694,6 +721,148 @@ public class SchemaEnsureRunner implements ApplicationRunner {
         ensureRewardSchema();
         ensureMedicationSchema();
         ensureAssessmentSchema();
+        ensureFieldSchema();
+    }
+
+    /** 字段统一与首诊问卷：元数据来源列、资料新列、问卷 / 入组 / 目标 / 授权表。 */
+    private void ensureFieldSchema() {
+        ensureColumn(
+                "people_metadata_info",
+                "source_ref_id",
+                "ALTER TABLE people_metadata_info ADD COLUMN source_ref_id VARCHAR(32) NULL COMMENT '来源单据，如作答 id' AFTER source_client_code");
+        ensureColumn(
+                "people_metadata_info",
+                "updated_by_type",
+                "ALTER TABLE people_metadata_info ADD COLUMN updated_by_type VARCHAR(16) NULL COMMENT 'STAFF/PEOPLE/SYSTEM' AFTER source_ref_id");
+        ensureColumn(
+                "people_metadata_info",
+                "updated_by_id",
+                "ALTER TABLE people_metadata_info ADD COLUMN updated_by_id VARCHAR(32) NULL AFTER updated_by_type");
+        ensureColumn(
+                "people_profile",
+                "wechat_id",
+                "ALTER TABLE people_profile ADD COLUMN wechat_id VARCHAR(64) NULL COMMENT '微信号' AFTER occupation");
+        ensureColumn(
+                "people_profile",
+                "work_schedule",
+                "ALTER TABLE people_profile ADD COLUMN work_schedule VARCHAR(16) NULL COMMENT '作息类型 DAY/SHIFT/NIGHT/IRREGULAR' AFTER wechat_id");
+        ensureTable(
+                "questionnaire_response",
+                """
+                CREATE TABLE IF NOT EXISTS questionnaire_response (
+                    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT,
+                    id                      VARCHAR(32)   NOT NULL,
+                    tenant_id               VARCHAR(32)   NOT NULL,
+                    org_id                  VARCHAR(32)   NOT NULL,
+                    people_id               VARCHAR(32)   NOT NULL,
+                    questionnaire_code      VARCHAR(64)   NOT NULL,
+                    questionnaire_version   INT           NOT NULL,
+                    purpose                 VARCHAR(16)   NOT NULL,
+                    enrollment_id           VARCHAR(32)   NULL,
+                    followup_record_id      VARCHAR(32)   NULL,
+                    request_id              VARCHAR(32)   NULL,
+                    status                  VARCHAR(16)   NOT NULL,
+                    channel                 VARCHAR(16)   NULL,
+                    program_code            VARCHAR(32)   NULL,
+                    prefill_json            JSON          NULL,
+                    answers_json            JSON          NULL,
+                    snapshot_json           JSON          NULL,
+                    changes_json            JSON          NULL,
+                    highlights_json         JSON          NULL,
+                    completeness_json       JSON          NULL,
+                    filled_by_type          VARCHAR(16)   NULL,
+                    filled_by_id            VARCHAR(32)   NULL,
+                    submitted_at            DATETIME      NULL,
+                    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+                    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_questionnaire_response_id (id),
+                    KEY idx_qr_people_purpose (tenant_id, people_id, purpose, status),
+                    KEY idx_qr_followup (followup_record_id),
+                    KEY idx_qr_request (request_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='问卷作答'
+                """);
+        ensureTable(
+                "people_program_enrollment",
+                """
+                CREATE TABLE IF NOT EXISTS people_program_enrollment (
+                    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT,
+                    id                      VARCHAR(32)   NOT NULL,
+                    tenant_id               VARCHAR(32)   NOT NULL,
+                    org_id                  VARCHAR(32)   NOT NULL,
+                    people_id               VARCHAR(32)   NOT NULL,
+                    program_code            VARCHAR(32)   NOT NULL,
+                    status                  VARCHAR(16)   NOT NULL,
+                    enrolled_at             DATETIME      NOT NULL,
+                    onboarded_at            DATETIME      NULL,
+                    closed_at               DATETIME      NULL,
+                    owner_staff_id          VARCHAR(32)   NULL,
+                    intake_response_id      VARCHAR(32)   NULL,
+                    close_reason            VARCHAR(255)  NULL,
+                    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+                    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_program_enrollment_id (id),
+                    KEY idx_enrollment_people (tenant_id, org_id, people_id, program_code, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理项目入组'
+                """);
+        ensureTable(
+                "people_health_goal",
+                """
+                CREATE TABLE IF NOT EXISTS people_health_goal (
+                    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT,
+                    id                      VARCHAR(32)   NOT NULL,
+                    tenant_id               VARCHAR(32)   NOT NULL,
+                    org_id                  VARCHAR(32)   NOT NULL,
+                    people_id               VARCHAR(32)   NOT NULL,
+                    enrollment_id           VARCHAR(32)   NULL,
+                    primary_appeal          VARCHAR(32)   NULL,
+                    doctor_advised          TINYINT       NULL,
+                    appeal_text             VARCHAR(500)  NULL,
+                    goal_mode               VARCHAR(32)   NULL,
+                    goals_json              JSON          NULL,
+                    preferences_json        JSON          NULL,
+                    source                  VARCHAR(32)   NULL,
+                    source_ref_id           VARCHAR(32)   NULL,
+                    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+                    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_health_goal_id (id),
+                    KEY idx_health_goal_people (tenant_id, people_id, enrollment_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健康诉求与目标'
+                """);
+        ensureTable(
+                "people_consent",
+                """
+                CREATE TABLE IF NOT EXISTS people_consent (
+                    pk_id                   BIGINT        NOT NULL AUTO_INCREMENT,
+                    id                      VARCHAR(32)   NOT NULL,
+                    tenant_id               VARCHAR(32)   NOT NULL,
+                    org_id                  VARCHAR(32)   NOT NULL,
+                    people_id               VARCHAR(32)   NOT NULL,
+                    consent_code            VARCHAR(64)   NOT NULL,
+                    given                   TINYINT       NOT NULL DEFAULT 0,
+                    method                  VARCHAR(16)   NULL,
+                    source_ref_id           VARCHAR(32)   NULL,
+                    recorded_by_type        VARCHAR(16)   NULL,
+                    recorded_by_id          VARCHAR(32)   NULL,
+                    recorded_at             DATETIME      NOT NULL,
+                    is_deleted              TINYINT       NOT NULL DEFAULT 0,
+                    gmt_created             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted             DATETIME      NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_people_consent_id (id),
+                    UNIQUE KEY uk_people_consent_code (people_id, consent_code, gmt_deleted),
+                    KEY idx_people_consent_people (tenant_id, people_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感信息授权'
+                """);
     }
 
     private void ensureAssessmentSchema() {
@@ -753,47 +922,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_assessment_state_dirty (dirty_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估待重算标记'
                 """);
-        ensureTable(
-                "people_assessment_fact",
-                """
-                CREATE TABLE IF NOT EXISTS people_assessment_fact (
-                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
-                    id VARCHAR(32) NOT NULL,
-                    tenant_id VARCHAR(32) NOT NULL,
-                    people_id VARCHAR(32) NOT NULL,
-                    field_code VARCHAR(64) NOT NULL,
-                    value_json JSON NOT NULL,
-                    source VARCHAR(32) NOT NULL COMMENT 'QUESTIONNAIRE_STAFF/QUESTIONNAIRE_PATIENT',
-                    submission_id VARCHAR(32) NULL,
-                    recorded_at DATETIME NOT NULL,
-                    recorded_by VARCHAR(32) NULL,
-                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    PRIMARY KEY (pk_id),
-                    UNIQUE KEY uk_assessment_fact_id (id),
-                    UNIQUE KEY uk_assessment_fact_field (people_id, field_code)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估问卷补充事实（档案外字段，仅存最新值）'
-                """);
-        ensureTable(
-                "assessment_questionnaire_submission",
-                """
-                CREATE TABLE IF NOT EXISTS assessment_questionnaire_submission (
-                    pk_id BIGINT NOT NULL AUTO_INCREMENT,
-                    id VARCHAR(32) NOT NULL,
-                    tenant_id VARCHAR(32) NOT NULL,
-                    people_id VARCHAR(32) NOT NULL,
-                    portal VARCHAR(8) NOT NULL COMMENT 'B/C',
-                    submitted_by VARCHAR(32) NULL COMMENT 'staffId / accountId',
-                    request_id VARCHAR(32) NULL,
-                    answers_json JSON NOT NULL,
-                    overrides_json JSON NULL COMMENT '确认覆盖的档案冲突项',
-                    submitted_at DATETIME NOT NULL,
-                    gmt_created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (pk_id),
-                    UNIQUE KEY uk_assessment_submission_id (id),
-                    KEY idx_assessment_submission_people (tenant_id, people_id, submitted_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评估问卷提交记录'
-                """);
+        migrateAssessmentQuestionnaireLegacy();
         ensureTable(
                 "assessment_questionnaire_request",
                 """
@@ -1564,6 +1693,231 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_org_recipe_org (org_id, status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='机构食谱库'
                 """);
+    }
+
+    /**
+     * M4–M7：评估问卷存量迁移后删除旧表。
+     *
+     * <ul>
+     *   <li>fields_json 枚举名 → 字段编码
+     *   <li>submission → questionnaire_response（若尚无对应行）
+     *   <li>fact 表仅尝试删除（事实已并入元数据；值换算见 {@link AssessmentLegacyMigrator}）
+     * </ul>
+     */
+    private void migrateAssessmentQuestionnaireLegacy() {
+        try {
+            Integer reqTable = jdbcTemplate.queryForObject(
+                    """
+                    SELECT COUNT(1) FROM information_schema.TABLES
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assessment_questionnaire_request'
+                    """,
+                    Integer.class);
+            if (reqTable != null && reqTable > 0) {
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                        "SELECT id, fields_json FROM assessment_questionnaire_request WHERE fields_json IS NOT NULL");
+                int converted = 0;
+                for (Map<String, Object> row : rows) {
+                    String id = String.valueOf(row.get("id"));
+                    String fields = row.get("fields_json") == null ? null : String.valueOf(row.get("fields_json"));
+                    String next = AssessmentLegacyMigrator.convertFieldsJson(fields);
+                    if (fields != null && !fields.equals(next)) {
+                        jdbcTemplate.update(
+                                "UPDATE assessment_questionnaire_request SET fields_json = ? WHERE id = ?", next, id);
+                        converted++;
+                    }
+                }
+                if (converted > 0) {
+                    log.warn("Migrated assessment request fields_json: {} rows", converted);
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Skip assessment fields_json migration: {}", ex.getMessage());
+        }
+
+        try {
+            Integer subTable = jdbcTemplate.queryForObject(
+                    """
+                    SELECT COUNT(1) FROM information_schema.TABLES
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assessment_questionnaire_submission'
+                    """,
+                    Integer.class);
+            if (subTable != null && subTable > 0) {
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                        """
+                        SELECT s.id, s.tenant_id, s.people_id, s.portal, s.submitted_by, s.request_id,
+                               s.answers_json, s.overrides_json, s.submitted_at
+                        FROM assessment_questionnaire_submission s
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM questionnaire_response q WHERE q.id = s.id AND q.is_deleted = 0
+                        )
+                        """);
+                int moved = 0;
+                for (Map<String, Object> row : rows) {
+                    String id = String.valueOf(row.get("id"));
+                    String answers = AssessmentLegacyMigrator.convertAnswersJson(
+                            row.get("answers_json") == null ? null : String.valueOf(row.get("answers_json")));
+                    String portal = row.get("portal") == null ? "B" : String.valueOf(row.get("portal"));
+                    boolean patient = "C".equalsIgnoreCase(portal);
+                    try {
+                        jdbcTemplate.update(
+                                """
+                                INSERT INTO questionnaire_response(
+                                    id, tenant_id, org_id, people_id, questionnaire_code, questionnaire_version,
+                                    purpose, request_id, status, channel, answers_json, snapshot_json, changes_json,
+                                    filled_by_type, filled_by_id, submitted_at,
+                                    is_deleted, gmt_created, gmt_modified, gmt_deleted
+                                ) VALUES (
+                                    ?, ?, '0', ?, 'ASSESSMENT_SUPPLEMENT', 1,
+                                    'ASSESSMENT', ?, 'SUBMITTED', ?, ?, ?, ?,
+                                    ?, ?, ?,
+                                    0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '9999-12-31 23:59:59'
+                                )
+                                """,
+                                id,
+                                row.get("tenant_id"),
+                                row.get("people_id"),
+                                row.get("request_id"),
+                                patient ? "WECHAT" : "ONSITE",
+                                answers,
+                                answers,
+                                row.get("overrides_json") == null ? null : String.valueOf(row.get("overrides_json")),
+                                patient ? "PEOPLE" : "STAFF",
+                                row.get("submitted_by"),
+                                row.get("submitted_at"));
+                        moved++;
+                    } catch (Exception ex) {
+                        log.warn("Skip migrate submission {}: {}", id, ex.getMessage());
+                    }
+                }
+                if (moved > 0) {
+                    log.warn("Migrated assessment submissions → questionnaire_response: {} rows", moved);
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Skip assessment submission migration: {}", ex.getMessage());
+        }
+
+        try {
+            Integer factTable = jdbcTemplate.queryForObject(
+                    """
+                    SELECT COUNT(1) FROM information_schema.TABLES
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'people_assessment_fact'
+                    """,
+                    Integer.class);
+            if (factTable != null && factTable > 0) {
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                        "SELECT id, tenant_id, people_id, field_code, value_json, source, submission_id, recorded_by FROM people_assessment_fact");
+                int moved = 0;
+                for (Map<String, Object> row : rows) {
+                    String field = row.get("field_code") == null ? null : String.valueOf(row.get("field_code"));
+                    String valueJson =
+                            row.get("value_json") == null ? null : String.valueOf(row.get("value_json"));
+                    if (field == null || valueJson == null) {
+                        continue;
+                    }
+                    var converted = AssessmentLegacyMigrator.convertFact(
+                            field, com.healix.common.util.JsonUtils.readTree(valueJson));
+                    for (var e : converted.entrySet()) {
+                        // BODY_FAT 等指标不写元数据；仅 basic/disease
+                        String code = e.getKey();
+                        if (code.startsWith("metric.") || code.startsWith("lab.") || code.startsWith("profile.")) {
+                            continue;
+                        }
+                        try {
+                            Integer exists = jdbcTemplate.queryForObject(
+                                    """
+                                    SELECT COUNT(1) FROM people_metadata_info
+                                    WHERE people_id = ? AND metadata_code = ? AND is_deleted = 0
+                                    """,
+                                    Integer.class,
+                                    row.get("people_id"),
+                                    code);
+                            if (exists != null && exists > 0) {
+                                continue; // 档案已有值优先
+                            }
+                            String source = row.get("source") == null ? "ASSESSMENT_QUESTIONNAIRE" : String.valueOf(row.get("source"));
+                            String byType = source.contains("PATIENT") ? "PEOPLE" : "STAFF";
+                            jdbcTemplate.update(
+                                    """
+                                    INSERT INTO people_metadata_info(
+                                        id, tenant_id, people_id, metadata_code, metadata_value,
+                                        source_biz_code, source_client_code, source_ref_id,
+                                        updated_by_type, updated_by_id, is_deleted,
+                                        gmt_created, gmt_modified, gmt_deleted
+                                    ) VALUES (
+                                        ?, ?, ?, ?, CAST(? AS JSON),
+                                        'ASSESSMENT_QUESTIONNAIRE', 'SYSTEM', ?,
+                                        ?, ?, 0,
+                                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '9999-12-31 23:59:59'
+                                    )
+                                    """,
+                                    String.valueOf(row.get("id")) + "_" + code.hashCode(),
+                                    row.get("tenant_id"),
+                                    row.get("people_id"),
+                                    code,
+                                    com.healix.common.util.JsonUtils.toJson(e.getValue()),
+                                    row.get("submission_id"),
+                                    byType,
+                                    row.get("recorded_by"));
+                            moved++;
+                        } catch (Exception ex) {
+                            log.warn("Skip migrate fact {} → {}: {}", field, code, ex.getMessage());
+                        }
+                    }
+                }
+                if (moved > 0) {
+                    log.warn("Migrated assessment facts → people_metadata_info: {} rows", moved);
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Skip assessment fact migration: {}", ex.getMessage());
+        }
+
+        dropObsoleteTable("assessment_questionnaire_submission");
+        dropObsoleteTable("people_assessment_fact");
+
+        // M4–M6 对账摘要（表已删则计 0）
+        try {
+            Integer reqLeft = countIfTableExists("assessment_questionnaire_request");
+            Integer subLeft = countIfTableExists("assessment_questionnaire_submission");
+            Integer factLeft = countIfTableExists("people_assessment_fact");
+            Integer qrAssess = jdbcTemplate.queryForObject(
+                    """
+                    SELECT COUNT(1) FROM questionnaire_response
+                    WHERE purpose = 'ASSESSMENT' AND is_deleted = 0
+                    """,
+                    Integer.class);
+            Integer metaFromAssess = jdbcTemplate.queryForObject(
+                    """
+                    SELECT COUNT(1) FROM people_metadata_info
+                    WHERE source_biz_code = 'ASSESSMENT_QUESTIONNAIRE' AND is_deleted = 0
+                    """,
+                    Integer.class);
+            log.info(
+                    "Assessment legacy reconcile: requestTableRows≈{}, submissionLeft={}, factLeft={}, "
+                            + "questionnaire_response(ASSESSMENT)={}, metadata(ASSESSMENT_QUESTIONNAIRE)={}",
+                    reqLeft == null ? 0 : reqLeft,
+                    subLeft == null ? 0 : subLeft,
+                    factLeft == null ? 0 : factLeft,
+                    qrAssess == null ? 0 : qrAssess,
+                    metaFromAssess == null ? 0 : metaFromAssess);
+        } catch (Exception ex) {
+            log.warn("Assessment legacy reconcile summary skipped: {}", ex.getMessage());
+        }
+    }
+
+    private Integer countIfTableExists(String table) {
+        Integer exists = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(1) FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+                """,
+                Integer.class,
+                table);
+        if (exists == null || exists == 0) {
+            return 0;
+        }
+        return jdbcTemplate.queryForObject("SELECT COUNT(1) FROM `" + table + "`", Integer.class);
     }
 
     private void dropObsoleteTable(String table) {

@@ -259,11 +259,17 @@ function detailTitle() {
 
       <template v-if="contentText('followupType') === 'ONBOARDING' && detailSection">
         <div class="detail-card">
-          <div class="detail-card-title">入组结果</div>
+          <div class="detail-card-title">入组 / 首诊结果</div>
           <div class="kv-grid">
             <div class="kv-item">
-              <span class="kv-label">档案写回</span>
-              <span class="kv-value">{{ detailSection.archiveWritten ? '是' : '否' }}</span>
+              <span class="kv-label">完成方式</span>
+              <span class="kv-value">{{
+                sectionText('intakeResponseId') ? '首诊问卷已提交' : detailSection.archiveWritten ? '档案写回（旧）' : '-'
+              }}</span>
+            </div>
+            <div v-if="sectionText('intakeResponseId')" class="kv-item kv-item--full">
+              <span class="kv-label">作答 ID</span>
+              <span class="kv-value">{{ sectionText('intakeResponseId') }}</span>
             </div>
             <div v-if="sectionText('nextAction')" class="kv-item">
               <span class="kv-label">下次动作</span>

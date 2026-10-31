@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { CarePlanChatPreview } from './agent-care-plan'
+import GuidelineRefTags from './GuidelineRefTags.vue'
 
 defineProps<{
   preview: CarePlanChatPreview
@@ -24,6 +25,7 @@ defineProps<{
         <span class="rationale-label">生成依据</span>
         <p>{{ preview.rationaleOverview }}</p>
       </div>
+      <GuidelineRefTags :refs="preview.refs" />
     </div>
 
     <section v-if="preview.weeklyDays.length" class="block">

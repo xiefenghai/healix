@@ -1,0 +1,24 @@
+{
+  "code": "FAMILY_HISTORY",
+  "version": 1,
+  "title": "家族史",
+  "script": "家里父母兄弟姐妹有没有慢性病？这个跟您自己的风险有关。",
+  "items": [
+    {
+      "field": "basic.familyHistoryStatus",
+      "label": "父母、兄弟姐妹或子女有没有慢性病？",
+      "level": "LATER",
+      "sensitive": true
+    },
+    {
+      "field": "basic.familyHistoryItems",
+      "label": "哪位亲属、什么病？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.familyHistoryStatus",
+        "eq": "has"
+      },
+      "sensitive": true
+    }
+  ]
+}

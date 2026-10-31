@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { printCarePlan } from './care-plan-print'
 import CarePlanAiDisclaimer from './CarePlanAiDisclaimer.vue'
+import GuidelineRefTags from './GuidelineRefTags.vue'
+import { refsOf } from './guidelines'
 import {
   CARE_PLAN_EXERCISE_TYPE_OPTIONS,
   CARE_PLAN_INTENSITY_OPTIONS,
@@ -38,6 +40,7 @@ export interface CarePlanPreviewData {
   exercise?: {
     goal?: string
     rationale?: string
+    refs?: string[]
     precautions?: string[]
     contraindications?: string[]
     reviewHint?: string
@@ -46,6 +49,7 @@ export interface CarePlanPreviewData {
   diet?: {
     principles?: string[]
     rationale?: string
+    refs?: string[]
     calorieHint?: string
     energyTarget?: EnergyTarget | null
     notes?: string
@@ -59,6 +63,7 @@ export interface CarePlanPreviewData {
   execution?: {
     horizonDays?: number
     rationale?: string
+    refs?: string[]
     tasks?: Array<{
       title: string
       category?: string
@@ -67,6 +72,7 @@ export interface CarePlanPreviewData {
       enabled?: boolean
       targetMl?: number | null
       rationale?: string
+      refs?: string[]
     }>
   }
   publishedAt?: string
@@ -383,6 +389,7 @@ function formatDateTime(iso?: string) {
             <p v-if="data.exercise?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.exercise.rationale }}
             </p>
+            <GuidelineRefTags :refs="refsOf(data.exercise)" />
             <div v-if="data.exercise?.contraindications?.length" class="info-block info-block--warn">
               <div class="info-block-title">禁忌</div>
               <ul class="info-list">
@@ -423,6 +430,7 @@ function formatDateTime(iso?: string) {
             <p v-if="data.diet?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.diet.rationale }}
             </p>
+            <GuidelineRefTags :refs="refsOf(data.diet)" />
             <div v-if="previewEnergy" class="energy-card">
               <div class="energy-main">
                 <div class="energy-value">
@@ -570,6 +578,7 @@ function formatDateTime(iso?: string) {
             <p v-if="data.execution?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.execution.rationale }}
             </p>
+            <GuidelineRefTags :refs="refsOf(data.execution)" />
             <el-table
               v-if="data.execution?.tasks?.length"
               :data="data.execution.tasks"

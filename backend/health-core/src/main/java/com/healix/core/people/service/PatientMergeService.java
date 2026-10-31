@@ -288,21 +288,15 @@ public class PatientMergeService {
         return new MergeResult(targetPeopleId, sourcePeopleId, moved, dropped);
     }
 
-    /** 问卷与事实随人迁移（目标已有同字段保留目标）；最新结果作废，目标标脏由自动任务重算。 */
+    /** 评估请求随人迁移；最新结果作废，目标标脏由自动任务重算。作答已在 questionnaire_response。 */
     private void mergeAssessment(String tenantId, String sourcePeopleId, String targetPeopleId, Map<String, Integer> moved) {
-        int subs = assessmentStoreMapper.repointQuestionnaire(sourcePeopleId, targetPeopleId);
         assessmentStoreMapper.cancelPendingRequests(tenantId, sourcePeopleId);
-        assessmentStoreMapper.repointRequests(sourcePeopleId, targetPeopleId);
-        int facts = assessmentStoreMapper.repointFacts(sourcePeopleId, targetPeopleId);
-        assessmentStoreMapper.deleteFacts(sourcePeopleId);
+        int reqs = assessmentStoreMapper.repointRequests(sourcePeopleId, targetPeopleId);
         assessmentStoreMapper.deleteLatest(sourcePeopleId);
         assessmentStoreMapper.deleteState(sourcePeopleId);
         assessmentDirtyMarker.mark(tenantId, targetPeopleId);
-        if (subs > 0) {
-            moved.put("assessment_questionnaire_submission", subs);
-        }
-        if (facts > 0) {
-            moved.put("people_assessment_fact", facts);
+        if (reqs > 0) {
+            moved.put("assessment_questionnaire_request", reqs);
         }
     }
 

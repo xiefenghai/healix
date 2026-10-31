@@ -4,6 +4,7 @@ import {
   parseSampleMeal,
 } from './care-plan-labels'
 import { asEnergyTarget, type EnergyTarget } from './energy-target'
+import { refsOf } from './guidelines'
 
 const DAY_ORDER = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'] as const
 const DAY_SHORT: Record<string, string> = {
@@ -55,6 +56,8 @@ export interface CarePlanChatPreview {
   goalSummary?: string
   /** 整份生成依据（B 端审阅） */
   rationaleOverview?: string
+  /** 三块方案引用的指南条目（去重） */
+  refs: string[]
   schemaVersion?: number | null
   horizonDays?: number | null
   energyKcal?: number | null
@@ -181,14 +184,14 @@ export function buildCarePlanChatPreview(extracted: unknown): CarePlanChatPrevie
   ]
   const sampleDay = asRecord(diet?.sampleDay)
   const sampleMeals: CarePlanChatMeal[] = mealKeys
-    .map(({ key, label }) => {
+    .map(({ key, label }): CarePlanChatMeal | null => {
       const meal = parseSampleMeal(sampleDay?.[key])
       return meal.text ? { label, text: meal.text, swapHint: meal.swapHint || undefined } : null
     })
     .filter((x): x is CarePlanChatMeal => !!x)
 
   const tasks: CarePlanChatTask[] = asArray(execution?.tasks)
-    .map((t) => {
+    .map((t): CarePlanChatTask | null => {
       const o = asRecord(t)
       if (!o) return null
       const title = textOf(o.title)
@@ -235,6 +238,10 @@ export function buildCarePlanChatPreview(extracted: unknown): CarePlanChatPrevie
   for (const w of warnings.slice(0, 2)) {
     checks.push({ level: 'RED', label: '已改', text: w })
   }
+  const flagList = asArray(draft?.safetyFlags).map(asRecord).filter((f): f is Record<string, unknown> => !!f)
+  for (const f of flagList.filter((x) => textOf(x.level) === 'ERROR').slice(0, 2)) {
+    checks.push({ level: 'RED', label: '拦截', text: textOf(f.message) || textOf(f.code) })
+  }
 
   const source = textOf(draft?.source)
   // 头表 status 在「已有发布版 + 新草稿」时仍为 ACTIVE；聊天卡应以本次 extracted 为准
@@ -261,6 +268,7 @@ export function buildCarePlanChatPreview(extracted: unknown): CarePlanChatPrevie
             : source || 'AI',
     goalSummary: textOf(plan?.goalSummary) || textOf(exercise?.goal) || undefined,
     rationaleOverview,
+    refs: [...new Set([exercise, diet, execution].flatMap((b) => refsOf(b)))],
     schemaVersion: draft?.schemaVersion == null ? null : Number(draft.schemaVersion),
     horizonDays: execution?.horizonDays == null ? null : Number(execution.horizonDays),
     energyKcal: energy?.energyKcal ?? null,

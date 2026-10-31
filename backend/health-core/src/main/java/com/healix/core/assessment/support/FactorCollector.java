@@ -1,6 +1,6 @@
 package com.healix.core.assessment.support;
 
-import com.healix.core.assessment.catalog.InputField;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.support.AssessmentResult.FactorGroup;
 import com.healix.core.assessment.support.AssessmentResult.Hit;
 import com.healix.core.assessment.support.AssessmentResult.Missing;
@@ -36,17 +36,16 @@ public final class FactorCollector {
         return this;
     }
 
-    public FactorCollector unchecked(InputField field, String label) {
+    public FactorCollector unchecked(String field, String label) {
         if (unchecked.stream().noneMatch(u -> u.label().equals(label))) {
-            unchecked.add(new Unchecked(
-                    field == null ? null : field.name(), label, field != null && field.inQuestionnaire()));
+            unchecked.add(new Unchecked(field, label, AssessmentFields.inQuestionnaire(field)));
         }
         return this;
     }
 
     /** value=true 命中；null 记未核实。 */
     public FactorCollector check(
-            Boolean value, InputField field, String code, String label, String detail, String source) {
+            Boolean value, String field, String code, String label, String detail, String source) {
         if (Boolean.TRUE.equals(value)) {
             hit(code, label, detail, source);
         } else if (value == null) {
@@ -55,9 +54,9 @@ public final class FactorCollector {
         return this;
     }
 
-    /** 问卷是非题事实。 */
-    public FactorCollector fact(AssessmentContext ctx, InputField field, String code, String label) {
-        return check(ctx.fact(field), field, code, label, "问卷：是", SRC_QUESTIONNAIRE);
+    /** 问卷是非题 / yesNoUnknown 事实。 */
+    public FactorCollector fact(AssessmentContext ctx, String field, String code, String label) {
+        return check(ctx.yesNo(field), field, code, label, "问卷：是", SRC_QUESTIONNAIRE);
     }
 
     public boolean has(String hitCode) {
@@ -76,9 +75,9 @@ public final class FactorCollector {
         return new FactorGroup(code, title, List.copyOf(hits), List.copyOf(unchecked));
     }
 
-    public static List<Missing> missing(AssessmentContext ctx, Collection<InputField> required) {
+    public static List<Missing> missing(AssessmentContext ctx, Collection<String> required) {
         List<Missing> out = new ArrayList<>();
-        for (InputField f : required) {
+        for (String f : required) {
             if (!ctx.has(f)) {
                 out.add(missingOf(f));
             }
@@ -86,7 +85,11 @@ public final class FactorCollector {
         return out;
     }
 
-    public static Missing missingOf(InputField f) {
-        return new Missing(f.name(), f.label(), f.fillHint(), f.inQuestionnaire());
+    public static Missing missingOf(String field) {
+        return new Missing(
+                field,
+                AssessmentFields.labelOf(field),
+                AssessmentFields.fillHintOf(field),
+                AssessmentFields.inQuestionnaire(field));
     }
 }

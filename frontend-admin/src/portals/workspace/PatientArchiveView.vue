@@ -57,6 +57,15 @@ import {
   type AbnormalFlag,
   type MetricDictMeta,
 } from '../../shared/metric-ranges'
+import FieldInput from '../../shared/FieldInput.vue'
+import {
+  PSYCH_FIELDS,
+  WEIGHT_HISTORY_FIELDS,
+  WOMEN_FIELDS,
+  emptyExtraAnswers,
+  flatFromNest,
+  type ArchiveExtraField,
+} from '../../shared/archive-extra-fields'
 
 interface DictItem {
   dictCode: string
@@ -151,6 +160,18 @@ const form = reactive({
   sleep: emptySleep(),
   lifestyle: emptyLifestyle(),
 })
+
+/** 档案页新字段（减重史 / 心理 / 女性健康），与首诊同编码 */
+const extraAnswers = reactive<Record<string, unknown>>({
+  ...emptyExtraAnswers(WEIGHT_HISTORY_FIELDS),
+  ...emptyExtraAnswers(PSYCH_FIELDS),
+  ...emptyExtraAnswers(WOMEN_FIELDS),
+})
+const ALL_EXTRA_FIELDS: ArchiveExtraField[] = [
+  ...WEIGHT_HISTORY_FIELDS,
+  ...PSYCH_FIELDS,
+  ...WOMEN_FIELDS,
+]
 
 /** 既往史：标签编辑，持久化为顿号分隔文本 */
 const familyHistoryEntries = ref<FamilyHistoryEntry[]>([])
@@ -501,6 +522,10 @@ function assignForm(content: Record<string, unknown>) {
   Object.assign(form.lifestyle.smoking, lifestyle.smoking)
   Object.assign(form.lifestyle.drinking, lifestyle.drinking)
   form.lifestyle.note = lifestyle.note
+  const flatExtra = flatFromNest(ALL_EXTRA_FIELDS, content)
+  for (const f of ALL_EXTRA_FIELDS) {
+    extraAnswers[f.field] = flatExtra[f.field] ?? null
+  }
   markBasicSaved()
 }
 
@@ -541,7 +566,21 @@ function buildBasicContentObject() {
     exercise: serializeExercise(form.exercise),
     sleep: serializeSleep(form.sleep),
     lifestyle: serializeLifestyle(form.lifestyle),
+    ...pickExtraNest('weightHistory', WEIGHT_HISTORY_FIELDS),
+    ...pickExtraNest('psych', PSYCH_FIELDS),
+    ...pickExtraNest('women', WOMEN_FIELDS),
   }
+}
+
+function pickExtraNest(group: string, fields: ArchiveExtraField[]): Record<string, unknown> {
+  const nested: Record<string, unknown> = {}
+  for (const f of fields) {
+    const leaf = f.field.replace(/^basic\.[^.]+\./, '')
+    const v = extraAnswers[f.field]
+    if (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)) continue
+    nested[leaf] = v
+  }
+  return Object.keys(nested).length ? { [group]: nested } : {}
 }
 
 function basicContentFingerprint(): string {
@@ -1866,6 +1905,65 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </el-card>
+
+        <el-card shadow="never" class="section-card">
+          <template #header>
+            <span class="section-title">减重史</span>
+            <span class="section-hint">与首诊问卷同字段；可在档案页补录或修改</span>
+          </template>
+          <div class="extra-fields">
+            <FieldInput
+              v-for="f in WEIGHT_HISTORY_FIELDS"
+              :key="f.field"
+              :field="f.field"
+              :label="f.label"
+              :type="f.type"
+              :unit="f.unit"
+              :options="f.options"
+              :model-value="extraAnswers[f.field]"
+              @update:model-value="(v) => (extraAnswers[f.field] = v)"
+            />
+          </div>
+        </el-card>
+
+        <el-card shadow="never" class="section-card">
+          <template #header>
+            <span class="section-title">心理与情绪</span>
+            <span class="section-hint">敏感信息；按角色在接口层脱敏</span>
+          </template>
+          <div class="extra-fields">
+            <FieldInput
+              v-for="f in PSYCH_FIELDS"
+              :key="f.field"
+              :field="f.field"
+              :label="f.label"
+              :type="f.type"
+              :unit="f.unit"
+              :options="f.options"
+              :model-value="extraAnswers[f.field]"
+              @update:model-value="(v) => (extraAnswers[f.field] = v)"
+            />
+          </div>
+        </el-card>
+
+        <el-card shadow="never" class="section-card">
+          <template #header>
+            <span class="section-title">女性健康</span>
+          </template>
+          <div class="extra-fields">
+            <FieldInput
+              v-for="f in WOMEN_FIELDS"
+              :key="f.field"
+              :field="f.field"
+              :label="f.label"
+              :type="f.type"
+              :unit="f.unit"
+              :options="f.options"
+              :model-value="extraAnswers[f.field]"
+              @update:model-value="(v) => (extraAnswers[f.field] = v)"
+            />
+          </div>
+        </el-card>
       </el-tab-pane>
 
       <el-tab-pane label="病种档案" name="disease">
@@ -2624,6 +2722,11 @@ onBeforeUnmount(() => {
   color: var(--admin-text);
 }
 
+.extra-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .section-hint {
   font-size: 12px;
   font-weight: 400;

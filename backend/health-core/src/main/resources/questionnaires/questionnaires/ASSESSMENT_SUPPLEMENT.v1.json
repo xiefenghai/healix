@@ -1,0 +1,14 @@
+{
+  "code": "ASSESSMENT_SUPPLEMENT",
+  "version": 1,
+  "title": "评估补充问卷",
+  "program": null,
+  "purpose": "ASSESSMENT",
+  "dynamic": true,
+  "modules": [
+    {
+      "code": "ASSESSMENT_DYNAMIC",
+      "version": 1
+    }
+  ]
+}

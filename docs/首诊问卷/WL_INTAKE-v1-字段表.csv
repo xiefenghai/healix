@@ -1,0 +1,129 @@
+﻿模块,序号,字段编码,来源,题面（健管师问法）,类型,选项（编码=文案，用｜分隔）,单位,范围,必收级别,显示条件,高亮（条件 → 级别：提示）,敏感,写回,备注 / 待评审
+作答属性,0.1,response.channel,新增,本次沟通方式,ENUM,PHONE=电话｜WECHAT=微信｜ONSITE=到店面谈｜VIDEO=视频,,,REQUIRED,,,,仅存作答,工作台顶栏选择，不计入 8 项必收
+作答属性,0.2,response.program,新增,参加的管理项目,ENUM,WEIGHT_LOSS=减重管理｜NONE=暂不加入,,,REQUIRED,,,,people_program_enrollment,默认减重管理；选定即建入组（入组中）
+BASIC_PROFILE 基础信息,1,profile.displayName,沿用,姓名,TEXT,,,1–32 字,REQUIRED,,,,people_profile.display_name,
+BASIC_PROFILE 基础信息,2,profile.gender,沿用（InputField GENDER）,性别,ENUM,MALE=男｜FEMALE=女,,,REQUIRED,,,,people_profile.gender,
+BASIC_PROFILE 基础信息,3,profile.birthday,沿用（InputField BIRTHDAY）,出生日期,DATE,,,不晚于今天,REQUIRED,,年龄 < 18 或 ≥ 65 → CAUTION：热量缺口与运动强度取保守值,,people_profile.birthday,只知道年龄时可录「约 X 岁」→ 记为当年 1 月 1 日并标注估算（待评审）
+BASIC_PROFILE 基础信息,4,profile.mobile,沿用,手机号,TEXT,,,11 位,REQUIRED,,,,people_profile.mobile,
+BASIC_PROFILE 基础信息,5,profile.wechatId,新增（profile 新列）,微信号,TEXT,,,,LATER,,,,people_profile.wechat_id,
+BASIC_PROFILE 基础信息,6,profile.occupation,沿用,职业,TEXT,,,,LATER,,,,people_profile.occupation,是否改为选项（久坐办公 / 体力劳动 / 司机 / 医护 / 学生 / 退休 / 其他）？
+BASIC_PROFILE 基础信息,7,profile.maritalStatus,沿用,婚姻状况,ENUM,沿用档案页现有选项,,,LATER,,,,people_profile.marital_status,
+BASIC_PROFILE 基础信息,8,profile.workSchedule,新增（profile 新列）,平时作息是哪种？,ENUM,DAY=规律白班｜SHIFT=倒班｜NIGHT=夜班为主｜IRREGULAR=不固定,,,LATER,,SHIFT / NIGHT → CAUTION：餐次与运动时段按班次安排,,people_profile.work_schedule,
+BODY_MEASURE 体测,1,metric.HEIGHT,沿用（InputField HEIGHT）,身高,NUMBER,,cm,100–230,REQUIRED,,,,指标表 HEIGHT（source=INTAKE）,预填最近一次；未改不重复写
+BODY_MEASURE 体测,2,metric.WEIGHT,沿用（InputField WEIGHT）,体重,NUMBER,,kg,25–300,REQUIRED,,BMI < 18.5 → REFER：不设减重目标；了解减重动机，必要时建议就医,,指标表 WEIGHT（source=INTAKE）,入组后首条 INTAKE 记录即首诊基线
+BODY_MEASURE 体测,3,metric.WAIST,沿用（InputField WAIST）,腰围（肚脐上方一横指水平绕一圈）,NUMBER,,cm,40–200,FIRST_VISIT,,,,指标表 WAIST,超标（男 ≥ 90 / 女 ≥ 85）只在右栏速览标红，不弹追问
+BODY_MEASURE 体测,4,metric.HIP,新增指标,臀围（臀部最突出处水平一圈）,NUMBER,,cm,50–200,LATER,,,,指标表 HIP（MetricTypeEnum 新增）,
+BODY_MEASURE 体测,5,metric.BODY_FAT,改（原 InputField BODY_FAT 存事实）,体脂率（体脂秤或体成分仪）,NUMBER,,%,3–70,LATER,,,,指标表 BODY_FAT（MetricTypeEnum 新增）,原评估补充事实存量迁为指标记录
+BODY_MEASURE 体测,6,metric.HEART_RATE,沿用,静息心率,NUMBER,,次/分,30–200,LATER,,< 50 或 > 110 → CAUTION：运动前建议先就医评估,,指标表 HEART_RATE,
+BODY_MEASURE 体测,7,metric.BLOOD_PRESSURE_SYS,沿用,血压：高压（收缩压）,NUMBER,,mmHg,60–260,LATER,,≥ 180 → REFER：血压很高，建议先就医，暂缓运动处方,,指标表 BLOOD_PRESSURE_SYS,与舒张压同一行录入
+BODY_MEASURE 体测,8,metric.BLOOD_PRESSURE_DIA,沿用,血压：低压（舒张压）,NUMBER,,mmHg,30–160,LATER,,≥ 110 → REFER：同上,,指标表 BLOOD_PRESSURE_DIA,
+BODY_MEASURE 体测,9,measure.method,新增,这些数据怎么来的？,ENUM,ONSITE=现场测量｜DEVICE=家用设备｜SELF_REPORT=客户自述,,,FIRST_VISIT,,,,写入本次各指标记录的测量方式,不单独存元数据
+BODY_MEASURE 体测,10,computed.bmi,计算项,BMI,COMPUTED,体重 ÷ 身高²,kg/m²,,—,,,,不存；后端复算进方案上下文,
+BODY_MEASURE 体测,11,computed.whr,计算项,腰臀比,COMPUTED,腰围 ÷ 臀围,,,—,,,,不存,
+WOMEN_HEALTH 女性健康,1,basic.women.reproductiveStatus,新增,目前有没有在备孕、怀孕或者哺乳？,ENUM,NONE=都没有｜PREPARING=备孕中｜PREGNANT=怀孕中｜LACTATING=哺乳期｜UNSURE=不确定,,,FIRST_VISIT,性别 = 女,PREGNANT / LACTATING → BLOCK：不设热量缺口与减重目标，只给均衡营养与适度活动；PREPARING → CAUTION：缺口与速度取保守值；UNSURE → CAUTION：建议先确认,是,元数据,高风险 5 类之一
+WOMEN_HEALTH 女性健康,2,basic.women.menstrualStatus,新增,月经情况,ENUM,REGULAR=规律｜IRREGULAR=不规律｜AMENORRHEA=停经（非绝经）｜PERIMENOPAUSE=围绝经期｜POSTMENOPAUSE=已绝经,,,LATER,性别 = 女,AMENORRHEA → CAUTION：可能与过度节食或内分泌问题有关，建议就医明确,是,元数据,
+WOMEN_HEALTH 女性健康,3,basic.women.earlyMenopause,映射（InputField EARLY_MENOPAUSE）,是否在 50 岁之前绝经？,BOOL,YES=是｜NO=否｜UNKNOWN=不清楚,,,LATER,月经情况 = 已绝经,,是,元数据,评估引擎用
+WOMEN_HEALTH 女性健康,4,basic.women.gdmHistory,映射（InputField GDM_HISTORY）,怀孕期间是否得过妊娠期糖尿病？,BOOL,YES=是｜NO=否｜UNKNOWN=不清楚,,,LATER,性别 = 女,,是,元数据,评估引擎用
+MEDICAL_HISTORY 病史与用药,1,basic.presentIllness,沿用（InputField PRESENT_ILLNESS / PREDIABETES / PCOS / OSA 并入）,医生诊断过哪些疾病？,MULTI,沿用现有疾病选项；新增 PREDIABETES=糖尿病前期（血糖偏高）｜PCOS=多囊卵巢综合征（女）｜OSA=睡眠呼吸暂停,,,FIRST_VISIT,,含 DIABETES / HYPERTENSION / CHD / HEART_FAILURE / CKD / CIRRHOSIS → CAUTION：确认在用药；热量缺口下注意低血糖与血压波动，加对应监测；含 MALIGNANT_TUMOR → REFER：减重前需医生同意；含 DEPRESSION / ANXIETY → CAUTION：留意情绪与进食关系,是,元数据（basic.presentIllness）,高风险 5 类之一；评估原「是 / 否 / 不知道」三态改为「勾选 = 是，已采集未勾 = 否，未采集 = 不知道」（待评审）
+MEDICAL_HISTORY 病史与用药,2,basic.presentIllnessOther,沿用,其他疾病,TEXT,,,,LATER,,,是,元数据,
+MEDICAL_HISTORY 病史与用药,3,basic.medicationFlags,新增（InputField ANTIHYPERTENSIVE / STATIN / PSYCH_DRUGS 并入）,目前在吃哪类药？,MULTI,NONE=都没有｜HYPOGLYCEMIC=降糖药或胰岛素｜ANTIHYPERTENSIVE=降压药｜STATIN=降脂药｜PSYCH=抗抑郁 / 抗精神病药｜STEROID=长期激素｜THYROID=甲状腺药｜WEIGHT_LOSS_DRUG=减重药（如司美格鲁肽）｜OTHER=其他,,,FIRST_VISIT,,HYPOGLYCEMIC → CAUTION：热量缺口下低血糖风险，加血糖监测，调整饮食前与医生沟通；WEIGHT_LOSS_DRUG → CAUTION：核实药名、剂量与处方来源；PSYCH / STEROID → CAUTION：部分药物影响食欲与体重,是,元数据,高风险 5 类之一；用药列表里有对应类别时自动勾选，两者冲突以用药列表为准
+MEDICAL_HISTORY 病史与用药,4,medication.current,沿用,在用药物明细,LIST,沿用用药组件（药名、剂量、频次）,,,LATER,在吃哪类药 ≠ 都没有,,是,people_medication,
+MEDICAL_HISTORY 病史与用药,5,basic.supplements,新增,有没有在用代餐、减肥茶、保健品？,MULTI,NONE=都没有｜MEAL_REPLACEMENT=代餐｜PROTEIN=蛋白粉｜DIET_TEA=减肥茶 / 非处方减肥产品｜FAT_BURNER=燃脂类｜VITAMIN=维生素 / 矿物质｜OTHER=其他,,,LATER,,DIET_TEA / FAT_BURNER → CAUTION：了解成分来源，建议停用并咨询医生,,元数据,
+MEDICAL_HISTORY 病史与用药,6,basic.pastHistoryItems.surgeries,沿用,近两年有没有做过手术或住院？,LIST,沿用档案页既往史组件（手术）,,,LATER,,近 3 个月内手术 → CAUTION：恢复期内不安排中高强度运动,是,元数据（basic.pastHistoryItems）,
+MEDICAL_HISTORY 病史与用药,7,basic.medical.mainDiscomfort,新增,目前身体最不舒服的地方是？,TEXT,,,,LATER,,,是,元数据,
+MEDICAL_HISTORY 病史与用药,8,basic.medical.exerciseRestriction,新增,有没有医生说过不能运动或要限制运动？,MULTI,NONE=没有｜DOCTOR_LIMIT=医生明确限制｜CARDIAC=运动时胸痛 / 心悸 / 晕厥｜BP_UNCONTROLLED=血压控制不好｜RECENT_SURGERY=近期手术未恢复｜OTHER=其他,,,FIRST_VISIT,,≠ NONE → CAUTION：设运动强度上限，避开禁忌；CARDIAC → REFER：先就医评估再开始运动,是,元数据,高风险 5 类之一
+MEDICAL_HISTORY 病史与用药,9,basic.medical.exerciseRestrictionNote,新增,医生具体怎么说的？,TEXT,,,,LATER,运动限制含 DOCTOR_LIMIT / OTHER,,是,元数据,
+MEDICAL_HISTORY 病史与用药,10,basic.medical.jointIssues,新增,有没有关节问题或运动损伤？,MULTI,NONE=没有｜KNEE=膝｜ANKLE=踝｜HIP=髋｜LOWER_BACK=腰｜SHOULDER=肩颈｜OTHER=其他,,,FIRST_VISIT,,≠ NONE → CAUTION：以低冲击运动为主（快走、骑车、游泳），避开受伤部位,,元数据,
+MEDICAL_HISTORY 病史与用药,11,basic.medical.steroidHyperglycemia,映射（InputField STEROID_DIABETES）,是否曾因使用激素类药物出现过血糖升高？,BOOL,YES=是｜NO=否｜UNKNOWN=不清楚,,,LATER,,,是,元数据,评估引擎用
+MEDICAL_HISTORY 病史与用药,12,basic.medical.acanthosis,映射（InputField ACANTHOSIS）,颈后、腋下等处是否有皮肤发黑、增厚？,BOOL,YES=是｜NO=否｜UNKNOWN=不清楚,,,LATER,,,,元数据,评估引擎用
+ALLERGY_DIET_RESTRICTION 过敏与忌口,1,allergy.status,沿用,有没有食物或药物过敏、不耐受？,ENUM,NKA=没有已知过敏｜HAS=有,,,FIRST_VISIT,,,,people_allergy_profile.status,高风险 5 类之一
+ALLERGY_DIET_RESTRICTION 过敏与忌口,2,allergy.food,沿用,对哪些食物过敏或不耐受？,LIST,沿用过敏组件（类别 = 食物；过敏 / 不耐受；严重程度）,,,FIRST_VISIT,过敏 = 有,严重或高危 → CAUTION：方案饮食须完全避开，提醒随身药物,,people_allergy,
+ALLERGY_DIET_RESTRICTION 过敏与忌口,3,allergy.drug,沿用,药物过敏,LIST,沿用过敏组件（类别 = 药物）,,,LATER,过敏 = 有,,,people_allergy,
+ALLERGY_DIET_RESTRICTION 过敏与忌口,4,basic.diet.restriction,新增,饮食上有什么忌口？,MULTI,NONE=没有｜VEGETARIAN=蛋奶素｜VEGAN=纯素｜HALAL=清真｜NO_SPICY=不吃辣｜NO_BEEF_LAMB=不吃牛羊肉｜NO_SEAFOOD=不吃海鲜｜OTHER=其他,,,FIRST_VISIT,,,,元数据,与现有 basic.diet.type 的「素食」重叠：建议 diet.type 只保留普通 / 低盐 / 低糖等饮食模式，素食移到忌口（待评审）
+ALLERGY_DIET_RESTRICTION 过敏与忌口,5,basic.diet.restrictionOther,新增,其他忌口,TEXT,,,,LATER,忌口含 OTHER,,,元数据,
+FAMILY_HISTORY 家族史,1,basic.familyHistoryStatus,沿用（InputField FAMILY_HISTORY）,父母、兄弟姐妹或子女有没有慢性病？,ENUM,none=没有｜has=有,,,LATER,,,是,元数据,选项编码沿用档案现有小写值
+FAMILY_HISTORY 家族史,2,basic.familyHistoryItems,沿用（InputField FAMILY_HISTORY）,哪位亲属、什么病？,LIST,沿用档案页家族史组件（亲属关系、病种 FH_*）,,,LATER,家族史 = 有,,是,元数据,
+DIET_BEHAVIOR 饮食行为,1,basic.diet.mealRegularity,新增,一日三餐规律吗？,ENUM,REGULAR=基本规律｜SOMETIMES=偶尔不规律｜IRREGULAR=经常不规律,,,FIRST_VISIT,,,,元数据,
+DIET_BEHAVIOR 饮食行为,2,basic.diet.breakfast,新增,早餐吃吗？,ENUM,DAILY=每天吃｜SOMETIMES=有时吃｜RARELY=基本不吃,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,3,basic.diet.takeoutFrequency,新增,点外卖或在外面吃的频率？,ENUM,RARELY=很少｜WEEKLY_1_3=每周 1–3 次｜WEEKLY_4_7=每周 4–7 次｜DAILY_MULTI=每天不止一次,,,FIRST_VISIT,,,,元数据,
+DIET_BEHAVIOR 饮食行为,4,basic.diet.snackNight,新增,吃零食或夜宵的频率？,ENUM,RARELY=很少｜WEEKLY_1_3=每周 1–3 次｜MOST_DAYS=大多数天,,,FIRST_VISIT,,,,元数据,
+DIET_BEHAVIOR 饮食行为,5,basic.diet.sugaryDrinks,新增,奶茶、可乐、果汁这类含糖饮料喝多少？,ENUM,NONE=基本不喝｜WEEKLY_1_3=每周 1–3 杯｜DAILY_1=每天 1 杯｜DAILY_2PLUS=每天 2 杯以上,,,FIRST_VISIT,,,,元数据,
+DIET_BEHAVIOR 饮食行为,6,basic.diet.staple,新增,主食一般吃什么？,ENUM,REFINED=以白米白面为主｜MIXED=粗细搭配｜LOW=主食吃得很少,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,7,basic.diet.vegFruit,新增,蔬菜水果吃得多吗？,ENUM,ENOUGH=每天都有不少｜SOME=有但不多｜RARE=很少吃,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,8,basic.diet.cooking,新增,家里做菜常用哪些方式？,MULTI,STEAM_BOIL=蒸煮｜STIR_FRY=炒｜DEEP_FRY=油炸｜BRAISE=红烧 / 卤,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,9,basic.diet.eatingSpeed,新增,吃一顿饭大概多久？,ENUM,FAST=10 分钟以内｜NORMAL=10–20 分钟｜SLOW=20 分钟以上,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,10,basic.diet.waterMl,新增,每天大概喝多少水？,NUMBER,,ml,0–6000,LATER,,,,元数据,题面提示：一瓶矿泉水约 550 ml
+DIET_BEHAVIOR 饮食行为,11,basic.diet.taste,新增（InputField HIGH_SALT 并入）,口味偏好,MULTI,LIGHT=清淡｜SALTY=偏咸 / 常吃咸菜腌制品｜SWEET=偏甜｜OILY=偏油｜SPICY=偏辣,,,LATER,,,,元数据,评估「高盐饮食」= 勾选 SALTY
+DIET_BEHAVIOR 饮食行为,12,basic.diet.trackedBefore,新增,以前记录过饮食吗？,ENUM,NEVER=没有｜TRIED=试过没坚持｜ONGOING=一直在记,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,13,basic.diet.cook,新增,平时主要谁做饭？,ENUM,SELF=自己做｜FAMILY=家人做｜CANTEEN=单位食堂｜EAT_OUT=外卖 / 外食为主,,,FIRST_VISIT,,,,元数据,决定饮食方案的可操作性
+DIET_BEHAVIOR 饮食行为,14,basic.diet.livingAlone,新增,是一个人住吗？,BOOL,YES=是｜NO=否,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,15,basic.diet.appetite,沿用,食欲,ENUM,沿用 appetiteLevel,,,LATER,,,,元数据,档案页原有字段，完整模式显示
+DIET_BEHAVIOR 饮食行为,16,basic.diet.habit,沿用,饮食习惯总体,ENUM,沿用 dietHabit,,,LATER,,,,元数据,同上；与新细项是否重复（待评审）
+DIET_BEHAVIOR 饮食行为,17,basic.diet.type,沿用,饮食类型,ENUM,沿用 dietType,,,LATER,,,,元数据,见忌口备注
+DIET_BEHAVIOR 饮食行为,18,basic.diet.preference,沿用,饮食偏好,TEXT,,,,LATER,,,,元数据,
+DIET_BEHAVIOR 饮食行为,19,basic.diet.note,沿用,饮食备注,TEXT,,,,LATER,,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,1,basic.exercise.frequency,沿用（InputField EXERCISE）,平时运动（每次 30 分钟以上）的频率？,ENUM,沿用 exerciseFrequency：NONE=基本不运动｜WEEKLY_1=每周 1–2 次｜WEEKLY_3=每周 3 次及以上｜DAILY=每天,,,FIRST_VISIT,,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,2,basic.exercise.type,改（文本 → 多选）,一般做什么运动？,MULTI,WALK=快走｜RUN=跑步｜CYCLE=骑行｜SWIM=游泳｜STRENGTH=力量训练｜BALL=球类｜YOGA=瑜伽 / 普拉提｜DANCE=跳操 / 广场舞｜OTHER=其他,,,LATER,运动频率 ≠ 基本不运动,,,元数据,存量文本值迁到 basic.exercise.note（待评审）
+EXERCISE_BEHAVIOR 运动行为,3,basic.exercise.intensity,沿用,运动强度,ENUM,沿用 exerciseIntensity,,,LATER,运动频率 ≠ 基本不运动,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,4,basic.exercise.durationMin,沿用,每次运动多长时间？,NUMBER,,分钟,0–300,LATER,运动频率 ≠ 基本不运动,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,5,basic.exercise.strengthExperience,新增,做过力量训练吗？,ENUM,NONE=没练过｜BEGINNER=偶尔练｜REGULAR=规律练,,,LATER,,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,6,basic.exercise.dailySteps,新增,平时一天大概走多少步？,ENUM,LT3000=3000 步以下｜3000_6000=3000–6000｜6000_10000=6000–10000｜GT10000=1 万步以上｜UNKNOWN=不清楚,,,LATER,,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,7,basic.exercise.sedentaryHours,新增,一天大概坐多久？,NUMBER,,小时,0–20,LATER,,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,8,basic.exercise.availableSlots,新增,一般什么时候有空运动？,MULTI,MORNING=早上｜NOON=中午｜EVENING=傍晚｜NIGHT=晚上｜WEEKEND=只有周末,,,FIRST_VISIT,,,,元数据,决定运动任务时段
+EXERCISE_BEHAVIOR 运动行为,9,basic.exercise.venue,新增,在哪运动方便？,MULTI,HOME=家里｜OUTDOOR=户外｜GYM=健身房｜OFFICE=单位,,,LATER,,,,元数据,
+EXERCISE_BEHAVIOR 运动行为,10,basic.exercise.equipment,新增,家里有什么器械？,TEXT,,,,LATER,场所含 HOME,,,元数据,如哑铃、弹力带、跑步机
+EXERCISE_BEHAVIOR 运动行为,11,basic.exercise.note,沿用,运动备注,TEXT,,,,LATER,,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,1,basic.lifestyle.activityLevel,新增,工作和日常活动量属于哪种？,ENUM,SEDENTARY=久坐为主｜LIGHT=轻体力（站立走动较多）｜MODERATE=中等体力｜HEAVY=重体力,,,FIRST_VISIT,,,,元数据,能量计算用的身体活动水平
+SLEEP_SUBSTANCE 睡眠与烟酒,2,basic.sleep.hours,沿用,每天大概睡几个小时？,NUMBER,,小时,0–16,FIRST_VISIT,,< 6 → CAUTION：睡眠不足影响食欲与减重效果，方案加入睡眠改善,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,3,basic.sleep.bedTime,新增,一般几点睡？,TIME,,,,LATER,,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,4,basic.sleep.wakeTime,新增,一般几点起？,TIME,,,,LATER,,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,5,basic.sleep.quality,沿用,睡眠质量,ENUM,沿用 sleepQuality,,,LATER,,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,6,basic.sleep.disorder,沿用,睡眠问题,ENUM,沿用 sleepDisorder,,,LATER,,SNORING → CAUTION：打鼾伴憋醒建议就医筛查睡眠呼吸暂停,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,7,basic.sleep.lateNight,新增,多久熬一次夜（凌晨以后睡）？,ENUM,RARELY=很少｜WEEKLY_1_3=每周 1–3 次｜MOST_DAYS=大多数天,,,LATER,,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,8,basic.sleep.note,沿用,睡眠备注,TEXT,,,,LATER,,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,9,basic.lifestyle.smoking.status,沿用（InputField SMOKING）,吸烟吗？,ENUM,沿用 smoking：NEVER=从不｜CURRENT=当前吸烟｜OCCASIONAL=偶尔｜FORMER=已戒烟,,,LATER,,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,10,basic.lifestyle.smoking.cigarettesPerDay,沿用,每天几支？,NUMBER,,支,0–100,LATER,吸烟 = 当前 / 偶尔,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,11,basic.lifestyle.smoking.years,沿用,吸了多少年？,NUMBER,,年,0–80,LATER,吸烟 = 当前 / 偶尔 / 已戒,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,12,basic.lifestyle.smoking.quitYear,沿用,哪年戒的？,TEXT,,,,LATER,吸烟 = 已戒烟,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,13,basic.lifestyle.smoking.passive,新增（InputField PASSIVE_SMOKING）,家里或单位经常有人在身边吸烟吗？,BOOL,YES=是｜NO=否｜UNKNOWN=不清楚,,,LATER,吸烟 = 从不 / 已戒烟,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,14,basic.lifestyle.drinking.status,沿用（InputField DRINKING）,喝酒吗？,ENUM,沿用 drinking：NEVER=从不｜CURRENT=当前饮酒｜OCCASIONAL=偶尔｜FORMER=已戒酒,,,LATER,,,,元数据,评估「饮酒频率」= status + frequency 组合：status = NEVER 视为不喝
+SLEEP_SUBSTANCE 睡眠与烟酒,15,basic.lifestyle.drinking.frequency,沿用（InputField DRINKING）,多久喝一次？,ENUM,沿用 drinkingFrequency：DAILY=每天｜WEEKLY_3=每周 ≥ 3 次｜WEEKLY_1_2=每周 1–2 次｜MONTHLY=每月数次,,,LATER,喝酒 = 当前 / 偶尔,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,16,basic.lifestyle.drinking.type,沿用,常喝什么酒？,TEXT,,,,LATER,喝酒 = 当前 / 偶尔,,,元数据,
+SLEEP_SUBSTANCE 睡眠与烟酒,17,basic.lifestyle.drinking.amountPerDay,沿用,一次喝多少？,TEXT,,,,LATER,喝酒 = 当前 / 偶尔,,,元数据,
+PSYCH_BASE 心理与情绪,1,basic.psych.stressLevel,新增（InputField CHRONIC_STRESS 并入）,最近压力大吗？,ENUM,LOW=不大｜MEDIUM=有一些｜HIGH=长期压力很大,,,LATER,,,是,元数据,评估「长期精神紧张」= HIGH
+PSYCH_BASE 心理与情绪,2,basic.psych.stressEating,新增,压力大的时候吃东西会变吗？,ENUM,NO=没变化｜EAT_MORE=吃得更多｜EAT_LESS=吃得更少,,,LATER,压力 ≠ 不大,,是,元数据,
+PSYCH_BASE 心理与情绪,3,basic.psych.emotionalEating,新增,心情不好或无聊时会想吃东西吗？,ENUM,NEVER=很少｜SOMETIMES=有时｜OFTEN=经常,,,LATER,,OFTEN → CAUTION：以行为替代为主，避免严格限制,是,元数据,
+PSYCH_BASE 心理与情绪,4,basic.psych.readiness,新增,现在想改变生活习惯的程度？,ENUM,NOT_READY=还没想好｜THINKING=想改但还没开始｜READY=准备好了｜ACTING=已经在做了,,,FIRST_VISIT,,NOT_READY → CAUTION：首版方案只设 1–2 个小目标,,元数据,决定方案节奏
+PSYCH_BASE 心理与情绪,5,basic.psych.familySupport,新增,家里人支持你减重吗？,ENUM,SUPPORTIVE=支持｜NEUTRAL=无所谓｜UNSUPPORTIVE=不太支持,,,LATER,,,,元数据,
+PSYCH_BASE 心理与情绪,6,basic.psych.willingToRecord,新增,愿意每天记录饮食或体重吗？,ENUM,YES=愿意｜MAYBE=可以试试｜NO=不太愿意,,,LATER,,,,元数据,决定打卡任务多少
+WL_WEIGHT_HISTORY 减重史,1,basic.weightHistory.triedBefore,新增,以前减过重吗？,ENUM,NEVER=没有｜ONCE=1 次｜MULTIPLE=多次,,,FIRST_VISIT,,MULTIPLE → CAUTION：体重反复的客户节奏更保守，重点防反弹,,元数据,
+WL_WEIGHT_HISTORY 减重史,2,basic.weightHistory.methods,新增,以前用过哪些方法？,MULTI,DIET_CONTROL=控制饮食｜LOW_CARB=低碳 / 生酮｜MEAL_REPLACEMENT=代餐｜FASTING=断食 / 轻断食｜EXERCISE=运动｜DRUG=药物｜SURGERY=减重手术｜OTHER=其他,,,LATER,减过重 ≠ 没有,SURGERY → CAUTION：术后营养需求特殊，需了解术式与时间,,元数据,
+WL_WEIGHT_HISTORY 减重史,3,basic.weightHistory.maxLossKg,新增,最多一次减了多少？,NUMBER,,kg,0–100,LATER,减过重 ≠ 没有,,,元数据,
+WL_WEIGHT_HISTORY 减重史,4,basic.weightHistory.failReasons,新增,之前没坚持下来或反弹的原因？,MULTI,REBOUND=反弹了｜HUNGRY=太饿坚持不了｜NO_TIME=没时间｜NO_RESULT=没效果｜SOCIAL=应酬多｜INJURY=受伤｜OTHER=其他,,,LATER,减过重 ≠ 没有,,,元数据,方案生成时避开重复失败的方式
+WL_WEIGHT_HISTORY 减重史,5,basic.weightHistory.maxWeightKg,新增,成年后最重的时候多少斤 / 公斤？,NUMBER,,kg,25–300,LATER,,,,元数据,录入框支持斤 / 公斤切换，统一存 kg
+WL_WEIGHT_HISTORY 减重史,6,basic.weightHistory.minAdultWeightKg,新增,成年后最轻的时候？,NUMBER,,kg,25–300,LATER,,,,元数据,
+WL_WEIGHT_HISTORY 减重史,7,basic.weightHistory.recentTrend,新增,最近 3–6 个月体重有变化吗？,ENUM,STABLE=基本稳定｜UP=涨了｜DOWN_INTENDED=有意减下来了｜DOWN_UNINTENDED=没刻意减却瘦了,,,FIRST_VISIT,,DOWN_UNINTENDED → REFER：不明原因体重下降，建议先就医,,元数据,
+WL_WEIGHT_HISTORY 减重史,8,basic.weightHistory.recentChangeKg,新增,大概变了多少？,NUMBER,,kg,0–50,LATER,近期变化 ≠ 基本稳定,,,元数据,
+WL_RISK_SCREEN 减重风险筛查,1,basic.psych.eatingDisorderHistory,新增,以前有没有出现过暴食、催吐，或者长时间刻意不吃饭的情况？,ENUM,NO=没有｜YES=有过｜UNSURE=说不清｜DECLINE=不想回答,,,FIRST_VISIT,,YES / UNSURE → REFER：不设热量缺口，称重改为每周，方案中提示寻求专业帮助；DECLINE → CAUTION：按保守方案处理,是,元数据,高风险 5 类之一；不追问细节
+WL_RISK_SCREEN 减重风险筛查,2,basic.psych.soughtHelp,新增,有没有因为这个找过医生或心理咨询？,ENUM,YES=找过｜NO=没有,,,LATER,进食问题 = 有过 / 说不清,,是,元数据,
+WL_RISK_SCREEN 减重风险筛查,3,basic.psych.bodySatisfaction,新增,对自己现在的身材满意吗？,ENUM,SATISFIED=满意｜NEUTRAL=一般｜DISSATISFIED=不太满意｜VERY_DISSATISFIED=很不满意,,,LATER,,,是,元数据,
+WL_RISK_SCREEN 减重风险筛查,4,basic.psych.bodyAnxiety,新增,会不会经常因为身材焦虑，影响心情或生活？,ENUM,NONE=不会｜MILD=偶尔｜SEVERE=经常，比较严重,,,LATER,,SEVERE → REFER：称重改为每周，弱化体重数字，必要时建议心理支持,是,元数据,
+WL_RISK_SCREEN 减重风险筛查,5,basic.weightHistory.expectedPace,新增,希望多快看到效果？,ENUM,STEADY=稳一点就好｜MODERATE=适中｜ASAP=越快越好,,,FIRST_VISIT,,ASAP → CAUTION：沟通安全速度（每周约 0.5–1 kg），目标按安全速度设定,,元数据,
+GOALS_PREFERENCE 诉求与目标,1,goal.primaryAppeal,新增,这次最想解决什么问题？,ENUM,FAT_LOSS=减脂减重｜BODY_SHAPE=塑形增肌｜GLUCOSE=控制血糖｜BP=控制血压｜SLEEP=改善睡眠｜GUT=改善肠胃｜CONSULT=先了解看看｜OTHER=其他,,,REQUIRED,,,,people_health_goal.primary_appeal,
+GOALS_PREFERENCE 诉求与目标,2,goal.appealText,新增,客户原话,TEXT,,,≤ 200 字,FIRST_VISIT,,,,people_health_goal.appeal_text,如「明年结婚想瘦 10 斤」；进方案生成
+GOALS_PREFERENCE 诉求与目标,3,goal.doctorAdvised,新增,是医生建议减重的吗？,BOOL,YES=是｜NO=否,,,LATER,,,,people_health_goal.doctor_advised,
+GOALS_PREFERENCE 诉求与目标,4,goal.mode,新增,目标类型,ENUM,LOSS=减重｜BODY_COMPOSITION=改善体成分｜MAINTAIN=维持,,,FIRST_VISIT,,,,people_health_goal.goal_mode,系统按 BMI 预选（≥ 24 减重；18.5–24 改善体成分；< 18.5 不可选减重），健管师可改
+GOALS_PREFERENCE 诉求与目标,5,goal.targetWeightKg,新增,希望减到多少？,NUMBER,,kg,25–300,FIRST_VISIT,目标类型 = 减重,校验：目标 BMI < 18.5 不可提交；命中 BLOCK 高亮时不可设,,people_health_goal.goals_json,
+GOALS_PREFERENCE 诉求与目标,6,goal.targetDate,新增,希望什么时候达到？,DATE,,,晚于今天,FIRST_VISIT,目标类型 = 减重,校验：平均每周 > 约 1 kg → WARN：建议延长期限或调整目标,,people_health_goal.goals_json,录入框可选「3 个月 / 6 个月 / 自定义」
+GOALS_PREFERENCE 诉求与目标,7,goal.targetWaistCm,新增,腰围目标,NUMBER,,cm,40–200,LATER,,,,people_health_goal.goals_json,
+GOALS_PREFERENCE 诉求与目标,8,goal.targetBodyFat,新增,体脂率目标,NUMBER,,%,3–70,LATER,目标类型 = 改善体成分,,,people_health_goal.goals_json,
+GOALS_PREFERENCE 诉求与目标,9,goal.exerciseMinutesPerDay,新增,每天能拿出多少时间运动？,NUMBER,,分钟,0–240,LATER,,,,people_health_goal.preferences_json,
+GOALS_PREFERENCE 诉求与目标,10,goal.dietEffort,新增,饮食上能做多大调整？,ENUM,COOK=愿意自己做｜ADJUST_ORDER=只能调整点餐｜MINIMAL=尽量少改变,,,LATER,,,,people_health_goal.preferences_json,
+GOALS_PREFERENCE 诉求与目标,11,goal.followupChannel,新增,希望怎么跟进？,MULTI,WECHAT=微信｜PHONE=电话｜ONSITE=到店,,,LATER,,,,people_health_goal.preferences_json,
+GOALS_PREFERENCE 诉求与目标,12,goal.followupFrequency,新增,希望多久沟通一次？,ENUM,DAILY=每天｜WEEKLY_2_3=每周 2–3 次｜WEEKLY_1=每周 1 次,,,LATER,,,,people_health_goal.preferences_json,
+GOALS_PREFERENCE 诉求与目标,13,goal.constraints,新增,经济或时间上有什么限制？,TEXT,,,,LATER,,,,people_health_goal.preferences_json,
+STAFF_NOTE 健管师补充,1,staff.keyFollowups,新增,重点跟进事项,TEXT,,,,STAFF,,,,仅存作答；进方案上下文,
+STAFF_NOTE 健管师补充,2,staff.referral,新增,转介建议,MULTI,NONE=无｜NUTRITION_CLINIC=营养科｜ENDOCRINE=内分泌科｜CARDIOLOGY=心内科｜PSYCH=心理科｜OBSTETRICS=产科｜OTHER=其他,,,STAFF,,,,仅存作答；进方案上下文,命中 REFER 高亮时提交前提示填写
+STAFF_NOTE 健管师补充,3,staff.note,新增,备注,TEXT,,,,STAFF,,,,仅存作答,
+CONSENT 隐私授权,1,consent.sensitiveHealth,新增,已向客户说明并取得敏感健康信息处理同意,BOOL,YES=已同意,,,REQUIRED,,,,people_consent,必须为「已同意」才能提交
+CONSENT 隐私授权,2,consent.method,新增,授权方式,ENUM,VERBAL=口头｜WRITTEN=书面｜ELECTRONIC=电子,,,REQUIRED,,,,people_consent,与上一项合计为 8 项必收中的「隐私授权」

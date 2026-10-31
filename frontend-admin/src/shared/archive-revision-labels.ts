@@ -457,9 +457,9 @@ const CARE_PLAN_CONTENT_ROOTS = new Set(['diet', 'exercise', 'execution'])
  * 修订详情展示用条目。管理方案发布/保存时内容 JSON 很大，按模块折叠。
  */
 export function visibleRevisionItemsForDisplay(
-  items?: Array<{ fieldPath: string; oldValue?: string; newValue?: string; oldDisplay?: string; newDisplay?: string }>,
+  items?: Array<{ fieldPath: string; oldValue?: string; newValue?: string; oldDisplay?: string; newDisplay?: string; quote?: string }>,
   bizType?: string,
-): Array<{ fieldPath: string; oldValue?: string; newValue?: string; oldDisplay?: string; newDisplay?: string }> {
+): Array<{ fieldPath: string; oldValue?: string; newValue?: string; oldDisplay?: string; newDisplay?: string; quote?: string }> {
   const visible = (items ?? []).filter(isMeaningfulRevisionItem)
   if (bizType !== 'CARE_PLAN') return visible
 
@@ -469,6 +469,7 @@ export function visibleRevisionItemsForDisplay(
     newValue?: string
     oldDisplay?: string
     newDisplay?: string
+    quote?: string
   }> = []
   const sections = new Set<string>()
 

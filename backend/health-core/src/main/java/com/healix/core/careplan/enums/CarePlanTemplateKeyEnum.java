@@ -22,7 +22,7 @@ public enum CarePlanTemplateKeyEnum {
             case COMPREHENSIVE -> "综合管理";
             case DIABETES -> "糖尿病管理";
             case HYPERTENSION -> "高血压管理";
-            case OBESITY -> "肥胖管理";
+            case OBESITY -> "减重管理";
             case WELLNESS -> "健康管理";
             default -> "健康管理";
         };

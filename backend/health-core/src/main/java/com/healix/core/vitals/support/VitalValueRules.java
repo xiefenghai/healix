@@ -12,29 +12,33 @@ import java.util.Map;
 public final class VitalValueRules {
 
     /** metricType → [min, max] */
-    private static final Map<String, double[]> PLAUSIBLE = Map.of(
-            "BLOOD_GLUCOSE", new double[] {1, 35},
-            "BLOOD_PRESSURE_SYS", new double[] {60, 260},
-            "BLOOD_PRESSURE_DIA", new double[] {30, 160},
-            "HEART_RATE", new double[] {30, 220},
-            "WEIGHT", new double[] {20, 300},
-            "HEIGHT", new double[] {50, 250},
-            "WAIST", new double[] {40, 200},
-            "TEMPERATURE", new double[] {34, 43},
-            "SLEEP_HOURS", new double[] {0.5, 24},
-            "STEPS", new double[] {1, 100000});
+    private static final Map<String, double[]> PLAUSIBLE = Map.ofEntries(
+            Map.entry("BLOOD_GLUCOSE", new double[] {1, 35}),
+            Map.entry("BLOOD_PRESSURE_SYS", new double[] {60, 260}),
+            Map.entry("BLOOD_PRESSURE_DIA", new double[] {30, 160}),
+            Map.entry("HEART_RATE", new double[] {30, 220}),
+            Map.entry("WEIGHT", new double[] {20, 300}),
+            Map.entry("HEIGHT", new double[] {50, 250}),
+            Map.entry("WAIST", new double[] {40, 200}),
+            Map.entry("HIP", new double[] {40, 200}),
+            Map.entry("BODY_FAT", new double[] {3, 70}),
+            Map.entry("TEMPERATURE", new double[] {34, 43}),
+            Map.entry("SLEEP_HOURS", new double[] {0.5, 24}),
+            Map.entry("STEPS", new double[] {1, 100000}));
 
-    private static final Map<String, String> LABELS = Map.of(
-            "BLOOD_GLUCOSE", "血糖",
-            "BLOOD_PRESSURE_SYS", "收缩压",
-            "BLOOD_PRESSURE_DIA", "舒张压",
-            "HEART_RATE", "心率",
-            "WEIGHT", "体重",
-            "HEIGHT", "身高",
-            "WAIST", "腰围",
-            "TEMPERATURE", "体温",
-            "SLEEP_HOURS", "睡眠时长",
-            "STEPS", "步数");
+    private static final Map<String, String> LABELS = Map.ofEntries(
+            Map.entry("BLOOD_GLUCOSE", "血糖"),
+            Map.entry("BLOOD_PRESSURE_SYS", "收缩压"),
+            Map.entry("BLOOD_PRESSURE_DIA", "舒张压"),
+            Map.entry("HEART_RATE", "心率"),
+            Map.entry("WEIGHT", "体重"),
+            Map.entry("HEIGHT", "身高"),
+            Map.entry("WAIST", "腰围"),
+            Map.entry("HIP", "臀围"),
+            Map.entry("BODY_FAT", "体脂率"),
+            Map.entry("TEMPERATURE", "体温"),
+            Map.entry("SLEEP_HOURS", "睡眠时长"),
+            Map.entry("STEPS", "步数"));
 
     private VitalValueRules() {}
 

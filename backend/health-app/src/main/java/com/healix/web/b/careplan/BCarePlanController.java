@@ -160,6 +160,57 @@ public class BCarePlanController {
                 SecurityUtils.requireStaffId()));
     }
 
+    @PostMapping("/patients/{peopleId}/care-plan/review")
+    public ApiResult<CarePlanBundleDto> markReviewed(@PathVariable String peopleId) {
+        return ApiResult.ok(carePlanService.markReviewed(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId()));
+    }
+
+    @PostMapping("/patients/{peopleId}/care-plan/start-communication")
+    public ApiResult<CarePlanBundleDto> startCommunication(@PathVariable String peopleId) {
+        return ApiResult.ok(carePlanService.startCommunication(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId()));
+    }
+
+    @PostMapping("/patients/{peopleId}/care-plan/communication")
+    public ApiResult<CarePlanBundleDto> recordCommunication(
+            @PathVariable String peopleId, @RequestBody(required = false) CommunicationRequest request) {
+        CommunicationRequest req =
+                request == null ? new CommunicationRequest(null, null, null, false, List.of(), null) : request;
+        return ApiResult.ok(carePlanService.recordCommunication(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId(),
+                SecurityUtils.requireContext().getAccountId(),
+                req.result(),
+                req.customerFeedback(),
+                req.changePoints(),
+                Boolean.TRUE.equals(req.faceToFace()),
+                req.ackWarnCodes(),
+                req.title()));
+    }
+
+    @PostMapping("/patients/{peopleId}/care-plan/face-to-face-accept")
+    public ApiResult<CarePlanBundleDto> faceToFaceAccept(
+            @PathVariable String peopleId, @RequestBody(required = false) PublishRequest request) {
+        PublishRequest req = request == null ? new PublishRequest(List.of(), null, null) : request;
+        return ApiResult.ok(carePlanService.faceToFaceAccept(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId(),
+                SecurityUtils.requireContext().getAccountId(),
+                req.ackWarnCodes(),
+                req.title()));
+    }
+
     @PostMapping("/patients/{peopleId}/care-plan/publish")
     public ApiResult<CarePlanBundleDto> publish(
             @PathVariable String peopleId, @RequestBody(required = false) PublishRequest request) {
@@ -292,4 +343,12 @@ public class BCarePlanController {
 
     /** @param syncDietGoal 把方案热量同步为医护设定的饮食目标；不传时仅手改过的热量同步 */
     public record PublishRequest(List<String> ackWarnCodes, String title, Boolean syncDietGoal) {}
+
+    public record CommunicationRequest(
+            String result,
+            String customerFeedback,
+            String changePoints,
+            Boolean faceToFace,
+            List<String> ackWarnCodes,
+            String title) {}
 }

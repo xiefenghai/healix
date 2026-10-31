@@ -22,12 +22,14 @@ public class CarePlanSafetyService {
 
     public static final String ERR_ALLERGEN = "DIET_ALLERGEN_CONFLICT";
     public static final String ERR_INCOMPLETE = "PLAN_INCOMPLETE";
+    public static final String ERR_HIGHLIGHT_BLOCK = "HIGHLIGHT_BLOCK";
     public static final String WARN_CONTEXT = "CONTEXT_INCOMPLETE";
     public static final String WARN_NO_DISEASE = "NO_DISEASE_TAG";
     public static final String WARN_MISSING_RATIONALE = CarePlanRationaleSupport.WARN_MISSING;
     public static final String WARN_HYPO = "HYPOGLYCEMIA_RISK";
     public static final String WARN_INTOLERANCE = "DIET_INTOLERANCE";
     public static final String WARN_ALLERGY_UNKNOWN = "ALLERGY_UNKNOWN";
+    public static final String WARN_HIGHLIGHT = "HIGHLIGHT_CAUTION";
 
     public List<SafetyFlagDto> evaluate(
             JsonNode exercise,
@@ -132,7 +134,7 @@ public class CarePlanSafetyService {
             flags.add(new SafetyFlagDto(
                     CarePlanSafetyLevelEnum.WARN.name(),
                     WARN_NO_DISEASE,
-                    "已选专项管理但档案未见对应确诊，请核对病种或改选方案类型"));
+                    "已选专项管理但档案未见对应病种，请核对病种或改选方案类型"));
         }
         if (requireRationale
                 && CarePlanRationaleSupport.missingBlockOrOverview(exercise, diet, execution, contextSnapshot)) {
@@ -147,7 +149,50 @@ public class CarePlanSafetyService {
                     WARN_HYPO,
                     "存在低血糖相关风险信号，请审阅运动强度与注意事项"));
         }
+        addHighlightFlags(flags, contextSnapshot);
         return flags;
+    }
+
+    /** 首诊高亮：BLOCK 不可发布；CAUTION/REFER 需确认。 */
+    private static void addHighlightFlags(List<SafetyFlagDto> flags, JsonNode contextSnapshot) {
+        if (contextSnapshot == null || contextSnapshot.isNull()) {
+            return;
+        }
+        JsonNode highlights = contextSnapshot.get("highlights");
+        if (highlights == null || !highlights.isArray() || highlights.isEmpty()) {
+            return;
+        }
+        List<String> blocks = new ArrayList<>();
+        List<String> warns = new ArrayList<>();
+        for (JsonNode h : highlights) {
+            String sev = h.path("severity").asText("");
+            String field = h.path("field").asText("高亮");
+            String effect = h.path("planEffect").asText("");
+            String msg = field + (StringUtils.hasText(effect) ? "：" + effect : "");
+            if ("BLOCK".equals(sev)) {
+                blocks.add(msg);
+            } else if ("CAUTION".equals(sev) || "REFER".equals(sev)) {
+                warns.add(("REFER".equals(sev) ? "建议转介 · " : "") + msg);
+            }
+        }
+        JsonNode goals = contextSnapshot.get("goals");
+        if (goals != null
+                && goals.path("lossBlocked").asBoolean(false)
+                && "LOSS".equalsIgnoreCase(goals.path("mode").asText(""))) {
+            blocks.add("高亮禁止减重，但目标模式仍为 LOSS");
+        }
+        if (!blocks.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.ERROR.name(),
+                    ERR_HIGHLIGHT_BLOCK,
+                    "存在阻断级高亮，不能按减重方案发布：" + String.join("；", blocks)));
+        }
+        if (!warns.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_HIGHLIGHT,
+                    "首诊高亮需在方案中落实：" + String.join("；", warns)));
+        }
     }
 
     public void assertPublishable(List<SafetyFlagDto> flags, List<String> ackWarnCodes) {
@@ -266,6 +311,21 @@ public class CarePlanSafetyService {
             o.put("message", f.message());
         }
         return JsonUtils.toJson(arr);
+    }
+
+    public List<SafetyFlagDto> parseFlags(String flagsJson) {
+        List<SafetyFlagDto> out = new ArrayList<>();
+        JsonNode arr = JsonUtils.readTree(flagsJson == null ? "[]" : flagsJson);
+        if (arr == null || !arr.isArray()) {
+            return out;
+        }
+        for (JsonNode n : arr) {
+            out.add(new SafetyFlagDto(
+                    n.path("level").asText(""),
+                    n.path("code").asText(""),
+                    n.path("message").asText("")));
+        }
+        return out;
     }
 
 }

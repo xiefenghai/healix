@@ -1,26 +1,31 @@
 package com.healix.core.assessment.support;
 
-import com.healix.core.assessment.catalog.InputField;
-import com.healix.core.assessment.catalog.InputField.Question;
+import com.healix.core.assessment.catalog.AssessmentFields;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.Builder;
 import lombok.Getter;
 
 /**
- * 评估输入（由档案 / 指标 / 检验 / 用药 / 问卷事实批量组装）。
+ * 评估输入（由档案 / 指标 / 检验 / 用药 / 元数据批量组装）。
  *
  * <p>检验值在加载时已统一单位：血脂 mmol/L、尿酸与肌酐 μmol/L、UACR mg/g。
  */
 @Getter
 @Builder(toBuilder = true)
 public class AssessmentContext {
+    public static final String YES = "YES";
+    public static final String NO = "NO";
+    public static final String UNKNOWN = "UNKNOWN";
+    public static final String NONE = "NONE";
+
     private final String tenantId;
     private final String peopleId;
     private final LocalDateTime asOf;
@@ -35,6 +40,8 @@ public class AssessmentContext {
     private final LocalDateTime weightRecordedAt;
     private final BigDecimal waistCm;
     private final LocalDateTime waistRecordedAt;
+    private final BigDecimal bodyFat;
+    private final LocalDateTime bodyFatRecordedAt;
     private final BigDecimal bmi;
 
     /** 近 4 周血压均值；读数不足 2 次时为最新一次 */
@@ -92,6 +99,13 @@ public class AssessmentContext {
     private final String dietType;
     private final String dietPreference;
     private final boolean dietCollected;
+    @Builder.Default
+    private final Set<String> dietTaste = Set.of();
+    private final boolean dietTasteCollected;
+    private final String stressLevel;
+    @Builder.Default
+    private final Set<String> medicationFlags = Set.of();
+    private final boolean medicationFlagsCollected;
 
     private final LocalDateTime controlWindowStart;
     private final int hypoEvents14d;
@@ -109,8 +123,9 @@ public class AssessmentContext {
     @Builder.Default
     private final Set<String> activeDrugCategories = Set.of();
 
+    /** 元数据 / 问卷写入的补充值，键为字段编码。 */
     @Builder.Default
-    private final Map<InputField, FactValue> facts = Map.of();
+    private final Map<String, FactValue> facts = Map.of();
 
     public record FactValue(Object value, String source, LocalDateTime recordedAt) {}
 
@@ -138,28 +153,28 @@ public class AssessmentContext {
         return hasObesityArchive || presentIllness.contains("OBESITY");
     }
 
-    public boolean answered(InputField field) {
+    public boolean answered(String field) {
         return facts.containsKey(field);
     }
 
-    /** 问卷是非题：YES → true，NO → false，不知道 / 未答 → null。 */
-    public Boolean fact(InputField field) {
+    /** yesNoUnknown：YES → true，NO → false，不清楚 / 未答 → null。 */
+    public Boolean yesNo(String field) {
         FactValue v = facts.get(field);
         if (v == null || v.value() == null) {
             return null;
         }
-        String s = String.valueOf(v.value());
-        if (Question.YES.equals(s)) {
+        String s = String.valueOf(v.value()).trim().toUpperCase(Locale.ROOT);
+        if (YES.equals(s)) {
             return true;
         }
-        if (Question.NO.equals(s)) {
+        if (NO.equals(s)) {
             return false;
         }
         return null;
     }
 
     @SuppressWarnings("unchecked")
-    public List<String> factList(InputField field) {
+    public List<String> factList(String field) {
         FactValue v = facts.get(field);
         if (v == null || !(v.value() instanceof List<?> list)) {
             return null;
@@ -167,7 +182,10 @@ public class AssessmentContext {
         return (List<String>) list;
     }
 
-    public BigDecimal factNumber(InputField field) {
+    public BigDecimal factNumber(String field) {
+        if (AssessmentFields.BODY_FAT.equals(field) && bodyFat != null) {
+            return bodyFat;
+        }
         FactValue v = facts.get(field);
         if (v == null || v.value() == null) {
             return null;
@@ -187,13 +205,26 @@ public class AssessmentContext {
         return presentIllnessCollected ? false : null;
     }
 
+    public Boolean hasMedicationFlag(String code) {
+        if (medicationFlags.contains(code)) {
+            return true;
+        }
+        return medicationFlagsCollected ? false : null;
+    }
+
     /** 既往最高收缩压：病种档案优先，未建档时取问卷补充值。 */
     public BigDecimal highestSbp() {
-        return archiveHighestSbp != null ? archiveHighestSbp : factNumber(InputField.HTN_MAX_SBP);
+        if (archiveHighestSbp != null) {
+            return archiveHighestSbp;
+        }
+        return factNumber(AssessmentFields.HTN_MAX_SBP);
     }
 
     public BigDecimal highestDbp() {
-        return archiveHighestDbp != null ? archiveHighestDbp : factNumber(InputField.HTN_MAX_DBP);
+        if (archiveHighestDbp != null) {
+            return archiveHighestDbp;
+        }
+        return factNumber(AssessmentFields.HTN_MAX_DBP);
     }
 
     public boolean onDrug(String category) {
@@ -201,46 +232,60 @@ public class AssessmentContext {
     }
 
     public Boolean antihypertensiveTherapy() {
-        return onDrug("BP") ? Boolean.TRUE : fact(InputField.ANTIHYPERTENSIVE);
+        if (onDrug("BP")) {
+            return Boolean.TRUE;
+        }
+        return hasMedicationFlag(AssessmentFields.MED_ANTIHYPERTENSIVE);
     }
 
     public Boolean lipidTherapy() {
-        return onDrug("LIPID") ? Boolean.TRUE : fact(InputField.STATIN);
+        if (onDrug("LIPID")) {
+            return Boolean.TRUE;
+        }
+        return hasMedicationFlag(AssessmentFields.MED_STATIN);
     }
 
     public Boolean prediabetes() {
-        if (Boolean.TRUE.equals(prediabetesInArchive)) {
+        if (Boolean.TRUE.equals(prediabetesInArchive) || presentIllness.contains(AssessmentFields.ILLNESS_PREDIABETES)) {
             return true;
         }
-        Boolean f = fact(InputField.PREDIABETES);
-        if (f != null) {
-            return f;
+        if (presentIllnessCollected || pastHistoryCollected) {
+            return false;
         }
-        return pastHistoryCollected ? Boolean.FALSE : null;
+        return null;
     }
 
     public Boolean highSalt() {
-        Boolean f = fact(InputField.HIGH_SALT);
-        if (f != null) {
-            return f;
+        if (dietTasteCollected) {
+            return dietTaste.contains("SALTY");
         }
         if (!dietCollected) {
             return null;
         }
-        String type = dietType == null ? "" : dietType.toUpperCase();
+        String type = dietType == null ? "" : dietType.toUpperCase(Locale.ROOT);
         if (type.contains("LOW_SALT")) {
             return false;
         }
         String pref = dietPreference == null ? "" : dietPreference;
-        return pref.contains("高盐") || pref.contains("偏咸") || pref.contains("口味重")
-                || pref.contains("重口味") || pref.contains("咸食");
+        return pref.contains("高盐")
+                || pref.contains("偏咸")
+                || pref.contains("口味重")
+                || pref.contains("重口味")
+                || pref.contains("咸食");
+    }
+
+    public Boolean chronicStress() {
+        if (stressLevel == null || stressLevel.isBlank()) {
+            return null;
+        }
+        return "HIGH".equalsIgnoreCase(stressLevel);
     }
 
     public Boolean currentSmoker() {
         if (smokingStatus == null || smokingStatus.isBlank()) {
             return null;
         }
-        String s = smokingStatus.toUpperCase();
+        String s = smokingStatus.toUpperCase(Locale.ROOT);
         return "CURRENT".equals(s) || "OCCASIONAL".equals(s);
     }
 
@@ -255,11 +300,11 @@ public class AssessmentContext {
         if (drinkingStatus == null && drinkingFrequency == null) {
             return null;
         }
-        String status = drinkingStatus == null ? "" : drinkingStatus.toUpperCase();
+        String status = drinkingStatus == null ? "" : drinkingStatus.toUpperCase(Locale.ROOT);
         if ("NEVER".equals(status) || "FORMER".equals(status)) {
             return false;
         }
-        String freq = drinkingFrequency == null ? "" : drinkingFrequency.toUpperCase();
+        String freq = drinkingFrequency == null ? "" : drinkingFrequency.toUpperCase(Locale.ROOT);
         if ("DAILY".equals(freq) || "WEEKLY_3".equals(freq)) {
             return true;
         }
@@ -275,165 +320,214 @@ public class AssessmentContext {
     }
 
     /** 系统里是否已有该字段的确定值（「不知道」不算）。 */
-    public boolean has(InputField f) {
-        return switch (f) {
-            case GENDER -> hasGender();
-            case BIRTHDAY -> ageYears != null;
-            case HEIGHT -> heightCm != null;
-            case WEIGHT -> weightKg != null;
-            case WAIST -> waistCm != null;
-            case BLOOD_PRESSURE -> sbp != null && dbp != null;
-            case HEART_RATE -> heartRate != null;
-            case GLUCOSE -> fastingGlucose != null || postprandialGlucose != null;
-            case HBA1C -> hba1c != null;
-            case LIPIDS -> tc != null || ldlC != null || hdlC != null || tg != null;
-            case URIC_ACID -> uricAcid != null;
-            case RENAL -> egfr != null || uacr != null || creatinine != null;
-            case LIVER -> alt != null;
-            case SMOKING -> smokingStatus != null && !smokingStatus.isBlank();
-            case DRINKING -> (drinkingStatus != null && !drinkingStatus.isBlank())
-                    || (drinkingFrequency != null && !drinkingFrequency.isBlank());
-            case EXERCISE -> exerciseFrequency != null && !exerciseFrequency.isBlank();
-            case FAMILY_HISTORY -> familyHistoryCollected;
-            case PRESENT_ILLNESS -> presentIllnessCollected;
-            case HTN_MAX_SBP -> highestSbp() != null;
-            case HTN_MAX_DBP -> highestDbp() != null;
-            case HIGH_SALT -> highSalt() != null;
-            case PREDIABETES -> prediabetes() != null;
-            case ANTIHYPERTENSIVE -> antihypertensiveTherapy() != null;
-            case STATIN -> lipidTherapy() != null;
+    public boolean has(String code) {
+        if (code == null) {
+            return false;
+        }
+        return switch (code) {
+            case AssessmentFields.GENDER -> hasGender();
+            case AssessmentFields.BIRTHDAY -> ageYears != null;
+            case AssessmentFields.HEIGHT -> heightCm != null;
+            case AssessmentFields.WEIGHT -> weightKg != null;
+            case AssessmentFields.WAIST -> waistCm != null;
+            case AssessmentFields.BODY_FAT -> bodyFat != null || factNumber(AssessmentFields.BODY_FAT) != null;
+            case AssessmentFields.BLOOD_PRESSURE_SYS, AssessmentFields.BLOOD_PRESSURE_DIA -> sbp != null && dbp != null;
+            case AssessmentFields.HEART_RATE -> heartRate != null;
+            case AssessmentFields.GLUCOSE -> fastingGlucose != null || postprandialGlucose != null;
+            case AssessmentFields.HBA1C -> hba1c != null;
+            case AssessmentFields.TC, AssessmentFields.TG, AssessmentFields.LDL_C, AssessmentFields.HDL_C ->
+                    tc != null || ldlC != null || hdlC != null || tg != null;
+            case AssessmentFields.URIC_ACID -> uricAcid != null;
+            case AssessmentFields.CR, AssessmentFields.EGFR, AssessmentFields.UACR ->
+                    egfr != null || uacr != null || creatinine != null;
+            case AssessmentFields.ALT, AssessmentFields.AST -> alt != null;
+            case AssessmentFields.SMOKING -> smokingStatus != null && !smokingStatus.isBlank();
+            case AssessmentFields.DRINKING, AssessmentFields.DRINKING_FREQUENCY ->
+                    (drinkingStatus != null && !drinkingStatus.isBlank())
+                            || (drinkingFrequency != null && !drinkingFrequency.isBlank());
+            case AssessmentFields.EXERCISE -> exerciseFrequency != null && !exerciseFrequency.isBlank();
+            case AssessmentFields.FAMILY_HISTORY,
+                    AssessmentFields.FAMILY_HISTORY_STATUS,
+                    AssessmentFields.FAMILY_HISTORY_ITEMS -> familyHistoryCollected;
+            case AssessmentFields.PRESENT_ILLNESS -> presentIllnessCollected;
+            case AssessmentFields.HTN_MAX_SBP -> highestSbp() != null;
+            case AssessmentFields.HTN_MAX_DBP -> highestDbp() != null;
+            case AssessmentFields.HIGH_SALT -> highSalt() != null;
+            case AssessmentFields.CHRONIC_STRESS -> chronicStress() != null;
+            case AssessmentFields.MEDICATION_FLAGS -> medicationFlagsCollected || !activeDrugCategories.isEmpty();
+            case AssessmentFields.PASSIVE_SMOKING,
+                    AssessmentFields.GDM_HISTORY,
+                    AssessmentFields.STEROID_DIABETES,
+                    AssessmentFields.ACANTHOSIS,
+                    AssessmentFields.EARLY_MENOPAUSE,
+                    AssessmentFields.LVH,
+                    AssessmentFields.CAROTID_PLAQUE,
+                    AssessmentFields.PWV_HIGH,
+                    AssessmentFields.ABI_LOW,
+                    AssessmentFields.HCY_HIGH,
+                    AssessmentFields.PERIPHERAL_ARTERY_DISEASE,
+                    AssessmentFields.ADVANCED_RETINOPATHY -> yesNoPresent(code);
+            case AssessmentFields.DM_COMPLICATIONS -> {
+                List<String> list = factList(code);
+                if (list == null || list.isEmpty()) {
+                    yield false;
+                }
+                yield !list.contains(UNKNOWN);
+            }
             default -> {
-                FactValue v = facts.get(f);
+                FactValue v = facts.get(code);
                 if (v == null || v.value() == null) {
                     yield false;
                 }
-                if (f.type() == InputField.ValueType.MULTI) {
-                    yield v.value() instanceof List<?> l && !l.isEmpty() && !l.contains(Question.UNKNOWN);
+                if (v.value() instanceof List<?> l) {
+                    yield !l.isEmpty() && !l.contains(UNKNOWN);
                 }
-                yield !Question.UNKNOWN.equals(String.valueOf(v.value()));
+                yield !UNKNOWN.equals(String.valueOf(v.value()));
             }
         };
     }
 
-    /** 问卷预填值（与提交格式一致）；无值返回 null。 */
-    public Object currentValue(InputField f) {
-        return switch (f) {
-            case HEIGHT -> heightCm;
-            case WEIGHT -> weightKg;
-            case WAIST -> waistCm;
-            case SMOKING -> blankToNull(smokingStatus);
-            case DRINKING -> {
-                String s = drinkingStatus == null ? "" : drinkingStatus.toUpperCase();
+    private boolean yesNoPresent(String code) {
+        Boolean b = yesNo(code);
+        return b != null;
+    }
+
+    /** 问卷预填值；无值返回 null。 */
+    public Object currentValue(String code) {
+        return switch (code) {
+            case AssessmentFields.HEIGHT -> heightCm;
+            case AssessmentFields.WEIGHT -> weightKg;
+            case AssessmentFields.WAIST -> waistCm;
+            case AssessmentFields.BODY_FAT -> bodyFat != null ? bodyFat : factNumber(AssessmentFields.BODY_FAT);
+            case AssessmentFields.SMOKING -> blankToNull(smokingStatus);
+            case AssessmentFields.DRINKING, AssessmentFields.DRINKING_FREQUENCY -> {
+                String s = drinkingStatus == null ? "" : drinkingStatus.toUpperCase(Locale.ROOT);
                 if ("NEVER".equals(s) || "FORMER".equals(s)) {
                     yield "NEVER";
                 }
                 yield blankToNull(drinkingFrequency);
             }
-            case EXERCISE -> blankToNull(exerciseFrequency);
-            case FAMILY_HISTORY -> {
+            case AssessmentFields.EXERCISE -> blankToNull(exerciseFrequency);
+            case AssessmentFields.FAMILY_HISTORY,
+                    AssessmentFields.FAMILY_HISTORY_STATUS,
+                    AssessmentFields.FAMILY_HISTORY_ITEMS -> {
                 if (!familyHistoryCollected) {
-                    yield answeredValue(f);
+                    yield answeredValue(code);
                 }
-                yield familyHistoryCodes.isEmpty() ? List.of(Question.NONE) : List.copyOf(familyHistoryCodes);
+                yield familyHistoryCodes.isEmpty() ? List.of(NONE) : List.copyOf(familyHistoryCodes);
             }
-            case PRESENT_ILLNESS -> {
+            case AssessmentFields.PRESENT_ILLNESS -> {
                 if (!presentIllnessCollected) {
                     yield null;
                 }
-                List<String> picked = f.question().options().stream()
-                        .map(InputField.Option::code)
-                        .filter(presentIllness::contains)
-                        .toList();
-                yield picked.isEmpty() ? List.of(Question.NONE) : picked;
+                yield presentIllness.isEmpty() ? List.of(NONE) : List.copyOf(presentIllness);
             }
-            case HTN_MAX_SBP -> highestSbp();
-            case HTN_MAX_DBP -> highestDbp();
-            case HIGH_SALT -> yesNo(highSalt(), f);
-            case PREDIABETES -> yesNo(prediabetes(), f);
-            case ANTIHYPERTENSIVE -> yesNo(antihypertensiveTherapy(), f);
-            case STATIN -> yesNo(lipidTherapy(), f);
-            default -> answeredValue(f);
+            case AssessmentFields.HTN_MAX_SBP -> highestSbp();
+            case AssessmentFields.HTN_MAX_DBP -> highestDbp();
+            case AssessmentFields.HIGH_SALT -> dietTasteCollected ? List.copyOf(dietTaste) : answeredValue(code);
+            case AssessmentFields.CHRONIC_STRESS -> blankToNull(stressLevel);
+            case AssessmentFields.MEDICATION_FLAGS ->
+                    medicationFlagsCollected ? List.copyOf(medicationFlags) : answeredValue(code);
+            case AssessmentFields.DM_COMPLICATIONS -> answeredValue(code);
+            default -> {
+                Boolean yn = yesNo(code);
+                if (yn != null) {
+                    yield yn ? YES : NO;
+                }
+                yield answeredValue(code);
+            }
         };
     }
 
-    private Object answeredValue(InputField f) {
-        FactValue v = facts.get(f);
+    private Object answeredValue(String field) {
+        FactValue v = facts.get(field);
         return v == null ? null : v.value();
     }
 
-    private Object yesNo(Boolean b, InputField f) {
-        if (b == null) {
-            return answeredValue(f);
-        }
-        return b ? Question.YES : Question.NO;
-    }
-
     private static String blankToNull(String s) {
-        return s == null || s.isBlank() ? null : s.trim().toUpperCase();
+        return s == null || s.isBlank() ? null : s.trim().toUpperCase(Locale.ROOT);
     }
 
     /** 输入快照：只保存引擎声明字段对应的原始值与时间。 */
-    public Map<String, Object> snapshotOf(Set<InputField> fields) {
+    public Map<String, Object> snapshotOf(Set<String> fields) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("asOf", str(asOf));
-        for (InputField f : fields) {
+        boolean lipidsDone = false;
+        boolean renalDone = false;
+        boolean bpDone = false;
+        for (String f : fields) {
             switch (f) {
-                case GENDER -> m.put("gender", gender);
-                case BIRTHDAY -> {
+                case AssessmentFields.GENDER -> m.put("gender", gender);
+                case AssessmentFields.BIRTHDAY -> {
                     m.put("birthday", str(birthday));
                     m.put("ageYears", ageYears);
                 }
-                case HEIGHT -> put(m, "heightCm", heightCm, heightRecordedAt);
-                case WEIGHT -> {
+                case AssessmentFields.HEIGHT -> put(m, "heightCm", heightCm, heightRecordedAt);
+                case AssessmentFields.WEIGHT -> {
                     put(m, "weightKg", weightKg, weightRecordedAt);
                     m.put("bmi", bmi);
                 }
-                case WAIST -> put(m, "waistCm", waistCm, waistRecordedAt);
-                case BLOOD_PRESSURE -> {
-                    put(m, "sbp", sbp, bpRecordedAt);
-                    m.put("dbp", dbp);
-                    m.put("bpReadings", bpReadings);
+                case AssessmentFields.WAIST -> put(m, "waistCm", waistCm, waistRecordedAt);
+                case AssessmentFields.BODY_FAT -> put(m, "bodyFat", bodyFat, bodyFatRecordedAt);
+                case AssessmentFields.BLOOD_PRESSURE_SYS, AssessmentFields.BLOOD_PRESSURE_DIA -> {
+                    if (!bpDone) {
+                        put(m, "sbp", sbp, bpRecordedAt);
+                        m.put("dbp", dbp);
+                        m.put("bpReadings", bpReadings);
+                        bpDone = true;
+                    }
                 }
-                case HEART_RATE -> put(m, "heartRate", heartRate, heartRateRecordedAt);
-                case GLUCOSE -> {
+                case AssessmentFields.HEART_RATE -> put(m, "heartRate", heartRate, heartRateRecordedAt);
+                case AssessmentFields.GLUCOSE -> {
                     put(m, "fastingGlucose", fastingGlucose, fastingGlucoseRecordedAt);
                     put(m, "postprandialGlucose", postprandialGlucose, postprandialGlucoseRecordedAt);
                     m.put("hypoEvents14d", hypoEvents14d);
                 }
-                case HBA1C -> put(m, "hba1c", hba1c, hba1cRecordedAt);
-                case LIPIDS -> {
-                    m.put("tc", tc);
-                    m.put("ldlC", ldlC);
-                    m.put("hdlC", hdlC);
-                    put(m, "tg", tg, lipidRecordedAt);
+                case AssessmentFields.HBA1C -> put(m, "hba1c", hba1c, hba1cRecordedAt);
+                case AssessmentFields.TC, AssessmentFields.TG, AssessmentFields.LDL_C, AssessmentFields.HDL_C -> {
+                    if (!lipidsDone) {
+                        m.put("tc", tc);
+                        m.put("ldlC", ldlC);
+                        m.put("hdlC", hdlC);
+                        put(m, "tg", tg, lipidRecordedAt);
+                        lipidsDone = true;
+                    }
                 }
-                case URIC_ACID -> m.put("uricAcid", uricAcid);
-                case RENAL -> {
-                    m.put("creatinine", creatinine);
-                    m.put("uacr", uacr);
-                    put(m, "egfr", egfr, renalRecordedAt);
+                case AssessmentFields.URIC_ACID -> m.put("uricAcid", uricAcid);
+                case AssessmentFields.CR, AssessmentFields.EGFR, AssessmentFields.UACR -> {
+                    if (!renalDone) {
+                        m.put("creatinine", creatinine);
+                        m.put("uacr", uacr);
+                        put(m, "egfr", egfr, renalRecordedAt);
+                        renalDone = true;
+                    }
                 }
-                case LIVER -> m.put("alt", alt);
-                case SMOKING -> m.put("smokingStatus", smokingStatus);
-                case DRINKING -> {
+                case AssessmentFields.ALT, AssessmentFields.AST -> m.put("alt", alt);
+                case AssessmentFields.SMOKING -> m.put("smokingStatus", smokingStatus);
+                case AssessmentFields.DRINKING, AssessmentFields.DRINKING_FREQUENCY -> {
                     m.put("drinkingStatus", drinkingStatus);
                     m.put("drinkingFrequency", drinkingFrequency);
                 }
-                case EXERCISE -> m.put("exerciseFrequency", exerciseFrequency);
-                case FAMILY_HISTORY -> {
+                case AssessmentFields.EXERCISE -> m.put("exerciseFrequency", exerciseFrequency);
+                case AssessmentFields.FAMILY_HISTORY,
+                        AssessmentFields.FAMILY_HISTORY_STATUS,
+                        AssessmentFields.FAMILY_HISTORY_ITEMS -> {
                     m.put("familyHistoryCollected", familyHistoryCollected);
                     m.put("fhDiabetes", fhDiabetes);
                     m.put("fhHypertension", fhHypertension);
                     m.put("fhAscvd", fhAscvd);
                     m.put("fhEarlyAscvd", fhEarlyAscvd);
                 }
-                case PRESENT_ILLNESS -> m.put("presentIllness", presentIllnessCollected ? List.copyOf(presentIllness) : null);
-                case HTN_MAX_SBP -> m.put("highestSbp", highestSbp());
-                case HTN_MAX_DBP -> m.put("highestDbp", highestDbp());
+                case AssessmentFields.PRESENT_ILLNESS ->
+                        m.put("presentIllness", presentIllnessCollected ? List.copyOf(presentIllness) : null);
+                case AssessmentFields.HTN_MAX_SBP -> m.put("highestSbp", highestSbp());
+                case AssessmentFields.HTN_MAX_DBP -> m.put("highestDbp", highestDbp());
+                case AssessmentFields.HIGH_SALT -> m.put("dietTaste", dietTasteCollected ? List.copyOf(dietTaste) : null);
+                case AssessmentFields.CHRONIC_STRESS -> m.put("stressLevel", stressLevel);
                 default -> {
                     FactValue v = facts.get(f);
                     if (v != null) {
-                        m.put("fact." + f.name(), v.value());
+                        m.put("field." + f, v.value());
                     }
                 }
             }
