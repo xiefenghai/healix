@@ -79,7 +79,7 @@ const summary = ref<WorkspaceTaskSummary | null>(null)
 const teams = ref<CareTeamListItem[]>([])
 const staff = ref<OrgStaffItem[]>([])
 
-const pool = ref<Pool>('PUBLIC')
+const pool = ref<Pool>('MINE')
 const taskType = ref('')
 const status = ref('')
 const careTeamId = ref('')
