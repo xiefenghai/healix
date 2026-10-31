@@ -8,8 +8,6 @@ import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.followup.service.FollowupService;
 import com.healix.core.program.domain.PeopleProgramEnrollment;
 import com.healix.core.program.service.ProgramEnrollmentService;
-import com.healix.core.field.FieldCatalog;
-import com.healix.core.field.SensitiveFieldMask;
 import com.healix.core.questionnaire.dto.IntakeStatusView;
 import com.healix.core.questionnaire.dto.QuestionnaireResponseView;
 import com.healix.core.questionnaire.service.QuestionnaireResponseService;
@@ -41,7 +39,6 @@ public class BIntakeController {
     private final QuestionnaireResponseService responseService;
     private final ProgramEnrollmentService enrollmentService;
     private final FollowupService followupService;
-    private final FieldCatalog fieldCatalog;
     private final IntakeAiSummaryService intakeAiSummaryService;
 
     /** 客户页首诊卡片：待补题数。 */
@@ -62,8 +59,9 @@ public class BIntakeController {
         String staffId = SecurityUtils.requireStaffId();
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         OpenIntakeRequest req = body == null ? new OpenIntakeRequest(null, null, null) : body;
-        return ApiResult.ok(maskIfNeeded(responseService.openIntake(
-                tenantId, orgId, peopleId, staffId, req.followupRecordId(), req.programCode(), req.channel())));
+        // 作答打开不做敏感脱敏：脱敏成「已采集」会进草稿/预填，提交后写脏档案
+        return ApiResult.ok(responseService.openIntake(
+                tenantId, orgId, peopleId, staffId, req.followupRecordId(), req.programCode(), req.channel()));
     }
 
     /** 打开升版 / 后补作答（仅待补题）。 */
@@ -75,34 +73,21 @@ public class BIntakeController {
         String staffId = SecurityUtils.requireStaffId();
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         String channel = body == null ? null : body.channel();
-        return ApiResult.ok(maskIfNeeded(
-                responseService.openSupplement(tenantId, orgId, peopleId, staffId, channel)));
+        return ApiResult.ok(
+                responseService.openSupplement(tenantId, orgId, peopleId, staffId, channel));
     }
 
+    /**
+     * 只读详情：返回当时填写内容（含敏感字段原文）。
+     * <p>档案页仍按角色脱敏；首诊作答读写链路不做脱敏，避免「已采集」写回元数据。
+     */
     @GetMapping("/questionnaire-responses/{id}")
     public ApiResult<QuestionnaireResponseView> get(@PathVariable String id) {
         QuestionnaireResponseView view = responseService.get(id);
         String tenantId = SecurityUtils.requireTenantId();
         String orgId = SecurityUtils.requireCurrentOrgId();
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, view.getPeopleId());
-        return ApiResult.ok(maskIfNeeded(view));
-    }
-
-    private QuestionnaireResponseView maskIfNeeded(QuestionnaireResponseView view) {
-        boolean canView = SensitiveFieldMask.anyRoleCanView(SecurityUtils.requireContext().getRoles());
-        if (canView || view == null) {
-            return view;
-        }
-        if (view.getAnswers() != null && view.getAnswers().isObject()) {
-            Map<String, JsonNode> flat = new LinkedHashMap<>();
-            view.getAnswers().fields().forEachRemaining(e -> flat.put(e.getKey(), e.getValue()));
-            SensitiveFieldMask.maskFlat(flat, fieldCatalog, false);
-            view.setAnswers(JsonUtils.mapper().valueToTree(flat));
-        }
-        if (view.getHighlights() != null) {
-            view.setHighlights(SensitiveFieldMask.maskHighlights(view.getHighlights(), fieldCatalog, false));
-        }
-        return view;
+        return ApiResult.ok(view);
     }
 
     @PutMapping("/questionnaire-responses/{id}/draft")

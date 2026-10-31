@@ -3,6 +3,8 @@
  */
 import { api } from './http'
 import {
+  FAMILY_HISTORY_DISEASE_GROUPS,
+  KINSHIP_MEMBERS,
   formatFamilyHistoryTag,
   type FamilyHistoryEntry,
   type KinshipLevel,
@@ -155,6 +157,12 @@ export interface QuestionnaireResponseView {
   highlights?: IntakeHighlightHit[] | null
   completeness?: IntakeCompleteness | null
   changes?: Record<string, { from?: unknown; to?: unknown }> | null
+  /** 提交快照：当时答案 / 高亮，只读详情优先用 */
+  snapshot?: {
+    questionnaire?: string
+    answers?: Record<string, unknown>
+    highlights?: IntakeHighlightHit[]
+  } | null
   modules?: IntakeModuleView[] | null
   submittedAt?: string | null
 }
@@ -425,12 +433,15 @@ export function formatPrefillSource(sourceBizCode?: string | null): string {
   const map: Record<string, string> = {
     PROFILE: '档案资料',
     ARCHIVE: '档案页',
+    ARCHIVE_PAGE: '档案页',
     METADATA: '元数据',
     METRIC: '指标',
     ASSESSMENT: '评估问卷',
+    ASSESSMENT_QUESTIONNAIRE: '评估问卷',
     INTAKE: '既往首诊',
     INTAKE_QUESTIONNAIRE: '既往首诊',
     MEDICATION: '用药清单',
+    ALLERGY: '过敏史',
   }
   return map[code] || sourceBizCode || '预填'
 }
@@ -454,6 +465,9 @@ export interface DictOption {
 export type IntakeOptionMaps = Record<string, DictOption[]>
 
 const optionCache = new Map<string, DictOption[]>()
+/** 缓存版本：改兜底文案后递增，避免 HMR 仍用旧的 label===code 脏缓存 */
+const OPTION_CACHE_VER = 'v3'
+const verCacheKey = (parentCode: string) => `${OPTION_CACHE_VER}::${parentCode}`
 
 /**
  * field-catalog optionSets 本地兜底（字典未同步时仍能显示中文）。
@@ -679,29 +693,37 @@ function parseOptionPairs(pairs: string[]): DictOption[] {
 }
 
 function fallbackOptions(parentCode: string): DictOption[] {
-  const pairs = OPTION_SET_FALLBACKS[parentCode]
+  const pairs = OPTION_SET_FALLBACKS[parentCode] || DICT_OPTION_FALLBACKS[parentCode]
   return pairs ? parseOptionPairs(pairs) : []
 }
 
-/** 按 options parentCode 拉字典；失败时返回空，调用方用编码占位 */
+/** 按 options parentCode 拉字典；失败或 desc 等于 code 时用本地中文兜底 */
 export async function loadDictOptions(parentCode: string): Promise<DictOption[]> {
   if (!parentCode) return []
-  const cached = optionCache.get(parentCode)
+  const key = verCacheKey(parentCode)
+  const cached = optionCache.get(key)
   if (cached) return cached
+  const fb = fallbackOptions(parentCode)
+  const fbByCode = new Map(fb.map((o) => [o.code, o.label]))
   try {
     const res = await api<{ data: Array<{ dictCode: string; dictCodeDesc: string }> }>(
       `/api/b/v1/dict?dictType=OPTION&parentCode=${encodeURIComponent(parentCode)}`,
     )
-    const list = (res.data || []).map((d) => ({
-      code: d.dictCode,
-      label: d.dictCodeDesc || d.dictCode,
-    }))
-    const final = list.length ? list : fallbackOptions(parentCode)
-    optionCache.set(parentCode, final)
+    const list = (res.data || []).map((d) => {
+      const code = d.dictCode
+      const desc = (d.dictCodeDesc || '').trim()
+      const label = isUsefulLabel(code, desc) ? desc : fbByCode.get(code) || desc || code
+      return { code, label }
+    })
+    // 合并兜底里有、接口没有的码
+    for (const o of fb) {
+      if (!list.some((x) => x.code === o.code)) list.push(o)
+    }
+    const final = list.length ? list : fb
+    optionCache.set(key, final)
     return final
   } catch {
-    const fb = fallbackOptions(parentCode)
-    optionCache.set(parentCode, fb)
+    optionCache.set(key, fb)
     return fb
   }
 }
@@ -712,6 +734,8 @@ export function collectOptionParentCodes(modules: IntakeModuleView[] | null | un
   for (const m of modules || []) {
     for (const it of m.items || []) {
       if (it.options) set.add(it.options)
+      const byField = it.field ? FIELD_OPTION_PARENT[it.field] : null
+      if (byField) set.add(byField)
     }
   }
   return [...set]
@@ -742,25 +766,260 @@ export function responseStatusLabel(status?: string | null): string {
   return map[status] || status
 }
 
+/** 常见字典父码（走 DB，不在 optionSets 里）的本地兜底，避免详情页短暂/失败时露出英文码 */
+const DICT_OPTION_FALLBACKS: Record<string, string[]> = {
+  presentIllness: [
+    'NONE=无',
+    'HYPERTENSION=高血压',
+    'CHD=冠心病',
+    'STROKE=脑卒中',
+    'HEART_FAILURE=心力衰竭',
+    'ATRIAL_FIBRILLATION=心房颤动',
+    'DIABETES=2型糖尿病',
+    'HYPERLIPIDEMIA=高脂血症',
+    'GOUT=高尿酸血症/痛风',
+    'COPD=慢性阻塞性肺疾病',
+    'ASTHMA=支气管哮喘',
+    'CKD=慢性肾脏病',
+    'CHRONIC_HEPATITIS=慢性肝炎',
+    'CIRRHOSIS=肝硬化',
+    'NAFLD=脂肪肝',
+    'CHRONIC_GI_DISEASE=慢性胃炎/消化性溃疡',
+    'OSTEOPOROSIS=骨质疏松症',
+    'RHEUMATOID_ARTHRITIS=类风湿关节炎',
+    'OSTEOARTHRITIS=骨关节炎',
+    'ALZHEIMERS=阿尔茨海默病',
+    'PARKINSONS=帕金森病',
+    'DEPRESSION=抑郁症',
+    'ANXIETY=焦虑症',
+    'MALIGNANT_TUMOR=恶性肿瘤',
+    'BPH=良性前列腺增生',
+    'THYROID_DISORDER=甲状腺功能减退/亢进',
+    'OBESITY=肥胖症',
+    'PREDIABETES=糖尿病前期（血糖偏高）',
+    'PCOS=多囊卵巢综合征',
+    'OSA=睡眠呼吸暂停',
+  ],
+  exerciseFrequency: [
+    'NONE=基本不运动',
+    'WEEKLY_1=每周1-2次',
+    'WEEKLY_3=每周≥3次',
+    'DAILY=每天',
+  ],
+  exerciseIntensity: ['LIGHT=轻度', 'MODERATE=中度', 'VIGOROUS=重度'],
+  appetiteLevel: ['POOR=差', 'NORMAL=一般', 'GOOD=好', 'EXCESSIVE=旺盛'],
+  dietHabit: ['REGULAR=规律', 'IRREGULAR=不规律'],
+  dietType: ['LIGHT=清淡', 'OILY=油腻', 'SALTY=偏咸', 'SWEET=偏甜', 'MIXED=杂食'],
+  sleepQuality: ['GOOD=好', 'FAIR=一般', 'POOR=差'],
+  sleepDisorder: ['NONE=没有', 'INSOMNIA=失眠', 'SNORING=打鼾', 'OTHER=其他'],
+  smoking: ['NEVER=从不', 'FORMER=已戒', 'CURRENT=仍吸', 'OCCASIONAL=偶尔'],
+  drinking: ['NEVER=从不', 'FORMER=已戒', 'CURRENT=仍饮', 'OCCASIONAL=偶尔'],
+  drinkingFrequency: ['NONE=基本不喝', 'OCCASIONAL=偶尔', 'WEEKLY=每周', 'DAILY=每天'],
+}
+
+/** 与 AllergyReactionEnum 对齐 */
+const ALLERGY_REACTION_LABELS: Record<string, string> = {
+  RASH: '皮疹/荨麻疹',
+  ITCH: '瘙痒',
+  ANGIOEDEMA: '口唇/眼睑肿胀',
+  DYSPNEA: '喘息/呼吸困难',
+  ANAPHYLAXIS: '过敏性休克',
+  NAUSEA_VOMIT: '恶心呕吐',
+  ABDOMINAL: '腹痛腹泻',
+  RHINITIS: '鼻塞流涕/喷嚏',
+  EYE: '眼痒流泪',
+  OTHER: '其他',
+}
+
+const ALLERGY_TYPE_LABELS: Record<string, string> = {
+  ALLERGY: '过敏',
+  INTOLERANCE: '不耐受',
+  SENSITIVITY: '敏感',
+  UNKNOWN: '不清楚',
+}
+
+/** 字段 → options parentCode（item.options 缺失时兜底） */
+const FIELD_OPTION_PARENT: Record<string, string> = {
+  'profile.gender': 'gender',
+  'profile.maritalStatus': 'maritalStatus',
+  'profile.workSchedule': 'workSchedule',
+  'measure.method': 'measureMethod',
+  'basic.presentIllness': 'presentIllness',
+  'basic.familyHistoryStatus': 'historyStatus',
+  'basic.familyHistory.firstDegree': 'familyHistoryFirstDegree',
+  'basic.pastHistoryStatus': 'historyStatus',
+  'basic.diet.appetite': 'appetiteLevel',
+  'basic.diet.habit': 'dietHabit',
+  'basic.diet.type': 'dietType',
+  'basic.diet.restriction': 'dietRestriction',
+  'basic.diet.mealRegularity': 'mealRegularity',
+  'basic.diet.breakfast': 'breakfast',
+  'basic.diet.takeoutFrequency': 'takeoutFrequency',
+  'basic.diet.snackNight': 'weeklyFrequency3',
+  'basic.diet.sugaryDrinks': 'sugaryDrinks',
+  'basic.diet.staple': 'staple',
+  'basic.diet.vegFruit': 'vegFruit',
+  'basic.diet.cooking': 'cooking',
+  'basic.diet.eatingSpeed': 'eatingSpeed',
+  'basic.diet.taste': 'taste',
+  'basic.diet.trackedBefore': 'dietTracked',
+  'basic.diet.cook': 'cook',
+  'basic.diet.livingAlone': 'yesNo',
+  'basic.exercise.frequency': 'exerciseFrequency',
+  'basic.exercise.intensity': 'exerciseIntensity',
+  'basic.exercise.types': 'exerciseTypes',
+  'basic.exercise.strengthExperience': 'strengthExperience',
+  'basic.exercise.dailySteps': 'dailySteps',
+  'basic.exercise.availableSlots': 'exerciseSlots',
+  'basic.exercise.venue': 'exerciseVenue',
+  'basic.sleep.quality': 'sleepQuality',
+  'basic.sleep.disorder': 'sleepDisorder',
+  'basic.sleep.lateNight': 'weeklyFrequency3',
+  'basic.lifestyle.smoking.status': 'smoking',
+  'basic.lifestyle.smoking.passive': 'yesNoUnknown',
+  'basic.lifestyle.drinking.status': 'drinking',
+  'basic.lifestyle.drinking.frequency': 'drinkingFrequency',
+  'basic.lifestyle.activityLevel': 'activityLevel',
+  'basic.women.reproductiveStatus': 'reproductiveStatus',
+  'basic.women.menstrualStatus': 'menstrualStatus',
+  'basic.women.earlyMenopause': 'yesNoUnknown',
+  'basic.women.gdmHistory': 'yesNoUnknown',
+  'basic.medicationFlags': 'medicationFlags',
+  'basic.supplements': 'supplements',
+  'basic.medical.exerciseRestriction': 'exerciseRestriction',
+  'basic.medical.jointIssues': 'jointIssues',
+  'basic.medical.steroidHyperglycemia': 'yesNoUnknown',
+  'basic.medical.acanthosis': 'yesNoUnknown',
+  'allergy.status': 'allergyStatus',
+  'basic.psych.stressLevel': 'stressLevel',
+  'basic.psych.stressEating': 'stressEating',
+  'basic.psych.emotionalEating': 'emotionalEating',
+  'basic.psych.readiness': 'readiness',
+  'basic.psych.familySupport': 'familySupport',
+  'basic.psych.willingToRecord': 'willingToRecord',
+  'basic.psych.eatingDisorderHistory': 'eatingDisorderHistory',
+  'basic.psych.soughtHelp': 'soughtHelp',
+  'basic.psych.bodySatisfaction': 'bodySatisfaction',
+  'basic.psych.bodyAnxiety': 'bodyAnxiety',
+  'basic.weightHistory.triedBefore': 'weightLossTried',
+  'basic.weightHistory.methods': 'weightLossMethods',
+  'basic.weightHistory.failReasons': 'weightLossFailReasons',
+  'basic.weightHistory.recentTrend': 'weightTrend',
+  'basic.weightHistory.expectedPace': 'expectedPace',
+  'goal.primaryAppeal': 'primaryAppeal',
+  'goal.doctorAdvised': 'yesNo',
+  'goal.mode': 'goalMode',
+  'goal.dietEffort': 'dietEffort',
+  'goal.followupChannel': 'followupChannel',
+  'goal.followupFrequency': 'followupFrequency',
+  'consent.sensitiveHealth': 'consentGiven',
+  'consent.method': 'consentMethod',
+  'staff.referral': 'referral',
+  'disease.diabetes.chronicComplications': 'dmChronicComplications',
+}
+
+/** 非 optionSets：亲属 / 用药频次 / 过敏临床状态等 */
+const EXTRA_CODE_LABELS: Record<string, string> = (() => {
+  const out: Record<string, string> = {
+    ...ALLERGY_REACTION_LABELS,
+    ...ALLERGY_TYPE_LABELS,
+    ACTIVE: '仍过敏',
+    RESOLVED: '已消失',
+    INACTIVE: '不活动',
+    CONFIRMED: '已确认',
+    UNCONFIRMED: '未确认',
+    REFUTED: '已排除',
+    FOOD: '食物',
+    DRUG: '药物',
+    OTHER_CATEGORY: '其他',
+    ORAL: '口服',
+    INJECTION: '注射',
+    TOPICAL: '外用',
+    INHALATION: '吸入',
+    QD: '每日1次',
+    BID: '每日2次',
+    TID: '每日3次',
+    QID: '每日4次',
+    QN: '每晚1次',
+    QOD: '隔日1次',
+    PRN: '必要时',
+    MILD: '轻度',
+    MODERATE: '中度',
+    SEVERE: '严重',
+  }
+  for (const level of Object.keys(KINSHIP_MEMBERS) as KinshipLevel[]) {
+    for (const m of KINSHIP_MEMBERS[level]) out[m.value] = m.label
+  }
+  for (const g of FAMILY_HISTORY_DISEASE_GROUPS) {
+    for (const d of g.options) out[d.value] = d.label
+  }
+  return out
+})()
+
+function isUsefulLabel(code: string, label?: string | null) {
+  if (!label) return false
+  const t = label.trim()
+  if (!t) return false
+  // 字典偶发把 code 原样塞进 desc，不能当中文用
+  if (t === code) return false
+  return true
+}
+
+function looksLikeOptionCode(raw: string): boolean {
+  if (!raw || raw === '已采集') return false
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return false
+  if (raw.length > 48) return false
+  // 含中文则已是可读文案
+  if (/[\u4e00-\u9fff]/.test(raw)) return false
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(raw)
+}
+
+function lookupFallbackLabel(code: string, parentCode?: string | null): string | null {
+  if (EXTRA_CODE_LABELS[code]) return EXTRA_CODE_LABELS[code]
+  if (parentCode) {
+    const fb = fallbackOptions(parentCode).find((o) => o.code === code)
+    if (isUsefulLabel(code, fb?.label)) return fb!.label
+  }
+  for (const pairs of Object.values(OPTION_SET_FALLBACKS)) {
+    const hit = parseOptionPairs(pairs).find((o) => o.code === code)
+    if (isUsefulLabel(code, hit?.label)) return hit!.label
+  }
+  for (const pairs of Object.values(DICT_OPTION_FALLBACKS)) {
+    const hit = parseOptionPairs(pairs).find((o) => o.code === code)
+    if (isUsefulLabel(code, hit?.label)) return hit!.label
+  }
+  return null
+}
+
 function optionLabelOf(parentCode: string | null | undefined, code: string, maps?: IntakeOptionMaps) {
   if (!code) return ''
   if (parentCode && maps?.[parentCode]) {
     const hit = maps[parentCode].find((o) => o.code === code)
-    if (hit?.label) return hit.label
+    if (isUsefulLabel(code, hit?.label)) return hit!.label
   }
-  // 无 maps 时仍尝试本地兜底（提交对话框未加载完等）
-  if (parentCode) {
-    const fb = fallbackOptions(parentCode).find((o) => o.code === code)
-    if (fb?.label) return fb.label
+  const fb = lookupFallbackLabel(code, parentCode)
+  if (fb) return fb
+  // 扫已加载 maps（跳过 label===code）
+  if (maps) {
+    for (const list of Object.values(maps)) {
+      const hit = list.find((o) => o.code === code)
+      if (isUsefulLabel(code, hit?.label)) return hit!.label
+    }
   }
   return code
 }
 
-function formatStructuredItem(item: unknown): string | null {
+function resolveOptionsParent(
+  item?: Pick<IntakeItemView, 'options' | 'field'> | null,
+): string | null {
+  if (item?.options) return item.options
+  if (item?.field && FIELD_OPTION_PARENT[item.field]) return FIELD_OPTION_PARENT[item.field]
+  return null
+}
+
+function formatStructuredItem(item: unknown, maps?: IntakeOptionMaps): string | null {
   if (item == null) return null
-  if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
-    return String(item)
-  }
+  // 原始码字符串留给 optionLabelOf，这里只处理结构化对象
   if (typeof item !== 'object' || Array.isArray(item)) return null
   const o = item as Record<string, unknown>
 
@@ -770,13 +1029,25 @@ function formatStructuredItem(item: unknown): string | null {
     const parts = [name]
     const dose = [o.doseAmount, o.doseUnit].filter((x) => x != null && String(x).trim()).join('')
     if (dose) parts.push(dose)
+    const usage = o.usageMethod != null ? optionLabelOf(null, String(o.usageMethod), maps) : ''
+    if (usage && usage !== String(o.usageMethod)) parts.push(usage)
+    else if (o.usageMethod) {
+      const raw = String(o.usageMethod)
+      const usageMap: Record<string, string> = {
+        ORAL: '口服',
+        INJECTION: '注射',
+        TOPICAL: '外用',
+        INHALATION: '吸入',
+        OTHER: '其他',
+      }
+      if (usageMap[raw]) parts.push(usageMap[raw])
+    }
     if (o.timingNote) parts.push(`（${String(o.timingNote).trim()}）`)
     return parts.join(' ')
   }
 
-  if ('allergenName' in o || 'allergenCode' in o) {
-    const name = String(o.allergenName || o.allergenCode || '').trim()
-    if (!name) return null
+  if ('allergenName' in o || 'allergenCode' in o || 'reactions' in o) {
+    const name = String(o.allergenName || o.allergenCode || '').trim() || '未命名过敏原'
     const severityMap: Record<string, string> = {
       MILD: '轻度',
       MODERATE: '中度',
@@ -784,10 +1055,16 @@ function formatStructuredItem(item: unknown): string | null {
       UNKNOWN: '不清楚',
     }
     const bits = [name]
-    const sev = o.severity != null ? severityMap[String(o.severity)] || String(o.severity) : ''
+    const typeLabel = o.allergyType != null ? ALLERGY_TYPE_LABELS[String(o.allergyType)] : ''
+    if (typeLabel) bits.push(typeLabel)
+    const sev = o.severity != null ? severityMap[String(o.severity)] || '' : ''
     if (sev && sev !== '不清楚') bits.push(sev)
     if (Array.isArray(o.reactions) && o.reactions.length) {
-      bits.push(o.reactions.map(String).join('/'))
+      bits.push(
+        o.reactions
+          .map((r) => optionLabelOf(null, String(r), maps) || String(r))
+          .join('/'),
+      )
     }
     return bits.join(' · ')
   }
@@ -860,16 +1137,22 @@ export function formatAnswerBrief(
 ): string {
   if (isAnswerEmpty(v)) return '—'
 
-  const parent = item?.options || null
+  const parent = resolveOptionsParent(item)
   const type = (item?.type || '').toUpperCase()
 
   if (Array.isArray(v)) {
     const parts = v
       .map((itemVal) => {
-        const structured = formatStructuredItem(itemVal)
-        if (structured != null) return structured
+        if (itemVal && typeof itemVal === 'object' && !Array.isArray(itemVal)) {
+          const structured = formatStructuredItem(itemVal, maps)
+          if (structured != null) return structured
+        }
         if (typeof itemVal === 'string' || typeof itemVal === 'number') {
-          return optionLabelOf(parent, String(itemVal), maps)
+          const raw = String(itemVal)
+          if (type === 'ENUM' || type === 'MULTI' || parent || looksLikeOptionCode(raw)) {
+            return optionLabelOf(parent, raw, maps)
+          }
+          return raw
         }
         return null
       })
@@ -878,17 +1161,18 @@ export function formatAnswerBrief(
   }
 
   if (v && typeof v === 'object') {
-    const structured = formatStructuredItem(v)
+    const structured = formatStructuredItem(v, maps)
     if (structured != null) return structured
     return formatObjectAnswer(v as Record<string, unknown>)
   }
 
   const raw = String(v)
-  if (type === 'ENUM' || type === 'MULTI' || parent) {
-    const labeled = optionLabelOf(parent, raw, maps)
-    if (item?.unit && type === 'NUMBER') return `${labeled} ${item.unit}`
-    return labeled
+  if (type === 'NUMBER') {
+    return item?.unit ? `${raw} ${item.unit}` : raw
   }
-  if (type === 'NUMBER' && item?.unit) return `${raw} ${item.unit}`
+  // 所有像选项码的字符串（含 has/none 小写）一律尝试中文
+  if (type === 'ENUM' || type === 'MULTI' || parent || looksLikeOptionCode(raw)) {
+    return optionLabelOf(parent, raw, maps)
+  }
   return raw
 }

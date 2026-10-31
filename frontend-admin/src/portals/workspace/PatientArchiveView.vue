@@ -484,11 +484,19 @@ watch(showHypertensionEmergencyOther, (show) => {
   }
 })
 
+const sensitiveMasked = ref(false)
+
 function assignForm(content: Record<string, unknown>) {
+  sensitiveMasked.value = content._sensitiveMasked === true || content.presentIllness === '已采集'
+  // 脱敏接口曾把 MULTI 改成「已采集」字符串，前端会当成未填；兼容旧响应
+  const rawIllness = content.presentIllness
   form.presentIllness = normalizePresentIllness(
-    Array.isArray(content.presentIllness) ? (content.presentIllness as string[]) : [],
+    Array.isArray(rawIllness) ? (rawIllness as string[]) : [],
   )
-  form.presentIllnessOther = String(content.presentIllnessOther ?? '')
+  form.presentIllnessOther =
+    typeof content.presentIllnessOther === 'string' && content.presentIllnessOther !== '已采集'
+      ? content.presentIllnessOther
+      : ''
   if (form.presentIllness.includes(PRESENT_ILLNESS_NONE)) {
     form.presentIllnessOther = ''
   }
@@ -1467,7 +1475,10 @@ onBeforeUnmount(() => {
           <div class="archive-row">
             <label class="row-label">现有疾病</label>
             <div class="row-body">
-              <el-checkbox-group v-model="form.presentIllness" class="illness-grid">
+              <p v-if="sensitiveMasked && !form.presentIllness.length" class="masked-hint">
+                已采集（当前角色不可查看明细）
+              </p>
+              <el-checkbox-group v-else v-model="form.presentIllness" class="illness-grid">
                 <el-checkbox
                   v-for="o in illnessOptions"
                   :key="o.dictCode"
@@ -1478,6 +1489,7 @@ onBeforeUnmount(() => {
                 </el-checkbox>
               </el-checkbox-group>
               <el-input
+                v-if="!(sensitiveMasked && !form.presentIllness.length)"
                 v-model="form.presentIllnessOther"
                 type="textarea"
                 :rows="2"
@@ -2918,6 +2930,12 @@ onBeforeUnmount(() => {
 
 .illness-other {
   margin-top: 12px;
+}
+
+.masked-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-500, #64748b);
 }
 
 .tag-select {

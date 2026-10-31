@@ -81,7 +81,17 @@ public final class SensitiveFieldMask {
         String leaf = parts[parts.length - 1];
         JsonNode v = cur.get(leaf);
         if (v != null && !ArchiveFields.isEmpty(v)) {
-            cur.put(leaf, MASKED);
+            // 数组/对象不能改成「已采集」字符串，否则前端勾选组会当成空；改用空容器 + 根标记
+            if (v.isArray()) {
+                cur.set(leaf, JsonUtils.mapper().createArrayNode());
+                root.put("_sensitiveMasked", true);
+            } else if (v.isObject()) {
+                cur.set(leaf, JsonUtils.emptyObject());
+                root.put("_sensitiveMasked", true);
+            } else {
+                cur.put(leaf, MASKED);
+                root.put("_sensitiveMasked", true);
+            }
         }
     }
 

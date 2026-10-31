@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
-import { StaffRole } from '../../shared/enums'
+import { formatRole, StaffRole } from '../../shared/enums'
 import { TABLE_COL } from '../../shared/table-columns'
 
 interface CareTeamListItem {
@@ -91,6 +91,18 @@ function memberLabel(m: CareTeamMember) {
     return staffNameMap.value.get(m.staffId!) ?? `员工 #${m.staffId}`
   }
   return patientNameMap.value.get(m.peopleId!) ?? `患者 #${m.peopleId}`
+}
+
+/** 组成员类型：员工侧按岗位展示（健管师/医生等），不再笼统写「医护」 */
+function memberTypeLabel(m: CareTeamMember) {
+  if (m.memberType !== 'STAFF') return '患者'
+  const staff = staffList.value.find((s) => s.staffId === m.staffId)
+  const roles = staff?.roles ?? []
+  if (roles.includes(StaffRole.CARE_MANAGER)) return formatRole(StaffRole.CARE_MANAGER)
+  if (roles.includes(StaffRole.DOCTOR)) return formatRole(StaffRole.DOCTOR)
+  if (roles.includes(StaffRole.NUTRITIONIST)) return formatRole(StaffRole.NUTRITIONIST)
+  if (roles.length > 0) return formatRole(roles[0])
+  return formatRole(StaffRole.CARE_MANAGER)
 }
 
 async function ensureOrg() {
@@ -181,7 +193,7 @@ async function savePrimary() {
 
 async function addStaffMember() {
   if (!addStaffId.value) {
-    ElMessage.warning('请选择医护')
+    ElMessage.warning('请选择健管师')
     return
   }
   addingMember.value = true
@@ -190,7 +202,7 @@ async function addStaffMember() {
       method: 'POST',
       body: JSON.stringify({ memberType: 'STAFF', staffId: addStaffId.value }),
     })
-    ElMessage.success('已添加医护')
+    ElMessage.success('已添加健管师')
     addStaffId.value = null
     await Promise.all([loadMembers(), loadTeam()])
   } catch (e) {
@@ -332,7 +344,7 @@ onMounted(async () => {
         <h3>成员（{{ members.length }}）</h3>
         <el-table v-loading="membersLoading" :data="members" stripe>
           <el-table-column label="类型" width="90">
-            <template #default="{ row }">{{ row.memberType === 'STAFF' ? '医护' : '患者' }}</template>
+            <template #default="{ row }">{{ memberTypeLabel(row) }}</template>
           </el-table-column>
           <el-table-column label="姓名" min-width="140">
             <template #default="{ row }">{{ memberLabel(row) }}</template>
@@ -348,15 +360,15 @@ onMounted(async () => {
         </el-table>
 
         <div class="add-row">
-          <el-select v-model="addStaffId" clearable filterable placeholder="添加医护" style="width: 260px">
+          <el-select v-model="addStaffId" clearable filterable placeholder="添加健管师" style="width: 260px">
             <el-option
-              v-for="s in staffList"
+              v-for="s in careManagers"
               :key="s.staffId"
               :label="s.displayName"
               :value="s.staffId"
             />
           </el-select>
-          <el-button :loading="addingMember" @click="addStaffMember">添加医护</el-button>
+          <el-button :loading="addingMember" @click="addStaffMember">添加健管师</el-button>
         </div>
         <div class="add-row">
           <el-select v-model="addPatientId" clearable filterable placeholder="添加未入组患者" style="width: 260px">

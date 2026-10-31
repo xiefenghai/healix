@@ -21,6 +21,7 @@ import com.healix.core.field.FieldStore;
 import com.healix.core.field.FieldValue;
 import com.healix.core.field.FieldWriteSource;
 import com.healix.core.field.PeopleFieldService;
+import com.healix.core.field.SensitiveFieldMask;
 import com.healix.core.goal.domain.PeopleHealthGoal;
 import com.healix.core.goal.mapper.PeopleHealthGoalMapper;
 import com.healix.core.medication.dto.MedicationViewDto;
@@ -156,6 +157,20 @@ public class QuestionnaireResponseService {
             }
             if (channel != null && !channel.isBlank()) {
                 draft.setChannel(channel);
+            }
+            // 空草稿：按「上次答卷 + 最近档案/指标」刷新预填，并升到最新问卷版本
+            if (answersBlank(asObject(draft.getAnswersJson()))) {
+                ObjectNode prefill = buildPrefill(tenantId, peopleId, q);
+                draft.setQuestionnaireCode(q.code());
+                draft.setQuestionnaireVersion(q.version());
+                draft.setPrefillJson(JsonUtils.toJson(prefill));
+                draft.setCompletenessJson(
+                        JsonUtils.toJson(
+                                completeness(
+                                        q,
+                                        JsonUtils.emptyObject(),
+                                        answersLookup(JsonUtils.emptyObject()),
+                                        null)));
             }
             EntityMeta.onUpdate(draft);
             responseMapper.updateDraft(draft);
@@ -373,6 +388,10 @@ public class QuestionnaireResponseService {
             }
             if (!isVisible(row, code, answersLookup(answers))) {
                 continue; // 收起的显示条件题：草稿可留，提交不写回
+            }
+            // 拒绝脱敏占位写回，避免档案被污染成「已采集」
+            if (isMaskedPlaceholder(value)) {
+                continue;
             }
             FieldStore store;
             try {
@@ -856,18 +875,31 @@ public class QuestionnaireResponseService {
         row.setEnrollmentId(en == null ? null : en.getId());
     }
 
+    /**
+     * 打开首诊预填：先铺「最近一次已提交答卷」，再用档案/元数据/指标/用药/过敏等最近值覆盖。
+     * staff.* 案头字段不预填，避免把上次 AI 总结当成新答案。
+     */
     private ObjectNode buildPrefill(String tenantId, String peopleId, QuestionnaireDef q) {
         peopleFieldService.ensureMigrated(tenantId, peopleId);
         ObjectNode out = JsonUtils.emptyObject();
+        Set<String> fields = new LinkedHashSet<>();
+        for (ModuleItem item : catalog.itemsOf(q)) {
+            fields.add(item.field());
+        }
+        seedLastSubmittedAnswers(out, tenantId, peopleId, PURPOSE_INTAKE, fields);
+        seedLastSubmittedAnswers(out, tenantId, peopleId, PURPOSE_SUPPLEMENT, fields);
+
         PeopleProfile profile = peopleProfileMapper.findById(peopleId);
         AllergySummaryDto allergySummary = null;
         boolean allergyLoaded = false;
-        for (ModuleItem item : catalog.itemsOf(q)) {
-            String code = item.field();
+        for (String code : fields) {
             FieldStore store;
             try {
                 store = FieldStore.of(code);
             } catch (IllegalArgumentException e) {
+                continue;
+            }
+            if (store.responseOnly()) {
                 continue;
             }
             ObjectNode cell = JsonUtils.emptyObject();
@@ -945,11 +977,71 @@ public class QuestionnaireResponseService {
                     }
                 }
                 default -> {
-                    /* goal/consent 等无预填或后续补 */
+                    /* goal/consent 等：保留上面「上次答卷」预填 */
                 }
             }
         }
         return out;
+    }
+
+    private void seedLastSubmittedAnswers(
+            ObjectNode out, String tenantId, String peopleId, String purpose, Set<String> fields) {
+        QuestionnaireResponse last = responseMapper.findLatestSubmitted(tenantId, peopleId, purpose);
+        if (last == null) {
+            return;
+        }
+        ObjectNode answers = resolveSubmittedAnswers(last);
+        Iterator<Map.Entry<String, JsonNode>> it = answers.fields();
+        while (it.hasNext()) {
+            Map.Entry<String, JsonNode> e = it.next();
+            String code = e.getKey();
+            if (!fields.contains(code) || ArchiveFields.isEmpty(e.getValue())) {
+                continue;
+            }
+            try {
+                if (FieldStore.of(code).responseOnly()) {
+                    continue;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // 未知前缀仍可作答内预填
+            }
+            ObjectNode cell = JsonUtils.emptyObject();
+            cell.set("value", e.getValue());
+            cell.put("sourceBizCode", "INTAKE_QUESTIONNAIRE");
+            cell.put("sourceRefId", last.getId());
+            if (last.getSubmittedAt() != null) {
+                cell.put("gmtModified", last.getSubmittedAt().toString());
+            }
+            out.set(code, cell);
+        }
+    }
+
+    private static ObjectNode resolveSubmittedAnswers(QuestionnaireResponse row) {
+        JsonNode snap = JsonUtils.readTree(row.getSnapshotJson() == null ? "null" : row.getSnapshotJson());
+        if (snap != null && snap.isObject() && snap.path("answers").isObject()) {
+            return (ObjectNode) snap.get("answers");
+        }
+        return asObject(row.getAnswersJson());
+    }
+
+    private static boolean answersBlank(ObjectNode answers) {
+        if (answers == null || answers.isEmpty()) {
+            return true;
+        }
+        Iterator<Map.Entry<String, JsonNode>> it = answers.fields();
+        while (it.hasNext()) {
+            if (!ArchiveFields.isEmpty(it.next().getValue())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isMaskedPlaceholder(JsonNode value) {
+        if (value == null || value.isNull() || !value.isTextual()) {
+            return false;
+        }
+        return SensitiveFieldMask.MASKED.equals(value.asText());
     }
 
     private ArrayNode allergyPrefillArray(AllergySummaryDto summary, String category) {

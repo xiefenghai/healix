@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 已提交首诊问卷只读详情：按模块展示答案、高亮与 AI 总结。
+ * 已提交首诊问卷只读详情：直接展示当时填写内容（快照优先）、高亮与 AI 总结。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -11,7 +11,6 @@ import {
   getQuestionnaireResponse,
   isAnswerEmpty,
   loadIntakeOptionMaps,
-  matchShowIf,
   responseStatusLabel,
   severityLabel,
   type IntakeHighlightHit,
@@ -20,6 +19,7 @@ import {
   type IntakeOptionMaps,
   type QuestionnaireResponseView,
 } from '../../shared/intake'
+import { loadAllergyCatalog } from '../../shared/allergy'
 import { api } from '../../shared/http'
 import { openInNewTab } from '../../shared/open-route'
 
@@ -33,14 +33,22 @@ const optionMaps = ref<IntakeOptionMaps>({})
 
 const responseId = computed(() => String(route.params.responseId || ''))
 
-const answers = computed(() => (view.value?.answers || {}) as Record<string, unknown>)
+/** 只读详情优先用提交快照，保证展示「当时填写」 */
+const answers = computed(() => {
+  const snapAnswers = view.value?.snapshot?.answers
+  if (snapAnswers && typeof snapAnswers === 'object') return snapAnswers
+  return (view.value?.answers || {}) as Record<string, unknown>
+})
 
+/** 仅展示当时已填项 */
 const visibleModules = computed(() => {
   const mods = view.value?.modules || []
   return mods
     .map((m) => ({
       ...m,
-      items: (m.items || []).filter((it) => matchShowIf(it.showIf, answers.value)),
+      items: (m.items || []).filter(
+        (it) => it.field !== FIELD_STAFF_AI_SUMMARY && !isAnswerEmpty(answers.value[it.field]),
+      ),
     }))
     .filter((m) => m.items.length > 0)
 })
@@ -50,7 +58,11 @@ const aiSummary = computed(() => {
   return isAnswerEmpty(v) ? '' : String(v)
 })
 
-const highlights = computed(() => (view.value?.highlights || []) as IntakeHighlightHit[])
+const highlights = computed(() => {
+  const snapHl = view.value?.snapshot?.highlights
+  if (Array.isArray(snapHl) && snapHl.length) return snapHl
+  return (view.value?.highlights || []) as IntakeHighlightHit[]
+})
 
 const fieldLabelMap = computed(() => {
   const m = new Map<string, string>()
@@ -74,9 +86,7 @@ function formatTime(iso?: string | null) {
 }
 
 function moduleFilled(m: IntakeModuleView) {
-  const items = m.items || []
-  const done = items.filter((it) => !isAnswerEmpty(answers.value[it.field])).length
-  return { done, total: items.length }
+  return (m.items || []).length
 }
 
 async function load() {
@@ -85,7 +95,26 @@ async function load() {
   try {
     const data = await getQuestionnaireResponse(responseId.value)
     view.value = data
-    optionMaps.value = await loadIntakeOptionMaps(data.modules)
+    const [maps, allergyCat] = await Promise.all([
+      loadIntakeOptionMaps(data.modules),
+      loadAllergyCatalog().catch(() => null),
+    ])
+    // 过敏反应/类型并入选项表，详情展示用中文
+    if (allergyCat) {
+      maps.allergyReaction = (allergyCat.reactions || []).map((r) => ({
+        code: r.code,
+        label: r.label,
+      }))
+      maps.allergyType = (allergyCat.types || []).map((t) => ({
+        code: t.code,
+        label: t.label,
+      }))
+      maps.allergySeverity = (allergyCat.severities || []).map((s) => ({
+        code: s.code,
+        label: s.label,
+      }))
+    }
+    optionMaps.value = maps
     try {
       const res = await api<{ data: { displayName?: string } }>(`/api/b/v1/patients/${data.peopleId}`)
       patientName.value = res.data?.displayName || data.peopleId
@@ -144,7 +173,7 @@ onMounted(() => {
           <span class="nav-idx">{{ idx + 1 }}</span>
           <span class="nav-copy">
             <span class="nav-title">{{ m.title }}</span>
-            <span class="nav-fill">{{ moduleFilled(m).done }}/{{ moduleFilled(m).total }}</span>
+            <span class="nav-fill">{{ moduleFilled(m) }} 项</span>
           </span>
         </a>
       </aside>
@@ -173,26 +202,19 @@ onMounted(() => {
           class="card mod"
         >
           <h2>{{ m.title }}</h2>
-          <p v-if="m.script" class="script">{{ m.script.replace(/^【内部】\s*/, '') }}</p>
-          <div
-            v-for="it in m.items"
-            :key="it.field"
-            class="q"
-            :class="{ empty: isAnswerEmpty(answers[it.field]) }"
-          >
+          <div v-for="it in m.items" :key="it.field" class="q">
             <div class="q-label">
               {{ it.label }}
               <span v-if="it.level === 'STAFF'" class="tag">内部</span>
             </div>
-            <div v-if="it.field === FIELD_STAFF_AI_SUMMARY && aiSummary" class="q-val pre">
-              {{ aiSummary }}
-            </div>
-            <div v-else-if="!isAnswerEmpty(answers[it.field])" class="q-val">
-              {{ displayAnswer(it) }}
-            </div>
-            <div v-else class="q-val muted">未填</div>
+            <div class="q-val">{{ displayAnswer(it) }}</div>
           </div>
         </section>
+
+        <el-empty
+          v-if="!aiSummary && !highlights.length && !visibleModules.length"
+          description="该次首诊没有已填内容"
+        />
       </main>
     </div>
     <el-empty v-else-if="!loading" description="未找到作答" />
@@ -334,13 +356,6 @@ onMounted(() => {
   color: var(--ink-700);
 }
 
-.script {
-  margin: 0 0 12px;
-  font-size: 12px;
-  color: var(--ink-400);
-  line-height: 1.45;
-}
-
 .q {
   padding: 10px 0;
   border-top: 1px solid var(--ink-100);
@@ -369,20 +384,6 @@ onMounted(() => {
   color: var(--ink-800);
   line-height: 1.5;
   word-break: break-word;
-}
-
-.q-val.pre {
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.q-val.muted,
-.muted {
-  color: var(--ink-400);
-}
-
-.q.empty .q-label {
-  color: var(--ink-400);
 }
 
 .hl {
