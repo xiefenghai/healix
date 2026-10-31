@@ -41,13 +41,15 @@ export function suggestedCareTracksFromAppeal(appeal: unknown): IntakeProgramCod
 }
 
 /** 病史现患 → 可提示一并纳入的慢病方向 */
-export function suggestedCareTracksFromIllness(presentIllness: unknown): IntakeProgramCode[] {
+export function suggestedCareTracksFromIllness(
+  presentIllness: unknown,
+): Exclude<IntakeProgramCode, 'NONE'>[] {
   const set = new Set(
     (Array.isArray(presentIllness) ? presentIllness : presentIllness != null ? [presentIllness] : []).map((x) =>
       String(x).toUpperCase(),
     ),
   )
-  const out: IntakeProgramCode[] = []
+  const out: Exclude<IntakeProgramCode, 'NONE'>[] = []
   if (set.has('DIABETES')) out.push('DIABETES')
   if (set.has('HYPERTENSION')) out.push('HYPERTENSION')
   return out
@@ -1053,7 +1055,6 @@ const FIELD_OPTION_PARENT: Record<string, string> = {
   'consent.sensitiveHealth': 'consentGiven',
   'consent.method': 'consentMethod',
   'staff.referral': 'referral',
-  'disease.diabetes.chronicComplications': 'dmChronicComplications',
 }
 
 /** 非 optionSets：亲属 / 用药频次 / 过敏临床状态等 */
