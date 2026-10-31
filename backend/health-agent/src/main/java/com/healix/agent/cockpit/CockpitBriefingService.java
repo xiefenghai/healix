@@ -198,24 +198,22 @@ public class CockpitBriefingService {
         return sb.toString();
     }
 
-    /** 前 3 位：每人一个「处理某某」，再按其待办挂一个直接办理动作（点了才执行）。 */
+    /** 前 3 位：每人只挂一个直接办理动作（点了才执行）；无匹配待办时回落「处理某某」点人。 */
     private static List<CockpitBriefingDto.BriefingAction> toActions(List<CockpitPriorityCardDto> top) {
-        List<CockpitBriefingDto.BriefingAction> focus = new ArrayList<>();
-        List<CockpitBriefingDto.BriefingAction> doIt = new ArrayList<>();
+        List<CockpitBriefingDto.BriefingAction> out = new ArrayList<>();
         for (int i = 0; i < Math.min(3, top.size()); i++) {
             CockpitPriorityCardDto c = top.get(i);
             String name = c.getDisplayName() == null ? "该患者" : c.getDisplayName();
+            CockpitBriefingDto.BriefingAction d = doAction(c, name);
+            if (d != null) {
+                out.add(d);
+                continue;
+            }
             CockpitBriefingDto.BriefingAction a = new CockpitBriefingDto.BriefingAction();
             a.setPeopleId(c.getPeopleId());
             a.setLabel("处理" + name);
-            focus.add(a);
-            CockpitBriefingDto.BriefingAction d = doAction(c, name);
-            if (d != null) {
-                doIt.add(d);
-            }
+            out.add(a);
         }
-        List<CockpitBriefingDto.BriefingAction> out = new ArrayList<>(focus);
-        out.addAll(doIt);
         return out;
     }
 
@@ -266,7 +264,7 @@ public class CockpitBriefingService {
 
     private static String cacheKey(String staffId, String orgId) {
         LocalDate day = LocalDate.now(JobCronSupport.ZONE);
-        // v5：简报带具体读数与直接办理动作
-        return HealthConstants.REDIS_COCKPIT_BRIEFING_PREFIX + staffId + ":" + orgId + ":" + day + ":v5";
+        // v6：简报每人只保留一键办理动作（去掉重复的「处理某某」）
+        return HealthConstants.REDIS_COCKPIT_BRIEFING_PREFIX + staffId + ":" + orgId + ":" + day + ":v6";
     }
 }
