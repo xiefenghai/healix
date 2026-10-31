@@ -1,0 +1,2353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Healix · 产品使用说明 · 全流程</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #2c7ef8;
+      --primary-dark: #1f5dc9;
+      --teal: #00b8a9;
+      --bg: #f5f7fb;
+      --surface: #fff;
+      --ink: #0f172a;
+      --ink-2: #334155;
+      --ink-3: #64748b;
+      --ink-4: #94a3b8;
+      --line: #e2e8f0;
+      --line-soft: #f1f5f9;
+      --sidebar: #0f172a;
+      --amber: #f59e0b;
+      --rose: #ef4444;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
+      --font: Inter, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      color: var(--ink);
+      background: var(--bg);
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    /* ===== 左侧导航（产品说明） ===== */
+    .guide-nav {
+      position: sticky; top: 0; height: 100vh;
+      background: linear-gradient(180deg, #0f172a 0%, #131c30 100%);
+      color: #94a3b8;
+      padding: 22px 14px 20px;
+      overflow-y: auto;
+      border-right: 1px solid rgba(255,255,255,0.04);
+    }
+    .gn-brand {
+      display: flex; align-items: center; gap: 10px;
+      padding: 4px 10px 20px; color: #fff;
+    }
+    .gn-logo {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: linear-gradient(135deg, #2c7ef8, #00b8a9);
+      display: grid; place-items: center;
+      font-weight: 800; color: #fff; font-size: 15px;
+      box-shadow: 0 6px 16px -4px rgba(44, 126, 248, 0.55);
+    }
+    .gn-brand strong { display: block; font-size: 16px; letter-spacing: -0.2px; }
+    .gn-brand small { display: block; font-size: 11px; color: #94a3b8; font-weight: 500; margin-top: 2px; }
+
+    .gn-sec { font-size: 11px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase;
+      color: #64748b; padding: 10px 12px 8px; }
+    .gn-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px 12px; border-radius: 8px; margin-bottom: 2px;
+      color: #94a3b8; transition: 0.15s; position: relative;
+    }
+    .gn-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
+    .gn-item.active {
+      background: linear-gradient(90deg, rgba(44,126,248,0.18), rgba(44,126,248,0.04));
+      color: #fff;
+    }
+    .gn-item.active::before {
+      content: ""; position: absolute; left: 0; top: 10px; bottom: 10px;
+      width: 3px; background: var(--primary); border-radius: 0 3px 3px 0;
+    }
+    .gn-num {
+      width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+      background: rgba(255,255,255,0.08); color: #cbd5e1;
+      display: grid; place-items: center; font-size: 11px; font-weight: 700; margin-top: 1px;
+    }
+    .gn-item.active .gn-num { background: var(--primary); color: #fff; }
+    .gn-item .t { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+    .gn-item .d { font-size: 11.5px; color: #64748b; margin-top: 2px; }
+    .gn-item.active .d { color: #94a3b8; }
+
+    .gn-foot {
+      margin-top: 28px; padding: 12px;
+      background: rgba(255,255,255,0.04); border-radius: 10px;
+      font-size: 11.5px; color: #64748b; line-height: 1.5;
+    }
+    .gn-foot b { color: #e2e8f0; font-weight: 600; }
+
+    /* ===== 主内容 ===== */
+    .main { min-width: 0; }
+    .topbar {
+      height: 56px; background: #fff; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; padding: 0 28px; gap: 12px;
+      position: sticky; top: 0; z-index: 20;
+    }
+    .topbar h1 { font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
+    .topbar p { color: var(--ink-3); font-size: 12.5px; }
+    .topbar .spacer { flex: 1; }
+    .replay-all {
+      height: 32px; padding: 0 12px; border-radius: 8px;
+      border: 1px solid var(--line); background: #fff; font-size: 12.5px; font-weight: 600; color: var(--ink-2);
+    }
+    .replay-all:hover { background: var(--line-soft); }
+
+    .content { padding: 24px 28px 48px; max-width: 1100px; }
+
+    .hero-card {
+      background: linear-gradient(135deg, #eff6ff 0%, #f0fdfa 100%);
+      border: 1px solid var(--line);
+      border-radius: 16px; padding: 22px 24px; margin-bottom: 22px;
+    }
+    .hero-card .kicker { font-size: 12px; font-weight: 700; color: var(--primary); letter-spacing: 0.04em; }
+    .hero-card h2 { font-size: 22px; font-weight: 800; letter-spacing: -0.4px; margin-top: 6px; }
+    .hero-card p { color: var(--ink-3); margin-top: 8px; max-width: 56ch; font-size: 13.5px; }
+    .flow {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 16px;
+    }
+    .flow a {
+      background: #fff; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px 12px; transition: 0.15s;
+    }
+    .flow a:hover { border-color: #bfdbfe; box-shadow: var(--shadow); }
+    .flow .n { font-size: 11px; font-weight: 700; color: var(--primary); }
+    .flow .t { display: block; font-weight: 700; font-size: 13px; margin-top: 2px; }
+    .flow .d { display: block; font-size: 11px; color: var(--ink-4); margin-top: 2px; }
+
+    .section {
+      scroll-margin-top: 72px;
+      margin-bottom: 28px;
+      display: grid;
+      grid-template-columns: minmax(220px, 0.78fr) minmax(0, 1.2fr) minmax(200px, 0.72fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+    .copy {
+      background: #fff; border: 1px solid var(--line); border-radius: 14px;
+      padding: 18px 18px 16px; box-shadow: var(--shadow);
+    }
+    .copy .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 9px; border-radius: 999px;
+      background: #eaf2ff; color: #1e63d9;
+      font-size: 11px; font-weight: 700;
+    }
+    .copy h3 { font-size: 18px; font-weight: 800; letter-spacing: -0.3px; margin: 10px 0 6px; }
+    .copy .where { font-size: 12.5px; color: var(--ink-3); margin-bottom: 12px; }
+    .copy .where code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px; background: var(--line-soft); padding: 1px 5px; border-radius: 4px;
+    }
+    .steps { list-style: none; display: grid; gap: 10px; }
+    .steps li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; }
+    .steps .dot {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--ink); color: #fff; font-size: 11px; font-weight: 700;
+      display: grid; place-items: center; margin-top: 1px;
+    }
+    .steps strong { display: block; font-size: 13.5px; }
+    .steps p { color: var(--ink-3); font-size: 12.5px; margin-top: 2px; }
+    .tip {
+      margin-top: 14px; padding: 10px 12px; border-radius: 10px;
+      background: #fef6e2; color: #92400e; font-size: 12.5px;
+    }
+
+    /* ===== 动画右侧：设计理由 / 场景 ===== */
+    .why {
+      background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px 15px 14px;
+      box-shadow: var(--shadow);
+      display: flex; flex-direction: column; gap: 10px;
+      min-height: 100%;
+    }
+    .why .why-kicker {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px;
+      text-transform: uppercase; color: #0f766e;
+    }
+    .why .why-kicker::before {
+      content: ""; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--teal); box-shadow: 0 0 0 3px rgba(0,184,169,0.18);
+    }
+    .why h4 {
+      font-size: 14.5px; font-weight: 800; letter-spacing: -0.2px;
+      color: var(--ink); line-height: 1.35; margin-top: -2px;
+    }
+    .why .why-block {
+      padding: 9px 10px; border-radius: 9px;
+      background: #fff; border: 1px solid var(--line-soft);
+    }
+    .why .why-block .lbl {
+      display: block; font-size: 10.5px; font-weight: 700;
+      color: var(--ink-4); letter-spacing: 0.4px; margin-bottom: 4px;
+    }
+    .why .why-block p {
+      font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
+    }
+    .why ul {
+      list-style: none; display: grid; gap: 7px; margin: 0; padding: 0;
+    }
+    .why ul li {
+      position: relative; padding-left: 12px;
+      font-size: 12.5px; color: var(--ink-2); line-height: 1.45;
+    }
+    .why ul li::before {
+      content: ""; position: absolute; left: 0; top: 7px;
+      width: 5px; height: 5px; border-radius: 50%; background: var(--primary);
+    }
+    .why .why-note {
+      margin-top: auto; padding-top: 10px;
+      border-top: 1px dashed var(--line);
+      font-size: 11.5px; color: var(--ink-3); line-height: 1.45;
+    }
+
+    /* ===== Demo chrome ===== */
+    .stage {
+      background: #0b1220;
+      border-radius: 14px;
+      padding: 10px;
+      box-shadow: var(--shadow);
+      min-height: 440px;
+      display: flex; flex-direction: column;
+      position: relative;
+    }
+    .stage-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      color: rgba(255,255,255,0.65); font-size: 11.5px; padding: 2px 4px 8px;
+    }
+    .stage-bar .dots { display: flex; gap: 5px; }
+    .stage-bar .dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.2); display: block; }
+    .stage-bar .dots i:nth-child(1) { background: #f87171; }
+    .stage-bar .dots i:nth-child(2) { background: #fbbf24; }
+    .stage-bar .dots i:nth-child(3) { background: #34d399; }
+    .replay {
+      color: #93c5fd; font-weight: 600; font-size: 11.5px;
+      padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(147,197,253,0.35);
+    }
+    .replay:hover { background: rgba(147,197,253,0.12); }
+
+    .screen {
+      flex: 1; background: var(--bg); border-radius: 10px; overflow: hidden;
+      position: relative; min-height: 390px;
+    }
+
+    .cursor {
+      position: absolute; width: 16px; height: 16px; z-index: 50; pointer-events: none; opacity: 0;
+      filter: drop-shadow(0 2px 3px rgba(0,0,0,0.3));
+    }
+    .cursor::before {
+      content: ""; position: absolute; inset: 0; background: #fff;
+      clip-path: polygon(0 0, 0 100%, 28% 78%, 48% 100%, 58% 95%, 38% 70%, 100% 70%);
+      border: 1px solid #0f172a;
+    }
+    .cursor.click::after {
+      content: ""; position: absolute; left: -7px; top: -7px; width: 28px; height: 28px;
+      border-radius: 50%; border: 2px solid var(--primary);
+      animation: ripple 0.5s ease-out;
+    }
+    @keyframes ripple { from { transform: scale(0.4); opacity: 0.9; } to { transform: scale(1.35); opacity: 0; } }
+
+    .caption {
+      position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 40;
+      background: rgba(15, 23, 42, 0.9); color: #e2e8f0;
+      border-radius: 8px; padding: 8px 10px; font-size: 12px;
+      transform: translateY(120%); transition: transform 0.3s ease;
+    }
+    .caption.show { transform: none; }
+
+    .toast {
+      position: absolute; top: 10px; left: 50%; z-index: 45;
+      transform: translate(-50%, -120%); opacity: 0; transition: 0.3s ease;
+      background: #0f766e; color: #ecfdf5; padding: 6px 12px; border-radius: 999px;
+      font-size: 12px; font-weight: 600; white-space: nowrap;
+      box-shadow: 0 8px 20px rgba(15,118,110,0.25);
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    .btn-p {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      height: 32px; padding: 0 14px; border-radius: 8px;
+      background: var(--primary); color: #fff; font-weight: 600; font-size: 12.5px;
+      box-shadow: 0 4px 10px -2px rgba(44,126,248,0.4);
+      transition: 0.15s;
+    }
+    .btn-p.pulse { transform: scale(0.97); filter: brightness(1.08); box-shadow: 0 0 0 4px rgba(44,126,248,0.25); }
+    .btn-g {
+      display: inline-flex; align-items: center; height: 32px; padding: 0 12px;
+      border-radius: 8px; border: 1px solid var(--line); background: #fff;
+      color: var(--ink-2); font-weight: 600; font-size: 12.5px;
+    }
+
+    .field label { display: block; font-size: 12px; color: var(--ink-3); margin-bottom: 4px; font-weight: 500; }
+    .box {
+      height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+      padding: 0 11px; display: flex; align-items: center; font-size: 13px; overflow: hidden;
+    }
+    .box.typing::after {
+      content: ""; width: 1.5px; height: 14px; background: var(--primary); margin-left: 1px;
+      animation: blink 0.8s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* Login split */
+    .login-page { display: grid; grid-template-columns: 1.05fr 1fr; height: 100%; }
+    .login-brand {
+      position: relative; color: #fff; padding: 22px 20px; overflow: hidden;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 45%, #1e3a8a 100%);
+    }
+    .login-brand::before {
+      content: ""; position: absolute; inset: 0;
+      background:
+        radial-gradient(420px 280px at 80% 10%, rgba(44,126,248,0.45), transparent 60%),
+        radial-gradient(360px 240px at 10% 90%, rgba(0,184,169,0.35), transparent 60%);
+    }
+    .login-brand-inner { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; }
+    .login-brand .mark {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--primary), var(--teal));
+      display: grid; place-items: center; font-weight: 800; font-size: 12px;
+    }
+    .login-brand h4 { font-size: 18px; font-weight: 800; letter-spacing: -0.4px; margin-top: 28px; line-height: 1.2; }
+    .login-brand p { font-size: 11.5px; color: rgba(255,255,255,0.65); margin-top: 8px; line-height: 1.55; }
+    .login-form { padding: 22px 22px; display: flex; flex-direction: column; justify-content: center; background: #f8fafc; }
+    .login-form h5 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .login-form .sub { font-size: 12px; color: var(--ink-3); margin-bottom: 14px; }
+    .badge-ws {
+      display: inline-flex; padding: 2px 7px; border-radius: 5px; margin-bottom: 8px;
+      background: #e6faf7; color: #0f766e; font-size: 10px; font-weight: 700; letter-spacing: 0.4px;
+    }
+
+    /* Org picker / workspace chrome */
+    .org-page { height: 100%; display: flex; flex-direction: column; }
+    .ws-shell { display: grid; grid-template-columns: 118px 1fr; height: 100%; }
+    .ws-shell.no-sider { grid-template-columns: 1fr; }
+    .ws-sider {
+      background: linear-gradient(180deg, #0f172a 0%, #131c30 100%);
+      color: #94a3b8; padding: 8px 6px; overflow: hidden;
+      display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,0.04);
+    }
+    .ws-sider .brand {
+      display: flex; align-items: center; gap: 6px;
+      padding: 2px 6px 10px; color: #fff;
+    }
+    .ws-sider .brand .m {
+      width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+      background: linear-gradient(135deg, #2c7ef8, #00b8a9);
+      color: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 800;
+    }
+    .ws-sider .brand strong { font-size: 11px; letter-spacing: -0.2px; }
+    .ws-sider .brand small { display: block; font-size: 9px; color: #64748b; font-weight: 500; margin-top: 1px; }
+    .ws-sider .g {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+      color: #475569; padding: 6px 6px 3px;
+    }
+    .ws-sider .mi {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 6px; border-radius: 6px; margin-bottom: 1px;
+      font-size: 10.5px; font-weight: 550; color: #94a3b8; position: relative;
+      white-space: nowrap; overflow: hidden;
+    }
+    .ws-sider .mi .ico {
+      width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0;
+      background: rgba(255,255,255,0.08); display: grid; place-items: center;
+      font-size: 8px; color: #cbd5e1;
+    }
+    .ws-sider .mi.on {
+      background: linear-gradient(90deg, rgba(44,126,248,0.2), rgba(44,126,248,0.04));
+      color: #fff; font-weight: 650;
+    }
+    .ws-sider .mi.on::before {
+      content: ""; position: absolute; left: 0; top: 5px; bottom: 5px;
+      width: 2px; background: #2c7ef8; border-radius: 0 2px 2px 0;
+    }
+    .ws-sider .mi.on .ico { background: #2c7ef8; color: #fff; }
+    .ws-sider .mi .bdg {
+      margin-left: auto; font-size: 8px; background: #ef4444; color: #fff;
+      padding: 0 4px; border-radius: 8px; font-weight: 700;
+    }
+    .ws-main { display: flex; flex-direction: column; min-width: 0; background: var(--bg); height: 100%; }
+    .ws-top {
+      height: 40px; background: #fff; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; padding: 0 12px; font-size: 12px; font-weight: 600; gap: 8px;
+    }
+    .ws-body { padding: 12px; flex: 1; overflow: hidden; }
+    .page-h { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; }
+    .page-h h4 { font-size: 15px; font-weight: 700; }
+    .page-h p { font-size: 11.5px; color: var(--ink-3); }
+    .org-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .org-card {
+      background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+      transition: 0.2s;
+    }
+    .org-card.pick { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(44,126,248,0.15); background: #f8fbff; }
+    .org-card .name { font-weight: 700; font-size: 13px; }
+    .org-card .meta { font-size: 11px; color: var(--ink-4); margin-top: 3px; }
+    .org-card .link { margin-top: 8px; font-size: 12px; color: var(--primary); font-weight: 600; }
+
+    /* Patients */
+    .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+    .kpi { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    .kpi .l { font-size: 10.5px; color: var(--ink-3); }
+    .kpi .v { font-size: 16px; font-weight: 800; margin-top: 2px; letter-spacing: -0.3px; }
+    .table {
+      background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+    }
+    .table .th {
+      display: grid; grid-template-columns: 1.4fr 1fr 0.8fr;
+      padding: 7px 10px; background: #f8fafc; font-size: 10.5px; font-weight: 700;
+      color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .table .tr {
+      display: grid; grid-template-columns: 1.4fr 1fr 0.8fr;
+      padding: 8px 10px; font-size: 12px; border-bottom: 1px solid var(--line-soft); align-items: center;
+    }
+    .table .tr:last-child { border-bottom: 0; }
+    .av {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: linear-gradient(135deg, #60a5fa, #34d399);
+      color: #fff; font-size: 11px; font-weight: 700;
+      display: grid; place-items: center; flex-shrink: 0;
+    }
+    .patient { display: flex; align-items: center; gap: 7px; }
+    .patient .nm { font-weight: 650; }
+    .dialog-mask {
+      position: absolute; inset: 0; background: rgba(15,23,42,0.35);
+      display: flex; align-items: flex-start; justify-content: center; padding-top: 36px;
+      opacity: 0; pointer-events: none; transition: 0.25s; z-index: 20;
+    }
+    .dialog-mask.show { opacity: 1; pointer-events: auto; }
+    .dialog {
+      width: 300px; background: #fff; border-radius: 12px; box-shadow: 0 20px 40px rgba(15,23,42,0.2);
+      transform: translateY(8px); transition: 0.25s; overflow: hidden;
+    }
+    .dialog-mask.show .dialog { transform: none; }
+    .dialog-h {
+      padding: 12px 14px; border-bottom: 1px solid var(--line);
+      font-weight: 700; font-size: 13.5px; display: flex; justify-content: space-between;
+    }
+    .dialog-b { padding: 12px 14px; }
+    .dialog-f {
+      padding: 10px 14px; border-top: 1px solid var(--line);
+      display: flex; justify-content: flex-end; gap: 8px; background: #f8fafc;
+    }
+
+    /* Intake */
+    .intake {
+      height: 100%; display: flex; flex-direction: column; background: #f4f7fb;
+    }
+    .intake-top {
+      background: #fff; border-bottom: 1px solid var(--line);
+      padding: 8px 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+    }
+    .intake-top .who strong { display: block; font-size: 13px; }
+    .intake-top .who span { font-size: 11px; color: var(--ink-3); }
+    .intake-mid {
+      display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0;
+    }
+    .mode-switch {
+      display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
+      overflow: hidden; background: #f8fafc;
+    }
+    .mode-switch span {
+      font-size: 10.5px; font-weight: 700; padding: 3px 10px; color: var(--ink-3);
+      transition: 0.15s;
+    }
+    .mode-switch span.on {
+      background: var(--primary); color: #fff;
+    }
+    .intake-pills { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+    .pill {
+      font-size: 10.5px; padding: 3px 8px; border-radius: 999px;
+      background: #f1f5f9; color: var(--ink-3); font-weight: 600;
+    }
+    .pill.ok { background: #e6faf7; color: #0f766e; }
+    .imod.dim { opacity: 0.35; }
+    .intake-body { display: grid; grid-template-columns: 128px 1fr; flex: 1; min-height: 0; }
+    .intake-nav {
+      background: #fff; border-right: 1px solid var(--line); padding: 8px 6px; overflow: hidden;
+    }
+    .intake-nav .h { font-size: 10px; font-weight: 700; color: var(--ink-4); padding: 2px 6px 6px; letter-spacing: 0.5px; }
+    .imod {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 7px; border-radius: 7px; font-size: 11.5px; color: var(--ink-3); margin-bottom: 2px;
+    }
+    .imod.on { background: #eaf2ff; color: #1e63d9; font-weight: 700; }
+    .imod .i {
+      width: 16px; height: 16px; border-radius: 5px; background: #f1f5f9;
+      display: grid; place-items: center; font-size: 9px; font-weight: 700;
+    }
+    .imod.on .i { background: var(--primary); color: #fff; }
+    .intake-form { padding: 10px 12px; overflow: hidden; }
+    .mod-title { font-size: 14px; font-weight: 800; }
+    .script {
+      margin-top: 6px; padding: 7px 9px; border-radius: 8px;
+      background: #fff7ed; color: #9a3412; font-size: 11.5px; line-height: 1.45;
+    }
+    .q { margin-top: 10px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+    .q .ql { font-size: 12.5px; font-weight: 650; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chip {
+      font-size: 11.5px; padding: 5px 10px; border-radius: 8px;
+      border: 1px solid var(--line); background: #fff; color: var(--ink-2); font-weight: 500;
+    }
+    .chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .ai-box {
+      margin-top: 8px; padding: 8px; border-radius: 8px; background: #f8fafc;
+      border: 1px dashed var(--line); font-size: 11.5px; color: var(--ink-3); min-height: 52px; white-space: pre-wrap;
+    }
+
+    /* Care plan */
+    .patient-hero {
+      background: #fff; border-bottom: 1px solid var(--line); padding: 10px 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .patient-hero .pic {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: linear-gradient(135deg, #60a5fa, #34d399);
+      color: #fff; font-weight: 800; display: grid; place-items: center;
+    }
+    .patient-hero .nm { font-weight: 800; font-size: 13.5px; }
+    .patient-hero .meta { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+    .tabs {
+      display: flex; gap: 2px; background: #fff; border-bottom: 1px solid var(--line); padding: 0 8px;
+    }
+    .tab { padding: 8px 10px; font-size: 11.5px; color: var(--ink-3); font-weight: 600; border-bottom: 2px solid transparent; }
+    .tab.on { color: var(--primary); border-bottom-color: var(--primary); }
+    .cp-body { padding: 10px 12px; }
+    .cp-empty {
+      background: #fff; border: 1px dashed var(--line); border-radius: 10px;
+      padding: 16px; text-align: center; color: var(--ink-3); font-size: 12px;
+    }
+    .progress { height: 6px; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin: 8px 0; }
+    .progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2c7ef8, #00b8a9); transition: width 0.45s ease; }
+    .plan-card {
+      background: #fff; border: 1px solid var(--line); border-radius: 10px;
+      padding: 9px 10px; margin-top: 6px; opacity: 0; transform: translateY(6px); transition: 0.35s;
+    }
+    .plan-card.show { opacity: 1; transform: none; }
+    .plan-card h5 { font-size: 12px; font-weight: 700; margin-bottom: 2px; }
+    .plan-card p { font-size: 11px; color: var(--ink-3); }
+
+    /* Extra flows */
+    .tag-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .htag {
+      font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+    }
+    .htag.risk { background: #fee2e2; color: #b91c1c; }
+    .htag.warn { background: #fef3c7; color: #b45309; }
+    .htag.ok { background: #d1fae5; color: #047857; }
+    .htag.info { background: #eaf2ff; color: #1e63d9; }
+    .list-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 10px; background: #fff; border: 1px solid var(--line);
+      border-radius: 8px; margin-top: 6px; font-size: 12px;
+    }
+    .list-row .l { font-weight: 650; }
+    .list-row .m { color: var(--ink-4); font-size: 11px; }
+    .bar-track { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; width: 72px; }
+    .bar-track > i { display: block; height: 100%; background: var(--teal); border-radius: 999px; }
+    .cockpit {
+      display: grid; grid-template-columns: 0.78fr 1.35fr 0.95fr; gap: 5px; height: 100%; padding: 6px;
+      min-height: 430px;
+    }
+    .ck-col {
+      background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 7px;
+      overflow: hidden; display: flex; flex-direction: column; min-height: 0;
+    }
+    .ck-col h5 {
+      font-size: 10.5px; font-weight: 700; margin-bottom: 5px; color: var(--ink-2);
+      display: flex; align-items: center; justify-content: space-between; gap: 4px;
+    }
+    .ck-col h5 em { font-style: normal; font-weight: 600; color: var(--ink-4); font-size: 9.5px; }
+    .ck-tabs { display: flex; gap: 3px; margin-bottom: 6px; flex-wrap: wrap; }
+    .ck-tabs span {
+      font-size: 9.5px; padding: 2px 6px; border-radius: 999px; background: #f1f5f9; color: var(--ink-3); font-weight: 600;
+    }
+    .ck-tabs span.on { background: #eaf2ff; color: #1e63d9; }
+    .ck-item {
+      padding: 5px 6px; border-radius: 6px; background: #f8fafc; border: 1px solid var(--line-soft);
+      font-size: 10.5px; margin-bottom: 4px; color: var(--ink-2); line-height: 1.3;
+    }
+    .ck-item small { display: block; color: var(--ink-4); font-size: 9.5px; margin-top: 1px; }
+    .ck-item.on { border-color: #bfdbfe; background: #eff6ff; box-shadow: 0 0 0 2px rgba(44,126,248,0.12); }
+    .ck-center { background: linear-gradient(180deg, #f0f7ff 0%, #f8fafc 40%); }
+    .ck-ai-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 9px; font-weight: 800; letter-spacing: 0.3px;
+      padding: 1px 5px; border-radius: 4px;
+      background: linear-gradient(135deg, #2c7ef8, #00b8a9); color: #fff;
+    }
+    .ck-brief {
+      background: linear-gradient(180deg, #eef6ff, #f8fbff); border: 1px solid #dbeafe;
+      border-radius: 7px; padding: 6px 7px; margin-bottom: 5px; font-size: 10.5px; color: var(--ink-2); line-height: 1.4;
+      position: relative;
+    }
+    .ck-brief .ttl {
+      font-weight: 700; font-size: 10.5px; margin-bottom: 3px; color: #1e40af;
+      display: flex; align-items: center; gap: 5px;
+    }
+    .ck-typing {
+      display: none; align-items: center; gap: 3px; padding: 4px 0 2px;
+    }
+    .ck-typing.show { display: flex; }
+    .ck-typing i {
+      width: 4px; height: 4px; border-radius: 50%; background: #60a5fa;
+      animation: ckDot 1s ease-in-out infinite;
+    }
+    .ck-typing i:nth-child(2) { animation-delay: 0.15s; }
+    .ck-typing i:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes ckDot {
+      0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-2px); }
+    }
+    .ai-cap-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0 4px;
+    }
+    .ai-cap {
+      padding: 8px 9px; border-radius: 9px;
+      border: 1px solid #dbeafe; background: linear-gradient(160deg, #eff6ff, #fff);
+    }
+    .ai-cap .cap-tag {
+      display: inline-block; font-size: 10px; font-weight: 800; color: #1d4ed8;
+      letter-spacing: 0.2px; margin-bottom: 3px;
+    }
+    .ai-cap p { font-size: 11.5px; color: var(--ink-3); line-height: 1.4; margin: 0; }
+    .section.spotlight-ai .copy {
+      border-color: #bfdbfe;
+      background: linear-gradient(180deg, #f8fbff 0%, #fff 28%);
+    }
+    .section.spotlight-ai .stage {
+      box-shadow: 0 0 0 1px rgba(44,126,248,0.25), 0 12px 32px -12px rgba(44,126,248,0.35);
+    }
+    .section.spotlight-ai .why {
+      border-color: #99f6e4;
+      background: linear-gradient(180deg, #f0fdfa 0%, #fff 40%);
+    }
+    .ck-chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0 6px; }
+    .ck-chip {
+      font-size: 9.5px; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--line);
+      background: #fff; color: var(--ink-2); font-weight: 600;
+    }
+    .ck-chip.on { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; box-shadow: 0 0 0 2px rgba(44,126,248,0.12); }
+    .ck-bubble {
+      background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 7px;
+      font-size: 10.5px; color: var(--ink-2); line-height: 1.4; margin-bottom: 5px;
+    }
+    .ck-bubble .who { font-size: 9.5px; color: var(--ink-4); font-weight: 600; margin-bottom: 2px; }
+    .ck-actions { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+    .ck-act {
+      font-size: 9.5px; padding: 3px 7px; border-radius: 999px; border: 1px solid #bfdbfe;
+      background: #eff6ff; color: #1e40af; font-weight: 650;
+    }
+    .ck-act.do { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .ck-act.pulse { box-shadow: 0 0 0 3px rgba(44,126,248,0.22); }
+    .ck-drop {
+      margin-top: auto; border: 1.5px dashed #93c5fd; border-radius: 8px; padding: 7px;
+      background: #eff6ff; color: #1e40af; font-size: 10.5px; text-align: center; font-weight: 600;
+      opacity: 0; transform: scale(0.98); transition: 0.25s;
+    }
+    .ck-drop.show { opacity: 1; transform: none; }
+    .ck-ocr {
+      margin-top: 5px; padding: 6px 7px; border-radius: 7px; border: 1px dashed #93c5fd;
+      background: #eff6ff; font-size: 10.5px; color: #1e40af; opacity: 0; transition: 0.3s;
+    }
+    .ck-ocr.show { opacity: 1; }
+    .ck-metric {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 5px 0;
+    }
+    .ck-metric > div {
+      background: #f8fafc; border: 1px solid var(--line-soft); border-radius: 6px; padding: 5px 6px;
+    }
+    .ck-metric .l { font-size: 9.5px; color: var(--ink-4); }
+    .ck-metric .v { font-size: 12px; font-weight: 700; color: var(--ink); margin-top: 1px; }
+    .ck-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 4px; }
+    .ck-quick span {
+      font-size: 9.5px; padding: 4px 5px; border-radius: 6px; background: #f8fafc;
+      border: 1px solid var(--line-soft); color: var(--ink-2); font-weight: 600; text-align: center;
+    }
+    .feat-grid {
+      display: grid; gap: 8px; margin-top: 4px;
+    }
+    .feat {
+      padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line-soft); background: #f8fafc;
+    }
+    .feat strong { display: block; font-size: 12.5px; margin-bottom: 2px; }
+    .feat p { font-size: 12px; color: var(--ink-3); line-height: 1.45; }
+    .chat-bubbles { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+    .bub {
+      max-width: 78%; padding: 7px 9px; border-radius: 10px; font-size: 11.5px; line-height: 1.4;
+    }
+    .bub.p { align-self: flex-start; background: #fff; border: 1px solid var(--line); }
+    .bub.s { align-self: flex-end; background: #2c7ef8; color: #fff; }
+    .ocr-card {
+      margin-top: 6px; padding: 8px; border-radius: 8px; border: 1px dashed #93c5fd;
+      background: #eff6ff; font-size: 11.5px; color: #1e40af;
+    }
+
+    .foot {
+      margin-top: 8px; padding: 14px 16px; border: 1px dashed var(--line);
+      border-radius: 12px; background: #fff; color: var(--ink-3); font-size: 12.5px;
+    }
+
+    @media (max-width: 1280px) {
+      .section { grid-template-columns: minmax(200px, 0.85fr) minmax(0, 1.15fr); }
+      .why { grid-column: 1 / -1; }
+    }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .guide-nav { position: relative; height: auto; }
+      .section { grid-template-columns: 1fr; }
+      .why { grid-column: auto; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .login-page { grid-template-columns: 1fr; }
+      .login-brand { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="guide-nav">
+      <div class="gn-brand">
+        <div class="gn-logo">H</div>
+        <div>
+          <strong>Healix</strong>
+          <small>使用说明 · 演示版</small>
+        </div>
+      </div>
+
+      <div class="gn-sec">总览</div>
+      <a class="gn-item active" href="#overview" data-nav="overview">
+        <span class="gn-num">●</span>
+        <span><span class="t">全流程地图</span><span class="d">入组 · 管理 · 协作</span></span>
+      </a>
+
+      <div class="gn-sec">一、入组闭环</div>
+      <a class="gn-item" href="#s1" data-nav="s1"><span class="gn-num">1</span><span><span class="t">登录工作台</span><span class="d">账号入口</span></span></a>
+      <a class="gn-item" href="#s2" data-nav="s2"><span class="gn-num">2</span><span><span class="t">选择机构</span><span class="d">进入驾驶舱</span></span></a>
+      <a class="gn-item" href="#s3" data-nav="s3"><span class="gn-num">3</span><span><span class="t">患者建档</span><span class="d">本机构入组</span></span></a>
+      <a class="gn-item" href="#s4" data-nav="s4"><span class="gn-num">4</span><span><span class="t">完成首诊</span><span class="d">快速 / 完整</span></span></a>
+      <a class="gn-item" href="#s5" data-nav="s5"><span class="gn-num">5</span><span><span class="t">制定方案</span><span class="d">AI 草稿 · 发布</span></span></a>
+
+      <div class="gn-sec">二、持续管理</div>
+      <a class="gn-item" href="#s6" data-nav="s6"><span class="gn-num">6</span><span><span class="t">疾病评估</span><span class="d">风险 / 严重度</span></span></a>
+      <a class="gn-item" href="#s7" data-nav="s7"><span class="gn-num">7</span><span><span class="t">用药管理</span><span class="d">在用 · 提醒</span></span></a>
+      <a class="gn-item" href="#s8" data-nav="s8"><span class="gn-num">8</span><span><span class="t">观测数据</span><span class="d">指标 · 检验 OCR</span></span></a>
+      <a class="gn-item" href="#s9" data-nav="s9"><span class="gn-num">9</span><span><span class="t">随访管理</span><span class="d">创建 · 办结</span></span></a>
+      <a class="gn-item" href="#s10" data-nav="s10"><span class="gn-num">10</span><span><span class="t">健康报告</span><span class="d">周/月/季总结</span></span></a>
+      <a class="gn-item" href="#s11" data-nav="s11"><span class="gn-num">11</span><span><span class="t">依从看板</span><span class="d">执行跟进</span></span></a>
+      <a class="gn-item" href="#s12" data-nav="s12"><span class="gn-num">12</span><span><span class="t">工作台待办</span><span class="d">公共池 · 办结</span></span></a>
+
+      <div class="gn-sec">三、日常协作</div>
+      <a class="gn-item" href="#s13" data-nav="s13"><span class="gn-num">13</span><span><span class="t">智能驾驶舱</span><span class="d">AI 主卖点</span></span></a>
+      <a class="gn-item" href="#s14" data-nav="s14"><span class="gn-num">14</span><span><span class="t">患者沟通</span><span class="d">消息 · 提取</span></span></a>
+
+      <div class="gn-foot">
+        <b>给老板演示</b><br />
+        点步骤跳转。每步：左操作 · 中动画 · 右设计理由/场景。可「重播」单步循环。
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div>
+          <h1>Healix 产品使用说明 · 全流程</h1>
+          <p>入组闭环 → 持续管理 → 日常协作 · 每步含操作说明、动画与设计理由（不连账号）</p>
+        </div>
+        <div class="spacer"></div>
+        <button type="button" class="replay-all" id="replayVisible">重播当前动画</button>
+      </header>
+
+      <div class="content">
+        <section class="hero-card" id="overview">
+          <div class="kicker">WORKSPACE · FULL JOURNEY</div>
+          <h2>入组、持续管理与日常协作，一条链路说清</h2>
+          <p>建档首诊出方案之后，持续管理（评估/用药/观测/随访/阶段总结/依从/<strong>工作台待办</strong>）托底；日常主角是<strong>智能驾驶舱里的健管智能体</strong>——机构简报、任务编排、患者建议、动作卡、拖图 OCR 与聊天识别，人审后落库。</p>
+          <div class="flow" style="grid-template-columns:repeat(4,1fr)">
+            <a href="#s1"><span class="n">入组</span><span class="t">登录 → 方案</span><span class="d">步骤 1–5</span></a>
+            <a href="#s6"><span class="n">评估用药</span><span class="t">风险 · 用药 · 观测</span><span class="d">步骤 6–8</span></a>
+            <a href="#s9"><span class="n">持续管理</span><span class="t">随访 · 依从 · 待办</span><span class="d">步骤 9–12</span></a>
+            <a href="#s13"><span class="n">协作</span><span class="t">驾驶舱 · 沟通</span><span class="d">步骤 13–14</span></a>
+          </div>
+        </section>
+
+        <!-- 1 -->
+        <section class="section" id="s1">
+          <article class="copy">
+            <span class="badge">STEP 01 · 登录</span>
+            <h3>登录机构工作台</h3>
+            <p class="where">入口选择「机构工作台」→ <code>/login/workspace</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>打开工作台登录</strong><p>左侧品牌区 + 右侧表单，与线上一致。</p></div></li>
+              <li><span class="dot">2</span><div><strong>输入账号密码</strong><p>健管师 / 医生账号；多租户时先选租户。</p></div></li>
+              <li><span class="dot">3</span><div><strong>登录成功</strong><p>跳转「选择工作机构」，尚未进业务侧栏。</p></div></li>
+            </ol>
+            <div class="tip">演示账号请提前准备；若开了 MFA，准备验证器验证码。</div>
+          </article>
+          <aside class="stage" data-demo="login">
+            <div class="stage-bar">
+              <div class="dots"><i></i><i></i><i></i></div>
+              <span>贴近原页 · 登录</span>
+              <button type="button" class="replay" data-replay>重播</button>
+            </div>
+            <div class="screen">
+              <div class="login-page">
+                <div class="login-brand">
+                  <div class="login-brand-inner">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div class="mark">H</div><strong style="font-size:13px">Healix</strong>
+                    </div>
+                    <h4>把健康管理<br/>做成可执行闭环</h4>
+                    <p>档案 · 首诊 · 方案 · 依从，一个工作台串起来。</p>
+                  </div>
+                </div>
+                <div class="login-form">
+                  <div class="badge-ws">WORKSPACE</div>
+                  <h5>机构工作台登录</h5>
+                  <div class="sub">健管师 / 医生入口</div>
+                  <div class="field" style="margin-bottom:8px"><label>用户名</label><div class="box" data-type="user"></div></div>
+                  <div class="field" style="margin-bottom:12px"><label>密码</label><div class="box" data-type="pass"></div></div>
+                  <div class="btn-p" data-btn style="width:100%;height:36px">登 录</div>
+                </div>
+              </div>
+              <div class="toast" data-toast>登录成功</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>独立工作台入口，和患者端、员工端分开</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>健管业务权限、机构切换、侧栏菜单都与 C 端不同；单独登录页避免角色串扰，也方便给客户演示「机构工作台」品牌面。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>晨会前健管师登录，准备今日跟进</li>
+                <li>多租户部署时先选租户再进机构</li>
+                <li>演示时强调：这是 B 端运营工作台，不是患者小程序</li>
+              </ul>
+            </div>
+            <p class="why-note">登录成功后不直接进业务，强制先选机构，保证数据边界清晰。</p>
+          </aside>
+        </section>
+
+        <!-- 2 -->
+        <section class="section" id="s2">
+          <article class="copy">
+            <span class="badge">STEP 02 · 选机构</span>
+            <h3>选择工作机构</h3>
+            <p class="where">路径 <code>/workspace/orgs</code> → 进入智能驾驶舱</p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>查看机构卡片</strong><p>仅展示当前账号有权限的机构。</p></div></li>
+              <li><span class="dot">2</span><div><strong>点击进入</strong><p>切换会话中的当前机构。</p></div></li>
+              <li><span class="dot">3</span><div><strong>进入驾驶舱</strong><p>侧栏出现患者、任务、依从等菜单。</p></div></li>
+            </ol>
+            <div class="tip">后续建档 / 首诊 / 方案都归属当前机构，演示前确认选对。</div>
+          </article>
+          <aside class="stage" data-demo="org">
+            <div class="stage-bar">
+              <div class="dots"><i></i><i></i><i></i></div>
+              <span>贴近原页 · 选机构</span>
+              <button type="button" class="replay" data-replay>重播</button>
+            </div>
+            <div class="screen">
+              <div class="org-page">
+                <div class="ws-shell no-sider" style="height:100%">
+                  <div class="ws-main">
+                    <div class="ws-top"><span style="color:var(--ink-4)">工作台</span><span>/</span><span>选择机构（尚未进入业务菜单）</span></div>
+                    <div class="ws-body">
+                      <div class="page-h">
+                        <div><h4>选择工作机构</h4><p>选择机构后进入智能驾驶舱</p></div>
+                      </div>
+                      <div class="org-grid">
+                        <div class="org-card" data-org="a">
+                          <div class="name">星海门诊 · 徐汇</div>
+                          <div class="meta">门诊 · 启用</div>
+                          <div class="link">进入驾驶舱 →</div>
+                        </div>
+                        <div class="org-card" data-org="b">
+                          <div class="name">星海门诊 · 浦东</div>
+                          <div class="meta">门诊 · 启用</div>
+                          <div class="link">进入驾驶舱 →</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="toast" data-toast>已进入 星海门诊 · 徐汇</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>先选机构再开业务菜单</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>同一账号常跨多门诊；患者、待办、驾驶舱简报都必须挂在「当前机构」下。选机构页无侧栏，避免在错误机构误操作。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>连锁门诊：上午徐汇、下午浦东，切换机构即切换数据域</li>
+                <li>授权兼职医生：只看到被分配的机构卡片</li>
+                <li>演示叙事：选机构 = 进入这家店的智能驾驶舱</li>
+              </ul>
+            </div>
+            <p class="why-note">进入后默认落在驾驶舱，而不是空白首页，减少「打开后不知道干什么」。</p>
+          </aside>
+        </section>
+
+        <!-- 3 -->
+        <section class="section" id="s3">
+          <article class="copy">
+            <span class="badge">STEP 03 · 建档</span>
+            <h3>患者建档（本机构入组）</h3>
+            <p class="where">侧栏「患者」→ <code>新建患者档案</code> · <code>/workspace/patients</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>打开患者列表</strong><p>可见 KPI 与在管患者表。</p></div></li>
+              <li><span class="dot">2</span><div><strong>点「新建患者档案」</strong><p>弹出建档表单。</p></div></li>
+              <li><span class="dot">3</span><div><strong>填姓名 / 手机 / 生日</strong><p>优先本人手机；证件可选。</p></div></li>
+              <li><span class="dot">4</span><div><strong>提交并查重</strong><p>命中已有档案可关联入组，避免重复建人。</p></div></li>
+            </ol>
+            <div class="tip">建档成功后进患者详情，顶栏点「开始首诊」。</div>
+          </article>
+          <aside class="stage" data-demo="archive">
+            <div class="stage-bar">
+              <div class="dots"><i></i><i></i><i></i></div>
+              <span>贴近原页 · 患者建档</span>
+              <button type="button" class="replay" data-replay>重播</button>
+            </div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="patients">
+                <div class="ws-main">
+                  <div class="ws-top">
+                    <span style="color:var(--ink-4)">星海 · 徐汇</span><span>/</span><span>患者管理</span>
+                    <span style="margin-left:auto"></span>
+                  </div>
+                  <div class="ws-body">
+                    <div class="page-h">
+                      <div><h4>患者</h4><p>共 <b>128</b> 位在管患者</p></div>
+                      <div class="btn-p" data-new>+ 新建患者档案</div>
+                    </div>
+                    <div class="kpi-row">
+                      <div class="kpi"><div class="l">今日首诊</div><div class="v">3</div></div>
+                      <div class="kpi"><div class="l">待跟进</div><div class="v">12</div></div>
+                      <div class="kpi"><div class="l">本周新增</div><div class="v">9</div></div>
+                    </div>
+                    <div class="table">
+                      <div class="th"><span>患者</span><span>标签</span><span>状态</span></div>
+                      <div class="tr"><div class="patient"><div class="av">李</div><div class="nm">李先生</div></div><span style="color:var(--ink-4);font-size:11px">肥胖</span><span style="color:#0f766e;font-size:11px">在管</span></div>
+                      <div class="tr"><div class="patient"><div class="av" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">陈</div><div class="nm">陈女士</div></div><span style="color:var(--ink-4);font-size:11px">高血压</span><span style="color:#0f766e;font-size:11px">在管</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="dialog-mask" data-dialog>
+                <div class="dialog">
+                  <div class="dialog-h"><span>新建患者档案</span><span style="color:var(--ink-4)">×</span></div>
+                  <div class="dialog-b">
+                    <div class="field" style="margin-bottom:8px"><label>姓名</label><div class="box" data-type="name"></div></div>
+                    <div class="field" style="margin-bottom:8px"><label>本人手机号</label><div class="box" data-type="mobile"></div></div>
+                    <div class="field"><label>出生日期</label><div class="box" data-type="bday"></div></div>
+                  </div>
+                  <div class="dialog-f">
+                    <div class="btn-g">取消</div>
+                    <div class="btn-p" data-submit>提交建档</div>
+                  </div>
+                </div>
+              </div>
+              <div class="toast" data-toast>建档成功</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>本机构入组 + 查重，避免重复建人</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>人是全局主体，入组是机构关系。手机号查重可关联已有档案，防止同一人多条档案导致方案/依从割裂。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>前台接待新客：姓名 + 本人手机快速建档</li>
+                <li>老客转诊到本院：命中档案后关联入组，不重录</li>
+                <li>列表 KPI 让主管一眼看到今日首诊与待跟进压力</li>
+              </ul>
+            </div>
+            <p class="why-note">建档只是入组起点；真正管理闭环从「开始首诊」拉开。</p>
+          </aside>
+        </section>
+
+        <!-- 4 -->
+        <section class="section" id="s4">
+          <article class="copy">
+            <span class="badge">STEP 04 · 首诊</span>
+            <h3>完成首诊问卷</h3>
+            <p class="where">患者顶栏「开始首诊」· 新标签全屏 <code>.../intake</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>切换「快速 / 完整」</strong><p>顶栏可随时切换：快速只收必收 + 首诊建议；完整展开全部题目。健管师补充 / AI 总结两种模式都保留。</p></div></li>
+              <li><span class="dot">2</span><div><strong>左侧切模块作答</strong><p>基本信息、病史用药、饮食运动、目标等；用药/过敏用专用编辑器。</p></div></li>
+              <li><span class="dot">3</span><div><strong>AI 案头总结</strong><p>末段内部模块生成，可编辑后提交。</p></div></li>
+              <li><span class="dot">4</span><div><strong>提交并关页签</strong><p>写回档案；高亮与总结供方案生成使用。</p></div></li>
+            </ol>
+            <div class="tip">面诊时间紧用「快速」先闭环；信息要采全再切「完整」补题。进度条按当前模式可见题计算。</div>
+          </article>
+          <aside class="stage" data-demo="intake">
+            <div class="stage-bar">
+              <div class="dots"><i></i><i></i><i></i></div>
+              <span>贴近原页 · 首诊问卷</span>
+              <button type="button" class="replay" data-replay>重播</button>
+            </div>
+            <div class="screen">
+              <div class="intake">
+                <div class="intake-top">
+                  <div class="who"><strong>王女士</strong><span>首诊问卷 · 自动保存</span></div>
+                  <div class="intake-mid">
+                    <div class="mode-switch" data-mode>
+                      <span class="on" data-mode-quick>快速</span>
+                      <span data-mode-full>完整</span>
+                    </div>
+                    <div class="intake-pills">
+                      <span class="pill ok">必收 12/12</span>
+                      <span class="pill" data-pill-fv>建议 8/14</span>
+                      <span class="pill" data-pill-pct>62%</span>
+                    </div>
+                  </div>
+                  <div class="btn-p" data-submit style="height:28px;font-size:11.5px">提交并完成首诊</div>
+                </div>
+                <div class="intake-body">
+                  <aside class="intake-nav">
+                    <div class="h">模块</div>
+                    <div class="imod on" data-mod><span class="i">1</span>基本信息</div>
+                    <div class="imod" data-mod><span class="i">2</span>病史用药</div>
+                    <div class="imod" data-mod><span class="i">3</span>饮食运动</div>
+                    <div class="imod" data-mod data-mod-extra><span class="i">4</span>生活方式</div>
+                    <div class="imod" data-mod><span class="i">5</span>目标偏好</div>
+                    <div class="imod" data-mod><span class="i">6</span>AI 总结</div>
+                  </aside>
+                  <main class="intake-form">
+                    <div class="mod-title" data-title>饮食与运动</div>
+                    <div class="script" data-script>您平时运动多吗？我们按您能坚持的节奏来安排。</div>
+                    <div class="q">
+                      <div class="ql" data-ql>平时运动（每次 30 分钟以上）的频率？</div>
+                      <div class="chips" data-chips>
+                        <span class="chip">基本不运动</span>
+                        <span class="chip">每周 1–2 次</span>
+                        <span class="chip">每周 ≥3 次</span>
+                        <span class="chip">每天</span>
+                      </div>
+                      <div class="ai-box" data-ai style="display:none"></div>
+                    </div>
+                  </main>
+                </div>
+              </div>
+              <div class="toast" data-toast>首诊已提交</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>快速闭环 + 完整采全，同一份问卷</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>首诊题量大。默认「快速」只暴露必收与首诊建议，先把入组闭环跑通；需要更细画像时切「完整」展开其余题，不必另开一份表。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>门诊高峰：快速模式 10 分钟内提交</li>
+                <li>慢病深访：切完整补生活方式 / 家族史等</li>
+                <li>中途切模式：已填答案保留，进度按当前可见题重算</li>
+              </ul>
+            </div>
+            <p class="why-note">首诊摘要与高亮会进入方案生成上下文——采得准，方案才贴人。</p>
+          </aside>
+        </section>
+
+        <!-- 5 -->
+        <section class="section" id="s5">
+          <article class="copy">
+            <span class="badge">STEP 05 · 方案</span>
+            <h3>制定并审阅管理方案</h3>
+            <p class="where">患者详情 → 标签「管理方案」· <code>.../care-plan</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>打开管理方案页</strong><p>可见患者头区与多业务标签。</p></div></li>
+              <li><span class="dot">2</span><div><strong>AI 生成方案</strong><p>结合档案、首诊摘要/高亮、目标、过敏用药。</p></div></li>
+              <li><span class="dot">3</span><div><strong>审阅草稿</strong><p>运动 / 饮食 / 执行任务可修订。</p></div></li>
+              <li><span class="dot">4</span><div><strong>确认后发布</strong><p>草稿不会自动生效，须人工发布。</p></div></li>
+            </ol>
+            <div class="tip">减重方案需先完成减重项目首诊；发布前注意安全约束。</div>
+          </article>
+          <aside class="stage" data-demo="plan">
+            <div class="stage-bar">
+              <div class="dots"><i></i><i></i><i></i></div>
+              <span>贴近原页 · 管理方案</span>
+              <button type="button" class="replay" data-replay>重播</button>
+            </div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="patients">
+                <div class="ws-main">
+                  <div class="patient-hero">
+                    <div class="pic">王</div>
+                    <div style="flex:1">
+                      <div class="nm">王女士 <span style="font-size:11px;color:var(--ink-4);font-weight:500">· 38 岁 · 女</span></div>
+                      <div class="meta">肥胖管理 · 首诊已完成</div>
+                    </div>
+                    <div class="btn-p" data-gen style="height:28px;font-size:11.5px">AI 生成方案</div>
+                  </div>
+                  <div class="tabs">
+                    <div class="tab">档案</div>
+                    <div class="tab on">管理方案</div>
+                    <div class="tab">用药</div>
+                    <div class="tab">随访</div>
+                  </div>
+                  <div class="cp-body">
+                    <div class="cp-empty" data-empty>暂无草稿 · 可基于首诊信息 AI 生成</div>
+                    <div class="progress" data-prog style="display:none"><i data-bar></i></div>
+                    <div data-status style="font-size:11.5px;color:var(--ink-3);margin-bottom:4px"></div>
+                    <div class="plan-card" data-block><h5>运动计划</h5><p>餐后快走 25–30 分钟，每周 ≥5 天；强度偏轻，关节友好。</p></div>
+                    <div class="plan-card" data-block><h5>饮食计划</h5><p>控精制糖与外卖；示例周菜单已规避海鲜过敏。</p></div>
+                    <div class="plan-card" data-block><h5>执行任务</h5><p>打卡：步行 · 三餐记录 · 体重（按首诊节奏）· 睡眠。</p></div>
+                  </div>
+                </div>
+              </div>
+              <div class="toast" data-toast>草稿已生成，请审阅</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>AI 起草、人发布：安全阀门在中间</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>方案直接影响患者执行任务。AI 负责提速与个性化草稿，发布必须健管师确认，并把过敏、禁忌等安全约束挡在生效前。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>首诊刚结束：一键生成运动/饮食/打卡任务</li>
+                <li>随访后微调：改草稿再发，不必从零写</li>
+                <li>对外演示：强调「可执行闭环」而不是一纸建议书</li>
+              </ul>
+            </div>
+            <p class="why-note">未发布的草稿不会进患者端打卡；发布才打开依从闭环。</p>
+          </aside>
+        </section>
+
+        <!-- 6 Assessment -->
+        <section class="section" id="s6">
+          <article class="copy">
+            <span class="badge">STEP 06 · 疾病评估</span>
+            <h3>患病风险与严重度评估</h3>
+            <p class="where">患者详情 → <code>疾病评估</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>查看评估标签</strong><p>头区展示各病种风险 / 已患严重度。</p></div></li>
+              <li><span class="dot">2</span><div><strong>缺数可补问卷</strong><p>可发送评估问卷给患者补齐因子。</p></div></li>
+              <li><span class="dot">3</span><div><strong>打开依据</strong><p>查看关键因素；用于干预强度，不替代诊疗。</p></div></li>
+            </ol>
+            <div class="tip">评估结论会进入方案生成上下文；患者可见文案避免「高危」等黑话。</div>
+          </article>
+          <aside class="stage" data-demo="assess">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 疾病评估</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="patients">
+                <div class="ws-main">
+                  <div class="patient-hero">
+                    <div class="pic">王</div>
+                    <div style="flex:1"><div class="nm">王女士</div><div class="meta">疾病评估</div>
+                      <div class="tag-row" data-tags>
+                        <span class="htag warn">肥胖 · 中危</span>
+                        <span class="htag info">糖尿病 · 待评估</span>
+                      </div>
+                    </div>
+                    <div class="btn-g" data-send style="height:28px;font-size:11px">发送评估问卷</div>
+                  </div>
+                  <div class="tabs"><div class="tab">档案</div><div class="tab on">疾病评估</div><div class="tab">管理方案</div></div>
+                  <div class="cp-body">
+                    <div class="list-row" data-row><div><div class="l">肥胖风险评估</div><div class="m">腰围 · BMI · 家族史</div></div><span class="htag warn">中危</span></div>
+                    <div class="list-row"><div><div class="l">糖尿病患病风险</div><div class="m">缺：空腹血糖</div></div><span class="htag info">数据不足</span></div>
+                    <div class="ocr-card" data-hint style="opacity:0">已向患者发送评估问卷 · 待填写</div>
+                  </div>
+                </div>
+              </div>
+              <div class="toast" data-toast>评估问卷已发送</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>风险标签驱动干预强度，不替代诊疗</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>健管需要统一的风险/严重度语言来定随访频率与方案力度。标签进方案上下文，但对患者侧文案避黑话，防止惊吓与误诊感。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>缺空腹血糖等因子：发问卷让患者补齐再算</li>
+                <li>打开依据：向医生/患者解释「为什么是中危」</li>
+                <li>多病种并行：肥胖、糖尿病等标签同屏对照</li>
+              </ul>
+            </div>
+            <p class="why-note">评估是管理分层工具，结论不自动改诊断、不开药。</p>
+          </aside>
+        </section>
+
+        <!-- 7 Meds -->
+        <section class="section" id="s7">
+          <article class="copy">
+            <span class="badge">STEP 07 · 用药</span>
+            <h3>用药管理与提醒</h3>
+            <p class="where">患者详情 → <code>用药</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>查看在用清单</strong><p>首诊写回的药会出现在此。</p></div></li>
+              <li><span class="dot">2</span><div><strong>添加 / 调整用药</strong><p>剂量、频次、服药时段。</p></div></li>
+              <li><span class="dot">3</span><div><strong>患者端打卡</strong><p>依从看板可看今日是否按时服药。</p></div></li>
+            </ol>
+            <div class="tip">过敏原会约束方案饮食；减重药等类别也会影响干预话术。</div>
+          </article>
+          <aside class="stage" data-demo="meds">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 用药</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="patients">
+              <div class="ws-main">
+                <div class="ws-top"><span>王女士</span><span>/</span><span>用药</span><span style="margin-left:auto" class="btn-p" data-add style="height:26px;font-size:11px">+ 添加用药</span></div>
+                <div class="ws-body">
+                  <div class="table">
+                    <div class="th"><span>药品</span><span>用法</span><span>状态</span></div>
+                    <div class="tr"><span class="l" style="font-weight:650">二甲双胍</span><span style="font-size:11px;color:var(--ink-3)">0.5g · 口服 · 每日 2 次</span><span class="htag ok">在用</span></div>
+                    <div class="tr" data-newrow style="opacity:0"><span class="l" style="font-weight:650">阿托伐他汀</span><span style="font-size:11px;color:var(--ink-3)">10mg · 口服 · 每晚</span><span class="htag ok">在用</span></div>
+                  </div>
+                </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>已添加用药</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>在用清单是依从与方案的共用真相</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>首诊写回、OCR 用药单、手工添加都汇到同一清单，患者端才能按次打卡，依从看板才有「今日是否服药」信号。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>复诊改药：调整剂量/频次后立刻影响提醒</li>
+                <li>过敏与减重药类别约束饮食话术与方案安全</li>
+                <li>驾驶舱拖入用药单 → 核对后进本清单</li>
+              </ul>
+            </div>
+            <p class="why-note">用药未完成默认不自动开催办，避免过度打扰；可在看板人工催。</p>
+          </aside>
+        </section>
+
+        <!-- 8 Observations -->
+        <section class="section" id="s8">
+          <article class="copy">
+            <span class="badge">STEP 08 · 观测</span>
+            <h3>指标、检验与检查 OCR</h3>
+            <p class="where">患者详情 → <code>观测数据</code>（指标 / 趋势 / 检验 / 检查）</p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>录入或同步体征</strong><p>体重、血压、血糖等。</p></div></li>
+              <li><span class="dot">2</span><div><strong>上传检验 / 检查单</strong><p>OCR 预填，人工核对后入库。</p></div></li>
+              <li><span class="dot">3</span><div><strong>看趋势</strong><p>为报告与方案调整提供依据。</p></div></li>
+            </ol>
+            <div class="tip">AI 只做预填，人确认后才写库。</div>
+          </article>
+          <aside class="stage" data-demo="obs">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 观测 OCR</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="patients">
+              <div class="ws-main">
+                <div class="ws-top"><span>观测数据</span><span>/</span><span>检验</span><span style="margin-left:auto" class="btn-p" data-ocr style="height:26px;font-size:11px">上传检验单 OCR</span></div>
+                <div class="ws-body">
+                  <div class="list-row"><div><div class="l">体重</div><div class="m">今天 78.2 kg</div></div><span class="htag ok">正常录入</span></div>
+                  <div class="ocr-card" data-ocrbox style="opacity:0">识别中：空腹血糖 6.8 · 糖化 6.4% …</div>
+                  <div class="list-row" data-lab style="opacity:0"><div><div class="l">检验报告 · 草稿</div><div class="m">待核对后入库</div></div><span class="htag warn">待审阅</span></div>
+                </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>OCR 预填完成，请核对</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>指标 + 检验检查一张「观测」底盘</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>体征手录、检验/检查 OCR、聊天提取最终都进观测，报告与方案调整才有统一数据源。OCR 只预填，人确认后写库，控医疗数据风险。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>患者带来纸质化验单：上传/拖图识别</li>
+                <li>看体重血压趋势，决定是否加强干预</li>
+                <li>周报生成时自动汇总近 7 日观测</li>
+              </ul>
+            </div>
+            <p class="why-note">驾驶舱「单据录入」与本页 OCR 是同一能力，入口不同、核对流程一致。</p>
+          </aside>
+        </section>
+
+        <!-- 9 Followup -->
+        <section class="section" id="s9">
+          <article class="copy">
+            <span class="badge">STEP 09 · 随访</span>
+            <h3>创建随访并办结</h3>
+            <p class="where">患者详情 → <code>随访管理</code>；也可从依从看板 / 驾驶舱一键开单</p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>新建随访</strong><p>入组、定期、异常跟进等类型。</p></div></li>
+              <li><span class="dot">2</span><div><strong>按表单沟通记录</strong><p>可写方案满意度、依从问题等。</p></div></li>
+              <li><span class="dot">3</span><div><strong>办结</strong><p>人工办结；可触发「调整方案」待办。</p></div></li>
+            </ol>
+            <div class="tip">随访须人工办结；排期可按机构×病种配置。</div>
+          </article>
+          <aside class="stage" data-demo="followup">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 随访</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="patients">
+              <div class="ws-main">
+                <div class="ws-top"><span>随访管理</span><span style="margin-left:auto" class="btn-p" data-new style="height:26px;font-size:11px">+ 新建随访</span></div>
+                <div class="ws-body">
+                  <div class="list-row" data-row style="opacity:0"><div><div class="l">定期随访 · 今日</div><div class="m">电话 · 关注体重与服药</div></div><span class="htag warn">进行中</span></div>
+                  <div class="q" data-form style="opacity:0;margin-top:8px">
+                    <div class="ql">办结摘要</div>
+                    <div class="ai-box" data-note style="display:block;min-height:36px"></div>
+                    <div class="btn-p" data-done style="margin-top:8px;height:28px;font-size:11.5px">办结随访</div>
+                  </div>
+                </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>随访已办结</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>随访是人工闭环节点，不是自动工单</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>依从异常、入组、定期都需要「人说过一次话」的留痕。办结必须人工，可触发调方案待办，避免 AI 假装已沟通。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>依从看板红人：一键开随访电话跟进</li>
+                <li>驾驶舱动作卡：创建随访后填表办结</li>
+                <li>机构按病种配置排期，到期进入待办</li>
+              </ul>
+            </div>
+            <p class="why-note">随访记录会喂给阶段报告与下次方案修订，越办结越有上下文。</p>
+          </aside>
+        </section>
+
+        <!-- 10 Reports -->
+        <section class="section" id="s10">
+          <article class="copy">
+            <span class="badge">STEP 10 · 阶段总结</span>
+            <h3>健康报告（周 / 月 / 季）</h3>
+            <p class="where">患者详情 → <code>健康报告</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>选择周期生成</strong><p>最近一周报（入组对齐）、上月月报、上季三月报。</p></div></li>
+              <li><span class="dot">2</span><div><strong>AI 点评草稿</strong><p>汇总方案执行、用药、饮食运动等。</p></div></li>
+              <li><span class="dot">3</span><div><strong>审阅后发布</strong><p>发布后患者端可见；可导出 PDF。</p></div></li>
+            </ol>
+            <div class="tip">这是面向患者与健管的「阶段总结」主入口；三月报还可带出制定方案待办。</div>
+          </article>
+          <aside class="stage" data-demo="report">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 健康报告</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="patients">
+              <div class="ws-main">
+                <div class="ws-top">
+                  <span>健康报告</span>
+                  <span style="margin-left:auto" class="btn-p" data-gen style="height:26px;font-size:11px">生成报告 ▾</span>
+                </div>
+                <div class="ws-body">
+                  <div class="kpi-row">
+                    <div class="kpi"><div class="l">草稿</div><div class="v" data-d>0</div></div>
+                    <div class="kpi"><div class="l">已发布</div><div class="v">2</div></div>
+                    <div class="kpi"><div class="l">本周</div><div class="v">周报</div></div>
+                  </div>
+                  <div class="menu" data-menu style="display:none;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px;margin-bottom:8px">
+                    <div class="list-row" style="margin:2px;border:0" data-week>最近一周报（入组对齐）</div>
+                    <div class="list-row" style="margin:2px;border:0">上月月报</div>
+                    <div class="list-row" style="margin:2px;border:0">上季三月报</div>
+                  </div>
+                  <div class="progress" data-prog style="display:none"><i data-bar></i></div>
+                  <div class="list-row" data-draft style="opacity:0"><div><div class="l">周报草稿 · 近 7 日</div><div class="m">依从 86% · 体重 −0.6kg · AI 点评已生成</div></div>
+                    <div style="display:flex;gap:6px"><span class="btn-g" style="height:26px;font-size:11px">预览</span><span class="btn-p" data-pub style="height:26px;font-size:11px">发布</span></div>
+                  </div>
+                </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>报告已发布，患者可见</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>周/月/季阶段总结，对患者可见</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>管理价值要周期性可见：周报对齐入组节奏，月报看趋势，季报可带出「重新制定方案」待办。AI 点评是草稿，发布才进患者端。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>周末批量生成周报，审阅后一键发布</li>
+                <li>向患者复盘「这周做对了什么」</li>
+                <li>导出 PDF 用于门诊沟通或家属同步</li>
+              </ul>
+            </div>
+            <p class="why-note">这里是阶段总结主入口；不是另做一套「评估报告」产品。</p>
+          </aside>
+        </section>
+
+        <!-- 11 Adherence -->
+        <section class="section" id="s11">
+          <article class="copy">
+            <span class="badge">STEP 11 · 依从</span>
+            <h3>依从性看板 · 执行跟进</h3>
+            <p class="where">侧栏 <code>依从性看板</code>；患者内也有「依从性分析」</p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>看今日未完成</strong><p>方案任务、用药打卡缺口。</p></div></li>
+              <li><span class="dot">2</span><div><strong>筛选需跟进</strong><p>连续未完成、饮食运动无记录等。</p></div></li>
+              <li><span class="dot">3</span><div><strong>一键催办</strong><p>开随访 / 打卡跟进待办 / 发沟通。</p></div></li>
+            </ol>
+            <div class="tip">用药未完成默认不自动开催办单；看板可人工催。</div>
+          </article>
+          <aside class="stage" data-demo="adhere">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 依从看板</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="adherence">
+              <div class="ws-main">
+                <div class="ws-top"><span>依从性看板</span><span class="htag warn" style="margin-left:8px">需跟进 8</span></div>
+                <div class="ws-body">
+                  <div class="list-row" data-row>
+                    <div><div class="l">王女士</div><div class="m">今日方案未完成 · 用药已打卡</div></div>
+                    <div style="display:flex;align-items:center;gap:8px"><div class="bar-track"><i style="width:45%"></i></div><span class="btn-p" data-nudge style="height:26px;font-size:11px">催打卡</span></div>
+                  </div>
+                  <div class="list-row"><div><div class="l">李先生</div><div class="m">近 7 日完成率 92%</div></div><div class="bar-track"><i style="width:92%"></i></div></div>
+                </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>已创建打卡跟进待办</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>专业视图：一眼看清谁没执行</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>驾驶舱负责「智能编排」，依从看板负责「运营深潜」。按缺口筛选、看 7 日完成率，适合晨会派工与批量催办。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>早高峰：筛「今日方案未完成」批量催打卡</li>
+                <li>连续多日缺卡：开随访而不是只发提醒</li>
+                <li>主管巡检：对比组内完成率</li>
+              </ul>
+            </div>
+            <p class="why-note">与工作台 / 驾驶舱互补：看板看面，工作台清单，驾驶舱对人下钻。</p>
+          </aside>
+        </section>
+
+        <!-- 12 Tasks / 工作台 -->
+        <section class="section" id="s12">
+          <article class="copy">
+            <span class="badge">STEP 12 · 工作台</span>
+            <h3>工作台 · 待办任务深潜</h3>
+            <p class="where">侧栏 <code>工作台</code> · 路径 <code>/workspace/tasks</code></p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>看摘要切池</strong><p>公共池（待领取）· 我的待办 · 今日完成；可按类型 / 健管组筛选。</p></div></li>
+              <li><span class="dot">2</span><div><strong>公共池领取</strong><p>无人认领的任务在公共池；点「领取」挂到自己名下。</p></div></li>
+              <li><span class="dot">3</span><div><strong>处理 / 填单办结</strong><p>分配健管组、制定方案、报告审阅等走「处理」跳转；随访 / 打卡跟进等走填单弹窗办结。</p></div></li>
+              <li><span class="dot">4</span><div><strong>退回与分派</strong><p>可退回公共池（须填原因）；管理员可指定处理人。</p></div></li>
+            </ol>
+            <div class="tip">任务类型覆盖：首诊/随访、制定方案、打卡跟进、指标异常、报告审阅、用药反馈、分配健管组等。驾驶舱动作卡办结的，也是同一套任务。</div>
+          </article>
+          <aside class="stage" data-demo="tasks">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 工作台</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="tasks">
+              <div class="ws-main">
+                <div class="ws-top"><span>工作台</span><span>/</span><span>待办任务</span></div>
+                <div class="ws-body">
+                  <div class="kpi-row">
+                    <div class="kpi" data-pool-public style="border-color:#bfdbfe;background:#f8fbff"><div class="l">公共池</div><div class="v" data-pub-n>3</div></div>
+                    <div class="kpi" data-pool-mine><div class="l">我的待办</div><div class="v" data-mine-n>1</div></div>
+                    <div class="kpi"><div class="l">今日完成</div><div class="v">5</div></div>
+                  </div>
+                  <div class="ck-tabs" style="margin-bottom:8px">
+                    <span class="on" data-tab-pub>公共池</span><span data-tab-mine>我的待办</span><span>今日完成</span>
+                  </div>
+                  <div class="list-row" data-row>
+                    <div>
+                      <div class="l">王女士 · 打卡跟进</div>
+                      <div class="m">方案未打卡 3 天 · 公共池</div>
+                    </div>
+                    <span class="btn-p" data-claim style="height:26px;font-size:11px">领取</span>
+                  </div>
+                  <div class="list-row" data-mine-row style="opacity:0.35">
+                    <div>
+                      <div class="l">王女士 · 打卡跟进</div>
+                      <div class="m">已领取 · 待办结</div>
+                    </div>
+                    <span class="btn-p" data-done style="height:26px;font-size:11px">处理</span>
+                  </div>
+                </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>已领取，可填单办结</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>任务清单深潜：和驾驶舱分工清晰</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>驾驶舱按「人」编排建议；工作台按「单」清队列。公共池保证无人认领不丢单，我的待办保证主责可追踪。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>晨会：先清公共池超期单</li>
+                <li>交班：退回公共池并写原因</li>
+                <li>主管：看今日完成与类型分布</li>
+              </ul>
+            </div>
+            <p class="why-note">依从看板开出来的催办单，最终也落在工作台里办结。</p>
+          </aside>
+        </section>
+
+        <!-- 13 Cockpit -->
+        <section class="section spotlight-ai" id="s13">
+          <article class="copy">
+            <span class="badge">STEP 13 · AI 主卖点</span>
+            <h3>智能驾驶舱 · 健管智能体工作台</h3>
+            <p class="where">默认首页 · 主角是 <strong>AI 对话</strong>，不是运营大卡片 · 三栏：左喂人 · 中智能体 · 右焦点</p>
+            <div class="ai-cap-grid">
+              <div class="ai-cap"><span class="cap-tag">① 先开口</span><p>进页自动生成<strong>今日机构简报</strong>：红人、超期、待办与推进顺序。</p></div>
+              <div class="ai-cap"><span class="cap-tag">② 任务编排</span><p><strong>今日建议</strong>按优先名单排工；选人后变<strong>患者建议</strong>。</p></div>
+              <div class="ai-cap"><span class="cap-tag">③ 动作卡</span><p>气泡下挂催打卡、开随访、生成方案、办结待办——AI 建议，人一点就走。</p></div>
+              <div class="ai-cap"><span class="cap-tag">④ 多模态</span><p>拖图 OCR 检验/检查/用药单；长文「整理这段记录」提指标与用药。</p></div>
+            </div>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>AI 开场简报</strong><p>当日简报可刷新；失败降级规则模板，不空白。简报下也可挂动作。</p></div></li>
+              <li><span class="dot">2</span><div><strong>点人 = 注入上下文</strong><p>左侧优先卡喂给智能体；自动切患者会话，右栏同步快照与待审草稿。</p></div></li>
+              <li><span class="dot">3</span><div><strong>快捷能力条</strong><p>今日/患者建议 · 生成方案 · 报告点评 · 单据录入 · 完成待办。</p></div></li>
+              <li><span class="dot">4</span><div><strong>人审阀门</strong><p>LLM 不直接写库；发布方案、办结随访、OCR/提取入库均需确认。</p></div></li>
+            </ol>
+            <div class="tip">对外叙事：Healix = 健管智能体。持续管理里的工作台是任务清单深潜；驾驶舱是 AI 编排层，动作卡办结仍走同一套任务。</div>
+          </article>
+          <aside class="stage" data-demo="cockpit">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>AI 能力演示 · 驾驶舱</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="cockpit">
+              <div class="ws-main">
+              <div class="cockpit">
+                <div class="ck-col">
+                  <h5>今日优先 <em>喂给 AI</em></h5>
+                  <div class="ck-tabs">
+                    <span class="on">立即处理</span><span>待入组</span><span>关注</span><span>我的</span>
+                  </div>
+                  <div class="ck-item">李先生 · 随访超期<small>血压偏高 · 催办</small></div>
+                  <div class="ck-item on" data-item>王女士 · 方案未打卡<small>依从 62% · 注入对话</small></div>
+                  <div class="ck-item">赵先生 · 待首诊<small>新入组</small></div>
+                </div>
+                <div class="ck-col ck-center">
+                  <h5>
+                    <span style="display:inline-flex;align-items:center;gap:5px"><span class="ck-ai-badge">AI</span> 健管智能体</span>
+                    <em data-ctx>机构级会话</em>
+                  </h5>
+                  <div class="ck-brief" data-brief>
+                    <div class="ttl"><span class="ck-ai-badge">LLM</span> 今日机构简报</div>
+                    <div class="ck-typing" data-typing><i></i><i></i><i></i></div>
+                    <div data-brief-body>
+                      超期随访 2、方案未打卡 3、新入组待首诊 1。建议先处理王女士打卡，再办结李先生随访。
+                    </div>
+                    <div class="ck-actions">
+                      <span class="ck-act">查看优先名单</span>
+                      <span class="ck-act">刷新今日建议</span>
+                    </div>
+                  </div>
+                  <div class="ck-chips">
+                    <span class="ck-chip" data-chip-org>今日建议</span>
+                    <span class="ck-chip" data-chip-pat>患者建议</span>
+                    <span class="ck-chip">生成方案</span>
+                    <span class="ck-chip">报告点评</span>
+                    <span class="ck-chip" data-chip-ocr>单据录入</span>
+                    <span class="ck-chip">完成待办</span>
+                  </div>
+                  <div class="ck-bubble" data-suggest style="opacity:0.4">
+                    <div class="who"><span class="ck-ai-badge">AI</span> 患者建议 · 基于档案与近 7 日</div>
+                    近 7 日打卡缺口 3 天，体重趋势平稳。建议：①发送打卡提醒 ②本周内开一次随访复核用药。
+                    <div class="ck-actions">
+                      <span class="ck-act do" data-act>发送打卡提醒</span>
+                      <span class="ck-act">创建随访</span>
+                      <span class="ck-act">生成方案草稿</span>
+                    </div>
+                  </div>
+                  <div class="ck-drop" data-drop>拖入图片 → AI 识别检验 / 检查 / 用药单</div>
+                  <div class="ck-ocr" data-ocr><span class="ck-ai-badge">OCR</span> 检验单 · 空腹血糖 6.2 · HbA1c 6.8%
+                    <div class="ck-actions" style="margin-top:4px">
+                      <span class="ck-act do" data-ocr-ok>确认入库</span>
+                      <span class="ck-act">再检查</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="ck-col">
+                  <h5>当前焦点 <em>人审区</em></h5>
+                  <div class="ck-metric">
+                    <div><div class="l">档案完整度</div><div class="v">86%</div></div>
+                    <div><div class="l">依从性 7d</div><div class="v" style="color:#b45309">62%</div></div>
+                  </div>
+                  <div class="ck-item">待你确认 · AI 周报草稿</div>
+                  <div class="ck-item">待你确认 · AI 方案草稿</div>
+                  <div class="ck-quick">
+                    <span>录入数据</span><span>开随访</span>
+                    <span>编辑方案</span><span>用药管理</span>
+                  </div>
+                </div>
+              </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>已按 AI 建议发送打卡提醒</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">AI · 能力焦点</div>
+            <h4>为什么默认首页是智能体，不是看板</h4>
+            <div class="why-block">
+              <span class="lbl">产品定位</span>
+              <p>主卖点是 <strong>AI 方案 / OCR / 会话编排</strong>；机构运营是底座。打开即对话，Agent 先给今日建议，点人再下钻——效率与「AI 感」同时到位。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">AI 实际在干什么</span>
+              <ul>
+                <li>生成机构简报与患者管理建议（流式）</li>
+                <li>结构化动作卡，前端调现有 B API</li>
+                <li>检验/检查/用药单 OCR 预填</li>
+                <li>聊天长文抽取指标、检验要点、用药</li>
+                <li>方案草稿、报告点评草稿进「待你确认」</li>
+              </ul>
+            </div>
+            <div class="why-block">
+              <span class="lbl">演示话术</span>
+              <ul>
+                <li>「智能体先开口，不用你先想问什么」</li>
+                <li>「拖张化验单进来，核对入库」</li>
+                <li>「AI 只起草，发布和写库你说了算」</li>
+              </ul>
+            </div>
+            <p class="why-note">人审阀门是卖点不是缺点：可控、可审计，才敢进真实机构。</p>
+          </aside>
+        </section>
+
+        <!-- 14 Chat -->
+        <section class="section" id="s14">
+          <article class="copy">
+            <span class="badge">STEP 14 · 沟通</span>
+            <h3>患者沟通与记录提取</h3>
+            <p class="where">侧栏 <code>患者沟通</code>；患者内也可进会话</p>
+            <ol class="steps">
+              <li><span class="dot">1</span><div><strong>打开会话</strong><p>按健管组 / 患者筛选。</p></div></li>
+              <li><span class="dot">2</span><div><strong>发送提醒或回复</strong><p>站内信 + 可选浏览器推送。</p></div></li>
+              <li><span class="dot">3</span><div><strong>聊天提取入库</strong><p>识别指标等，确认后写入档案。</p></div></li>
+            </ol>
+            <div class="tip">消息中心是通知内核，不是完整医患 IM。</div>
+          </article>
+          <aside class="stage" data-demo="chat">
+            <div class="stage-bar"><div class="dots"><i></i><i></i><i></i></div><span>贴近原页 · 沟通</span><button type="button" class="replay" data-replay>重播</button></div>
+            <div class="screen">
+              <div class="ws-shell" data-ws-menu="chat">
+              <div class="ws-main">
+                <div class="ws-top"><span>患者沟通</span><span>/</span><span>王女士</span></div>
+                <div class="chat-bubbles">
+                  <div class="bub p">今天体重 77.8，比上周轻了一点</div>
+                  <div class="bub s" data-reply style="opacity:0">收到，继续保持餐后步行。我帮你记一下体重。</div>
+                  <div class="ocr-card" data-extract style="opacity:0;align-self:stretch">提取确认：体重 77.8 kg · 写入指标？
+                    <div style="margin-top:6px"><span class="btn-p" data-confirm style="height:26px;font-size:11px">确认入库</span></div>
+                  </div>
+                </div>
+              </div>
+              </div>
+              <div class="toast" data-toast>体重已写入观测</div>
+              <div class="caption" data-caption></div>
+              <div class="cursor" data-cursor></div>
+            </div>
+          </aside>
+          <aside class="why">
+            <div class="why-kicker">Why · 设计理由</div>
+            <h4>轻量沟通 + 可入库，不做完整 IM</h4>
+            <div class="why-block">
+              <span class="lbl">为什么这样设计</span>
+              <p>健管需要触达与留痕，但不替代微信级 IM。消息中心做通知内核；聊天里出现的指标可提取确认后进观测，避免「说过但没记上」。</p>
+            </div>
+            <div class="why-block">
+              <span class="lbl">使用场景</span>
+              <ul>
+                <li>催打卡、发随访提醒、回复患者上报体重</li>
+                <li>从会话一键确认写入档案指标</li>
+                <li>与驾驶舱 / 工作台配合：编排与待办落地，沟通负责触达</li>
+              </ul>
+            </div>
+            <p class="why-note">复杂长文整理、单据 OCR 更推荐在驾驶舱会话完成。</p>
+          </aside>
+        </section>
+
+        <p class="foot">文件路径：<code>docs/产品使用说明-入组到方案.html</code> · 覆盖入组闭环、持续管理（评估/用药/观测/随访/报告/依从/工作台）与日常协作（驾驶舱 / 沟通）。左：怎么操作 · 中：动画 · 右：为什么这样设计 / 场景。动画为示意，不写入真实数据。</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /** 工作台左侧菜单（贴近真实 WorkspaceLayout） */
+    const WS_MENUS = [
+      { group: "日常工作", items: [
+        { id: "cockpit", label: "智能驾驶舱", ico: "舱" },
+        { id: "tasks", label: "工作台", ico: "待" },
+        { id: "patients", label: "患者管理", ico: "患" },
+        { id: "chat", label: "患者沟通", ico: "讯", badge: 2 },
+        { id: "adherence", label: "依从性看板", ico: "依" },
+        { id: "recipes", label: "食谱库", ico: "谱" },
+        { id: "guidelines", label: "依据来源", ico: "据" },
+      ]},
+      { group: "组织管理", items: [
+        { id: "teams", label: "健管组", ico: "组" },
+        { id: "staff", label: "成员管理", ico: "员" },
+        { id: "ops", label: "运营统计", ico: "统" },
+      ]},
+    ];
+
+    function buildWsSider(active) {
+      let html = `<aside class="ws-sider"><div class="brand"><div class="m">H</div><div><strong>Healix</strong><small>星海 · 徐汇</small></div></div>`;
+      for (const g of WS_MENUS) {
+        html += `<div class="g">${g.group}</div>`;
+        for (const it of g.items) {
+          const on = it.id === active ? " on" : "";
+          const bdg = it.badge ? `<span class="bdg">${it.badge}</span>` : "";
+          html += `<div class="mi${on}" data-mi="${it.id}"><span class="ico">${it.ico}</span>${it.label}${bdg}</div>`;
+        }
+      }
+      html += `</aside>`;
+      return html;
+    }
+
+    document.querySelectorAll(".ws-shell[data-ws-menu]").forEach((shell) => {
+      if (shell.querySelector(".ws-sider")) return;
+      shell.insertAdjacentHTML("afterbegin", buildWsSider(shell.dataset.wsMenu || "patients"));
+    });
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const runners = new Map();
+    let currentStage = null;
+
+    function setCaption(root, text) {
+      const el = root.querySelector("[data-caption]");
+      if (!text) { el.classList.remove("show"); el.textContent = ""; return; }
+      el.textContent = text; el.classList.add("show");
+    }
+    function moveCursor(root, x, y, click = false) {
+      const c = root.querySelector("[data-cursor]");
+      c.style.transition = "left .5s cubic-bezier(.2,.8,.2,1), top .5s cubic-bezier(.2,.8,.2,1), opacity .2s";
+      c.style.opacity = "1"; c.style.left = x + "px"; c.style.top = y + "px";
+      c.classList.toggle("click", !!click);
+      if (click) setTimeout(() => c.classList.remove("click"), 450);
+    }
+    function hideCursor(root) { root.querySelector("[data-cursor]").style.opacity = "0"; }
+    async function typeInto(box, text, speed = 50) {
+      box.textContent = ""; box.classList.add("typing");
+      for (const ch of text) { box.textContent += ch; await sleep(speed); }
+      box.classList.remove("typing");
+    }
+    function rectIn(root, el) {
+      const sr = root.querySelector(".screen").getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      return { x: r.left - sr.left + r.width * 0.55, y: r.top - sr.top + r.height * 0.55 };
+    }
+
+    const demos = {
+      async login(root, token) {
+        const user = root.querySelector('[data-type="user"]');
+        const pass = root.querySelector('[data-type="pass"]');
+        const btn = root.querySelector("[data-btn]");
+        const toast = root.querySelector("[data-toast]");
+        user.textContent = pass.textContent = "";
+        btn.classList.remove("pulse"); toast.classList.remove("show");
+        setCaption(root, "打开机构工作台登录页（左右分栏）");
+        await sleep(700); if (token.cancelled) return;
+        let p = rectIn(root, user); moveCursor(root, p.x, p.y);
+        setCaption(root, "输入用户名");
+        await typeInto(user, "care.manager"); if (token.cancelled) return;
+        p = rectIn(root, pass); moveCursor(root, p.x, p.y);
+        setCaption(root, "输入密码");
+        await typeInto(pass, "••••••••", 38); if (token.cancelled) return;
+        p = rectIn(root, btn); moveCursor(root, p.x, p.y, true);
+        btn.classList.add("pulse"); setCaption(root, "点击登录");
+        await sleep(500); btn.classList.remove("pulse");
+        toast.classList.add("show"); setCaption(root, "进入「选择工作机构」");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async org(root, token) {
+        const a = root.querySelector('[data-org="a"]');
+        const toast = root.querySelector("[data-toast]");
+        a.classList.remove("pick"); root.querySelector('[data-org="b"]').classList.remove("pick");
+        toast.classList.remove("show");
+        setCaption(root, "展示有权限的机构卡片");
+        await sleep(700); if (token.cancelled) return;
+        const p = rectIn(root, a); moveCursor(root, p.x, p.y, true);
+        a.classList.add("pick"); setCaption(root, "点击进入目标机构");
+        await sleep(450); toast.classList.add("show");
+        setCaption(root, "进入智能驾驶舱");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async archive(root, token) {
+        const neu = root.querySelector("[data-new]");
+        const dialog = root.querySelector("[data-dialog]");
+        const submit = root.querySelector("[data-submit]");
+        const toast = root.querySelector("[data-toast]");
+        const name = root.querySelector('[data-type="name"]');
+        const mobile = root.querySelector('[data-type="mobile"]');
+        const bday = root.querySelector('[data-type="bday"]');
+        dialog.classList.remove("show");
+        name.textContent = mobile.textContent = bday.textContent = "";
+        toast.classList.remove("show"); neu.classList.remove("pulse"); submit.classList.remove("pulse");
+        setCaption(root, "工作台 · 患者列表（侧栏 + KPI + 表格）");
+        await sleep(700); if (token.cancelled) return;
+        let p = rectIn(root, neu); moveCursor(root, p.x, p.y, true);
+        neu.classList.add("pulse"); setCaption(root, "点击「新建患者档案」");
+        await sleep(400); neu.classList.remove("pulse");
+        dialog.classList.add("show");
+        await sleep(350);
+        p = rectIn(root, name); moveCursor(root, p.x, p.y);
+        setCaption(root, "填写姓名、本人手机、生日");
+        await typeInto(name, "王女士"); if (token.cancelled) return;
+        p = rectIn(root, mobile); moveCursor(root, p.x, p.y);
+        await typeInto(mobile, "138****2618", 42); if (token.cancelled) return;
+        p = rectIn(root, bday); moveCursor(root, p.x, p.y);
+        await typeInto(bday, "1988-05-16", 38); if (token.cancelled) return;
+        p = rectIn(root, submit); moveCursor(root, p.x, p.y, true);
+        submit.classList.add("pulse"); setCaption(root, "提交建档（系统自动查重）");
+        await sleep(500); submit.classList.remove("pulse");
+        dialog.classList.remove("show"); toast.classList.add("show");
+        setCaption(root, "建档成功，可打开患者详情");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async intake(root, token) {
+        const mods = [...root.querySelectorAll("[data-mod]")];
+        const extra = root.querySelector("[data-mod-extra]");
+        const chips = [...root.querySelectorAll(".chip")];
+        const title = root.querySelector("[data-title]");
+        const ql = root.querySelector("[data-ql]");
+        const script = root.querySelector("[data-script]");
+        const ai = root.querySelector("[data-ai]");
+        const submit = root.querySelector("[data-submit]");
+        const toast = root.querySelector("[data-toast]");
+        const pillFv = root.querySelector("[data-pill-fv]");
+        const pillPct = root.querySelector("[data-pill-pct]");
+        const modeQuick = root.querySelector("[data-mode-quick]");
+        const modeFull = root.querySelector("[data-mode-full]");
+
+        mods.forEach((m, i) => m.classList.toggle("on", i === 2));
+        extra.classList.add("dim");
+        chips.forEach((c) => { c.classList.remove("on"); c.style.display = ""; });
+        title.textContent = "饮食与运动";
+        script.style.display = "";
+        script.textContent = "您平时运动多吗？我们按您能坚持的节奏来安排。";
+        ql.textContent = "平时运动（每次 30 分钟以上）的频率？";
+        ai.style.display = "none"; ai.textContent = "";
+        toast.classList.remove("show"); submit.classList.remove("pulse");
+        modeQuick.classList.add("on"); modeFull.classList.remove("on");
+        pillFv.textContent = "建议 8/14"; pillPct.textContent = "62%";
+        pillFv.classList.remove("ok");
+
+        setCaption(root, "首诊默认「快速」：必收 + 建议题");
+        await sleep(700); if (token.cancelled) return;
+
+        let p = rectIn(root, modeFull);
+        moveCursor(root, p.x, p.y, true);
+        modeQuick.classList.remove("on");
+        modeFull.classList.add("on");
+        extra.classList.remove("dim");
+        pillFv.textContent = "建议 8/22";
+        pillPct.textContent = "48%";
+        setCaption(root, "切到「完整」：展开全部题目");
+        await sleep(1000); if (token.cancelled) return;
+
+        p = rectIn(root, modeQuick);
+        moveCursor(root, p.x, p.y, true);
+        modeFull.classList.remove("on");
+        modeQuick.classList.add("on");
+        extra.classList.add("dim");
+        pillFv.textContent = "建议 8/14";
+        pillPct.textContent = "62%";
+        setCaption(root, "可随时切回「快速」· 已填答案保留");
+        await sleep(900); if (token.cancelled) return;
+
+        p = rectIn(root, chips[2]); moveCursor(root, p.x, p.y, true);
+        chips[2].classList.add("on"); setCaption(root, "点选结构化选项");
+        pillFv.textContent = "建议 9/14"; pillPct.textContent = "68%";
+        await sleep(800);
+        mods[2].classList.remove("on"); mods[1].classList.add("on");
+        title.textContent = "病史与用药"; ql.textContent = "在用药物明细 / 过敏史";
+        script.style.display = "none";
+        chips.forEach((c) => (c.style.display = "none"));
+        ai.style.display = "block"; ai.textContent = "已录入：二甲双胍 0.5g · 青霉素过敏（严重）";
+        setCaption(root, "用药 / 过敏走专用编辑器");
+        pillPct.textContent = "78%";
+        await sleep(1100); if (token.cancelled) return;
+        mods[1].classList.remove("on"); mods[5].classList.add("on");
+        title.textContent = "AI 案头总结"; ql.textContent = "内部模块 · 快速/完整都保留";
+        ai.textContent = "正在生成…";
+        setCaption(root, "生成首诊 AI 总结");
+        await sleep(800);
+        ai.textContent = "要点：运动偏少、外卖较多；在用降糖药；建议稳步减重、加强餐后步行。";
+        pillFv.textContent = "建议 14/14"; pillPct.textContent = "100%";
+        pillFv.classList.add("ok");
+        await sleep(500);
+        p = rectIn(root, submit); moveCursor(root, p.x, p.y, true);
+        submit.classList.add("pulse"); setCaption(root, "提交并完成首诊");
+        await sleep(500); submit.classList.remove("pulse");
+        toast.classList.add("show"); setCaption(root, "写回档案 · 页签可关闭");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+        pillFv.classList.remove("ok");
+        chips.forEach((c) => (c.style.display = ""));
+        script.style.display = "";
+        extra.classList.add("dim");
+      },
+
+      async plan(root, token) {
+        const gen = root.querySelector("[data-gen]");
+        const empty = root.querySelector("[data-empty]");
+        const prog = root.querySelector("[data-prog]");
+        const bar = root.querySelector("[data-bar]");
+        const status = root.querySelector("[data-status]");
+        const blocks = [...root.querySelectorAll("[data-block]")];
+        const toast = root.querySelector("[data-toast]");
+        empty.style.display = "block"; prog.style.display = "none"; bar.style.width = "0%";
+        status.textContent = ""; blocks.forEach((b) => b.classList.remove("show"));
+        toast.classList.remove("show"); gen.classList.remove("pulse");
+        setCaption(root, "患者详情 · 管理方案标签页");
+        await sleep(700); if (token.cancelled) return;
+        const p = rectIn(root, gen); moveCursor(root, p.x, p.y, true);
+        gen.classList.add("pulse"); setCaption(root, "点击 AI 生成方案");
+        await sleep(450); gen.classList.remove("pulse");
+        empty.style.display = "none"; prog.style.display = "block";
+        status.textContent = "正在参考档案 / 首诊摘要 / 目标与过敏…";
+        setCaption(root, "模型结合首诊上下文生成草稿");
+        for (const w of [18, 42, 68, 100]) {
+          if (token.cancelled) return;
+          bar.style.width = w + "%"; await sleep(400);
+        }
+        status.textContent = "草稿已就绪（待审阅发布）";
+        for (const b of blocks) { if (token.cancelled) return; b.classList.add("show"); await sleep(280); }
+        toast.classList.add("show"); setCaption(root, "健管师审阅后发布给患者");
+        await sleep(1600); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async assess(root, token) {
+        const send = root.querySelector("[data-send]");
+        const hint = root.querySelector("[data-hint]");
+        const toast = root.querySelector("[data-toast]");
+        hint.style.opacity = "0"; toast.classList.remove("show"); send.classList.remove("pulse");
+        setCaption(root, "患者头区可见评估标签");
+        await sleep(700); if (token.cancelled) return;
+        const p = rectIn(root, send); moveCursor(root, p.x, p.y, true);
+        send.classList.add("pulse"); setCaption(root, "缺数时发送评估问卷");
+        await sleep(450); send.classList.remove("pulse");
+        hint.style.opacity = "1"; toast.classList.add("show");
+        setCaption(root, "患者补齐后自动刷新风险分层");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async meds(root, token) {
+        const add = root.querySelector("[data-add]");
+        const row = root.querySelector("[data-newrow]");
+        const toast = root.querySelector("[data-toast]");
+        row.style.opacity = "0"; toast.classList.remove("show"); add.classList.remove("pulse");
+        setCaption(root, "查看在用药清单（可含首诊写回）");
+        await sleep(700); if (token.cancelled) return;
+        const p = rectIn(root, add); moveCursor(root, p.x, p.y, true);
+        add.classList.add("pulse"); setCaption(root, "添加或调整用药");
+        await sleep(450); add.classList.remove("pulse");
+        row.style.transition = "0.35s"; row.style.opacity = "1";
+        toast.classList.add("show"); setCaption(root, "频次与时段将用于用药提醒");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async obs(root, token) {
+        const ocr = root.querySelector("[data-ocr]");
+        const box = root.querySelector("[data-ocrbox]");
+        const lab = root.querySelector("[data-lab]");
+        const toast = root.querySelector("[data-toast]");
+        box.style.opacity = "0"; lab.style.opacity = "0"; toast.classList.remove("show");
+        setCaption(root, "观测：体征 + 检验/检查");
+        await sleep(600); if (token.cancelled) return;
+        const p = rectIn(root, ocr); moveCursor(root, p.x, p.y, true);
+        setCaption(root, "上传检验单，OCR 预填");
+        await sleep(400); box.style.opacity = "1";
+        await sleep(900); lab.style.opacity = "1";
+        toast.classList.add("show"); setCaption(root, "人工核对后入库");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async followup(root, token) {
+        const neu = root.querySelector("[data-new]");
+        const row = root.querySelector("[data-row]");
+        const form = root.querySelector("[data-form]");
+        const note = root.querySelector("[data-note]");
+        const done = root.querySelector("[data-done]");
+        const toast = root.querySelector("[data-toast]");
+        row.style.opacity = "0"; form.style.opacity = "0"; note.textContent = "";
+        toast.classList.remove("show");
+        setCaption(root, "随访列表 · 可从看板一键开单");
+        await sleep(600); if (token.cancelled) return;
+        let p = rectIn(root, neu); moveCursor(root, p.x, p.y, true);
+        setCaption(root, "新建定期随访");
+        await sleep(400); row.style.opacity = "1"; form.style.opacity = "1";
+        await sleep(300);
+        p = rectIn(root, note); moveCursor(root, p.x, p.y);
+        await typeInto(note, "体重下降 0.6kg，服药规律，继续当前方案。", 28);
+        if (token.cancelled) return;
+        p = rectIn(root, done); moveCursor(root, p.x, p.y, true);
+        setCaption(root, "人工办结随访");
+        await sleep(450); toast.classList.add("show");
+        row.querySelector(".htag").textContent = "已办结";
+        row.querySelector(".htag").className = "htag ok";
+        await sleep(1400); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+        row.querySelector(".htag").textContent = "进行中";
+        row.querySelector(".htag").className = "htag warn";
+      },
+
+      async report(root, token) {
+        const gen = root.querySelector("[data-gen]");
+        const menu = root.querySelector("[data-menu]");
+        const week = root.querySelector("[data-week]");
+        const prog = root.querySelector("[data-prog]");
+        const bar = root.querySelector("[data-bar]");
+        const draft = root.querySelector("[data-draft]");
+        const pub = root.querySelector("[data-pub]");
+        const dcount = root.querySelector("[data-d]");
+        const toast = root.querySelector("[data-toast]");
+        menu.style.display = "none"; prog.style.display = "none"; draft.style.opacity = "0";
+        bar.style.width = "0%"; dcount.textContent = "0"; toast.classList.remove("show");
+        setCaption(root, "健康报告 = 周/月/季阶段总结");
+        await sleep(650); if (token.cancelled) return;
+        let p = rectIn(root, gen); moveCursor(root, p.x, p.y, true);
+        menu.style.display = "block"; setCaption(root, "选择生成周期");
+        await sleep(500);
+        p = rectIn(root, week); moveCursor(root, p.x, p.y, true);
+        menu.style.display = "none"; prog.style.display = "block";
+        setCaption(root, "生成周报草稿 + AI 点评");
+        for (const w of [30, 65, 100]) { if (token.cancelled) return; bar.style.width = w + "%"; await sleep(350); }
+        draft.style.opacity = "1"; dcount.textContent = "1";
+        await sleep(400);
+        p = rectIn(root, pub); moveCursor(root, p.x, p.y, true);
+        setCaption(root, "审阅后发布给患者");
+        await sleep(450); toast.classList.add("show"); dcount.textContent = "0";
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async adhere(root, token) {
+        const nudge = root.querySelector("[data-nudge]");
+        const toast = root.querySelector("[data-toast]");
+        toast.classList.remove("show"); nudge.classList.remove("pulse");
+        setCaption(root, "依从看板：今日缺口与近 7 日完成率");
+        await sleep(700); if (token.cancelled) return;
+        const p = rectIn(root, nudge); moveCursor(root, p.x, p.y, true);
+        nudge.classList.add("pulse"); setCaption(root, "对需跟进患者一键催打卡");
+        await sleep(450); nudge.classList.remove("pulse");
+        toast.classList.add("show"); setCaption(root, "生成工作台待办，可继续开随访");
+        await sleep(1500); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+
+      async tasks(root, token) {
+        const claim = root.querySelector("[data-claim]");
+        const done = root.querySelector("[data-done]");
+        const row = root.querySelector("[data-row]");
+        const mineRow = root.querySelector("[data-mine-row]");
+        const tabPub = root.querySelector("[data-tab-pub]");
+        const tabMine = root.querySelector("[data-tab-mine]");
+        const poolPub = root.querySelector("[data-pool-public]");
+        const poolMine = root.querySelector("[data-pool-mine]");
+        const pubN = root.querySelector("[data-pub-n]");
+        const mineN = root.querySelector("[data-mine-n]");
+        const toast = root.querySelector("[data-toast]");
+
+        toast.classList.remove("show");
+        claim.classList.remove("pulse");
+        done.classList.remove("pulse");
+        row.style.opacity = "1";
+        mineRow.style.opacity = "0.35";
+        tabPub.classList.add("on");
+        tabMine.classList.remove("on");
+        poolPub.style.borderColor = "#bfdbfe";
+        poolPub.style.background = "#f8fbff";
+        poolMine.style.borderColor = "";
+        poolMine.style.background = "";
+        pubN.textContent = "3";
+        mineN.textContent = "1";
+
+        setCaption(root, "工作台：公共池 / 我的待办 / 今日完成");
+        await sleep(800); if (token.cancelled) return;
+
+        let p = rectIn(root, claim);
+        moveCursor(root, p.x, p.y, true);
+        claim.classList.add("pulse");
+        setCaption(root, "公共池领取 → 挂到我的待办");
+        await sleep(500); if (token.cancelled) return;
+        claim.classList.remove("pulse");
+        row.style.opacity = "0.35";
+        mineRow.style.opacity = "1";
+        pubN.textContent = "2";
+        mineN.textContent = "2";
+        toast.textContent = "已领取，可填单办结";
+        toast.classList.add("show");
+        await sleep(900); if (token.cancelled) return;
+        toast.classList.remove("show");
+
+        p = rectIn(root, tabMine);
+        moveCursor(root, p.x, p.y, true);
+        tabPub.classList.remove("on");
+        tabMine.classList.add("on");
+        poolPub.style.borderColor = "";
+        poolPub.style.background = "";
+        poolMine.style.borderColor = "#bfdbfe";
+        poolMine.style.background = "#f8fbff";
+        setCaption(root, "切到「我的待办」处理");
+        await sleep(700); if (token.cancelled) return;
+
+        p = rectIn(root, done);
+        moveCursor(root, p.x, p.y, true);
+        done.classList.add("pulse");
+        setCaption(root, "处理 / 填单办结（与驾驶舱同一套任务）");
+        await sleep(500);
+        toast.textContent = "待办已办结";
+        toast.classList.add("show");
+        await sleep(1300);
+        toast.classList.remove("show");
+        done.classList.remove("pulse");
+        hideCursor(root);
+        setCaption(root, "");
+      },
+
+      async cockpit(root, token) {
+        const item = root.querySelector("[data-item]");
+        const brief = root.querySelector("[data-brief]");
+        const briefBody = root.querySelector("[data-brief-body]");
+        const typing = root.querySelector("[data-typing]");
+        const ctx = root.querySelector("[data-ctx]");
+        const chipOrg = root.querySelector("[data-chip-org]");
+        const chipPat = root.querySelector("[data-chip-pat]");
+        const chipOcr = root.querySelector("[data-chip-ocr]");
+        const suggest = root.querySelector("[data-suggest]");
+        const act = root.querySelector("[data-act]");
+        const drop = root.querySelector("[data-drop]");
+        const ocr = root.querySelector("[data-ocr]");
+        const ocrOk = root.querySelector("[data-ocr-ok]");
+        const toast = root.querySelector("[data-toast]");
+
+        suggest.style.opacity = "0.35";
+        drop.classList.remove("show");
+        ocr.classList.remove("show");
+        toast.classList.remove("show");
+        act.classList.remove("pulse");
+        chipOrg.classList.remove("on");
+        chipPat.classList.remove("on");
+        chipOcr.classList.remove("on");
+        typing.classList.remove("show");
+        briefBody.style.opacity = "1";
+        ctx.textContent = "机构级会话";
+
+        setCaption(root, "AI 主入口：健管智能体先开口");
+        await sleep(500); if (token.cancelled) return;
+
+        briefBody.style.opacity = "0.15";
+        typing.classList.add("show");
+        setCaption(root, "LLM 生成今日机构简报（流式）");
+        await sleep(900); if (token.cancelled) return;
+        typing.classList.remove("show");
+        briefBody.style.transition = "0.3s";
+        briefBody.style.opacity = "1";
+        let p = rectIn(root, brief);
+        moveCursor(root, p.x, p.y, false);
+        setCaption(root, "AI 汇总红人 / 超期，并给出推进顺序");
+        await sleep(1100); if (token.cancelled) return;
+
+        p = rectIn(root, chipOrg);
+        moveCursor(root, p.x, p.y, true);
+        chipOrg.classList.add("on");
+        setCaption(root, "AI 今日建议 · 按优先名单做任务编排");
+        await sleep(900); if (token.cancelled) return;
+        chipOrg.classList.remove("on");
+
+        p = rectIn(root, item);
+        moveCursor(root, p.x, p.y, true);
+        ctx.textContent = "患者会话 · 王女士";
+        setCaption(root, "点人 → 上下文注入智能体");
+        await sleep(700); if (token.cancelled) return;
+
+        p = rectIn(root, chipPat);
+        moveCursor(root, p.x, p.y, true);
+        chipPat.classList.add("on");
+        suggest.style.transition = "0.35s";
+        suggest.style.opacity = "1";
+        setCaption(root, "AI 患者建议 + 气泡动作卡（人审执行）");
+        await sleep(1000); if (token.cancelled) return;
+
+        p = rectIn(root, act);
+        moveCursor(root, p.x, p.y, true);
+        act.classList.add("pulse");
+        setCaption(root, "动作卡调现有 API · AI 不直接写库");
+        await sleep(500);
+        toast.textContent = "已按 AI 建议发送打卡提醒";
+        toast.classList.add("show");
+        await sleep(1100); if (token.cancelled) return;
+        toast.classList.remove("show");
+        act.classList.remove("pulse");
+        chipPat.classList.remove("on");
+
+        p = rectIn(root, chipOcr);
+        moveCursor(root, p.x, p.y, true);
+        chipOcr.classList.add("on");
+        drop.classList.add("show");
+        setCaption(root, "多模态：拖图 → AI OCR 检验/检查/用药");
+        await sleep(1000); if (token.cancelled) return;
+
+        drop.classList.remove("show");
+        ocr.classList.add("show");
+        setCaption(root, "OCR 预填完成 · 人确认后入库");
+        await sleep(700); if (token.cancelled) return;
+        p = rectIn(root, ocrOk);
+        moveCursor(root, p.x, p.y, true);
+        toast.textContent = "AI 识别结果已写入观测";
+        toast.classList.add("show");
+        setCaption(root, "长文还可「整理这段记录」抽取指标 / 用药");
+        await sleep(1500);
+        toast.classList.remove("show");
+        chipOcr.classList.remove("on");
+        hideCursor(root);
+        setCaption(root, "");
+      },
+
+      async chat(root, token) {
+        const reply = root.querySelector("[data-reply]");
+        const extract = root.querySelector("[data-extract]");
+        const confirm = root.querySelector("[data-confirm]");
+        const toast = root.querySelector("[data-toast]");
+        reply.style.opacity = "0"; extract.style.opacity = "0"; toast.classList.remove("show");
+        setCaption(root, "患者沟通会话");
+        await sleep(600); if (token.cancelled) return;
+        reply.style.transition = "0.35s"; reply.style.opacity = "1";
+        setCaption(root, "健管师回复并跟进");
+        await sleep(800); extract.style.opacity = "1";
+        setCaption(root, "聊天提取指标，确认后入库");
+        await sleep(500);
+        const p = rectIn(root, confirm); moveCursor(root, p.x, p.y, true);
+        await sleep(450); toast.classList.add("show");
+        setCaption(root, "体重已写入观测数据");
+        await sleep(1400); toast.classList.remove("show"); hideCursor(root); setCaption(root, "");
+      },
+    };
+
+    function play(stage) {
+      currentStage = stage;
+      const name = stage.dataset.demo;
+      const prev = runners.get(stage);
+      if (prev) prev.cancelled = true;
+      const token = { cancelled: false };
+      runners.set(stage, token);
+      (async () => {
+        while (!token.cancelled) {
+          await demos[name](stage, token);
+          if (token.cancelled) break;
+          await sleep(900);
+        }
+      })();
+    }
+
+    const stages = [...document.querySelectorAll(".stage[data-demo]")];
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting && e.intersectionRatio > 0.4) play(e.target);
+        else { const t = runners.get(e.target); if (t) t.cancelled = true; }
+      });
+    }, { threshold: [0.4] });
+    stages.forEach((s) => {
+      io.observe(s);
+      s.querySelector("[data-replay]")?.addEventListener("click", () => play(s));
+    });
+    document.getElementById("replayVisible").addEventListener("click", () => {
+      if (currentStage) play(currentStage);
+    });
+
+    const navLinks = [...document.querySelectorAll("[data-nav]")];
+    const targets = navLinks.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+    const navIo = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        const id = e.target.id;
+        navLinks.forEach((a) => a.classList.toggle("active", a.dataset.nav === id));
+      });
+    }, { rootMargin: "-35% 0px -50% 0px", threshold: 0 });
+    targets.forEach((t) => navIo.observe(t));
+  </script>
+</body>
+</html>
