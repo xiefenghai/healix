@@ -1459,6 +1459,50 @@ public class WorkspaceTaskGenerator {
         taskMapper.close(open.getId(), WorkspaceTaskStatus.DONE.name(), WorkspaceTaskCloseReason.CONDITION.name(), now, null, now);
     }
 
+    /**
+     * 风险引擎不再适用或等级已回落：关掉该引擎下 OPEN 的评估升级单（bizKey = peopleId:engineCode:tier）。
+     */
+    @Transactional
+    public void closeAssessmentEscalationsForEngine(String tenantId, String peopleId, String engineCode) {
+        closeAssessmentEscalationsForEngine(tenantId, peopleId, engineCode, null);
+    }
+
+    /**
+     * @param keepBizKey 非空时保留该 bizKey 的 OPEN 单（用于同档仍高、清掉其它档残留）
+     */
+    @Transactional
+    public void closeAssessmentEscalationsForEngine(
+            String tenantId, String peopleId, String engineCode, String keepBizKey) {
+        if (!StringUtils.hasText(engineCode)) {
+            return;
+        }
+        String orgId = resolveOrgId(tenantId, null, peopleId);
+        if (!StringUtils.hasText(orgId)) {
+            return;
+        }
+        String prefix = peopleId + ":" + engineCode + ":";
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        for (WorkspaceTask open : taskMapper.listOpenByPeople(orgId, peopleId)) {
+            if (!WorkspaceTaskType.ASSESSMENT_ESCALATION.matches(open.getTaskType())) {
+                continue;
+            }
+            String bizKey = open.getBizKey();
+            if (!StringUtils.hasText(bizKey) || !bizKey.startsWith(prefix)) {
+                continue;
+            }
+            if (StringUtils.hasText(keepBizKey) && keepBizKey.equals(bizKey)) {
+                continue;
+            }
+            taskMapper.close(
+                    open.getId(),
+                    WorkspaceTaskStatus.DONE.name(),
+                    WorkspaceTaskCloseReason.CONDITION.name(),
+                    now,
+                    null,
+                    now);
+        }
+    }
+
     /** 患者问卷覆盖档案已有值：提醒负责健管师（含新旧值）。 */
     @Transactional
     public void onArchiveSelfReport(

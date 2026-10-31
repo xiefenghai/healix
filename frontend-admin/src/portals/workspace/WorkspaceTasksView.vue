@@ -304,7 +304,7 @@ function canForm(row: WorkspaceTaskItem) {
   )
 }
 
-/** 非填单类：分配健管组 / 制定方案 / 报告审阅 — 领取后主操作 */
+/** 非填单类：分配健管组 / 制定方案 / 报告审阅 / 评估闭环 — 领取后主操作 */
 function canProcess(row: WorkspaceTaskItem) {
   return (
     isMineOpen(row) &&
@@ -314,7 +314,10 @@ function canProcess(row: WorkspaceTaskItem) {
       row.taskType === 'MED_FEEDBACK' ||
       row.taskType === 'MED_VERIFY' ||
       row.taskType === 'ARCHIVE_SELF_REPORT' ||
-      row.taskType === 'PROFILE_LINK')
+      row.taskType === 'PROFILE_LINK' ||
+      row.taskType === 'ASSESSMENT_ESCALATION' ||
+      row.taskType === 'ASSESSMENT_SUSPECTED' ||
+      row.taskType === 'QUESTIONNAIRE_EXPIRED')
   )
 }
 
@@ -330,6 +333,14 @@ async function processTask(row: WorkspaceTaskItem) {
   }
   if (row.taskType === 'PROFILE_LINK') {
     openLinkReview(row)
+    return
+  }
+  if (
+    row.taskType === 'ASSESSMENT_ESCALATION' ||
+    row.taskType === 'ASSESSMENT_SUSPECTED' ||
+    row.taskType === 'QUESTIONNAIRE_EXPIRED'
+  ) {
+    openAssessmentTask(row)
     return
   }
   if (row.taskType === 'TEAM_ASSIGN') {
@@ -511,6 +522,12 @@ interface WorkspaceTaskDetail {
     carePlanId?: string
     healthReportId?: string
     changes?: SelfReportChange[]
+    engineCode?: string
+    diseaseCode?: string
+    advice?: string
+    reason?: string
+    tier?: string
+    level?: string
   } | null
 }
 
@@ -525,6 +542,19 @@ const selfReportLoading = ref(false)
 const selfReportBusy = ref(false)
 const selfReportTask = ref<WorkspaceTaskItem | null>(null)
 const selfReportChanges = ref<SelfReportChange[]>([])
+
+const assessmentOpen = ref(false)
+const assessmentLoading = ref(false)
+const assessmentBusy = ref(false)
+const assessmentTask = ref<WorkspaceTaskItem | null>(null)
+const assessmentPayload = ref<NonNullable<WorkspaceTaskDetail['payload']>>({})
+
+const assessmentDialogTitle = computed(() => {
+  const t = assessmentTask.value?.taskType
+  if (t === 'ASSESSMENT_SUSPECTED') return '疑似患病'
+  if (t === 'QUESTIONNAIRE_EXPIRED') return '问卷未完成'
+  return '评估升级'
+})
 
 function openSelfReport(row: WorkspaceTaskItem) {
   selfReportTask.value = row
@@ -565,6 +595,79 @@ function goAdjustPlan() {
   if (!row?.peopleId) return
   selfReportOpen.value = false
   router.push(`/workspace/patients/${row.peopleId}/care-plan`)
+}
+
+function openAssessmentTask(row: WorkspaceTaskItem) {
+  assessmentTask.value = row
+  assessmentPayload.value = {}
+  assessmentOpen.value = true
+  assessmentLoading.value = true
+  void api<{ data: WorkspaceTaskDetail }>(`/api/b/v1/workspace/tasks/${row.id}`)
+    .then((res) => {
+      assessmentPayload.value = res.data.payload || {}
+    })
+    .catch((e) => {
+      ElMessage.error(e instanceof Error ? e.message : '加载任务失败')
+    })
+    .finally(() => {
+      assessmentLoading.value = false
+    })
+}
+
+async function ackAssessmentTask() {
+  const row = assessmentTask.value
+  if (!row) return
+  assessmentBusy.value = true
+  try {
+    await api(`/api/b/v1/workspace/tasks/${row.id}/ack`, { method: 'POST' })
+    ElMessage.success(
+      row.taskType === 'ASSESSMENT_SUSPECTED' ? '已办结（暂未建档）' : '已办结',
+    )
+    assessmentOpen.value = false
+    void load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '办结失败')
+  } finally {
+    assessmentBusy.value = false
+  }
+}
+
+async function createArchiveFromAssessmentTask() {
+  const row = assessmentTask.value
+  const diseaseCode = assessmentPayload.value.diseaseCode
+  if (!row?.peopleId || !diseaseCode) {
+    ElMessage.warning('缺少病种信息，请到评估页处理')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '确认患者已患病并建立病种档案？建档后将切换严重等级分层评估，并自动关闭本任务。',
+      '确认建档',
+      { confirmButtonText: '确认建档', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  assessmentBusy.value = true
+  try {
+    await api(`/api/b/v1/patients/${row.peopleId}/assessments/disease-archives/${diseaseCode}`, {
+      method: 'POST',
+    })
+    ElMessage.success('已建档并办结')
+    assessmentOpen.value = false
+    void load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '建档失败')
+  } finally {
+    assessmentBusy.value = false
+  }
+}
+
+function goAssessmentPage() {
+  const row = assessmentTask.value
+  if (!row?.peopleId) return
+  assessmentOpen.value = false
+  openInNewTab(router, `/workspace/patients/${row.peopleId}/assessments`)
 }
 
 const linkOpen = ref(false)
@@ -695,6 +798,15 @@ async function openDetail(row: WorkspaceTaskItem) {
   }
   if (row.status === 'OPEN' && row.taskType === 'PROFILE_LINK') {
     openLinkReview(row)
+    return
+  }
+  if (
+    row.status === 'OPEN' &&
+    (row.taskType === 'ASSESSMENT_ESCALATION' ||
+      row.taskType === 'ASSESSMENT_SUSPECTED' ||
+      row.taskType === 'QUESTIONNAIRE_EXPIRED')
+  ) {
+    openAssessmentTask(row)
     return
   }
   if (row.status === 'OPEN' && row.taskType === 'TEAM_ASSIGN' && isMineOpen(row)) {
@@ -1133,6 +1245,54 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="assessmentOpen"
+      :title="assessmentDialogTitle"
+      width="480px"
+      @closed="assessmentTask = null"
+    >
+      <div v-loading="assessmentLoading" class="assessment-task-body">
+        <p class="assessment-summary">{{ assessmentTask?.summary || '—' }}</p>
+        <p v-if="assessmentPayload.advice || assessmentPayload.reason" class="assessment-advice">
+          {{ assessmentPayload.advice || assessmentPayload.reason }}
+        </p>
+        <p v-if="assessmentTask?.taskType === 'ASSESSMENT_ESCALATION'" class="assessment-hint">
+          评估等级已升至高风险。请跟进（补问卷、随访或调整方案）后办结；若后续等级回落，系统也会自动关单。
+        </p>
+        <p v-else-if="assessmentTask?.taskType === 'ASSESSMENT_SUSPECTED'" class="assessment-hint">
+          规则提示疑似已患病。确认后可一键建病种档案并关单；暂不建档也可先办结，之后可在评估页再建档。
+        </p>
+        <p v-else class="assessment-hint">患者评估问卷已过期未完成。可提醒患者或自行补录后办结。</p>
+      </div>
+      <template #footer>
+        <el-button @click="goAssessmentPage">查看评估</el-button>
+        <el-button
+          v-if="
+            assessmentTask?.taskType === 'ASSESSMENT_SUSPECTED' &&
+            assessmentPayload.diseaseCode &&
+            assessmentTask &&
+            isMineOpen(assessmentTask)
+          "
+          type="warning"
+          :loading="assessmentBusy"
+          @click="createArchiveFromAssessmentTask"
+        >
+          确认建档
+        </el-button>
+        <el-button
+          v-if="assessmentTask && isMineOpen(assessmentTask)"
+          type="primary"
+          :loading="assessmentBusy"
+          @click="ackAssessmentTask"
+        >
+          {{
+            assessmentTask.taskType === 'ASSESSMENT_SUSPECTED' ? '暂不建档，办结' : '已跟进，办结'
+          }}
+        </el-button>
+        <el-button v-else type="primary" disabled>请先领取后再办结</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="linkOpen" title="核对是否同一人" width="480px" @closed="linkTask = null">
       <p>本人号尾号 {{ linkPayload.mobileTail || '—' }}。确认是同一人后再关联。拒绝后不会新建档案。</p>
       <p>申请填写：{{ linkPayload.applicantName }} · {{ linkPayload.applicantGender }} · {{ linkPayload.applicantBirthday }}</p>
@@ -1371,6 +1531,29 @@ onMounted(async () => {
 
 .row-actions :deep(.el-button--small) {
   padding: 5px 8px;
+}
+
+.assessment-task-body {
+  min-height: 64px;
+}
+.assessment-summary {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-900, #0f172a);
+  line-height: 1.45;
+}
+.assessment-advice {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--ink-800, #1e293b);
+  line-height: 1.5;
+}
+.assessment-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-500, #64748b);
+  line-height: 1.5;
 }
 
 .self-report-lead {

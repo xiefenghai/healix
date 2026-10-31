@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -431,6 +432,27 @@ public class StaffBizTools {
                     "去分配健管组「" + typeLabel + "」" + summarySuffix(top.getSummary(), typeLabel),
                     "join-care-team",
                     peopleId));
+            return true;
+        }
+        if ("ASSESSMENT_ESCALATION".equals(type) || "QUESTIONNAIRE_EXPIRED".equals(type)) {
+            Map<String, Object> ack = new LinkedHashMap<>();
+            ack.put("taskId", top.getId());
+            out.add(AgentAction.callApi(
+                    "确认办结「" + typeLabel + "」" + summarySuffix(top.getSummary(), typeLabel),
+                    "ACK_TASK",
+                    peopleId,
+                    ack));
+            out.add(AgentAction.openSheet("查看评估", "assessments", peopleId));
+            return true;
+        }
+        if ("ASSESSMENT_SUSPECTED".equals(type)) {
+            Map<String, Object> ack = new LinkedHashMap<>();
+            ack.put("taskId", top.getId());
+            out.add(AgentAction.openSheet(
+                    "去评估建档「" + typeLabel + "」" + summarySuffix(top.getSummary(), typeLabel),
+                    "assessments",
+                    peopleId));
+            out.add(AgentAction.callApi("暂不建档，办结", "ACK_TASK", peopleId, ack));
             return true;
         }
         return false;

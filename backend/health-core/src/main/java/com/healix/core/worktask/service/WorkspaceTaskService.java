@@ -252,13 +252,20 @@ public class WorkspaceTaskService {
         return toDetail(requireTask(orgId, id));
     }
 
-    /** 患者自报更新：健管师核对改动后办结。档案已在问卷提交时写回，这里不再改档案。 */
+    /**
+     * 核对类办结（不填单）：患者自报更新、评估升级、疑似患病（暂不建档）、问卷过期。
+     * 疑似患病确认建档请走评估页建档接口（会条件关单）。
+     */
     @Transactional
     public WorkspaceTaskDetailDto acknowledge(String orgId, String id, String actorAccountId) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
         WorkspaceTask task = requireTask(orgId, id);
         assertOpen(task);
-        if (WorkspaceTaskType.require(task.getTaskType()) != WorkspaceTaskType.ARCHIVE_SELF_REPORT) {
+        WorkspaceTaskType type = WorkspaceTaskType.require(task.getTaskType());
+        if (type != WorkspaceTaskType.ARCHIVE_SELF_REPORT
+                && type != WorkspaceTaskType.ASSESSMENT_ESCALATION
+                && type != WorkspaceTaskType.ASSESSMENT_SUSPECTED
+                && type != WorkspaceTaskType.QUESTIONNAIRE_EXPIRED) {
             throw new BusinessException(400, "该类任务请按原流程处理");
         }
         String staffId = requireStaffId();

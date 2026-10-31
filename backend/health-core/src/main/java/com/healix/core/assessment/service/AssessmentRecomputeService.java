@@ -78,6 +78,7 @@ public class AssessmentRecomputeService {
                 if (engine.category() == AssessmentCategory.RISK) {
                     closeSuspicionQuietly(tenantId, peopleId, engine.diseaseCode());
                 }
+                closeEscalationQuietly(tenantId, peopleId, engine.code());
                 continue;
             }
             AssessmentResult result = engine.evaluate(ctx);
@@ -109,6 +110,7 @@ public class AssessmentRecomputeService {
             AssessmentTier tier = result.getTier();
             if (result.getStatus() == AssessmentStatus.COMPLETE && tier != null && tier.atLeastHigh()) {
                 AssessmentTier prev = change.previousTier();
+                String keepBizKey = peopleId + ":" + engine.code() + ":" + tier.name();
                 if (prev == null || tier.rank() > prev.rank()) {
                     LevelDef def = engine.levelDef(result.getLevel());
                     String label = def == null ? result.getLevel() : def.label();
@@ -120,8 +122,26 @@ public class AssessmentRecomputeService {
                     payload.put("previousTier", prev == null ? null : prev.name());
                     payload.put("level", result.getLevel());
                     payload.put("advice", result.getAdvice());
+                    // 先关同引擎旧档升级单，再开当前档，避免「高」与「很高」双开
+                    closeEscalationQuietly(tenantId, peopleId, engine.code());
                     taskGenerator.onAssessmentEscalation(tenantId, peopleId, engine.code(), tier.name(), summary, payload);
+                } else {
+                    // 仍在高档但未再升：清掉其它档残留（如很高→高），不重开已办结的同档单
+                    try {
+                        taskGenerator.closeAssessmentEscalationsForEngine(
+                                tenantId, peopleId, engine.code(), keepBizKey);
+                    } catch (RuntimeException e) {
+                        log.debug(
+                                "close stale escalation failed people={} engine={}: {}",
+                                peopleId,
+                                engine.code(),
+                                e.getMessage());
+                    }
                 }
+            } else if (result.getStatus() == AssessmentStatus.COMPLETE
+                    && (tier == null || !tier.atLeastHigh())) {
+                // 仅在完整结果且已不在高/很高时关单；缺项 INCOMPLETE 不关，避免误消高风险跟进
+                closeEscalationQuietly(tenantId, peopleId, engine.code());
             }
             if (engine.category() == AssessmentCategory.RISK) {
                 if (result.getSuspicion() != null) {
@@ -146,6 +166,14 @@ public class AssessmentRecomputeService {
             taskGenerator.closeAssessmentSuspected(tenantId, peopleId, diseaseCode);
         } catch (RuntimeException e) {
             log.debug("close suspicion task failed people={}: {}", peopleId, e.getMessage());
+        }
+    }
+
+    private void closeEscalationQuietly(String tenantId, String peopleId, String engineCode) {
+        try {
+            taskGenerator.closeAssessmentEscalationsForEngine(tenantId, peopleId, engineCode);
+        } catch (RuntimeException e) {
+            log.debug("close escalation task failed people={} engine={}: {}", peopleId, engineCode, e.getMessage());
         }
     }
 

@@ -14,7 +14,7 @@ import org.springframework.util.StringUtils;
  *   <li>{@code OPEN_SHEET}：抽屉 mode（archive / followups / care-plan / …）
  *   <li>{@code NAVIGATE}：路由 path
  *   <li>{@code CALL_API}：API 键（NUDGE / NUDGE_BATCH / CREATE_FOLLOWUP / PUBLISH_REPORT / PUBLISH_CARE_PLAN /
- *       SEND_CARE_CHAT / CLAIM_TASK / COMPLETE_TASK），点击后调现有 B API 并回执
+ *       SEND_CARE_CHAT / CLAIM_TASK / COMPLETE_TASK / ACK_TASK），点击后调现有 B API 并回执
  *   <li>{@code TRIGGER_CAPABILITY}：会话内能力码（CARE_PLAN / REPORT_SUMMARY），点击后自动发带 hint 的消息
  * </ul>
  */

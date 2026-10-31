@@ -5,7 +5,7 @@ public enum WorkspaceTaskCloseReason {
     FORM,
     EXPIRED,
     CANCEL,
-    /** 患者自报更新：健管师已核对，无需再跟 */
+    /** 健管师已核对/跟进办结（自报更新、评估升级、疑似暂不建档、问卷过期等） */
     REVIEWED;
 
     public boolean matches(String value) {

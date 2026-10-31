@@ -119,6 +119,23 @@ export async function runAgentCallApi(
     return { message: '', openTaskForm: taskId }
   }
 
+  if (apiKey === 'ACK_TASK') {
+    const taskId = strPayload(payload, 'taskId')
+    if (!taskId) throw new Error('缺少任务 ID')
+    const detail = await api<{ data: { assigneeStaffId?: string | null; status?: string } }>(
+      `/api/b/v1/workspace/tasks/${taskId}`,
+    )
+    const row = detail.data
+    if (!row || (row.status || '').toUpperCase() !== 'OPEN') {
+      return { message: '任务已关闭或不存在' }
+    }
+    if (!row.assigneeStaffId) {
+      await api(`/api/b/v1/workspace/tasks/${taskId}/claim`, { method: 'POST' })
+    }
+    await api(`/api/b/v1/workspace/tasks/${taskId}/ack`, { method: 'POST' })
+    return { message: '已办结待办' }
+  }
+
   if (apiKey === 'PUBLISH_REPORT') {
     const reportId = typeof payload?.reportId === 'string' ? payload.reportId : ''
     if (!reportId) throw new Error('缺少报告 ID')
@@ -193,6 +210,7 @@ export function callApiDoneLabel(apiKey: string): string | null {
   if (apiKey === 'SEND_CARE_CHAT') return '已发送沟通'
   if (apiKey === 'CLAIM_TASK') return '已领取待办'
   if (apiKey === 'COMPLETE_TASK') return '已办结待办'
+  if (apiKey === 'ACK_TASK') return '已办结待办'
   if (apiKey === 'PUBLISH_REPORT') return '已发布报告'
   if (apiKey === 'PUBLISH_CARE_PLAN') return '已发布方案'
   return null

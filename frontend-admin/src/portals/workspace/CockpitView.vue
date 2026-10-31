@@ -2014,6 +2014,7 @@ async function executeCallApi(action: AgentAction) {
       apiKey === 'PUBLISH_REPORT' ||
       apiKey === 'PUBLISH_CARE_PLAN' ||
       apiKey === 'CLAIM_TASK' ||
+      apiKey === 'ACK_TASK' ||
       apiKey === 'SEND_CARE_CHAT'
     ) {
       await refreshAfterTaskChange(peopleId)
@@ -2148,6 +2149,15 @@ function openTodoTask(task: FocusTask) {
     openSheet('medications')
     return
   }
+  if (
+    task.taskType === 'ASSESSMENT_ESCALATION' ||
+    task.taskType === 'ASSESSMENT_SUSPECTED' ||
+    task.taskType === 'QUESTIONNAIRE_EXPIRED'
+  ) {
+    // 评估闭环：抽屉看详情；正式办结走工作台「处理」或气泡 ACK_TASK
+    openSheet('assessments')
+    return
+  }
   if (DRAFT_TASK_TYPES.has(task.taskType)) {
     if (task.taskType === 'REPORT_REVIEW') goReports()
     else goCarePlan()
@@ -2182,14 +2192,14 @@ function retireCompletedTaskActions(peopleId: string, openTasks: FocusTask[]) {
     for (const msg of list) {
       if (!msg.actions?.length) continue
       for (const a of msg.actions) {
-        if (a.path !== 'COMPLETE_TASK') continue
+        if (a.path !== 'COMPLETE_TASK' && a.path !== 'ACK_TASK') continue
         if (a.runState === 'done') continue
         if (a.peopleId && a.peopleId !== peopleId) continue
         const taskId = typeof a.payload?.taskId === 'string' ? a.payload.taskId.trim() : ''
         if (!taskId) continue
         if (openIds.has(taskId)) continue
         a.runState = 'done'
-        a.label = doneLabel
+        a.label = a.path === 'ACK_TASK' ? callApiDoneLabel('ACK_TASK') || doneLabel : doneLabel
         touched = true
       }
     }
