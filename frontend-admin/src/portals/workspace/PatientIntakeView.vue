@@ -34,6 +34,7 @@ import {
   type QuestionnaireResponseView,
 } from '../../shared/intake'
 import { api } from '../../shared/http'
+import { publishPatientCrossTab } from '../../shared/patient-cross-tab'
 import FieldInput from './FieldInput.vue'
 
 const route = useRoute()
@@ -486,6 +487,11 @@ async function doSubmit(conflictResolutions?: Record<string, unknown>) {
     status.value = view.status || 'SUBMITTED'
     summaryOpen.value = false
     ElMessage.success(isSupplement.value ? '待补问卷已提交' : '首诊已提交')
+    // 通知仍打开的患者详情页刷新首诊状态 / 档案
+    publishPatientCrossTab({
+      peopleId: peopleId.value,
+      reason: isSupplement.value ? 'INTAKE_SUPPLEMENT' : 'INTAKE_SUBMITTED',
+    })
     // 首诊多为新标签打开：提交后关掉本页，回到原患者页签
     await new Promise((r) => setTimeout(r, 350))
     window.close()

@@ -62,11 +62,11 @@
       "version": 1
     },
     {
-      "code": "INTAKE_AI_SUMMARY",
+      "code": "CONSENT",
       "version": 1
     },
     {
-      "code": "CONSENT",
+      "code": "INTAKE_AI_SUMMARY",
       "version": 1
     }
   ]

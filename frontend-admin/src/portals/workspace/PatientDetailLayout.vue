@@ -17,6 +17,7 @@ import type { AssessmentSnapshot } from '../../shared/assessment'
 import { allergyTick } from '../../shared/allergy'
 import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { openInNewTab } from '../../shared/open-route'
+import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -823,9 +824,28 @@ async function loadIntakeStatus() {
   }
 }
 
+/** 其他标签页完成首诊后刷新头图状态 */
+async function refreshAfterExternalIntake() {
+  if (!peopleId.value) return
+  await Promise.all([
+    loadPatient(),
+    loadCompleteness(),
+    loadAdherenceSummary(),
+    loadAssessmentSummary(),
+    loadMetricSummary(),
+    loadIntakeStatus(),
+  ])
+}
+
+let unsubPatientCrossTab: (() => void) | null = null
+
 onMounted(async () => {
   setArchiveCompletenessRefresh(() => {
     void loadCompleteness()
+  })
+  unsubPatientCrossTab = subscribePatientCrossTab((ev) => {
+    if (ev.peopleId !== peopleId.value) return
+    void refreshAfterExternalIntake()
   })
   await loadPatient()
   await loadInvites()
@@ -840,6 +860,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   setArchiveCompletenessRefresh(null)
+  unsubPatientCrossTab?.()
+  unsubPatientCrossTab = null
 })
 </script>
 

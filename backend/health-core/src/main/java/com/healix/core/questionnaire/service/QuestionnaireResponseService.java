@@ -914,7 +914,9 @@ public class QuestionnaireResponseService {
                 }
                 case BASIC, DISEASE -> {
                     Optional<FieldValue> fv = peopleFieldService.read(tenantId, peopleId, code);
-                    if (fv.isPresent() && !ArchiveFields.isEmpty(fv.get().value())) {
+                    if (fv.isPresent()
+                            && !ArchiveFields.isEmpty(fv.get().value())
+                            && !isMaskedPlaceholder(fv.get().value())) {
                         cell.set("value", fv.get().value());
                         cell.put("sourceBizCode", nullToEmpty(fv.get().sourceBizCode()));
                         cell.put("sourceRefId", nullToEmpty(fv.get().sourceRefId()));
@@ -986,33 +988,41 @@ public class QuestionnaireResponseService {
 
     private void seedLastSubmittedAnswers(
             ObjectNode out, String tenantId, String peopleId, String purpose, Set<String> fields) {
-        QuestionnaireResponse last = responseMapper.findLatestSubmitted(tenantId, peopleId, purpose);
-        if (last == null) {
+        // 按提交时间倒序；跳过「已采集」占位，让更早的真实作答顶上
+        List<QuestionnaireResponse> rows = responseMapper.listSubmitted(tenantId, peopleId, purpose, 30);
+        if (rows == null || rows.isEmpty()) {
             return;
         }
-        ObjectNode answers = resolveSubmittedAnswers(last);
-        Iterator<Map.Entry<String, JsonNode>> it = answers.fields();
-        while (it.hasNext()) {
-            Map.Entry<String, JsonNode> e = it.next();
-            String code = e.getKey();
-            if (!fields.contains(code) || ArchiveFields.isEmpty(e.getValue())) {
-                continue;
-            }
-            try {
-                if (FieldStore.of(code).responseOnly()) {
+        for (QuestionnaireResponse last : rows) {
+            ObjectNode answers = resolveSubmittedAnswers(last);
+            Iterator<Map.Entry<String, JsonNode>> it = answers.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                String code = e.getKey();
+                if (!fields.contains(code)
+                        || ArchiveFields.isEmpty(e.getValue())
+                        || isMaskedPlaceholder(e.getValue())) {
                     continue;
                 }
-            } catch (IllegalArgumentException ignored) {
-                // 未知前缀仍可作答内预填
+                if (out.has(code) && !isMaskedPrefillCell(out.get(code))) {
+                    continue; // 已有更新的真实值
+                }
+                try {
+                    if (FieldStore.of(code).responseOnly()) {
+                        continue;
+                    }
+                } catch (IllegalArgumentException ignored) {
+                    // 未知前缀仍可作答内预填
+                }
+                ObjectNode cell = JsonUtils.emptyObject();
+                cell.set("value", e.getValue());
+                cell.put("sourceBizCode", "INTAKE_QUESTIONNAIRE");
+                cell.put("sourceRefId", last.getId());
+                if (last.getSubmittedAt() != null) {
+                    cell.put("gmtModified", last.getSubmittedAt().toString());
+                }
+                out.set(code, cell);
             }
-            ObjectNode cell = JsonUtils.emptyObject();
-            cell.set("value", e.getValue());
-            cell.put("sourceBizCode", "INTAKE_QUESTIONNAIRE");
-            cell.put("sourceRefId", last.getId());
-            if (last.getSubmittedAt() != null) {
-                cell.put("gmtModified", last.getSubmittedAt().toString());
-            }
-            out.set(code, cell);
         }
     }
 
@@ -1042,6 +1052,60 @@ public class QuestionnaireResponseService {
             return false;
         }
         return SensitiveFieldMask.MASKED.equals(value.asText());
+    }
+
+    private static boolean isMaskedPrefillCell(JsonNode cell) {
+        if (cell == null || !cell.isObject()) {
+            return isMaskedPlaceholder(cell);
+        }
+        return isMaskedPlaceholder(cell.get("value"));
+    }
+
+    /**
+     * 详情/读接口：把答卷里被脱敏写脏的「已采集」替换为同客户历史答卷中最近一次真实值。
+     */
+    private ObjectNode healMaskedAnswers(String tenantId, String peopleId, ObjectNode answers) {
+        if (answers == null || answers.isEmpty()) {
+            return answers;
+        }
+        List<String> maskedCodes = new ArrayList<>();
+        Iterator<Map.Entry<String, JsonNode>> it = answers.fields();
+        while (it.hasNext()) {
+            Map.Entry<String, JsonNode> e = it.next();
+            if (isMaskedPlaceholder(e.getValue())) {
+                maskedCodes.add(e.getKey());
+            }
+        }
+        if (maskedCodes.isEmpty()) {
+            return answers;
+        }
+        Map<String, JsonNode> recovered = new LinkedHashMap<>();
+        for (String purpose : List.of(PURPOSE_INTAKE, PURPOSE_SUPPLEMENT)) {
+            List<QuestionnaireResponse> rows = responseMapper.listSubmitted(tenantId, peopleId, purpose, 30);
+            if (rows == null) {
+                continue;
+            }
+            for (QuestionnaireResponse hist : rows) {
+                ObjectNode histAnswers = resolveSubmittedAnswers(hist);
+                for (String code : maskedCodes) {
+                    if (recovered.containsKey(code)) {
+                        continue;
+                    }
+                    JsonNode v = histAnswers.get(code);
+                    if (!ArchiveFields.isEmpty(v) && !isMaskedPlaceholder(v)) {
+                        recovered.put(code, v);
+                    }
+                }
+            }
+        }
+        if (recovered.isEmpty()) {
+            return answers;
+        }
+        ObjectNode healed = answers.deepCopy();
+        for (Map.Entry<String, JsonNode> e : recovered.entrySet()) {
+            healed.set(e.getKey(), e.getValue());
+        }
+        return healed;
     }
 
     private ArrayNode allergyPrefillArray(AllergySummaryDto summary, String category) {
@@ -1282,6 +1346,9 @@ public class QuestionnaireResponseService {
                 if (rule.matches(answer)) {
                     ObjectNode hit = JsonUtils.emptyObject();
                     hit.put("field", item.field());
+                    if (StringUtils.hasText(item.label())) {
+                        hit.put("label", item.label());
+                    }
                     hit.put("severity", rule.severity());
                     if (rule.planEffect() != null) {
                         hit.put("planEffect", rule.planEffect());
@@ -1357,12 +1424,23 @@ public class QuestionnaireResponseService {
         v.setProgramCode(row.getProgramCode());
         v.setEnrollmentId(row.getEnrollmentId());
         v.setFollowupRecordId(row.getFollowupRecordId());
+        ObjectNode answersNode = asObject(row.getAnswersJson());
+        answersNode = healMaskedAnswers(row.getTenantId(), row.getPeopleId(), answersNode);
         v.setPrefill(JsonUtils.readTree(row.getPrefillJson() == null ? "{}" : row.getPrefillJson()));
-        v.setAnswers(JsonUtils.readTree(row.getAnswersJson() == null ? "{}" : row.getAnswersJson()));
+        v.setAnswers(answersNode);
         v.setHighlights(JsonUtils.readTree(row.getHighlightsJson() == null ? "[]" : row.getHighlightsJson()));
         v.setCompleteness(JsonUtils.readTree(row.getCompletenessJson() == null ? "{}" : row.getCompletenessJson()));
         v.setChanges(JsonUtils.readTree(row.getChangesJson() == null ? "{}" : row.getChangesJson()));
-        v.setSnapshot(JsonUtils.readTree(row.getSnapshotJson() == null ? "null" : row.getSnapshotJson()));
+        JsonNode snapshotNode = JsonUtils.readTree(row.getSnapshotJson() == null ? "null" : row.getSnapshotJson());
+        if (snapshotNode != null && snapshotNode.isObject() && snapshotNode.path("answers").isObject()) {
+            ObjectNode snapObj = (ObjectNode) snapshotNode.deepCopy();
+            ObjectNode snapAnswers =
+                    healMaskedAnswers(row.getTenantId(), row.getPeopleId(), (ObjectNode) snapObj.get("answers"));
+            snapObj.set("answers", snapAnswers);
+            v.setSnapshot(snapObj);
+        } else {
+            v.setSnapshot(snapshotNode);
+        }
         v.setSubmittedAt(row.getSubmittedAt());
         QuestionnaireDef q = catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
         v.setTitle(q.title());

@@ -6,7 +6,6 @@ import com.healix.core.archive.dto.ArchiveViewDto;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.archive.service.ArchiveOperatorContext;
 import com.healix.core.archive.service.BasicArchiveService;
-import com.healix.core.field.SensitiveFieldMask;
 import com.healix.security.SecurityUtils;
 import com.healix.web.b.archive.SaveArchiveRequest;
 import lombok.RequiredArgsConstructor;
@@ -31,15 +30,17 @@ public class BBasicArchiveController {
     private final ArchiveAccessService archiveAccessService;
     private final BasicArchiveService basicArchiveService;
 
-    /** 查询患者基础档案全文（含版本号，用于乐观锁编辑）。 */
+    /**
+     * 查询患者基础档案全文（含版本号，用于乐观锁编辑）。
+     *
+     * <p>机构工作台已通过入组/权限校验的员工可查看敏感明细，不再按角色脱敏为「已采集」。
+     */
     @GetMapping("/patients/{peopleId}/archive/basic")
     public ApiResult<ArchiveViewDto> getBasicArchive(@PathVariable String peopleId) {
         String tenantId = SecurityUtils.requireTenantId();
         String orgId = SecurityUtils.requireCurrentOrgId();
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
-        boolean canViewSensitive =
-                SensitiveFieldMask.anyRoleCanView(SecurityUtils.requireContext().getRoles());
-        return ApiResult.ok(basicArchiveService.get(tenantId, peopleId, canViewSensitive));
+        return ApiResult.ok(basicArchiveService.get(tenantId, peopleId, true));
     }
 
     /** 保存患者基础档案；写入字段修订历史并同步元数据索引。 */

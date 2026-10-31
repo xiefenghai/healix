@@ -47,7 +47,26 @@ public class BIntakeController {
         String tenantId = SecurityUtils.requireTenantId();
         String orgId = SecurityUtils.requireCurrentOrgId();
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
-        return ApiResult.ok(responseService.intakeStatus(tenantId, peopleId));
+        IntakeStatusView view = responseService.intakeStatus(tenantId, peopleId);
+        // 兼容：详情页开首诊未挂 followupId 时，提交后任务可能仍 OPEN；有已提交答卷则补办结
+        if (view.isHasSubmitted() && StringUtils.hasText(view.getLatestSubmittedId())) {
+            try {
+                followupService.completeOnboardingAfterIntakeSubmit(
+                        orgId,
+                        peopleId,
+                        null,
+                        view.getLatestSubmittedId(),
+                        null,
+                        SecurityUtils.requireContext().getAccountId(),
+                        null);
+            } catch (Exception e) {
+                log.warn(
+                        "首诊已提交，补办结入组随访失败 peopleId={}: {}",
+                        peopleId,
+                        e.getMessage());
+            }
+        }
+        return ApiResult.ok(view);
     }
 
     /** 打开 / 续开首诊作答草稿。 */
@@ -117,11 +136,13 @@ public class BIntakeController {
             body.conflictResolutions().fields().forEachRemaining(e -> resolutions.put(e.getKey(), e.getValue()));
         }
         QuestionnaireResponseView submitted = responseService.submit(id, staffId, resolutions);
-        if (submitted.getFollowupRecordId() != null && !submitted.getFollowupRecordId().isBlank()) {
+        // 入组/首诊：提交后办结 OPEN 的 ONBOARDING 随访（详情页开首诊常无 followupRecordId）
+        if (QuestionnaireResponseService.PURPOSE_INTAKE.equals(submitted.getPurpose())) {
             try {
                 String aiSummary = extractAiSummary(submitted.getAnswers());
-                followupService.completeOnboardingByIntake(
+                followupService.completeOnboardingAfterIntakeSubmit(
                         SecurityUtils.requireCurrentOrgId(),
+                        submitted.getPeopleId(),
                         submitted.getFollowupRecordId(),
                         submitted.getId(),
                         submitted.getChannel(),

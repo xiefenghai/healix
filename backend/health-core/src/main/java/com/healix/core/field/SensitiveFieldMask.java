@@ -8,9 +8,10 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 敏感字段按角色脱敏：运营 / 租户管理员等不可见明细，仅保留「已采集」。
+ * 敏感字段按角色脱敏工具（保留给仍需按角色裁剪的调用方）。
  *
- * <p>可见：健管师、营养师、医生；其余角色对 {@code sensitive=true} 字段脱敏。
+ * <p>机构工作台基础档案读取已取消角色脱敏：能进患者档案的员工可看明细。
+ * {@link #canViewSensitive} 仍表示临床岗位（健管师 / 营养师 / 医生）。
  */
 public final class SensitiveFieldMask {
 

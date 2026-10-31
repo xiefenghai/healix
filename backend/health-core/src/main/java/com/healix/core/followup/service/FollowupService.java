@@ -293,6 +293,41 @@ public class FollowupService {
         return toView(followupRecordMapper.findById(record.getId()));
     }
 
+    /**
+     * 首诊问卷提交后办结入组/首诊随访。
+     *
+     * <p>优先用答卷上的 {@code preferredFollowupId}；从患者详情直接开首诊时往往没有该 ID，
+     * 则回退查找该患者当前 OPEN 的 ONBOARDING 随访并办结（关工作台任务、开制定方案）。
+     *
+     * @return 办结后的随访视图；无可办结记录时返回 null
+     */
+    @Transactional
+    public FollowupRecordViewDto completeOnboardingAfterIntakeSubmit(
+            String orgId,
+            String peopleId,
+            String preferredFollowupId,
+            String intakeResponseId,
+            String channel,
+            String actorAccountId,
+            String aiSummary) {
+        String followupId = preferredFollowupId;
+        if (StringUtils.hasText(followupId)) {
+            FollowupRecord preferred = followupRecordMapper.findById(followupId);
+            if (preferred == null || !FollowupRecordStatus.OPEN.matches(preferred.getStatus())) {
+                followupId = null;
+            }
+        }
+        if (!StringUtils.hasText(followupId)) {
+            FollowupRecord open = findOpenOnboardingByPeople(orgId, peopleId);
+            if (open == null) {
+                return null;
+            }
+            followupId = open.getId();
+        }
+        return completeOnboardingByIntake(
+                orgId, followupId, intakeResponseId, channel, actorAccountId, aiSummary);
+    }
+
     /** 首诊问卷提交后自动办结关联的 ONBOARDING 随访（含关任务、开制定方案）。 */
     @Transactional
     public FollowupRecordViewDto completeOnboardingByIntake(
@@ -316,6 +351,11 @@ public class FollowupService {
         content.put("guidance", "首诊问卷已提交");
         content.put("section", section);
         return complete(orgId, followupId, content, actorAccountId);
+    }
+
+    /** 患者当前 OPEN 的入组/首诊随访（PERIODIC + followupType=ONBOARDING）。 */
+    public FollowupRecord findOpenOnboardingByPeople(String orgId, String peopleId) {
+        return findOpenPeriodicSameType(orgId, peopleId, FollowupType.ONBOARDING);
     }
 
     private static String mapIntakeChannel(String channel) {

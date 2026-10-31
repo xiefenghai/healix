@@ -9,16 +9,22 @@ import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.careplan.dto.SafetyFlagDto;
 import com.healix.core.careplan.support.CarePlanAllergenGuard.Hit;
 import com.healix.core.careplan.enums.CarePlanSafetyLevelEnum;
+import com.healix.core.field.FieldCatalog;
+import com.healix.core.field.FieldDef;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
+@RequiredArgsConstructor
 public class CarePlanSafetyService {
+
+    private final FieldCatalog fieldCatalog;
 
     public static final String ERR_ALLERGEN = "DIET_ALLERGEN_CONFLICT";
     public static final String ERR_INCOMPLETE = "PLAN_INCOMPLETE";
@@ -154,7 +160,7 @@ public class CarePlanSafetyService {
     }
 
     /** 首诊高亮：BLOCK 不可发布；CAUTION/REFER 需确认。 */
-    private static void addHighlightFlags(List<SafetyFlagDto> flags, JsonNode contextSnapshot) {
+    private void addHighlightFlags(List<SafetyFlagDto> flags, JsonNode contextSnapshot) {
         if (contextSnapshot == null || contextSnapshot.isNull()) {
             return;
         }
@@ -166,9 +172,9 @@ public class CarePlanSafetyService {
         List<String> warns = new ArrayList<>();
         for (JsonNode h : highlights) {
             String sev = h.path("severity").asText("");
-            String field = h.path("field").asText("高亮");
+            String label = highlightLabel(h);
             String effect = h.path("planEffect").asText("");
-            String msg = field + (StringUtils.hasText(effect) ? "：" + effect : "");
+            String msg = label + (StringUtils.hasText(effect) ? "：" + effect : "");
             if ("BLOCK".equals(sev)) {
                 blocks.add(msg);
             } else if ("CAUTION".equals(sev) || "REFER".equals(sev)) {
@@ -193,6 +199,23 @@ public class CarePlanSafetyService {
                     WARN_HIGHLIGHT,
                     "首诊高亮需在方案中落实：" + String.join("；", warns)));
         }
+    }
+
+    /** 优先高亮自带中文 label，否则查字段目录，最后才回退编码。 */
+    private String highlightLabel(JsonNode h) {
+        String label = h.path("label").asText("");
+        if (StringUtils.hasText(label)) {
+            return label.trim();
+        }
+        String field = h.path("field").asText("");
+        if (!StringUtils.hasText(field)) {
+            return "高亮";
+        }
+        return fieldCatalog
+                .find(field)
+                .map(FieldDef::label)
+                .filter(StringUtils::hasText)
+                .orElse(field);
     }
 
     public void assertPublishable(List<SafetyFlagDto> flags, List<String> ackWarnCodes) {
