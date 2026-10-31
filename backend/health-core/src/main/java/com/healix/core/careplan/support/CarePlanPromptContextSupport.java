@@ -98,14 +98,14 @@ public final class CarePlanPromptContextSupport {
             "goal.targetBpSys=收缩压目标",
             "goal.targetBpDia=舒张压目标",
             "disease.diabetes.type=糖尿病分型",
-            "disease.diabetes.diagnosedYear=糖尿病确诊年份",
+            "disease.diabetes.diagnosedYear=糖尿病患病年份",
             "disease.diabetes.hypoglycemia=低血糖情况",
             "disease.diabetes.monitorFreq=血糖监测频率",
             "disease.diabetes.latestHba1c=近期糖化",
             "disease.diabetes.latestFpg=近期空腹血糖",
             "disease.diabetes.latestPpg=近期餐后血糖",
             "disease.diabetes.medAdherence=降糖药规律",
-            "disease.hypertension.diagnosedYear=高血压确诊年份",
+            "disease.hypertension.diagnosedYear=高血压患病年份",
             "disease.hypertension.homeMonitor=家庭自测血压",
             "disease.hypertension.latestSystolic=近期收缩压",
             "disease.hypertension.latestDiastolic=近期舒张压",
@@ -351,7 +351,7 @@ public final class CarePlanPromptContextSupport {
             case "monitorFreq" -> parsePairs(
                     "NONE=基本不测", "OCCASIONAL=偶尔", "WEEKLY=每周几次", "DAILY=几乎每天", "UNKNOWN=不清楚");
             case "medAdherence" -> parsePairs(
-                    "ALWAYS=基本按医嘱",
+                    "ALWAYS=基本按时用药",
                     "MOSTLY=大多按时偶有漏服",
                     "IRREGULAR=经常漏服或自行加减",
                     "STOPPED=已自行停药",

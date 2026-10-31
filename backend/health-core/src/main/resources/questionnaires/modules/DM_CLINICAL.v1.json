@@ -12,7 +12,7 @@
     },
     {
       "field": "disease.diabetes.diagnosedYear",
-      "label": "大概哪一年确诊的？",
+      "label": "大概哪一年得知患病的？",
       "level": "FIRST_VISIT",
       "sensitive": true
     },

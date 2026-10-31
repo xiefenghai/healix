@@ -752,7 +752,7 @@ const OPTION_SET_FALLBACKS: Record<string, string[]> = {
   dmHypoglycemia: ['NONE=没有', 'MILD=偶尔轻微', 'SEVERE=有过较重或需他人帮助', 'UNKNOWN=不清楚'],
   dmMonitorFreq: ['NONE=基本不测', 'OCCASIONAL=偶尔', 'WEEKLY=每周几次', 'DAILY=几乎每天', 'UNKNOWN=不清楚'],
   medAdherence: [
-    'ALWAYS=基本按医嘱',
+    'ALWAYS=基本按时用药',
     'MOSTLY=大多按时偶有漏服',
     'IRREGULAR=经常漏服或自行加减',
     'STOPPED=已自行停药',

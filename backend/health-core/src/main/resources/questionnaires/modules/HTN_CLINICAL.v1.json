@@ -6,7 +6,7 @@
   "items": [
     {
       "field": "disease.hypertension.diagnosedYear",
-      "label": "大概哪一年确诊高血压？",
+      "label": "大概哪一年得知患高血压？",
       "level": "FIRST_VISIT",
       "sensitive": true
     },

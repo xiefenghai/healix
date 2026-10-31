@@ -12,7 +12,7 @@
     },
     {
       "field": "disease.diabetes.diagnosedYear",
-      "label": "大概哪一年确诊的？（选年份）",
+      "label": "大概哪一年得知患病的？（选年份）",
       "level": "FIRST_VISIT",
       "sensitive": true
     },
@@ -75,7 +75,7 @@
         {
           "when": { "in": ["IRREGULAR", "STOPPED"] },
           "severity": "CAUTION",
-          "planEffect": "先提醒按医嘱用药，方案不强推大幅饮食变动"
+          "planEffect": "先提醒按时用药，方案不强推大幅饮食变动"
         }
       ]
     },

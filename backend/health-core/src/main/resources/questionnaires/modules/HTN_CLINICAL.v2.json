@@ -6,7 +6,7 @@
   "items": [
     {
       "field": "disease.hypertension.diagnosedYear",
-      "label": "大概哪一年确诊高血压？（选年份）",
+      "label": "大概哪一年得知患高血压？（选年份）",
       "level": "FIRST_VISIT",
       "sensitive": true
     },
@@ -63,7 +63,7 @@
         {
           "when": { "in": ["IRREGULAR", "STOPPED"] },
           "severity": "CAUTION",
-          "planEffect": "先提醒按医嘱用药，再谈限盐与运动"
+          "planEffect": "先提醒按时用药，再谈限盐与运动"
         }
       ]
     },
