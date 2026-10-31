@@ -126,7 +126,7 @@ defineExpose({ payload, touchedCount, reset })
           :model-value="answers[q.field] as string"
           type="number"
           :min="q.min ?? 0"
-          :max="q.max"
+          :max="q.max ?? undefined"
           :placeholder="q.min != null && q.max != null ? `${q.min}–${q.max}` : '请输入'"
           class="qf-input"
           @update:model-value="(v: string) => onNumber(q, v)"
