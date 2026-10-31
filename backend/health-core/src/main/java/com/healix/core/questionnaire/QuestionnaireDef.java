@@ -14,7 +14,11 @@ public record QuestionnaireDef(
         boolean dynamic,
         List<ModuleRef> modules) {
 
-    public record ModuleRef(String code, int version) {}
+    public record ModuleRef(String code, int version, ShowIf showIf) {
+        public ModuleRef(String code, int version) {
+            this(code, version, null);
+        }
+    }
 
     static QuestionnaireDef parse(JsonNode n) {
         String code = text(n, "code");
@@ -31,7 +35,7 @@ public record QuestionnaireDef(
             if (mc == null || mv <= 0) {
                 throw new IllegalStateException("问卷模块引用不合法: " + code);
             }
-            modules.add(new ModuleRef(mc, mv));
+            modules.add(new ModuleRef(mc, mv, ShowIf.parse(m.get("showIf"))));
         }
         if (modules.isEmpty()) {
             throw new IllegalStateException("问卷无模块: " + code);

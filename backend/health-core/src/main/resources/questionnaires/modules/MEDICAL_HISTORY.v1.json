@@ -119,12 +119,22 @@
       "highlights": [
         {
           "when": {
-            "text": "近 3 个月内手术"
+            "notIn": ["NONE"]
           },
           "severity": "CAUTION",
-          "planEffect": "恢复期内不安排中高强度运动"
+          "planEffect": "了解时间与恢复情况，恢复期内不安排中高强度运动"
         }
       ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.medical.recentHospitalizationNote",
+      "label": "做过什么手术或因何住院？大概什么时候？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.medical.recentHospitalization",
+        "notIn": ["NONE"]
+      },
       "sensitive": true
     },
     {

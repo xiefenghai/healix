@@ -1,0 +1,56 @@
+{
+  "code": "WL_RISK_SCREEN",
+  "version": 2,
+  "title": "减重风险筛查",
+  "script": "接下来有几题是为了让减重方案更安全。如果触到您不想谈的话题，可以直接说跳过，我们完全理解。",
+  "items": [
+    {
+      "field": "basic.psych.eatingDisorderHistory",
+      "label": "以前有没有出现过暴食、催吐，或者长时间刻意不吃饭的情况？",
+      "level": "FIRST_VISIT",
+      "sensitive": true,
+      "highlights": [
+        {
+          "when": { "in": ["YES", "UNSURE"] },
+          "severity": "REFER",
+          "followUp": "不追问细节；记录是否曾寻求专业帮助。",
+          "planEffect": "不设热量缺口；称重改为每周；方案中提示转介"
+        }
+      ]
+    },
+    {
+      "field": "basic.psych.soughtHelp",
+      "label": "有没有因为这个找过医生或心理咨询？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.psych.eatingDisorderHistory",
+        "in": ["YES", "UNSURE"]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.bodySatisfaction",
+      "label": "对自己现在的身材满意吗？",
+      "level": "LATER",
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.bodyAnxiety",
+      "label": "会不会经常因为身材焦虑，影响心情或生活？",
+      "level": "LATER",
+      "sensitive": true
+    },
+    {
+      "field": "basic.weightHistory.expectedPace",
+      "label": "希望多快看到减重效果？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "eq": "ASAP" },
+          "severity": "CAUTION",
+          "planEffect": "预期沟通：稳健节奏更可持续，避免过快减重"
+        }
+      ]
+    }
+  ]
+}

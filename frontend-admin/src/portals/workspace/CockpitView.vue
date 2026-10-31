@@ -22,6 +22,7 @@ import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
 import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
 import { onAgentCarePlanUpdated } from '../../shared/agent-events'
+import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
 import {
   notifyCockpitTasksPossiblyChanged,
   onCockpitTasksPossiblyChanged,
@@ -1250,6 +1251,8 @@ async function loadFocus(peopleId: string) {
   try {
     const res = await api<{ data: Focus }>(`/api/b/v1/cockpit/focus/${peopleId}`)
     focus.value = res.data
+    // 首诊等多在新标签办结：焦点刷新后把已关闭任务的气泡按钮变灰
+    retireCompletedTaskActions(peopleId, res.data?.openTasks || [])
   } catch (e) {
     focus.value = null
     ElMessage.error(e instanceof Error ? e.message : '加载患者快照失败')
@@ -2105,7 +2108,12 @@ async function openWorkspaceTaskForm(
     const row = detail.data
     if (!row || (row.status || '').toUpperCase() !== 'OPEN') {
       ElMessage.warning('任务已关闭或不存在')
-      if (opts?.fromAction) opts.fromAction.runState = undefined
+      if (opts?.fromAction) {
+        opts.fromAction.runState = 'done'
+        const doneLabel = callApiDoneLabel('COMPLETE_TASK')
+        if (doneLabel) opts.fromAction.label = doneLabel
+      }
+      if (peopleId) retireCompletedTaskActions(peopleId, focus.value?.openTasks || [])
       return
     }
     if (!row.assigneeStaffId) {
@@ -2158,6 +2166,65 @@ function isCarePlanChatAction(a: AgentAction): boolean {
   if (a.type === 'OPEN_SHEET' && a.path === 'care-plan') return true
   if (a.label && /(编辑|查看)?方案草稿|确认发布方案|发布方案|预览全文/.test(a.label)) return true
   return false
+}
+
+/**
+ * 气泡「确认办结」在首诊等流程里往往新开标签完成，本页拿不到 submitted。
+ * 按焦点 OPEN 待办对照：任务已不在列表则灰掉对应 COMPLETE_TASK 按钮；
+ * 无 OPEN 的 TEAM_ASSIGN 时灰掉「去分配健管组」。
+ */
+function retireCompletedTaskActions(peopleId: string, openTasks: FocusTask[]) {
+  if (!peopleId) return
+  const openIds = new Set(openTasks.map((t) => t.id).filter(Boolean))
+  const doneLabel = callApiDoneLabel('COMPLETE_TASK') || '已办结待办'
+  let touched = false
+  const patch = (list: ChatMessage[]) => {
+    for (const msg of list) {
+      if (!msg.actions?.length) continue
+      for (const a of msg.actions) {
+        if (a.path !== 'COMPLETE_TASK') continue
+        if (a.runState === 'done') continue
+        if (a.peopleId && a.peopleId !== peopleId) continue
+        const taskId = typeof a.payload?.taskId === 'string' ? a.payload.taskId.trim() : ''
+        if (!taskId) continue
+        if (openIds.has(taskId)) continue
+        a.runState = 'done'
+        a.label = doneLabel
+        touched = true
+      }
+    }
+  }
+  patch(messages.value)
+  const cached = patientSessionCache.get(peopleId)
+  if (cached) patch(cached.messages)
+  if (touched && focusPeopleId.value === peopleId) cachePatientSession(peopleId)
+  if (!openTasks.some((t) => t.taskType === 'TEAM_ASSIGN')) {
+    retireJoinCareTeamActions(peopleId)
+  }
+}
+
+/** 入组成功后灰掉气泡「去分配健管组」（NAVIGATE join-care-team，非 COMPLETE_TASK）。 */
+function retireJoinCareTeamActions(peopleId: string) {
+  if (!peopleId) return
+  const doneLabel = '已分配健管组'
+  let touched = false
+  const patch = (list: ChatMessage[]) => {
+    for (const msg of list) {
+      if (!msg.actions?.length) continue
+      for (const a of msg.actions) {
+        if (a.runState === 'done') continue
+        if (a.peopleId && a.peopleId !== peopleId) continue
+        if (!(a.type === 'NAVIGATE' && a.path === 'join-care-team')) continue
+        a.runState = 'done'
+        a.label = doneLabel
+        touched = true
+      }
+    }
+  }
+  patch(messages.value)
+  const cached = patientSessionCache.get(peopleId)
+  if (cached) patch(cached.messages)
+  if (touched && focusPeopleId.value === peopleId) cachePatientSession(peopleId)
 }
 
 /** 方案已在抽屉或聊天内发布后，收掉过期的编辑/发布按钮，避免回到驾驶舱再点一遍 */
@@ -2592,6 +2659,8 @@ const COCKPIT_FOCUS_KEY = 'healix.cockpit.focusPeopleId'
 
 let stopCockpitTasksRefresh: (() => void) | null = null
 let stopCarePlanUpdated: (() => void) | null = null
+let stopPatientCrossTab: (() => void) | null = null
+let stopVisibilityRefresh: (() => void) | null = null
 
 watch(sheetOpen, (open, wasOpen) => {
   // 快捷办理抽屉关闭：随访/录入/方案等可能已改待办
@@ -2612,6 +2681,19 @@ onMounted(async () => {
       if (id) retireCarePlanChatActions(id)
     },
   )
+  // 首诊在新标签提交后，驾驶舱页签收到广播 → 刷新焦点并灰掉办结气泡
+  stopPatientCrossTab = subscribePatientCrossTab((ev) => {
+    if (!ev.peopleId) return
+    if (ev.reason !== 'INTAKE_SUBMITTED' && ev.reason !== 'INTAKE_SUPPLEMENT') return
+    scheduleRefreshAfterTaskChange(ev.peopleId)
+  })
+  const onVis = () => {
+    if (document.visibilityState !== 'visible') return
+    const id = focusPeopleId.value
+    if (id) scheduleRefreshAfterTaskChange(id)
+  }
+  document.addEventListener('visibilitychange', onVis)
+  stopVisibilityRefresh = () => document.removeEventListener('visibilitychange', onVis)
   try {
     await Promise.all([loadSummary(), loadPriority(), loadCapabilities(), loadDraftInbox()])
     // 先恢复机构会话（以服务端为准）
@@ -2643,6 +2725,10 @@ onUnmounted(() => {
   stopCockpitTasksRefresh = null
   stopCarePlanUpdated?.()
   stopCarePlanUpdated = null
+  stopPatientCrossTab?.()
+  stopPatientCrossTab = null
+  stopVisibilityRefresh?.()
+  stopVisibilityRefresh = null
   if (refreshTasksTimer) {
     clearTimeout(refreshTasksTimer)
     refreshTasksTimer = null
@@ -3554,6 +3640,7 @@ onUnmounted(() => {
       @joined="
         async () => {
           const id = focusPeopleId
+          if (id) retireJoinCareTeamActions(id)
           await refreshAfterTaskChange(id)
         }
       "

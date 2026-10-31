@@ -332,14 +332,46 @@ public class CarePlanLlmGenerator {
         payload.set("patientContext", patientContext(ctx));
         putAllergyGuard(payload, ctx);
         putGuidelineRecs(payload, ctx);
+        putCareTrackHint(payload, ctx);
         return """
                 请根据以下输入生成完整管理方案 JSON。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
+                叙事与监测须对齐 patientContext.goals.careTracks（及 diabetesClinical / hypertensionClinical）；
+                无减重方向时不要写成减肥方案。
                 仅输出 JSON，不要 markdown。
 
                 %s
                 """
                 .formatted(JsonUtils.toJson(payload));
+    }
+
+    private static void putCareTrackHint(ObjectNode payload, CarePlanContext ctx) {
+        if (ctx == null || ctx.snapshot() == null) {
+            return;
+        }
+        JsonNode goals = ctx.snapshot().get("goals");
+        if (goals == null || goals.isNull()) {
+            return;
+        }
+        ObjectNode hint = JsonUtils.emptyObject();
+        JsonNode tracks = goals.get("careTracksLabels");
+        if (tracks != null && tracks.isArray() && !tracks.isEmpty()) {
+            hint.set("careTracksLabels", tracks.deepCopy());
+        }
+        JsonNode appealLabels = goals.get("primaryAppealLabels");
+        if (appealLabels != null && appealLabels.isArray() && !appealLabels.isEmpty()) {
+            hint.set("primaryAppealLabels", appealLabels.deepCopy());
+        } else {
+            JsonNode appeal = goals.get("primaryAppealLabel");
+            if (appeal != null && appeal.isTextual() && StringUtils.hasText(appeal.asText())) {
+                hint.put("primaryAppealLabel", appeal.asText());
+            }
+        }
+        boolean weight = CarePlanPromptContextSupport.includesWeightLossTrack(goals);
+        hint.put("emphasizeWeightLoss", weight);
+        if (!hint.isEmpty()) {
+            payload.set("careFocus", hint);
+        }
     }
 
     private static List<String> sanitizeDiseaseCodes(List<String> raw) {
@@ -401,6 +433,7 @@ public class CarePlanLlmGenerator {
         payload.set("patientContext", patientContext(ctx));
         putAllergyGuard(payload, ctx);
         putGuidelineRecs(payload, ctx);
+        putCareTrackHint(payload, ctx);
         ObjectNode draft = JsonUtils.emptyObject();
         draft.set("exercise", currentExercise == null ? JsonUtils.emptyObject() : currentExercise);
         draft.set("diet", currentDiet == null ? JsonUtils.emptyObject() : currentDiet);

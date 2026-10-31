@@ -140,11 +140,14 @@ public class DictSeedRunner implements ApplicationRunner {
         ensureFieldCatalogOptions();
     }
 
-    /** 字段目录里的新选项集（幂等；已存在的不覆盖，机构可改文案）。 */
+    /**
+     * 字段目录 optionSets：按目录同步码 / 文案 / 排序。
+     * 平台种子可纠偏；租户自建同码项仍由 listMerged 覆盖展示。
+     */
     private void ensureFieldCatalogOptions() {
         fieldCatalog.catalogOptionSets().forEach((set, options) -> {
             for (int i = 0; i < options.size(); i++) {
-                seedOptionIfAbsent(set, options.get(i).code(), options.get(i).label(), 1000 - i * 10);
+                seedOptionEnsure(set, options.get(i).code(), options.get(i).label(), 1000 - i * 10);
             }
         });
         seedOptionIfAbsent("presentIllness", "PREDIABETES", "糖尿病前期（血糖偏高）", 224);

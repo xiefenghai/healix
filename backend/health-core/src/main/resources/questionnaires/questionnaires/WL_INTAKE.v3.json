@@ -1,0 +1,43 @@
+{
+  "code": "WL_INTAKE",
+  "version": 3,
+  "title": "首诊入组问卷",
+  "program": null,
+  "purpose": "INTAKE",
+  "modules": [
+    { "code": "BASIC_PROFILE", "version": 2 },
+    { "code": "GOALS_PREFERENCE", "version": 3 },
+    { "code": "BODY_MEASURE", "version": 2 },
+    { "code": "MEDICAL_HISTORY", "version": 2 },
+    { "code": "WOMEN_HEALTH", "version": 2 },
+    { "code": "ALLERGY_DIET_RESTRICTION", "version": 2 },
+    { "code": "FAMILY_HISTORY", "version": 2 },
+    {
+      "code": "DM_CLINICAL",
+      "version": 2,
+      "showIf": { "field": "goal.careTracks", "intersects": ["DIABETES"] }
+    },
+    {
+      "code": "HTN_CLINICAL",
+      "version": 2,
+      "showIf": { "field": "goal.careTracks", "intersects": ["HYPERTENSION"] }
+    },
+    {
+      "code": "WL_WEIGHT_HISTORY",
+      "version": 2,
+      "showIf": { "field": "goal.careTracks", "intersects": ["WEIGHT_LOSS"] }
+    },
+    {
+      "code": "WL_RISK_SCREEN",
+      "version": 2,
+      "showIf": { "field": "goal.careTracks", "intersects": ["WEIGHT_LOSS"] }
+    },
+    { "code": "DIET_BEHAVIOR", "version": 2 },
+    { "code": "EXERCISE_BEHAVIOR", "version": 2 },
+    { "code": "SLEEP_SUBSTANCE", "version": 2 },
+    { "code": "PSYCH_BASE", "version": 2 },
+    { "code": "STAFF_NOTE", "version": 1 },
+    { "code": "CONSENT", "version": 1 },
+    { "code": "INTAKE_AI_SUMMARY", "version": 1 }
+  ]
+}

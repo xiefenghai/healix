@@ -695,9 +695,6 @@ onMounted(async () => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="证件" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.identityMask || '-' }}</template>
-        </el-table-column>
         <el-table-column label="病种档案" min-width="140">
           <template #default="{ row }">
             <div v-if="row.diseaseLabels?.length" class="tag-wrap">

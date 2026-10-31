@@ -4,6 +4,7 @@
  * 已填行折叠成一行摘要，与用药明细一致。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import {
   emptyAllergyForm,
   loadAllergyCatalog,
@@ -182,6 +183,17 @@ function collapseRow() {
   expandedIdx.value = null
 }
 
+/** 确定：校验过敏原后折叠成摘要行 */
+function confirmRow(idx: number) {
+  const row = items[idx]
+  if (!row?.allergenName?.trim()) {
+    ElMessage.warning('请先填写过敏原')
+    return
+  }
+  emitList()
+  expandedIdx.value = null
+}
+
 function onAllergenPick(row: IntakeAllergyDraft, val: string) {
   const hit = catalog.value?.allergens.find((a) => a.code === val)
   if (hit) {
@@ -254,15 +266,6 @@ onMounted(async () => {
         <div class="head">
           <strong>{{ categoryLabel }} {{ idx + 1 }}</strong>
           <div class="head-actions">
-            <el-button
-              v-if="row.allergenName.trim()"
-              link
-              type="primary"
-              size="small"
-              @click="collapseRow"
-            >
-              收起
-            </el-button>
             <el-button link type="danger" size="small" :disabled="disabled" @click="removeItem(idx)">
               删除
             </el-button>
@@ -370,6 +373,13 @@ onMounted(async () => {
               @change="emitList"
             />
           </el-form-item>
+
+          <div class="confirm-row">
+            <el-button type="primary" size="small" :disabled="disabled" @click="confirmRow(idx)">
+              确定
+            </el-button>
+            <el-button size="small" :disabled="disabled" @click="collapseRow">收起</el-button>
+          </div>
         </el-form>
       </template>
     </div>
@@ -508,6 +518,14 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 2px;
+  margin-top: 4px;
 }
 
 .form :deep(.el-form-item) {

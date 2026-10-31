@@ -297,7 +297,7 @@ public class FollowupService {
      * 首诊问卷提交后办结入组/首诊随访。
      *
      * <p>优先用答卷上的 {@code preferredFollowupId}；从患者详情直接开首诊时往往没有该 ID，
-     * 则回退查找该患者当前 OPEN 的 ONBOARDING 随访并办结（关工作台任务、开制定方案）。
+     * 则回退查找该患者当前 OPEN 的 ONBOARDING 随访并办结（关工作台任务、按是否入组开后续待办）。
      *
      * @return 办结后的随访视图；无可办结记录时返回 null
      */
@@ -328,7 +328,7 @@ public class FollowupService {
                 orgId, followupId, intakeResponseId, channel, actorAccountId, aiSummary);
     }
 
-    /** 首诊问卷提交后自动办结关联的 ONBOARDING 随访（含关任务、开制定方案）。 */
+    /** 首诊问卷提交后自动办结关联的 ONBOARDING 随访（含关任务、开分配健管组或制定方案）。 */
     @Transactional
     public FollowupRecordViewDto completeOnboardingByIntake(
             String orgId,
@@ -979,16 +979,15 @@ public class FollowupService {
     }
 
     /**
-     * 首诊办结后：立刻开制定方案；若尚未进健管组则再开「分配健管组」（公海）。
-     * 已有生效方案 / 已在组内时由生成器跳过。
+     * 首诊办结后：未入组只开「分配健管组」；已在组内才开「制定方案」。
+     * 入组后再由 {@link com.healix.core.worktask.service.WorkspaceTaskGenerator#onPatientJoinedTeam} 开制定方案。
      */
     private void openPlanAfterOnboarding(
             String tenantId, String orgId, String peopleId, String followupId, FollowupType type) {
         if (type != FollowupType.ONBOARDING) {
             return;
         }
-        workspaceTaskGenerator.ensurePlanCreateAfterOnboarding(tenantId, orgId, peopleId, followupId);
-        workspaceTaskGenerator.ensureTeamAssignOnJoin(tenantId, orgId, peopleId);
+        workspaceTaskGenerator.afterOnboardingCompleted(tenantId, orgId, peopleId, followupId);
     }
 
     /** 勾选建议调整方案时，确保工作台有 OPEN 的制定方案待办。 */

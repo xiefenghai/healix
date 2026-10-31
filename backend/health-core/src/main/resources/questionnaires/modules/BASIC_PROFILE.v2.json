@@ -1,0 +1,62 @@
+{
+  "code": "BASIC_PROFILE",
+  "version": 2,
+  "title": "基础信息",
+  "script": "先确认一下基本信息，后面定方案会用到，有不对的地方随时改就好。",
+  "items": [
+    {
+      "field": "profile.displayName",
+      "label": "姓名",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "profile.gender",
+      "label": "性别",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "profile.birthday",
+      "label": "出生日期",
+      "level": "REQUIRED",
+      "highlights": [
+        {
+          "when": { "computed": "年龄", "op": "<", "value": 18.0 },
+          "severity": "CAUTION",
+          "planEffect": "干预强度取保守值"
+        }
+      ]
+    },
+    {
+      "field": "profile.mobile",
+      "label": "手机号",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "profile.wechatId",
+      "label": "微信号",
+      "level": "LATER"
+    },
+    {
+      "field": "profile.occupation",
+      "label": "职业",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "profile.maritalStatus",
+      "label": "婚姻状况",
+      "level": "LATER"
+    },
+    {
+      "field": "profile.workSchedule",
+      "label": "平时作息是哪种？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "in": ["SHIFT", "NIGHT"] },
+          "severity": "CAUTION",
+          "planEffect": "餐次、用药提醒与运动时段按班次安排"
+        }
+      ]
+    }
+  ]
+}

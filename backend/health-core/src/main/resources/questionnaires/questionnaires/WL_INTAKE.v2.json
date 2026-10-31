@@ -1,0 +1,97 @@
+{
+  "code": "WL_INTAKE",
+  "version": 2,
+  "title": "首诊入组问卷",
+  "program": null,
+  "purpose": "INTAKE",
+  "modules": [
+    {
+      "code": "BASIC_PROFILE",
+      "version": 1
+    },
+    {
+      "code": "BODY_MEASURE",
+      "version": 1
+    },
+    {
+      "code": "GOALS_PREFERENCE",
+      "version": 2
+    },
+    {
+      "code": "WOMEN_HEALTH",
+      "version": 1
+    },
+    {
+      "code": "MEDICAL_HISTORY",
+      "version": 1
+    },
+    {
+      "code": "ALLERGY_DIET_RESTRICTION",
+      "version": 1
+    },
+    {
+      "code": "FAMILY_HISTORY",
+      "version": 1
+    },
+    {
+      "code": "DIET_BEHAVIOR",
+      "version": 1
+    },
+    {
+      "code": "EXERCISE_BEHAVIOR",
+      "version": 1
+    },
+    {
+      "code": "SLEEP_SUBSTANCE",
+      "version": 1
+    },
+    {
+      "code": "PSYCH_BASE",
+      "version": 1
+    },
+    {
+      "code": "WL_WEIGHT_HISTORY",
+      "version": 1,
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["WEIGHT_LOSS"]
+      }
+    },
+    {
+      "code": "WL_RISK_SCREEN",
+      "version": 1,
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["WEIGHT_LOSS"]
+      }
+    },
+    {
+      "code": "DM_CLINICAL",
+      "version": 1,
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["DIABETES"]
+      }
+    },
+    {
+      "code": "HTN_CLINICAL",
+      "version": 1,
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["HYPERTENSION"]
+      }
+    },
+    {
+      "code": "STAFF_NOTE",
+      "version": 1
+    },
+    {
+      "code": "CONSENT",
+      "version": 1
+    },
+    {
+      "code": "INTAKE_AI_SUMMARY",
+      "version": 1
+    }
+  ]
+}

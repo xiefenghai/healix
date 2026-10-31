@@ -8,6 +8,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { debounce } from '../../shared/debounce'
 import {
   calcBmi,
+  CARE_TRACK_OPTIONS,
   FIELD_STAFF_AI_SUMMARY,
   collectLocalHighlights,
   formatAnswerBrief,
@@ -18,11 +19,16 @@ import {
   loadIntakeOptionMaps,
   matchShowIf,
   mergePrefillIntoAnswers,
+  careTracksAnswerValue,
+  normalizeCareTracks,
   openIntake,
   openIntakeSupplement,
+  primaryProgramFromTracks,
   saveIntakeDraft,
   severityLabel,
   submitIntake,
+  suggestedCareTracksFromAppeal,
+  suggestedCareTracksFromIllness,
   valuesEqual,
   type IntakeCompleteness,
   type IntakeHighlightHit,
@@ -132,12 +138,17 @@ function isPrefillTone(field: string) {
 
 const visibleModules = computed(() =>
   modules.value
+    .filter((m) => matchShowIf(m.showIf, answers))
     .map((m) => ({
       ...m,
       items: m.items.filter(itemVisible),
     }))
     .filter((m) => m.items.length > 0),
 )
+
+const careTracks = computed(() => normalizeCareTracks(answers['goal.careTracks']))
+
+const illnessTrackHints = computed(() => suggestedCareTracksFromIllness(answers['basic.presentIllness']))
 
 const currentModule = computed(() => visibleModules.value.find((m) => m.code === activeModule.value) || null)
 
@@ -234,6 +245,7 @@ const localCompleteness = computed(() => {
   const requiredMissing: string[] = []
   const firstVisitMissing: string[] = []
   for (const m of modules.value) {
+    if (!matchShowIf(m.showIf, answers)) continue
     for (const it of m.items) {
       // 进度按当前模式可见题（快速 = 必收+首诊建议）
       if (!itemVisible(it)) continue
@@ -302,6 +314,7 @@ const highlightHits = computed(() => {
 const riskUnasked = computed(() => {
   const list: IntakeItemView[] = []
   for (const m of modules.value) {
+    if (!matchShowIf(m.showIf, answers)) continue
     for (const it of m.items) {
       if (!itemVisible(it)) continue
       if ((it.highlights?.length || 0) === 0) continue
@@ -348,11 +361,63 @@ function applyView(view: QuestionnaireResponseView, seedAnswers: boolean) {
     const merged = mergePrefillIntoAnswers(view.answers || {}, prefill.value)
     Object.keys(answers).forEach((k) => delete answers[k])
     Object.assign(answers, merged)
+    // 核心诉求改为多选：历史单码字符串归一成数组
+    if (typeof answers['goal.primaryAppeal'] === 'string' && answers['goal.primaryAppeal']) {
+      answers['goal.primaryAppeal'] = [answers['goal.primaryAppeal']]
+    }
+    // 空草稿无管理方向时，按顶栏/后端 programCode 预填，专属模块才能显隐
+    if (
+      status.value === 'DRAFT' &&
+      !normalizeCareTracks(answers['goal.careTracks']).length &&
+      programCode.value &&
+      programCode.value !== 'NONE'
+    ) {
+      answers['goal.careTracks'] = [programCode.value]
+    }
   }
 
+  syncProgramFromTracks()
   if (!activeModule.value || !visibleModules.value.some((m) => m.code === activeModule.value)) {
     activeModule.value = visibleModules.value[0]?.code || modules.value[0]?.code || ''
   }
+}
+
+function syncProgramFromTracks() {
+  programCode.value = primaryProgramFromTracks(careTracks.value, answers['goal.primaryAppeal'])
+}
+
+function setCareTracks(next: IntakeProgramCode[], persist = true) {
+  answers['goal.careTracks'] = careTracksAnswerValue(next)
+  syncProgramFromTracks()
+  if (!visibleModules.value.some((m) => m.code === activeModule.value)) {
+    activeModule.value = visibleModules.value[0]?.code || ''
+  }
+  if (persist && hydrated.value && status.value === 'DRAFT') {
+    scheduleSave.cancel()
+    void persistDraft()
+  }
+}
+
+function toggleCareTrack(code: Exclude<IntakeProgramCode, 'NONE'>) {
+  const cur = [...careTracks.value]
+  const idx = cur.indexOf(code)
+  if (idx >= 0) cur.splice(idx, 1)
+  else cur.push(code)
+  setCareTracks(cur)
+}
+
+function setNoProgram() {
+  setCareTracks([])
+}
+
+function adoptIllnessTrackHints() {
+  const merged = [...careTracks.value]
+  for (const t of illnessTrackHints.value) {
+    if (!merged.includes(t as Exclude<IntakeProgramCode, 'NONE'>)) {
+      merged.push(t as Exclude<IntakeProgramCode, 'NONE'>)
+    }
+  }
+  setCareTracks(merged)
 }
 
 async function loadPatientName() {
@@ -426,15 +491,48 @@ watch(
   { deep: true },
 )
 
-watch(programCode, async (next, prev) => {
-  if (!hydrated.value || next === prev || status.value !== 'DRAFT') return
-  scheduleSave.cancel()
-  await persistDraft()
-})
+watch(
+  () => answers['goal.careTracks'],
+  () => {
+    if (!hydrated.value || status.value !== 'DRAFT') return
+    syncProgramFromTracks()
+    if (!visibleModules.value.some((m) => m.code === activeModule.value)) {
+      activeModule.value = visibleModules.value[0]?.code || ''
+    }
+  },
+  { deep: true },
+)
+
+watch(
+  () => answers['goal.primaryAppeal'],
+  (appeal, prev) => {
+    if (!hydrated.value || status.value !== 'DRAFT' || appeal === prev) return
+    const suggested = suggestedCareTracksFromAppeal(appeal)
+    if (!suggested.length) return
+    // 仅在尚未勾选任何方向，或当前方向完全不含建议项时，自动补上建议方向
+    const cur = careTracks.value
+    if (!cur.length || suggested.some((s) => !cur.includes(s as Exclude<IntakeProgramCode, 'NONE'>))) {
+      const merged = [...cur]
+      for (const s of suggested) {
+        if (!merged.includes(s as Exclude<IntakeProgramCode, 'NONE'>)) {
+          merged.push(s as Exclude<IntakeProgramCode, 'NONE'>)
+        }
+      }
+      answers['goal.careTracks'] = careTracksAnswerValue(merged)
+      syncProgramFromTracks()
+    }
+  },
+)
 
 watch(quickMode, () => {
   if (!visibleModules.value.some((m) => m.code === activeModule.value)) {
     activeModule.value = visibleModules.value[0]?.code || ''
+  }
+})
+
+watch(visibleModules, (mods) => {
+  if (!mods.some((m) => m.code === activeModule.value)) {
+    activeModule.value = mods[0]?.code || ''
   }
 })
 
@@ -549,19 +647,52 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="top-mid">
-        <el-radio-group
-          v-if="!isSupplement"
-          v-model="programCode"
-          size="small"
-          :disabled="status !== 'DRAFT'"
-        >
-          <el-radio-button value="WEIGHT_LOSS">减重管理</el-radio-button>
-          <el-radio-button value="NONE">暂不加入</el-radio-button>
-        </el-radio-group>
-        <el-radio-group v-if="!isSupplement" v-model="quickMode" size="small" class="mode">
-          <el-radio-button :value="true">快速</el-radio-button>
-          <el-radio-button :value="false">完整</el-radio-button>
-        </el-radio-group>
+        <div v-if="!isSupplement" class="track-switch" role="group" aria-label="管理方向">
+          <span class="track-switch-label">管理方向</span>
+          <div class="track-btns">
+            <button
+              v-for="opt in CARE_TRACK_OPTIONS"
+              :key="opt.code"
+              type="button"
+              class="track-btn"
+              :class="{ on: careTracks.includes(opt.code) }"
+              :disabled="status !== 'DRAFT'"
+              @click="toggleCareTrack(opt.code)"
+            >
+              {{ opt.label }}
+            </button>
+            <button
+              type="button"
+              class="track-btn track-btn-none"
+              :class="{ on: careTracks.length === 0 }"
+              :disabled="status !== 'DRAFT'"
+              @click="setNoProgram"
+            >
+              暂不加入
+            </button>
+          </div>
+          <button
+            v-if="status === 'DRAFT' && illnessTrackHints.some((t) => !careTracks.includes(t))"
+            type="button"
+            class="track-hint"
+            @click="adoptIllnessTrackHints"
+          >
+            病史含糖/压，一并纳入
+          </button>
+        </div>
+        <div v-if="!isSupplement" class="mode-switch" role="group" aria-label="填写范围">
+          <span class="mode-switch-label">填写范围</span>
+          <el-radio-group v-model="quickMode" class="mode-switch-group">
+            <el-radio-button :value="true">
+              <span class="mode-btn-title">快速</span>
+              <span class="mode-btn-desc">必收 + 首诊建议</span>
+            </el-radio-button>
+            <el-radio-button :value="false">
+              <span class="mode-btn-title">完整</span>
+              <span class="mode-btn-desc">全部题目</span>
+            </el-radio-button>
+          </el-radio-group>
+        </div>
         <div class="pills" aria-label="填写进度">
           <span
             class="pill"
@@ -951,8 +1082,127 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.mode {
-  margin-left: 0;
+.track-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 8px 4px 10px;
+  border-radius: 12px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.track-switch-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1d4ed8;
+  white-space: nowrap;
+}
+
+.track-btns {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.track-btn {
+  appearance: none;
+  border: 1px solid #93c5fd;
+  background: #fff;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.track-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.track-btn.on {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.track-btn-none.on {
+  background: #64748b;
+  border-color: #64748b;
+}
+
+.track-hint {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 12px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+
+.mode-switch-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #047857;
+  white-space: nowrap;
+}
+
+.mode-switch-group :deep(.el-radio-button__inner) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  height: auto;
+  min-height: 40px;
+  padding: 6px 14px;
+  line-height: 1.15;
+  border-radius: 0 !important;
+  border-color: #6ee7b7 !important;
+  background: #fff;
+  box-shadow: none !important;
+}
+
+.mode-switch-group :deep(.el-radio-button:first-child .el-radio-button__inner) {
+  border-radius: 8px 0 0 8px !important;
+}
+
+.mode-switch-group :deep(.el-radio-button:last-child .el-radio-button__inner) {
+  border-radius: 0 8px 8px 0 !important;
+}
+
+.mode-switch-group :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: #059669 !important;
+  border-color: #059669 !important;
+  color: #fff !important;
+}
+
+.mode-btn-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mode-btn-desc {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
 }
 
 .pills {

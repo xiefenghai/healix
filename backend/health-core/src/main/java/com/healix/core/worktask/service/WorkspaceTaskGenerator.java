@@ -222,6 +222,40 @@ public class WorkspaceTaskGenerator {
                 true);
     }
 
+    /**
+     * 首诊办结后的待办编排：未入组 → 只开分配健管组；已在组 → 开制定方案。
+     * 避免未入组时双开「制定方案 + 分配健管组」。
+     */
+    @Transactional
+    public void afterOnboardingCompleted(String tenantId, String orgId, String peopleId, String followupId) {
+        if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(orgId) || !StringUtils.hasText(peopleId)) {
+            return;
+        }
+        if (careTeamMemberMapper.findPeopleInOrg(orgId, peopleId) == null) {
+            // 历史/竞态若已开制定方案，先关掉，等入组后再开
+            closeOpenPlanCreateAwaitingTeam(tenantId, orgId, peopleId);
+            ensureTeamAssignOnJoin(tenantId, orgId, peopleId);
+            return;
+        }
+        ensurePlanCreateAfterOnboarding(tenantId, orgId, peopleId, followupId);
+    }
+
+    /** 未入组不应保留制定方案待办。 */
+    private void closeOpenPlanCreateAwaitingTeam(String tenantId, String orgId, String peopleId) {
+        WorkspaceTask open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);
+        if (open == null) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        taskMapper.close(
+                open.getId(),
+                WorkspaceTaskStatus.EXPIRED.name(),
+                WorkspaceTaskCloseReason.CONDITION.name(),
+                now,
+                null,
+                now);
+    }
+
     @Transactional
     public void onPatientJoinedTeam(
             String tenantId,
@@ -242,6 +276,11 @@ public class WorkspaceTaskGenerator {
         }
         if (StringUtils.hasText(primaryCareManagerStaffId)) {
             taskMapper.reassignPublicToStaff(orgId, peopleId, primaryCareManagerStaffId, now);
+        }
+        // 入组后：首诊已办结且无生效方案 → 给主责开制定方案
+        FollowupRecord onboarding = findOnboarding(orgId, peopleId);
+        if (onboarding != null && FollowupRecordStatus.DONE.matches(onboarding.getStatus())) {
+            ensurePlanCreateAfterOnboarding(tenantId, orgId, peopleId, onboarding.getId());
         }
     }
 
@@ -355,7 +394,7 @@ public class WorkspaceTaskGenerator {
     }
 
     /**
-     * 首诊办结后立刻开制定方案。已有生效方案或已有 OPEN 制定方案时不新开。
+     * 开制定方案（首诊已办结且已入组后调用）。已有生效方案或已有 OPEN 制定方案时不新开。
      *
      * @return 任务 id；不需要开单时为 null
      */
@@ -363,6 +402,10 @@ public class WorkspaceTaskGenerator {
     public String ensurePlanCreateAfterOnboarding(
             String tenantId, String orgId, String peopleId, String followupId) {
         if (hasActivePlan(tenantId, peopleId)) {
+            return null;
+        }
+        // 未入组不提前开制定方案（先分配健管组）
+        if (careTeamMemberMapper.findPeopleInOrg(orgId, peopleId) == null) {
             return null;
         }
         WorkspaceTask open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);

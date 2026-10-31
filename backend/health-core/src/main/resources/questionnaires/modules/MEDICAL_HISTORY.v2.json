@@ -1,0 +1,186 @@
+{
+  "code": "MEDICAL_HISTORY",
+  "version": 2,
+  "title": "病史与用药",
+  "script": "了解一下身体情况和正在用的药。有些病和药会影响饮食、运动安排，我们心里有数，后面方案会更稳妥。",
+  "items": [
+    {
+      "field": "basic.presentIllness",
+      "label": "医生说过您有哪些疾病？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "intersects": ["DIABETES", "HYPERTENSION", "CHD", "HEART_FAILURE", "CKD", "CIRRHOSIS"]
+          },
+          "severity": "CAUTION",
+          "planEffect": "确认在用药与监测习惯；可提示一并纳入对应慢病管理"
+        },
+        {
+          "when": { "intersects": ["MALIGNANT_TUMOR"] },
+          "severity": "REFER",
+          "planEffect": "干预前需医生同意"
+        },
+        {
+          "when": { "intersects": ["DEPRESSION", "ANXIETY"] },
+          "severity": "CAUTION",
+          "planEffect": "留意情绪与进食、依从性"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.presentIllnessOther",
+      "label": "其他疾病",
+      "level": "LATER",
+      "sensitive": true
+    },
+    {
+      "field": "basic.medicationFlags",
+      "label": "目前在吃哪类药？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "eq": "HYPOGLYCEMIC" },
+          "severity": "CAUTION",
+          "planEffect": "调整饮食或运动前防低血糖，与医生沟通"
+        },
+        {
+          "when": { "eq": "ANTIHYPERTENSIVE" },
+          "severity": "CAUTION",
+          "planEffect": "留意直立性低血压；力量训练与高强度运动需谨慎"
+        },
+        {
+          "when": { "eq": "WEIGHT_LOSS_DRUG" },
+          "severity": "CAUTION",
+          "planEffect": "核实药名、剂量与来源"
+        },
+        {
+          "when": { "in": ["PSYCH", "STEROID"] },
+          "severity": "CAUTION",
+          "planEffect": "部分药物影响食欲、体重或血糖"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "medication.current",
+      "label": "在用药物明细（药名 / 剂量）",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "basic.medicationFlags",
+        "notIn": ["NONE"]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.supplements",
+      "label": "有没有在用代餐、保健品或非处方调理产品？",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": { "in": ["DIET_TEA", "FAT_BURNER"] },
+          "severity": "CAUTION",
+          "planEffect": "了解成分来源，建议停用并咨询医生"
+        }
+      ]
+    },
+    {
+      "field": "basic.medical.recentHospitalization",
+      "label": "近两年有没有做过手术或住院？",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": { "notIn": ["NONE"] },
+          "severity": "CAUTION",
+          "planEffect": "了解时间与恢复情况，恢复期内不安排中高强度运动"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.medical.recentHospitalizationNote",
+      "label": "做过什么手术或因何住院？大概什么时候？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.medical.recentHospitalization",
+        "notIn": ["NONE"]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.medical.mainDiscomfort",
+      "label": "目前身体最不舒服的地方是？",
+      "level": "FIRST_VISIT",
+      "sensitive": true
+    },
+    {
+      "field": "basic.medical.exerciseRestriction",
+      "label": "有没有医生说过不能运动或要限制运动？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "notIn": ["NONE"] },
+          "severity": "CAUTION",
+          "planEffect": "设运动强度上限，避开禁忌"
+        },
+        {
+          "when": { "eq": "CARDIAC" },
+          "severity": "REFER",
+          "planEffect": "先就医评估再开始运动"
+        },
+        {
+          "when": { "eq": "BP_UNCONTROLLED" },
+          "severity": "CAUTION",
+          "planEffect": "优先稳压，暂缓高强度"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.medical.exerciseRestrictionNote",
+      "label": "医生具体怎么说的？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.medical.exerciseRestriction",
+        "intersects": ["DOCTOR_LIMIT", "OTHER"]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.medical.jointIssues",
+      "label": "有没有关节问题或运动损伤？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "notIn": ["NONE"] },
+          "severity": "CAUTION",
+          "planEffect": "以低冲击运动为主（快走、骑车、游泳），避开受伤部位"
+        }
+      ]
+    },
+    {
+      "field": "basic.medical.steroidHyperglycemia",
+      "label": "是否曾因使用激素类药物出现过血糖升高？",
+      "level": "LATER",
+      "showIf": {
+        "any": [
+          { "field": "goal.careTracks", "intersects": ["DIABETES"] },
+          { "field": "basic.presentIllness", "intersects": ["DIABETES"] }
+        ]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.medical.acanthosis",
+      "label": "颈后、腋下等处是否有皮肤发黑、增厚？",
+      "level": "LATER",
+      "showIf": {
+        "any": [
+          { "field": "goal.careTracks", "intersects": ["DIABETES", "WEIGHT_LOSS"] },
+          { "field": "basic.presentIllness", "intersects": ["DIABETES"] }
+        ]
+      }
+    }
+  ]
+}

@@ -24,6 +24,8 @@ public final class HealthGoalRules {
     public static final String MODE_LOSS = "LOSS";
     public static final String MODE_BODY_COMPOSITION = "BODY_COMPOSITION";
     public static final String MODE_MAINTAIN = "MAINTAIN";
+    public static final String MODE_GLUCOSE_CONTROL = "GLUCOSE_CONTROL";
+    public static final String MODE_BP_CONTROL = "BP_CONTROL";
 
     public static final String LEVEL_ERROR = "ERROR";
     public static final String LEVEL_WARN = "WARN";
@@ -69,6 +71,11 @@ public final class HealthGoalRules {
             issues.add(new Issue(LEVEL_INFO, "GOAL_MODE_DEFAULT", "已按 BMI/高亮建议目标模式：" + resolved));
         }
         final String mode = resolved;
+
+        // 慢病控糖 / 控压目标：不做减重 BMI 校验
+        if (MODE_GLUCOSE_CONTROL.equals(mode) || MODE_BP_CONTROL.equals(mode)) {
+            return new Decision(mode, List.copyOf(issues));
+        }
 
         if (lossBlocked && MODE_LOSS.equals(mode)) {
             issues.add(new Issue(LEVEL_ERROR, "GOAL_LOSS_BLOCKED", "存在阻断级高亮（如孕哺），不能设减重目标"));
@@ -165,7 +172,15 @@ public final class HealthGoalRules {
             return null;
         }
         String m = mode.trim().toUpperCase(Locale.ROOT);
-        return Set.of(MODE_LOSS, MODE_BODY_COMPOSITION, MODE_MAINTAIN).contains(m) ? m : null;
+        return Set.of(
+                                MODE_LOSS,
+                                MODE_BODY_COMPOSITION,
+                                MODE_MAINTAIN,
+                                MODE_GLUCOSE_CONTROL,
+                                MODE_BP_CONTROL)
+                        .contains(m)
+                ? m
+                : null;
     }
 
     private static Double num(JsonNode n, String f) {

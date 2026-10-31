@@ -3,6 +3,7 @@
  * 首诊问卷「在用药物明细」：与用药管理「添加用药」同字段形态的可增删列表。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
 import { MED_TIMING_PRESETS } from '../../shared/agent-ocr'
 
@@ -256,6 +257,17 @@ function collapseRow() {
   expandedIdx.value = null
 }
 
+/** 确定：校验药名后折叠成摘要行 */
+function confirmRow(idx: number) {
+  const row = items[idx]
+  if (!row?.drugName.trim()) {
+    ElMessage.warning('请先填写药品名称')
+    return
+  }
+  emitList()
+  expandedIdx.value = null
+}
+
 function onFieldChange() {
   emitList()
 }
@@ -361,15 +373,6 @@ onMounted(() => {
         <div class="med-head">
           <strong>药品 {{ idx + 1 }}</strong>
           <div class="med-head-actions">
-            <el-button
-              v-if="row.drugName.trim()"
-              link
-              type="primary"
-              size="small"
-              @click="collapseRow"
-            >
-              收起
-            </el-button>
             <el-button
               link
               type="danger"
@@ -581,6 +584,13 @@ onMounted(() => {
               @change="onFieldChange"
             />
           </el-form-item>
+
+          <div class="confirm-row">
+            <el-button type="primary" size="small" :disabled="disabled" @click="confirmRow(idx)">
+              确定
+            </el-button>
+            <el-button size="small" :disabled="disabled" @click="collapseRow">收起</el-button>
+          </div>
         </el-form>
       </template>
     </div>
@@ -713,6 +723,14 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 2px;
+  margin-top: 4px;
 }
 
 .med-form :deep(.el-form-item) {

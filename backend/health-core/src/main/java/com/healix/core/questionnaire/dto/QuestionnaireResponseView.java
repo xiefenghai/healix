@@ -36,6 +36,8 @@ public class QuestionnaireResponseView {
         private int version;
         private String title;
         private String script;
+        /** 模块级显示条件（如按 careTracks 加载减重/慢病专属模块） */
+        private JsonNode showIf;
         private List<ItemView> items;
     }
 

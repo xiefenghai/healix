@@ -92,8 +92,19 @@ public class QuestionnaireCatalog {
 
     /** 展开问卷全部题目（按模块顺序）；动态模块返回空 items。 */
     public List<ModuleItem> itemsOf(QuestionnaireDef q) {
+        return itemsOf(q, null);
+    }
+
+    /**
+     * 展开问卷题目；若提供 answers lookup，则跳过模块级 showIf 不匹配的模块。
+     */
+    public List<ModuleItem> itemsOf(
+            QuestionnaireDef q, java.util.function.Function<String, com.fasterxml.jackson.databind.JsonNode> lookup) {
         List<ModuleItem> out = new ArrayList<>();
         for (QuestionnaireDef.ModuleRef ref : q.modules()) {
+            if (lookup != null && ref.showIf() != null && !ref.showIf().matches(lookup)) {
+                continue;
+            }
             ModuleDef m = requireModule(ref.code(), ref.version());
             out.addAll(m.items());
         }
@@ -132,6 +143,10 @@ public class QuestionnaireCatalog {
                 }
             }
             for (QuestionnaireDef.ModuleRef ref : q.modules()) {
+                if (ref.showIf() != null) {
+                    validateShowIfFields(
+                            ref.showIf(), inQuestionnaire, q.key(), ref.code() + ".v" + ref.version() + "#module");
+                }
                 ModuleDef m = requireModule(ref.code(), ref.version());
                 for (ModuleItem it : m.items()) {
                     if (it.showIf() != null) {

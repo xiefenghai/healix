@@ -54,6 +54,65 @@ public final class CarePlanPromptContextSupport {
         return DiseaseCodeLabels.isMeaningful(code);
     }
 
+    private static final Map<String, String> PRIMARY_APPEAL_LABELS = parsePairs(
+            "GLUCOSE=控糖（糖尿病）",
+            "BP=控压（高血压）",
+            "LIPID=控血脂",
+            "FAT_LOSS=减脂减重",
+            "BODY_SHAPE=塑形增肌",
+            "METABOLIC=三高 / 代谢综合",
+            "SLEEP=改善睡眠",
+            "GUT=改善肠胃",
+            "CONSULT=先了解看看",
+            "OTHER=其他");
+
+    private static final Map<String, String> CARE_TRACK_LABELS = parsePairs(
+            "WEIGHT_LOSS=减重管理",
+            "DIABETES=糖尿病管理",
+            "HYPERTENSION=高血压管理",
+            "NONE=暂不加入项目");
+
+    private static final Map<String, String> GOAL_MODE_LABELS = parsePairs(
+            "LOSS=减重",
+            "BODY_COMPOSITION=改善体成分",
+            "MAINTAIN=维持",
+            "GLUCOSE_CONTROL=控糖",
+            "BP_CONTROL=控压");
+
+    private static final Map<String, String> GOAL_METRIC_LABELS = parsePairs(
+            "WEIGHT=体重",
+            "WAIST=腰围",
+            "BODY_FAT=体脂率",
+            "HBA1C=糖化血红蛋白",
+            "FPG=空腹血糖",
+            "BP_SYS=收缩压",
+            "BP_DIA=舒张压");
+
+    private static final Map<String, String> INTAKE_FIELD_LABELS = parsePairs(
+            "goal.careTracks=本次管理方向",
+            "goal.primaryAppeal=核心诉求",
+            "goal.mode=目标类型",
+            "goal.targetWeightKg=目标体重",
+            "goal.targetHba1c=糖化目标",
+            "goal.targetFpg=空腹血糖目标",
+            "goal.targetBpSys=收缩压目标",
+            "goal.targetBpDia=舒张压目标",
+            "disease.diabetes.type=糖尿病分型",
+            "disease.diabetes.diagnosedYear=糖尿病确诊年份",
+            "disease.diabetes.hypoglycemia=低血糖情况",
+            "disease.diabetes.monitorFreq=血糖监测频率",
+            "disease.diabetes.latestHba1c=近期糖化",
+            "disease.diabetes.latestFpg=近期空腹血糖",
+            "disease.diabetes.latestPpg=近期餐后血糖",
+            "disease.diabetes.medAdherence=降糖药规律",
+            "disease.hypertension.diagnosedYear=高血压确诊年份",
+            "disease.hypertension.homeMonitor=家庭自测血压",
+            "disease.hypertension.latestSystolic=近期收缩压",
+            "disease.hypertension.latestDiastolic=近期舒张压",
+            "disease.hypertension.morningPeak=晨峰血压",
+            "disease.hypertension.medAdherence=降压药规律",
+            "disease.hypertension.orthostatic=起立头晕");
+
     /**
      * 基础档案 → 方案 prompt 摘要：病种 + 饮食/运动/生活方式/睡眠/心理/妇幼/医疗限制/减重史等，并补中文标签。
      */
@@ -95,6 +154,289 @@ public final class CarePlanPromptContextSupport {
         copyEnrichedArray(o, content, "supplements");
 
         return o;
+    }
+
+    /** 目标块补中文：诉求 / 模式 / careTracks / 指标目标名。 */
+    public static ObjectNode enrichGoalsForPrompt(ObjectNode goals) {
+        if (goals == null || goals.isNull()) {
+            return null;
+        }
+        ObjectNode out = goals.deepCopy();
+        JsonNode appealNode = out.get("primaryAppeal");
+        ArrayNode appealLabels = primaryAppealLabels(appealNode);
+        if (!appealLabels.isEmpty()) {
+            out.set("primaryAppealLabels", appealLabels);
+            // 兼容旧消费方：单码时仍写 primaryAppealLabel
+            out.put("primaryAppealLabel", appealLabels.get(0).asText());
+        }
+        String mode = text(out, "mode");
+        if (StringUtils.hasText(mode)) {
+            out.put("modeLabel", GOAL_MODE_LABELS.getOrDefault(mode, mode));
+        }
+        JsonNode prefs = out.get("preferences");
+        JsonNode tracks = prefs != null && prefs.isObject() ? prefs.get("careTracks") : null;
+        if (tracks == null || tracks.isNull()) {
+            tracks = out.get("careTracks");
+        }
+        if (tracks != null && !tracks.isNull()) {
+            out.set("careTracks", tracks.deepCopy());
+            ArrayNode labels = careTrackLabels(tracks);
+            if (!labels.isEmpty()) {
+                out.set("careTracksLabels", labels);
+            }
+            if (prefs != null && prefs.isObject()) {
+                ObjectNode prefsCopy = ((ObjectNode) prefs).deepCopy();
+                prefsCopy.set("careTracks", tracks.deepCopy());
+                if (!labels.isEmpty()) {
+                    prefsCopy.set("careTracksLabels", labels.deepCopy());
+                }
+                out.set("preferences", prefsCopy);
+            }
+        }
+        JsonNode items = out.get("items");
+        if (items != null && items.isArray()) {
+            for (JsonNode item : items) {
+                if (item instanceof ObjectNode obj) {
+                    String metric = text(obj, "metric");
+                    if (StringUtils.hasText(metric)) {
+                        obj.put("metricLabel", GOAL_METRIC_LABELS.getOrDefault(metric.toUpperCase(Locale.ROOT), metric));
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 是否纳入减重管理方向（含诉求/模式推断）。 */
+    public static boolean includesWeightLossTrack(JsonNode goals) {
+        if (goals == null || goals.isNull()) {
+            return false;
+        }
+        JsonNode tracks = goals.get("careTracks");
+        if (tracks == null || tracks.isNull()) {
+            JsonNode prefs = goals.get("preferences");
+            if (prefs != null && prefs.isObject()) {
+                tracks = prefs.get("careTracks");
+            }
+        }
+        if (tracks != null) {
+            if (tracks.isArray()) {
+                for (JsonNode n : tracks) {
+                    if (n != null && "WEIGHT_LOSS".equalsIgnoreCase(n.asText())) {
+                        return true;
+                    }
+                }
+            } else if ("WEIGHT_LOSS".equalsIgnoreCase(tracks.asText())) {
+                return true;
+            }
+        }
+        String mode = text(goals, "mode");
+        return "LOSS".equalsIgnoreCase(mode) || "BODY_COMPOSITION".equalsIgnoreCase(mode);
+    }
+
+    /** disease.* 元数据 → 精简临床块（供糖/压方案引用）。 */
+    public static ObjectNode summarizeDiseaseClinical(Map<String, JsonNode> values, String prefix) {
+        ObjectNode out = JsonUtils.emptyObject();
+        if (values == null || values.isEmpty() || !StringUtils.hasText(prefix)) {
+            return out;
+        }
+        for (Map.Entry<String, JsonNode> e : values.entrySet()) {
+            String code = e.getKey();
+            if (code == null || !code.startsWith(prefix) || e.getValue() == null || e.getValue().isNull()) {
+                continue;
+            }
+            String shortKey = code.substring(prefix.length());
+            if (!StringUtils.hasText(shortKey)) {
+                continue;
+            }
+            out.set(shortKey, e.getValue().deepCopy());
+            String label = enumLabelForClinical(shortKey, e.getValue());
+            if (StringUtils.hasText(label)) {
+                out.put(shortKey + "Label", label);
+            }
+        }
+        return out;
+    }
+
+    /** 从首诊 answers 抽出关键字段（带中文名），控制体量。 */
+    public static ObjectNode extractIntakeKeyAnswers(JsonNode answers) {
+        ObjectNode out = JsonUtils.emptyObject();
+        if (answers == null || !answers.isObject()) {
+            return out;
+        }
+        for (Map.Entry<String, String> e : INTAKE_FIELD_LABELS.entrySet()) {
+            JsonNode v = answers.get(e.getKey());
+            if (v == null || v.isNull() || (v.isTextual() && v.asText().isBlank())) {
+                continue;
+            }
+            if (v.isArray() && v.isEmpty()) {
+                continue;
+            }
+            ObjectNode cell = out.putObject(e.getKey());
+            cell.put("label", e.getValue());
+            cell.set("value", v.deepCopy());
+            String pretty = prettyIntakeValue(e.getKey(), v);
+            if (StringUtils.hasText(pretty)) {
+                cell.put("display", pretty);
+            }
+        }
+        return out;
+    }
+
+    private static ArrayNode careTrackLabels(JsonNode tracks) {
+        ArrayNode labels = JsonUtils.mapper().createArrayNode();
+        if (tracks == null || tracks.isNull()) {
+            return labels;
+        }
+        if (tracks.isArray()) {
+            for (JsonNode n : tracks) {
+                if (n == null || !n.isTextual()) {
+                    continue;
+                }
+                String code = n.asText();
+                labels.add(CARE_TRACK_LABELS.getOrDefault(code, code));
+            }
+        } else if (tracks.isTextual()) {
+            String code = tracks.asText();
+            labels.add(CARE_TRACK_LABELS.getOrDefault(code, code));
+        }
+        return labels;
+    }
+
+    private static ArrayNode primaryAppealLabels(JsonNode appeal) {
+        ArrayNode labels = JsonUtils.mapper().createArrayNode();
+        if (appeal == null || appeal.isNull()) {
+            return labels;
+        }
+        if (appeal.isArray()) {
+            for (JsonNode n : appeal) {
+                if (n == null || !n.isTextual() || n.asText().isBlank()) {
+                    continue;
+                }
+                String code = n.asText().trim();
+                labels.add(PRIMARY_APPEAL_LABELS.getOrDefault(code, code));
+            }
+            return labels;
+        }
+        if (appeal.isTextual()) {
+            String raw = appeal.asText().trim();
+            if (raw.startsWith("[")) {
+                return primaryAppealLabels(JsonUtils.readTree(raw));
+            }
+            if (raw.contains(",")) {
+                for (String p : raw.split(",")) {
+                    if (!StringUtils.hasText(p)) {
+                        continue;
+                    }
+                    String code = p.trim();
+                    labels.add(PRIMARY_APPEAL_LABELS.getOrDefault(code, code));
+                }
+                return labels;
+            }
+            if (StringUtils.hasText(raw)) {
+                labels.add(PRIMARY_APPEAL_LABELS.getOrDefault(raw, raw));
+            }
+        }
+        return labels;
+    }
+
+    private static String enumLabelForClinical(String shortKey, JsonNode value) {
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        Map<String, String> map = switch (shortKey) {
+            case "type" -> parsePairs("T2=2型糖尿病", "T1=1型糖尿病", "OTHER=其他/未分型", "UNKNOWN=不清楚");
+            case "hypoglycemia" -> parsePairs(
+                    "NONE=没有", "MILD=偶尔轻微", "SEVERE=有过较重或需他人帮助", "UNKNOWN=不清楚");
+            case "monitorFreq" -> parsePairs(
+                    "NONE=基本不测", "OCCASIONAL=偶尔", "WEEKLY=每周几次", "DAILY=几乎每天", "UNKNOWN=不清楚");
+            case "medAdherence" -> parsePairs(
+                    "ALWAYS=基本按医嘱",
+                    "MOSTLY=大多按时偶有漏服",
+                    "IRREGULAR=经常漏服或自行加减",
+                    "STOPPED=已自行停药",
+                    "UNKNOWN=不清楚");
+            case "homeMonitor" -> parsePairs("YES=有在家测", "NO=基本不测", "OCCASIONAL=偶尔测", "UNKNOWN=不清楚");
+            case "morningPeak", "orthostatic" -> parsePairs("YES=有", "NO=没有", "UNSURE=不清楚", "UNKNOWN=不清楚");
+            case "eyeCheck" -> parsePairs(
+                    "WITHIN_1Y=近1年内查过", "1_TO_2Y=1–2年前", "OVER_2Y=超过2年/没查过", "UNKNOWN=不清楚");
+            default -> null;
+        };
+        if (map == null || !value.isTextual()) {
+            return null;
+        }
+        return map.get(value.asText());
+    }
+
+    private static String prettyIntakeValue(String field, JsonNode v) {
+        if (v == null || v.isNull()) {
+            return null;
+        }
+        if ("goal.careTracks".equals(field)) {
+            ArrayNode labels = careTrackLabels(v);
+            if (labels.isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            labels.forEach(n -> {
+                if (sb.length() > 0) {
+                    sb.append("、");
+                }
+                sb.append(n.asText());
+            });
+            return sb.toString();
+        }
+        if ("goal.primaryAppeal".equals(field)) {
+            ArrayNode labels = primaryAppealLabels(v);
+            if (labels.isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            labels.forEach(n -> {
+                if (sb.length() > 0) {
+                    sb.append("、");
+                }
+                sb.append(n.asText());
+            });
+            return sb.toString();
+        }
+        if ("goal.mode".equals(field) && v.isTextual()) {
+            return GOAL_MODE_LABELS.getOrDefault(v.asText(), v.asText());
+        }
+        if (v.isTextual()) {
+            String shortKey = field.contains(".") ? field.substring(field.lastIndexOf('.') + 1) : field;
+            String labeled = enumLabelForClinical(shortKey, v);
+            return StringUtils.hasText(labeled) ? labeled : v.asText();
+        }
+        if (v.isNumber()) {
+            return v.asText();
+        }
+        if (v.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode n : v) {
+                if (n == null || n.isNull()) {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append("、");
+                }
+                sb.append(n.asText());
+            }
+            return sb.length() == 0 ? null : sb.toString();
+        }
+        return null;
+    }
+
+    private static String text(JsonNode n, String field) {
+        if (n == null || !n.isObject()) {
+            return null;
+        }
+        JsonNode v = n.get(field);
+        if (v == null || v.isNull() || !v.isTextual()) {
+            return null;
+        }
+        String t = v.asText();
+        return StringUtils.hasText(t) ? t.trim() : null;
     }
 
     private static void copyEnrichedObject(ObjectNode dest, JsonNode content, String key) {

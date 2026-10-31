@@ -528,7 +528,7 @@ public class CockpitService {
 
     /**
      * 待入组：公海 OPEN 的入组/首诊随访 + 分配健管组。
-     * 引导先做首诊了解情况，再分配健管组（首诊办结后才会开分配单）。
+     * 引导先做首诊了解情况，再分配健管组（首诊办结后开分配单；入组后再开制定方案）。
      */
     private List<CockpitPriorityCardDto> buildPendingIntakeCards(String tenantId, String orgId) {
         Map<String, CockpitPriorityCardDto> byPeople = new HashMap<>();

@@ -10,7 +10,83 @@ import {
   type KinshipLevel,
 } from './family-history-options'
 
-export type IntakeProgramCode = 'WEIGHT_LOSS' | 'NONE'
+export type IntakeProgramCode = 'WEIGHT_LOSS' | 'DIABETES' | 'HYPERTENSION' | 'NONE'
+
+export const CARE_TRACK_OPTIONS: { code: Exclude<IntakeProgramCode, 'NONE'>; label: string }[] = [
+  { code: 'WEIGHT_LOSS', label: '减重管理' },
+  { code: 'DIABETES', label: '糖尿病管理' },
+  { code: 'HYPERTENSION', label: '高血压管理' },
+]
+
+/** 核心诉求（单选或多选）→ 建议纳入的管理方向 */
+export function suggestedCareTracksFromAppeal(appeal: unknown): IntakeProgramCode[] {
+  const codes = (Array.isArray(appeal) ? appeal : appeal != null && appeal !== '' ? [appeal] : []).map((x) =>
+    String(x).toUpperCase(),
+  )
+  const out: IntakeProgramCode[] = []
+  const add = (t: IntakeProgramCode) => {
+    if (!out.includes(t)) out.push(t)
+  }
+  for (const code of codes) {
+    if (code === 'FAT_LOSS' || code === 'BODY_SHAPE' || code === 'LIPID') add('WEIGHT_LOSS')
+    else if (code === 'GLUCOSE') add('DIABETES')
+    else if (code === 'BP') add('HYPERTENSION')
+    else if (code === 'METABOLIC') {
+      add('WEIGHT_LOSS')
+      add('DIABETES')
+      add('HYPERTENSION')
+    }
+  }
+  return out
+}
+
+/** 病史现患 → 可提示一并纳入的慢病方向 */
+export function suggestedCareTracksFromIllness(presentIllness: unknown): IntakeProgramCode[] {
+  const set = new Set(
+    (Array.isArray(presentIllness) ? presentIllness : presentIllness != null ? [presentIllness] : []).map((x) =>
+      String(x).toUpperCase(),
+    ),
+  )
+  const out: IntakeProgramCode[] = []
+  if (set.has('DIABETES')) out.push('DIABETES')
+  if (set.has('HYPERTENSION')) out.push('HYPERTENSION')
+  return out
+}
+
+export function normalizeCareTracks(value: unknown): Exclude<IntakeProgramCode, 'NONE'>[] {
+  const raw = Array.isArray(value) ? value : value != null && value !== '' ? [value] : []
+  const allowed = new Set(['WEIGHT_LOSS', 'DIABETES', 'HYPERTENSION'])
+  const out: Exclude<IntakeProgramCode, 'NONE'>[] = []
+  for (const v of raw) {
+    const c = String(v).toUpperCase()
+    if (c === 'NONE') return []
+    if (allowed.has(c) && !out.includes(c as Exclude<IntakeProgramCode, 'NONE'>)) {
+      out.push(c as Exclude<IntakeProgramCode, 'NONE'>)
+    }
+  }
+  return out
+}
+
+/** 写入答案：无项目时存 ["NONE"]，保证必收可过 */
+export function careTracksAnswerValue(
+  tracks: IntakeProgramCode[],
+): Array<Exclude<IntakeProgramCode, 'NONE'> | 'NONE'> {
+  const normalized = normalizeCareTracks(tracks)
+  return normalized.length ? normalized : ['NONE']
+}
+
+export function primaryProgramFromTracks(
+  tracks: IntakeProgramCode[],
+  primaryAppeal?: unknown,
+): IntakeProgramCode {
+  const normalized = normalizeCareTracks(tracks)
+  if (!normalized.length) return 'NONE'
+  const suggested = suggestedCareTracksFromAppeal(primaryAppeal)
+  if (suggested[0] && normalized.includes(suggested[0] as Exclude<IntakeProgramCode, 'NONE'>)) {
+    return suggested[0]
+  }
+  return normalized[0]
+}
 
 export type IntakeFieldType =
   | 'TEXT'
@@ -101,6 +177,7 @@ export interface IntakeModuleView {
   version?: number
   title: string
   script?: string | null
+  showIf?: IntakeShowIf | null
   items: IntakeItemView[]
 }
 
@@ -388,6 +465,7 @@ export function collectLocalHighlights(
 ): IntakeHighlightHit[] {
   const out: IntakeHighlightHit[] = []
   for (const m of modules) {
+    if (!matchShowIf(m.showIf, answers)) continue
     for (const item of m.items) {
       if (!matchShowIf(item.showIf, answers)) continue
       for (const rule of item.highlights || []) {
@@ -466,7 +544,7 @@ export type IntakeOptionMaps = Record<string, DictOption[]>
 
 const optionCache = new Map<string, DictOption[]>()
 /** 缓存版本：改兜底文案后递增，避免 HMR 仍用旧的 label===code 脏缓存 */
-const OPTION_CACHE_VER = 'v3'
+const OPTION_CACHE_VER = 'v5'
 const verCacheKey = (parentCode: string) => `${OPTION_CACHE_VER}::${parentCode}`
 
 /**
@@ -476,6 +554,13 @@ const verCacheKey = (parentCode: string) => `${OPTION_CACHE_VER}::${parentCode}`
 const OPTION_SET_FALLBACKS: Record<string, string[]> = {
   yesNoUnknown: ['YES=是', 'NO=否', 'UNKNOWN=不清楚'],
   yesNo: ['YES=是', 'NO=否'],
+  recentHospitalization: [
+    'NONE=没有',
+    'SURGERY=有手术',
+    'HOSPITAL=有住院',
+    'BOTH=都有',
+    'UNKNOWN=不清楚',
+  ],
   gender: ['MALE=男', 'FEMALE=女'],
   maritalStatus: ['UNMARRIED=未婚', 'MARRIED=已婚', 'DIVORCED=离异', 'WIDOWED=丧偶', 'OTHER=其他'],
   workSchedule: ['DAY=规律白班', 'SHIFT=倒班', 'NIGHT=夜班为主', 'IRREGULAR=不固定'],
@@ -639,16 +724,49 @@ const OPTION_SET_FALLBACKS: Record<string, string[]> = {
   bodyAnxiety: ['NONE=不会', 'MILD=偶尔', 'SEVERE=经常，比较严重'],
   expectedPace: ['STEADY=稳一点就好', 'MODERATE=适中', 'ASAP=越快越好'],
   primaryAppeal: [
+    'GLUCOSE=控糖（糖尿病）',
+    'BP=控压（高血压）',
+    'LIPID=控血脂',
     'FAT_LOSS=减脂减重',
     'BODY_SHAPE=塑形增肌',
-    'GLUCOSE=控制血糖',
-    'BP=控制血压',
+    'METABOLIC=三高 / 代谢综合',
     'SLEEP=改善睡眠',
     'GUT=改善肠胃',
     'CONSULT=先了解看看',
     'OTHER=其他',
   ],
-  goalMode: ['LOSS=减重', 'BODY_COMPOSITION=改善体成分', 'MAINTAIN=维持'],
+  careTracks: [
+    'WEIGHT_LOSS=减重管理',
+    'DIABETES=糖尿病管理',
+    'HYPERTENSION=高血压管理',
+    'NONE=暂不加入项目',
+  ],
+  goalMode: [
+    'LOSS=减重',
+    'BODY_COMPOSITION=改善体成分',
+    'MAINTAIN=维持',
+    'GLUCOSE_CONTROL=控糖',
+    'BP_CONTROL=控压',
+  ],
+  dmType: ['T2=2 型糖尿病', 'T1=1 型糖尿病', 'OTHER=其他 / 未分型', 'UNKNOWN=不清楚'],
+  dmHypoglycemia: ['NONE=没有', 'MILD=偶尔轻微', 'SEVERE=有过较重或需他人帮助', 'UNKNOWN=不清楚'],
+  dmMonitorFreq: ['NONE=基本不测', 'OCCASIONAL=偶尔', 'WEEKLY=每周几次', 'DAILY=几乎每天', 'UNKNOWN=不清楚'],
+  medAdherence: [
+    'ALWAYS=基本按医嘱',
+    'MOSTLY=大多按时偶有漏服',
+    'IRREGULAR=经常漏服或自行加减',
+    'STOPPED=已自行停药',
+    'UNKNOWN=不清楚',
+  ],
+  htnHomeMonitor: ['YES=有在家测', 'NO=基本不测', 'OCCASIONAL=偶尔测', 'UNKNOWN=不清楚'],
+  htnMorningPeak: ['YES=有', 'NO=没有', 'UNKNOWN=不清楚'],
+  yesNoUnsure: ['YES=有', 'NO=没有', 'UNSURE=不清楚'],
+  eyeCheckRecency: [
+    'WITHIN_1Y=近 1 年内查过',
+    '1_TO_2Y=1–2 年前',
+    'OVER_2Y=超过 2 年 / 没查过',
+    'UNKNOWN=不清楚',
+  ],
   dietEffort: ['COOK=愿意自己做', 'ADJUST_ORDER=只能调整点餐', 'MINIMAL=尽量少改变'],
   followupChannel: ['WECHAT=微信', 'PHONE=电话', 'ONSITE=到店'],
   followupFrequency: ['DAILY=每天', 'WEEKLY_2_3=每周 2–3 次', 'WEEKLY_1=每周 1 次'],
@@ -709,17 +827,25 @@ export async function loadDictOptions(parentCode: string): Promise<DictOption[]>
     const res = await api<{ data: Array<{ dictCode: string; dictCodeDesc: string }> }>(
       `/api/b/v1/dict?dictType=OPTION&parentCode=${encodeURIComponent(parentCode)}`,
     )
-    const list = (res.data || []).map((d) => {
+    const byCode = new Map<string, DictOption>()
+    for (const d of res.data || []) {
       const code = d.dictCode
       const desc = (d.dictCodeDesc || '').trim()
       const label = isUsefulLabel(code, desc) ? desc : fbByCode.get(code) || desc || code
-      return { code, label }
-    })
-    // 合并兜底里有、接口没有的码
-    for (const o of fb) {
-      if (!list.some((x) => x.code === o.code)) list.push(o)
+      byCode.set(code, { code, label })
     }
-    const final = list.length ? list : fb
+    // 兜底补缺，并优先按本地兜底顺序排（与 field-catalog 一致）
+    for (const o of fb) {
+      if (!byCode.has(o.code)) byCode.set(o.code, o)
+    }
+    const ordered: DictOption[] = []
+    for (const o of fb) {
+      const hit = byCode.get(o.code)
+      if (hit) ordered.push(hit)
+      byCode.delete(o.code)
+    }
+    for (const rest of byCode.values()) ordered.push(rest)
+    const final = ordered.length ? ordered : fb
     optionCache.set(key, final)
     return final
   } catch {
@@ -888,6 +1014,7 @@ const FIELD_OPTION_PARENT: Record<string, string> = {
   'basic.supplements': 'supplements',
   'basic.medical.exerciseRestriction': 'exerciseRestriction',
   'basic.medical.jointIssues': 'jointIssues',
+  'basic.medical.recentHospitalization': 'recentHospitalization',
   'basic.medical.steroidHyperglycemia': 'yesNoUnknown',
   'basic.medical.acanthosis': 'yesNoUnknown',
   'allergy.status': 'allergyStatus',
@@ -906,9 +1033,20 @@ const FIELD_OPTION_PARENT: Record<string, string> = {
   'basic.weightHistory.failReasons': 'weightLossFailReasons',
   'basic.weightHistory.recentTrend': 'weightTrend',
   'basic.weightHistory.expectedPace': 'expectedPace',
+  'goal.careTracks': 'careTracks',
   'goal.primaryAppeal': 'primaryAppeal',
   'goal.doctorAdvised': 'yesNo',
   'goal.mode': 'goalMode',
+  'disease.diabetes.type': 'dmType',
+  'disease.diabetes.hypoglycemia': 'dmHypoglycemia',
+  'disease.diabetes.monitorFreq': 'dmMonitorFreq',
+  'disease.diabetes.chronicComplications': 'dmChronicComplications',
+  'disease.diabetes.medAdherence': 'medAdherence',
+  'disease.diabetes.eyeCheck': 'eyeCheckRecency',
+  'disease.hypertension.homeMonitor': 'htnHomeMonitor',
+  'disease.hypertension.morningPeak': 'htnMorningPeak',
+  'disease.hypertension.medAdherence': 'medAdherence',
+  'disease.hypertension.orthostatic': 'yesNoUnsure',
   'goal.dietEffort': 'dietEffort',
   'goal.followupChannel': 'followupChannel',
   'goal.followupFrequency': 'followupFrequency',

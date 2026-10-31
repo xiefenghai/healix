@@ -345,8 +345,8 @@ public class QuestionnaireResponseService {
 
         writeBack(row, answers, prefill, source);
 
-        if (row.getEnrollmentId() != null && PURPOSE_INTAKE.equals(row.getPurpose())) {
-            enrollmentService.activate(row.getEnrollmentId(), row.getId());
+        if (PURPOSE_INTAKE.equals(row.getPurpose())) {
+            activateEnrollments(row, answers);
         }
 
         row.setAnswersJson(JsonUtils.toJson(answers));
@@ -435,9 +435,15 @@ public class QuestionnaireResponseService {
 
     private boolean isVisible(QuestionnaireResponse row, String field, Function<String, JsonNode> lookup) {
         QuestionnaireDef q = catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
-        for (ModuleItem item : catalog.itemsOf(q)) {
-            if (item.field().equals(field)) {
-                return item.showIf() == null || item.showIf().matches(lookup);
+        for (QuestionnaireDef.ModuleRef ref : q.modules()) {
+            if (ref.showIf() != null && !ref.showIf().matches(lookup)) {
+                continue;
+            }
+            ModuleDef m = catalog.requireModule(ref.code(), ref.version());
+            for (ModuleItem item : m.items()) {
+                if (item.field().equals(field)) {
+                    return item.showIf() == null || item.showIf().matches(lookup);
+                }
             }
         }
         return true;
@@ -474,7 +480,17 @@ public class QuestionnaireResponseService {
                     changed = true;
                 }
                 case "occupation" -> {
-                    profile.setOccupation(text);
+                    // ENUM 存码；档案展示用中文标签（未知码则原样写入，兼容历史自由文本）
+                    final String occupationCode = text;
+                    String occupationLabel = occupationCode;
+                    if (occupationCode != null && !occupationCode.isBlank()) {
+                        occupationLabel = fieldCatalog.catalogOptions("occupation").stream()
+                                .filter(o -> occupationCode.equals(o.code()))
+                                .map(com.healix.core.field.FieldOption::label)
+                                .findFirst()
+                                .orElse(occupationCode);
+                    }
+                    profile.setOccupation(occupationLabel);
                     changed = true;
                 }
                 case "maritalStatus" -> {
@@ -774,7 +790,7 @@ public class QuestionnaireResponseService {
             g.setEnrollmentId(row.getEnrollmentId());
         }
         if (goals.containsKey("goal.primaryAppeal")) {
-            g.setPrimaryAppeal(textOrNull(goals.get("goal.primaryAppeal")));
+            g.setPrimaryAppeal(serializePrimaryAppeal(goals.get("goal.primaryAppeal")));
         }
         if (goals.containsKey("goal.appealText")) {
             g.setAppealText(textOrNull(goals.get("goal.appealText")));
@@ -790,6 +806,10 @@ public class QuestionnaireResponseService {
                 ? asObject(existing.getGoalsJson())
                 : JsonUtils.emptyObject();
         ObjectNode answers = asObject(row.getAnswersJson());
+        List<String> tracks = resolveCareTracks(answers, row.getProgramCode());
+        if (!StringUtils.hasText(g.getGoalMode())) {
+            g.setGoalMode(defaultGoalModeForTracks(tracks));
+        }
         putGoalMetric(
                 goalsJson,
                 "WEIGHT",
@@ -798,20 +818,39 @@ public class QuestionnaireResponseService {
                 answers.get("metric.WEIGHT"));
         putGoalMetric(goalsJson, "WAIST", goals.get("goal.targetWaistCm"), null, answers.get("metric.WAIST"));
         putGoalMetric(goalsJson, "BODY_FAT", goals.get("goal.targetBodyFat"), null, answers.get("metric.BODY_FAT"));
+        putGoalMetric(goalsJson, "HBA1C", goals.get("goal.targetHba1c"), null, answers.get("disease.diabetes.latestHba1c"));
+        putGoalMetric(goalsJson, "FPG", goals.get("goal.targetFpg"), null, answers.get("disease.diabetes.latestFpg"));
+        putGoalMetric(
+                goalsJson,
+                "BP_SYS",
+                goals.get("goal.targetBpSys"),
+                null,
+                answers.get("disease.hypertension.latestSystolic"));
+        putGoalMetric(
+                goalsJson,
+                "BP_DIA",
+                goals.get("goal.targetBpDia"),
+                null,
+                answers.get("disease.hypertension.latestDiastolic"));
         Double height = numAnswer(answers.get("metric.HEIGHT"));
         Double weight = numAnswer(answers.get("metric.WEIGHT"));
         Double bmi = (height != null && height > 0 && weight != null)
                 ? Math.round(weight / Math.pow(height / 100.0, 2) * 10) / 10.0
                 : null;
         boolean lossBlocked = hasBlockHighlight(row);
+        // 未纳入减重时不做体重下降目标的 BMI 硬校验
+        ObjectNode goalsForValidate = tracks.contains(ProgramEnrollmentService.WEIGHT_LOSS)
+                ? goalsJson
+                : JsonUtils.emptyObject();
         var decision = com.healix.core.goal.support.HealthGoalRules.requireValid(
-                g.getGoalMode(), bmi, lossBlocked, goalsJson, height);
+                g.getGoalMode(), bmi, lossBlocked, goalsForValidate, height);
         g.setGoalMode(decision.mode());
         g.setGoalsJson(JsonUtils.toJson(goalsJson));
 
         ObjectNode prefs = existing != null && existing.getPreferencesJson() != null
                 ? asObject(existing.getPreferencesJson())
                 : JsonUtils.emptyObject();
+        putIfPresent(prefs, "careTracks", goals.get("goal.careTracks"));
         putIfPresent(prefs, "exerciseMinutesPerDay", goals.get("goal.exerciseMinutesPerDay"));
         putIfPresent(prefs, "dietEffort", goals.get("goal.dietEffort"));
         putIfPresent(prefs, "followupChannel", goals.get("goal.followupChannel"));
@@ -870,9 +909,185 @@ public class QuestionnaireResponseService {
 
     private void applyEnrollment(
             QuestionnaireResponse row, String tenantId, String orgId, String peopleId, String staffId) {
-        PeopleProgramEnrollment en =
-                enrollmentService.ensureOnboarding(tenantId, orgId, peopleId, row.getProgramCode(), staffId);
-        row.setEnrollmentId(en == null ? null : en.getId());
+        ObjectNode answers = asObject(row.getAnswersJson());
+        List<String> tracks = resolveCareTracks(answers, row.getProgramCode());
+        syncCareTracksAnswer(answers, tracks);
+        row.setAnswersJson(JsonUtils.toJson(answers));
+
+        if (tracks.isEmpty()) {
+            row.setProgramCode(ProgramEnrollmentService.NONE);
+            row.setEnrollmentId(null);
+            return;
+        }
+        String primary = resolvePrimaryProgram(tracks, answers);
+        row.setProgramCode(primary);
+        PeopleProgramEnrollment primaryEn = null;
+        for (String track : tracks) {
+            PeopleProgramEnrollment en =
+                    enrollmentService.ensureOnboarding(tenantId, orgId, peopleId, track, staffId);
+            if (en != null && track.equals(primary)) {
+                primaryEn = en;
+            }
+        }
+        row.setEnrollmentId(primaryEn == null ? null : primaryEn.getId());
+    }
+
+    /** 提交时激活本次 careTracks 对应的全部入组。 */
+    private void activateEnrollments(QuestionnaireResponse row, ObjectNode answers) {
+        List<String> tracks = resolveCareTracks(answers, row.getProgramCode());
+        if (tracks.isEmpty()) {
+            return;
+        }
+        String primary = resolvePrimaryProgram(tracks, answers);
+        for (String track : tracks) {
+            PeopleProgramEnrollment open =
+                    enrollmentService.findOpen(row.getTenantId(), row.getOrgId(), row.getPeopleId(), track);
+            if (open == null) {
+                open = enrollmentService.ensureOnboarding(
+                        row.getTenantId(), row.getOrgId(), row.getPeopleId(), track, row.getFilledById());
+            }
+            if (open == null) {
+                continue;
+            }
+            PeopleProgramEnrollment activated = enrollmentService.activate(open.getId(), row.getId());
+            if (track.equals(primary)) {
+                row.setEnrollmentId(activated.getId());
+                row.setProgramCode(primary);
+            }
+        }
+    }
+
+    private static List<String> resolveCareTracks(ObjectNode answers, String programCode) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        JsonNode tracksNode = answers == null ? null : answers.get("goal.careTracks");
+        boolean explicitNone = false;
+        if (tracksNode != null && !tracksNode.isNull()) {
+            if (tracksNode.isArray()) {
+                for (JsonNode n : tracksNode) {
+                    String t = n == null ? null : n.asText(null);
+                    if (t == null || t.isBlank()) {
+                        continue;
+                    }
+                    String code = t.trim().toUpperCase();
+                    if (ProgramEnrollmentService.NONE.equals(code)) {
+                        explicitNone = true;
+                        continue;
+                    }
+                    if (ProgramEnrollmentService.isKnownProgram(code)) {
+                        out.add(code);
+                    }
+                }
+            } else if (tracksNode.isTextual()) {
+                String code = tracksNode.asText().trim().toUpperCase();
+                if (ProgramEnrollmentService.NONE.equals(code)) {
+                    explicitNone = true;
+                } else if (ProgramEnrollmentService.isKnownProgram(code)) {
+                    out.add(code);
+                }
+            }
+        }
+        if (explicitNone) {
+            return List.of();
+        }
+        if (out.isEmpty() && ProgramEnrollmentService.isKnownProgram(programCode)) {
+            out.add(programCode.trim().toUpperCase());
+        }
+        return List.copyOf(out);
+    }
+
+    private static String resolvePrimaryProgram(List<String> tracks, ObjectNode answers) {
+        if (tracks == null || tracks.isEmpty()) {
+            return ProgramEnrollmentService.NONE;
+        }
+        // 多选诉求按优先级映射主项目：糖 > 压 > 减重相关
+        for (String appeal : flattenAppealCodes(answers == null ? null : answers.get("goal.primaryAppeal"))) {
+            String mapped = switch (appeal) {
+                case "GLUCOSE" -> ProgramEnrollmentService.DIABETES;
+                case "BP" -> ProgramEnrollmentService.HYPERTENSION;
+                case "FAT_LOSS", "BODY_SHAPE", "LIPID", "METABOLIC" -> ProgramEnrollmentService.WEIGHT_LOSS;
+                default -> null;
+            };
+            if (mapped != null && tracks.contains(mapped)) {
+                return mapped;
+            }
+        }
+        return tracks.get(0);
+    }
+
+    /** 核心诉求可单选或多选：库内存 JSON 数组字符串；历史单码仍兼容。 */
+    private static String serializePrimaryAppeal(JsonNode node) {
+        List<String> codes = flattenAppealCodes(node);
+        if (codes.isEmpty()) {
+            return null;
+        }
+        if (codes.size() == 1) {
+            return codes.get(0);
+        }
+        ArrayNode arr = JsonUtils.mapper().createArrayNode();
+        codes.forEach(arr::add);
+        return JsonUtils.toJson(arr);
+    }
+
+    private static List<String> flattenAppealCodes(JsonNode node) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (node == null || node.isNull()) {
+            return List.of();
+        }
+        if (node.isArray()) {
+            node.forEach(n -> {
+                String t = n == null ? null : n.asText(null);
+                if (t != null && !t.isBlank()) {
+                    out.add(t.trim().toUpperCase());
+                }
+            });
+        } else if (node.isTextual()) {
+            String raw = node.asText().trim();
+            if (raw.startsWith("[")) {
+                JsonNode parsed = JsonUtils.readTree(raw);
+                return flattenAppealCodes(parsed);
+            }
+            if (raw.contains(",")) {
+                for (String p : raw.split(",")) {
+                    if (p != null && !p.isBlank()) {
+                        out.add(p.trim().toUpperCase());
+                    }
+                }
+            } else if (!raw.isBlank()) {
+                out.add(raw.toUpperCase());
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static void syncCareTracksAnswer(ObjectNode answers, List<String> tracks) {
+        if (answers == null) {
+            return;
+        }
+        ArrayNode arr = JsonUtils.mapper().createArrayNode();
+        if (tracks == null || tracks.isEmpty()) {
+            arr.add(ProgramEnrollmentService.NONE);
+        } else {
+            for (String t : tracks) {
+                arr.add(t);
+            }
+        }
+        answers.set("goal.careTracks", arr);
+    }
+
+    private static String defaultGoalModeForTracks(List<String> tracks) {
+        if (tracks == null || tracks.isEmpty()) {
+            return com.healix.core.goal.support.HealthGoalRules.MODE_MAINTAIN;
+        }
+        if (tracks.contains(ProgramEnrollmentService.WEIGHT_LOSS)) {
+            return com.healix.core.goal.support.HealthGoalRules.MODE_LOSS;
+        }
+        if (tracks.contains(ProgramEnrollmentService.DIABETES)) {
+            return com.healix.core.goal.support.HealthGoalRules.MODE_GLUCOSE_CONTROL;
+        }
+        if (tracks.contains(ProgramEnrollmentService.HYPERTENSION)) {
+            return com.healix.core.goal.support.HealthGoalRules.MODE_BP_CONTROL;
+        }
+        return com.healix.core.goal.support.HealthGoalRules.MODE_MAINTAIN;
     }
 
     /**
@@ -1240,7 +1455,7 @@ public class QuestionnaireResponseService {
         int reqTotal = 0, reqDone = 0, firstTotal = 0, firstDone = 0, allTotal = 0, allDone = 0;
         ArrayNode requiredMissing = JsonUtils.mapper().createArrayNode();
         ArrayNode firstMissing = JsonUtils.mapper().createArrayNode();
-        for (ModuleItem item : catalog.itemsOf(q)) {
+        for (ModuleItem item : catalog.itemsOf(q, lookup)) {
             if (fieldFilter != null && !fieldFilter.contains(item.field())) {
                 continue;
             }
@@ -1289,6 +1504,9 @@ public class QuestionnaireResponseService {
         };
         List<IntakeStatusView.PendingField> pending = new ArrayList<>();
         for (QuestionnaireDef.ModuleRef ref : q.modules()) {
+            if (ref.showIf() != null && !ref.showIf().matches(lookup)) {
+                continue;
+            }
             ModuleDef m = catalog.requireModule(ref.code(), ref.version());
             for (ModuleItem item : m.items()) {
                 if ("STAFF".equals(item.level())) {
@@ -1337,7 +1555,7 @@ public class QuestionnaireResponseService {
 
     private ArrayNode collectHighlights(QuestionnaireDef q, Function<String, JsonNode> lookup) {
         ArrayNode out = JsonUtils.mapper().createArrayNode();
-        for (ModuleItem item : catalog.itemsOf(q)) {
+        for (ModuleItem item : catalog.itemsOf(q, lookup)) {
             if (item.showIf() != null && !item.showIf().matches(lookup)) {
                 continue;
             }
@@ -1454,6 +1672,9 @@ public class QuestionnaireResponseService {
                 mv.setVersion(m.version());
                 mv.setTitle(m.title());
                 mv.setScript(m.script());
+                if (ref.showIf() != null) {
+                    mv.setShowIf(JsonUtils.mapper().valueToTree(showIfToMap(ref.showIf())));
+                }
                 List<QuestionnaireResponseView.ItemView> items = new ArrayList<>();
                 for (ModuleItem it : m.items()) {
                     if (filter != null && !filter.contains(it.field())) {
@@ -1495,6 +1716,22 @@ public class QuestionnaireResponseService {
 
     private static Map<String, Object> showIfToMap(ShowIf s) {
         Map<String, Object> m = new LinkedHashMap<>();
+        if (s.all() != null) {
+            List<Map<String, Object>> kids = new ArrayList<>();
+            for (ShowIf c : s.all()) {
+                kids.add(showIfToMap(c));
+            }
+            m.put("all", kids);
+            return m;
+        }
+        if (s.any() != null) {
+            List<Map<String, Object>> kids = new ArrayList<>();
+            for (ShowIf c : s.any()) {
+                kids.add(showIfToMap(c));
+            }
+            m.put("any", kids);
+            return m;
+        }
         if (s.field() != null) {
             m.put("field", s.field());
         }

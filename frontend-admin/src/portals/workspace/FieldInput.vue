@@ -197,6 +197,38 @@ function onDateChange(v: string | null) {
   }
   emit('update:modelValue', v)
 }
+
+/** YEAR：存整数年；兼容历史 NUMBER / 字符串 */
+const yearPickerValue = computed(() => {
+  const v = props.modelValue
+  if (v == null || v === '') return ''
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 1000) return ''
+  return String(Math.trunc(n))
+})
+
+function disabledDiagnosedYear(d: Date) {
+  const y = d.getFullYear()
+  const minY = props.min != null && Number.isFinite(Number(props.min)) ? Number(props.min) : 1950
+  const maxY =
+    props.max != null && Number.isFinite(Number(props.max))
+      ? Number(props.max)
+      : new Date().getFullYear()
+  return y < minY || y > maxY
+}
+
+function onYearChange(v: string | null) {
+  if (!v) {
+    emit('update:modelValue', '')
+    return
+  }
+  const n = Number(v)
+  if (!Number.isFinite(n)) {
+    emit('update:modelValue', '')
+    return
+  }
+  emit('update:modelValue', clampNumber(Math.trunc(n)))
+}
 </script>
 
 <template>
@@ -261,6 +293,19 @@ function onDateChange(v: string | null) {
         :disabled-date="isBirthdayField ? disabledBirthdayDate : undefined"
         style="width: 100%"
         @update:model-value="onDateChange"
+      />
+    </template>
+
+    <template v-else-if="type === 'YEAR'">
+      <el-date-picker
+        :model-value="yearPickerValue"
+        type="year"
+        value-format="YYYY"
+        placeholder="选择年份"
+        :disabled="disabled"
+        :disabled-date="disabledDiagnosedYear"
+        style="width: 100%"
+        @update:model-value="onYearChange"
       />
     </template>
 

@@ -22,9 +22,9 @@ display_name: 管理方案生成
 
 上下文中的 `assessments` 是系统评估结论（患病风险 / 严重等级分层）与关键因素，仅用于决定干预强度与重点：
 
-- 高 / 很高：干预更积极（如减重目标、监测频次、复评周期更短），`execution` 中安排对应监测任务
+- 高 / 很高：干预更积极（监测频次、复评周期更短；若同时有减重方向再加强体重目标），`execution` 中安排对应监测任务
 - `keyFactors` 中可干预的因素（吸烟、久坐、高盐、腰围超标等）应在运动 / 饮食 / 执行中逐一落实
-- **方案正文是给患者看的**：`exercise` / `diet` / `execution` / `summary` / `goalSummary` 中**不得**出现「高风险」「很高危」「分层」「中危」等等级用语，也不得复述评分；用「需要重点控制血压」「建议加强体重管理」这类行动化表述
+- **方案正文是给患者看的**：`exercise` / `diet` / `execution` / `summary` / `goalSummary` 中**不得**出现「高风险」「很高危」「分层」「中危」等等级用语，也不得复述评分；用「需要重点控制血压」「建议规律监测血糖」「稳步管理体重」这类**与本次管理方向一致**的行动化表述
 - **生成理由 `rationale` 仅给健管师审阅**：可以点明评估等级（如很高危），须引用档案/评估/过敏等事实，禁止编造数值
 
 ### 指南条目（`guidelineRecs`）
@@ -250,16 +250,26 @@ display_name: 管理方案生成
 生成时必须参考上下文中的：
 
 - 病种与合并症 → 决定模板倾向与安全提示
-- `patientContext.basicArchive` 生活方式摘要（饮食行为、运动习惯、睡眠、烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史等，含 `*Label` 中文）→ 个体化运动强度、示例餐与执行任务
-- `patientContext.goals`（目标模式、诉求、偏好、`weighFrequency` / `pace` / `lossBlocked`）→ 阶段目标与称重频次；`lossBlocked=true` 时不得以快速减重为主叙事
+- **`patientContext.goals.careTracks` / `careTracksLabels`（本次管理方向）** → 叙事主轴：
+  - 含 `DIABETES`：以控糖为主（监测、餐后活动、防低血糖），体重仅为辅助除非同时含减重
+  - 含 `HYPERTENSION`：以控压为主（限盐、家庭血压、避免憋气用力）
+  - 含 `WEIGHT_LOSS`：才强化减重热量、称重与体成分叙事
+  - 多方向并存：综合模板下分清主次，勿把纯慢病方案写成减肥方案
+- `patientContext.goals`（`mode`/`modeLabel`、`primaryAppeal`/`primaryAppealLabels`（可多选；兼容旧字段 `primaryAppealLabel`）、目标 `items` 含体重/糖化/空腹血糖/血压、`weighFrequency` / `pace` / `lossBlocked`）
+  - `lossBlocked=true` 时不得以快速减重为主叙事
+  - 有 `HBA1C`/`FPG`/`BP_SYS`/`BP_DIA` 目标时，在 `goalSummary` 与监测任务中体现
+  - 无减重方向时不要默认「每日称重 / 快速减脂」话术
+- `patientContext.diabetesClinical` / `hypertensionClinical`（首诊慢病专属要点：分型、低血糖、监测频率、用药规律、家庭自测、晨峰等）→ 运动强度、监测任务与饮食限盐/控糖
+- `patientContext.basicArchive` 生活方式摘要（饮食含口味/含糖饮料、运动习惯、睡眠烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史等，含 `*Label`）→ 个体化强度与示例餐
 - `patientContext.intakeBrief`（最近首诊/待补）与 `highlights`：
-  - 有 `aiSummary` 时优先吸收其中的要点、风险与下一步，落实到三块方案与 `summary`（**不要整段照抄**到患者可见正文）
+  - `keyAnswers`：核心诉求、管理方向、糖/压/体重目标与临床关键答（带 `label`/`display`），优先落实，**勿整段照抄**到患者正文
+  - 有 `aiSummary` 时吸收要点、风险与下一步
   - `highlights` 命中进食障碍 / 身材焦虑 / 运动限制 / 孕哺等 → 节奏更保守、称重勿过度强调每日、运动避禁忌
   - `rationale` 可写「依据首诊…」，患者正文仍用行动化表述
 - 过敏原 → 写入 `allergensAvoid`，且不得出现在 `recommended`、`sampleDay` 与 `sampleWeek`（含 `swapHint`；以 `foodAllergyGuard` 为准）
 - 限水相关病情 → 不要生成 `WATER` 任务
 - 最近指标（血糖、血压、体重等）→ 调整运动强度与总结表述
-- `energyTarget` → 饮食 `calorieHint` 的热量数字（见「热量」）
+- `energyTarget` → 饮食 `calorieHint` 的热量数字（见「热量」）；**非减重方向**可弱化热量缺口表述，改为均衡与限盐/控糖
 - 在用药物 → `diet.notes` 与执行计划中谨慎表述
 - `guidelineRecs` → 建议内容、量化约束与各块 `refs`（见「指南条目」）
 - `contextIncomplete=true` → 文案中可提示信息有限，但不拒绝生成

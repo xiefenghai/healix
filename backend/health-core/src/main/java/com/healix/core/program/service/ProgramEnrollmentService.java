@@ -15,8 +15,14 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProgramEnrollmentService {
 
     public static final String WEIGHT_LOSS = "WEIGHT_LOSS";
+    public static final String DIABETES = "DIABETES";
+    public static final String HYPERTENSION = "HYPERTENSION";
+    public static final String NONE = "NONE";
     public static final String STATUS_ONBOARDING = "ONBOARDING";
     public static final String STATUS_ACTIVE = "ACTIVE";
+
+    private static final java.util.Set<String> KNOWN_PROGRAMS =
+            java.util.Set.of(WEIGHT_LOSS, DIABETES, HYPERTENSION);
 
     private final PeopleProgramEnrollmentMapper enrollmentMapper;
 
@@ -29,14 +35,22 @@ public class ProgramEnrollmentService {
         return enrollmentMapper.findOpen(tenantId, orgId, peopleId, programCode);
     }
 
+    public static boolean isKnownProgram(String programCode) {
+        return programCode != null && KNOWN_PROGRAMS.contains(programCode.trim().toUpperCase());
+    }
+
     /** 选定项目：已有未结束入组则复用；否则建 ONBOARDING。 */
     @Transactional
     public PeopleProgramEnrollment ensureOnboarding(
             String tenantId, String orgId, String peopleId, String programCode, String staffId) {
-        if (programCode == null || programCode.isBlank() || "NONE".equals(programCode)) {
+        if (programCode == null || programCode.isBlank() || NONE.equalsIgnoreCase(programCode)) {
             return null;
         }
-        PeopleProgramEnrollment existing = enrollmentMapper.findOpen(tenantId, orgId, peopleId, programCode);
+        String code = programCode.trim().toUpperCase();
+        if (!KNOWN_PROGRAMS.contains(code)) {
+            throw new BusinessException("不支持的管理项目: " + programCode);
+        }
+        PeopleProgramEnrollment existing = enrollmentMapper.findOpen(tenantId, orgId, peopleId, code);
         if (existing != null) {
             return existing;
         }
@@ -44,7 +58,7 @@ public class ProgramEnrollmentService {
         row.setTenantId(tenantId);
         row.setOrgId(orgId);
         row.setPeopleId(peopleId);
-        row.setProgramCode(programCode);
+        row.setProgramCode(code);
         row.setStatus(STATUS_ONBOARDING);
         row.setEnrolledAt(LocalDateTime.now());
         row.setOwnerStaffId(staffId);

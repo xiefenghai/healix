@@ -2,6 +2,7 @@ package com.healix.core.questionnaire;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.node.TextNode;
@@ -16,17 +17,20 @@ class QuestionnaireCatalogTest {
     @Test
     void loadsWlIntake() {
         QuestionnaireDef q = catalog.latest("WL_INTAKE");
-        assertEquals(1, q.version());
-        assertEquals("WEIGHT_LOSS", q.program());
+        assertEquals(3, q.version());
+        assertNull(q.program());
         assertFalse(catalog.itemsOf(q).isEmpty());
         assertTrue(catalog.itemsOf(q).stream().anyMatch(i -> "REQUIRED".equals(i.level())));
-        assertTrue(catalog.module("WL_RISK_SCREEN", 1).isPresent());
+        assertTrue(catalog.module("WL_RISK_SCREEN", 2).isPresent());
+        assertTrue(catalog.module("DM_CLINICAL", 2).isPresent());
+        assertTrue(catalog.module("HTN_CLINICAL", 2).isPresent());
+        assertTrue(q.modules().stream().anyMatch(m -> "GOALS_PREFERENCE".equals(m.code()) && m.version() == 3));
     }
 
     @Test
     void showIfGender() {
         ModuleItem women =
-                catalog.requireModule("WOMEN_HEALTH", 1).items().stream()
+                catalog.requireModule("WOMEN_HEALTH", 2).items().stream()
                         .filter(i -> i.field().equals("basic.women.reproductiveStatus"))
                         .findFirst()
                         .orElseThrow();
@@ -37,7 +41,7 @@ class QuestionnaireCatalogTest {
     @Test
     void highlightEatingDisorder() {
         ModuleItem item =
-                catalog.requireModule("WL_RISK_SCREEN", 1).items().stream()
+                catalog.requireModule("WL_RISK_SCREEN", 2).items().stream()
                         .filter(i -> i.field().equals("basic.psych.eatingDisorderHistory"))
                         .findFirst()
                         .orElseThrow();
