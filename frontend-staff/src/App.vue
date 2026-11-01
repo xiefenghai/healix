@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getCurrentOrgId, getToken, orgSessionTick } from './shared/http'
 import {
@@ -13,6 +13,12 @@ const route = useRoute()
 const showTab = computed(() => !route.meta.hideTab && !route.meta.public)
 const unread = computed(() => chatUnreadTotal.value)
 
+/** 用可视视口高度，避开手机浏览器底栏 / 100vh 把 Tab 顶出屏外 */
+function syncViewportHeight() {
+  const h = window.visualViewport?.height ?? window.innerHeight
+  document.documentElement.style.setProperty('--hx-vvh', `${Math.round(h)}px`)
+}
+
 function syncRealtime() {
   void orgSessionTick.value
   if (route.meta.public || !getToken() || !getCurrentOrgId()) {
@@ -25,17 +31,23 @@ function syncRealtime() {
 
 onMounted(() => {
   syncRealtime()
-  document.documentElement.classList.toggle('hx-lock-scroll', showTab.value)
+  syncViewportHeight()
+  window.visualViewport?.addEventListener('resize', syncViewportHeight)
+  window.visualViewport?.addEventListener('scroll', syncViewportHeight)
+  window.addEventListener('resize', syncViewportHeight)
+  window.addEventListener('orientationchange', syncViewportHeight)
 })
-/** 仅登录态 / 机构变化时重建连接，避免路由切换打断 SSE */
+
+onBeforeUnmount(() => {
+  window.visualViewport?.removeEventListener('resize', syncViewportHeight)
+  window.visualViewport?.removeEventListener('scroll', syncViewportHeight)
+  window.removeEventListener('resize', syncViewportHeight)
+  window.removeEventListener('orientationchange', syncViewportHeight)
+})
+
 watch(
   () => [!!route.meta.public, orgSessionTick.value, !!getToken(), getCurrentOrgId()] as const,
   () => syncRealtime(),
-)
-watch(
-  showTab,
-  (on) => document.documentElement.classList.toggle('hx-lock-scroll', on),
-  { immediate: true },
 )
 </script>
 
@@ -45,11 +57,11 @@ watch(
     <main class="page-body">
       <RouterView />
     </main>
-    <!-- fixed=false：进 flex 底栏，避免手机浏览器 100vh / 底栏裁切导致 Tab 出屏 -->
     <van-tabbar
       v-if="showTab"
       route
-      :fixed="false"
+      fixed
+      placeholder
       safe-area-inset-bottom
       class="tabbar"
     >
@@ -74,16 +86,8 @@ watch(
   max-width: 430px;
   margin: 0 auto;
   min-height: 100vh;
-  min-height: 100dvh;
-}
-.app-shell.with-tab {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
-  max-height: 100vh;
-  max-height: 100dvh;
-  overflow: hidden;
+  min-height: 100svh;
+  min-height: var(--hx-vvh, 100svh);
 }
 .atmosphere {
   position: fixed;
@@ -101,23 +105,37 @@ watch(
 .page-body {
   position: relative;
   z-index: 1;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: inherit;
 }
-.with-tab .page-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-}
+/*
+ * Vant Tabbar：height:50px + content-box + safe-area padding。
+ * 强制 height:auto，避免安全区把图标/文字挤出 50px 盒子被裁切。
+ */
 .tabbar {
-  position: relative;
-  z-index: 20;
-  flex-shrink: 0;
+  z-index: 200 !important;
   width: 100%;
+  max-width: 430px;
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%);
+  height: auto !important;
+  min-height: var(--van-tabbar-height, 50px);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px) !important;
+  box-sizing: content-box !important;
   backdrop-filter: blur(16px);
   border-top: 1px solid rgba(20, 40, 48, 0.06);
   box-shadow: 0 -8px 24px rgba(22, 70, 78, 0.04);
+  background: rgba(255, 255, 255, 0.96) !important;
+}
+.tabbar :deep(.van-tabbar-item) {
+  font-size: 11px;
+  line-height: 1.2;
+}
+.tabbar :deep(.van-tabbar-item__icon) {
+  margin-bottom: 2px;
+}
+.tabbar :deep(.van-tabbar-item__text) {
+  display: block;
+  white-space: nowrap;
 }
 </style>

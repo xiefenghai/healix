@@ -45,20 +45,17 @@ html,
 body,
 #app {
   margin: 0;
-  height: 100%;
   min-height: 100%;
-  min-height: 100dvh;
+  min-height: 100svh;
   background: var(--hx-bg);
   color: var(--hx-text);
   font-family: var(--hx-font);
   -webkit-font-smoothing: antialiased;
 }
 
-/* 有底栏时由 .app-shell.with-tab 接管滚动，避免整页把 Tab 顶出可视区 */
-html.hx-lock-scroll,
-html.hx-lock-scroll body {
-  height: 100%;
-  overflow: hidden;
+/* 给 Vant placeholder / 固定底栏预留：50px 内容 + 安全区 + 一点余量 */
+:root {
+  --hx-tabbar-space: calc(var(--van-tabbar-height, 50px) + env(safe-area-inset-bottom, 0px) + 8px);
 }
 
 button,
@@ -79,6 +76,7 @@ a {
 
 .hx-page {
   min-height: 100%;
+  /* 底栏 fixed + placeholder 之外再留一点，防列表最后一项贴边 */
   padding-bottom: 28px;
   animation: hx-enter 0.35s ease both;
 }
