@@ -165,10 +165,8 @@ function onSwitchOrg() {
                 <el-icon v-else><Menu /></el-icon>
                 <template v-if="!collapsed">
                   <span class="menu-label">{{ m.label }}</span>
-                  <i
-                    v-if="m.badge === true || (typeof m.badge === 'number' && m.badge > 0)"
-                    class="menu-dot"
-                  />
+                  <!-- 有数字只显示角标；布尔 true 才用纯红点 -->
+                  <i v-if="m.badge === true" class="menu-dot" />
                   <span
                     v-if="typeof m.badge === 'number' && m.badge > 0"
                     class="menu-badge"
