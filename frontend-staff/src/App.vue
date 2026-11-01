@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getCurrentOrgId, getToken, orgSessionTick } from './shared/http'
 import {
@@ -13,6 +13,14 @@ const route = useRoute()
 const showTab = computed(() => !route.meta.hideTab && !route.meta.public)
 const unread = computed(() => chatUnreadTotal.value)
 
+/** 微信/iOS 里 window.innerHeight、100vh 常高于可视区；用 visualViewport 钉住壳高 */
+const vpH = ref(0)
+function syncVp() {
+  const vv = window.visualViewport
+  vpH.value = Math.round(vv?.height ?? window.innerHeight)
+}
+const shellStyle = computed(() => (vpH.value > 0 ? { height: `${vpH.value}px` } : undefined))
+
 function syncRealtime() {
   void orgSessionTick.value
   if (route.meta.public || !getToken() || !getCurrentOrgId()) {
@@ -23,40 +31,61 @@ function syncRealtime() {
   void refreshChatUnread()
 }
 
-/** 切 Tab / 返回列表时回到顶部，避免微信里「页太长」滑不到底栏 */
+/** 切 Tab 时滚内容区（不再滚 window） */
 function scrollTop() {
-  window.scrollTo(0, 0)
-  document.documentElement.scrollTop = 0
-  document.body.scrollTop = 0
+  const el = document.querySelector('.page-body')
+  if (el instanceof HTMLElement) el.scrollTop = 0
 }
 
-onMounted(() => syncRealtime())
+onMounted(() => {
+  syncVp()
+  window.visualViewport?.addEventListener('resize', syncVp)
+  window.visualViewport?.addEventListener('scroll', syncVp)
+  window.addEventListener('resize', syncVp)
+  syncRealtime()
+})
+
+onBeforeUnmount(() => {
+  window.visualViewport?.removeEventListener('resize', syncVp)
+  window.visualViewport?.removeEventListener('scroll', syncVp)
+  window.removeEventListener('resize', syncVp)
+})
+
 watch(
   () => [!!route.meta.public, orgSessionTick.value, !!getToken(), getCurrentOrgId()] as const,
   () => syncRealtime(),
 )
 watch(
-  () => route.fullPath,
-  () => {
-    scrollTop()
+  () => route.path,
+  (path) => {
+    if (route.meta.hideTab || route.meta.public) return
+    if (path === '/tasks' || path === '/chat' || path === '/patients' || path === '/me') {
+      scrollTop()
+    }
   },
 )
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'with-tab': showTab }">
+  <div class="app-shell" :class="{ 'with-tab': showTab }" :style="shellStyle">
     <div class="atmosphere" aria-hidden="true" />
     <main class="page-body">
       <RouterView />
     </main>
-    <!-- 与 C 端相同：fixed + placeholder；高度压短，避免微信里 100vh 叠安全区显得「太长」 -->
-    <van-tabbar v-if="showTab" route safe-area-inset-bottom placeholder class="tabbar">
+    <!-- fixed=false：底栏跟壳走，避免微信把 position:fixed 画到可视区外 -->
+    <van-tabbar
+      v-if="showTab"
+      route
+      :fixed="false"
+      safe-area-inset-bottom
+      class="tabbar"
+    >
       <van-tabbar-item replace to="/tasks" icon="todo-list-o">待办</van-tabbar-item>
       <van-tabbar-item
         replace
         to="/chat"
         icon="chat-o"
-        :badge="unread > 0 ? (unread > 99 ? '99+' : unread) : ''"
+        :badge="unread > 0 ? (unread > 99 ? '99+' : String(unread)) : undefined"
       >
         沟通
       </van-tabbar-item>
@@ -71,13 +100,13 @@ watch(
   position: relative;
   max-width: 430px;
   margin: 0 auto;
-  /* 不要 min-height:100vh：微信里 100vh 往往高于可视区，整页被撑「太长」，底栏像在屏外 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .atmosphere {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  max-width: 430px;
-  margin: 0 auto;
   pointer-events: none;
   z-index: 0;
   background:
@@ -89,8 +118,15 @@ watch(
 .page-body {
   position: relative;
   z-index: 1;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .tabbar {
+  position: relative;
+  z-index: 2;
+  flex: none;
   --van-tabbar-height: 48px;
   backdrop-filter: blur(10px);
   box-shadow: 0 -4px 16px rgba(22, 70, 78, 0.05);

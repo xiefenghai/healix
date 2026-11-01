@@ -50,9 +50,11 @@ function shiftLocalYmd(base: Date, dayDelta: number) {
   return formatLocalYmd(d)
 }
 
+/** 后端 onTimeRate 已是百分数（如 85.5），与管理端 OpsStats 同口径，勿再 *100 */
 function pct(rate?: number | null) {
   if (rate == null || Number.isNaN(Number(rate))) return '—'
-  return `${Math.round(Number(rate) * 100)}%`
+  const n = Number(rate)
+  return `${Number.isInteger(n) ? n : Math.round(n * 10) / 10}%`
 }
 
 async function loadStats() {

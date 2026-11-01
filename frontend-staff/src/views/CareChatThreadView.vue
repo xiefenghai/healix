@@ -400,14 +400,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 填满 App 壳（visualViewport 高度），不用 100dvh / fixed 全屏 */
 .page {
-  height: 100dvh;
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: transparent;
   animation: hx-enter 0.3s ease both;
+}
+.page :deep(.van-nav-bar) {
+  flex: none;
 }
 .nav-link {
   border: 0;
@@ -417,6 +421,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 .quick {
+  flex: none;
   display: flex;
   gap: 6px;
   overflow-x: auto;
@@ -438,6 +443,7 @@ onBeforeUnmount(() => {
   opacity: 0.55;
 }
 .task-strip {
+  flex: none;
   display: flex;
   gap: 8px;
   overflow-x: auto;
@@ -460,16 +466,18 @@ onBeforeUnmount(() => {
   color: var(--hx-danger);
 }
 .loading {
+  flex: 1;
   margin-top: 48px;
 }
 .list {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px 14px 96px;
+  padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  -webkit-overflow-scrolling: touch;
 }
 .row {
   display: flex;
@@ -521,12 +529,7 @@ onBeforeUnmount(() => {
   font-weight: 650;
 }
 .composer {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 0;
-  width: 100%;
-  max-width: 430px;
+  flex: none;
   display: flex;
   gap: 8px;
   align-items: flex-end;
@@ -536,20 +539,16 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(14px);
   box-sizing: border-box;
 }
-.composer .van-field {
+.composer :deep(.van-field) {
   flex: 1;
   background: #f3f7f8;
   border-radius: 14px;
   padding: 4px 8px;
 }
 .block {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 72px;
-  width: calc(100% - 24px);
-  max-width: 406px;
+  flex: none;
   margin: 0;
+  padding: 0 16px 10px;
   font-size: 12px;
   color: var(--hx-danger);
   text-align: center;
