@@ -1,13 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/http'
-import { onCareChatEvent } from '../shared/care-chat-realtime'
-import { currentPatientIdFromToken } from '../shared/patient-context'
-import { debounce } from '../shared/debounce'
 import {
-  CARE_PLAN_CHECKIN_STATUS_LABELS,
   CARE_PLAN_TIME_SLOT_LABELS,
   carePlanCategoryTone,
   carePlanTaskCategoryLabel,
@@ -42,6 +38,10 @@ import {
   type AbnormalFlag,
 } from '../shared/metric-ranges'
 import { loadRewardSummary, type RewardBadge, type RewardSummary } from '../shared/rewards'
+import {
+  formatHealthReportPeriodType,
+  formatReportDate,
+} from '../shared/management-report-labels'
 import { ymd } from '../shared/diet'
 
 interface TodayTask {
@@ -75,6 +75,7 @@ interface MetricLatest {
 }
 
 const router = useRouter()
+const route = useRoute()
 const displayName = ref('朋友')
 const profileGender = ref('')
 const hasPatient = ref(false)
@@ -88,7 +89,7 @@ const latestMetrics = ref<MetricLatest[]>([])
 const reward = ref<RewardSummary | null>(null)
 const badges = ref<RewardBadge[]>([])
 const earnedBadgeCount = computed(() => badges.value.filter((b) => b.earned).length)
-/** 首页一排展示：已点亮在前，未点亮留在后面；组内仍按徽章墙顺序。 */
+/** 首页一排：已点亮在前，未点亮在后 */
 const homeBadges = computed(() =>
   badges.value
     .map((b, i) => ({ b, i }))
@@ -96,29 +97,35 @@ const homeBadges = computed(() =>
     .map(({ b }) => b),
 )
 
-/**
- * 昨天未打卡且火苗未熄：24h 内补录仍可续上。
- * 有保护卡时只在卡内轻提示；没有保护卡、火苗明天就熄时升级为补救卡。
- */
-const rewardMakeup = computed(() => {
-  const r = reward.value
-  if (!r || r.yesterdayActive || r.streak <= 0) return null
-  const how = r.yesterdayPending > 0 ? `补打昨天的 ${r.yesterdayPending} 项任务之一` : '补录一次昨天的测量'
-  if (r.freezeCards > 0) {
-    return { level: 'soft' as const, text: `${how}即可续上火苗，否则将自动用 1 张保护卡` }
-  }
+interface LatestReport {
+  id: string
+  title?: string
+  periodType?: string
+  periodStart?: string
+  periodEnd?: string
+  publishedAt?: string
+}
+const latestReport = ref<LatestReport | null>(null)
+const reportLoaded = ref(false)
+
+/** 首页周报复盘条：优先最近周报，否则取最近一份已发布报告 */
+const reportReview = computed(() => {
+  const row = latestReport.value
+  if (!row) return null
+  const kind = formatHealthReportPeriodType(row.periodType)
+  const range =
+    row.periodStart && row.periodEnd
+      ? `${formatReportDate(row.periodStart)} ~ ${formatReportDate(row.periodEnd)}`
+      : ''
+  const spanHint =
+    kind === '周报' ? '看看这一周的变化与建议' : kind === '月报' ? '看看这个月的变化与建议' : '看看这一阶段的变化与建议'
   return {
-    level: 'critical' as const,
-    title: `连续 ${r.streak} 天的火苗明天熄灭`,
-    text: `${how}即可续上`,
+    id: row.id,
+    eye: kind === '周报' ? '本周复盘' : `${kind}复盘`,
+    title: row.title?.trim() || `${kind}已更新`,
+    hint: range ? `${range} · ${spanHint}` : spanHint,
   }
 })
-
-function onMakeupHint() {
-  if (reward.value && reward.value.yesterdayPending > 0) {
-    router.push({ path: '/care-plan', query: { day: 'yesterday' } })
-  }
-}
 
 async function loadReward() {
   reward.value = await loadRewardSummary()
@@ -134,6 +141,26 @@ async function loadReward() {
   }
 }
 
+async function loadLatestReport() {
+  try {
+    const res = await api<{ data: LatestReport[] }>('/api/c/v1/health-reports?limit=10')
+    const list = res.data || []
+    latestReport.value = list.find((r) => r.periodType === 'WEEK') || list[0] || null
+  } catch {
+    latestReport.value = null
+  } finally {
+    reportLoaded.value = true
+  }
+}
+
+function openLatestReport() {
+  if (latestReport.value?.id) {
+    void router.push(`/management-reports/${latestReport.value.id}`)
+    return
+  }
+  void router.push('/management-reports')
+}
+
 /** 首页只展示各时段完成情况，具体服药在用药管理页操作。 */
 const medSlots = computed(() => medSchedule.value?.slots || [])
 const medAllDone = computed(() => {
@@ -147,15 +174,6 @@ function medSlotTone(slot: ScheduleSlot) {
   if (slot.items.some((it) => it.status === 'MISSED') || (slot.past && slot.pendingCount)) return 'late'
   if (slot.items.every((it) => it.status)) return 'done'
   return 'todo'
-}
-
-function medSlotHint(slot: ScheduleSlot) {
-  const tone = medSlotTone(slot)
-  if (tone === 'late' && slot.pendingCount) return '未记'
-  if (tone === 'late') return '漏服'
-  if (tone === 'done' && slot.items.every((it) => it.status === 'TAKEN')) return '已服'
-  if (tone === 'done') return '已记'
-  return slot.pendingCount > 1 ? `${slot.pendingCount} 种` : '待服'
 }
 
 const medNextLine = computed(() => {
@@ -237,6 +255,31 @@ const planProgressPct = computed(() => {
   return Math.min(100, Math.round((t.doneTasks / t.totalTasks) * 100))
 })
 
+/** 今日方案环（薄荷式进度主视觉） */
+const RING_R = 40
+const RING_C = 2 * Math.PI * RING_R
+const ringDashOffset = computed(() => RING_C * (1 - planProgressPct.value / 100))
+
+const dietToday = ref<{ intake: number; goal: number | null }>({ intake: 0, goal: null })
+const exerciseTodayKcal = ref(0)
+
+const dietBarPct = computed(() => {
+  const g = dietToday.value.goal
+  if (!g || g <= 0) return dietToday.value.intake > 0 ? 40 : 0
+  return Math.min(100, Math.round((dietToday.value.intake / g) * 100))
+})
+
+/** 左侧火苗副文：不重复右侧「健康豆」数字 */
+const rewardHeroCap = computed(() => {
+  const r = reward.value
+  if (!r) return '完成 1 项即可点亮'
+  if (r.streak > 0 && r.todayActive) return r.level?.title || '今天已打卡'
+  if (r.streak > 0 && r.freezeCards > 0) return `保护卡 ${r.freezeCards} 张备用`
+  if (r.streak > 0) return '完成 1 项即可续火苗'
+  if (r.bestStreak > 0) return '断了也没关系，重新开始'
+  return '完成 1 项即可点亮'
+})
+
 function taskPending(task: TodayTask) {
   return task.checkinStatus !== 'DONE' && task.checkinStatus !== 'SKIPPED'
 }
@@ -262,10 +305,6 @@ const todoOpen = ref(false)
 const todoHiddenCount = computed(() => Math.max(0, sortedTasks.value.length - TODO_VISIBLE))
 const visibleTasks = computed(() =>
   todoOpen.value ? sortedTasks.value : sortedTasks.value.slice(0, TODO_VISIBLE),
-)
-
-const recordDoneCount = computed(
-  () => recordEntries.value.filter((r) => r.status === 'done' || r.status === 'partial').length,
 )
 
 /** 首页线性图标（stroke 1.7，round cap），与 v8 原型同源 */
@@ -294,15 +333,8 @@ const ICONS: Record<string, string> = {
   calendar: '<rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8 3.5v4M16 3.5v4"/>',
   warning: '<path d="M12 4l8.5 15H3.5z"/><path d="M12 10v4" stroke-width="1.8"/><circle cx="12" cy="16.8" r=".9" fill="currentColor"/>',
   plan: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/>',
-  nurse: '<path d="M4 6.5A2.5 2.5 0 016.5 4h11A2.5 2.5 0 0120 6.5v8a2.5 2.5 0 01-2.5 2.5H11l-4.5 3.5V17A2.5 2.5 0 014 14.5z"/><path d="M12 7.5v6M9 10.5h6"/>',
-}
-
-const RECORD_ICON: Record<string, string> = {
-  diet: 'food',
-  exercise: 'walk',
-  water: 'cup',
-  sleep: 'moon',
-  mood: 'smile',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M16.5 16.5L20 20"/>',
+  plus: '<path d="M12 5v14M5 12h14" stroke-width="2"/>',
 }
 
 const METRIC_ICONS = {
@@ -409,6 +441,8 @@ const metricTiles = computed(() => {
     },
   ]
 })
+
+const bpTile = computed(() => metricTiles.value.find((m) => m.key === 'bp') || null)
 
 const recordOpen = ref(false)
 const recordKey = ref<'bmi' | 'bp' | 'glucose' | 'heart' | null>(null)
@@ -632,7 +666,7 @@ async function submitRecord() {
     }
     showToast({ type: 'success', message: '已记录' })
     closeRecord()
-    await Promise.all([loadLatestMetrics(), loadReward()])
+    await Promise.all([loadLatestMetrics(), loadReward(), loadDiarySummaries()])
   } catch (e) {
     showToast(e instanceof Error ? e.message : '录入失败')
   } finally {
@@ -640,231 +674,20 @@ async function submitRecord() {
   }
 }
 
-/** 生活记录入口：不依赖方案任务，始终可点 */
-const lifestyleLog = ref({
-  waterLogged: false,
-  waterReached: false,
-  sleepLogged: false,
-  moodLogged: false,
-})
+/** 本轮目标：只展示一句话 goalSummary，避免标题叠字 */
+const cycleGoal = computed(() => todayPlan.value?.goalSummary?.trim() || '')
 
-type RecordEntryKey = 'diet' | 'exercise' | 'water' | 'sleep' | 'mood'
-
-const recordEntries = computed(() => {
-  const tasks = todayPlan.value?.tasks || []
-  const findTask = (pred: (t: TodayTask) => boolean) => tasks.find(pred)
-  const toneOf = (key: RecordEntryKey, task?: TodayTask) => {
-    if (task && task.checkinStatus === 'DONE') return 'done' as const
-    if (key === 'water' && lifestyleLog.value.waterReached) return 'done' as const
-    if (key === 'water' && lifestyleLog.value.waterLogged) return 'partial' as const
-    if (key === 'sleep' && lifestyleLog.value.sleepLogged) return 'done' as const
-    if (key === 'mood' && lifestyleLog.value.moodLogged) return 'done' as const
-    if (task && taskPending(task)) return 'todo' as const
-    return 'idle' as const
+function consumeRecordQuery() {
+  const raw = String(route.query.record || '')
+  if (raw === 'bp' || raw === 'glucose' || raw === 'bmi' || raw === 'heart') {
+    openRecord(raw)
+    const q = { ...route.query }
+    delete q.record
+    void router.replace({ path: '/home', query: q })
   }
-  const hintOf = (key: RecordEntryKey, status: 'done' | 'partial' | 'todo' | 'idle') => {
-    if (status === 'done') return key === 'water' ? '已达标' : '已记'
-    if (status === 'partial') return '已记'
-    if (status === 'todo') return '待办'
-    return '去记'
-  }
-  const items: Array<{
-    key: RecordEntryKey
-    title: string
-    path: string
-    cat: string
-    status: 'done' | 'partial' | 'todo' | 'idle'
-    hint: string
-  }> = [
-    {
-      key: 'diet',
-      title: '饮食',
-      path: '/diet',
-      cat: 'diet',
-      status: 'idle',
-      hint: '去记',
-    },
-    {
-      key: 'exercise',
-      title: '运动',
-      path: '/exercise',
-      cat: 'exercise',
-      status: 'idle',
-      hint: '去记',
-    },
-    {
-      key: 'water',
-      title: '饮水',
-      path: '/water',
-      cat: 'water',
-      status: 'idle',
-      hint: '去记',
-    },
-    {
-      key: 'sleep',
-      title: '睡眠',
-      path: '/sleep',
-      cat: 'sleep',
-      status: 'idle',
-      hint: '去记',
-    },
-    {
-      key: 'mood',
-      title: '心情',
-      path: '/mood',
-      cat: 'mood',
-      status: 'idle',
-      hint: '去记',
-    },
-  ]
-  for (const item of items) {
-    const task =
-      item.key === 'diet'
-        ? findTask((t) => t.taskCode === 'DIET_LOG' || t.category === 'DIET')
-        : item.key === 'exercise'
-          ? findTask((t) => t.category === 'EXERCISE')
-          : item.key === 'water'
-            ? findTask((t) => t.taskCode === 'WATER_LOG' || t.category === 'WATER')
-            : item.key === 'sleep'
-              ? findTask((t) => t.taskCode === 'SLEEP_LOG' || t.category === 'SLEEP')
-              : findTask((t) => t.taskCode === 'MOOD_LOG' || t.category === 'MOOD')
-    item.status = toneOf(item.key, task)
-    item.hint = hintOf(item.key, item.status)
-  }
-  return items
-})
-
-interface CareThread {
-  id: string
-  peopleId?: string
-  orgName?: string
-  lastMessagePreview?: string
-  lastSenderType?: string
-  patientUnreadCount?: number
 }
 
-/** 健管师焦点卡：只用会话里已有的数据，不展示在线状态 */
-const careThread = ref<CareThread | null>(null)
-const careState = ref<'loading' | 'ready' | 'failed'>('loading')
-
-const careCard = computed(() => {
-  const unread = unreadChatCount.value
-  const t = careThread.value
-  const staffMsg = t?.lastSenderType === 'STAFF' && t.lastMessagePreview ? `“${t.lastMessagePreview}”` : ''
-  if (unread > 0) {
-    return {
-      state: 'unread',
-      label: `${unread > 99 ? '99+' : unread} 条新消息`,
-      name: '健管师给你留言了',
-      hint: staffMsg || `有 ${unread} 条消息等你查看`,
-      btn: '查看',
-    }
-  }
-  return {
-    state: 'online',
-    label: '医生 · 营养师 · 健管师',
-    name: '专属健康管家',
-    hint: staffMsg || '血压、血糖、饮食用药有疑问，随时问我',
-    btn: '联系健管团队',
-  }
-})
-
-function onCareCard() {
-  if (careState.value === 'failed') {
-    void loadCareThread()
-    return
-  }
-  router.push('/care-chat?contact=1')
-}
-
-interface LatestReport {
-  id: string
-  title?: string
-  periodType?: string
-  periodStart?: string
-  periodEnd?: string
-}
-
-const latestReport = ref<LatestReport | null>(null)
-
-interface LatestFollowup {
-  id: string
-  completedAt?: string
-  plannedAt?: string
-  gmtCreated?: string
-}
-
-const latestFollowup = ref<LatestFollowup | null>(null)
-const unreadNotifyCount = ref(0)
 const assessRequest = ref<{ id: string; expiresAt?: string } | null>(null)
-const unreadChatCount = ref(0)
-let unsubChat: (() => void) | null = null
-const scheduleChatUnread = debounce(() => {
-  void loadCareThread()
-}, 300)
-
-function reportPeriodHint(row: LatestReport | null) {
-  if (!row) return '暂无报告'
-  const title = row.title || ''
-  const week = title.match(/入组第\d+周/)
-  if (week) return week[0]
-  const month = title.match(/\d{4}年\d{1,2}月/)
-  if (month) return month[0]
-  const quarter = title.match(/\d{4}年Q\d/)
-  if (quarter) return quarter[0]
-  if (row.periodType === 'WEEK') return '周报'
-  if (row.periodType === 'MONTH') return '月报'
-  if (row.periodType === 'QUARTER') return '三月报'
-  return '查看报告'
-}
-
-function followupDateHint(row: LatestFollowup | null) {
-  if (!row) return '暂无记录'
-  const iso = row.completedAt || row.plannedAt || row.gmtCreated
-  if (!iso) return '查看记录'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '查看记录'
-  return `${d.getMonth() + 1}月${d.getDate()}日`
-}
-
-const serviceEntries = computed(() => [
-  {
-    key: 'plan',
-    label: '管理方案',
-    hint: todayPlan.value?.planTitle?.trim() || '查看当前方案',
-    icon: 'plan',
-    tone: 't-teal',
-    to: '/care-plan',
-    due: false,
-  },
-  {
-    key: 'assess',
-    label: '评估',
-    hint: assessRequest.value ? '待完成' : '查看评估',
-    icon: 'clipboard',
-    tone: assessRequest.value ? 't-warn' : 't-info',
-    to: '/assessment-questionnaire',
-    due: !!assessRequest.value,
-  },
-  {
-    key: 'followup',
-    label: '随访记录',
-    hint: followupDateHint(latestFollowup.value),
-    icon: 'calendar',
-    tone: 't-mint',
-    to: '/followups',
-    due: false,
-  },
-  {
-    key: 'report',
-    label: '管理报告',
-    hint: reportPeriodHint(latestReport.value),
-    icon: 'report',
-    tone: 't-info',
-    to: latestReport.value ? `/management-reports/${latestReport.value.id}` : '/management-reports',
-    due: false,
-  },
-])
 
 onMounted(async () => {
   try {
@@ -875,20 +698,15 @@ onMounted(async () => {
     profileLoaded.value = true
     await Promise.all([
       loadTodayPlan(),
-      loadLifestyleLog(),
       loadMeds(),
       loadLatestMetrics(),
-      loadLatestReport(),
-      loadLatestFollowup(),
-      loadUnreadNotifyCount(),
-      loadCareThread(),
+      loadDiarySummaries(),
       loadReward(),
+      loadLatestReport(),
       loadAssessRequest(),
     ])
     await offerScience()
-    unsubChat = onCareChatEvent(() => {
-      scheduleChatUnread()
-    })
+    consumeRecordQuery()
   } catch (e) {
     profileLoaded.value = true
     const msg = e instanceof Error ? e.message : ''
@@ -898,29 +716,12 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(() => {
-  scheduleChatUnread.cancel()
-  unsubChat?.()
-  unsubChat = null
-})
-
-async function loadLatestReport() {
-  try {
-    const res = await api<{ data: LatestReport[] }>('/api/c/v1/health-reports?limit=1')
-    latestReport.value = res.data?.[0] || null
-  } catch {
-    latestReport.value = null
-  }
-}
-
-async function loadLatestFollowup() {
-  try {
-    const res = await api<{ data: LatestFollowup[] }>('/api/c/v1/followups?limit=1')
-    latestFollowup.value = res.data?.[0] || null
-  } catch {
-    latestFollowup.value = null
-  }
-}
+watch(
+  () => route.query.record,
+  () => {
+    if (profileLoaded.value && hasPatient.value) consumeRecordQuery()
+  },
+)
 
 async function loadAssessRequest() {
   try {
@@ -930,35 +731,6 @@ async function loadAssessRequest() {
     assessRequest.value = res.data || null
   } catch {
     assessRequest.value = null
-  }
-}
-
-async function loadUnreadNotifyCount() {
-  try {
-    const res = await api<{ data: { count?: number } }>('/api/c/v1/notifications/unread-count')
-    unreadNotifyCount.value = Number(res.data?.count || 0)
-  } catch {
-    unreadNotifyCount.value = 0
-  }
-}
-
-/** 账号下可能挂多个就诊人，首页只展示当前就诊人自己的会话。 */
-function threadsForCurrentPatient(list: CareThread[]) {
-  const peopleId = currentPatientIdFromToken()
-  if (!peopleId) return []
-  return list.filter((t) => t.peopleId === peopleId)
-}
-
-async function loadCareThread() {
-  if (!careThread.value) careState.value = 'loading'
-  try {
-    const res = await api<{ data: CareThread[] }>('/api/c/v1/care-chat/threads')
-    const mine = threadsForCurrentPatient(res.data || [])
-    careThread.value = mine.find((t) => (t.patientUnreadCount || 0) > 0) || mine[0] || null
-    unreadChatCount.value = mine.reduce((n, t) => n + (t.patientUnreadCount || 0), 0)
-    careState.value = 'ready'
-  } catch {
-    careState.value = 'failed'
   }
 }
 
@@ -974,29 +746,29 @@ async function loadTodayPlan() {
   }
 }
 
-async function loadLifestyleLog() {
+async function loadDiarySummaries() {
   const today = ymd(new Date())
   try {
-    const [water, sleep, mood] = await Promise.all([
-      api<{ data: { intakeMl?: number; reached?: boolean } }>(`/api/c/v1/me/water/days/${today}`).catch(
+    const [dietRes, exRes] = await Promise.all([
+      api<{
+        data: Array<{ intake?: { energyKcal?: number }; targetKcal?: number | null }>
+      }>(`/api/c/v1/me/diet/summary?from=${today}&to=${today}`).catch(() => null),
+      api<{ data: { sessions?: Array<{ energyKcal?: number }> } }>('/api/c/v1/me/exercise/today').catch(
         () => null,
       ),
-      api<{ data: { logged?: boolean } }>(`/api/c/v1/me/sleep/days/${today}`).catch(() => null),
-      api<{ data: { logged?: boolean } }>(`/api/c/v1/me/mood/days/${today}`).catch(() => null),
     ])
-    lifestyleLog.value = {
-      waterLogged: (water?.data?.intakeMl || 0) > 0,
-      waterReached: !!water?.data?.reached,
-      sleepLogged: !!sleep?.data?.logged,
-      moodLogged: !!mood?.data?.logged,
+    const d = dietRes?.data?.[0]
+    dietToday.value = {
+      intake: Math.round(d?.intake?.energyKcal ?? 0),
+      goal: d?.targetKcal ?? null,
     }
+    const sessions = exRes?.data?.sessions || []
+    exerciseTodayKcal.value = Math.round(
+      sessions.reduce((s, x) => s + (Number(x.energyKcal) || 0), 0),
+    )
   } catch {
-    lifestyleLog.value = {
-      waterLogged: false,
-      waterReached: false,
-      sleepLogged: false,
-      moodLogged: false,
-    }
+    dietToday.value = { intake: 0, goal: null }
+    exerciseTodayKcal.value = 0
   }
 }
 
@@ -1033,7 +805,7 @@ async function checkinTask(task: TodayTask, status: 'DONE' | 'SKIPPED') {
       body: JSON.stringify({ status }),
     })
     showToast({ message: status === 'DONE' ? '打卡成功' : '已跳过', type: 'success' })
-    await Promise.all([loadTodayPlan(), loadLifestyleLog(), loadReward()])
+    await Promise.all([loadTodayPlan(), loadDiarySummaries(), loadReward()])
     if (status === 'DONE') await offerScience()
   } catch (e) {
     showToast(e instanceof Error ? e.message : '打卡失败')
@@ -1044,9 +816,6 @@ async function checkinTask(task: TodayTask, status: 'DONE' | 'SKIPPED') {
 
 function taskTimeLabel(code?: string) {
   return formatCarePlanLabel(CARE_PLAN_TIME_SLOT_LABELS, code)
-}
-function checkinStatusLabel(code?: string) {
-  return formatCarePlanLabel(CARE_PLAN_CHECKIN_STATUS_LABELS, code)
 }
 
 async function offerScience() {
@@ -1059,334 +828,260 @@ async function offerScience() {
 <template>
   <div class="home">
     <ScienceSheet v-if="scienceOffer" :offer="scienceOffer" @close="scienceOffer = null" />
-    <header class="hero">
-      <div class="avatar" role="img" :aria-label="`用户头像，${avatarChar}`">{{ avatarChar }}</div>
+
+    <header class="topbar">
+      <button type="button" class="avatar" :aria-label="`切换就诊人，${avatarChar}`" @click="router.push('/patient-cards')">
+        {{ avatarChar }}
+      </button>
       <div class="hi">
         <h1><span class="hx-mark">{{ honorific }}</span>，{{ greetingTail }}</h1>
-        <div class="sub">{{ greetingSub }}</div>
-      </div>
-      <div class="acts">
-        <button
-          class="icon-btn"
-          type="button"
-          :aria-label="unreadNotifyCount ? `消息，未读 ${unreadNotifyCount} 条` : '消息'"
-          @click="router.push('/notifications')"
-        >
-          <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.bell" />
-          <span v-if="unreadNotifyCount > 0" class="badge">{{ unreadNotifyCount > 99 ? '99+' : unreadNotifyCount }}</span>
-        </button>
-        <button class="icon-btn" type="button" aria-label="切换就诊人" @click="router.push('/patient-cards')">
-          <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.switch" />
-        </button>
+        <p class="sub">{{ greetingSub }}</p>
       </div>
     </header>
-
-    <button
-      v-if="badges.length"
-      type="button"
-      class="medal-row"
-      :aria-label="`勋章 ${earnedBadgeCount} / ${badges.length}，查看成就`"
-      @click="router.push('/achievements')"
-    >
-      <span
-        v-for="b in homeBadges"
-        :key="b.code"
-        class="medal-dot"
-        :class="{ off: !b.earned, outcome: b.earned && b.kind === 'OUTCOME' }"
-        :title="b.earned ? b.name : `${b.name}，未点亮`"
-      >{{ b.icon }}</span>
-      <em>{{ earnedBadgeCount }}/{{ badges.length }}</em>
-    </button>
-    <div class="gap-24" />
 
     <div v-if="profileLoaded && !hasPatient" class="join-card">
       <p>请先添加就诊人或使用激活码<br />添加后即可获得专属健管师</p>
       <button type="button" class="btn-solid" @click="router.push('/patient-cards')">去添加就诊人</button>
     </div>
-    <div
-      v-else
-      class="l1-card"
-      :data-state="careState === 'ready' ? careCard.state : careState"
-      role="button"
-      tabindex="0"
-      aria-label="专属健康管家"
-      @click="onCareCard"
-      @keydown.enter="onCareCard"
-    >
-      <template v-if="careState === 'loading'">
-        <div class="l1-top"><span class="l1-dot" />加载中</div>
-        <div class="l1-sk">
-          <div class="l1-av loading"><span class="dots"><i /><i /><i /></span></div>
-          <div class="l1-sk-bars">
-            <div class="bar b1 shimmer" />
-            <div class="bar b2 shimmer" />
-            <div class="bar b3 shimmer" />
-          </div>
-        </div>
-      </template>
-      <template v-else-if="careState === 'failed'">
-        <div class="l1-top"><span class="l1-dot" />加载失败</div>
-        <div class="l1-main">
-          <div class="l1-av">健</div>
-          <div class="l1-tx">
-            <div class="l1-name">健管师信息加载失败</div>
-            <div class="l1-hint">网络异常，请稍后重试</div>
-          </div>
-          <button type="button" class="l1-btn" @click.stop="onCareCard">重试</button>
-        </div>
-      </template>
-      <template v-else>
-        <div class="l1-top"><span class="l1-dot" />{{ careCard.label }}</div>
-        <div class="l1-main">
-          <div class="l1-av"><svg class="ic ic24" viewBox="0 0 24 24" v-html="ICONS.nurse" /></div>
-          <div class="l1-tx">
-            <div class="l1-name">{{ careCard.name }}</div>
-            <div class="l1-hint">{{ careCard.hint }}</div>
-          </div>
-          <button type="button" class="l1-btn" @click.stop="onCareCard">{{ careCard.btn }}</button>
-        </div>
-      </template>
-    </div>
 
-    <div class="gap-24" />
-
-    <section class="card" aria-labelledby="t-todo">
-      <div class="sec-head">
-        <h2 id="t-todo">今日待办</h2>
-        <button type="button" class="link" @click="router.push('/care-plan')">全部方案 ›</button>
-      </div>
-
-      <div
-        v-if="reward"
-        class="reward-strip"
-        :class="{ dim: reward.streak <= 0 }"
-        role="button"
-        tabindex="0"
-        @click="router.push('/achievements')"
-        @keydown.enter="router.push('/achievements')"
+    <template v-else>
+      <button
+        v-if="cycleGoal"
+        type="button"
+        class="goal-strip"
+        aria-label="本轮目标，进入方案"
+        @click="router.push('/care-plan')"
       >
-        <div class="flame" aria-hidden="true">🔥</div>
-        <div class="rs-tx">
-          <div class="rs-days">
-            <template v-if="reward.streak > 0">{{ reward.streak }}<span class="rs-unit"> 天</span></template>
-            <template v-else-if="reward.bestStreak > 0">已熄灭<span class="rs-unit"> · 点击重新开始</span></template>
-            <template v-else>0<span class="rs-unit"> 天</span></template>
-          </div>
-          <div class="rs-cap">
-            <template v-if="reward.streak > 0 && reward.todayActive">连续打卡 · 今天 +{{ reward.todayPoints }} 豆</template>
-            <template v-else-if="reward.streak > 0 && reward.freezeCards > 0">连续打卡 · 保护卡 {{ reward.freezeCards }} 张备用</template>
-            <template v-else-if="reward.streak > 0">连续打卡 · 今天完成 1 项即可续上</template>
-            <template v-else-if="reward.bestStreak > 0">连续打卡归零</template>
-            <template v-else>完成 1 项任务、服药或测量即可点亮</template>
-          </div>
-        </div>
-        <span v-if="reward.level && reward.streak > 0" class="rs-lv">{{ reward.level.title }}</span>
+        <span class="goal-eye">本轮目标</span>
+        <strong>{{ cycleGoal }}</strong>
+      </button>
+      <div v-else-if="profileLoaded && !planLoading" class="goal-strip soft" role="status">
+        <strong class="goal-motto">让每一次记录都产生价值</strong>
       </div>
 
-      <div v-if="rewardMakeup?.level === 'soft'" class="hx-flag info">
-        <i>未打卡</i>
-        <div>
-          <template v-if="reward?.yesterdayPending">
-            昨天有 <b>{{ reward.yesterdayPending }}</b> 项任务未完成，<span class="link-inline" @click="onMakeupHint">补打卡可续火苗 ›</span>
-          </template>
-          <template v-else>{{ rewardMakeup.text }}</template>
-        </div>
-      </div>
-
-      <van-loading v-if="planLoading" size="20px" vertical class="block-loading">加载中</van-loading>
-      <template v-else-if="sortedTasks.length">
-        <div class="exec">
-          <div class="exec-top">
-            <span class="lab">今日执行</span>
-            <span class="num">{{ todayPlan?.doneTasks ?? 0 }} / {{ todayPlan?.totalTasks ?? 0 }}</span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" :style="{ width: planProgressPct + '%' }" /></div>
-        </div>
-        <div id="home-todo-list" class="todo-list">
-          <div v-for="task in visibleTasks" :key="task.id" class="todo-item">
-            <span class="hx-ck" :class="{ on: task.checkinStatus === 'DONE' }" aria-hidden="true">
-              <svg viewBox="0 0 24 24" v-html="ICONS.check" />
+      <!-- 主视觉：今日进度 -->
+      <section class="progress-hero" aria-label="今日进度">
+        <div class="ph-body">
+          <button type="button" class="ph-side" @click="router.push('/achievements')">
+            <span class="ph-flame" :class="{ on: !!(reward && reward.streak > 0) }" aria-hidden="true">
+              <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.flame" />
             </span>
-            <span class="todo-main">
-              <span class="tt">
-                <span class="hx-cat" :class="carePlanCategoryTone(task.category, task.taskCode)">
-                  {{ carePlanTaskCategoryLabel(task) }}
+            <strong v-if="reward && reward.streak > 0">连续 {{ reward.streak }} 天</strong>
+            <strong v-else-if="reward && reward.bestStreak > 0">已熄灭</strong>
+            <strong v-else>连续 0 天</strong>
+            <em>{{ rewardHeroCap }}</em>
+          </button>
+          <div class="ph-ring" aria-hidden="true">
+            <svg viewBox="0 0 100 100">
+              <circle class="track" cx="50" cy="50" :r="RING_R" />
+              <circle
+                class="prog"
+                cx="50"
+                cy="50"
+                :r="RING_R"
+                :stroke-dasharray="RING_C"
+                :stroke-dashoffset="ringDashOffset"
+                transform="rotate(-90 50 50)"
+              />
+            </svg>
+            <div class="ph-center">
+              <b>{{ todayPlan?.doneTasks ?? 0 }}/{{ todayPlan?.totalTasks ?? 0 }}</b>
+              <span>今日进度</span>
+            </div>
+          </div>
+          <button type="button" class="ph-side right" @click="router.push('/achievements')">
+            <strong>+{{ reward?.todayPoints || 0 }}</strong>
+            <em>健康豆</em>
+          </button>
+        </div>
+        <button
+          v-if="badges.length"
+          type="button"
+          class="ph-medals"
+          :aria-label="`勋章 ${earnedBadgeCount} / ${badges.length}`"
+          @click="router.push('/achievements')"
+        >
+          <span
+            v-for="b in homeBadges.slice(0, 8)"
+            :key="b.code"
+            class="medal-dot"
+            :class="{ off: !b.earned, outcome: b.earned && b.kind === 'OUTCOME' }"
+          >{{ b.icon }}</span>
+          <em>{{ earnedBadgeCount }}/{{ badges.length }}</em>
+        </button>
+      </section>
+
+      <button
+        v-if="reportReview"
+        type="button"
+        class="report-card"
+        :aria-label="`${reportReview.eye}，${reportReview.title}`"
+        @click="openLatestReport"
+      >
+        <span class="rc-ico" aria-hidden="true">复</span>
+        <span class="rc-tx">
+          <b>{{ reportReview.eye }}</b>
+          <strong>{{ reportReview.title }}</strong>
+          <em>{{ reportReview.hint }}</em>
+        </span>
+        <span class="rc-go">去复盘 ›</span>
+      </button>
+      <div v-else-if="reportLoaded" class="report-card soft" role="status">
+        <span class="rc-ico" aria-hidden="true">复</span>
+        <span class="rc-tx">
+          <b>周报复盘</b>
+          <strong>坚持记录，下一份周报会为你总结</strong>
+        </span>
+      </div>
+
+      <!-- 今日日记 2×2 -->
+      <section class="block" aria-labelledby="t-diary">
+        <div class="sec-head pad">
+          <h2 id="t-diary">今日日记</h2>
+          <button type="button" class="link" @click="router.push({ path: '/health', query: { tab: 'lifestyle' } })">
+            明细 ›
+          </button>
+        </div>
+        <div class="diary-grid">
+          <button type="button" class="diary-card" @click="router.push('/diet')">
+            <div class="dc-top">
+              <span class="dc-ico t-teal"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.food" /></span>
+              <span class="dc-name">饮食</span>
+            </div>
+            <div class="dc-val">
+              <template v-if="dietToday.intake">{{ dietToday.intake }}</template>
+              <template v-else>—</template>
+              <i v-if="dietToday.goal"> / {{ dietToday.goal }}</i>
+              <i v-else> 千卡</i>
+            </div>
+            <div class="dc-bar"><i :style="{ width: dietBarPct + '%' }" /></div>
+            <span class="dc-cta"><svg class="ic ic16" viewBox="0 0 24 24" v-html="ICONS.plus" /> 记一笔</span>
+          </button>
+
+          <button type="button" class="diary-card" @click="router.push('/exercise')">
+            <div class="dc-top">
+              <span class="dc-ico t-mint"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.walk" /></span>
+              <span class="dc-name">运动</span>
+            </div>
+            <div class="dc-val">
+              <template v-if="exerciseTodayKcal">{{ exerciseTodayKcal }}</template>
+              <template v-else>—</template>
+              <i> kcal</i>
+            </div>
+            <div class="dc-bar soft"><i :style="{ width: exerciseTodayKcal ? Math.min(100, exerciseTodayKcal / 4) + '%' : '0%' }" /></div>
+            <span class="dc-cta"><svg class="ic ic16" viewBox="0 0 24 24" v-html="ICONS.plus" /> 记运动</span>
+          </button>
+
+          <button type="button" class="diary-card" @click="router.push('/medications')">
+            <div class="dc-top">
+              <span class="dc-ico t-warn"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.pill" /></span>
+              <span class="dc-name">用药</span>
+            </div>
+            <div class="dc-val">
+              <template v-if="medSchedule && medSchedule.summary.due > 0">
+                {{ medSchedule.summary.taken }}/{{ medSchedule.summary.due }}
+              </template>
+              <template v-else>—</template>
+              <i v-if="medSchedule && medSchedule.summary.due > 0"> 已服</i>
+            </div>
+            <div v-if="medSlots.length" class="dc-slots">
+              <i
+                v-for="slot in medSlots"
+                :key="slot.slot"
+                :class="`st-${medSlotTone(slot)}`"
+              >{{ MED_SLOT_TITLES[slot.slot] || slot.label }}</i>
+            </div>
+            <span v-else class="dc-hint">{{ medNextLine || '去管理用药' }}</span>
+            <span class="dc-cta"><svg class="ic ic16" viewBox="0 0 24 24" v-html="ICONS.plus" /> 服药</span>
+          </button>
+
+          <button type="button" class="diary-card" @click="openRecord('bp')">
+            <div class="dc-top">
+              <span class="dc-ico t-info"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.activity" /></span>
+              <span class="dc-name">指标</span>
+            </div>
+            <div class="dc-val" :class="{ bad: bpTile?.abnormal }">
+              <template v-if="bpTile?.value">{{ bpTile.value }}</template>
+              <template v-else>—</template>
+              <i v-if="bpTile?.value"> mmHg</i>
+            </div>
+            <div class="dc-hint">{{ bpTile?.value ? (bpTile.status || '血压') : '点击测量血压' }}</div>
+            <span class="dc-cta"><svg class="ic ic16" viewBox="0 0 24 24" v-html="ICONS.plus" /> 测量</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- 精简待办 -->
+      <section class="card todo-card" aria-labelledby="t-todo">
+        <div class="sec-head">
+          <h2 id="t-todo">待办</h2>
+          <button type="button" class="link" @click="router.push('/care-plan')">全部方案 ›</button>
+        </div>
+        <van-loading v-if="planLoading" size="20px" vertical class="block-loading">加载中</van-loading>
+        <template v-else-if="sortedTasks.length">
+          <div id="home-todo-list" class="todo-list">
+            <div v-for="task in visibleTasks" :key="task.id" class="todo-item">
+              <span class="hx-ck" :class="{ on: task.checkinStatus === 'DONE' }" aria-hidden="true">
+                <svg viewBox="0 0 24 24" v-html="ICONS.check" />
+              </span>
+              <span class="todo-main">
+                <span class="tt">
+                  <span class="hx-cat" :class="carePlanCategoryTone(task.category, task.taskCode)">
+                    {{ carePlanTaskCategoryLabel(task) }}
+                  </span>
+                  <strong>{{ task.title }}</strong>
                 </span>
-                <strong>{{ task.title }}</strong>
+                <span v-if="task.timeSlot || exerciseHowTo(task.title) || taskSkipped(task)" class="meta">
+                  <template v-if="task.timeSlot">{{ taskTimeLabel(task.timeSlot) }}</template>
+                  <template v-if="exerciseHowTo(task.title)">{{ task.timeSlot ? ' · ' : '' }}{{ exerciseHowTo(task.title) }}</template>
+                  <template v-if="taskSkipped(task)">{{ task.timeSlot || exerciseHowTo(task.title) ? ' · ' : '' }}已跳过</template>
+                </span>
               </span>
-              <span v-if="task.timeSlot || exerciseHowTo(task.title) || taskSkipped(task)" class="meta">
-                <template v-if="task.timeSlot">{{ taskTimeLabel(task.timeSlot) }}</template>
-                <template v-if="exerciseHowTo(task.title)">{{ task.timeSlot ? ' · ' : '' }}{{ exerciseHowTo(task.title) }}</template>
-                <template v-if="taskSkipped(task)">{{ task.timeSlot || exerciseHowTo(task.title) ? ' · ' : '' }}已跳过</template>
-              </span>
-            </span>
-            <template v-if="taskPending(task)">
+              <template v-if="taskPending(task)">
+                <button
+                  v-if="carePlanTaskRecordPath(task)"
+                  type="button"
+                  class="act-btn primary"
+                  @click="router.push(carePlanTaskRecordPath(task)!)"
+                >
+                  {{ carePlanTaskRecordLabel(task) }}
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="act-btn primary"
+                  :disabled="checkinBusyId === task.id"
+                  @click="checkinTask(task, 'DONE')"
+                >
+                  <van-loading v-if="checkinBusyId === task.id" size="12px" color="#fff" />
+                  <span v-else>打卡</span>
+                </button>
+              </template>
               <button
-                v-if="carePlanTaskRecordPath(task)"
-                type="button"
-                class="act-btn primary"
-                @click="router.push(carePlanTaskRecordPath(task)!)"
-              >
-                {{ carePlanTaskRecordLabel(task) }}
-              </button>
-              <button
-                v-else
+                v-else-if="taskSkipped(task)"
                 type="button"
                 class="act-btn primary"
                 :disabled="checkinBusyId === task.id"
                 @click="checkinTask(task, 'DONE')"
               >
-                <van-loading v-if="checkinBusyId === task.id" size="12px" color="#fff" />
-                <span v-else>完成</span>
+                <span>改为完成</span>
               </button>
-              <button
-                type="button"
-                class="act-btn ghost"
-                :disabled="!!checkinBusyId"
-                @click="checkinTask(task, 'SKIPPED')"
-              >
-                跳过
-              </button>
-            </template>
-            <button
-              v-else-if="taskSkipped(task) && carePlanTaskRecordPath(task)"
-              type="button"
-              class="act-btn primary"
-              @click="router.push(carePlanTaskRecordPath(task)!)"
-            >
-              {{ carePlanTaskRecordLabel(task) }}
-            </button>
-            <button v-else-if="taskSkipped(task)" type="button" class="act-btn primary" :disabled="checkinBusyId === task.id" @click="checkinTask(task, 'DONE')">
-              <van-loading v-if="checkinBusyId === task.id" size="12px" color="#fff" />
-              <span v-else>改为完成</span>
-            </button>
-            <button v-else type="button" class="act-btn done" disabled>
-              {{ checkinStatusLabel(task.checkinStatus) || '已完成' }}
+              <button v-else type="button" class="act-btn done" disabled>已完成</button>
+            </div>
+          </div>
+          <div v-if="todoHiddenCount > 0" class="todo-fold">
+            <button type="button" :aria-expanded="todoOpen" aria-controls="home-todo-list" @click="todoOpen = !todoOpen">
+              <span>{{ todoOpen ? '收起' : `展开剩余 ${todoHiddenCount} 项` }}</span>
+              <svg class="ic ic16 fold-ic" viewBox="0 0 24 24" v-html="ICONS.chev" />
             </button>
           </div>
+        </template>
+        <div v-else class="todo-empty">
+          <div class="et">暂无今日方案任务</div>
         </div>
-        <div v-if="todoHiddenCount > 0" class="todo-fold">
-          <button
-            type="button"
-            :aria-expanded="todoOpen"
-            aria-controls="home-todo-list"
-            @click="todoOpen = !todoOpen"
-          >
-            <span>{{ todoOpen ? '收起' : `展开剩余 ${todoHiddenCount} 项` }}</span>
-            <svg class="ic ic16 fold-ic" viewBox="0 0 24 24" v-html="ICONS.chev" />
-          </button>
-        </div>
-      </template>
-      <div v-else class="todo-empty">
-        <div class="ei"><svg class="ic ic24" viewBox="0 0 24 24" v-html="ICONS.plan" /></div>
-        <div class="et">暂无今日方案任务</div>
-      </div>
-    </section>
+      </section>
 
-    <div class="gap-20" />
-
-    <div v-if="rewardMakeup?.level === 'critical'" class="rescue" role="alert">
-      <div class="ri"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.warning" /></div>
-      <div class="rt">
-        <b>{{ rewardMakeup.title }}</b>
-        <span>{{ rewardMakeup.text }}，否则明天火苗熄灭</span>
-      </div>
-      <div class="racts">
-        <button type="button" class="act-btn primary" @click="onMakeupHint">去补打卡</button>
-      </div>
-    </div>
-
-    <div v-if="rewardMakeup?.level === 'critical'" class="gap-20" />
-
-    <section class="card" aria-labelledby="t-vital">
-      <div class="sec-head">
-        <h2 id="t-vital">指标记录</h2>
-        <button type="button" class="link" @click="router.push('/health')">趋势 ›</button>
-      </div>
-      <div class="metrics-grid">
-        <button
-          v-for="m in metricTiles"
-          :key="m.key"
-          type="button"
-          class="metric-tile"
-          :class="{ abnormal: m.abnormal }"
-          @click="openRecord(m.key)"
-        >
-          <div class="metric-head">
-            <span class="metric-name">
-              <svg class="ic" viewBox="0 0 24 24" v-html="ICONS[m.icon]" />
-              {{ m.label }}
-            </span>
-            <span class="metric-flag">{{ m.value ? m.status || '已记录' : '去记录' }}</span>
-          </div>
-          <div v-if="!m.value" class="metric-value">—</div>
-          <div v-else-if="m.key === 'bp' && m.value.includes('/')" class="metric-value">
-            {{ m.value.split('/')[0] }}<i>/{{ m.value.split('/')[1] }}</i>
-          </div>
-          <div v-else class="metric-value">
-            {{ m.value }}<i v-if="m.unit">{{ m.unit }}</i>
-          </div>
-          <div class="metric-ref">
-            <template v-if="m.value">参考 {{ m.refLines.join(' / ') }}<template v-if="m.key === 'bp'"> mmHg</template></template>
-            <template v-else>点击记录</template>
-          </div>
-        </button>
-      </div>
-    </section>
-
-    <div class="gap-20" />
-
-    <section class="card" aria-labelledby="t-rec">
-      <div class="sec-head">
-        <h2 id="t-rec">生活记录</h2>
-        <div class="sec-side">
-          <span class="sec-sub">已记 {{ recordDoneCount }} / {{ recordEntries.length }}</span>
-          <button type="button" class="link" @click="router.push({ path: '/health', query: { tab: 'lifestyle' } })">趋势 ›</button>
-        </div>
-      </div>
-      <div class="record-grid">
-        <button
-          v-for="r in recordEntries"
-          :key="r.key"
-          type="button"
-          class="record-tile"
-          :class="`st-${r.status}`"
-          @click="router.push(r.path)"
-        >
-          <span class="ri"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS[RECORD_ICON[r.key]]" /></span>
-          <span class="rl">{{ r.title }}</span>
-          <span class="rst">{{ r.hint }}</span>
-        </button>
-      </div>
-    </section>
-
-    <div class="gap-20" />
-    <section class="card" aria-labelledby="t-med">
-        <div class="sec-head">
-          <h2 id="t-med">用药管理</h2>
-          <span v-if="medSchedule && medSchedule.summary.due > 0" class="sec-sub">
-            {{ medAllDone ? '已全部服完' : `已服 ${medSchedule.summary.taken} / ${medSchedule.summary.due}` }}
-          </span>
-        </div>
-        <button type="button" class="med-home" @click="router.push('/medications')">
-          <div
-            v-if="medSlots.length"
-            class="med-chips"
-            :style="{ gridTemplateColumns: `repeat(${medSlots.length}, minmax(0, 1fr))` }"
-          >
-            <span v-for="slot in medSlots" :key="slot.slot" class="med-chip" :class="`st-${medSlotTone(slot)}`">
-              <b>{{ MED_SLOT_TITLES[slot.slot] || slot.label }}</b>
-              <i>{{ medSlotHint(slot) }}</i>
-            </span>
-          </div>
-          <span v-if="medNextLine" class="med-next">{{ medNextLine }}</span>
-          <span class="med-more">查看全部 ›</span>
-        </button>
-    </section>
-
-    <template v-if="assessRequest">
-      <div class="gap-20" />
-      <div class="assess">
+      <div v-if="assessRequest" class="assess">
         <div class="ai"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.clipboard" /></div>
         <div class="at">
           <b>健管师邀请你完善健康信息</b>
@@ -1395,28 +1090,6 @@ async function offerScience() {
         <button type="button" class="act-btn primary" @click="router.push('/assessment-questionnaire')">去评估</button>
       </div>
     </template>
-
-    <div class="gap-20" />
-
-    <section class="card" aria-labelledby="t-svc">
-      <div class="sec-head">
-        <h2 id="t-svc">管理服务</h2>
-      </div>
-      <div class="svc-grid">
-        <button
-          v-for="s in serviceEntries"
-          :key="s.key"
-          type="button"
-          class="svc-tile"
-          :class="{ due: s.due }"
-          @click="router.push(s.to)"
-        >
-          <span class="si" :class="s.tone"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS[s.icon]" /></span>
-          <span class="sl">{{ s.label }}</span>
-          <span class="ss">{{ s.hint }}</span>
-        </button>
-      </div>
-    </section>
 
     <van-popup
       v-model:show="recordOpen"
@@ -1507,6 +1180,7 @@ async function offerScience() {
   padding: 12px 16px 28px;
   display: flex;
   flex-direction: column;
+  gap: 14px;
   background: var(--hx-bg-flat);
 }
 .card {
@@ -1514,124 +1188,44 @@ async function offerScience() {
   border-radius: var(--hx-r-lg);
   box-shadow: var(--hx-elev-2);
 }
-.gap-12 { height: 12px; flex: none; }
-.gap-16 { height: 16px; flex: none; }
-.gap-20 { height: 20px; flex: none; }
-.gap-24 { height: 24px; flex: none; }
 .ic { width: 20px; height: 20px; flex: none; display: block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .ic16 { width: 16px; height: 16px; }
 .ic24 { width: 24px; height: 24px; }
 button { font-family: inherit; }
 
-/* Hero */
-.hero { min-height: 56px; display: flex; align-items: center; gap: 12px; }
+/* Topbar */
+.topbar { display: flex; align-items: center; gap: 10px; min-height: 48px; }
 .avatar {
-  width: 48px; height: 48px; border-radius: 50%; flex: none; display: grid; place-items: center;
-  background: var(--hx-teal-600); color: #fff; font-size: 18px; font-weight: 800;
-  box-shadow: 0 0 0 2px var(--hx-teal-100);
+  width: 44px; height: 44px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  border: 0; background: var(--hx-teal-600); color: #fff; font-size: 17px; font-weight: 800;
+  box-shadow: 0 0 0 2px var(--hx-teal-100); cursor: pointer; padding: 0;
 }
 .hi { flex: 1; min-width: 0; }
 .hi h1 {
-  margin: 0; font-size: 22px; font-weight: 900; line-height: 1.15; letter-spacing: -0.01em; color: var(--hx-n-900);
+  margin: 0; font-size: 20px; font-weight: 900; line-height: 1.15; letter-spacing: -0.01em; color: var(--hx-n-900);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.hi .sub { font-size: 13px; font-weight: 500; color: var(--hx-n-700); margin-top: 4px; line-height: 1.35; }
+.hi .sub { margin: 3px 0 0; font-size: 12px; font-weight: 500; color: var(--hx-n-700); line-height: 1.35; }
 .hx-mark { border-radius: 2px; }
-.acts { display: flex; gap: 8px; flex: none; }
-.icon-btn {
-  width: 40px; height: 40px; border-radius: 50%; background: #fff; color: var(--hx-teal-600);
-  display: grid; place-items: center; box-shadow: var(--hx-elev-1); border: 0; position: relative; cursor: pointer; padding: 0;
+.goal-strip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%;
+  padding: 12px 14px; border: 0; border-radius: 16px; background: #fff;
+  box-shadow: var(--hx-elev-2); text-align: left; cursor: pointer; color: inherit; font-family: inherit;
 }
-.icon-btn .badge {
-  position: absolute; top: -2px; right: -2px; min-width: 16px; height: 16px; padding: 0 4px;
-  border-radius: var(--hx-r-pill); background: var(--hx-danger); color: #fff; font-size: 11px; font-weight: 700;
-  line-height: 13px; text-align: center; border: 1.5px solid #f2faf7;
+.goal-strip.soft {
+  cursor: default;
+  background: var(--hx-teal-50);
+  box-shadow: none;
 }
-.medal-row {
-  margin-top: 18px; display: flex; align-items: center; gap: 4px; width: 100%;
-  padding: 2px 0; border: 0; background: transparent; cursor: pointer;
+.goal-eye { font-size: 11px; font-weight: 800; color: var(--hx-teal-700); }
+.goal-strip strong {
+  display: block; width: 100%; font-size: 14px; font-weight: 800; line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.medal-dot {
-  flex: 1 1 32px; width: 32px; max-width: 34px; min-width: 0; aspect-ratio: 1;
-  border-radius: 50%; display: grid; place-items: center;
-  font-size: clamp(12px, 3.4vw, 16px); line-height: 1;
-  background: radial-gradient(circle at 35% 30%, #fff7e0, #ffd88a);
-  box-shadow: 0 3px 8px rgba(224, 160, 60, 0.28);
+.goal-motto {
+  font-size: 14px; font-weight: 800; color: var(--hx-teal-700);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.medal-dot.outcome {
-  background: radial-gradient(circle at 35% 30%, #e9fbf5, #9fdcc6);
-  box-shadow: 0 3px 8px rgba(11, 122, 102, 0.22);
-}
-.medal-dot.off { background: #f1f4f6; box-shadow: none; filter: grayscale(1); opacity: 0.42; }
-.medal-row em {
-  margin-left: auto; padding-left: 4px; font-style: normal; font-size: 12px; font-weight: 700;
-  color: var(--hx-n-600); flex: none;
-}
-
-/* L1 健管师焦点卡 */
-.l1-card {
-  --l1-bg: var(--hx-teal-700); --l1-fg: #fff; --l1-sub: rgba(255, 255, 255, 0.86);
-  --l1-dim: var(--hx-teal-300); --l1-border: transparent; --l1-shadow: var(--hx-elev-3);
-  --l1-btn-bg: #fff; --l1-btn-fg: var(--hx-teal-700);
-  position: relative; overflow: hidden; cursor: pointer;
-  border-radius: var(--hx-r-xl); background: var(--l1-bg); color: var(--l1-fg);
-  border: 1px solid var(--l1-border); box-shadow: var(--l1-shadow);
-  padding: 18px 20px; min-height: 112px;
-}
-.l1-card::before {
-  content: ''; position: absolute; left: -30px; top: -40px; width: 180px; height: 180px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.12), transparent 60%); pointer-events: none;
-}
-.l1-card[data-state='unread'] { --l1-dim: var(--hx-danger); }
-.l1-card[data-state='failed'] {
-  --l1-bg: var(--hx-n-50); --l1-fg: var(--hx-n-900); --l1-sub: var(--hx-n-700);
-  --l1-dim: var(--hx-n-500); --l1-border: var(--hx-n-200); --l1-shadow: var(--hx-elev-2);
-  --l1-btn-bg: var(--hx-teal-600); --l1-btn-fg: #fff;
-}
-.l1-card[data-state='failed']::before { display: none; }
-.l1-top { position: relative; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--l1-dim); line-height: 14px; }
-.l1-card[data-state='unread'] .l1-top { color: #ffc2cb; }
-.l1-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--l1-dim); flex: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--l1-dim) 22%, transparent);
-}
-.l1-main { position: relative; display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.l1-av {
-  width: 56px; height: 56px; border-radius: 50%; flex: none; display: grid; place-items: center;
-  background: var(--hx-teal-800); color: #fff; font-size: 20px; font-weight: 800; box-shadow: 0 0 0 2px var(--hx-teal-100);
-}
-.l1-card[data-state='failed'] .l1-av { background: var(--hx-teal-100); color: var(--hx-teal-700); box-shadow: none; }
-.l1-tx { flex: 1; min-width: 0; }
-.l1-name { font-size: 17px; font-weight: 800; line-height: 1.2; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.l1-hint {
-  font-size: 13px; font-weight: 500; color: var(--l1-sub); margin-top: 5px; line-height: 1.4;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.l1-btn {
-  flex: none; height: 32px; min-width: 64px; padding: 0 16px; border: 0; border-radius: var(--hx-r-pill);
-  background: var(--l1-btn-bg); color: var(--l1-btn-fg); font-size: 13px; font-weight: 700; cursor: pointer;
-  transition: transform var(--hx-dur-1) var(--hx-ease-std);
-}
-.l1-btn:active { transform: scale(0.96); }
-.l1-sk { position: relative; display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.l1-sk-bars { flex: 1; }
-.l1-sk .bar { height: 10px; border-radius: 5px; background: var(--hx-n-200); position: relative; overflow: hidden; opacity: 0.35; }
-.l1-sk .b1 { width: 120px; }
-.l1-sk .b2 { width: 180px; margin-top: 9px; }
-.l1-sk .b3 { width: 90px; margin-top: 9px; }
-.shimmer::after {
-  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
-  animation: sh 1.2s var(--hx-ease-in-out) infinite;
-}
-@keyframes sh { 100% { transform: translateX(100%); } }
-.l1-av.loading { background: var(--hx-teal-800); color: rgba(255, 255, 255, 0.9); }
-.dots { display: flex; gap: 3px; }
-.dots i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: bl 1s infinite; }
-.dots i:nth-child(2) { animation-delay: 0.15s; }
-.dots i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes bl { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
-
 .join-card {
   border-radius: var(--hx-r-xl); background: var(--hx-n-50); border: 1px solid var(--hx-n-200); box-shadow: var(--hx-elev-2);
   padding: 18px 20px; text-align: center; min-height: 112px; display: flex; flex-direction: column; justify-content: center; gap: 12px;
@@ -1642,50 +1236,147 @@ button { font-family: inherit; }
   font-size: 13px; font-weight: 700; cursor: pointer; align-self: center;
 }
 
-/* 卡头 */
+/* Progress hero */
+.progress-hero {
+  position: relative; overflow: hidden; border-radius: 24px;
+  padding: 16px 14px 14px;
+  background: linear-gradient(145deg, #0b7a66 0%, #0e9f83 55%, #14b394 100%);
+  color: #fff; box-shadow: 0 16px 32px rgba(11, 122, 102, 0.28);
+}
+.ph-body { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; }
+.ph-side {
+  border: 0; background: transparent; color: #fff; text-align: left; padding: 4px; cursor: pointer; min-width: 0;
+}
+.ph-side.right { text-align: right; }
+.ph-flame {
+  display: grid; place-items: center; width: 22px; height: 22px; margin-bottom: 4px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.ph-flame.on { color: #ffd84d; }
+.ph-flame .ic { width: 20px; height: 20px; }
+.ph-side strong { display: block; font-size: 14px; font-weight: 800; line-height: 1.2; }
+.ph-side em { display: block; margin-top: 4px; font-style: normal; font-size: 11px; font-weight: 600; opacity: 0.82; line-height: 1.35; }
+.ph-ring { position: relative; width: 112px; height: 112px; }
+.ph-ring svg { width: 100%; height: 100%; display: block; }
+.ph-ring .track { fill: none; stroke: rgba(255,255,255,0.22); stroke-width: 8; }
+.ph-ring .prog {
+  fill: none; stroke: #ffd84d; stroke-width: 8; stroke-linecap: round;
+  transition: stroke-dashoffset 0.45s ease;
+}
+.ph-center {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.ph-center b { font-size: 22px; font-weight: 900; letter-spacing: -0.02em; line-height: 1; }
+.ph-center span { margin-top: 4px; font-size: 11px; font-weight: 700; opacity: 0.85; }
+.ph-medals {
+  margin-top: 12px; width: 100%; display: flex; align-items: center; gap: 4px;
+  border: 0; background: rgba(255,255,255,0.12); border-radius: 14px; padding: 8px 10px; cursor: pointer; color: #fff;
+}
+.medal-dot {
+  flex: 1 1 28px; width: 28px; max-width: 30px; min-width: 0; aspect-ratio: 1;
+  border-radius: 50%; display: grid; place-items: center; font-size: 13px; line-height: 1;
+  background: radial-gradient(circle at 35% 30%, #fff7e0, #ffd88a);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+.medal-dot.outcome { background: radial-gradient(circle at 35% 30%, #e9fbf5, #9fdcc6); }
+.medal-dot.off { background: rgba(255,255,255,0.22); box-shadow: none; filter: grayscale(1); opacity: 0.45; }
+.ph-medals em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 700; opacity: 0.9; flex: none; }
+
+.report-card {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 14px; border: 0; border-radius: var(--hx-r-lg); background: #fff;
+  box-shadow: var(--hx-elev-2); cursor: pointer; text-align: left;
+  color: inherit; font-family: inherit;
+}
+.report-card.soft { cursor: default; }
+.report-card.soft .rc-tx strong { color: var(--hx-muted); font-weight: 700; }
+.rc-ico {
+  flex: none; width: 36px; height: 36px; border-radius: 12px;
+  display: grid; place-items: center; font-size: 14px; font-weight: 900;
+  background: var(--hx-teal-50); color: var(--hx-teal-700);
+}
+.rc-tx { flex: 1; min-width: 0; }
+.rc-tx b { display: block; font-size: 11px; font-weight: 800; color: var(--hx-teal-700); }
+.rc-tx strong {
+  display: block; margin-top: 3px; font-size: 14px; font-weight: 800; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rc-tx em {
+  display: block; margin-top: 3px; font-style: normal; font-size: 12px; font-weight: 600; color: var(--hx-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rc-go { flex: none; font-size: 13px; font-weight: 800; color: var(--hx-teal-700); }
+
 .sec-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 16px 0; }
+.sec-head.pad { padding: 0 2px 8px; }
 .sec-head h2 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -0.01em; color: var(--hx-n-900); }
-.sec-side { display: flex; align-items: baseline; gap: 12px; }
 .link { border: 0; background: none; padding: 0; font-size: 13px; font-weight: 700; color: var(--hx-teal-700); cursor: pointer; }
-.sec-sub { font-size: 12px; font-weight: 600; color: var(--hx-n-700); }
 
-/* 火苗条 */
-.reward-strip { display: flex; align-items: center; gap: 10px; padding: 12px 16px 10px; cursor: pointer; }
-.flame {
-  width: 34px; height: 34px; border-radius: var(--hx-r-sm); flex: none; display: grid; place-items: center;
-  background: var(--hx-warn-bg); font-size: 20px; line-height: 1;
+.block { display: flex; flex-direction: column; }
+.diary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.diary-card {
+  text-align: left; border: 0; border-radius: 18px; background: #fff; box-shadow: var(--hx-elev-2);
+  padding: 14px 12px 12px; cursor: pointer; min-width: 0;
+  display: flex; flex-direction: column; gap: 6px;
 }
-.reward-strip.dim .flame { background: var(--hx-n-50); filter: grayscale(1); opacity: 0.6; }
-.rs-tx { flex: 1; min-width: 0; }
-.rs-days { font-size: 18px; font-weight: 800; color: var(--hx-n-900); line-height: 1.1; letter-spacing: -0.01em; }
-.rs-unit { font-size: 12px; font-weight: 600; color: var(--hx-n-600); }
-.reward-strip.dim .rs-days { color: var(--hx-n-700); }
-.rs-cap { font-size: 12px; font-weight: 600; color: var(--hx-n-700); margin-top: 2px; }
-.rs-lv {
-  flex: none; height: 18px; padding: 0 8px; border-radius: var(--hx-r-pill); background: var(--hx-teal-600); color: #fff;
-  font-size: 11px; font-weight: 800; line-height: 18px;
+.diary-card:active { transform: scale(0.985); }
+.dc-top { display: flex; align-items: center; gap: 8px; }
+.dc-ico {
+  width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; flex: none;
+}
+.dc-ico .ic { width: 16px; height: 16px; }
+.dc-name { font-size: 13px; font-weight: 700; color: var(--hx-n-800); }
+.dc-val {
+  font-size: 22px; font-weight: 900; letter-spacing: -0.02em; color: var(--hx-n-900);
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.dc-val i { font-style: normal; font-size: 12px; font-weight: 600; color: var(--hx-n-600); }
+.dc-val.bad { color: var(--hx-danger-text); }
+.dc-bar { height: 5px; border-radius: 999px; background: var(--hx-n-100); overflow: hidden; }
+.dc-bar i { display: block; height: 100%; border-radius: 999px; background: var(--hx-teal-600); }
+.dc-bar.soft i { background: var(--hx-mint); }
+.dc-slots { display: flex; flex-wrap: wrap; gap: 4px; }
+.dc-slots i {
+  font-style: normal; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 999px;
+  background: var(--hx-teal-50); color: var(--hx-teal-700);
+}
+.dc-slots i.st-done { background: var(--hx-n-100); color: var(--hx-n-600); }
+.dc-slots i.st-late { background: var(--hx-warn-bg); color: var(--hx-warn-text); }
+.dc-hint { font-size: 12px; font-weight: 600; color: var(--hx-n-600); min-height: 16px; }
+.dc-cta {
+  margin-top: auto; align-self: flex-start; height: 28px; padding: 0 10px; border-radius: 999px;
+  background: var(--hx-teal-50); color: var(--hx-teal-700);
+  display: inline-flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 700;
 }
 
-.hx-flag { margin: 0 16px 10px; }
-.hx-flag.info { background: var(--hx-teal-50); color: var(--hx-teal-700); }
-.hx-flag.info > i { background: var(--hx-teal-600); }
-.link-inline { color: var(--hx-teal-700); font-weight: 800; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.t-teal { background: var(--hx-teal-100); color: var(--hx-teal-700); }
+.t-warn { background: var(--hx-warn-bg); color: var(--hx-warn-text); }
+.t-info { background: var(--hx-info-bg); color: var(--hx-info-text); }
+.t-mint { background: var(--hx-mint-bg); color: var(--hx-mint); }
+.t-water { background: var(--hx-water-soft); color: var(--hx-water); }
+.t-sleep { background: var(--hx-sleep-soft); color: var(--hx-sleep); }
+.t-mood { background: var(--hx-mood-soft); color: var(--hx-mood); }
 
-/* 执行进度 */
-.exec { padding: 2px 16px 12px; }
-.exec-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
-.exec-top .lab { font-size: 15px; font-weight: 700; color: var(--hx-n-900); }
-.exec-top .num { font-size: 13px; font-weight: 700; color: var(--hx-n-700); }
-.bar-track { height: 6px; border-radius: var(--hx-r-pill); background: var(--hx-n-100); overflow: hidden; }
-.bar-fill {
-  height: 100%; border-radius: var(--hx-r-pill); background: var(--hx-teal-600);
-  transition: width var(--hx-dur-3) var(--hx-ease-in-out);
+.quick-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
 }
+.quick-row button {
+  border: 0; background: #fff; border-radius: 16px; box-shadow: var(--hx-elev-1);
+  padding: 12px 6px 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer;
+}
+.qi { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; }
+.quick-row em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--hx-n-800); }
+
+.todo-card { padding-bottom: 4px; }
 .block-loading { padding: 20px 0; }
-
-/* 任务列表 */
 .todo-list { padding: 0 16px 4px; }
-.todo-item { display: flex; align-items: center; gap: 11px; padding: 9px 0; border-top: 1px solid var(--hx-n-100); }
+.todo-item { display: flex; align-items: center; gap: 11px; padding: 10px 0; border-top: 1px solid var(--hx-n-100); }
+.todo-item:first-child { border-top: 0; }
+.hx-ck {
+  width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--hx-n-300);
+  display: grid; place-items: center; color: transparent; flex: none;
+}
+.hx-ck.on { background: var(--hx-teal-600); border-color: var(--hx-teal-600); color: #fff; }
 .hx-ck svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
 .todo-main { flex: 1; min-width: 0; display: block; }
 .todo-main .tt { display: flex; align-items: center; gap: 6px; }
@@ -1699,134 +1390,20 @@ button { font-family: inherit; }
   height: 32px; min-width: 56px; padding: 0 12px; border-radius: var(--hx-r-pill); border: 0;
   font-size: 12px; font-weight: 700; cursor: pointer; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
-  transition: transform var(--hx-dur-1) var(--hx-ease-std);
 }
-.act-btn:active:not(:disabled) { transform: scale(0.96); }
 .act-btn.primary { background: var(--hx-teal-600); color: #fff; }
 .act-btn.primary:disabled { opacity: 0.6; }
-.act-btn.ghost { background: #fff; color: var(--hx-n-700); border: 1px solid var(--hx-n-300); }
 .act-btn.done { background: var(--hx-n-100); color: var(--hx-n-600); cursor: default; }
 .todo-fold { margin: 0 16px; border-top: 1px solid var(--hx-n-100); }
 .todo-fold button {
   width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: center; gap: 4px;
   background: none; border: 0; font-size: 13px; font-weight: 600; color: var(--hx-teal-700); cursor: pointer; padding: 0;
 }
-.todo-fold button:active { opacity: 0.72; }
-.fold-ic { transform: rotate(90deg); transition: transform var(--hx-dur-2) var(--hx-ease-std); }
+.fold-ic { transform: rotate(90deg); transition: transform 0.2s ease; }
 .todo-fold button[aria-expanded='true'] .fold-ic { transform: rotate(-90deg); }
-.todo-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 16px 22px; }
-.todo-empty .ei {
-  width: 40px; height: 40px; border-radius: var(--hx-r-sm); display: grid; place-items: center;
-  background: var(--hx-n-50); color: var(--hx-n-600);
-}
+.todo-empty { padding: 18px 16px 20px; text-align: center; }
 .todo-empty .et { font-size: 13px; font-weight: 600; color: var(--hx-n-700); }
 
-.t-teal { background: var(--hx-teal-100); color: var(--hx-teal-700); }
-.t-warn { background: var(--hx-warn-bg); color: var(--hx-warn-text); }
-.t-info { background: var(--hx-info-bg); color: var(--hx-info-text); }
-.t-mint { background: var(--hx-mint-bg); color: var(--hx-mint); }
-
-/* 补救卡 */
-.rescue {
-  display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: var(--hx-r-md);
-  background: var(--hx-warn-bg); box-shadow: var(--hx-elev-2);
-}
-.rescue .ri {
-  width: 32px; height: 32px; border-radius: var(--hx-r-sm); background: var(--hx-warn); color: #fff;
-  flex: none; display: grid; place-items: center;
-}
-.rescue .rt { flex: 1; min-width: 0; }
-.rescue .rt b { font-size: 14px; font-weight: 800; color: var(--hx-warn-text); display: block; line-height: 1.3; }
-.rescue .rt span { font-size: 12px; font-weight: 600; color: var(--hx-warn-text); opacity: 0.85; display: block; margin-top: 3px; }
-.rescue .racts { display: flex; flex-direction: column; gap: 6px; flex: none; }
-
-/* 生活记录 */
-.record-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 12px 14px 14px; }
-.record-tile {
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0;
-  cursor: pointer; border-radius: var(--hx-r-sm); border: 0; background: none;
-}
-.record-tile:active { background: var(--hx-n-50); }
-.record-tile .ri {
-  width: 40px; height: 40px; border-radius: var(--hx-r-sm); display: grid; place-items: center;
-  background: var(--hx-n-100); color: var(--hx-n-600);
-}
-.record-tile .rl { font-size: 12px; font-weight: 600; color: var(--hx-n-800); }
-.record-tile.st-done .ri { background: var(--hx-teal-100); color: var(--hx-teal-700); }
-.record-tile.st-partial .ri { background: var(--hx-warn-bg); color: var(--hx-warn-text); }
-.record-tile.st-todo .ri { background: var(--hx-teal-50); color: var(--hx-teal-600); }
-.record-tile .rst { font-size: 11px; font-weight: 700; color: var(--hx-n-600); }
-.record-tile.st-done .rst { color: var(--hx-teal-700); }
-
-/* 用药：首页只留时段概览，清单在用药管理页 */
-.med-home {
-  width: 100%; display: block; text-align: left; border: 0; background: none; padding: 12px 16px 4px;
-  cursor: pointer; font: inherit; color: inherit;
-}
-.med-home:active { opacity: 0.72; }
-.med-chips { display: grid; gap: 8px; }
-.med-chip {
-  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px;
-  border-radius: var(--hx-r-sm); background: var(--hx-teal-50);
-}
-.med-chip b { font-size: 13px; font-weight: 700; color: var(--hx-n-900); }
-.med-chip i { font-style: normal; font-size: 11px; font-weight: 700; color: var(--hx-teal-700); }
-.med-chip.st-done { background: var(--hx-n-50); }
-.med-chip.st-done i { color: var(--hx-n-600); }
-.med-chip.st-late { background: var(--hx-warn-bg); }
-.med-chip.st-late i { color: var(--hx-warn-text); }
-.med-next { display: block; margin: 10px 0 0; font-size: 13px; font-weight: 600; color: var(--hx-n-800); line-height: 1.45; }
-.med-more {
-  display: block; min-height: 36px; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--hx-n-100);
-  font-size: 13px; font-weight: 700; color: var(--hx-teal-700); text-align: center;
-}
-
-/* 指标 2×2 */
-.metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 14px 14px; }
-.metric-tile {
-  width: 100%; text-align: left; font: inherit; color: inherit;
-  border-radius: var(--hx-r-md); background: var(--hx-n-50); padding: 12px 12px 10px; cursor: pointer;
-  border: 1px solid transparent; min-width: 0; transition: transform var(--hx-dur-1) var(--hx-ease-std);
-}
-.metric-tile:active { transform: scale(0.98); }
-.metric-tile.abnormal { background: var(--hx-danger-bg); }
-.metric-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.metric-name {
-  display: flex; align-items: center; gap: 4px; min-width: 0;
-  font-size: 12px; font-weight: 600; color: var(--hx-n-700);
-}
-.metric-name .ic { width: 16px; height: 16px; color: var(--hx-teal-600); }
-.metric-tile.abnormal .metric-name .ic { color: var(--hx-danger); }
-.metric-flag {
-  font-size: 11px; font-weight: 700; border-radius: var(--hx-r-pill); padding: 1px 7px; flex: none;
-  background: var(--hx-teal-100); color: var(--hx-teal-700);
-}
-.metric-tile.abnormal .metric-flag { background: var(--hx-danger); color: #fff; }
-.metric-value {
-  font-size: 24px; font-weight: 900; line-height: 1.1; letter-spacing: -0.02em; color: var(--hx-n-900); margin-top: 8px;
-  font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 3px;
-}
-.metric-value i { font-size: 12px; font-weight: 600; font-style: normal; color: var(--hx-n-600); }
-.metric-tile.abnormal .metric-value { color: var(--hx-danger-text); }
-.metric-ref { font-size: 11px; font-weight: 500; color: var(--hx-n-600); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* 管理服务 */
-.svc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 14px 14px; }
-.svc-tile {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0;
-  padding: 12px; border: 0; border-radius: var(--hx-r-sm); background: var(--hx-n-50);
-  text-align: left; cursor: pointer;
-}
-.svc-tile:active { background: var(--hx-n-100); }
-.svc-tile .si { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 4px; }
-.svc-tile .sl { font-size: 14px; font-weight: 700; color: var(--hx-n-900); }
-.svc-tile .ss {
-  max-width: 100%; font-size: 12px; font-weight: 500; color: var(--hx-n-600);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.svc-tile.due .ss { color: var(--hx-warn-text); font-weight: 700; }
-
-/* 评估邀请 */
 .assess {
   display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: var(--hx-r-lg);
   background: #fff; box-shadow: var(--hx-elev-2);
@@ -1839,7 +1416,6 @@ button { font-family: inherit; }
 .assess .at b { font-size: 14px; font-weight: 700; color: var(--hx-n-900); display: block; }
 .assess .at span { font-size: 12px; font-weight: 500; color: var(--hx-n-700); display: block; margin-top: 3px; }
 
-/* 记录弹层 */
 .record-sheet { padding: 4px 4px 0; }
 .record-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px 4px; }
 .record-head h3 { margin: 0; font-size: 17px; font-weight: 800; color: var(--hx-n-900); }
@@ -1850,19 +1426,9 @@ button { font-family: inherit; }
 
 @media (max-width: 359px) {
   .home { padding: 12px 14px 24px; }
-  .hi h1 { font-size: 20px; }
-  .l1-card { padding: 16px; min-height: 104px; }
-  .l1-av { width: 52px; height: 52px; font-size: 18px; }
-  .l1-name { font-size: 16px; }
-  .l1-hint { font-size: 12px; }
-  .l1-btn { height: 28px; min-width: 56px; font-size: 12px; }
-  .icon-btn { width: 36px; height: 36px; }
-  .medal-dot { max-width: 28px; font-size: 13px; }
-  .act-btn { height: 28px; }
-  .metric-value { font-size: 22px; }
-  .record-tile .rl { font-size: 11px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .shimmer::after, .dots i { animation: none; }
+  .hi h1 { font-size: 18px; }
+  .ph-ring { width: 96px; height: 96px; }
+  .ph-center b { font-size: 18px; }
+  .dc-val { font-size: 18px; }
 }
 </style>

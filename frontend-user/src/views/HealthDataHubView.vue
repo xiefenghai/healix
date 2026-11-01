@@ -41,6 +41,10 @@ const route = useRoute()
 const router = useRouter()
 const isTabPage = computed(() => route.path === '/health')
 const pageTitle = computed(() => (isTabPage.value ? '健康' : '健康数据'))
+
+function windowDispatchPlus() {
+  window.dispatchEvent(new CustomEvent('healix:open-plus'))
+}
 const TAB_KEYS: TabKey[] = ['vitals', 'lifestyle', 'labs', 'exams']
 const initialTab = String(route.query.tab || '')
 const tab = ref<TabKey>(TAB_KEYS.includes(initialTab as TabKey) ? (initialTab as TabKey) : 'vitals')
@@ -360,7 +364,11 @@ onBeforeUnmount(() => {
       placeholder
       :border="false"
       @click-left="isTabPage ? undefined : router.back()"
-    />
+    >
+      <template v-if="isTabPage" #right>
+        <button type="button" class="nav-record" @click="windowDispatchPlus">记一项</button>
+      </template>
+    </van-nav-bar>
 
     <div class="seg">
       <button
@@ -488,6 +496,16 @@ onBeforeUnmount(() => {
   min-height: 100vh;
   background: var(--hx-bg);
   padding-bottom: 28px;
+}
+.nav-record {
+  border: 0;
+  background: transparent;
+  color: var(--hx-teal-700);
+  font-size: 13px;
+  font-weight: 800;
+  font-family: inherit;
+  padding: 0 4px;
+  cursor: pointer;
 }
 
 .seg {
