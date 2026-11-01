@@ -24,6 +24,7 @@ import {
   openIntake,
   openIntakeSupplement,
   primaryProgramFromTracks,
+  resolveIntakeFieldLabel,
   saveIntakeDraft,
   severityLabel,
   submitIntake,
@@ -98,8 +99,11 @@ const fieldItemMap = computed(() => {
   return m
 })
 
-function labelOf(field: string) {
-  return fieldLabelMap.value.get(field) || field
+function labelOf(field: string, hitLabel?: string | null) {
+  return resolveIntakeFieldLabel(field, {
+    hitLabel,
+    moduleLabel: fieldLabelMap.value.get(field),
+  })
 }
 
 function displayAnswer(field: string, value: unknown) {
@@ -330,6 +334,10 @@ const changeRows = computed(() => {
     if (isAnswerEmpty(cell?.value) && isAnswerEmpty(answers[field])) continue
     if (valuesEqual(cell?.value, answers[field])) continue
     if (isAnswerEmpty(answers[field])) continue
+    const fromText = displayAnswer(field, cell?.value)
+    const toText = displayAnswer(field, answers[field])
+    // 结构不同但案头文案相同（过敏/用药常见）→ 不算变更
+    if (fromText === toText) continue
     rows.push({
       field,
       label: labelOf(field),
@@ -924,7 +932,7 @@ onBeforeUnmount(() => {
               class="hit-card"
               :class="severityClass(h.severity)"
             >
-              <div class="hit-title">{{ labelOf(h.field) }}</div>
+              <div class="hit-title">{{ labelOf(h.field, h.label) }}</div>
               <div class="hit-meta">{{ severityLabel(h.severity) }}</div>
               <p v-if="h.followUp">{{ h.followUp }}</p>
               <p v-if="h.planEffect" class="plan">方案影响：{{ h.planEffect }}</p>
@@ -985,7 +993,7 @@ onBeforeUnmount(() => {
           <h4>高亮汇总</h4>
           <ul v-if="highlightHits.length">
             <li v-for="(h, i) in highlightHits" :key="`s-${h.field}-${i}`">
-              {{ labelOf(h.field) }} · {{ severityLabel(h.severity) }}
+              {{ labelOf(h.field, h.label) }} · {{ severityLabel(h.severity) }}
               <span v-if="h.planEffect"> — {{ h.planEffect }}</span>
             </li>
           </ul>

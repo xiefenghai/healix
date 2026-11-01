@@ -58,6 +58,8 @@ interface TodayTask {
 interface TodayCarePlan {
   planTitle?: string
   goalSummary?: string
+  /** 首诊「这次最想解决什么问题」中文拼接 */
+  primaryAppealText?: string
   totalTasks: number
   doneTasks: number
   pendingTasks: number
@@ -674,8 +676,12 @@ async function submitRecord() {
   }
 }
 
-/** 本轮目标：只展示一句话 goalSummary，避免标题叠字 */
-const cycleGoal = computed(() => todayPlan.value?.goalSummary?.trim() || '')
+/** 首页条带：优先首诊核心诉求，无则回落方案 goalSummary */
+const cycleGoal = computed(() => {
+  const appeal = todayPlan.value?.primaryAppealText?.trim()
+  if (appeal) return appeal
+  return todayPlan.value?.goalSummary?.trim() || ''
+})
 
 function consumeRecordQuery() {
   const raw = String(route.query.record || '')
@@ -849,10 +855,10 @@ async function offerScience() {
         v-if="cycleGoal"
         type="button"
         class="goal-strip"
-        aria-label="本轮目标，进入方案"
+        aria-label="我想解决，进入方案"
         @click="router.push('/care-plan')"
       >
-        <span class="goal-eye">本轮目标</span>
+        <span class="goal-eye">我想解决</span>
         <strong>{{ cycleGoal }}</strong>
       </button>
       <div v-else-if="profileLoaded && !planLoading" class="goal-strip soft" role="status">

@@ -54,6 +54,33 @@ public final class CarePlanPromptContextSupport {
         return DiseaseCodeLabels.isMeaningful(code);
     }
 
+    /**
+     * 首诊核心诉求码（单码 / JSON 数组串 / 逗号串）→ 中文顿号拼接；空则 {@code null}。
+     * 与首诊选项、喂模型标签同源。
+     */
+    public static String formatPrimaryAppealText(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String t = raw.trim();
+        JsonNode node = t.startsWith("[") ? JsonUtils.readTree(t) : JsonUtils.mapper().getNodeFactory().textNode(t);
+        ArrayNode labels = primaryAppealLabels(node);
+        if (labels == null || labels.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode n : labels) {
+            if (n == null || !n.isTextual() || n.asText().isBlank()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append('、');
+            }
+            sb.append(n.asText());
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
     private static final Map<String, String> PRIMARY_APPEAL_LABELS = parsePairs(
             "GLUCOSE=控糖（糖尿病）",
             "BP=控压（高血压）",

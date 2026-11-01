@@ -18,8 +18,11 @@ import com.healix.core.careplan.mapper.CarePlanTaskCheckinMapper;
 import com.healix.core.careplan.mapper.CarePlanTaskMapper;
 import com.healix.core.careplan.mapper.CarePlanVersionMapper;
 import com.healix.core.careplan.support.CarePlanDueSupport;
+import com.healix.core.careplan.support.CarePlanPromptContextSupport;
 import com.healix.core.careplan.support.CarePlanSchemaVersions;
 import com.healix.core.careplan.support.MetricTaskRules;
+import com.healix.core.goal.domain.PeopleHealthGoal;
+import com.healix.core.goal.mapper.PeopleHealthGoalMapper;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -44,6 +47,7 @@ public class CarePlanCheckinService {
     private final CarePlanVersionMapper versionMapper;
     private final CarePlanTaskMapper taskMapper;
     private final CarePlanTaskCheckinMapper checkinMapper;
+    private final PeopleHealthGoalMapper healthGoalMapper;
     private final ArchiveAccessService archiveAccessService;
     private final ObjectProvider<WorkspaceTaskGenerator> workspaceTaskGenerator;
 
@@ -51,6 +55,7 @@ public class CarePlanCheckinService {
         LocalDate day = date != null ? date : LocalDate.now();
         CarePlanTodayDto out = new CarePlanTodayDto();
         out.setDate(day);
+        fillPrimaryAppeal(out, tenantId, peopleId);
         CarePlan plan = carePlanMapper.findByTenantAndPeople(tenantId, peopleId);
         if (plan == null
                 || !CarePlanStatusEnum.ACTIVE.name().equals(plan.getStatus())
@@ -256,6 +261,14 @@ public class CarePlanCheckinService {
      * 先按 taskCode 精确匹配；再按饮水/睡眠/心情/饮食等系统编码回落到类别，
      * 避免历史任务编码与稳定编码不一致时无法自动完成。
      */
+    private void fillPrimaryAppeal(CarePlanTodayDto out, String tenantId, String peopleId) {
+        PeopleHealthGoal goal = healthGoalMapper.findLatestByPeople(tenantId, peopleId);
+        if (goal == null) {
+            return;
+        }
+        out.setPrimaryAppealText(CarePlanPromptContextSupport.formatPrimaryAppealText(goal.getPrimaryAppeal()));
+    }
+
     private static CarePlanTodayTaskDto resolveDueTask(CarePlanTodayDto today, String taskCode) {
         if (today == null || today.getTasks() == null || !StringUtils.hasText(taskCode)) {
             return null;

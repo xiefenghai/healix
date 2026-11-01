@@ -11,6 +11,7 @@ import {
   getQuestionnaireResponse,
   isAnswerEmpty,
   loadIntakeOptionMaps,
+  resolveIntakeFieldLabel,
   responseStatusLabel,
   severityLabel,
   type IntakeHighlightHit,
@@ -72,8 +73,11 @@ const fieldLabelMap = computed(() => {
   return m
 })
 
-function labelOf(field: string) {
-  return fieldLabelMap.value.get(field) || field
+function labelOf(field: string, hitLabel?: string | null) {
+  return resolveIntakeFieldLabel(field, {
+    hitLabel,
+    moduleLabel: fieldLabelMap.value.get(field),
+  })
 }
 
 function displayAnswer(it: IntakeItemView) {
@@ -188,7 +192,7 @@ onMounted(() => {
           <h2>高亮</h2>
           <ul class="hl">
             <li v-for="(h, i) in highlights" :key="`${h.field}-${i}`">
-              <strong>{{ labelOf(h.field) }}</strong>
+              <strong>{{ labelOf(h.field, h.label) }}</strong>
               · {{ severityLabel(h.severity) }}
               <span v-if="h.planEffect"> — {{ h.planEffect }}</span>
             </li>

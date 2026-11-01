@@ -202,9 +202,50 @@ export interface IntakeCompleteness {
 
 export interface IntakeHighlightHit {
   field: string
+  /** 服务端/本地聚合时带上的中文题名；缺省时用 resolveIntakeFieldLabel */
+  label?: string | null
   severity?: string
   planEffect?: string | null
   followUp?: string | null
+}
+
+/**
+ * field-catalog 常用中文名回落（模块未下发、补填过滤、预填键不在 modules 时避免露出英文 code）。
+ * 不必穷尽；优先用 modules / hit.label。
+ */
+const INTAKE_FIELD_LABELS: Record<string, string> = {
+  'allergy.status': '过敏史',
+  'allergy.food': '食物过敏与不耐受',
+  'allergy.drug': '药物过敏',
+  'medication.current': '在用药物明细',
+  'basic.presentIllness': '现有疾病',
+  'basic.presentIllnessOther': '其他疾病',
+  'basic.medical.jointIssues': '关节问题与运动损伤',
+  'basic.diet.taste': '口味',
+  'basic.weightHistory.triedBefore': '减重经历',
+  'basic.weightHistory.methods': '用过的减重方法',
+  'goal.careTracks': '本次管理方向',
+  'goal.primaryAppeal': '核心诉求',
+  'goal.mode': '目标类型',
+  'goal.targetWeightKg': '目标体重',
+  'goal.targetDate': '目标日期',
+  'goal.targetWaistCm': '腰围目标',
+  'goal.targetHba1c': '糖化血红蛋白目标',
+  'goal.targetFpg': '空腹血糖目标',
+  'goal.targetBpSys': '收缩压目标',
+  'goal.targetBpDia': '舒张压目标',
+}
+
+/** 解析首诊字段中文名：hit 自带 label → 模块题名 → catalog 回落 → 原始 field */
+export function resolveIntakeFieldLabel(
+  field: string,
+  opts?: { hitLabel?: string | null; moduleLabel?: string | null },
+): string {
+  const hit = opts?.hitLabel?.trim()
+  if (hit) return hit
+  const mod = opts?.moduleLabel?.trim()
+  if (mod && mod !== field) return mod
+  return INTAKE_FIELD_LABELS[field] || field
 }
 
 /** 高亮严重程度码 → 界面中文（数据仍存 CAUTION / REFER / BLOCK） */
@@ -474,6 +515,7 @@ export function collectLocalHighlights(
         if (matchHighlightWhen(rule.when, answers[item.field])) {
           out.push({
             field: item.field,
+            label: item.label,
             severity: rule.severity,
             planEffect: rule.planEffect,
             followUp: rule.followUp,
