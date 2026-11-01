@@ -1693,6 +1693,31 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_org_recipe_org (org_id, status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='机构食谱库'
                 """);
+        ensureTable(
+                "people_persona",
+                """
+                CREATE TABLE IF NOT EXISTS people_persona (
+                    pk_id                   BIGINT       NOT NULL AUTO_INCREMENT,
+                    id                      VARCHAR(32)  NOT NULL,
+                    tenant_id               VARCHAR(32)  NOT NULL,
+                    people_id               VARCHAR(32)  NOT NULL,
+                    dimensions_json         JSON         NULL,
+                    narrative_json          JSON         NULL,
+                    source_fingerprint      VARCHAR(128) NULL,
+                    narrative_fingerprint   VARCHAR(128) NULL,
+                    status                  VARCHAR(16)  NOT NULL DEFAULT 'READY',
+                    generated_at            DATETIME     NULL,
+                    dimensions_at           DATETIME     NULL,
+                    edited_by_staff_id      VARCHAR(32)  NULL,
+                    is_deleted              TINYINT      NOT NULL DEFAULT 0,
+                    gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted             DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_people_persona_id (id),
+                    UNIQUE KEY uk_people_persona_people (tenant_id, people_id, gmt_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患者用户画像（案头）'
+                """);
     }
 
     /**

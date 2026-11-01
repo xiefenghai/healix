@@ -23,11 +23,19 @@ function syncRealtime() {
   void refreshChatUnread()
 }
 
-onMounted(() => syncRealtime())
+onMounted(() => {
+  syncRealtime()
+  document.documentElement.classList.toggle('hx-lock-scroll', showTab.value)
+})
 /** 仅登录态 / 机构变化时重建连接，避免路由切换打断 SSE */
 watch(
   () => [!!route.meta.public, orgSessionTick.value, !!getToken(), getCurrentOrgId()] as const,
   () => syncRealtime(),
+)
+watch(
+  showTab,
+  (on) => document.documentElement.classList.toggle('hx-lock-scroll', on),
+  { immediate: true },
 )
 </script>
 
@@ -37,7 +45,14 @@ watch(
     <main class="page-body">
       <RouterView />
     </main>
-    <van-tabbar v-if="showTab" route safe-area-inset-bottom placeholder class="tabbar">
+    <!-- fixed=false：进 flex 底栏，避免手机浏览器 100vh / 底栏裁切导致 Tab 出屏 -->
+    <van-tabbar
+      v-if="showTab"
+      route
+      :fixed="false"
+      safe-area-inset-bottom
+      class="tabbar"
+    >
       <van-tabbar-item replace to="/tasks" icon="todo-list-o">待办</van-tabbar-item>
       <van-tabbar-item
         replace
@@ -56,10 +71,19 @@ watch(
 <style scoped>
 .app-shell {
   position: relative;
-  min-height: 100vh;
   max-width: 430px;
   margin: 0 auto;
-  overflow: visible;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.app-shell.with-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow: hidden;
 }
 .atmosphere {
   position: fixed;
@@ -78,11 +102,20 @@ watch(
   position: relative;
   z-index: 1;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 .with-tab .page-body {
-  padding-bottom: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 .tabbar {
+  position: relative;
+  z-index: 20;
+  flex-shrink: 0;
+  width: 100%;
   backdrop-filter: blur(16px);
   border-top: 1px solid rgba(20, 40, 48, 0.06);
   box-shadow: 0 -8px 24px rgba(22, 70, 78, 0.04);

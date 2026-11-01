@@ -79,7 +79,15 @@ public enum AuditActionEnum {
     /** 疾病评估问卷提交（B 端代填 / 患者自填） */
     PATIENT_ASSESSMENT_QUESTIONNAIRE,
     /** 健管师↔患者沟通消息发送 */
-    CARE_CHAT_SEND;
+    CARE_CHAT_SEND,
+    /** 用户画像：生成叙事 */
+    PERSONA_GENERATE,
+    /** 用户画像：刷新维度/叙事 */
+    PERSONA_REFRESH,
+    /** 用户画像：人工编辑叙事 */
+    PERSONA_EDIT,
+    /** 用户画像：解锁叙事 */
+    PERSONA_UNLOCK;
 
     public boolean matches(String value) {
         return name().equals(value);

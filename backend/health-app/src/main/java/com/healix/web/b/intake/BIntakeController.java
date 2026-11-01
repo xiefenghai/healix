@@ -12,6 +12,7 @@ import com.healix.core.questionnaire.dto.IntakeStatusView;
 import com.healix.core.questionnaire.dto.QuestionnaireResponseView;
 import com.healix.core.questionnaire.service.QuestionnaireResponseService;
 import com.healix.security.SecurityUtils;
+import com.healix.web.b.persona.PersonaAppService;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,7 @@ public class BIntakeController {
     private final ProgramEnrollmentService enrollmentService;
     private final FollowupService followupService;
     private final IntakeAiSummaryService intakeAiSummaryService;
+    private final PersonaAppService personaAppService;
 
     /** 客户页首诊卡片：待补题数。 */
     @GetMapping("/patients/{peopleId}/intake/status")
@@ -136,12 +138,14 @@ public class BIntakeController {
             body.conflictResolutions().fields().forEachRemaining(e -> resolutions.put(e.getKey(), e.getValue()));
         }
         QuestionnaireResponseView submitted = responseService.submit(id, staffId, resolutions);
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        String tenantId = SecurityUtils.requireTenantId();
         // 入组/首诊：提交后办结 OPEN 的 ONBOARDING 随访（详情页开首诊常无 followupRecordId）
         if (QuestionnaireResponseService.PURPOSE_INTAKE.equals(submitted.getPurpose())) {
             try {
                 String aiSummary = extractAiSummary(submitted.getAnswers());
                 followupService.completeOnboardingAfterIntakeSubmit(
-                        SecurityUtils.requireCurrentOrgId(),
+                        orgId,
                         submitted.getPeopleId(),
                         submitted.getFollowupRecordId(),
                         submitted.getId(),
@@ -150,6 +154,14 @@ public class BIntakeController {
                         aiSummary);
             } catch (Exception e) {
                 log.warn("首诊作答已提交，但自动办结随访失败 responseId={}: {}", submitted.getId(), e.getMessage());
+            }
+        }
+        if (QuestionnaireResponseService.PURPOSE_INTAKE.equals(submitted.getPurpose())
+                || QuestionnaireResponseService.PURPOSE_SUPPLEMENT.equals(submitted.getPurpose())) {
+            try {
+                personaAppService.scheduleAfterIntakeSubmit(tenantId, orgId, submitted.getPeopleId());
+            } catch (Exception e) {
+                log.warn("首诊提交后触发用户画像失败 peopleId={}: {}", submitted.getPeopleId(), e.getMessage());
             }
         }
         return ApiResult.ok(submitted);

@@ -2139,3 +2139,25 @@ CREATE TABLE IF NOT EXISTS people_consent (
     UNIQUE KEY uk_people_consent_code (people_id, consent_code, gmt_deleted),
     KEY idx_people_consent_people (tenant_id, people_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感信息授权';
+
+CREATE TABLE IF NOT EXISTS people_persona (
+    pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id               VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    people_id               VARCHAR(32)  NOT NULL COMMENT '患者业务ID',
+    dimensions_json         JSON         NULL COMMENT '结构化六维聚合',
+    narrative_json          JSON         NULL COMMENT 'AI/模板叙事（含 staffLocked）',
+    source_fingerprint      VARCHAR(128) NULL COMMENT '最近持久化维度指纹',
+    narrative_fingerprint   VARCHAR(128) NULL COMMENT '生成该版叙事时的维度指纹',
+    status                  VARCHAR(16)  NOT NULL DEFAULT 'READY' COMMENT 'READY/GENERATING/FAILED',
+    generated_at            DATETIME     NULL COMMENT '最近叙事写入时间',
+    dimensions_at           DATETIME     NULL COMMENT '最近持久化维度时间',
+    edited_by_staff_id      VARCHAR(32)  NULL COMMENT '最近人工编辑者',
+    is_deleted              TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted             DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_people_persona_id (id),
+    UNIQUE KEY uk_people_persona_people (tenant_id, people_id, gmt_deleted)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患者用户画像（案头）';

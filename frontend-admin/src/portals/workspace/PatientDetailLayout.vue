@@ -18,6 +18,7 @@ import { allergyTick } from '../../shared/allergy'
 import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { openInNewTab } from '../../shared/open-route'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
+import PatientPersonaPanel from './PatientPersonaPanel.vue'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -1151,6 +1152,8 @@ onBeforeUnmount(() => {
         @updated="onBasicInfoUpdated"
       />
     </section>
+
+    <PatientPersonaPanel v-if="peopleId" :people-id="peopleId" />
 
     <nav class="pill-nav" aria-label="患者详情分段">
       <button
