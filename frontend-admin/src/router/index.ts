@@ -125,7 +125,7 @@ const router = createRouter({
           path: 'patients/:peopleId',
           component: () => import('../portals/workspace/PatientDetailLayout.vue'),
           meta: { requireOrg: true },
-          redirect: (to) => `/workspace/patients/${to.params.peopleId}/archive`,
+          redirect: (to) => `/workspace/patients/${to.params.peopleId}/persona`,
           children: [
             {
               path: 'archive',

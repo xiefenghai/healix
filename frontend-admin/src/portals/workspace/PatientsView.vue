@@ -550,7 +550,7 @@ function duplicateLabel(d: DuplicateCandidate) {
 function openExisting(d: DuplicateCandidate) {
   duplicateVisible.value = false
   archiveVisible.value = false
-  router.push({ path: `/workspace/patients/${d.peopleId}/archive`, query: { name: d.displayName } })
+  router.push({ path: `/workspace/patients/${d.peopleId}/persona`, query: { name: d.displayName } })
 }
 
 function openCareTeamDialog(row: OrgPatientListItem) {
@@ -766,7 +766,7 @@ onMounted(async () => {
             <el-button
               link
               type="primary"
-              @click="router.push({ path: `/workspace/patients/${row.peopleId}/archive`, query: { name: row.displayName } })"
+              @click="router.push({ path: `/workspace/patients/${row.peopleId}/persona`, query: { name: row.displayName } })"
             >
               详情
             </el-button>

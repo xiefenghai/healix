@@ -1072,78 +1072,85 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="summary-strip">
-        <button
-          type="button"
-          class="summary-card"
-          :class="followup.tone"
-          :title="followup.title"
-          @click="onNavClick('adherence')"
-        >
-          <span class="summary-label">执行跟进</span>
-          <strong class="summary-val is-text">{{ followup.value }}</strong>
-          <span class="summary-hint">{{ followup.hint }}</span>
-        </button>
-        <button
-          type="button"
-          class="summary-card"
-          :class="adherenceTone"
-          @click="onNavClick('adherence')"
-        >
-          <span class="summary-label">近 7 日依从</span>
-          <strong class="summary-val">
-            {{ adherenceDisplay }}<small v-if="adherencePercent != null">%</small>
-          </strong>
-          <span class="summary-hint">{{ adherenceHint }}</span>
-          <span class="summary-bar" aria-hidden="true">
-            <i :style="{ width: `${adherencePercent ?? 0}%` }" />
-          </span>
-        </button>
-        <button
-          type="button"
-          class="summary-card"
-          :class="completenessTone"
-          @click="onNavClick('archive')"
-        >
-          <span class="summary-label">档案完整度</span>
-          <strong class="summary-val">
-            {{ completeness ? completenessPercent : '—' }}<small v-if="completeness">%</small>
-          </strong>
-          <span class="summary-hint">{{ completenessHint }}</span>
-          <span class="summary-bar" aria-hidden="true">
-            <i :style="{ width: `${completenessPercent}%` }" />
-          </span>
-        </button>
-      </div>
-
-      <div v-if="metricCards.length" class="metric-strip">
-        <div class="metric-strip-head">
-          <h3>最新指标</h3>
-          <button type="button" class="text-btn" @click="onNavClick('observations')">查看全部</button>
-        </div>
-        <div class="metric-grid">
+      <div class="insight-band">
+        <div class="summary-strip">
           <button
-            v-for="card in metricCards"
-            :key="card.key"
             type="button"
-            class="metric-card"
-            :class="card.tone"
-            @click="onNavClick('observations')"
+            class="summary-card"
+            :class="followup.tone"
+            :title="followup.title"
+            @click="onNavClick('adherence')"
           >
-            <div class="metric-top">
+            <span class="summary-label">执行跟进</span>
+            <strong class="summary-val is-text">{{ followup.value }}</strong>
+            <span class="summary-hint">{{ followup.hint }}</span>
+          </button>
+          <button
+            type="button"
+            class="summary-card"
+            :class="adherenceTone"
+            @click="onNavClick('adherence')"
+          >
+            <span class="summary-label">近 7 日依从</span>
+            <strong class="summary-val">
+              {{ adherenceDisplay }}<small v-if="adherencePercent != null">%</small>
+            </strong>
+            <span class="summary-hint">{{ adherenceHint }}</span>
+            <span class="summary-bar" aria-hidden="true">
+              <i :style="{ width: `${adherencePercent ?? 0}%` }" />
+            </span>
+          </button>
+          <button
+            type="button"
+            class="summary-card"
+            :class="completenessTone"
+            @click="onNavClick('archive')"
+          >
+            <span class="summary-label">档案完整度</span>
+            <strong class="summary-val">
+              {{ completeness ? completenessPercent : '—' }}<small v-if="completeness">%</small>
+            </strong>
+            <span class="summary-hint">{{ completenessHint }}</span>
+            <span class="summary-bar" aria-hidden="true">
+              <i :style="{ width: `${completenessPercent}%` }" />
+            </span>
+          </button>
+        </div>
+
+        <div v-if="metricCards.length" class="metric-strip">
+          <div class="metric-strip-head">
+            <h3>最新指标</h3>
+            <button type="button" class="text-btn" @click="onNavClick('observations')">全部</button>
+          </div>
+          <div class="metric-chips">
+            <button
+              v-for="card in metricCards"
+              :key="card.key"
+              type="button"
+              class="metric-chip"
+              :class="card.tone"
+              @click="onNavClick('observations')"
+            >
               <span class="metric-label">{{ card.label }}</span>
+              <strong class="metric-val">{{ card.display }}</strong>
+              <span v-if="card.hint" class="metric-hint">{{ card.hint }}</span>
               <svg
-                v-if="sparkPath(card.points)"
+                v-if="sparkPath(card.points, 48, 16)"
                 class="spark"
-                viewBox="0 0 72 28"
+                viewBox="0 0 48 16"
                 aria-hidden="true"
               >
-                <path :d="sparkPath(card.points)" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                <path
+                  :d="sparkPath(card.points, 48, 16)"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
-            </div>
-            <div class="metric-val">{{ card.display }}</div>
-            <div class="metric-hint">{{ card.hint }}</div>
-          </button>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1711,73 +1718,99 @@ onBeforeUnmount(() => {
   color: #c2410c;
 }
 
-/* ── Summary strip ────────────────────────────────── */
-.summary-strip {
+/* ── Summary + metrics band ───────────────────────── */
+.insight-band {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.summary-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
 }
 
 .summary-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 12px 14px;
-  border-radius: 12px;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 1px;
+  align-items: baseline;
+  padding: 8px 12px 10px;
+  border-radius: 10px;
   border: 1px solid var(--ink-200);
   background: #fff;
   text-align: left;
   cursor: pointer;
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .summary-card:hover {
   border-color: rgba(44, 126, 248, 0.35);
-  box-shadow: 0 8px 20px -12px rgba(15, 23, 42, 0.18);
-  transform: translateY(-1px);
+  box-shadow: 0 4px 14px -10px rgba(15, 23, 42, 0.2);
 }
 
 .summary-label {
-  font-size: 11.5px;
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 11px;
   font-weight: 600;
   color: var(--ink-500);
+  white-space: nowrap;
 }
 
 .summary-val {
-  font-size: 22px;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  align-self: center;
+  font-size: 15px;
   font-weight: 750;
   color: var(--ink-900);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
-  line-height: 1.15;
+  line-height: 1.2;
+  text-align: right;
+  max-width: 100%;
 }
 
 .summary-val.is-text {
-  font-size: 18px;
+  font-size: 14px;
   letter-spacing: 0;
 }
 
 .summary-val small {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  margin-left: 2px;
+  margin-left: 1px;
   color: var(--ink-400);
 }
 
 .summary-hint {
-  font-size: 11px;
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 10.5px;
   color: var(--ink-400);
-  font-weight: 550;
+  font-weight: 500;
+  line-height: 1.3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .summary-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 4px;
   display: block;
-  width: 100%;
-  margin-top: 8px;
-  height: 4px;
+  height: 2px;
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.06);
   overflow: hidden;
@@ -1799,89 +1832,95 @@ onBeforeUnmount(() => {
 .summary-card.fair .summary-bar i { background: #f59e0b; }
 .summary-card.poor .summary-bar i { background: #ef4444; }
 
-/* ── Metric sparklines ────────────────────────────── */
 .metric-strip {
-  position: relative;
-  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--ink-200);
+  border-radius: 10px;
+  background: #fff;
 }
 
 .metric-strip-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .metric-strip-head h3 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink-800);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink-500);
+  white-space: nowrap;
 }
 
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.metric-card {
+.metric-chips {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--ink-200);
-  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid #e8eef3;
+  background: #f8fafc;
   text-align: left;
   cursor: pointer;
-  transition: border-color 160ms ease, transform 160ms ease;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 
-.metric-card:hover {
+.metric-chip:hover {
   border-color: rgba(44, 126, 248, 0.35);
-  transform: translateY(-1px);
-}
-
-.metric-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  background: #fff;
 }
 
 .metric-label {
-  font-size: 11.5px;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--ink-500);
+  white-space: nowrap;
 }
 
 .spark {
-  width: 56px;
-  height: 22px;
+  width: 40px;
+  height: 14px;
   opacity: 0.85;
+  flex-shrink: 0;
 }
 
 .metric-val {
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 750;
   color: var(--ink-900);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
+  white-space: nowrap;
 }
 
 .metric-hint {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--ink-400);
+  white-space: nowrap;
 }
 
-.metric-card.good .spark,
-.metric-card.good .metric-val { color: #047857; }
-.metric-card.fair .spark,
-.metric-card.fair .metric-val { color: #b45309; }
-.metric-card.poor .spark,
-.metric-card.poor .metric-val { color: #b91c1c; }
-.metric-card.empty .metric-val { color: var(--ink-400); }
+.metric-chip.good .spark,
+.metric-chip.good .metric-val { color: #047857; }
+.metric-chip.fair .spark,
+.metric-chip.fair .metric-val { color: #b45309; }
+.metric-chip.poor .spark,
+.metric-chip.poor .metric-val { color: #b91c1c; }
+.metric-chip.empty .metric-val { color: var(--ink-400); }
 
 /* ── Pill nav ─────────────────────────────────────── */
 .pill-nav {
@@ -1934,8 +1973,8 @@ onBeforeUnmount(() => {
     padding: 18px;
   }
 
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .metric-strip {
+    flex-wrap: wrap;
   }
 }
 
@@ -1952,10 +1991,6 @@ onBeforeUnmount(() => {
 
   .summary-strip {
     grid-template-columns: 1fr;
-  }
-
-  .metric-grid {
-    grid-template-columns: 1fr 1fr;
   }
 
   .pill-nav {
