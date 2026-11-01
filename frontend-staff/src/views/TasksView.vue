@@ -268,7 +268,6 @@ onMounted(() => {
     <header class="hx-page-head">
       <p class="eyebrow">{{ orgName }}</p>
       <h1>{{ greeting }}</h1>
-      <p>先处理待办，再回患者消息</p>
     </header>
 
     <section class="today hx-surface">
