@@ -132,6 +132,10 @@ const router = createRouter({
               component: () => import('../portals/workspace/PatientArchiveView.vue'),
             },
             {
+              path: 'persona',
+              component: () => import('../portals/workspace/PatientPersonaPanel.vue'),
+            },
+            {
               path: 'medications',
               component: () => import('../portals/workspace/PatientMedicationView.vue'),
             },

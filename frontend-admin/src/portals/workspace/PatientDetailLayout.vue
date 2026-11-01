@@ -18,7 +18,6 @@ import { allergyTick } from '../../shared/allergy'
 import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { openInNewTab } from '../../shared/open-route'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
-import PatientPersonaPanel from './PatientPersonaPanel.vue'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -97,6 +96,7 @@ const basicInfoEditorRef = ref<{ openEdit: () => void } | null>(null)
 const revealMobile = ref(false)
 const careTeamDialogOpen = ref(false)
 const NAV_ITEMS = [
+  { name: 'persona', label: '用户画像' },
   { name: 'archive', label: '患者档案' },
   { name: 'observations', label: '指标检验' },
   { name: 'assessments', label: '疾病评估' },
@@ -121,6 +121,7 @@ const activeTab = computed<NavName>(() => {
   if (path.includes('/lifestyle')) return 'lifestyle'
   if (path.includes('/care-plan')) return 'care-plan'
   if (path.includes('/observations')) return 'observations'
+  if (path.includes('/persona')) return 'persona'
   if (path.includes('/revisions')) return 'revisions'
   if (path.includes('/adherence')) return 'adherence'
   if (path.includes('/followups')) return 'followups'
@@ -764,6 +765,8 @@ function switchTab(name: string | number) {
     router.push({ path: `${base}/care-plan`, query })
   } else if (name === 'observations') {
     router.push({ path: `${base}/observations/metrics`, query })
+  } else if (name === 'persona') {
+    router.push({ path: `${base}/persona`, query })
   } else if (name === 'revisions') {
     router.push({ path: `${base}/revisions`, query })
   } else if (name === 'adherence') {
@@ -1152,8 +1155,6 @@ onBeforeUnmount(() => {
         @updated="onBasicInfoUpdated"
       />
     </section>
-
-    <PatientPersonaPanel v-if="peopleId" :people-id="peopleId" />
 
     <nav class="pill-nav" aria-label="患者详情分段">
       <button
