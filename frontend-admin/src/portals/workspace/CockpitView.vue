@@ -2582,7 +2582,7 @@ async function openIntakeSheet(
   await openSheet('intake', peopleId)
 }
 
-function onSheetOpenIntake(opts: { followupRecordId?: string; purpose?: string }) {
+function onSheetOpenIntake(opts: { followupRecordId?: string | null; purpose?: string | null }) {
   void openIntakeSheet(sheetPeopleId.value || focusPeopleId.value || undefined, opts)
 }
 

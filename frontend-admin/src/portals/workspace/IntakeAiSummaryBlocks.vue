@@ -11,11 +11,11 @@ import {
 
 const props = withDefaults(
   defineProps<{
-    text?: unknown
+    text?: string | null
     parsed?: IntakeAiSummaryParsed | null
     compact?: boolean
   }>(),
-  { text: '', parsed: null, compact: false },
+  { text: null, parsed: null, compact: false },
 )
 
 const view = computed(() => props.parsed ?? parseIntakeAiSummaryText(props.text))

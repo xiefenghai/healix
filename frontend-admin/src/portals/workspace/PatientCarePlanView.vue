@@ -2488,7 +2488,7 @@ watch(
                       :autosize="{ minRows: 2, maxRows: 5 }"
                       size="small"
                       resize="none"
-                      @update:model-value="(v) => setSampleWeekMeal(row.value, slot.key, String(v ?? ''))"
+                      @update:model-value="(v: string) => setSampleWeekMeal(row.value, slot.key, String(v ?? ''))"
                     />
                   </template>
                 </el-table-column>
