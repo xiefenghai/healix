@@ -333,16 +333,35 @@ public class CarePlanLlmGenerator {
         putAllergyGuard(payload, ctx);
         putGuidelineRecs(payload, ctx);
         putCareTrackHint(payload, ctx);
+        putHighlightHint(payload, ctx);
         return """
                 请根据以下输入生成完整管理方案 JSON。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
                 叙事与监测须对齐 patientContext.goals.careTracks（及 diabetesClinical / hypertensionClinical）；
                 无减重方向时不要写成减肥方案。
+                若有 patientContext.highlightGuidance，须把每条 mustApply 落实到运动/饮食/执行（clinicianNote 只吸收约束，勿照抄进患者正文）。
                 仅输出 JSON，不要 markdown。
 
                 %s
                 """
                 .formatted(JsonUtils.toJson(payload));
+    }
+
+    /** 首诊高亮追问 / 方案影响 → 生成时强制关注。 */
+    private static void putHighlightHint(ObjectNode payload, CarePlanContext ctx) {
+        if (ctx == null || ctx.snapshot() == null) {
+            return;
+        }
+        JsonNode guidance = ctx.snapshot().get("highlightGuidance");
+        if (guidance == null || !guidance.isArray() || guidance.isEmpty()) {
+            return;
+        }
+        ObjectNode hint = JsonUtils.emptyObject();
+        hint.put("count", guidance.size());
+        hint.put(
+                "rule",
+                "优先落实 highlightGuidance[].mustApply；severityLabel=转介/阻断时更保守；clinicianNote 为高亮追问，勿写入患者可见正文");
+        payload.set("highlightConstraint", hint);
     }
 
     private static void putCareTrackHint(ObjectNode payload, CarePlanContext ctx) {
@@ -434,6 +453,7 @@ public class CarePlanLlmGenerator {
         putAllergyGuard(payload, ctx);
         putGuidelineRecs(payload, ctx);
         putCareTrackHint(payload, ctx);
+        putHighlightHint(payload, ctx);
         ObjectNode draft = JsonUtils.emptyObject();
         draft.set("exercise", currentExercise == null ? JsonUtils.emptyObject() : currentExercise);
         draft.set("diet", currentDiet == null ? JsonUtils.emptyObject() : currentDiet);
@@ -456,6 +476,7 @@ public class CarePlanLlmGenerator {
         return """
                 请根据「修订意见」在「当前草稿」上修订，输出完整管理方案 JSON。
                 若存在 mustPreserveConstraints，必须写入新方案的 exercise 与 goalSummary，除非修订意见明确解除。
+                若有 patientContext.highlightGuidance，修订后仍须保留各条 mustApply（除非修订意见明确解除）。
                 未要求改动的字段尽量保留原意与结构。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
                 仅输出 JSON，不要 markdown。

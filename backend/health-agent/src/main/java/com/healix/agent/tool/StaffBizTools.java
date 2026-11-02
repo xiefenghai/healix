@@ -12,10 +12,12 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -266,17 +268,9 @@ public class StaffBizTools {
         boolean wantMed = containsAny(msg, "用药", "服药", "吃药", "药品", "漏服", "停药", "medication");
         boolean wantReport = containsAny(msg, "报告", "月报", "周报", "季报");
 
-        // 办结意图：挂齐当前患者可办结入口（人点才执行；上限与前端芯片一致）
+        // 办结意图：挂齐当前患者可办结入口（人点才执行；同抽屉类合并，上限与前端芯片一致）
         if (wantComplete && focus != null && focus.getOpenTasks() != null) {
-            int n = 0;
-            for (CockpitFocusDto.OpenTaskBrief t : focus.getOpenTasks()) {
-                if (n >= 8) {
-                    break;
-                }
-                if (appendTaskCloseActions(out, peopleId, t)) {
-                    n++;
-                }
-            }
+            appendGroupedTaskCloseActions(out, peopleId, focus.getOpenTasks(), 8);
         }
 
         if (wantFollowup) {
@@ -392,6 +386,79 @@ public class StaffBizTools {
     }
 
     /**
+     * 办结入口批量挂载：同抽屉类（审阅报告 / 处理方案 / 评估）合并为 1 个芯片并标注数量；
+     * 表单类 COMPLETE_TASK 仍按任务各挂一条。
+     */
+    private static void appendGroupedTaskCloseActions(
+            List<AgentAction> out,
+            String peopleId,
+            List<CockpitFocusDto.OpenTaskBrief> tasks,
+            int max) {
+        if (tasks == null || tasks.isEmpty() || max <= 0) {
+            return;
+        }
+        Map<String, Integer> sheetCounts = new LinkedHashMap<>();
+        for (CockpitFocusDto.OpenTaskBrief t : tasks) {
+            String mode = mergeableSheetMode(t == null ? null : t.getTaskType());
+            if (mode != null) {
+                sheetCounts.merge(mode, 1, Integer::sum);
+            }
+        }
+        Set<String> emittedSheets = new HashSet<>();
+        int n = 0;
+        for (CockpitFocusDto.OpenTaskBrief t : tasks) {
+            if (n >= max) {
+                break;
+            }
+            if (t == null || !StringUtils.hasText(t.getId())) {
+                continue;
+            }
+            String type = t.getTaskType() == null ? "" : t.getTaskType();
+            String mode = mergeableSheetMode(type);
+            if (mode != null) {
+                if (emittedSheets.contains(mode)) {
+                    continue;
+                }
+                emittedSheets.add(mode);
+                int count = sheetCounts.getOrDefault(mode, 1);
+                out.add(mergedSheetAction(mode, peopleId, t, count));
+                n++;
+                continue;
+            }
+            int before = out.size();
+            if (appendTaskCloseActions(out, peopleId, t) && out.size() > before) {
+                n++;
+            }
+        }
+    }
+
+    /** 多条任务点开后落同一抽屉、且无单条专属 payload 的类型 → 合并芯片。 */
+    private static String mergeableSheetMode(String taskType) {
+        if ("REPORT_REVIEW".equals(taskType)) {
+            return "reports";
+        }
+        if ("PLAN_CREATE".equals(taskType) || "PLAN_REVIEW".equals(taskType)) {
+            return "care-plan";
+        }
+        return null;
+    }
+
+    private static AgentAction mergedSheetAction(
+            String mode, String peopleId, CockpitFocusDto.OpenTaskBrief sample, int count) {
+        String countMark = count > 1 ? "（" + count + "）" : "";
+        if ("reports".equals(mode)) {
+            return AgentAction.openSheet("审阅管理报告" + countMark, mode, peopleId);
+        }
+        if ("care-plan".equals(mode)) {
+            return AgentAction.openSheet("处理方案待办" + countMark, mode, peopleId);
+        }
+        String typeLabel = StringUtils.hasText(sample.getTaskTypeLabel())
+                ? sample.getTaskTypeLabel()
+                : (sample.getTaskType() == null ? "" : sample.getTaskType());
+        return AgentAction.openSheet(typeLabel + countMark, mode, peopleId);
+    }
+
+    /**
      * 为 OPEN 待办挂「确认办结」或打开业务页。
      * 驾驶舱「立即处理」池内任务已归属当前健管师，不挂「领取」。
      * PLAN_NUDGE / METRIC_ALERT / FOLLOW_UP → COMPLETE_TASK（前端打开与工作台一致的填单弹窗）。
@@ -405,12 +472,16 @@ public class StaffBizTools {
         String typeLabel =
                 StringUtils.hasText(top.getTaskTypeLabel()) ? top.getTaskTypeLabel() : type;
         if ("PLAN_NUDGE".equals(type) || "METRIC_ALERT".equals(type) || "FOLLOW_UP".equals(type)) {
-            out.add(AgentAction.completeTask(
-                    completeTaskLabel(typeLabel, top.getSummary()),
-                    peopleId,
-                    top.getId(),
-                    type,
-                    top.getSummary()));
+            // 首诊走问卷工作台，文案用「开始首诊」而非「确认办结」
+            boolean onboarding = "ONBOARDING".equalsIgnoreCase(
+                    StringUtils.hasText(top.getFollowupType()) ? top.getFollowupType() : "");
+            if (!onboarding && StringUtils.hasText(typeLabel) && typeLabel.contains("首诊")) {
+                onboarding = true;
+            }
+            String label = onboarding
+                    ? "开始首诊" + summarySuffix(top.getSummary(), typeLabel)
+                    : completeTaskLabel(typeLabel, top.getSummary());
+            out.add(AgentAction.completeTask(label, peopleId, top.getId(), type, top.getSummary()));
             return true;
         }
         if ("PLAN_CREATE".equals(type) || "PLAN_REVIEW".equals(type)) {
@@ -428,6 +499,9 @@ public class StaffBizTools {
             return true;
         }
         if ("TEAM_ASSIGN".equals(type)) {
+            if (hasNavigate(out, "join-care-team", peopleId)) {
+                return true;
+            }
             out.add(AgentAction.navigate(
                     "去分配健管组「" + typeLabel + "」" + summarySuffix(top.getSummary(), typeLabel),
                     "join-care-team",
@@ -442,7 +516,9 @@ public class StaffBizTools {
                     "ACK_TASK",
                     peopleId,
                     ack));
-            out.add(AgentAction.openSheet("查看评估", "assessments", peopleId));
+            if (!hasOpenSheet(out, "assessments", peopleId)) {
+                out.add(AgentAction.openSheet("查看评估", "assessments", peopleId));
+            }
             return true;
         }
         if ("ASSESSMENT_SUSPECTED".equals(type)) {
@@ -456,6 +532,37 @@ public class StaffBizTools {
             return true;
         }
         return false;
+    }
+
+    private static boolean hasOpenSheet(List<AgentAction> out, String mode, String peopleId) {
+        for (AgentAction a : out) {
+            if (a != null
+                    && "OPEN_SHEET".equals(a.type())
+                    && mode.equals(a.path())
+                    && eqNullable(peopleId, a.peopleId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasNavigate(List<AgentAction> out, String path, String peopleId) {
+        for (AgentAction a : out) {
+            if (a != null
+                    && "NAVIGATE".equals(a.type())
+                    && path.equals(a.path())
+                    && eqNullable(peopleId, a.peopleId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean eqNullable(String a, String b) {
+        if (a == null) {
+            return b == null;
+        }
+        return a.equals(b);
     }
 
     /** 同类型多条待办时用摘要区分按钮文案，避免去重后只剩一个。 */

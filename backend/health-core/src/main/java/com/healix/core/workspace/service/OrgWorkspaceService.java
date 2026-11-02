@@ -53,12 +53,15 @@ import com.healix.core.people.support.DiseaseCodeLabels;
 import com.healix.core.identity.service.IdentityService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.portal.enums.PortalEnum;
 import com.healix.core.workspace.domain.StaffPatientWatch;
 import com.healix.core.workspace.dto.CareTeamListItem;
+import com.healix.common.result.PageResult;
 import com.healix.core.workspace.dto.OrgPatientListItem;
+import com.healix.core.workspace.dto.OrgPatientListStats;
 import com.healix.core.workspace.dto.OrgStaffItem;
 import com.healix.core.workspace.mapper.StaffPatientWatchMapper;
 import com.healix.core.followup.service.FollowupScheduleService;
@@ -648,7 +651,78 @@ public class OrgWorkspaceService {
     public List<OrgPatientListItem> listOrgPatients(
             String orgId, String keyword, String careTeamId, Boolean unassigned, Boolean watched) {
         requireOrgWorkspaceAccess(orgId);
-        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, watched, true);
+        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, watched, true, true);
+    }
+
+    /**
+     * 机构患者分页列表：先按条件筛全量，再切片并只给当前页补评估标签 / 火苗。
+     */
+    public PageResult<OrgPatientListItem> pageOrgPatients(
+            String orgId,
+            String keyword,
+            String careTeamId,
+            Boolean unassigned,
+            Boolean watched,
+            int page,
+            int size) {
+        requireOrgWorkspaceAccess(orgId);
+        int safePage = Math.max(1, page);
+        int safeSize = Math.min(100, Math.max(1, size));
+        List<OrgPatientListItem> all =
+                listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, watched, true, false);
+        int total = all.size();
+        int from = (safePage - 1) * safeSize;
+        if (from >= total) {
+            return new PageResult<>(total, List.of());
+        }
+        int to = Math.min(total, from + safeSize);
+        List<OrgPatientListItem> pageItems = new ArrayList<>(all.subList(from, to));
+        Map<String, String> tenantOf = new HashMap<>();
+        for (OrgPatientListItem item : pageItems) {
+            PeopleProfile p = peopleProfileMapper.findById(item.getPeopleId());
+            if (p != null && StringUtils.hasText(p.getTenantId())) {
+                tenantOf.put(item.getPeopleId(), p.getTenantId());
+            }
+        }
+        fillAssessmentTags(pageItems, tenantOf);
+        fillStreakDays(pageItems);
+        return new PageResult<>(total, pageItems);
+    }
+
+    /** 列表顶栏 KPI：在管 / 未入组 / 关注 / 本月与今日新增（不拉档案详情）。 */
+    public OrgPatientListStats orgPatientStats(String orgId) {
+        requireOrgWorkspaceAccess(orgId);
+        Set<String> watchedPeopleIds = currentWatchPeopleIds(orgId);
+        LocalDate today = LocalDate.now();
+        YearMonth month = YearMonth.from(today);
+        long total = 0;
+        long unassigned = 0;
+        long watched = 0;
+        long monthNew = 0;
+        long todayNew = 0;
+        for (PatientOrgMembership m : membershipMapper.listActiveByOrg(orgId)) {
+            if (peopleProfileMapper.findById(m.getPeopleId()) == null) {
+                continue;
+            }
+            total++;
+            CareTeamMember teamMember = careTeamMemberMapper.findPeopleInOrg(orgId, m.getPeopleId());
+            if (teamMember == null) {
+                unassigned++;
+            }
+            if (watchedPeopleIds.contains(m.getPeopleId())) {
+                watched++;
+            }
+            if (m.getJoinedAt() != null) {
+                LocalDate joinedDay = m.getJoinedAt().toLocalDate();
+                if (YearMonth.from(joinedDay).equals(month)) {
+                    monthNew++;
+                }
+                if (joinedDay.equals(today)) {
+                    todayNew++;
+                }
+            }
+        }
+        return new OrgPatientListStats(total, unassigned, watched, monthNew, todayNew);
     }
 
     /**
@@ -662,7 +736,7 @@ public class OrgWorkspaceService {
         if (org == null || !tenantId.equals(org.getTenantId())) {
             throw new BusinessException(404, "机构不存在");
         }
-        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, null, false);
+        return listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, null, false, true);
     }
 
     private List<OrgPatientListItem> listOrgPatientsInternal(
@@ -671,7 +745,8 @@ public class OrgWorkspaceService {
             String careTeamId,
             Boolean unassigned,
             Boolean watched,
-            boolean fillWatch) {
+            boolean fillWatch,
+            boolean fillExtras) {
         Set<String> watchedPeopleIds = fillWatch ? currentWatchPeopleIds(orgId) : Set.of();
         List<PatientOrgMembership> memberships = membershipMapper.listActiveByOrg(orgId);
         List<OrgPatientListItem> items = new ArrayList<>();
@@ -710,9 +785,11 @@ public class OrgWorkspaceService {
             }
             items.add(item);
         }
-        fillAssessmentTags(items, tenantOf);
-        if (fillWatch) {
-            fillStreakDays(items);
+        if (fillExtras) {
+            fillAssessmentTags(items, tenantOf);
+            if (fillWatch) {
+                fillStreakDays(items);
+            }
         }
         return items;
     }

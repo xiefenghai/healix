@@ -2,7 +2,7 @@
 /**
  * 首诊问卷「在用药物明细」：与用药管理「添加用药」同字段形态的可增删列表。
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
 import { MED_TIMING_PRESETS } from '../../shared/agent-ocr'
@@ -187,13 +187,27 @@ function parseList(v: unknown): IntakeMedItem[] {
 }
 
 const items = reactive<IntakeMedItem[]>([])
+/** 首次从 props 灌入时才自动展开空草稿；之后选药/改字段不得改折叠态 */
+const listHydrated = ref(false)
+/** 本组件 emit 后的回写，避免误当成外部刷新去改 expandedIdx */
+let syncFromSelf = false
 
 function syncFromProp() {
+  const keepExpand = expandedIdx.value
   const next = parseList(props.modelValue)
   items.splice(0, items.length, ...next.map((x) => ({ ...emptyItem(), ...x })))
-  // 外部同步时：空草稿行展开，其余折叠
-  const draftIdx = items.findIndex((x) => !x.drugName.trim())
-  expandedIdx.value = draftIdx >= 0 ? draftIdx : null
+  if (!listHydrated.value) {
+    listHydrated.value = true
+    const draftIdx = items.findIndex((x) => !x.drugName.trim())
+    expandedIdx.value = draftIdx >= 0 ? draftIdx : null
+    return
+  }
+  // 选药 / 自动保存回写：保持当前展开行，绝不自动收起
+  if (keepExpand != null && items.length > 0) {
+    expandedIdx.value = Math.min(keepExpand, items.length - 1)
+  } else if (keepExpand != null && items.length === 0) {
+    expandedIdx.value = null
+  }
 }
 
 watch(
@@ -201,7 +215,12 @@ watch(
   () => {
     const cur = JSON.stringify(items)
     const next = JSON.stringify(parseList(props.modelValue))
-    if (cur !== next) syncFromProp()
+    if (cur === next) return
+    if (syncFromSelf) {
+      syncFromSelf = false
+      // 仍同步字段（父级可能规范化），但上面会保留 expandedIdx
+    }
+    syncFromProp()
   },
   { immediate: true, deep: true },
 )
@@ -226,7 +245,11 @@ function emitList() {
       remark: row.remark?.trim() || undefined,
     } satisfies IntakeMedItem
   })
+  syncFromSelf = true
   emit('update:modelValue', out)
+  void nextTick(() => {
+    syncFromSelf = false
+  })
 }
 
 function addItem() {
@@ -294,13 +317,17 @@ async function searchDrugCatalog(query: string, cb: (rows: DrugCatalogItem[]) =>
   }
 }
 
-function applyDrugCatalog(row: IntakeMedItem, item: DrugCatalogItem) {
-  row.drugCode = item.code
-  row.drugName = item.displayName
+function applyDrugCatalog(row: IntakeMedItem, raw: DrugCatalogItem | Record<string, unknown>) {
+  const item = raw as DrugCatalogItem
+  const name = String(item.displayName || '').trim()
+  if (!name) return
+  row.drugCode = item.code || ''
+  row.drugName = name
   if (item.defaultDoseAmount) row.doseAmount = item.defaultDoseAmount
   if (item.defaultDoseUnit) row.doseUnit = item.defaultDoseUnit
   if (item.defaultUsageMethod) row.usageMethod = item.defaultUsageMethod
   if (item.defaultFrequency) row.frequency = item.defaultFrequency
+  // 选中后保持展开，等用户点「确定」再折叠
   emitList()
 }
 
@@ -401,7 +428,8 @@ onMounted(() => {
               @change="onFieldChange"
             >
               <template #default="{ item }">
-                <div class="drug-option">
+                <!-- mousedown.prevent：避免失焦先关下拉导致点了却选不上 -->
+                <div class="drug-option" @mousedown.prevent>
                   <div class="drug-option-main">
                     <span class="drug-option-name">{{ item.displayName }}</span>
                     <span

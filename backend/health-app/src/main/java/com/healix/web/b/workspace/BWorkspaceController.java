@@ -1,9 +1,11 @@
 package com.healix.web.b.workspace;
 
 import com.healix.common.result.ApiResult;
+import com.healix.common.result.PageResult;
 import com.healix.core.care.domain.CareTeamMember;
 import com.healix.core.workspace.dto.CareTeamListItem;
 import com.healix.core.workspace.dto.OrgPatientListItem;
+import com.healix.core.workspace.dto.OrgPatientListStats;
 import com.healix.core.workspace.dto.OrgStaffItem;
 import com.healix.core.workspace.service.OrgWorkspaceService;
 import com.healix.security.SecurityUtils;
@@ -205,21 +207,32 @@ public class BWorkspaceController {
     }
 
     /**
-     * 列出当前机构患者。
+     * 分页列出当前机构患者。
      *
      * @param keyword    姓名等关键字
      * @param careTeamId 按照护团队筛选
      * @param unassigned 是否仅看未分配团队患者
      * @param watched    是否仅看当前员工重点关注患者
+     * @param page       页码，从 1 起
+     * @param size       每页条数，最大 100
      */
     @GetMapping("/org-patients")
-    public ApiResult<List<OrgPatientListItem>> listOrgPatients(
+    public ApiResult<PageResult<OrgPatientListItem>> listOrgPatients(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String careTeamId,
             @RequestParam(required = false) Boolean unassigned,
-            @RequestParam(required = false) Boolean watched) {
+            @RequestParam(required = false) Boolean watched,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
         String orgId = SecurityUtils.requireCurrentOrgId();
-        return ApiResult.ok(orgWorkspaceService.listOrgPatients(orgId, keyword, careTeamId, unassigned, watched));
+        return ApiResult.ok(orgWorkspaceService.pageOrgPatients(
+                orgId, keyword, careTeamId, unassigned, watched, page, size));
+    }
+
+    /** 患者列表顶栏 KPI（在管 / 未入组 / 关注 / 本月与今日新增）。 */
+    @GetMapping("/org-patients/stats")
+    public ApiResult<OrgPatientListStats> orgPatientStats() {
+        return ApiResult.ok(orgWorkspaceService.orgPatientStats(SecurityUtils.requireCurrentOrgId()));
     }
 
     /** 建档前查重：同名且同生日 / 同号码的已有档案。 */

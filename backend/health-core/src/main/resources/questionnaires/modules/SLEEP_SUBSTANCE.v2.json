@@ -2,7 +2,7 @@
   "code": "SLEEP_SUBSTANCE",
   "version": 2,
   "title": "睡眠与烟酒",
-  "script": "睡眠和作息对血压、血糖、体力和食欲影响都很大，想简单了解几句平时几点睡、睡得怎么样，以及烟酒情况。",
+  "script": "睡眠和作息对血压、血糖、力气和食欲影响都挺大。想简单了解平时几点睡、睡得怎么样，以及烟酒情况。",
   "items": [
     {
       "field": "basic.lifestyle.activityLevel",

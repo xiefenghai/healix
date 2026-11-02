@@ -150,19 +150,32 @@
       "highlights": [
         {
           "when": {
-            "notIn": [
-              "NONE"
+            "intersects": [
+              "CARDIAC"
+            ]
+          },
+          "severity": "REFER",
+          "planEffect": "先就医评估再开始运动"
+        },
+        {
+          "when": {
+            "intersects": [
+              "BP_UNCONTROLLED"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "优先稳压，暂缓高强度"
+        },
+        {
+          "when": {
+            "intersects": [
+              "DOCTOR_LIMIT",
+              "RECENT_SURGERY",
+              "OTHER"
             ]
           },
           "severity": "CAUTION",
           "planEffect": "设运动强度上限，避开禁忌"
-        },
-        {
-          "when": {
-            "eq": "CARDIAC"
-          },
-          "severity": "REFER",
-          "planEffect": "先就医评估再开始运动"
         }
       ],
       "sensitive": true

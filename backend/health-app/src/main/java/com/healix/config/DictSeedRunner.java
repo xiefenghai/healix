@@ -129,6 +129,7 @@ public class DictSeedRunner implements ApplicationRunner {
         // 已有库也可幂等补齐糖尿病 / 高血压扩展字段
         ensureDiabetesArchiveExtensions();
         ensureHypertensionArchiveExtensions();
+        ensureObesityArchiveExtensions();
         ensureDiagnosisDateLabels();
         ensureObesityDiseaseAndPresentIllness();
         ensureLifestyleSocialHistoryOptions();
@@ -731,6 +732,144 @@ public class DictSeedRunner implements ApplicationRunner {
                 "diagnosisDate",
                 "患病时间",
                 DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_HYPERTENSION_DIAGNOSIS_DATE, "患病时间"));
+        syncDiseaseField(
+                "obesity",
+                "diagnosisDate",
+                "患病时间",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_OBESITY_DIAGNOSIS_DATE, "患病时间"));
+    }
+
+    /** 肥胖症病种档案字段（幂等；对齐《肥胖症诊疗指南（2024）》与糖/高专病档深度）。 */
+    private void ensureObesityArchiveExtensions() {
+        seedObesityTypeOptions();
+        seedObesityClassOptions();
+        seedObesityCentralOptions();
+        seedObesityComplicationOptions();
+        seedObesityPriorInterventionOptions();
+
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "obesityType",
+                "肥胖分型",
+                DictFieldSchemas.selectField(
+                        MetaDataCodeEnum.DISEASE_OBESITY_TYPE, "肥胖分型", "obesityType"),
+                100);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "secondaryCause",
+                "继发原因",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_OBESITY_SECONDARY_CAUSE, "继发原因"),
+                98);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "diagnosisDate",
+                "患病时间",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_OBESITY_DIAGNOSIS_DATE, "患病时间"),
+                95);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "obesityClass",
+                "BMI分度",
+                DictFieldSchemas.selectField(
+                        MetaDataCodeEnum.DISEASE_OBESITY_CLASS, "BMI分度", "obesityClass"),
+                90);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "centralObesity",
+                "中心性肥胖",
+                DictFieldSchemas.selectField(
+                        MetaDataCodeEnum.DISEASE_OBESITY_CENTRAL, "中心性肥胖", "obesityCentral"),
+                85);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "complications",
+                "肥胖相关并发症",
+                DictFieldSchemas.multiSelectField(
+                        MetaDataCodeEnum.DISEASE_OBESITY_COMPLICATIONS,
+                        "肥胖相关并发症",
+                        "obesityComplications"),
+                80);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "complicationsOther",
+                "其它并发症",
+                DictFieldSchemas.textField(
+                        MetaDataCodeEnum.DISEASE_OBESITY_COMPLICATIONS_OTHER, "其它并发症"),
+                75);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "priorInterventions",
+                "既往干预",
+                DictFieldSchemas.multiSelectField(
+                        MetaDataCodeEnum.DISEASE_OBESITY_PRIOR_INTERVENTIONS,
+                        "既往干预",
+                        "obesityPriorInterventions"),
+                70);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "pharmacotherapyNote",
+                "减重药物说明",
+                DictFieldSchemas.textField(
+                        MetaDataCodeEnum.DISEASE_OBESITY_PHARMACOTHERAPY_NOTE, "减重药物说明"),
+                65);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "surgeryNote",
+                "减重手术说明",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_OBESITY_SURGERY_NOTE, "减重手术说明"),
+                60);
+        seedDiseaseFieldIfAbsent(
+                "obesity",
+                "remark",
+                "备注",
+                DictFieldSchemas.textField(MetaDataCodeEnum.DISEASE_OBESITY_REMARK, "备注"),
+                40);
+        log.warn("Ensured obesity disease-archive dict extensions");
+    }
+
+    private void seedObesityTypeOptions() {
+        seedOptionEnsure("obesityType", "PRIMARY", "单纯性肥胖", 100);
+        seedOptionEnsure("obesityType", "SECONDARY", "继发性肥胖", 90);
+        seedOptionEnsure("obesityType", "OTHER", "其他", 80);
+    }
+
+    private void seedObesityClassOptions() {
+        seedOptionEnsure("obesityClass", "OVERWEIGHT", "超重（BMI 24.0–27.9）", 100);
+        seedOptionEnsure("obesityClass", "MILD", "轻度肥胖（BMI 28.0–32.4）", 90);
+        seedOptionEnsure("obesityClass", "MODERATE", "中度肥胖（BMI 32.5–37.4）", 80);
+        seedOptionEnsure("obesityClass", "SEVERE", "重度肥胖（BMI 37.5–49.9）", 70);
+        seedOptionEnsure("obesityClass", "EXTREME", "极重度肥胖（BMI ≥50）", 60);
+    }
+
+    private void seedObesityCentralOptions() {
+        seedOptionEnsure("obesityCentral", "YES", "是", 100);
+        seedOptionEnsure("obesityCentral", "NO", "否", 90);
+        seedOptionEnsure("obesityCentral", "UNKNOWN", "不详", 80);
+    }
+
+    private void seedObesityComplicationOptions() {
+        seedOptionIfAbsent("obesityComplications", "NONE", "无相关并发症", 200);
+        seedOptionIfAbsent("obesityComplications", "HYPERTENSION", "高血压", 190);
+        seedOptionIfAbsent("obesityComplications", "DIABETES", "2型糖尿病", 180);
+        seedOptionIfAbsent("obesityComplications", "HYPERLIPIDEMIA", "血脂异常", 170);
+        seedOptionIfAbsent("obesityComplications", "NAFLD", "脂肪肝/NAFLD", 160);
+        seedOptionIfAbsent("obesityComplications", "OSA", "睡眠呼吸暂停", 150);
+        seedOptionIfAbsent("obesityComplications", "OSTEOARTHRITIS", "骨关节炎", 140);
+        seedOptionIfAbsent("obesityComplications", "GOUT", "痛风/高尿酸血症", 130);
+        seedOptionIfAbsent("obesityComplications", "CKD", "慢性肾病", 120);
+        seedOptionIfAbsent("obesityComplications", "CHD", "冠心病/心梗", 110);
+        seedOptionIfAbsent("obesityComplications", "HEART_FAILURE", "心力衰竭", 100);
+        seedOptionIfAbsent("obesityComplications", "STROKE", "脑卒中", 90);
+        seedOptionIfAbsent("obesityComplications", "PCOS", "多囊卵巢综合征", 80);
+        seedOptionIfAbsent("obesityComplications", "OTHER", "其他", 50);
+    }
+
+    private void seedObesityPriorInterventionOptions() {
+        seedOptionIfAbsent("obesityPriorInterventions", "LIFESTYLE", "生活方式干预", 100);
+        seedOptionIfAbsent("obesityPriorInterventions", "MEAL_REPLACEMENT", "代餐", 90);
+        seedOptionIfAbsent("obesityPriorInterventions", "PHARMACOTHERAPY", "减重药物", 80);
+        seedOptionIfAbsent("obesityPriorInterventions", "BARIATRIC", "减重代谢手术", 70);
+        seedOptionIfAbsent("obesityPriorInterventions", "OTHER", "其他", 50);
     }
 
     private void syncDiseaseField(String parent, String code, String desc, String content) {

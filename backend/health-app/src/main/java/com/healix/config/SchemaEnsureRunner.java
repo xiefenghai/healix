@@ -820,7 +820,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     org_id                  VARCHAR(32)   NOT NULL,
                     people_id               VARCHAR(32)   NOT NULL,
                     enrollment_id           VARCHAR(32)   NULL,
-                    primary_appeal          VARCHAR(32)   NULL,
+                    primary_appeal          VARCHAR(512)  NULL COMMENT '核心诉求：单码或 JSON 数组字符串',
                     doctor_advised          TINYINT       NULL,
                     appeal_text             VARCHAR(500)  NULL,
                     goal_mode               VARCHAR(32)   NULL,
@@ -837,6 +837,12 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_health_goal_people (tenant_id, people_id, enrollment_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='健康诉求与目标'
                 """);
+        // 核心诉求已支持多选，库内可存 JSON 数组；旧库 VARCHAR(32) 会截断提交失败
+        ensureVarcharMinLength(
+                "people_health_goal",
+                "primary_appeal",
+                512,
+                "ALTER TABLE people_health_goal MODIFY COLUMN primary_appeal VARCHAR(512) NULL COMMENT '核心诉求：单码或 JSON 数组字符串'");
         ensureTable(
                 "people_consent",
                 """
@@ -2043,6 +2049,36 @@ public class SchemaEnsureRunner implements ApplicationRunner {
         }
         jdbcTemplate.execute(ddl);
         log.warn("Ensured column {}.{}", table, column);
+    }
+
+    /** 存量库列过短时加宽（仅 VARCHAR；已 ≥ minLen 则跳过）。 */
+    private void ensureVarcharMinLength(String table, String column, int minLen, String ddl) {
+        Integer len = null;
+        try {
+            len = jdbcTemplate.queryForObject(
+                    """
+                    SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE()
+                      AND TABLE_NAME = ?
+                      AND COLUMN_NAME = ?
+                      AND DATA_TYPE = 'varchar'
+                    """,
+                    Integer.class,
+                    table,
+                    column);
+        } catch (Exception ex) {
+            log.warn("Skip widen {}.{}: {}", table, column, ex.getMessage());
+            return;
+        }
+        if (len == null || len >= minLen) {
+            return;
+        }
+        try {
+            jdbcTemplate.execute(ddl);
+            log.warn("Widened column {}.{} varchar({} -> {})", table, column, len, minLen);
+        } catch (Exception ex) {
+            log.warn("Skip widen {}.{}: {}", table, column, ex.getMessage());
+        }
     }
 
     private void ensureIndex(String table, String indexName, String ddl) {

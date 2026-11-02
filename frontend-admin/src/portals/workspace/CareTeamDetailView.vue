@@ -119,8 +119,19 @@ async function loadStaff() {
 }
 
 async function loadPatients() {
-  const res = await api<{ data: OrgPatientListItem[] }>('/api/b/v1/org-patients')
-  allPatients.value = res.data ?? []
+  const [unassigned, inTeam] = await Promise.all([
+    api<{ data: { items: OrgPatientListItem[] } }>(
+      '/api/b/v1/org-patients?unassigned=true&page=1&size=100',
+    ),
+    api<{ data: { items: OrgPatientListItem[] } }>(
+      `/api/b/v1/org-patients?careTeamId=${encodeURIComponent(teamId.value)}&page=1&size=100`,
+    ),
+  ])
+  const map = new Map<string, OrgPatientListItem>()
+  for (const row of [...(unassigned.data?.items ?? []), ...(inTeam.data?.items ?? [])]) {
+    map.set(row.peopleId, row)
+  }
+  allPatients.value = [...map.values()]
 }
 
 async function loadTeam() {

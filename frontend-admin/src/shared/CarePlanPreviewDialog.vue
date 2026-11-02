@@ -7,9 +7,9 @@ import CarePlanAiDisclaimer from './CarePlanAiDisclaimer.vue'
 import GuidelineRefTags from './GuidelineRefTags.vue'
 import { refsOf } from './guidelines'
 import {
-  CARE_PLAN_EXERCISE_TYPE_OPTIONS,
-  CARE_PLAN_INTENSITY_OPTIONS,
+  formatCarePlanExerciseType,
   formatCarePlanFrequency,
+  formatCarePlanIntensity,
   formatCarePlanTaskCategory,
   formatCarePlanTimeSlot,
   isAiGeneratedCarePlanSource,
@@ -193,10 +193,6 @@ const sampleWeekTable = computed(() => {
     .filter((row) => row.breakfast || row.lunch || row.dinner || row.snacks)
 })
 
-const EXERCISE_TYPE_LABELS = Object.fromEntries(
-  CARE_PLAN_EXERCISE_TYPE_OPTIONS.map((opt) => [opt.value, opt.label]),
-)
-const INTENSITY_LABELS = Object.fromEntries(CARE_PLAN_INTENSITY_OPTIONS.map((opt) => [opt.value, opt.label]))
 const WEEK_DAY_ORDER = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 
 const weeklyPlanTable = computed(() => {
@@ -218,13 +214,15 @@ const weeklyPlanTable = computed(() => {
       if (!item || typeof item !== 'object') return
       const row = item as Record<string, unknown>
       const typeCode = row.type != null ? String(row.type) : ''
+      const mapped = formatCarePlanExerciseType(typeCode)
       const type =
-        EXERCISE_TYPE_LABELS[typeCode] ||
+        (mapped && mapped !== typeCode ? mapped : '') ||
         (row.title != null ? String(row.title).trim() : '') ||
+        mapped ||
         typeCode ||
         '运动'
       const intensityCode = row.intensity != null ? String(row.intensity) : ''
-      const intensity = INTENSITY_LABELS[intensityCode] || '—'
+      const intensity = formatCarePlanIntensity(intensityCode) || '—'
       const duration =
         row.durationMin != null && row.durationMin !== '' ? `${row.durationMin} 分钟` : '—'
       const note = row.note != null ? String(row.note).trim() : ''

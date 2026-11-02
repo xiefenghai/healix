@@ -65,7 +65,9 @@ public final class GuidelineCheck {
         }
 
         List<String> safety = new ArrayList<>();
-        List<String> target = new ArrayList<>();
+        // key = 「量化描述」+ 违规正文 → 合并多本指南的来源标注，避免同条重复刷屏
+        Map<String, LinkedHashSet<String>> safetyByKey = new LinkedHashMap<>();
+        Map<String, LinkedHashSet<String>> targetByKey = new LinkedHashMap<>();
         for (int i = 0; i < match.matched().size(); i++) {
             GuidelineRec rec = match.matched().get(i);
             if (rec.quant() == null) {
@@ -73,10 +75,19 @@ public final class GuidelineCheck {
             }
             String violation = violation(rec.quant(), exercise, diet, execution);
             if (violation != null) {
-                String msg = "「" + rec.quant().describe() + "」" + violation + "（" + match.sourceLabels().get(i) + "）";
-                (rec.safety() ? safety : target).add(msg);
+                String key = "「" + rec.quant().describe() + "」" + violation;
+                String source = match.sourceLabels().get(i);
+                (rec.safety() ? safetyByKey : targetByKey)
+                        .computeIfAbsent(key, k -> new LinkedHashSet<>())
+                        .add(source);
             }
         }
+        // 来源之间用顿号：外层多条违规仍用「；」拼接，避免前端按分号拆条时拆碎出处
+        safetyByKey.forEach((key, sources) ->
+                safety.add(key + "（" + String.join("、", sources) + "）"));
+        List<String> target = new ArrayList<>();
+        targetByKey.forEach((key, sources) ->
+                target.add(key + "（" + String.join("、", sources) + "）"));
         if (!safety.isEmpty()) {
             flags.add(error(ERR_SAFETY, "超出指南安全要求，须修改后发布：" + String.join("；", safety)));
         }
@@ -153,7 +164,17 @@ public final class GuidelineCheck {
             case GuidelineQuant.WEEKLY_MODERATE_MIN -> {
                 double minutes = weeklyModerateMinutes(exercise);
                 boolean bad = ">=".equals(q.op()) ? minutes < q.value() : minutes > q.value();
-                return bad ? "方案每周约 " + GuidelineQuant.fmt(minutes) + " 分钟" : null;
+                if (!bad) {
+                    return null;
+                }
+                double light = weeklyLightMinutes(exercise);
+                // 全低强度时「约 0 分钟」易被理解成没排运动；补上低强度合计，便于确认个体化
+                if (minutes <= 0 && light > 0) {
+                    return "方案中等强度约 0 分钟（另有低强度约 "
+                            + GuidelineQuant.fmt(light)
+                            + " 分钟，或为稳压/限制下的个体化安排）";
+                }
+                return "方案中等强度每周约 " + GuidelineQuant.fmt(minutes) + " 分钟";
             }
             case GuidelineQuant.SESSION_MAX_MIN -> {
                 double max = 0;
@@ -256,8 +277,12 @@ public final class GuidelineCheck {
             return 0;
         }
         return switch (freq.trim().toUpperCase(java.util.Locale.ROOT)) {
-            case "DAILY", "EVERY_DAY" -> 7;
-            case "WEEKLY", "EVERY_WEEK" -> 1;
+            case "QD", "DAILY", "EVERY_DAY" -> 7;
+            case "BID" -> 14;
+            case "TID" -> 21;
+            case "TIW" -> 3;
+            case "QOD" -> 3.5;
+            case "QW", "WEEKLY", "EVERY_WEEK" -> 1;
             case "BIWEEKLY", "EVERY_2_WEEKS" -> 0.5;
             default -> 0;
         };
@@ -273,6 +298,18 @@ public final class GuidelineCheck {
                 total += min;
             } else if ("VIGOROUS".equals(level)) {
                 total += min * 2;
+            }
+        }
+        return total;
+    }
+
+    /** 低强度分钟数（仅用于提示文案，不计入指南中等强度达标）。 */
+    static double weeklyLightMinutes(JsonNode exercise) {
+        double total = 0;
+        for (JsonNode item : exerciseItems(exercise)) {
+            String level = item.path("intensity").asText("").trim().toUpperCase(java.util.Locale.ROOT);
+            if ("LIGHT".equals(level) || "LOW".equals(level)) {
+                total += item.path("durationMin").asDouble(0);
             }
         }
         return total;

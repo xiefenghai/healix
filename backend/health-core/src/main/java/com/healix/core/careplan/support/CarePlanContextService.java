@@ -274,6 +274,10 @@ public class CarePlanContextService {
             JsonNode highlights = intakeBrief.get("highlights");
             if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
                 snapshot.set("highlights", highlights);
+                ArrayNode guidance = CarePlanPromptContextSupport.highlightGuidance(highlights);
+                if (!guidance.isEmpty()) {
+                    snapshot.set("highlightGuidance", guidance);
+                }
                 applyHighlightHints(snapshot, highlights, goalsNode);
                 trace(tracer, "IntakeHighlights", "done", "高亮命中 " + highlights.size() + " 项");
             } else if (goalsNode != null) {
@@ -408,6 +412,8 @@ public class CarePlanContextService {
                 if (StringUtils.hasText(r.getHighlightsJson())) {
                     JsonNode highlights = JsonUtils.readTree(r.getHighlightsJson());
                     if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
+                        // 历史 highlights 可能无 answerDisplay，用答卷补齐
+                        CarePlanPromptContextSupport.enrichHighlightAnswers(highlights, answers);
                         brief.set("highlights", highlights);
                     }
                 }

@@ -74,6 +74,14 @@ export const CARE_PLAN_EXERCISE_TYPE_OPTIONS = [
   { value: 'POSITION_CHANGE', label: '体位变换' },
   { value: 'BREATHING', label: '呼吸训练' },
   { value: 'BREATHING_TRAINING', label: '呼吸训练' },
+  { value: 'LIGHT_INDOOR_ACTIVITY', label: '室内轻活动' },
+  { value: 'INDOOR_WALKING', label: '室内步行' },
+  { value: 'SLOW_WALKING', label: '慢走' },
+  { value: 'LIGHT_WALKING', label: '慢走' },
+  { value: 'LIGHT_ACTIVITY', label: '轻度活动' },
+  { value: 'SEDENTARY_BREAK', label: '久坐起身' },
+  { value: 'STANDING_BREAK', label: '久坐起身' },
+  { value: 'SIT_BREAK', label: '久坐起身' },
   { value: 'HOUSEWORK', label: '家务' },
   { value: 'GARDENING', label: '园艺' },
   { value: 'REST', label: '休息' },
@@ -102,6 +110,7 @@ export const CARE_PLAN_TIME_SLOT_OPTIONS = [
   { value: 'EVENING', label: '晚上' },
   { value: 'AFTER_DINNER', label: '餐后' },
   { value: 'BEDTIME', label: '睡前' },
+  { value: 'ALL', label: '全天' },
   { value: 'OTHER', label: '其他' },
 ]
 
@@ -114,15 +123,28 @@ export const CARE_PLAN_TASK_CATEGORY_OPTIONS = [
   { value: 'OTHER', label: '其他' },
 ]
 
-const FREQUENCY_LABELS = Object.fromEntries(CARE_PLAN_FREQUENCY_OPTIONS.map((o) => [o.value, o.label]))
+const FREQUENCY_LABELS: Record<string, string> = {
+  ...Object.fromEntries(CARE_PLAN_FREQUENCY_OPTIONS.map((o) => [o.value, o.label])),
+  /** 模板 / LLM 偶发英文码，仅用于展示映射 */
+  DAILY: '每日1次',
+  WEEKLY: '每周1次',
+  EVERY_WEEK: '每周1次',
+  BIWEEKLY: '每两周1次',
+  EVERY_2_WEEKS: '每两周1次',
+  MONTHLY: '每月1次',
+}
 const TIME_SLOT_LABELS = Object.fromEntries(CARE_PLAN_TIME_SLOT_OPTIONS.map((o) => [o.value, o.label]))
 const TASK_CATEGORY_LABELS = Object.fromEntries(
   CARE_PLAN_TASK_CATEGORY_OPTIONS.map((o) => [o.value, o.label]),
 )
+const EXERCISE_TYPE_LABELS = Object.fromEntries(
+  CARE_PLAN_EXERCISE_TYPE_OPTIONS.map((o) => [o.value, o.label]),
+)
 
 function lookup(map: Record<string, string>, code?: string | null): string {
   if (!code) return ''
-  return map[code] ?? code
+  const raw = String(code).trim()
+  return map[raw] ?? map[raw.toUpperCase()] ?? raw
 }
 
 export function formatCarePlanFoodCode(code?: string | null): string {
@@ -149,6 +171,17 @@ export function formatCarePlanTimeSlot(code?: string | null): string {
 
 export function formatCarePlanTaskCategory(code?: string | null): string {
   return lookup(TASK_CATEGORY_LABELS, code)
+}
+
+export function formatCarePlanExerciseType(code?: string | null): string {
+  return lookup(EXERCISE_TYPE_LABELS, code)
+}
+
+export function formatCarePlanIntensity(code?: string | null): string {
+  return lookup(
+    Object.fromEntries(CARE_PLAN_INTENSITY_OPTIONS.map((o) => [o.value, o.label])),
+    code,
+  )
 }
 
 /** 解析 sampleDay 餐次：字符串或 { text, swapHint } */

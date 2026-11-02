@@ -37,6 +37,13 @@ public class CarePlanSafetyService {
     public static final String WARN_ALLERGY_UNKNOWN = "ALLERGY_UNKNOWN";
     public static final String WARN_HIGHLIGHT = "HIGHLIGHT_CAUTION";
 
+    /** 仅首诊高亮相关 flag（打开方案页刷新提示文案用）。 */
+    public List<SafetyFlagDto> highlightFlags(JsonNode contextSnapshot) {
+        List<SafetyFlagDto> flags = new ArrayList<>();
+        addHighlightFlags(flags, contextSnapshot);
+        return flags;
+    }
+
     public List<SafetyFlagDto> evaluate(
             JsonNode exercise,
             JsonNode diet,
@@ -134,7 +141,7 @@ public class CarePlanSafetyService {
             flags.add(new SafetyFlagDto(
                     CarePlanSafetyLevelEnum.WARN.name(),
                     WARN_CONTEXT,
-                    "患者档案或关键指标不完整，方案基于有限上下文生成"));
+                    "患者档案或关键指标不完整，建议先完善后再制定/生成方案"));
         }
         if (specialtyMismatch) {
             flags.add(new SafetyFlagDto(
@@ -168,17 +175,49 @@ public class CarePlanSafetyService {
         if (highlights == null || !highlights.isArray() || highlights.isEmpty()) {
             return;
         }
+        // 历史快照可能缺 answerDisplay：从 intakeBrief.keyAnswers[].display 补
+        if (highlights instanceof ArrayNode arr) {
+            JsonNode keyAnswers = contextSnapshot.path("intakeBrief").path("keyAnswers");
+            for (JsonNode h : arr) {
+                if (!(h instanceof ObjectNode obj)) {
+                    continue;
+                }
+                if (StringUtils.hasText(obj.path("answerDisplay").asText(""))) {
+                    continue;
+                }
+                String field = obj.path("field").asText("");
+                String display = keyAnswers.path(field).path("display").asText("").trim();
+                if (StringUtils.hasText(display)) {
+                    obj.put("answerDisplay", display);
+                }
+            }
+        }
         List<String> blocks = new ArrayList<>();
         List<String> warns = new ArrayList<>();
         for (JsonNode h : highlights) {
             String sev = h.path("severity").asText("");
             String label = highlightLabel(h);
-            String effect = h.path("planEffect").asText("");
-            String msg = label + (StringUtils.hasText(effect) ? "：" + effect : "");
+            String answer = h.path("answerDisplay").asText("").trim();
+            String effect = h.path("planEffect").asText("").trim();
+            if (!StringUtils.hasText(effect)) {
+                effect = "请在方案中体现对应约束";
+            }
+            // 动作在前；来源带题干 + 答卷（便于发布确认一眼看懂触发原因）
+            String source = label;
+            if (StringUtils.hasText(answer)) {
+                source = label + " → " + answer;
+            }
+            String msg = "【"
+                    + ("REFER".equals(sev) ? "转介" : "BLOCK".equals(sev) ? "阻断" : "谨慎")
+                    + "】"
+                    + effect
+                    + "（首诊题："
+                    + source
+                    + "）";
             if ("BLOCK".equals(sev)) {
                 blocks.add(msg);
             } else if ("CAUTION".equals(sev) || "REFER".equals(sev)) {
-                warns.add(("REFER".equals(sev) ? "建议转介 · " : "") + msg);
+                warns.add(msg);
             }
         }
         JsonNode goals = contextSnapshot.get("goals");
@@ -191,13 +230,13 @@ public class CarePlanSafetyService {
             flags.add(new SafetyFlagDto(
                     CarePlanSafetyLevelEnum.ERROR.name(),
                     ERR_HIGHLIGHT_BLOCK,
-                    "存在阻断级高亮，不能按减重方案发布：" + String.join("；", blocks)));
+                    "存在阻断级高亮，不能按减重方案发布：\n" + String.join("\n", blocks)));
         }
         if (!warns.isEmpty()) {
             flags.add(new SafetyFlagDto(
                     CarePlanSafetyLevelEnum.WARN.name(),
                     WARN_HIGHLIGHT,
-                    "首诊高亮需在方案中落实：" + String.join("；", warns)));
+                    "首诊高亮需在方案中落实：\n" + String.join("\n", warns)));
         }
     }
 

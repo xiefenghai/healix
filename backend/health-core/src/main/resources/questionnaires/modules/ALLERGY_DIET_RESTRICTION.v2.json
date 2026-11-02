@@ -2,7 +2,7 @@
   "code": "ALLERGY_DIET_RESTRICTION",
   "version": 2,
   "title": "过敏与忌口",
-  "script": "有没有吃了会过敏或不舒服的食物、药物？另外有没有因为信仰或习惯需要忌口的？我们会记在方案里避开。",
+  "script": "有没有吃了会过敏或不舒服的食物、药物？或者因为习惯、信仰需要忌口的？我们会记在方案里避开。",
   "items": [
     {
       "field": "allergy.status",

@@ -2,7 +2,7 @@
   "code": "HTN_CLINICAL",
   "version": 2,
   "title": "高血压管理",
-  "script": "了解一下血压控制、自测习惯和用药规律，方便定控压目标，以及运动、限盐方面的注意点。",
+  "script": "再确认一下血压这块：平时控得怎么样、自测习惯和吃药规律。定控压目标和运动、限盐时会参考。",
   "items": [
     {
       "field": "disease.hypertension.diagnosedYear",

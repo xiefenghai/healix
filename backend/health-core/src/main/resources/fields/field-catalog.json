@@ -62,6 +62,13 @@
     "bodySatisfaction": ["SATISFIED=满意", "NEUTRAL=一般", "DISSATISFIED=不太满意", "VERY_DISSATISFIED=很不满意"],
     "bodyAnxiety": ["NONE=不会", "MILD=偶尔", "SEVERE=经常，比较严重"],
     "expectedPace": ["STEADY=稳一点就好", "MODERATE=适中", "ASAP=越快越好"],
+    "weightTargetHorizon": [
+      "M1=1 个月",
+      "M3=3 个月",
+      "M6=6 个月",
+      "M12=约 1 年",
+      "FLEXIBLE=不着急，先稳住"
+    ],
     "primaryAppeal": [
       "GLUCOSE=控糖（糖尿病）",
       "BP=控压（高血压）",
@@ -287,7 +294,7 @@
     {"code": "goal.doctorAdvised", "label": "是否医生建议本次管理", "type": "ENUM", "options": "yesNo"},
     {"code": "goal.mode", "label": "目标类型", "type": "ENUM", "options": "goalMode"},
     {"code": "goal.targetWeightKg", "label": "目标体重", "type": "NUMBER", "unit": "kg", "min": 25, "max": 300},
-    {"code": "goal.targetDate", "label": "目标日期", "type": "DATE"},
+    {"code": "goal.targetDate", "label": "希望多久达到体重目标", "type": "ENUM", "options": "weightTargetHorizon"},
     {"code": "goal.targetWaistCm", "label": "腰围目标", "type": "NUMBER", "unit": "cm", "min": 40, "max": 200},
     {"code": "goal.targetBodyFat", "label": "体脂率目标", "type": "NUMBER", "unit": "%", "min": 3, "max": 70},
     {"code": "goal.targetHba1c", "label": "糖化血红蛋白目标", "type": "NUMBER", "unit": "%", "min": 4, "max": 15},

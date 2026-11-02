@@ -20,15 +20,15 @@ const TABS = [
 ] as const
 
 const PLUS_ITEMS = [
-  { key: 'diet', label: '饮食', path: '/diet', tone: 't-teal' },
-  { key: 'med', label: '用药', path: '/medications', tone: 't-warn', tag: '服药' },
-  { key: 'bp', label: '血压', path: '/home', query: { record: 'bp' }, tone: 't-info', tag: '测量' },
-  { key: 'glucose', label: '血糖', path: '/home', query: { record: 'glucose' }, tone: 't-warn' },
-  { key: 'exercise', label: '运动', path: '/exercise', tone: 't-mint' },
-  { key: 'bmi', label: '体重', path: '/home', query: { record: 'bmi' }, tone: 't-teal' },
-  { key: 'water', label: '喝水', path: '/water', tone: 't-water' },
-  { key: 'sleep', label: '睡眠', path: '/sleep', tone: 't-sleep' },
-  { key: 'mood', label: '心情', path: '/mood', tone: 't-mood' },
+  { key: 'diet', label: '饮食', icon: 'food', path: '/diet', tone: 't-teal' },
+  { key: 'med', label: '用药', icon: 'pill', path: '/medications', tone: 't-warn', tag: '服药' },
+  { key: 'bp', label: '血压', icon: 'activity', path: '/home', query: { record: 'bp' }, tone: 't-info', tag: '测量' },
+  { key: 'glucose', label: '血糖', icon: 'drop', path: '/home', query: { record: 'glucose' }, tone: 't-warn' },
+  { key: 'exercise', label: '运动', icon: 'walk', path: '/exercise', tone: 't-mint' },
+  { key: 'bmi', label: '体重', icon: 'balance', path: '/home', query: { record: 'bmi' }, tone: 't-teal' },
+  { key: 'water', label: '喝水', icon: 'cup', path: '/water', tone: 't-water' },
+  { key: 'sleep', label: '睡眠', icon: 'moon', path: '/sleep', tone: 't-sleep' },
+  { key: 'mood', label: '心情', icon: 'smile', path: '/mood', tone: 't-mood' },
 ] as const
 
 const TAB_ICONS: Record<string, string> = {
@@ -37,6 +37,22 @@ const TAB_ICONS: Record<string, string> = {
     '<path d="M4 14c2-6 5-9 8-9s6 3 8 9"/><path d="M8 14h.01M12 14h.01M16 14h.01"/><path d="M6 18h12"/>',
   chat: '<path d="M5 6h14a2 2 0 012 2v7a2 2 0 01-2 2h-6l-4 3v-3H5a2 2 0 01-2-2V8a2 2 0 012-2z"/>',
   me: '<circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/>',
+}
+
+/** 与首页日记卡同源的线性图标 */
+const PLUS_ICONS: Record<(typeof PLUS_ITEMS)[number]['icon'], string> = {
+  food: '<path d="M6 3v8M9 3v8M6 7h3M7.5 11v10M16 3c-1.6 0-2.5 1.5-2.5 3.5S15 10 16 10v11M16 3c1.4 0 2.5 1.5 2.5 3.5S17.5 10 16 10"/>',
+  pill: '<rect x="3" y="9" width="18" height="6" rx="3"/><path d="M12 9v6"/>',
+  activity:
+    '<path d="M3 12h4"/><rect x="7" y="6.5" width="10" height="11" rx="2.2"/><path d="M7 11.4h10"/><path d="M17 12h4"/>',
+  drop: '<path d="M12 4.2C9.4 7.6 7.6 10 7.6 12.6a4.4 4.4 0 108.8 0c0-2.6-1.8-5-4.4-8.4z"/>',
+  walk: '<circle cx="13" cy="4.5" r="1.6"/><path d="M11.5 8l-1.5 6 3 1.5 1.5-3 2 1.8M8 21l3-7M14.5 15.5L16 21"/>',
+  balance:
+    '<rect x="5.2" y="6.2" width="13.6" height="11.6" rx="2.4"/><circle cx="12" cy="12" r="2.5"/><path d="M12 12l1.6-1.4"/>',
+  cup: '<path d="M6 6h11l-1.2 12a2 2 0 01-2 1.8H9.2a2 2 0 01-2-1.8z"/><path d="M5 6h13"/>',
+  moon: '<path d="M20 13.5A8 8 0 019.5 4 7 7 0 1020 13.5z"/>',
+  smile:
+    '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 13.5a4 4 0 007 0"/><circle cx="9" cy="9.6" r=".9" fill="currentColor"/><circle cx="15" cy="9.6" r=".9" fill="currentColor"/>',
 }
 
 const activeTab = computed(() => {
@@ -139,7 +155,9 @@ onBeforeUnmount(() => {
             @click="onPlusItem(item)"
           >
             <span v-if="'tag' in item && item.tag" class="plus-tag">{{ item.tag }}</span>
-            <span class="plus-ico" :class="item.tone">{{ item.label.slice(0, 1) }}</span>
+            <span class="plus-ico" :class="item.tone" aria-hidden="true">
+              <svg class="plus-ic" viewBox="0 0 24 24" v-html="PLUS_ICONS[item.icon]" />
+            </span>
             <em>{{ item.label }}</em>
           </button>
         </div>
@@ -346,8 +364,15 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   display: grid;
   place-items: center;
-  font-size: 15px;
-  font-weight: 900;
+}
+.plus-ic {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .plus-ico.t-teal { background: var(--hx-teal-100); color: var(--hx-teal-700); }
 .plus-ico.t-mint { background: var(--hx-mint-bg); color: var(--hx-teal-700); }

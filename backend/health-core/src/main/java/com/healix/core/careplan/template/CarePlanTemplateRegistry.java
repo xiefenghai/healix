@@ -14,6 +14,7 @@ import com.healix.core.careplan.support.CarePlanContextService.MetricBrief;
 import com.healix.core.careplan.support.CarePlanDiseaseTags;
 import com.healix.core.careplan.support.CarePlanDiseaseTags.Flags;
 import com.healix.core.careplan.support.CarePlanRationaleSupport;
+import com.healix.core.careplan.support.CarePlanWeighTaskNormalizer;
 import com.healix.core.careplan.support.MetricTaskRules;
 import com.healix.core.water.support.WaterIntakeRules;
 import java.util.ArrayList;
@@ -361,41 +362,20 @@ public class CarePlanTemplateRegistry {
                     "档案含高血压，叠加家庭血压监测"));
         }
         if (flags.obesity() || key == CarePlanTemplateKeyEnum.OBESITY) {
-            boolean weeklyWeigh = preferWeeklyWeigh(ctx);
+            boolean weeklyWeigh = CarePlanWeighTaskNormalizer.preferWeeklyWeigh(ctx == null ? null : ctx.snapshot());
             tasks.add(task(
                     "WEIGHT_LOG",
-                    weeklyWeigh ? "每周记录体重" : "记录体重",
+                    weeklyWeigh ? "每周固定一天晨起空腹称体重" : "记录体重",
                     "OTHER",
                     weeklyWeigh ? "QW" : "QD",
                     "MORNING",
                     MetricTaskRules.REF_WEIGHT,
                     weeklyWeigh
-                            ? "进食障碍/身材焦虑等高亮命中：称重改为每周"
+                            ? "进食障碍/身材焦虑等高亮命中：称重改为每周1次"
                             : (flags.obesity() ? "档案含肥胖，每日记录体重" : "减重管理：每日记录体重")));
         }
         exec.put("rationale", "执行清单含基础生活任务，并按档案病种标签叠加监测");
         return exec;
-    }
-
-    /** 首诊高亮或 goals.weighFrequency=WEEKLY 时改为每周称重。 */
-    private static boolean preferWeeklyWeigh(CarePlanContext ctx) {
-        if (ctx == null || ctx.snapshot() == null) {
-            return false;
-        }
-        JsonNode goals = ctx.snapshot().get("goals");
-        if (goals != null && "WEEKLY".equalsIgnoreCase(goals.path("weighFrequency").asText(""))) {
-            return true;
-        }
-        JsonNode highlights = ctx.snapshot().get("highlights");
-        if (highlights != null && highlights.isArray()) {
-            for (JsonNode h : highlights) {
-                String field = h.path("field").asText("");
-                if (field.contains("eatingDisorder") || field.contains("bodyAnxiety")) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     private static Double weightKg(CarePlanContext ctx) {

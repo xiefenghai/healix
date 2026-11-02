@@ -30,6 +30,7 @@ import {
   CARE_PLAN_TASK_CATEGORY_OPTIONS,
   CARE_PLAN_TEMPLATE_OPTIONS,
   CARE_PLAN_TIME_SLOT_OPTIONS,
+  formatCarePlanExerciseType,
   formatCarePlanFoodItem,
   formatCarePlanFrequency,
   formatCarePlanTaskCategory,
@@ -39,6 +40,14 @@ import {
   parseSampleMeal,
   sampleMealPayload,
 } from '../../shared/care-plan-labels'
+import {
+  CARE_PLAN_WARN_DOMAIN_OPTIONS,
+  confirmCarePlanWarnAck,
+  groupHighlightItemsByDomain,
+  parseCarePlanWarnSections,
+  type CarePlanWarnDomain,
+  type CarePlanWarnSection,
+} from '../../shared/care-plan-warn-ack'
 
 const carePlanTextareaAutosize = { minRows: 2, maxRows: 20 }
 const carePlanTextareaAutosizeLg = { minRows: 3, maxRows: 24 }
@@ -180,6 +189,13 @@ const DAY_OPTIONS = [
   { value: 'SUN', label: '周日' },
 ]
 
+const SAMPLE_MEAL_SLOTS = [
+  { key: 'breakfast' as const, label: '早餐' },
+  { key: 'lunch' as const, label: '午餐' },
+  { key: 'dinner' as const, label: '晚餐' },
+  { key: 'snacks' as const, label: '加餐' },
+]
+
 const TEMPLATE_OPTIONS = [
   { value: '', label: '自动推断（推荐）' },
   ...CARE_PLAN_TEMPLATE_OPTIONS,
@@ -188,6 +204,7 @@ const TEMPLATE_OPTIONS = [
 const DISEASE_OPTIONS = [
   { value: 'DIABETES', label: '糖尿病' },
   { value: 'HYPERTENSION', label: '高血压' },
+  { value: 'OBESITY', label: '肥胖' },
 ]
 
 const INSTRUCTION_CHIPS = [
@@ -208,6 +225,13 @@ const emit = defineEmits<{
   published: []
 }>()
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
+/** 驾驶舱抽屉嵌入：保持页内切换，不跳全屏路由 */
+const isEmbedded = computed(() => !!props.peopleId)
+/** 独立全屏制定页（与首诊同构） */
+const isFullscreenCompose = computed(() =>
+  /\/workspace\/patients\/[^/]+\/care-plan\/compose(?:\/|$)/.test(route.path),
+)
+const patientName = ref('')
 
 const loading = ref(false)
 const saving = ref(false)
@@ -215,6 +239,40 @@ const bundle = ref<CarePlanBundle | null>(null)
 const mainTab = ref<'list' | 'compose' | 'checkins'>('list')
 const subTab = ref<'overview' | 'summary' | 'exercise' | 'diet' | 'execution'>('overview')
 const adjustHintVisible = ref(false)
+
+function composePath() {
+  return `/workspace/patients/${peopleId.value}/care-plan/compose`
+}
+
+function goFullscreenCompose(query?: Record<string, string>) {
+  if (!peopleId.value) return
+  void router.push({ path: composePath(), query })
+}
+
+function backFromCompose() {
+  if (isEmbedded.value) return
+  void router.push(`/workspace/patients/${peopleId.value}/care-plan`)
+}
+
+async function loadPatientName() {
+  if (!peopleId.value) return
+  try {
+    const res = await api<{ data: { displayName?: string } }>(`/api/b/v1/patients/${peopleId.value}`)
+    patientName.value = res.data?.displayName || peopleId.value
+  } catch {
+    patientName.value = peopleId.value
+  }
+}
+
+/** 嵌套患者页点「制定」时改走全屏；嵌入/已在全屏则就地切 tab */
+function enterCompose(query?: Record<string, string>) {
+  if (!isEmbedded.value && !isFullscreenCompose.value) {
+    goFullscreenCompose(query)
+    return
+  }
+  mainTab.value = 'compose'
+  void load()
+}
 
 const listLoading = ref(false)
 const listItems = ref<CarePlanListItem[]>([])
@@ -282,10 +340,15 @@ const generateFocusHint = computed(() => {
   const codes = generateForm.diseaseCodes
   const hasD = codes.includes('DIABETES')
   const hasH = codes.includes('HYPERTENSION')
-  if (hasD && hasH) return '未指定侧重时，AI 将按糖尿病+高血压联合管理方向生成'
+  const hasO = codes.includes('OBESITY')
+  const picked = [hasD && '糖尿病', hasH && '高血压', hasO && '肥胖'].filter(Boolean)
+  if (picked.length >= 2) {
+    return `未指定侧重时，AI 将按${picked.join('+')}联合管理方向生成`
+  }
   if (hasD) return '未指定侧重时，AI 将按糖尿病管理方向生成'
   if (hasH) return '未指定侧重时，AI 将按高血压管理方向生成'
-  return '未指定侧重与病种时，AI 将根据患者档案自动判断生成方向'
+  if (hasO) return '未指定侧重时，AI 将按肥胖管理方向生成'
+  return '未指定侧重与病种时，AI 将根据首诊诉求/管理方向与档案病种自动判断'
 })
 
 function isInstructionChipActive(text: string) {
@@ -385,6 +448,39 @@ const planBeforeLibrary = computed(
 )
 const errorFlags = computed(() => safetyFlags.value.filter((f) => f.level === 'ERROR'))
 const warnFlags = computed(() => safetyFlags.value.filter((f) => f.level === 'WARN'))
+const warnSections = computed<CarePlanWarnSection[]>(() => parseCarePlanWarnSections(warnFlags.value))
+/** 顶部不堆首诊高亮长列表，改按运动/饮食/执行分栏核对 */
+const topWarnSections = computed(() =>
+  warnSections.value.filter((sec) => sec.code !== 'HIGHLIGHT_CAUTION'),
+)
+const highlightWarnSection = computed(
+  () => warnSections.value.find((sec) => sec.code === 'HIGHLIGHT_CAUTION') || null,
+)
+const highlightByDomain = computed(() =>
+  groupHighlightItemsByDomain(highlightWarnSection.value?.items || []),
+)
+const highlightDomainSummary = computed(() =>
+  CARE_PLAN_WARN_DOMAIN_OPTIONS.map((d) => ({
+    ...d,
+    count: highlightByDomain.value[d.key].length,
+  })).filter((d) => d.count > 0),
+)
+
+function jumpToHighlightDomain(domain: CarePlanWarnDomain) {
+  subTab.value = domain
+}
+
+function domainHighlightTitle(domain: CarePlanWarnDomain) {
+  const label = CARE_PLAN_WARN_DOMAIN_OPTIONS.find((d) => d.key === domain)?.label || domain
+  return `${label} · 首诊高亮需落实`
+}
+/** 内容未齐是草稿常态，页面用提示展示；发布/审核仍按 ERROR 拦截 */
+const incompleteTip = computed(
+  () => errorFlags.value.find((f) => f.code === 'PLAN_INCOMPLETE')?.message || '',
+)
+const hardErrorFlags = computed(() =>
+  errorFlags.value.filter((f) => f.code !== 'PLAN_INCOMPLETE'),
+)
 
 function asFoodList(raw: any): FoodItem[] {
   if (!Array.isArray(raw)) return []
@@ -496,6 +592,33 @@ function emptySampleMeals(): Record<string, SampleMeal> {
   }
 }
 
+/** 周计划类型下拉：保证当前值（含 AI 偶发英文码）有中文展示项 */
+function exerciseTypeOptionsFor(currentType?: string | null) {
+  const code = String(currentType || '').trim()
+  if (!code || CARE_PLAN_EXERCISE_TYPE_OPTIONS.some((o) => o.value === code)) {
+    return CARE_PLAN_EXERCISE_TYPE_OPTIONS
+  }
+  return [
+    { value: code, label: formatCarePlanExerciseType(code) || code },
+    ...CARE_PLAN_EXERCISE_TYPE_OPTIONS,
+  ]
+}
+
+function sampleWeekMealText(day: string, slot: (typeof SAMPLE_MEAL_SLOTS)[number]['key']) {
+  return editForm.sampleWeek[day]?.[slot]?.text || ''
+}
+
+function setSampleWeekMeal(
+  day: string,
+  slot: (typeof SAMPLE_MEAL_SLOTS)[number]['key'],
+  text: string,
+) {
+  if (!editForm.sampleWeek[day]) {
+    editForm.sampleWeek[day] = emptySampleMeals()
+  }
+  editForm.sampleWeek[day][slot].text = text
+}
+
 function syncSampleWeekFromDay() {
   const base = {
     breakfast: { ...editForm.sampleDay.breakfast },
@@ -565,7 +688,19 @@ async function loadList() {
 }
 
 function syncMainTabFromQuery() {
+  if (isFullscreenCompose.value) {
+    mainTab.value = 'compose'
+    adjustHintVisible.value = String(route.query.adjustHint || '') === '1'
+    return
+  }
   const tab = String(route.query.mainTab || '')
+  if (tab === 'compose' && !isEmbedded.value) {
+    // 旧链接 ?mainTab=compose → 全屏制定
+    goFullscreenCompose(
+      route.query.adjustHint ? { adjustHint: String(route.query.adjustHint) } : undefined,
+    )
+    return
+  }
   if (tab === 'list' || tab === 'compose' || tab === 'checkins') {
     mainTab.value = tab
   }
@@ -580,6 +715,11 @@ function dismissAdjustHint() {
 }
 
 function onMainTabChange(name: string | number) {
+  if (name === 'compose' && !isEmbedded.value && !isFullscreenCompose.value) {
+    mainTab.value = 'list'
+    goFullscreenCompose()
+    return
+  }
   if (name === 'list') {
     void loadList()
   } else if (name === 'compose') {
@@ -891,7 +1031,7 @@ async function confirmGenerate() {
       },
     )
     generateVisible.value = false
-    mainTab.value = 'compose'
+    enterCompose()
     ElMessage.success('AI 方案草稿已生成，请审阅后发布')
     refreshAfterMutation()
   } catch (e) {
@@ -919,7 +1059,7 @@ async function createBlank() {
     bundle.value = res.data
     syncFormFromBundle()
     ElMessage.success('已创建空白草稿')
-    mainTab.value = 'compose'
+    enterCompose()
     refreshAfterMutation()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
@@ -1166,11 +1306,11 @@ async function collectAckWarnCodes(): Promise<string[] | null> {
   const ack = warnFlags.value.map((f) => f.code)
   if (ack.length) {
     try {
-      await ElMessageBox.confirm(
-        `存在警告：\n${warnFlags.value.map((f) => `· ${f.message}`).join('\n')}\n\n确认后继续？`,
-        '确认警告',
-        { type: 'warning' },
-      )
+      await confirmCarePlanWarnAck(warnFlags.value, {
+        title: '发布前确认警告',
+        confirmText: '已知悉，继续',
+        cancelText: '返回修改',
+      })
     } catch {
       return null
     }
@@ -1411,16 +1551,27 @@ watch(peopleId, () => {
 async function preferComposeIfDraft() {
   const draftHint = takeAgentDraft(peopleId.value, 'care-plan')
   const wantCompose = !!(draftHint?.openCompose || draftHint?.openCreate)
-  const embedded = !!props.peopleId
   const queryTab = String(route.query.mainTab || '')
 
+  if (isFullscreenCompose.value) {
+    mainTab.value = 'compose'
+    await load()
+    return
+  }
+
   if (queryTab === 'compose' || wantCompose) {
+    if (!isEmbedded.value) {
+      goFullscreenCompose(
+        route.query.adjustHint ? { adjustHint: String(route.query.adjustHint) } : undefined,
+      )
+      return
+    }
     mainTab.value = 'compose'
     await load()
     return
   }
   if (queryTab) return
-  if (!embedded) return
+  if (!isEmbedded.value) return
 
   await load()
   if (bundle.value?.draft) {
@@ -1430,7 +1581,11 @@ async function preferComposeIfDraft() {
 
 onMounted(() => {
   syncMainTabFromQuery()
-  void loadList()
+  if (isFullscreenCompose.value) {
+    void loadPatientName()
+  } else {
+    void loadList()
+  }
   loadGuidelineLibrary()
     .then((lib) => (guidelineLib.value = lib))
     .catch(() => {})
@@ -1468,7 +1623,18 @@ watch(
 </script>
 
 <template>
-  <div class="care-plan">
+  <div class="care-plan" :class="{ 'care-plan--fullscreen': isFullscreenCompose }">
+    <header v-if="isFullscreenCompose" class="compose-top">
+      <div class="compose-top-left">
+        <button type="button" class="compose-back" title="关闭本页" @click="backFromCompose">
+          关闭
+        </button>
+        <div class="compose-who">
+          <strong>{{ patientName || peopleId }}</strong>
+          <span class="compose-sub">制定管理方案</span>
+        </div>
+      </div>
+    </header>
     <el-alert
       v-if="adjustHintVisible"
       class="adjust-hint"
@@ -1479,7 +1645,12 @@ watch(
       description="请在本页修订草稿并发布；本次不单独生成改方案任务。"
       @close="dismissAdjustHint"
     />
-    <el-tabs v-model="mainTab" class="main-tabs" @tab-change="onMainTabChange">
+    <el-tabs
+      v-if="!isFullscreenCompose"
+      v-model="mainTab"
+      class="main-tabs hx-pill-tabs"
+      @tab-change="onMainTabChange"
+    >
       <el-tab-pane label="管理方案列表" name="list" />
       <el-tab-pane label="制定新的方案" name="compose" />
       <el-tab-pane label="患者打卡" name="checkins" />
@@ -1704,7 +1875,15 @@ watch(
     </div>
 
     <el-alert
-      v-for="f in errorFlags"
+      v-if="incompleteTip"
+      :title="`待完善后再发布：${incompleteTip}`"
+      type="info"
+      show-icon
+      :closable="false"
+      class="flag"
+    />
+    <el-alert
+      v-for="f in hardErrorFlags"
       :key="'e-' + f.code"
       :title="f.message"
       type="error"
@@ -1713,14 +1892,46 @@ watch(
       class="flag"
     />
     <el-alert
-      v-for="f in warnFlags"
-      :key="'w-' + f.code"
-      :title="f.message"
+      v-for="sec in topWarnSections"
+      :key="'w-' + sec.code"
       type="warning"
       show-icon
       :closable="false"
-      class="flag"
-    />
+      class="flag flag--warn-structured"
+      :title="sec.title"
+    >
+      <ul v-if="sec.items.length" class="warn-flag-items">
+        <li v-for="(it, idx) in sec.items" :key="idx" class="warn-flag-item">
+          <span v-if="it.severity" class="warn-flag-sev" :data-sev="it.severity">{{ it.severity }}</span>
+          <span class="warn-flag-action">{{ it.action }}</span>
+          <span v-if="it.source || it.answer" class="warn-flag-meta">
+            <template v-if="it.source">来自首诊：{{ it.source }}</template>
+            <template v-if="it.answer">
+              <template v-if="it.source"> </template>答：{{ it.answer }}
+            </template>
+          </span>
+        </li>
+      </ul>
+    </el-alert>
+    <div v-if="highlightDomainSummary.length" class="highlight-jump flag">
+      <div class="highlight-jump-main">
+        <span class="highlight-jump-title">首诊高亮需落实</span>
+        <span class="highlight-jump-hint">已按方案块拆分，点对应页核对</span>
+      </div>
+      <div class="highlight-jump-chips">
+        <button
+          v-for="d in highlightDomainSummary"
+          :key="d.key"
+          type="button"
+          class="highlight-jump-chip"
+          :class="{ on: subTab === d.key }"
+          @click="jumpToHighlightDomain(d.key)"
+        >
+          {{ d.label }}
+          <strong>{{ d.count }}</strong>
+        </button>
+      </div>
+    </div>
     <CarePlanAiDisclaimer v-if="showAiDisclaimer && bundle?.plan" :pending="isDraftMode" class="flag" />
 
     <el-empty v-if="!bundle?.plan && !loading" class="page-empty section-card" description="尚未创建管理方案">
@@ -1728,7 +1939,7 @@ watch(
     </el-empty>
 
     <template v-else-if="bundle?.plan">
-      <el-tabs v-model="subTab" class="sub-tabs">
+      <el-tabs v-model="subTab" class="sub-tabs hx-pill-tabs">
         <el-tab-pane label="总览" name="overview" />
         <el-tab-pane label="方案总结" name="summary" />
         <el-tab-pane label="运动方案" name="exercise" />
@@ -1736,7 +1947,7 @@ watch(
         <el-tab-pane label="执行计划" name="execution" />
       </el-tabs>
 
-      <div v-show="subTab === 'overview'" class="panel section-card">
+      <div v-show="subTab === 'overview'" class="panel panel--fluid section-card">
         <div class="panel-head">
           <h3 class="section-title">方案总览</h3>
         </div>
@@ -1818,7 +2029,7 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'summary'" class="panel section-card">
+      <div v-show="subTab === 'summary'" class="panel panel--fluid section-card">
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--brand">总</span>
@@ -1842,7 +2053,7 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'exercise'" class="panel wide section-card">
+      <div v-show="subTab === 'exercise'" class="panel panel--fluid section-card">
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--brand">运</span>
@@ -1850,6 +2061,31 @@ watch(
           </h3>
         </div>
         <div class="panel-body">
+        <el-alert
+          v-if="highlightByDomain.exercise.length"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="domain-highlight"
+          :title="domainHighlightTitle('exercise')"
+        >
+          <ul class="warn-flag-items warn-flag-items--scroll">
+            <li
+              v-for="(it, idx) in highlightByDomain.exercise"
+              :key="'ex-h-' + idx"
+              class="warn-flag-item"
+            >
+              <span v-if="it.severity" class="warn-flag-sev" :data-sev="it.severity">{{ it.severity }}</span>
+              <span class="warn-flag-action">{{ it.action }}</span>
+              <span v-if="it.source || it.answer" class="warn-flag-meta">
+                <template v-if="it.source">来自首诊：{{ it.source }}</template>
+                <template v-if="it.answer">
+                  <template v-if="it.source"> </template>答：{{ it.answer }}
+                </template>
+              </span>
+            </li>
+          </ul>
+        </el-alert>
         <el-form label-width="96px">
           <el-form-item label="运动目标">
             <el-input
@@ -1934,7 +2170,7 @@ watch(
                         placeholder="运动类型"
                       >
                         <el-option
-                          v-for="opt in CARE_PLAN_EXERCISE_TYPE_OPTIONS"
+                          v-for="opt in exerciseTypeOptionsFor(row.type)"
                           :key="opt.value"
                           :label="opt.label"
                           :value="opt.value"
@@ -2005,7 +2241,7 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'diet'" class="panel wide section-card">
+      <div v-show="subTab === 'diet'" class="panel panel--fluid section-card">
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--teal">食</span>
@@ -2013,6 +2249,31 @@ watch(
           </h3>
         </div>
         <div class="panel-body">
+        <el-alert
+          v-if="highlightByDomain.diet.length"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="domain-highlight"
+          :title="domainHighlightTitle('diet')"
+        >
+          <ul class="warn-flag-items warn-flag-items--scroll">
+            <li
+              v-for="(it, idx) in highlightByDomain.diet"
+              :key="'diet-h-' + idx"
+              class="warn-flag-item"
+            >
+              <span v-if="it.severity" class="warn-flag-sev" :data-sev="it.severity">{{ it.severity }}</span>
+              <span class="warn-flag-action">{{ it.action }}</span>
+              <span v-if="it.source || it.answer" class="warn-flag-meta">
+                <template v-if="it.source">来自首诊：{{ it.source }}</template>
+                <template v-if="it.answer">
+                  <template v-if="it.source"> </template>答：{{ it.answer }}
+                </template>
+              </span>
+            </li>
+          </ul>
+        </el-alert>
         <el-form label-width="96px">
           <el-form-item label="原则">
             <el-input
@@ -2196,41 +2457,42 @@ watch(
           </el-form-item>
           <el-form-item label="示例周">
             <div class="sample-week">
-              <el-button
-                v-if="isDraftMode"
-                size="small"
-                @click="syncSampleWeekFromDay"
-              >
-                用示例日填充整周
-              </el-button>
-              <el-collapse v-if="Object.keys(editForm.sampleWeek).length">
-                <el-collapse-item
-                  v-for="day in DAY_OPTIONS"
-                  :key="day.value"
-                  :title="day.label"
-                  :name="day.value"
+              <div class="sample-week-toolbar">
+                <el-button
+                  v-if="isDraftMode"
+                  size="small"
+                  @click="syncSampleWeekFromDay"
                 >
-                  <div
-                    v-for="slot in [
-                      { k: 'breakfast', l: '早' },
-                      { k: 'lunch', l: '午' },
-                      { k: 'dinner', l: '晚' },
-                      { k: 'snacks', l: '加餐' },
-                    ]"
-                    :key="slot.k"
-                    class="sample-meal week-meal"
-                  >
-                    <span class="week-slot">{{ slot.l }}</span>
+                  用示例日填充整周
+                </el-button>
+                <span class="food-hint">行=星期，列=餐次；可直接改单元格，也可先用示例日铺满再微调。</span>
+              </div>
+              <el-table
+                :data="DAY_OPTIONS"
+                size="small"
+                border
+                class="sample-week-table"
+              >
+                <el-table-column prop="label" label="星期" width="72" fixed />
+                <el-table-column
+                  v-for="slot in SAMPLE_MEAL_SLOTS"
+                  :key="slot.key"
+                  :label="slot.label"
+                  min-width="148"
+                >
+                  <template #default="{ row }">
                     <el-input
-                      v-model="(editForm.sampleWeek[day.value] || emptySampleMeals())[slot.k as 'breakfast'].text"
+                      :model-value="sampleWeekMealText(row.value, slot.key)"
                       :disabled="!isDraftMode"
+                      type="textarea"
+                      :autosize="{ minRows: 2, maxRows: 5 }"
                       size="small"
-                      @focus="editForm.sampleWeek[day.value] ||= emptySampleMeals()"
+                      resize="none"
+                      @update:model-value="(v) => setSampleWeekMeal(row.value, slot.key, String(v ?? ''))"
                     />
-                  </div>
-                </el-collapse-item>
-              </el-collapse>
-              <div v-else class="food-hint">可点「用示例日填充整周」生成一周菜单后再按天微调。</div>
+                  </template>
+                </el-table-column>
+              </el-table>
             </div>
           </el-form-item>
           <el-form-item label="备注">
@@ -2246,18 +2508,51 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'execution'" class="panel wide section-card">
+      <div v-show="subTab === 'execution'" class="panel panel--fluid section-card">
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--violet">执</span>
             执行计划
           </h3>
+          <div class="exec-horizon">
+            <span class="exec-horizon-label">周期</span>
+            <el-input-number
+              v-model="editForm.horizonDays"
+              :disabled="!isDraftMode"
+              :min="1"
+              :max="90"
+              size="small"
+            />
+            <span class="exec-horizon-unit">天</span>
+          </div>
         </div>
         <div class="panel-body">
-        <el-form label-width="96px">
-          <el-form-item label="周期(天)">
-            <el-input-number v-model="editForm.horizonDays" :disabled="!isDraftMode" :min="1" :max="90" />
-          </el-form-item>
+        <el-alert
+          v-if="highlightByDomain.execution.length"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="domain-highlight"
+          :title="domainHighlightTitle('execution')"
+        >
+          <ul class="warn-flag-items warn-flag-items--scroll">
+            <li
+              v-for="(it, idx) in highlightByDomain.execution"
+              :key="'exec-h-' + idx"
+              class="warn-flag-item"
+            >
+              <span v-if="it.severity" class="warn-flag-sev" :data-sev="it.severity">{{ it.severity }}</span>
+              <span class="warn-flag-action">{{ it.action }}</span>
+              <span v-if="it.source || it.answer" class="warn-flag-meta">
+                <template v-if="it.source">来自首诊：{{ it.source }}</template>
+                <template v-if="it.answer">
+                  <template v-if="it.source"> </template>答：{{ it.answer }}
+                </template>
+              </span>
+            </li>
+          </ul>
+        </el-alert>
+        <el-form label-width="0" class="exec-form">
           <div
             v-if="isDraftMode || editForm.executionRationale || executionRefs.length"
             class="rationale-box rationale-box--inline"
@@ -2276,9 +2571,15 @@ watch(
             />
             <GuidelineRefTags :refs="executionRefs" />
           </div>
-          <el-form-item label="任务">
-            <div class="block">
-              <el-table :data="editForm.tasks" size="small" border>
+          <el-form-item class="exec-tasks-item">
+            <div class="block block--fluid">
+              <div class="exec-tasks-head">
+                <span class="exec-tasks-title">任务清单</span>
+                <el-button v-if="isDraftMode" type="primary" plain size="small" @click="addTask">
+                  添加任务
+                </el-button>
+              </div>
+              <el-table :data="editForm.tasks" size="small" border class="exec-tasks-table">
                 <el-table-column label="启用" width="70">
                   <template #default="{ row }">
                     <el-switch v-model="row.enabled" :disabled="!isDraftMode" />
@@ -2349,20 +2650,23 @@ watch(
                     </el-select>
                   </template>
                 </el-table-column>
-                <el-table-column v-if="isDraftMode" label="" width="70">
+                <el-table-column v-if="isDraftMode" label="" width="70" fixed="right">
                   <template #default="{ $index }">
                     <el-button text type="danger" @click="removeTask($index)">删</el-button>
                   </template>
                 </el-table-column>
               </el-table>
-              <el-button v-if="isDraftMode" size="small" class="mt8" @click="addTask">添加任务</el-button>
             </div>
           </el-form-item>
           <el-form-item
             v-if="!isDraftMode && bundle.activeVersion?.tasks?.length"
-            label="投影任务"
+            class="exec-tasks-item"
           >
-            <el-table :data="bundle.activeVersion.tasks" size="small" border>
+            <div class="block block--fluid">
+              <div class="exec-tasks-head">
+                <span class="exec-tasks-title">投影任务</span>
+              </div>
+              <el-table :data="bundle.activeVersion.tasks" size="small" border class="exec-tasks-table">
               <el-table-column prop="title" label="任务" />
               <el-table-column label="类别" width="100">
                 <template #default="{ row }">{{ formatCarePlanTaskCategory(row.category) }}</template>
@@ -2379,7 +2683,8 @@ watch(
               <el-table-column label="启用" width="80">
                 <template #default="{ row }">{{ row.enabled ? '是' : '否' }}</template>
               </el-table-column>
-            </el-table>
+              </el-table>
+            </div>
           </el-form-item>
         </el-form>
         </div>
@@ -2395,7 +2700,7 @@ watch(
       @closed="generateProgress = ''"
     >
       <p class="generate-lead">
-        由 AI 结合患者档案与观测数据生成草稿；下方选项用于引导生成方向。生成后请人工审阅再发布。
+        由 AI 结合患者档案、首诊问卷与观测数据生成草稿；下方选项用于引导本次生成方向。生成后请人工审阅再发布。
       </p>
       <el-form label-width="96px" :disabled="saving" class="generate-form">
         <el-form-item label="生成侧重">
@@ -2421,7 +2726,7 @@ watch(
             clearable
             collapse-tags
             collapse-tags-tooltip
-            placeholder="可选，不选则读取患者档案病种"
+            placeholder="可选，不选则沿用档案病种"
             style="width: 100%"
           >
             <el-option
@@ -2431,14 +2736,16 @@ watch(
               :value="opt.value"
             />
           </el-select>
-          <div class="generate-hint">写入本次 AI 生成的病种提示；不影响档案中的正式病种记录</div>
+          <div class="generate-hint">
+            不选则沿用档案病种；首诊要点已自动带入，此处仅作本次覆盖，不影响正式病种记录
+          </div>
         </el-form-item>
         <el-form-item label="给 AI 说明">
           <el-input
             v-model="generateForm.instruction"
             type="textarea"
             :autosize="{ minRows: 3, maxRows: 8 }"
-            placeholder="可选，例如：近期低血糖偏多，运动强度放低；饮食优先低盐"
+            placeholder="可选，补充本次偏好（首诊总结已自动带入，无需重复粘贴）。例如：近期低血糖偏多，运动强度放低"
             maxlength="500"
             show-word-limit
           />
@@ -2520,6 +2827,76 @@ watch(
   padding: 8px 0 24px;
 }
 
+.care-plan--fullscreen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  background: var(--ink-50, #f8fafc);
+}
+
+.care-plan--fullscreen .adjust-hint {
+  margin: 12px 16px 0;
+}
+
+.care-plan--fullscreen .compose-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 24px;
+}
+
+.compose-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--ink-200, #e2e8f0);
+  flex-shrink: 0;
+}
+
+.compose-top-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 160px;
+}
+
+.compose-back {
+  border: 1px solid var(--ink-200, #e2e8f0);
+  background: #fff;
+  color: var(--ink-600, #475569);
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.compose-back:hover {
+  border-color: var(--ink-300, #cbd5e1);
+  color: var(--ink-800, #1e293b);
+}
+
+.compose-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.3;
+}
+
+.compose-who strong {
+  font-size: 15px;
+  color: var(--ink-900, #0f172a);
+}
+
+.compose-sub {
+  font-size: 12px;
+  color: var(--ink-500, #64748b);
+}
+
 .adjust-hint {
   margin-bottom: 12px;
   border-radius: var(--admin-radius, 12px);
@@ -2534,17 +2911,72 @@ watch(
   margin-bottom: 14px;
 }
 
-.main-tabs :deep(.el-tabs__header) {
+/* 与健康档案 / 指标检验同构的胶囊 Tab */
+.hx-pill-tabs :deep(.el-tabs__header) {
+  margin-bottom: 14px;
+  border: none;
+}
+
+.hx-pill-tabs :deep(.el-tabs__nav-wrap::after),
+.hx-pill-tabs :deep(.el-tabs__active-bar) {
+  display: none;
+}
+
+.hx-pill-tabs :deep(.el-tabs__nav-wrap) {
   margin-bottom: 0;
 }
 
-.main-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--brand-500);
-  font-weight: 600;
+.hx-pill-tabs :deep(.el-tabs__nav-scroll) {
+  overflow: visible;
 }
 
-.main-tabs :deep(.el-tabs__active-bar) {
-  background: var(--brand-500);
+.hx-pill-tabs :deep(.el-tabs__nav) {
+  float: none;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: 10px;
+  background: #fff;
+  padding: 6px;
+  box-shadow: var(--admin-shadow, 0 1px 2px rgba(15, 23, 42, 0.04));
+}
+
+.hx-pill-tabs :deep(.el-tabs__item) {
+  height: auto !important;
+  line-height: 1.25 !important;
+  padding: 8px 16px !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-600, #475569);
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.hx-pill-tabs :deep(.el-tabs__item:hover) {
+  color: var(--ink-800, #1e293b);
+}
+
+.hx-pill-tabs :deep(.el-tabs__item.is-active) {
+  color: #fff !important;
+  background: var(--brand-500, #2c7ef8);
+  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
+}
+
+.hx-pill-tabs :deep(.el-tabs__item:focus),
+.hx-pill-tabs :deep(.el-tabs__item:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+.hx-pill-tabs :deep(.el-tabs__item.is-active:focus),
+.hx-pill-tabs :deep(.el-tabs__item.is-active:focus-visible) {
+  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
 }
 
 .section-card {
@@ -2877,12 +3309,146 @@ watch(
   overflow: hidden;
 }
 
+.highlight-jump {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 14px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+}
+
+.highlight-jump-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.highlight-jump-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.highlight-jump-hint {
+  font-size: 12px;
+  color: #a16207;
+}
+
+.highlight-jump-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.highlight-jump-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #fcd34d;
+  background: #fff;
+  color: #78350f;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.highlight-jump-chip:hover,
+.highlight-jump-chip.on {
+  border-color: #f59e0b;
+  background: #fef3c7;
+}
+
+.highlight-jump-chip strong {
+  font-variant-numeric: tabular-nums;
+  color: #b45309;
+}
+
+.domain-highlight {
+  margin-bottom: 14px;
+  border-radius: var(--admin-radius, 12px);
+  width: 100%;
+}
+
+.domain-highlight :deep(.el-alert__content),
+.domain-highlight :deep(.el-alert__description),
+.flag--warn-structured :deep(.el-alert__content),
+.flag--warn-structured :deep(.el-alert__description) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.warn-flag-items {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.warn-flag-items--scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
+.warn-flag-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.warn-flag-sev {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.warn-flag-sev[data-sev='转介'],
+.warn-flag-sev[data-sev='阻断'] {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.warn-flag-action {
+  flex: 1;
+  min-width: 0;
+  color: #1e293b;
+  font-weight: 500;
+}
+
+.warn-flag-meta {
+  flex-basis: 100%;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .sub-tabs {
   margin: 4px 0 12px;
 }
 
-.sub-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--brand-500);
+.sub-tabs.hx-pill-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
 }
 
 .panel {
@@ -2892,6 +3458,60 @@ watch(
 
 .panel.wide {
   max-width: 980px;
+}
+
+.panel.panel--fluid {
+  max-width: none;
+  width: 100%;
+}
+
+.exec-horizon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.exec-horizon-label {
+  font-size: 13px;
+  color: var(--ink-500, #64748b);
+  white-space: nowrap;
+}
+
+.exec-horizon-unit {
+  font-size: 13px;
+  color: var(--ink-500, #64748b);
+}
+
+.exec-form :deep(.el-form-item) {
+  margin-bottom: 12px;
+}
+
+.exec-tasks-item :deep(.el-form-item__content) {
+  display: block;
+  width: 100%;
+}
+
+.exec-tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.exec-tasks-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-800, #1e293b);
+}
+
+.exec-tasks-table {
+  width: 100%;
+}
+
+.block--fluid {
+  width: 100%;
 }
 
 .panel :deep(.el-form-item__content) {
@@ -3035,6 +3655,34 @@ watch(
   flex-direction: column;
   gap: 6px;
   width: 100%;
+}
+
+.sample-week {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sample-week-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.sample-week-toolbar .food-hint {
+  margin-top: 0;
+}
+
+.sample-week-table {
+  width: 100%;
+}
+
+.sample-week-table :deep(.el-textarea__inner) {
+  box-shadow: none;
+  padding: 4px 6px;
+  line-height: 1.4;
 }
 
 .sample-swap :deep(.el-input__wrapper) {

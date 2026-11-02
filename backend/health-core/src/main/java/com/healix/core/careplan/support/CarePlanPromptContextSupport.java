@@ -120,10 +120,19 @@ public final class CarePlanPromptContextSupport {
             "goal.primaryAppeal=核心诉求",
             "goal.mode=目标类型",
             "goal.targetWeightKg=目标体重",
+            "goal.targetDate=希望多久达到体重目标(M1/M3/M6/M12/FLEXIBLE)",
             "goal.targetHba1c=糖化目标",
             "goal.targetFpg=空腹血糖目标",
             "goal.targetBpSys=收缩压目标",
             "goal.targetBpDia=舒张压目标",
+            "basic.presentIllness=医生说过您有哪些疾病？",
+            "basic.medicationFlags=目前在吃哪类药？",
+            "basic.exerciseRestriction=有没有医生说过不能运动或要限制运动？",
+            "basic.jointIssues=有没有关节问题或运动损伤？",
+            "basic.eatingDisorderHistory=以前有没有出现过暴食、催吐，或者长时间刻意不吃饭的情况？",
+            "basic.sugaryDrinks=奶茶、可乐、果汁这类含糖饮料喝多少？",
+            "basic.taste=口味更偏哪种？（可多选）",
+            "basic.triedBefore=以前减过重吗？",
             "disease.diabetes.type=糖尿病分型",
             "disease.diabetes.diagnosedYear=糖尿病患病年份",
             "disease.diabetes.hypoglycemia=低血糖情况",
@@ -181,6 +190,152 @@ public final class CarePlanPromptContextSupport {
         copyEnrichedArray(o, content, "supplements");
 
         return o;
+    }
+
+    /**
+     * 首诊高亮 → 模型可读约束列表（方案影响 + 追问话术）。
+     * 原始 {@code highlights} 仍保留供安全校验 / 指南匹配；生成时优先读本列表。
+     */
+    public static ArrayNode highlightGuidance(JsonNode highlights) {
+        ArrayNode out = JsonUtils.mapper().createArrayNode();
+        if (highlights == null || !highlights.isArray()) {
+            return out;
+        }
+        for (JsonNode h : highlights) {
+            if (h == null || h.isNull()) {
+                continue;
+            }
+            String sev = h.path("severity").asText("").trim().toUpperCase(Locale.ROOT);
+            String effect = h.path("planEffect").asText("").trim();
+            String followUp = h.path("followUp").asText("").trim();
+            if (!StringUtils.hasText(effect) && !StringUtils.hasText(followUp)) {
+                continue;
+            }
+            ObjectNode row = out.addObject();
+            if (StringUtils.hasText(sev)) {
+                row.put("severity", sev);
+                row.put(
+                        "severityLabel",
+                        switch (sev) {
+                            case "BLOCK" -> "阻断";
+                            case "REFER" -> "转介";
+                            case "CAUTION" -> "谨慎";
+                            default -> sev;
+                        });
+            }
+            if (StringUtils.hasText(effect)) {
+                row.put("mustApply", effect);
+            }
+            if (StringUtils.hasText(followUp)) {
+                row.put("clinicianNote", followUp);
+            }
+            String label = h.path("label").asText("").trim();
+            String field = h.path("field").asText("").trim();
+            String answer = h.path("answerDisplay").asText("").trim();
+            if (StringUtils.hasText(label)) {
+                row.put("source", label);
+            } else if (StringUtils.hasText(field)) {
+                row.put("source", field);
+            }
+            if (StringUtils.hasText(answer)) {
+                row.put("answer", answer);
+            }
+            if (StringUtils.hasText(field)) {
+                row.put("field", field);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 问卷答案 → 给人看的中文摘要（高亮来源、首诊要点等复用）。
+     * 枚举优先用字段 option 文案；病种码走 {@link DiseaseCodeLabels}。
+     */
+    public static String formatAnswerDisplay(String field, JsonNode v) {
+        if (v == null || v.isNull()) {
+            return null;
+        }
+        String shortKey = shortFieldKey(field);
+        if (v.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode n : v) {
+                if (n == null || n.isNull()) {
+                    continue;
+                }
+                String piece = formatSingleAnswerToken(shortKey, n);
+                if (!StringUtils.hasText(piece)) {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append('、');
+                }
+                sb.append(piece);
+            }
+            return sb.length() == 0 ? null : truncate(sb.toString());
+        }
+        if (v.isObject()) {
+            // 罕见结构：尽量不把整段 JSON 塞进提示
+            return null;
+        }
+        String piece = formatSingleAnswerToken(shortKey, v);
+        return StringUtils.hasText(piece) ? truncate(piece) : null;
+    }
+
+    /** 给已有高亮补 answerDisplay（历史答卷 highlightsJson 可能没有）。 */
+    public static void enrichHighlightAnswers(JsonNode highlights, JsonNode answers) {
+        if (highlights == null || !highlights.isArray() || answers == null || !answers.isObject()) {
+            return;
+        }
+        for (JsonNode h : highlights) {
+            if (!(h instanceof ObjectNode obj)) {
+                continue;
+            }
+            if (StringUtils.hasText(obj.path("answerDisplay").asText(""))) {
+                continue;
+            }
+            String field = obj.path("field").asText("");
+            if (!StringUtils.hasText(field)) {
+                continue;
+            }
+            String display = formatAnswerDisplay(field, answers.get(field));
+            if (StringUtils.hasText(display)) {
+                obj.put("answerDisplay", display);
+            }
+        }
+    }
+
+    private static String shortFieldKey(String field) {
+        if (!StringUtils.hasText(field)) {
+            return "";
+        }
+        int i = field.lastIndexOf('.');
+        return i >= 0 ? field.substring(i + 1) : field;
+    }
+
+    private static String formatSingleAnswerToken(String shortKey, JsonNode n) {
+        if (n == null || n.isNull()) {
+            return null;
+        }
+        if (n.isNumber() || n.isBoolean()) {
+            return n.asText();
+        }
+        if (!n.isTextual()) {
+            return null;
+        }
+        String code = n.asText().trim();
+        if (!StringUtils.hasText(code)) {
+            return null;
+        }
+        if ("presentIllness".equals(shortKey) || "presentIllnessOther".equals(shortKey)) {
+            String disease = DiseaseCodeLabels.label(code);
+            return StringUtils.hasText(disease) ? disease : code;
+        }
+        String labeled = enumLabel(shortKey, code);
+        if (StringUtils.hasText(labeled)) {
+            return labeled;
+        }
+        String clinical = enumLabelForClinical(shortKey, n);
+        return StringUtils.hasText(clinical) ? clinical : code;
     }
 
     /** 目标块补中文：诉求 / 模式 / careTracks / 指标目标名。 */
@@ -396,9 +551,6 @@ public final class CarePlanPromptContextSupport {
     }
 
     private static String prettyIntakeValue(String field, JsonNode v) {
-        if (v == null || v.isNull()) {
-            return null;
-        }
         if ("goal.careTracks".equals(field)) {
             ArrayNode labels = careTrackLabels(v);
             if (labels.isEmpty()) {
@@ -427,31 +579,10 @@ public final class CarePlanPromptContextSupport {
             });
             return sb.toString();
         }
-        if ("goal.mode".equals(field) && v.isTextual()) {
+        if ("goal.mode".equals(field) && v != null && v.isTextual()) {
             return GOAL_MODE_LABELS.getOrDefault(v.asText(), v.asText());
         }
-        if (v.isTextual()) {
-            String shortKey = field.contains(".") ? field.substring(field.lastIndexOf('.') + 1) : field;
-            String labeled = enumLabelForClinical(shortKey, v);
-            return StringUtils.hasText(labeled) ? labeled : v.asText();
-        }
-        if (v.isNumber()) {
-            return v.asText();
-        }
-        if (v.isArray()) {
-            StringBuilder sb = new StringBuilder();
-            for (JsonNode n : v) {
-                if (n == null || n.isNull()) {
-                    continue;
-                }
-                if (sb.length() > 0) {
-                    sb.append("、");
-                }
-                sb.append(n.asText());
-            }
-            return sb.length() == 0 ? null : sb.toString();
-        }
-        return null;
+        return formatAnswerDisplay(field, v);
     }
 
     private static String text(JsonNode n, String field) {

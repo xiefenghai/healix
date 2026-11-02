@@ -61,12 +61,19 @@ const isIntakeWorkspace = computed(
     /\/workspace\/patients\/[^/]+\/intake(?:\/|$)/.test(route.path) ||
     /\/workspace\/intake-responses\/[^/]+/.test(route.path),
 )
-const hideSiderEffective = computed(() => hideSider.value || isIntakeWorkspace.value)
-const flushContent = computed(() => isCockpit.value || isIntakeWorkspace.value)
+const isCarePlanComposeWorkspace = computed(() =>
+  /\/workspace\/patients\/[^/]+\/care-plan\/compose(?:\/|$)/.test(route.path),
+)
+const isFullscreenWorkspace = computed(
+  () => isIntakeWorkspace.value || isCarePlanComposeWorkspace.value,
+)
+const hideSiderEffective = computed(() => hideSider.value || isFullscreenWorkspace.value)
+const flushContent = computed(() => isCockpit.value || isFullscreenWorkspace.value)
 
 const pageTitle = computed(() => {
   if (/\/workspace\/intake-responses\//.test(route.path)) return '首诊详情'
   if (isIntakeWorkspace.value) return '首诊问卷'
+  if (isCarePlanComposeWorkspace.value) return '制定管理方案'
   if (route.path.startsWith('/workspace/cockpit')) return '智能驾驶舱'
   if (route.path.startsWith('/workspace/tasks')) return '工作台任务'
   if (route.path.startsWith('/workspace/care-chat')) return '患者沟通'
@@ -213,8 +220,8 @@ onBeforeUnmount(() => {
     :title="pageTitle"
     :menus="menus"
     :hide-sider="hideSiderEffective"
-    :hide-topbar="isIntakeWorkspace"
-    :org-switchable="orgSwitchable && !isIntakeWorkspace"
+    :hide-topbar="isFullscreenWorkspace"
+    :org-switchable="orgSwitchable && !isFullscreenWorkspace"
     :flush-content="flushContent"
     @switch-org="switchOrg"
   >
@@ -229,7 +236,7 @@ onBeforeUnmount(() => {
       </button>
     </template>
     <RouterView />
-    <AgentFloatingRobot v-if="!isCockpit && !isIntakeWorkspace" />
+    <AgentFloatingRobot v-if="!isCockpit && !isFullscreenWorkspace" />
   </AdminShell>
 </template>
 

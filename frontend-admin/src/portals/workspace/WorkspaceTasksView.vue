@@ -380,7 +380,7 @@ async function openFormTask(row: WorkspaceTaskItem) {
         : ''
     const followupType = contentType || payloadType
     if (followupType === 'ONBOARDING' && people && openFu?.id) {
-      openInNewTab(router, {
+      void router.push({
         path: `/workspace/patients/${people}/intake`,
         query: { followupRecordId: openFu.id },
       })
@@ -1185,6 +1185,18 @@ onMounted(async () => {
         }
       "
       @saved="() => void load()"
+      @open-intake="
+        (opts) => {
+          if (opts.followupRecordId) {
+            void router.push({
+              path: `/workspace/patients/${opts.peopleId}/intake`,
+              query: { followupRecordId: opts.followupRecordId },
+            })
+          } else {
+            void router.push(`/workspace/patients/${opts.peopleId}/intake`)
+          }
+        }
+      "
     />
 
     <JoinCareTeamDialog

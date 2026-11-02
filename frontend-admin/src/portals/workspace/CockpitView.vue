@@ -290,6 +290,9 @@ const sheetMode = ref<CockpitSheetMode>('archive')
 const sheetPeopleId = ref('')
 /** 健康数据抽屉打开时的子页（如 trends） */
 const sheetObservationsSub = ref<string | undefined>(undefined)
+/** 首诊抽屉：关联随访 / 待补用途 */
+const sheetIntakeFollowupId = ref<string | null>(null)
+const sheetIntakePurpose = ref<string | null>(null)
 /** 与工作台「处理」同款的任务填单弹窗 */
 const formTaskId = ref<string | null>(null)
 const joinPeopleId = ref<string | null>(null)
@@ -1253,6 +1256,11 @@ async function loadFocus(peopleId: string) {
     focus.value = res.data
     // 首诊等多在新标签办结：焦点刷新后把已关闭任务的气泡按钮变灰
     retireCompletedTaskActions(peopleId, res.data?.openTasks || [])
+    retireSettledReportReviewActions(
+      peopleId,
+      res.data?.pendingDrafts || [],
+      res.data?.openTasks || [],
+    )
   } catch (e) {
     focus.value = null
     ElMessage.error(e instanceof Error ? e.message : '加载患者快照失败')
@@ -1499,6 +1507,108 @@ function organizeRecord() {
 
 function visibleActions(msg: ChatMessage) {
   return (msg.actions || []).filter((action) => action.type !== 'chat_extract')
+}
+
+/** 气泡动作过多时默认只展示前几条，其余折叠 */
+const ACTION_CHIP_PREVIEW = 3
+const expandedActionKeys = ref<Record<string, boolean>>({})
+
+function actionListKey(scope: string, idx: number) {
+  return `${scope}:${idx}`
+}
+
+function isActionListExpanded(scope: string, idx: number) {
+  return !!expandedActionKeys.value[actionListKey(scope, idx)]
+}
+
+function toggleActionList(scope: string, idx: number) {
+  const key = actionListKey(scope, idx)
+  expandedActionKeys.value = { ...expandedActionKeys.value, [key]: !expandedActionKeys.value[key] }
+}
+
+/**
+ * 同抽屉入口去重（历史气泡里多条「审阅报告」合并展示）；
+ * COMPLETE_TASK / ACK_TASK 仍按 taskId 保留多条。
+ */
+function collapseSameSheetActions(actions: AgentAction[]): AgentAction[] {
+  const out: AgentAction[] = []
+  const sheetCount = new Map<string, number>()
+  for (const a of actions) {
+    if (a.type === 'OPEN_SHEET' && a.path) {
+      const key = `${a.path}::${a.peopleId || ''}`
+      sheetCount.set(key, (sheetCount.get(key) || 0) + 1)
+    }
+  }
+  const seenSheet = new Set<string>()
+  for (const a of actions) {
+    if (a.type === 'OPEN_SHEET' && a.path) {
+      const key = `${a.path}::${a.peopleId || ''}`
+      if (seenSheet.has(key)) continue
+      seenSheet.add(key)
+      const n = sheetCount.get(key) || 1
+      if (n > 1 && !/[（(]\d+[）)]/.test(a.label || '') && !/×\d+/.test(a.label || '')) {
+        const base = String(a.label || '')
+          .replace(/[（(]\d+[）)]\s*$/, '')
+          .trim()
+        out.push({ ...a, label: `${base || '打开'}（${n}）` })
+      } else {
+        out.push(a)
+      }
+      continue
+    }
+    if (a.type === 'NAVIGATE' && a.path === 'join-care-team') {
+      const key = `nav::${a.path}::${a.peopleId || ''}`
+      if (seenSheet.has(key)) continue
+      seenSheet.add(key)
+      out.push(a)
+      continue
+    }
+    out.push(a)
+  }
+  return out
+}
+
+function displayActions(actions: AgentAction[]) {
+  return collapseSameSheetActions(actions)
+}
+
+function shownActions(actions: AgentAction[], scope: string, idx: number) {
+  const list = displayActions(actions)
+  if (isActionListExpanded(scope, idx) || list.length <= ACTION_CHIP_PREVIEW) return list
+  return list.slice(0, ACTION_CHIP_PREVIEW)
+}
+
+function hiddenActionCount(actions: AgentAction[], scope: string, idx: number) {
+  const list = displayActions(actions)
+  if (isActionListExpanded(scope, idx) || list.length <= ACTION_CHIP_PREVIEW) return 0
+  return list.length - ACTION_CHIP_PREVIEW
+}
+
+/** 气泡按钮展示用短文案；完整 label 放 title */
+function actionChipLabel(label?: string | null) {
+  const raw = String(label || '').trim()
+  if (!raw) return ''
+  const countMatch = raw.match(/[（(](\d+)[）)]$/)
+  const countSuffix = countMatch ? `×${countMatch[1]}` : ''
+  // 去掉 · 后摘要与末尾（N），避免通栏长文案
+  let head = raw
+    .replace(/[（(]\d+[）)]\s*$/, '')
+    .split('·')[0]
+    .trim()
+  if (/^审阅管理报告/.test(head) || head === '打开报告审阅' || head === '审阅报告') {
+    head = '审阅报告'
+  } else if (head === '使用点评草稿审阅') head = '使用点评审阅'
+  else if (/^处理方案待办/.test(head) || head === '处理方案') head = '处理方案'
+  else if (/^去评估建档/.test(head)) head = '去评估建档'
+  // 首诊：历史气泡「确认办结「入组/首诊随访」」收成「确认办结」不对，统一「开始首诊」
+  else if (/首诊/.test(head) || /^开始首诊/.test(head)) head = '开始首诊'
+  else if (/^确认办结「([^」]+)」/.test(head)) {
+    const t = RegExp.$1
+    head = `办结${t.length > 8 ? `${t.slice(0, 7)}…` : t}`
+  } else if (/^确认办结/.test(head)) head = '确认办结'
+  else head = head.replace(/「[^」]*」/g, '').replace(/\s+/g, ' ').trim() || head
+  const withCount = `${head}${countSuffix}`
+  return withCount.length > 14 ? `${withCount.slice(0, 13)}…` : withCount
 }
 
 async function sendMessage(
@@ -1895,8 +2005,21 @@ function runAction(action: AgentAction) {
     return
   }
   if (action.type === 'OPEN_SHEET' && action.path) {
-    const mode = action.path as CockpitSheetMode
     const peopleId = action.peopleId || focusPeopleId.value || undefined
+    if (action.path === 'intake' || isIntakePath(action.path)) {
+      const parsed = isIntakePath(action.path) ? parseIntakeNav(action.path) : {}
+      void openIntakeSheet(peopleId || parsed.peopleId, {
+        followupRecordId:
+          (typeof action.payload?.followupRecordId === 'string'
+            ? action.payload.followupRecordId
+            : null) || parsed.followupRecordId,
+        purpose:
+          (typeof action.payload?.purpose === 'string' ? action.payload.purpose : null) ||
+          parsed.purpose,
+      })
+      return
+    }
+    const mode = action.path as CockpitSheetMode
     if (mode === 'observations' && typeof action.payload?.sub === 'string') {
       openSheet(mode, peopleId, action.payload.sub)
       return
@@ -1980,6 +2103,14 @@ function runAction(action: AgentAction) {
   }
   if (isAssessmentsPath(action.path)) {
     openSheet('assessments', action.peopleId)
+    return
+  }
+  if (isIntakePath(action.path)) {
+    const parsed = parseIntakeNav(action.path!)
+    void openIntakeSheet(action.peopleId || parsed.peopleId, {
+      followupRecordId: parsed.followupRecordId,
+      purpose: parsed.purpose,
+    })
     return
   }
   if (action.path) router.push(action.path)
@@ -2103,9 +2234,20 @@ async function openWorkspaceTaskForm(
 ) {
   const peopleId = opts?.peopleId || focusPeopleId.value
   try {
-    const detail = await api<{ data: { assigneeStaffId?: string | null; status?: string } }>(
-      `/api/b/v1/workspace/tasks/${taskId}`,
-    )
+    const detail = await api<{
+      data: {
+        assigneeStaffId?: string | null
+        status?: string
+        peopleId?: string
+        taskType?: string
+        payload?: Record<string, unknown>
+        followups?: Array<{
+          id: string
+          status?: string
+          content?: Record<string, unknown>
+        }>
+      }
+    }>(`/api/b/v1/workspace/tasks/${taskId}`)
     const row = detail.data
     if (!row || (row.status || '').toUpperCase() !== 'OPEN') {
       ElMessage.warning('任务已关闭或不存在')
@@ -2119,6 +2261,27 @@ async function openWorkspaceTaskForm(
     }
     if (!row.assigneeStaffId) {
       await api(`/api/b/v1/workspace/tasks/${taskId}/claim`, { method: 'POST' })
+    }
+    // 首诊：直接开抽屉问卷，不弹填单
+    if ((row.taskType || '').toUpperCase() === 'FOLLOW_UP') {
+      const openFu =
+        (row.followups || []).find((f) => f.status === 'OPEN') || (row.followups || [])[0]
+      const contentType =
+        openFu?.content && typeof openFu.content.followupType === 'string'
+          ? openFu.content.followupType
+          : ''
+      const payloadType =
+        typeof row.payload?.followupType === 'string' ? row.payload.followupType : ''
+      if ((contentType || payloadType) === 'ONBOARDING') {
+        if (opts?.fromAction) opts.fromAction.runState = undefined
+        pendingCompleteAction.value = null
+        pendingCompletePeopleId.value = null
+        formTaskId.value = null
+        void openIntakeSheet(row.peopleId || peopleId || undefined, {
+          followupRecordId: openFu?.id || null,
+        })
+        return
+      }
     }
   } catch (e) {
     if (opts?.fromAction) opts.fromAction.runState = undefined
@@ -2176,6 +2339,16 @@ function isCarePlanChatAction(a: AgentAction): boolean {
   if (a.type === 'OPEN_SHEET' && a.path === 'care-plan') return true
   if (a.label && /(编辑|查看)?方案草稿|确认发布方案|发布方案|预览全文/.test(a.label)) return true
   return false
+}
+
+function isReportReviewChatAction(a: AgentAction): boolean {
+  if (a.path === 'PUBLISH_REPORT') return true
+  if (a.type === 'OPEN_SHEET' && a.path === 'reports') {
+    if (a.payload?.openReview || a.payload?.reportId) return true
+    // 仅匹配「审阅/发布」类，不把「打开报告列表 / 查看报告」一并收掉
+    return !!(a.label && /(审阅|使用点评草稿|确认发布)/.test(a.label))
+  }
+  return !!(a.label && /(使用点评草稿审阅|确认发布给患者|审阅管理报告)/.test(a.label))
 }
 
 /**
@@ -2277,6 +2450,47 @@ function onCarePlanPublishedFromSheet() {
   sheetOpen.value = false
   void refreshAfterTaskChange(id)
 }
+
+/**
+ * 按剩余草稿/待办结算审阅按钮：只灰掉已发布的那份报告；
+ * 无 reportId 的泛化「审阅报告」仅在该患者已无报告待办时才收掉。
+ */
+function retireSettledReportReviewActions(
+  peopleId: string,
+  pending: PendingDraft[],
+  openTasks: FocusTask[],
+) {
+  if (!peopleId) return
+  const openReportIds = new Set(
+    pending.filter((d) => d.kind === 'REPORT' && d.id).map((d) => String(d.id)),
+  )
+  const stillHasReportWork =
+    openReportIds.size > 0 || openTasks.some((t) => t.taskType === 'REPORT_REVIEW')
+  let touched = false
+  const patch = (list: ChatMessage[]) => {
+    for (const msg of list) {
+      if (!msg.actions?.length) continue
+      for (const a of msg.actions) {
+        if (a.runState === 'done') continue
+        if (a.peopleId && a.peopleId !== peopleId) continue
+        if (!isReportReviewChatAction(a)) continue
+        const rid = typeof a.payload?.reportId === 'string' ? a.payload.reportId.trim() : ''
+        if (rid) {
+          if (openReportIds.has(rid)) continue
+        } else if (stillHasReportWork) {
+          continue
+        }
+        a.runState = 'done'
+        a.label = a.path === 'PUBLISH_REPORT' ? '已发布报告' : '报告已发布'
+        touched = true
+      }
+    }
+  }
+  patch(messages.value)
+  const cached = patientSessionCache.get(peopleId)
+  if (cached) patch(cached.messages)
+  if (touched && focusPeopleId.value === peopleId) cachePatientSession(peopleId)
+}
 function isFollowupPath(path?: string) {
   return !!path && path.includes('/followups')
 }
@@ -2298,6 +2512,27 @@ function isMedicationsPath(path?: string) {
 function isAssessmentsPath(path?: string) {
   return !!path && (path === 'assessments' || path.includes('/assessments'))
 }
+function isIntakePath(path?: string) {
+  return !!path && /\/patients\/[^/]+\/intake/.test(path)
+}
+
+function parseIntakeNav(path: string): {
+  peopleId?: string
+  followupRecordId?: string | null
+  purpose?: string | null
+} {
+  try {
+    const u = new URL(path, 'http://local')
+    const m = u.pathname.match(/\/patients\/([^/]+)\/intake/)
+    return {
+      peopleId: m?.[1],
+      followupRecordId: u.searchParams.get('followupRecordId'),
+      purpose: u.searchParams.get('purpose'),
+    }
+  } catch {
+    return {}
+  }
+}
 
 async function openSheet(mode: CockpitSheetMode, peopleId?: string, observationsSub?: string) {
   const id = peopleId || focusPeopleId.value
@@ -2313,12 +2548,48 @@ async function openSheet(mode: CockpitSheetMode, peopleId?: string, observations
   sheetPeopleId.value = id
   sheetMode.value = mode
   sheetObservationsSub.value = observationsSub
+  if (mode !== 'intake') {
+    sheetIntakeFollowupId.value = null
+    sheetIntakePurpose.value = null
+  }
   if (sameOpen || (sheetOpen.value && subChanged)) {
     // destroy-on-close：同页再开时强制重挂载，以便消费 Agent 草稿预填
     sheetOpen.value = false
     await nextTick()
   }
   sheetOpen.value = true
+}
+
+async function openIntakeSheet(
+  peopleId?: string,
+  opts?: { followupRecordId?: string | null; purpose?: string | null },
+) {
+  const nextFu = opts?.followupRecordId || null
+  const nextPurpose = opts?.purpose || null
+  const id = peopleId || focusPeopleId.value
+  const sameIntake =
+    sheetOpen.value &&
+    sheetMode.value === 'intake' &&
+    sheetPeopleId.value === id &&
+    sheetIntakeFollowupId.value === nextFu &&
+    sheetIntakePurpose.value === nextPurpose
+  sheetIntakeFollowupId.value = nextFu
+  sheetIntakePurpose.value = nextPurpose
+  if (sameIntake) {
+    sheetOpen.value = false
+    await nextTick()
+  }
+  await openSheet('intake', peopleId)
+}
+
+function onSheetOpenIntake(opts: { followupRecordId?: string; purpose?: string }) {
+  void openIntakeSheet(sheetPeopleId.value || focusPeopleId.value || undefined, opts)
+}
+
+async function onIntakeSubmitted() {
+  const id = sheetPeopleId.value || focusPeopleId.value
+  sheetOpen.value = false
+  if (id) await refreshAfterTaskChange(id)
 }
 
 async function refreshBriefing() {
@@ -2378,10 +2649,11 @@ function goReports() {
   openSheet('reports')
 }
 function onReportPublished() {
+  const id = sheetPeopleId.value || focusPeopleId.value
+  stickyCapability.value = null
   sheetOpen.value = false
-  tab.value = 'watch'
-  void refreshBriefing()
-  void refreshAfterTaskChange(focusPeopleId.value)
+  // 刷新焦点后按剩余草稿结算；只灰掉已发布的那份，其它审阅按钮保留
+  void refreshAfterTaskChange(id)
 }
 function goObservations() {
   openSheet('observations')
@@ -3033,9 +3305,12 @@ onUnmounted(() => {
                 <p class="briefing-loading-hint">正在生成今日简报…</p>
               </div>
               <div v-else class="briefing-text md-body" v-html="messageHtml(briefingMsg)" />
-              <div v-if="briefingMsg.actions?.length" class="bubble-actions">
+              <div
+                v-if="briefingMsg.actions?.length"
+                class="bubble-actions"
+              >
                 <button
-                  v-for="(a, ai) in briefingMsg.actions"
+                  v-for="(a, ai) in shownActions(briefingMsg.actions || [], 'briefing', 0)"
                   :key="ai"
                   type="button"
                   class="action-chip"
@@ -3044,10 +3319,32 @@ onUnmounted(() => {
                     do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
                     done: a.runState === 'done',
                   }"
+                  :title="a.label"
                   :disabled="a.runState === 'busy' || a.runState === 'done'"
                   @click="runAction(a)"
                 >
-                  {{ a.runState === 'busy' ? '处理中…' : a.label }}
+                  <span class="action-chip-text">
+                    {{ a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label) }}
+                  </span>
+                </button>
+                <button
+                  v-if="hiddenActionCount(briefingMsg.actions || [], 'briefing', 0)"
+                  type="button"
+                  class="action-chip more"
+                  @click="toggleActionList('briefing', 0)"
+                >
+                  展开其余 {{ hiddenActionCount(briefingMsg.actions || [], 'briefing', 0) }} 项
+                </button>
+                <button
+                  v-else-if="
+                    isActionListExpanded('briefing', 0) &&
+                    displayActions(briefingMsg.actions || []).length > ACTION_CHIP_PREVIEW
+                  "
+                  type="button"
+                  class="action-chip more"
+                  @click="toggleActionList('briefing', 0)"
+                >
+                  收起
                 </button>
               </div>
             </template>
@@ -3121,9 +3418,12 @@ onUnmounted(() => {
                 :people-id="focusPeopleId"
                 :gender="focus?.gender"
               />
-              <div v-if="visibleActions(msg).length" class="bubble-actions">
+              <div
+                v-if="visibleActions(msg).length"
+                class="bubble-actions"
+              >
                 <button
-                  v-for="(a, ai) in visibleActions(msg)"
+                  v-for="(a, ai) in shownActions(visibleActions(msg), 'thread', idx)"
                   :key="ai"
                   type="button"
                   class="action-chip"
@@ -3132,10 +3432,32 @@ onUnmounted(() => {
                     do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
                     done: a.runState === 'done',
                   }"
+                  :title="a.label"
                   :disabled="a.runState === 'busy' || a.runState === 'done'"
                   @click="runAction(a)"
                 >
-                  {{ a.runState === 'busy' ? '处理中…' : a.label }}
+                  <span class="action-chip-text">
+                    {{ a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label) }}
+                  </span>
+                </button>
+                <button
+                  v-if="hiddenActionCount(visibleActions(msg), 'thread', idx)"
+                  type="button"
+                  class="action-chip more"
+                  @click="toggleActionList('thread', idx)"
+                >
+                  展开其余 {{ hiddenActionCount(visibleActions(msg), 'thread', idx) }} 项
+                </button>
+                <button
+                  v-else-if="
+                    isActionListExpanded('thread', idx) &&
+                    displayActions(visibleActions(msg)).length > ACTION_CHIP_PREVIEW
+                  "
+                  type="button"
+                  class="action-chip more"
+                  @click="toggleActionList('thread', idx)"
+                >
+                  收起
                 </button>
               </div>
             </div>
@@ -3626,9 +3948,13 @@ onUnmounted(() => {
       :people-id="sheetPeopleId"
       :mode="sheetMode"
       :observations-sub="sheetObservationsSub"
+      :intake-followup-record-id="sheetIntakeFollowupId"
+      :intake-purpose="sheetIntakePurpose"
       :patient-name="focus?.displayName"
       @published="onReportPublished"
       @care-plan-published="onCarePlanPublishedFromSheet"
+      @open-intake="onSheetOpenIntake"
+      @intake-submitted="onIntakeSubmitted"
     />
 
     <WorkspaceTaskFormDialog
@@ -3636,6 +3962,13 @@ onUnmounted(() => {
       @closed="onTaskFormClosed"
       @submitted="onTaskFormSubmitted"
       @saved="onTaskFormSaved"
+      @open-intake="
+        (opts) => {
+          void openIntakeSheet(opts.peopleId, {
+            followupRecordId: opts.followupRecordId,
+          })
+        }
+      "
     />
 
     <JoinCareTeamDialog
@@ -5164,6 +5497,7 @@ onUnmounted(() => {
   margin-top: 10px;
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
 }
 
@@ -5172,11 +5506,22 @@ onUnmounted(() => {
   background: #fff;
   color: var(--ink-700);
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 5px 11px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: var(--admin-transition);
+  max-width: min(100%, 11.5em);
+  text-align: center;
+  line-height: 1.3;
+}
+
+.action-chip-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .action-chip:hover {
@@ -5200,6 +5545,20 @@ onUnmounted(() => {
   border-color: var(--brand-300, #93c5fd);
   color: var(--brand-600);
   background: var(--brand-50);
+}
+
+.action-chip.more {
+  border-style: dashed;
+  color: var(--ink-500);
+  background: transparent;
+  max-width: none;
+  padding-inline: 10px;
+}
+
+.action-chip.more:hover {
+  color: var(--brand-700, #0f766e);
+  border-color: var(--brand-400, #2dd4bf);
+  background: color-mix(in srgb, var(--brand-500, #0d9488) 6%, #fff);
 }
 
 .action-chip:disabled {

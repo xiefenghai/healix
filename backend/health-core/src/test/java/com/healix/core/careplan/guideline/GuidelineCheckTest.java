@@ -60,7 +60,7 @@ class GuidelineCheckTest {
                 GuidelineCheck.apply(exercise(20, "MODERATE", 3), diet(), execution("BLOOD_PRESSURE"), match, false);
         SafetyFlagDto target = flag(flags, GuidelineCheck.WARN_TARGET);
         assertThat(target.level()).isEqualTo("WARN");
-        assertThat(target.message()).contains("每周约 60 分钟");
+        assertThat(target.message()).contains("中等强度每周约 60 分钟");
         assertThat(flags).noneMatch(f -> f.code().equals(GuidelineCheck.ERR_SAFETY));
     }
 
@@ -68,6 +68,21 @@ class GuidelineCheckTest {
     void vigorousCountsDoubleTowardsWeeklyTarget() {
         assertThat(GuidelineCheck.weeklyModerateMinutes(exercise(25, "VIGOROUS", 3))).isEqualTo(150);
         assertThat(GuidelineCheck.weeklyModerateMinutes(exercise(60, "LIGHT", 7))).isZero();
+        assertThat(GuidelineCheck.weeklyLightMinutes(exercise(60, "LIGHT", 7))).isEqualTo(420);
+    }
+
+    @Test
+    void lightOnlyWeeklyTargetMentionsLightMinutes() {
+        GuidelineMatch match = match(Set.of("OBESITY"), false);
+        List<SafetyFlagDto> flags =
+                GuidelineCheck.apply(exercise(30, "LIGHT", 5), diet(), execution(), match, false);
+        SafetyFlagDto target = flag(flags, GuidelineCheck.WARN_TARGET);
+        assertThat(target.message())
+                .contains("中等强度约 0 分钟")
+                .contains("低强度约 150 分钟")
+                .contains("个体化");
+        // 肥胖 + 身体活动两本指南同一量化，合并为一条
+        assertThat(target.message().split("「每周中等强度运动")).hasSize(2);
     }
 
     @Test

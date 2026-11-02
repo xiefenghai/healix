@@ -2,7 +2,7 @@
   "code": "CONSENT",
   "version": 1,
   "title": "隐私授权",
-  "script": "您刚才提供的健康信息，我们只会用于为您制定和调整健康管理方案，并严格保密。请问您是否同意我们这样处理？",
+  "script": "您刚才说的这些健康信息，我们只会用来帮您定方案、做调整，也会严格保密。您看这样处理可以吗？",
   "items": [
     {
       "field": "consent.sensitiveHealth",

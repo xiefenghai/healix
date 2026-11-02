@@ -21,8 +21,6 @@ import {
   validateFollowupSection,
   type FollowupSection,
 } from '../../shared/followup-labels'
-import { openInNewTab } from '../../shared/open-route'
-
 interface FollowupItem {
   id: string
   peopleId: string
@@ -47,11 +45,18 @@ const props = defineProps<{
   /** 驾驶舱抽屉等场景传入；不传则走路由 params */
   peopleId?: string
 }>()
+const emit = defineEmits<{
+  'open-intake': [opts: { followupRecordId?: string; purpose?: string }]
+}>()
 const peopleId = () => String(props.peopleId || route.params.peopleId || '')
 const loading = ref(false)
 
+/** 驾驶舱抽屉内 emit；患者页同标签跳转问卷 */
 function goIntake(row: FollowupItem) {
-  openInNewTab(router, {
+  const opts = { followupRecordId: row.id }
+  emit('open-intake', opts)
+  if (props.peopleId) return
+  void router.push({
     path: `/workspace/patients/${peopleId()}/intake`,
     query: { followupRecordId: row.id },
   })
@@ -136,7 +141,7 @@ watch(
   () => createForm.followupType,
   (t) => {
     resetSection(createForm)
-    // 首诊只能先建待办，再在全屏工作台完成
+    // 首诊只能先建待办，再在问卷工作台完成
     if (t === 'ONBOARDING') {
       createForm.completeNow = false
       createForm.createTask = true
@@ -149,7 +154,7 @@ async function submitCreate() {
     ElMessage.warning('请选择随访类型')
     return
   }
-  // 首诊：只建 OPEN 随访，随后跳转全屏工作台
+  // 首诊：只建 OPEN 随访，随后打开问卷工作台
   if (createForm.followupType === 'ONBOARDING') {
     submitting.value = true
     try {
@@ -168,10 +173,13 @@ async function submitCreate() {
       notifyCockpitTasksPossiblyChanged(peopleId())
       const id = res.data?.id
       if (id) {
-        openInNewTab(router, {
-          path: `/workspace/patients/${peopleId()}/intake`,
-          query: { followupRecordId: id },
-        })
+        emit('open-intake', { followupRecordId: id })
+        if (!props.peopleId) {
+          void router.push({
+            path: `/workspace/patients/${peopleId()}/intake`,
+            query: { followupRecordId: id },
+          })
+        }
         ElMessage.success('已打开首诊工作台')
       } else {
         ElMessage.success('已创建首诊待办，请点「开始首诊」')
@@ -365,7 +373,7 @@ async function submitComplete() {
     return
   }
   if (completeForm.followupType === 'ONBOARDING') {
-    ElMessage.warning('首诊请在全屏工作台提交问卷完成')
+    ElMessage.warning('首诊请在问卷工作台提交完成')
     return
   }
   submitting.value = true

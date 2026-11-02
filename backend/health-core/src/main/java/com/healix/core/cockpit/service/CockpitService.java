@@ -402,6 +402,12 @@ public class CockpitService {
             brief.setOverdue(isOverdue(task));
             brief.setDueAt(task.getDueAt());
             brief.setTaskTypeLabel(taskLabel(task, type));
+            if (type == WorkspaceTaskType.FOLLOW_UP) {
+                String ft = WorkspaceTaskLabels.followupTypeFromPayload(task.getPayloadJson());
+                if (StringUtils.hasText(ft)) {
+                    brief.setFollowupType(ft);
+                }
+            }
             dto.getOpenTasks().add(brief);
         }
         fillPendingDrafts(dto, tenantId, orgId, peopleId);

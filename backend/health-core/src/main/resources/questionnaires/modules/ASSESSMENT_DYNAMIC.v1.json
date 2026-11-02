@@ -2,7 +2,7 @@
   "code": "ASSESSMENT_DYNAMIC",
   "version": 1,
   "title": "评估补填",
-  "script": "根据刚才的评估，还有几项信息想跟您再确认一下，补全后方案会更稳妥。",
+  "script": "根据刚才聊的，还有几项想跟您再确认一下，补全后定方案会更稳妥。",
   "dynamic": true,
   "items": []
 }

@@ -62,8 +62,17 @@ const AVATAR_COLORS = [
 const router = useRouter()
 const loading = ref(false)
 const list = ref<OrgPatientListItem[]>([])
-/** 无筛选基线列表，仅用于 KPI（复用现有 org-patients，不新增 API） */
-const baselineList = ref<OrgPatientListItem[]>([])
+const listTotal = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
+/** 顶栏 KPI（/org-patients/stats） */
+const stats = ref({
+  total: 0,
+  unassigned: 0,
+  watched: 0,
+  monthNew: 0,
+  todayNew: 0,
+})
 const teams = ref<CareTeamListItem[]>([])
 const keyword = ref('')
 const careTeamId = ref<string | ''>('')
@@ -108,44 +117,18 @@ const teamDialogPeopleName = ref<string | null>(null)
 const teamDialogCurrentTeamId = ref<string | null>(null)
 
 
-const totalCount = computed(() => baselineList.value.length)
-const unassignedCount = computed(
-  () => baselineList.value.filter((p) => !p.careTeamId).length,
-)
-const watchedCount = computed(
-  () => baselineList.value.filter((p) => !!p.watched).length,
-)
-const enrolledCount = computed(() => totalCount.value - unassignedCount.value)
-const monthNewCount = computed(() => {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = now.getMonth()
-  return baselineList.value.filter((p) => {
-    if (!p.joinedAt) return false
-    const d = new Date(p.joinedAt)
-    return !Number.isNaN(d.getTime()) && d.getFullYear() === y && d.getMonth() === m
-  }).length
-})
-const todayNewCount = computed(() => {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = now.getMonth()
-  const day = now.getDate()
-  return baselineList.value.filter((p) => {
-    if (!p.joinedAt) return false
-    const d = new Date(p.joinedAt)
-    return (
-      !Number.isNaN(d.getTime())
-      && d.getFullYear() === y
-      && d.getMonth() === m
-      && d.getDate() === day
-    )
-  }).length
-})
+const totalCount = computed(() => stats.value.total)
+const unassignedCount = computed(() => stats.value.unassigned)
+const watchedCount = computed(() => stats.value.watched)
+const enrolledCount = computed(() => Math.max(0, totalCount.value - unassignedCount.value))
+const monthNewCount = computed(() => stats.value.monthNew)
+const todayNewCount = computed(() => stats.value.todayNew)
 const enrolledRate = computed(() => {
   if (!totalCount.value) return '—'
   return `${Math.round((enrolledCount.value / totalCount.value) * 100)}%`
 })
+/** 表头条数：筛选结果总数（分页 total） */
+const filterTotal = computed(() => listTotal.value)
 
 type SummaryKey = 'all' | 'unassigned' | 'watched' | 'month' | 'adherence' | 'client'
 
@@ -331,8 +314,23 @@ async function loadTeams() {
 }
 
 async function loadBaseline() {
-  const res = await api<{ data: OrgPatientListItem[] }>('/api/b/v1/org-patients')
-  baselineList.value = res.data ?? []
+  const res = await api<{
+    data: {
+      total: number
+      unassigned: number
+      watched: number
+      monthNew: number
+      todayNew: number
+    }
+  }>('/api/b/v1/org-patients/stats')
+  const d = res.data
+  stats.value = {
+    total: d?.total ?? 0,
+    unassigned: d?.unassigned ?? 0,
+    watched: d?.watched ?? 0,
+    monthNew: d?.monthNew ?? 0,
+    todayNew: d?.todayNew ?? 0,
+  }
 }
 
 async function load() {
@@ -342,12 +340,13 @@ async function load() {
     if (adherenceFilter.value) {
       const q = new URLSearchParams()
       q.set('filter', adherenceFilter.value)
-      q.set('page', '1')
-      q.set('size', '200')
+      q.set('page', String(page.value))
+      q.set('size', String(pageSize.value))
       if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
       if (careTeamId.value !== '') q.set('careTeamId', String(careTeamId.value))
       const res = await api<{
         data: {
+          total: number
           items: Array<{
             peopleId: string
             displayName: string
@@ -356,6 +355,7 @@ async function load() {
           }>
         }
       }>(`/api/b/v1/adherence/patients?${q}`)
+      listTotal.value = res.data?.total ?? 0
       list.value = (res.data?.items ?? []).map((row) => ({
         peopleId: row.peopleId,
         displayName: row.displayName,
@@ -364,22 +364,28 @@ async function load() {
       }))
     } else {
       const q = new URLSearchParams()
+      q.set('page', String(page.value))
+      q.set('size', String(pageSize.value))
       if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
       if (unassignedOnly.value) q.set('unassigned', 'true')
       else if (careTeamId.value !== '') q.set('careTeamId', String(careTeamId.value))
       if (watchedOnly.value) q.set('watched', 'true')
-      const qs = q.toString()
-      const res = await api<{ data: OrgPatientListItem[] }>(`/api/b/v1/org-patients${qs ? `?${qs}` : ''}`)
-      list.value = res.data ?? []
-      if (!keyword.value.trim() && !unassignedOnly.value && !watchedOnly.value && careTeamId.value === '') {
-        baselineList.value = list.value
-      }
+      const res = await api<{ data: { total: number; items: OrgPatientListItem[] } }>(
+        `/api/b/v1/org-patients?${q}`,
+      )
+      listTotal.value = res.data?.total ?? 0
+      list.value = res.data?.items ?? []
     }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   } finally {
     loading.value = false
   }
+}
+
+function reloadFromFirstPage() {
+  page.value = 1
+  void load()
 }
 
 function onSummaryClick(key: SummaryKey) {
@@ -393,7 +399,7 @@ function onSummaryClick(key: SummaryKey) {
     unassignedOnly.value = false
     watchedOnly.value = false
     adherenceFilter.value = ''
-    void load()
+    reloadFromFirstPage()
     return
   }
   if (key === 'watched') {
@@ -402,7 +408,7 @@ function onSummaryClick(key: SummaryKey) {
     adherenceFilter.value = ''
     unassignedOnly.value = false
     watchedOnly.value = true
-    void load()
+    reloadFromFirstPage()
     return
   }
   if (key === 'unassigned') {
@@ -411,7 +417,7 @@ function onSummaryClick(key: SummaryKey) {
     adherenceFilter.value = ''
     watchedOnly.value = false
     unassignedOnly.value = true
-    void load()
+    reloadFromFirstPage()
   }
 }
 
@@ -624,7 +630,7 @@ onMounted(async () => {
           placeholder="搜索患者姓名 / 证件号"
           clearable
           class="toolbar-search"
-          @keyup.enter="load"
+          @keyup.enter="reloadFromFirstPage"
         />
         <el-select
           v-model="careTeamId"
@@ -648,7 +654,7 @@ onMounted(async () => {
         </el-select>
         <el-checkbox v-model="unassignedOnly" :disabled="adherenceMode">仅未入组</el-checkbox>
         <el-checkbox v-model="watchedOnly" :disabled="adherenceMode">仅重点关注</el-checkbox>
-        <el-button type="primary" @click="load">查询</el-button>
+        <el-button type="primary" @click="reloadFromFirstPage">查询</el-button>
       </div>
     </el-card>
 
@@ -658,8 +664,8 @@ onMounted(async () => {
           <div class="table-title">
             患者列表
             <span class="count">
-              · 共 {{ totalCount }} 条
-              <template v-if="list.length !== totalCount"> · 当前 {{ list.length }} 条</template>
+              · 共 {{ filterTotal }} 条
+              <template v-if="filterTotal !== totalCount"> · 在管 {{ totalCount }}</template>
             </span>
           </div>
         </div>
@@ -776,6 +782,22 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="!loading && list.length === 0" description="暂无患者" :image-size="72" />
+      <div v-if="filterTotal > 0" class="list-pagination">
+        <el-pagination
+          :current-page="page"
+          :page-size="pageSize"
+          :total="filterTotal"
+          layout="total, prev, pager, next"
+          background
+          @current-change="
+            (p: number) => {
+              page = p
+              void load()
+            }
+          "
+        />
+      </div>
     </el-card>
 
     <el-dialog v-model="archiveVisible" title="患者建档" width="560px">
@@ -1111,6 +1133,13 @@ onMounted(async () => {
   margin: 0 0 12px;
   color: var(--admin-muted);
   font-size: 13px;
+}
+
+.list-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding: 0 4px 4px;
 }
 
 .list-card :deep(.el-card__header) {

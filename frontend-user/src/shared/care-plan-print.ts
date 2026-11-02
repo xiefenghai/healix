@@ -102,6 +102,12 @@ const FREQUENCY_LABELS: Record<string, string> = {
   QOD: '隔日1次',
   QW: '每周1次',
   PRN: '必要时',
+  DAILY: '每日1次',
+  WEEKLY: '每周1次',
+  EVERY_WEEK: '每周1次',
+  BIWEEKLY: '每两周1次',
+  EVERY_2_WEEKS: '每两周1次',
+  MONTHLY: '每月1次',
 }
 
 const TIME_SLOT_LABELS: Record<string, string> = {
@@ -180,6 +186,14 @@ const EXERCISE_TYPE_LABELS: Record<string, string> = {
   POSITION_CHANGE: '体位变换',
   BREATHING: '呼吸训练',
   BREATHING_TRAINING: '呼吸训练',
+  LIGHT_INDOOR_ACTIVITY: '室内轻活动',
+  INDOOR_WALKING: '室内步行',
+  SLOW_WALKING: '慢走',
+  LIGHT_WALKING: '慢走',
+  LIGHT_ACTIVITY: '轻度活动',
+  SEDENTARY_BREAK: '久坐起身',
+  STANDING_BREAK: '久坐起身',
+  SIT_BREAK: '久坐起身',
   HOUSEWORK: '家务',
   GARDENING: '园艺',
   REST: '休息',

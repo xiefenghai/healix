@@ -66,6 +66,11 @@ const hypertensionGradeOptions = ref<DictItem[]>([])
 const hypertensionCvRiskOptions = ref<DictItem[]>([])
 const hypertensionSymptomOptions = ref<DictItem[]>([])
 const hypertensionEmergencyOptions = ref<DictItem[]>([])
+const obesityTypeOptions = ref<DictItem[]>([])
+const obesityClassOptions = ref<DictItem[]>([])
+const obesityCentralOptions = ref<DictItem[]>([])
+const obesityComplicationOptions = ref<DictItem[]>([])
+const obesityPriorInterventionOptions = ref<DictItem[]>([])
 const doseUnitOptions = ref<DictItem[]>([])
 const medicationUsageOptions = ref<DictItem[]>([])
 const medicationFrequencyOptions = ref<DictItem[]>([])
@@ -101,6 +106,13 @@ const revisionOptionMaps = computed<RevisionOptionMaps>(() => ({
   cvRiskStratification: dictItemsToMap(hypertensionCvRiskOptions.value),
   'hypertension.symptoms': dictItemsToMap(hypertensionSymptomOptions.value),
   'hypertension.emergencyComplications': dictItemsToMap(hypertensionEmergencyOptions.value),
+  obesityType: dictItemsToMap(obesityTypeOptions.value),
+  obesityClass: dictItemsToMap(obesityClassOptions.value),
+  centralObesity: dictItemsToMap(obesityCentralOptions.value),
+  'obesity.complications': dictItemsToMap(obesityComplicationOptions.value),
+  complications: dictItemsToMap(obesityComplicationOptions.value),
+  'obesity.priorInterventions': dictItemsToMap(obesityPriorInterventionOptions.value),
+  priorInterventions: dictItemsToMap(obesityPriorInterventionOptions.value),
   doseUnit: dictItemsToMap(doseUnitOptions.value),
   usageMethod: dictItemsToMap(medicationUsageOptions.value),
   frequency: dictItemsToMap(medicationFrequencyOptions.value),
@@ -158,6 +170,11 @@ async function loadDicts() {
     htnCvRisk,
     htnSymptoms,
     htnEmerg,
+    obType,
+    obClass,
+    obCentral,
+    obCompl,
+    obPrior,
     doseUnit,
     usage,
     frequency,
@@ -192,6 +209,13 @@ async function loadDicts() {
     api<{ data: DictItem[] }>(
       '/api/b/v1/dict?dictType=OPTION&parentCode=hypertensionEmergencyComplications',
     ),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityType'),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityClass'),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityCentral'),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityComplications'),
+    api<{ data: DictItem[] }>(
+      '/api/b/v1/dict?dictType=OPTION&parentCode=obesityPriorInterventions',
+    ),
     api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=doseUnit'),
     api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=medicationUsage'),
     api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=medicationFrequency'),
@@ -220,6 +244,11 @@ async function loadDicts() {
   hypertensionCvRiskOptions.value = htnCvRisk.data ?? []
   hypertensionSymptomOptions.value = htnSymptoms.data ?? []
   hypertensionEmergencyOptions.value = htnEmerg.data ?? []
+  obesityTypeOptions.value = obType.data ?? []
+  obesityClassOptions.value = obClass.data ?? []
+  obesityCentralOptions.value = obCentral.data ?? []
+  obesityComplicationOptions.value = obCompl.data ?? []
+  obesityPriorInterventionOptions.value = obPrior.data ?? []
   doseUnitOptions.value = doseUnit.data ?? []
   medicationUsageOptions.value = usage.data ?? []
   medicationFrequencyOptions.value = frequency.data ?? []

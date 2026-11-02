@@ -228,7 +228,7 @@ const INTAKE_FIELD_LABELS: Record<string, string> = {
   'goal.primaryAppeal': '核心诉求',
   'goal.mode': '目标类型',
   'goal.targetWeightKg': '目标体重',
-  'goal.targetDate': '目标日期',
+  'goal.targetDate': '希望多久达到体重目标',
   'goal.targetWaistCm': '腰围目标',
   'goal.targetHba1c': '糖化血红蛋白目标',
   'goal.targetFpg': '空腹血糖目标',
@@ -373,6 +373,93 @@ export interface IntakeAiSummaryResult {
   note?: string | null
 }
 
+/** 解析后的案头总结：概况 + 要点 / 风险 / 下一步 + 其它【】分节 */
+export interface IntakeAiSummaryParsed {
+  overview: string
+  keyPoints: string[]
+  risks: string[]
+  nextActions: string[]
+  otherSections: { title: string; items: string[] }[]
+}
+
+function emptyIntakeAiSummaryParsed(): IntakeAiSummaryParsed {
+  return { overview: '', keyPoints: [], risks: [], nextActions: [], otherSections: [] }
+}
+
+function extractSummaryItems(lines: string[]): string[] {
+  const items: string[] = []
+  for (const line of lines) {
+    const t = line.trim()
+    if (!t) continue
+    items.push(t.replace(/^[·•\-＊*]\s*/, '').trim())
+  }
+  return items.filter(Boolean)
+}
+
+/**
+ * 将落库的案头总结文本拆成分节，供 UI 分要点展示。
+ * 兼容 formatIntakeAiSummaryText 产出，以及模板兜底中的【基本情况】等标题。
+ */
+export function parseIntakeAiSummaryText(raw: unknown): IntakeAiSummaryParsed {
+  const text = String(raw ?? '').trim()
+  if (!text) return emptyIntakeAiSummaryParsed()
+
+  const buckets: { title: string | null; lines: string[] }[] = [{ title: null, lines: [] }]
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^【([^】]+)】\s*$/)
+    if (m) {
+      buckets.push({ title: m[1].trim(), lines: [] })
+      continue
+    }
+    buckets[buckets.length - 1].lines.push(line)
+  }
+
+  const out = emptyIntakeAiSummaryParsed()
+  for (const b of buckets) {
+    const items = extractSummaryItems(b.lines)
+    const prose = b.lines.join('\n').trim()
+    if (b.title == null) {
+      out.overview = prose
+      continue
+    }
+    const title = b.title
+    if (/要点/.test(title)) {
+      out.keyPoints.push(...items)
+    } else if (/风险|禁忌/.test(title)) {
+      out.risks.push(...items)
+    } else if (/下一步/.test(title) || /^建议/.test(title)) {
+      out.nextActions.push(...items)
+    } else {
+      out.otherSections.push({
+        title,
+        items: items.length ? items : prose ? [prose] : [],
+      })
+    }
+  }
+
+  // 无任何【】分节时整段作为概况，避免空白
+  if (
+    !out.overview &&
+    !out.keyPoints.length &&
+    !out.risks.length &&
+    !out.nextActions.length &&
+    !out.otherSections.length
+  ) {
+    out.overview = text
+  }
+  return out
+}
+
+export function hasParsedIntakeAiSummary(p: IntakeAiSummaryParsed): boolean {
+  return Boolean(
+    p.overview ||
+      p.keyPoints.length ||
+      p.risks.length ||
+      p.nextActions.length ||
+      p.otherSections.length,
+  )
+}
+
 /** 将 AI 结构化结果拼成案头可编辑条文（重点条目清晰） */
 export function formatIntakeAiSummaryText(draft: IntakeAiSummaryResult): string {
   const blocks: string[] = []
@@ -407,19 +494,49 @@ export async function generateIntakeAiSummary(id: string, answers?: Record<strin
 }
 
 export const FIELD_STAFF_AI_SUMMARY = 'staff.aiSummary'
+export const FIELD_ALLERGY_STATUS = 'allergy.status'
+export const FIELD_ALLERGY_FOOD = 'allergy.food'
+export const FIELD_ALLERGY_DRUG = 'allergy.drug'
 
 export function isAnswerEmpty(v: unknown): boolean {
   if (v == null) return true
   if (typeof v === 'string') return v.trim() === ''
   if (Array.isArray(v)) {
     if (v.length === 0) return true
-    // 用药明细：全是空药名视为未填
-    if (v.every((item) => item && typeof item === 'object' && 'drugName' in (item as object))) {
-      return v.every((item) => !String((item as { drugName?: unknown }).drugName || '').trim())
+    // 用药/过敏明细：全是空名称视为未填
+    if (
+      v.every(
+        (item) =>
+          item &&
+          typeof item === 'object' &&
+          ('drugName' in (item as object) || 'allergenName' in (item as object)),
+      )
+    ) {
+      return v.every((item) => {
+        const row = item as { drugName?: unknown; allergenName?: unknown }
+        return !String(row.drugName || row.allergenName || '').trim()
+      })
     }
     return false
   }
   if (typeof v === 'object') return Object.keys(v as object).length === 0
+  return false
+}
+
+/**
+ * 首诊题是否算已填。
+ * 过敏选「有」后食物/药物两类都会出现：一类已有明细时，另一类空视为「该类无」，避免总挂 1 项未填。
+ */
+export function isIntakeAnswerFilled(field: string, answers: Record<string, unknown>): boolean {
+  if (!isAnswerEmpty(answers[field])) return true
+  if (field === FIELD_ALLERGY_FOOD || field === FIELD_ALLERGY_DRUG) {
+    const status = String(answers[FIELD_ALLERGY_STATUS] ?? '')
+      .trim()
+      .toUpperCase()
+    if (status !== 'HAS') return false
+    const other = field === FIELD_ALLERGY_FOOD ? FIELD_ALLERGY_DRUG : FIELD_ALLERGY_FOOD
+    return !isAnswerEmpty(answers[other])
+  }
   return false
 }
 
@@ -449,7 +566,8 @@ export function matchShowIf(
     return actual.some((a) => showIf.in!.some((w) => w.toLowerCase() === a.toLowerCase()))
   }
   if (showIf.notIn) {
-    if (!actual.length) return true
+    // 与后端 ShowIf 一致：未作答不算命中 notIn，避免追问题空挂
+    if (!actual.length) return false
     return actual.every((a) => showIf.notIn!.every((w) => w.toLowerCase() !== a.toLowerCase()))
   }
   if (showIf.intersects) {
@@ -475,10 +593,51 @@ function compareNum(num: number, op: string, thr: number): boolean {
   }
 }
 
-export function matchHighlightWhen(when: IntakeHighlightWhen | null | undefined, answer: unknown): boolean {
+function ageYearsFromBirthday(raw: unknown): number | null {
+  if (raw == null || raw === '') return null
+  const s = String(raw).trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null
+  const b = new Date(`${s}T00:00:00`)
+  if (Number.isNaN(b.getTime())) return null
+  const now = new Date()
+  let age = now.getFullYear() - b.getFullYear()
+  const md = now.getMonth() - b.getMonth()
+  if (md < 0 || (md === 0 && now.getDate() < b.getDate())) age -= 1
+  return age >= 0 && age < 150 ? age : null
+}
+
+/** 可前端即时算出的 computed；缺身高/生日等依赖时返回 null → 不高亮 */
+function resolveHighlightComputed(
+  name: string,
+  answer: unknown,
+  answers?: Record<string, unknown>,
+): number | null {
+  const n = String(name || '').trim()
+  if (n === 'BMI') {
+    return calcBmi(answers?.['metric.HEIGHT'], answers?.['metric.WEIGHT'] ?? answer)
+  }
+  if (n === '目标BMI') {
+    return calcBmi(answers?.['metric.HEIGHT'], answer)
+  }
+  if (n === '年龄') {
+    return ageYearsFromBirthday(answers?.['profile.birthday'] ?? answer)
+  }
+  return null
+}
+
+export function matchHighlightWhen(
+  when: IntakeHighlightWhen | null | undefined,
+  answer: unknown,
+  answers?: Record<string, unknown>,
+): boolean {
   if (!when) return false
   if (when.always) return true
-  if (when.text != null || when.computed != null) return false
+  if (when.text != null) return false
+  if (when.computed != null) {
+    const num = resolveHighlightComputed(when.computed, answer, answers)
+    if (num == null || when.op == null || when.value == null) return false
+    return compareNum(num, when.op, Number(when.value))
+  }
   const actual = flattenAnswer(answer)
   if (when.eq != null) {
     return actual.length === 1 && actual[0].toLowerCase() === when.eq.toLowerCase()
@@ -502,6 +661,64 @@ export function matchHighlightWhen(when: IntakeHighlightWhen | null | undefined,
   return false
 }
 
+function highlightSeverityRank(severity?: string | null): number {
+  switch (String(severity || '').toUpperCase()) {
+    case 'BLOCK':
+      return 3
+    case 'REFER':
+      return 2
+    case 'CAUTION':
+      return 1
+    default:
+      return 0
+  }
+}
+
+/** 同一题多条规则命中时合并为一张卡：取最高级别，方案影响去重拼接 */
+export function collapseHighlightsByField(hits: IntakeHighlightHit[]): IntakeHighlightHit[] {
+  const map = new Map<string, IntakeHighlightHit>()
+  for (const h of hits) {
+    if (!h?.field) continue
+    const prev = map.get(h.field)
+    if (!prev) {
+      map.set(h.field, { ...h })
+      continue
+    }
+    const prevRank = highlightSeverityRank(prev.severity)
+    const nextRank = highlightSeverityRank(h.severity)
+    const severity = nextRank > prevRank ? h.severity : prev.severity
+    const effects = [prev.planEffect, h.planEffect]
+      .map((x) => (x || '').trim())
+      .filter(Boolean)
+    const planEffect = [...new Set(effects)].join('；') || null
+    const follows = [prev.followUp, h.followUp]
+      .map((x) => (x || '').trim())
+      .filter(Boolean)
+    const followUp = [...new Set(follows)].join(' ') || null
+    map.set(h.field, {
+      field: h.field,
+      label: h.label || prev.label,
+      severity,
+      planEffect,
+      followUp,
+    })
+  }
+  return [...map.values()]
+}
+
+const LOCAL_COMPUTED = new Set(['BMI', '目标BMI', '年龄'])
+
+/** 规则均可在前端即时判定（含 BMI / 目标BMI / 年龄；无 text）→ 侧栏以本地结果为准 */
+export function isLocallyOwnedHighlightField(item: IntakeItemView): boolean {
+  const rules = item.highlights || []
+  if (!rules.length) return false
+  return rules.every((r) => {
+    if (r.when?.text != null) return false
+    if (r.when?.computed != null) return LOCAL_COMPUTED.has(String(r.when.computed))
+    return true
+  })
+}
+
 export function collectLocalHighlights(
   modules: IntakeModuleView[],
   answers: Record<string, unknown>,
@@ -512,7 +729,7 @@ export function collectLocalHighlights(
     for (const item of m.items) {
       if (!matchShowIf(item.showIf, answers)) continue
       for (const rule of item.highlights || []) {
-        if (matchHighlightWhen(rule.when, answers[item.field])) {
+        if (matchHighlightWhen(rule.when, answers[item.field], answers)) {
           out.push({
             field: item.field,
             label: item.label,
@@ -524,7 +741,27 @@ export function collectLocalHighlights(
       }
     }
   }
-  return out
+  return collapseHighlightsByField(out)
+}
+
+/**
+ * 侧栏即时高亮：本地可判定的题完全听 answers；
+ * 仅保留服务端对 computed/text 等前端无法判的题的命中。
+ */
+export function mergeLiveHighlights(
+  modules: IntakeModuleView[],
+  answers: Record<string, unknown>,
+  serverHits: IntakeHighlightHit[] | null | undefined,
+): IntakeHighlightHit[] {
+  const local = collectLocalHighlights(modules, answers)
+  const localOwned = new Set<string>()
+  for (const m of modules) {
+    for (const item of m.items || []) {
+      if (isLocallyOwnedHighlightField(item)) localOwned.add(item.field)
+    }
+  }
+  const serverKept = (serverHits || []).filter((h) => h?.field && !localOwned.has(h.field))
+  return collapseHighlightsByField([...serverKept, ...local])
 }
 
 /** 预填写入 answers：仅空位 */
@@ -767,6 +1004,13 @@ const OPTION_SET_FALLBACKS: Record<string, string[]> = {
   ],
   bodyAnxiety: ['NONE=不会', 'MILD=偶尔', 'SEVERE=经常，比较严重'],
   expectedPace: ['STEADY=稳一点就好', 'MODERATE=适中', 'ASAP=越快越好'],
+  weightTargetHorizon: [
+    'M1=1 个月',
+    'M3=3 个月',
+    'M6=6 个月',
+    'M12=约 1 年',
+    'FLEXIBLE=不着急，先稳住',
+  ],
   primaryAppeal: [
     'GLUCOSE=控糖（糖尿病）',
     'BP=控压（高血压）',
@@ -1081,6 +1325,7 @@ const FIELD_OPTION_PARENT: Record<string, string> = {
   'goal.primaryAppeal': 'primaryAppeal',
   'goal.doctorAdvised': 'yesNo',
   'goal.mode': 'goalMode',
+  'goal.targetDate': 'weightTargetHorizon',
   'disease.diabetes.type': 'dmType',
   'disease.diabetes.hypoglycemia': 'dmHypoglycemia',
   'disease.diabetes.monitorFreq': 'dmMonitorFreq',

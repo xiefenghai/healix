@@ -35,30 +35,23 @@
       "highlights": [
         {
           "when": {
-            "always": true
+            "computed": "目标BMI",
+            "op": "<",
+            "value": 18.5
           },
           "severity": "CAUTION",
-          "planEffect": "校验：目标 BMI < 18.5 不可提交；命中阻断级高亮时不可设"
+          "planEffect": "按当前身高计算，目标体重对应 BMI < 18.5，请先补身高或上调目标体重"
         }
       ]
     },
     {
       "field": "goal.targetDate",
-      "label": "希望什么时候达到？",
+      "label": "希望多久达到体重目标？",
       "level": "FIRST_VISIT",
       "showIf": {
         "field": "goal.mode",
         "eq": "LOSS"
-      },
-      "highlights": [
-        {
-          "when": {
-            "always": true
-          },
-          "severity": "CAUTION",
-          "planEffect": "校验：平均每周 > 约 1 kg → 警告：建议延长期限或调整目标"
-        }
-      ]
+      }
     },
     {
       "field": "goal.targetWaistCm",

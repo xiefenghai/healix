@@ -1,5 +1,6 @@
 /** 智能体 CALL_API 共用执行：催办 / 建随访 / 发布报告 / 发布方案 / 发沟通 / 领任务 / 办结待办 */
 import { ElMessageBox } from 'element-plus'
+import { confirmCarePlanWarnAck } from './care-plan-warn-ack'
 import { api } from './http'
 
 export type CallApiPayload = Record<string, unknown> | undefined
@@ -183,11 +184,11 @@ export async function runAgentCallApi(
     const warns = flags.filter((f) => (f.level || '').toUpperCase() === 'WARN')
     const ack = warns.map((f) => f.code).filter((c): c is string => !!c)
     if (warns.length) {
-      await ElMessageBox.confirm(
-        `存在警告：\n${warns.map((f) => `· ${f.message || f.code}`).join('\n')}\n\n确认后继续发布？`,
-        '确认发布方案',
-        { type: 'warning', confirmButtonText: '确认发布' },
-      )
+      await confirmCarePlanWarnAck(warns, {
+        title: '确认发布方案',
+        confirmText: '确认发布',
+        cancelText: '取消',
+      })
     } else {
       await ElMessageBox.confirm('确认将当前方案草稿发布给患者？', '确认发布方案', {
         type: 'warning',

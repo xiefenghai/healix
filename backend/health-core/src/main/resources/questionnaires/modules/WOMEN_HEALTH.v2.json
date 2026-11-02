@@ -2,7 +2,7 @@
   "code": "WOMEN_HEALTH",
   "version": 2,
   "title": "女性健康",
-  "script": "有几个和女性健康相关的问题，主要是为了方案更安全。不方便说的可以跳过。",
+  "script": "有几个和女性健康相关的问题，主要是为了方案更安全。不方便说的直接跳过就行。",
   "items": [
     {
       "field": "basic.women.reproductiveStatus",

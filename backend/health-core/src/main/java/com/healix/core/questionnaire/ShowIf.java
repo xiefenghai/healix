@@ -69,8 +69,9 @@ public record ShowIf(
             return actual.stream().anyMatch(a -> containsIgnoreCase(in, a));
         }
         if (notIn != null) {
+            // 未作答时不算「不在列表中」——避免追问/后补题在父题为空时被误算进待补
             if (actual.isEmpty()) {
-                return true;
+                return false;
             }
             return actual.stream().noneMatch(a -> containsIgnoreCase(notIn, a));
         }

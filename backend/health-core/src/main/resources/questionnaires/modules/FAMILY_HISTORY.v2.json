@@ -2,7 +2,7 @@
   "code": "FAMILY_HISTORY",
   "version": 2,
   "title": "家族史",
-  "script": "方便的话，了解一下父母、兄弟姐妹或子女有没有比较常见的慢性病。这能帮我们更早留意相关风险，不是要给您下结论。",
+  "script": "方便的话，父母、兄弟姐妹有没有比较常见的慢性病？主要是帮我们早点留意风险，不是给您下结论。",
   "items": [
     {
       "field": "basic.familyHistoryStatus",

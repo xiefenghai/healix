@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
-import { openInNewTab } from '../../shared/open-route'
 import {
   formatBaselineMetric,
   formatFollowupContactTarget,
@@ -132,7 +131,7 @@ function sectionText(key: string) {
 function openIntakeDetail() {
   const id = sectionText('intakeResponseId')
   if (!id) return
-  openInNewTab(router, `/workspace/intake-responses/${id}`)
+  void router.push(`/workspace/intake-responses/${id}`)
 }
 
 function contentText(key: string) {

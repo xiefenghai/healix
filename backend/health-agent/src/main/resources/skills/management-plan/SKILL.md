@@ -196,11 +196,13 @@ display_name: 管理方案生成
 
 1. **运动任务**：从 `weeklyPlan` 提炼 1–2 条高频任务，`category=EXERCISE`。标题要点名动作（如「餐后步行 30 分钟」「靠墙静蹲与坐姿抬腿 20 分钟」），不要只写「抗阻训练」「有氧运动」「拉伸训练」这类患者不知道做什么的大类
 2. **饮食任务**：至少 1 条「记录三餐与加餐」等，`category=DIET`（**不要**再把饮水写进 DIET）
-3. **饮水任务**：无限水禁忌时编入 1 条 `code=WATER_LOG`，`category=WATER`，`frequency=QD`，填写 `targetMl`（有体重用约 `kg×30` 并落在 1200–2000，否则 1600；标题可写「足量饮水，每日约 {targetMl} ml」）
+3. **饮水任务**：无限水禁忌时编入 1 条 `code=WATER_LOG`，`category=WATER`，`frequency=QD`，`timeSlot=ALL`（全天少量多次），填写 `targetMl`（有体重用约 `kg×30` 并落在 1200–2000，否则 1600；标题可写「足量饮水，每日约 {targetMl} ml」）
 4. **限水**：上下文出现心衰、慢性肾病、医嘱限水等 → **不要生成** `WATER` 任务（由健管师决定是否手加）
 5. **糖尿病标签**：增加「按时监测血糖」`relatedRef=BLOOD_GLUCOSE`
 6. **高血压标签**：增加「家庭血压测量」`relatedRef=BLOOD_PRESSURE`
-6b. **肥胖标签**：增加「记录体重」`code=WEIGHT_LOG`，`relatedRef=WEIGHT`，`frequency=QD`
+6b. **肥胖 / 减重方向**：增加「记录体重」`code=WEIGHT_LOG`，`relatedRef=WEIGHT`
+    - 默认 `frequency=QD`（每日）
+    - 若 `patientContext.goals.weighFrequency=WEEKLY`，或 `highlightGuidance` / 高亮命中进食障碍、身材焦虑 → **必须** `frequency=QW`（每周1次），标题写成「每周固定一天晨起空腹称体重」；**禁止**标题写每周一次却把 `frequency` 标成 `TIW`/`QD`
 7. **睡眠任务**：编入 1 条 `code=SLEEP_LOG`，`category=SLEEP`，`frequency=QD`，标题如「记录昨夜睡眠」
 8. **心情任务**：编入 1 条 `code=MOOD_LOG`，`category=MOOD`，`frequency=QD`，标题如「记录今日心情」
 9. 任务数量建议 4–8 条，避免过多导致依从性差
@@ -261,11 +263,14 @@ display_name: 管理方案生成
   - 无减重方向时不要默认「每日称重 / 快速减脂」话术
 - `patientContext.diabetesClinical` / `hypertensionClinical`（首诊慢病专属要点：分型、低血糖、监测频率、用药规律、家庭自测、晨峰等）→ 运动强度、监测任务与饮食限盐/控糖
 - `patientContext.basicArchive` 生活方式摘要（饮食含口味/含糖饮料、运动习惯、睡眠烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史等，含 `*Label`）→ 个体化强度与示例餐
-- `patientContext.intakeBrief`（最近首诊/待补）与 `highlights`：
+- `patientContext.intakeBrief`（最近首诊/待补）与高亮：
   - `keyAnswers`：核心诉求、管理方向、糖/压/体重目标与临床关键答（带 `label`/`display`），优先落实，**勿整段照抄**到患者正文
   - 有 `aiSummary` 时吸收要点、风险与下一步
-  - `highlights` 命中进食障碍 / 身材焦虑 / 运动限制 / 孕哺等 → 节奏更保守、称重勿过度强调每日、运动避禁忌
-  - `rationale` 可写「依据首诊…」，患者正文仍用行动化表述
+  - **`highlightGuidance`（优先）**：首诊「高亮追问 / 方案影响」的模型可读版；每条含 `severityLabel`（谨慎/转介/阻断）、`mustApply`（须写入运动/饮食/执行的约束）、可选 `clinicianNote`（追问话术，只吸收约束、**勿照抄**进患者正文）、`source`（题干）
+    - `mustApply` 为硬约束：对应写进 `exercise`（强度/禁忌）、`diet`（限盐/控糖等）、`execution`（监测/用药提醒）与 `goalSummary`
+    - `severityLabel=转介/阻断` → 节奏更保守；阻断减重时不得以快速减重为主叙事
+  - 兼容原始 `highlights`（`field`/`severity`/`planEffect`/`followUp`）；进食障碍 / 身材焦虑 / 运动限制 / 孕哺等 → 称重勿过度强调每日、运动避禁忌
+  - `rationale` 可写「依据首诊高亮…」，患者正文仍用行动化表述
 - 过敏原 → 写入 `allergensAvoid`，且不得出现在 `recommended`、`sampleDay` 与 `sampleWeek`（含 `swapHint`；以 `foodAllergyGuard` 为准）
 - 限水相关病情 → 不要生成 `WATER` 任务
 - 最近指标（血糖、血压、体重等）→ 调整运动强度与总结表述

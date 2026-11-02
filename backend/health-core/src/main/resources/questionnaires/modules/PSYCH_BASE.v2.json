@@ -2,7 +2,7 @@
   "code": "PSYCH_BASE",
   "version": 2,
   "title": "心理与情绪",
-  "script": "心情、压力也会影响饮食、睡眠和坚持度。如果您愿意，我们简单聊几句；不想说的可以跳过。",
+  "script": "心情、压力有时也会影响吃、睡和坚持度。愿意的话我们简单聊几句；不想说的可以跳过。",
   "items": [
     {
       "field": "basic.psych.readiness",

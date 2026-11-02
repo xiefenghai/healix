@@ -22,7 +22,7 @@ import {
 } from '../../shared/intake'
 import { loadAllergyCatalog } from '../../shared/allergy'
 import { api } from '../../shared/http'
-import { openInNewTab } from '../../shared/open-route'
+import IntakeAiSummaryBlocks from './IntakeAiSummaryBlocks.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -141,7 +141,7 @@ function goPatient() {
 function openFillAgain() {
   const pid = view.value?.peopleId
   if (!pid) return
-  openInNewTab(router, `/workspace/patients/${pid}/intake`)
+  void router.push(`/workspace/patients/${pid}/intake`)
 }
 
 onMounted(() => {
@@ -185,7 +185,7 @@ onMounted(() => {
       <main class="main">
         <section v-if="aiSummary" class="card ai-card">
           <h2>AI 总结</h2>
-          <pre class="ai-text">{{ aiSummary }}</pre>
+          <IntakeAiSummaryBlocks :text="aiSummary" />
         </section>
 
         <section v-if="highlights.length" class="card">
@@ -349,15 +349,6 @@ onMounted(() => {
 .ai-card {
   border-color: #99f6e4;
   background: #f0fdfa;
-}
-
-.ai-text {
-  margin: 0;
-  white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.55;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: var(--ink-700);
 }
 
 .q {

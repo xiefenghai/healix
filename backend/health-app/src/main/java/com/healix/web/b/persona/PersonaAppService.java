@@ -111,25 +111,28 @@ public class PersonaAppService {
     }
 
     /** 首诊/待补提交后异步：持久化维度；未锁则生成叙事。 */
-    public void scheduleAfterIntakeSubmit(String tenantId, String orgId, String peopleId) {
+    public void scheduleAfterIntakeSubmit(
+            String tenantId, String orgId, String peopleId, String staffId, String accountId) {
         CompletableFuture.runAsync(() -> {
             try {
-                afterIntakeSubmit(tenantId, orgId, peopleId);
+                afterIntakeSubmit(tenantId, orgId, peopleId, staffId, accountId);
             } catch (Exception e) {
                 log.warn("[Persona] after intake failed peopleId={}: {}", peopleId, e.getMessage());
             }
         });
     }
 
-    void afterIntakeSubmit(String tenantId, String orgId, String peopleId) {
+    void afterIntakeSubmit(
+            String tenantId, String orgId, String peopleId, String staffId, String accountId) {
         PeoplePersona row = personaService.findRow(tenantId, peopleId);
         if (personaService.isStaffLocked(row)) {
             ObjectNode dimensions = personaService.aggregateDimensions(tenantId, orgId, peopleId);
-            personaService.persistRefresh(tenantId, orgId, peopleId, dimensions, null, true, null, null);
+            personaService.persistRefresh(
+                    tenantId, orgId, peopleId, dimensions, null, true, staffId, accountId);
             return;
         }
         try {
-            generate(tenantId, orgId, peopleId, null, null);
+            generate(tenantId, orgId, peopleId, staffId, accountId);
         } catch (BusinessException e) {
             if (e.getCode() == 409) {
                 log.info("[Persona] skip intake generate, already GENERATING peopleId={}", peopleId);
@@ -143,7 +146,11 @@ public class PersonaAppService {
         } catch (BusinessException e) {
             return PersonaTemplateSupport.templateNarrative(dimensions);
         }
+        boolean intakeDone = dimensions != null && dimensions.path("goals").path("fromIntake").asBoolean(false);
         String intakeSummary = loadLatestIntakeAiSummary(tenantId, peopleId);
+        if (intakeDone) {
+            intakeSummary = scrubIncompleteIntakeWording(intakeSummary);
+        }
         PersonaNarrativeDraft draft = personaLlmGenerator.generate(dimensions, intakeSummary);
         return draft.narrative();
     }
@@ -175,5 +182,17 @@ public class PersonaAppService {
             log.debug("[Persona] load intake aiSummary failed: {}", e.getMessage());
         }
         return null;
+    }
+
+    /** 已提交首诊后，去掉案头总结里过时的「尚未完成」措辞，避免画像 LLM 照抄。 */
+    static String scrubIncompleteIntakeWording(String summary) {
+        if (!StringUtils.hasText(summary)) {
+            return summary;
+        }
+        return summary
+                .replace("入组当日尚未完成首诊", "已完成首诊")
+                .replace("尚未完成首诊问卷", "已完成首诊")
+                .replace("尚未完成首诊", "已完成首诊")
+                .replace("首诊未完成", "已完成首诊");
     }
 }

@@ -73,7 +73,18 @@ public enum MetaDataCodeEnum {
     DISEASE_HYPERTENSION_SYMPTOMS_OTHER("disease.hypertension.symptomsOther"),
     DISEASE_HYPERTENSION_EMERGENCY_COMPLICATIONS("disease.hypertension.emergencyComplications"),
     DISEASE_HYPERTENSION_EMERGENCY_COMPLICATIONS_OTHER(
-            "disease.hypertension.emergencyComplicationsOther");
+            "disease.hypertension.emergencyComplicationsOther"),
+    DISEASE_OBESITY_TYPE("disease.obesity.obesityType"),
+    DISEASE_OBESITY_SECONDARY_CAUSE("disease.obesity.secondaryCause"),
+    DISEASE_OBESITY_DIAGNOSIS_DATE("disease.obesity.diagnosisDate"),
+    DISEASE_OBESITY_CLASS("disease.obesity.obesityClass"),
+    DISEASE_OBESITY_CENTRAL("disease.obesity.centralObesity"),
+    DISEASE_OBESITY_COMPLICATIONS("disease.obesity.complications"),
+    DISEASE_OBESITY_COMPLICATIONS_OTHER("disease.obesity.complicationsOther"),
+    DISEASE_OBESITY_PRIOR_INTERVENTIONS("disease.obesity.priorInterventions"),
+    DISEASE_OBESITY_PHARMACOTHERAPY_NOTE("disease.obesity.pharmacotherapyNote"),
+    DISEASE_OBESITY_SURGERY_NOTE("disease.obesity.surgeryNote"),
+    DISEASE_OBESITY_REMARK("disease.obesity.remark");
 
     public static final String BASIC_PREFIX = "basic.";
     public static final String DISEASE_PREFIX = "disease.";

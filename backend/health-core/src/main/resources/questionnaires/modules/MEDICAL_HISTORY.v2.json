@@ -2,7 +2,7 @@
   "code": "MEDICAL_HISTORY",
   "version": 2,
   "title": "病史与用药",
-  "script": "了解一下身体情况和正在用的药。有些病和药会影响饮食、运动安排，我们心里有数，后面方案会更稳妥。",
+  "script": "再跟您确认一下身体情况和在用的药。有些病和药会影响后面饮食、运动安排，心里有数会更稳妥。",
   "items": [
     {
       "field": "basic.presentIllness",
@@ -120,19 +120,19 @@
       "level": "FIRST_VISIT",
       "highlights": [
         {
-          "when": { "notIn": ["NONE"] },
-          "severity": "CAUTION",
-          "planEffect": "设运动强度上限，避开禁忌"
-        },
-        {
-          "when": { "eq": "CARDIAC" },
+          "when": { "intersects": ["CARDIAC"] },
           "severity": "REFER",
           "planEffect": "先就医评估再开始运动"
         },
         {
-          "when": { "eq": "BP_UNCONTROLLED" },
+          "when": { "intersects": ["BP_UNCONTROLLED"] },
           "severity": "CAUTION",
           "planEffect": "优先稳压，暂缓高强度"
+        },
+        {
+          "when": { "intersects": ["DOCTOR_LIMIT", "RECENT_SURGERY", "OTHER"] },
+          "severity": "CAUTION",
+          "planEffect": "设运动强度上限，避开禁忌"
         }
       ],
       "sensitive": true

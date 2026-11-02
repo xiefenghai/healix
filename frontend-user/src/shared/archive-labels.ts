@@ -370,6 +370,28 @@ export function formatDiseaseRows(
       dash(codeList('emergencyComplications', 'hypertensionEmergencyComplications')),
     )
     push('其它紧急并发症', dash(asStr(content.emergencyComplicationsOther)))
+  } else if (diseaseCode === 'obesity') {
+    push(
+      '肥胖分型',
+      dash(labels.obesityType?.[asStr(content.obesityType)] ?? asStr(content.obesityType)),
+    )
+    push('继发原因', dash(asStr(content.secondaryCause)))
+    push(
+      'BMI分度',
+      dash(labels.obesityClass?.[asStr(content.obesityClass)] ?? asStr(content.obesityClass)),
+    )
+    push(
+      '中心性肥胖',
+      dash(
+        labels.obesityCentral?.[asStr(content.centralObesity)] ?? asStr(content.centralObesity),
+      ),
+    )
+    push('相关并发症', dash(codeList('complications', 'obesityComplications')))
+    push('其它并发症', dash(asStr(content.complicationsOther)))
+    push('既往干预', dash(codeList('priorInterventions', 'obesityPriorInterventions')))
+    push('减重药物说明', dash(asStr(content.pharmacotherapyNote)))
+    push('减重手术说明', dash(asStr(content.surgeryNote)))
+    push('备注', dash(asStr(content.remark)))
   } else {
     for (const [k, v] of Object.entries(content)) {
       if (k === 'schemaVersion') continue

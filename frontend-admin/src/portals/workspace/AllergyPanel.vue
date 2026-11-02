@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
 import {
-  SOURCE_LABELS,
   allergyTick,
   emptyAllergyForm,
   fetchAllergySummary,
@@ -28,11 +27,46 @@ const editingId = ref<string | null>(null)
 const form = reactive(emptyAllergyForm())
 /** 下拉值：字典 code 或手输文本 */
 const allergenPick = ref('')
+/**
+ * UNKNOWN 下点「有过敏」的本地意图（后端不能直接设 HAS，需先加条目）。
+ * 从 NKA 切过来时会先清成 UNKNOWN。
+ */
+const forceHas = ref(false)
 
 const base = computed(() => `/api/b/v1/patients/${props.peopleId}/allergies`)
 
 const items = computed(() => summary.value?.items ?? [])
-const hasEffective = computed(() => items.value.some((i) => i.effective))
+
+/** 与家族史一致：'' 未选 / none 无 / has 有 */
+const statusUi = computed<'none' | 'has' | ''>(() => {
+  const s = summary.value?.status
+  if (s === 'NKA') return 'none'
+  if (s === 'HAS' || forceHas.value) return 'has'
+  return ''
+})
+
+const showBody = computed(() => statusUi.value === 'has')
+
+/** 药物 / 食物 / 环境固定分区；「其他」仅有数据时出现 */
+const categorySections = computed(() => {
+  const defaults: Array<{ code: AllergyCategory; label: string }> = [
+    { code: 'DRUG', label: '药物' },
+    { code: 'FOOD', label: '食物' },
+    { code: 'ENVIRONMENT', label: '环境' },
+    { code: 'OTHER', label: '其他' },
+  ]
+  const fromCatalog = catalog.value?.categories ?? []
+  const ordered = defaults.map((d) => {
+    const hit = fromCatalog.find((c) => c.code === d.code)
+    return { code: d.code, label: hit?.label || d.label }
+  })
+  return ordered
+    .filter((c) => c.code !== 'OTHER' || items.value.some((i) => i.category === 'OTHER'))
+    .map((c) => ({
+      ...c,
+      rows: items.value.filter((i) => i.category === c.code),
+    }))
+})
 
 const allergenOptions = computed(() =>
   (catalog.value?.allergens ?? []).filter((a) => a.category === form.category),
@@ -46,13 +80,30 @@ const willBeHighRisk = computed(
   () => form.severity === 'SEVERE' || form.reactions.some((r) => highRiskReactions.value.has(r)),
 )
 
-async function load() {
+/** 最近发作不可选未来日期 */
+function disabledLastOccurrenceDate(d: Date) {
+  const today = new Date()
+  today.setHours(23, 59, 59, 999)
+  return d.getTime() > today.getTime()
+}
+
+/** @param keepHasIntent 变更后刷新时：删光条目回 UNKNOWN 仍保持「有过敏」展开 */
+async function load(keepHasIntent = false) {
   if (!props.peopleId) return
   loading.value = true
   try {
+    const prevStatus = summary.value?.status
+    const keep = keepHasIntent && (forceHas.value || prevStatus === 'HAS')
     const [s, c] = await Promise.all([fetchAllergySummary(props.peopleId), loadAllergyCatalog()])
     summary.value = s
     catalog.value = c
+    if (s.status === 'NKA' || s.status === 'HAS') {
+      forceHas.value = false
+    } else if (keep && s.status === 'UNKNOWN') {
+      forceHas.value = true
+    } else {
+      forceHas.value = false
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '过敏史加载失败')
   } finally {
@@ -60,15 +111,33 @@ async function load() {
   }
 }
 
+/** 本面板写入后会推 allergyTick；跳过紧随其后的自触发刷新 */
+let skipTickReload = false
+
 function afterChange(next?: AllergySummary) {
+  skipTickReload = true
   allergyTick.value++
-  if (next) summary.value = next
-  else void load()
+  if (next) {
+    const prev = summary.value?.status
+    summary.value = next
+    if (next.status === 'NKA' || next.status === 'HAS') {
+      forceHas.value = false
+    } else if ((forceHas.value || prev === 'HAS') && next.status === 'UNKNOWN') {
+      // 删光条目或从 NKA 切出后，保持「有过敏」展开
+      forceHas.value = true
+    }
+  } else {
+    void load(true)
+  }
+  queueMicrotask(() => {
+    skipTickReload = false
+  })
 }
 
-function openCreate() {
+function openCreate(category?: AllergyCategory) {
   editingId.value = null
   Object.assign(form, emptyAllergyForm())
+  if (category) form.category = category
   allergenPick.value = ''
   dialogVisible.value = true
 }
@@ -80,8 +149,19 @@ function openEdit(item: AllergyItem) {
   dialogVisible.value = true
 }
 
-function onStatusPick(v: string | number | boolean | undefined) {
-  if (v === 'NKA' || v === 'UNKNOWN') void setStatus(v)
+async function onStatusUi(v: string | number | boolean | undefined) {
+  if (v === 'none') {
+    const ok = await setStatus('NKA')
+    if (ok) forceHas.value = false
+    return
+  }
+  if (v === 'has') {
+    forceHas.value = true
+    // 后端不允许直接设 HAS；有条目时已是 HAS。从 NKA 切出需清掉「无已知」声明。
+    if (summary.value?.status === 'NKA') {
+      await setStatus('UNKNOWN', { silent: true })
+    }
+  }
 }
 
 function onCategoryPick(v: string | number | boolean | undefined) {
@@ -169,134 +249,132 @@ async function remove(item: AllergyItem) {
   }
 }
 
-async function setStatus(status: 'NKA' | 'UNKNOWN') {
+async function setStatus(status: 'NKA' | 'UNKNOWN', opts?: { silent?: boolean }): Promise<boolean> {
   try {
     const res = await api<{ data: AllergySummary }>(`${base.value}/status`, {
       method: 'PUT',
       body: JSON.stringify({ status }),
     })
-    ElMessage.success(status === 'NKA' ? '已记录：无已知过敏' : '已改为未询问')
+    if (!opts?.silent) {
+      ElMessage.success(status === 'NKA' ? '已记录：无已知过敏' : '已清除「无已知过敏」')
+    }
     afterChange(res.data)
+    return true
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    return false
   }
 }
 
-async function review() {
-  try {
-    const res = await api<{ data: AllergySummary }>(`${base.value}/review`, { method: 'POST' })
-    ElMessage.success('已记录核对')
-    afterChange(res.data)
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
-  }
-}
-
-function detailLine(item: AllergyItem): string {
+function reactionText(item: AllergyItem): string {
   const parts: string[] = []
   if (item.reactionLabels.length) parts.push(item.reactionLabels.join('、'))
   if (item.reactionNote) parts.push(item.reactionNote)
-  if (item.severity !== 'UNKNOWN') parts.push(item.severityLabel)
-  if (item.onsetText) parts.push(`首次 ${item.onsetText}`)
-  if (item.lastOccurrence) parts.push(`最近 ${item.lastOccurrence}`)
-  if (item.note) parts.push(item.note)
-  return parts.join(' · ') || '未填写反应'
+  return parts.join('；') || '—'
 }
 
-function fmtTime(iso: string | null) {
-  if (!iso) return ''
-  return iso.replace('T', ' ').slice(0, 16)
+function statusText(item: AllergyItem): string {
+  const bits: string[] = []
+  if (item.clinicalStatus === 'RESOLVED') bits.push('已消失')
+  // 已确认不展示；仅提示待核实 / 已排除
+  if (item.verification === 'UNCONFIRMED') bits.push('患者自述')
+  if (item.verification === 'REFUTED') bits.push('已排除')
+  return bits.join(' · ') || '—'
 }
 
-watch(() => props.peopleId, load)
+function tableRowClass({ row }: { row: AllergyItem }) {
+  const cls: string[] = []
+  if (!row.effective) cls.push('ag-row-inactive')
+  if (row.highRisk && row.effective) cls.push('ag-row-risk')
+  return cls.join(' ')
+}
+
+watch(() => props.peopleId, () => void load())
 watch(allergyTick, (v, old) => {
-  // 其他入口（如头部）改动后同步；本组件自身改动已在 afterChange 刷新
-  if (v !== old && !loading.value && !dialogVisible.value) void load()
+  // 其他入口改动后同步；本组件自身改动已在 afterChange 刷新
+  if (skipTickReload || v === old || loading.value || dialogVisible.value) return
+  void load()
 })
-onMounted(load)
+onMounted(() => void load())
 </script>
 
 <template>
   <div v-loading="loading" class="ag-block">
     <div class="ag-head">
-      <div class="ag-title">
-        <el-tag
-          v-if="summary"
-          size="small"
-          effect="plain"
-          :type="summary.status === 'HAS' ? 'danger' : summary.status === 'NKA' ? 'success' : 'info'"
-        >
-          {{ summary.statusLabel }}
-        </el-tag>
-        <el-tag v-if="summary?.pendingCount" size="small" type="warning" effect="light">
-          {{ summary.pendingCount }} 条患者自述待确认
-        </el-tag>
-        <span class="ag-reviewed">
-          {{ summary?.reviewedAt ? `核对于 ${fmtTime(summary.reviewedAt)}` : '尚未核对' }}
-        </span>
-        <span class="ag-instant">即时保存，无需点「保存基础档案」</span>
-      </div>
-      <div class="ag-actions">
-        <el-button size="small" @click="review">核对无误</el-button>
-        <el-button size="small" type="primary" @click="openCreate">添加过敏</el-button>
-      </div>
-    </div>
-
-    <el-alert
-      v-if="summary?.status === 'UNKNOWN' && !items.length"
-      type="warning"
-      :closable="false"
-      show-icon
-      title="尚未采集过敏史，请询问患者是否有药物、食物或其他过敏"
-      class="ag-alert"
-    />
-
-    <div v-if="!hasEffective" class="ag-status-row">
-      <span class="ag-status-label">没有过敏条目时：</span>
       <el-radio-group
-        :model-value="summary?.status"
-        size="small"
-        @change="onStatusPick"
+        :model-value="statusUi"
+        class="ag-status"
+        @change="onStatusUi"
       >
-        <el-radio-button value="NKA">无已知过敏</el-radio-button>
-        <el-radio-button value="UNKNOWN">未询问</el-radio-button>
+        <el-radio value="none">无已知过敏</el-radio>
+        <el-radio value="has">有过敏</el-radio>
       </el-radio-group>
+      <el-tag v-if="summary?.pendingCount" size="small" type="warning" effect="light">
+        {{ summary.pendingCount }} 条患者自述待确认
+      </el-tag>
     </div>
 
-    <div v-if="items.length" class="ag-list">
-      <div
-        v-for="item in items"
-        :key="item.id"
-        class="ag-item"
-        :class="{ inactive: !item.effective, risk: item.highRisk && item.effective }"
-      >
-        <div class="ag-main">
-          <div class="ag-name-row">
-            <span class="ag-name">{{ item.allergenName }}</span>
-            <el-tag size="small" effect="plain">{{ item.categoryLabel }}</el-tag>
-            <el-tag v-if="item.allergyType === 'INTOLERANCE'" size="small" type="info" effect="plain">不耐受</el-tag>
-            <el-tag v-if="item.highRisk" size="small" type="danger" effect="dark">高危</el-tag>
-            <el-tag
-              size="small"
-              effect="light"
-              :type="item.verification === 'CONFIRMED' ? 'success' : item.verification === 'REFUTED' ? 'info' : 'warning'"
-            >
-              {{ item.verificationLabel }}
-            </el-tag>
-            <el-tag v-if="item.clinicalStatus === 'RESOLVED'" size="small" type="info">已消失</el-tag>
-            <span class="ag-source">{{ SOURCE_LABELS[item.source] ?? item.source }}</span>
-          </div>
-          <div class="ag-detail">{{ detailLine(item) }}</div>
+    <div v-if="showBody" class="ag-body">
+      <section v-for="sec in categorySections" :key="sec.code" class="ag-section">
+        <div class="ag-section-head">
+          <h4 class="ag-section-title">{{ sec.label }}</h4>
+          <el-button size="small" type="primary" link @click="openCreate(sec.code)">添加</el-button>
         </div>
-        <div class="ag-ops">
-          <template v-if="item.verification === 'UNCONFIRMED'">
-            <el-button link type="success" @click="verify(item, 'CONFIRMED')">确认</el-button>
-            <el-button link type="warning" @click="verify(item, 'REFUTED')">排除</el-button>
-          </template>
-          <el-button link type="primary" @click="openEdit(item)">编辑</el-button>
-          <el-button link type="danger" @click="remove(item)">删除</el-button>
-        </div>
-      </div>
+        <el-table
+          :data="sec.rows"
+          size="small"
+          stripe
+          class="ag-table"
+          :row-class-name="tableRowClass"
+          empty-text="暂无"
+        >
+          <el-table-column label="过敏原" min-width="120">
+            <template #default="{ row }">
+              <div class="ag-allergen">
+                <span class="ag-name" :class="{ inactive: !row.effective }">{{ row.allergenName }}</span>
+                <el-tag v-if="row.highRisk" size="small" type="danger" effect="dark">高危</el-tag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="88">
+            <template #default="{ row }">
+              {{ row.allergyType === 'INTOLERANCE' ? '不耐受' : '过敏' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="反应表现" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ reactionText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="程度" width="88">
+            <template #default="{ row }">
+              {{ row.severity === 'UNKNOWN' ? '—' : row.severityLabel }}
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <span
+                :class="{
+                  'ag-status-warn': row.verification === 'UNCONFIRMED',
+                  'ag-status-muted': row.verification === 'REFUTED' || row.clinicalStatus === 'RESOLVED',
+                }"
+              >
+                {{ statusText(row) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="168" fixed="right">
+            <template #default="{ row }">
+              <div class="ag-ops">
+                <template v-if="row.verification === 'UNCONFIRMED'">
+                  <el-button link type="success" @click="verify(row, 'CONFIRMED')">确认</el-button>
+                  <el-button link type="warning" @click="verify(row, 'REFUTED')">排除</el-button>
+                </template>
+                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button link type="danger" @click="remove(row)">删除</el-button>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
     </div>
 
     <el-dialog
@@ -373,7 +451,7 @@ onMounted(load)
             type="date"
             value-format="YYYY-MM-DD"
             placeholder="选择日期"
-            :disabled-date="(d: Date) => d.getTime() > Date.now()"
+            :disabled-date="disabledLastOccurrenceDate"
             style="width: 180px"
           />
         </el-form-item>
@@ -406,113 +484,89 @@ onMounted(load)
 .ag-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 32px;
-  margin-bottom: 8px;
-}
-
-.ag-instant {
-  font-size: 12px;
-  color: var(--el-color-primary);
-}
-
-.ag-title {
-  display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 16px;
+  min-height: 32px;
 }
 
-.ag-reviewed {
-  font-size: 12px;
-  color: var(--admin-muted);
-}
-
-.ag-actions {
-  display: flex;
-  gap: 8px;
+.ag-status {
   flex-shrink: 0;
-}
-
-.ag-alert {
-  margin-bottom: 12px;
-}
-
-.ag-status-row {
-  display: flex;
+  height: 32px;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
 }
 
-.ag-status-label {
-  font-size: 13px;
-  color: var(--admin-muted);
+.ag-status :deep(.el-radio) {
+  height: 32px;
+  margin-right: 16px;
+  align-items: center;
 }
 
-.ag-list {
+.ag-body {
+  min-height: 40px;
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
 }
 
-.ag-item {
+.ag-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--admin-border);
-  border-radius: 8px;
-  background: #fff;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
-.ag-item.risk {
-  border-color: #fca5a5;
-  background: #fef2f2;
+.ag-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--admin-text);
 }
 
-.ag-item.inactive {
-  opacity: 0.6;
+.ag-table {
+  width: 100%;
+  --el-table-header-bg-color: #f8fafc;
 }
 
-.ag-item.inactive .ag-name {
-  text-decoration: line-through;
+.ag-table :deep(.ag-row-risk) {
+  --el-table-tr-bg-color: #fef2f2;
 }
 
-.ag-main {
-  min-width: 0;
+.ag-table :deep(.ag-row-inactive) {
+  opacity: 0.55;
 }
 
-.ag-name-row {
-  display: flex;
+.ag-allergen {
+  display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }
 
 .ag-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--admin-text);
 }
 
-.ag-source {
-  font-size: 12px;
-  color: var(--admin-muted);
+.ag-name.inactive {
+  text-decoration: line-through;
+  font-weight: 500;
 }
 
-.ag-detail {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.5;
+.ag-status-warn {
+  color: #b45309;
+}
+
+.ag-status-muted {
   color: var(--admin-muted);
 }
 
 .ag-ops {
   display: flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 0;
 }
 
 .ag-opt-alias {

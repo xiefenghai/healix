@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
- * 首诊问卷全屏工作台：模块导航 + 表单 + BMI/高亮追问。
+ * 首诊问卷工作台：模块导航 + 表单 + BMI/高亮追问。
+ * 可独立路由页，也可 embedded 嵌入驾驶舱抽屉。
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { debounce } from '../../shared/debounce'
@@ -10,12 +11,14 @@ import {
   calcBmi,
   CARE_TRACK_OPTIONS,
   FIELD_STAFF_AI_SUMMARY,
-  collectLocalHighlights,
   formatAnswerBrief,
+  mergeLiveHighlights,
   formatIntakeAiSummaryText,
   formatPrefillSource,
   generateIntakeAiSummary,
+  hasParsedIntakeAiSummary,
   isAnswerEmpty,
+  isIntakeAnswerFilled,
   loadIntakeOptionMaps,
   matchShowIf,
   mergePrefillIntoAnswers,
@@ -23,6 +26,7 @@ import {
   normalizeCareTracks,
   openIntake,
   openIntakeSupplement,
+  parseIntakeAiSummaryText,
   primaryProgramFromTracks,
   resolveIntakeFieldLabel,
   saveIntakeDraft,
@@ -43,16 +47,39 @@ import {
 import { api } from '../../shared/http'
 import { publishPatientCrossTab } from '../../shared/patient-cross-tab'
 import FieldInput from './FieldInput.vue'
+import IntakeAiSummaryBlocks from './IntakeAiSummaryBlocks.vue'
 
 const route = useRoute()
 const router = useRouter()
 
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const props = withDefaults(
+  defineProps<{
+    /** 驾驶舱抽屉等场景传入；不传则走路由 */
+    peopleId?: string
+    followupRecordId?: string | null
+    purpose?: string | null
+    /** 嵌入抽屉：提交/关闭走 emit，不关窗、不跳路由 */
+    embedded?: boolean
+  }>(),
+  { embedded: false },
+)
+
+const emit = defineEmits<{
+  submitted: []
+  close: []
+}>()
+
+const isEmbedded = computed(() => !!props.embedded)
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 const followupRecordId = computed(() => {
+  if (props.embedded) return props.followupRecordId || null
   const q = route.query.followupRecordId
   return typeof q === 'string' && q ? q : null
 })
-const isSupplement = computed(() => String(route.query.purpose || '') === 'SUPPLEMENT')
+const isSupplement = computed(() => {
+  if (props.embedded) return props.purpose === 'SUPPLEMENT'
+  return String(route.query.purpose || '') === 'SUPPLEMENT'
+})
 
 const loading = ref(true)
 const saving = ref(false)
@@ -62,7 +89,7 @@ const lastSavedAt = ref<Date | null>(null)
 const patientName = ref('')
 const responseId = ref('')
 const status = ref('DRAFT')
-const programCode = ref<IntakeProgramCode>('WEIGHT_LOSS')
+const programCode = ref<IntakeProgramCode>('NONE')
 const quickMode = ref(true)
 const activeModule = ref('')
 const modules = ref<IntakeModuleView[]>([])
@@ -76,11 +103,10 @@ const riskAck = ref(false)
 const hydrated = ref(false)
 const aiSummaryGenerating = ref(false)
 const aiSummaryMeta = ref<{ fromLlm: boolean; note?: string | null } | null>(null)
-const aiSummaryExtras = ref<{
-  keyPoints: string[]
-  risks: string[]
-  nextActions: string[]
-} | null>(null)
+const aiSummaryEditRaw = ref(false)
+/** 从侧栏/确认框跳转后短暂高亮的题目 */
+const focusedField = ref('')
+let focusClearTimer: ReturnType<typeof setTimeout> | null = null
 let aiSummaryAutoTried = false
 
 const fieldLabelMap = computed(() => {
@@ -118,11 +144,13 @@ function levelAllowed(level: string) {
 
 function itemVisible(item: IntakeItemView) {
   if (!levelAllowed(item.level)) return false
+  // 待补模块/题目已由服务端按 showIf 裁剪，避免前端再用当前答案藏题导致与「N 项待补」不一致
+  if (isSupplement.value) return true
   return matchShowIf(item.showIf, answers)
 }
 
 function isFilled(field: string) {
-  return !isAnswerEmpty(answers[field])
+  return isIntakeAnswerFilled(field, answers)
 }
 
 function isDirty(field: string) {
@@ -142,7 +170,7 @@ function isPrefillTone(field: string) {
 
 const visibleModules = computed(() =>
   modules.value
-    .filter((m) => matchShowIf(m.showIf, answers))
+    .filter((m) => isSupplement.value || matchShowIf(m.showIf, answers))
     .map((m) => ({
       ...m,
       items: m.items.filter(itemVisible),
@@ -195,19 +223,24 @@ function goNextModule() {
   }
 }
 
+function requiredStillMissing() {
+  return (localCompleteness.value.requiredMissing?.length || 0) > 0
+}
+
 async function runAiSummary(force = false) {
   if (!responseId.value || status.value !== 'DRAFT' || aiSummaryGenerating.value) return
   if (!force && !isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) return
+  // 必收未齐：不调 AI（自动/手动都拦），避免空卷生成无意义总结
+  if (requiredStillMissing()) {
+    ElMessage.warning('请先完成必收项后再生成 AI 总结')
+    return
+  }
   aiSummaryGenerating.value = true
   try {
     const draft = await generateIntakeAiSummary(responseId.value, { ...answers })
     answers[FIELD_STAFF_AI_SUMMARY] = formatIntakeAiSummaryText(draft)
     aiSummaryMeta.value = { fromLlm: draft.fromLlm, note: draft.note }
-    aiSummaryExtras.value = {
-      keyPoints: draft.keyPoints || [],
-      risks: draft.risks || [],
-      nextActions: draft.nextActions || [],
-    }
+    aiSummaryEditRaw.value = false
     scheduleSave()
     if (draft.note) ElMessage.info(draft.note)
     else if (draft.fromLlm) ElMessage.success('已生成 AI 总结，可继续修改')
@@ -223,6 +256,8 @@ watch(activeModule, (code) => {
   if (code !== 'INTAKE_AI_SUMMARY' || status.value !== 'DRAFT') return
   if (aiSummaryAutoTried) return
   if (!isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) return
+  // 必收未齐：不自动生成，等填完再进本模块或手动点
+  if (requiredStillMissing()) return
   aiSummaryAutoTried = true
   void runAiSummary(false)
 })
@@ -249,9 +284,9 @@ const localCompleteness = computed(() => {
   const requiredMissing: string[] = []
   const firstVisitMissing: string[] = []
   for (const m of modules.value) {
-    if (!matchShowIf(m.showIf, answers)) continue
+    if (!isSupplement.value && !matchShowIf(m.showIf, answers)) continue
     for (const it of m.items) {
-      // 进度按当前模式可见题（快速 = 必收+首诊建议）
+      // 进度按当前模式可见题（快速 = 必收+首诊建议；待补信任服务端裁剪）
       if (!itemVisible(it)) continue
       allTotal++
       const filled = isFilled(it.field)
@@ -306,14 +341,10 @@ const bmiBand = computed(() => {
   return { label: '肥胖', tone: 'danger' as const }
 })
 
-const highlightHits = computed(() => {
-  const local = collectLocalHighlights(modules.value, answers)
-  // 合并服务端（含 computed 等前端未覆盖的规则）
-  const map = new Map<string, IntakeHighlightHit>()
-  for (const h of serverHighlights.value || []) map.set(`${h.field}|${h.severity}|${h.planEffect}`, h)
-  for (const h of local) map.set(`${h.field}|${h.severity}|${h.planEffect}`, h)
-  return [...map.values()]
-})
+const highlightHits = computed(() =>
+  // 本地可判定的题跟 answers 即时联动；computed 类规则仍保留服务端结果
+  mergeLiveHighlights(modules.value, answers, serverHighlights.value),
+)
 
 const riskUnasked = computed(() => {
   const list: IntakeItemView[] = []
@@ -349,14 +380,24 @@ const changeRows = computed(() => {
   return rows
 })
 
+const hasAiSummary = computed(() => !isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY]))
+const aiSummaryParsed = computed(() => parseIntakeAiSummaryText(answers[FIELD_STAFF_AI_SUMMARY]))
+const showAiSummaryBlocks = computed(() => hasParsedIntakeAiSummary(aiSummaryParsed.value))
+
+/** 正式首诊须有总结正文；待补问卷仍可选 */
 const canSubmit = computed(
-  () => status.value === 'DRAFT' && (localCompleteness.value.requiredMissing?.length || 0) === 0,
+  () =>
+    status.value === 'DRAFT' &&
+    (localCompleteness.value.requiredMissing?.length || 0) === 0 &&
+    (isSupplement.value || hasAiSummary.value),
 )
+
+const openingSummary = ref(false)
 
 function applyView(view: QuestionnaireResponseView, seedAnswers: boolean) {
   responseId.value = view.id
   status.value = view.status || 'DRAFT'
-  programCode.value = (view.programCode as IntakeProgramCode) || 'WEIGHT_LOSS'
+  programCode.value = (view.programCode as IntakeProgramCode) || 'NONE'
   modules.value = view.modules || []
   prefill.value = (view.prefill || {}) as Record<string, IntakePrefillCell>
   completeness.value = view.completeness || {}
@@ -373,15 +414,14 @@ function applyView(view: QuestionnaireResponseView, seedAnswers: boolean) {
     if (typeof answers['goal.primaryAppeal'] === 'string' && answers['goal.primaryAppeal']) {
       answers['goal.primaryAppeal'] = [answers['goal.primaryAppeal']]
     }
-    // 空草稿无管理方向时，按顶栏/后端 programCode 预填，专属模块才能显隐
-    if (
-      status.value === 'DRAFT' &&
-      !normalizeCareTracks(answers['goal.careTracks']).length &&
-      programCode.value &&
-      programCode.value !== 'NONE'
-    ) {
-      answers['goal.careTracks'] = [programCode.value]
+    // 待补：管理方向/性别以预填为准，避免草稿改窄后藏模块，和「N 项待补」对不上
+    if (isSupplement.value) {
+      const tracks = prefill.value['goal.careTracks']?.value
+      if (!isAnswerEmpty(tracks)) answers['goal.careTracks'] = tracks
+      const gender = prefill.value['profile.gender']?.value
+      if (!isAnswerEmpty(gender)) answers['profile.gender'] = gender
     }
+    // 正式首诊：不默认勾选减重；管理方向由健管师点选，或按诉求/病史提示后采纳
   }
 
   syncProgramFromTracks()
@@ -443,13 +483,15 @@ async function bootstrap() {
   hydrated.value = false
   aiSummaryAutoTried = false
   aiSummaryMeta.value = null
-  aiSummaryExtras.value = null
+  aiSummaryEditRaw.value = false
+  clearFocusTimer()
+  focusedField.value = ''
   try {
     await loadPatientName()
     const view = isSupplement.value
       ? await openIntakeSupplement(peopleId.value, { channel: 'PHONE' })
       : await openIntake(peopleId.value, {
-          // 不传 programCode：续开草稿保留原项目；新建由后端默认 WEIGHT_LOSS
+          // 不传 programCode：续开草稿保留原选择；新建不默认减重
           followupRecordId: followupRecordId.value,
           channel: 'PHONE',
         })
@@ -564,9 +606,61 @@ function severityClass(sev?: string) {
   return 'sev-info'
 }
 
-function openSummary() {
+function aiSummaryLooksIncomplete() {
+  const text = String(answers[FIELD_STAFF_AI_SUMMARY] ?? '')
+  return /尚未完成首诊|入组当日尚未完成首诊|首诊未完成/.test(text)
+}
+
+async function openSummary() {
+  if (status.value !== 'DRAFT' || openingSummary.value) return
   riskAck.value = riskUnasked.value.length === 0
+  // 正式首诊：无总结，或总结仍写着「尚未完成首诊」→ 提交前按当前答卷重生成
+  if (
+    !isSupplement.value &&
+    (!hasAiSummary.value || (aiSummaryLooksIncomplete() && !requiredStillMissing()))
+  ) {
+    openingSummary.value = true
+    try {
+      await runAiSummary(true)
+    } finally {
+      openingSummary.value = false
+    }
+  }
   summaryOpen.value = true
+}
+
+function jumpToAiSummary() {
+  summaryOpen.value = false
+  activeModule.value = 'INTAKE_AI_SUMMARY'
+  void focusQuestion(FIELD_STAFF_AI_SUMMARY)
+}
+
+function clearFocusTimer() {
+  if (focusClearTimer) {
+    clearTimeout(focusClearTimer)
+    focusClearTimer = null
+  }
+}
+
+async function focusQuestion(field: string) {
+  if (!field) return
+  clearFocusTimer()
+  focusedField.value = field
+  await nextTick()
+  // 模块切换后 DOM 可能再刷一帧
+  await new Promise((r) => requestAnimationFrame(() => r(undefined)))
+  const el = document.querySelector(`[data-intake-field="${CSS.escape(field)}"]`) as HTMLElement | null
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const focusable = el.querySelector<HTMLElement>(
+      'input, textarea, select, button, [tabindex]:not([tabindex="-1"])',
+    )
+    focusable?.focus({ preventScroll: true })
+  }
+  focusClearTimer = setTimeout(() => {
+    if (focusedField.value === field) focusedField.value = ''
+    focusClearTimer = null
+  }, 2600)
 }
 
 function jumpToField(field: string) {
@@ -577,6 +671,7 @@ function jumpToField(field: string) {
       const item = m.items.find((it) => it.field === field)
       if (item && !levelAllowed(item.level)) quickMode.value = false
       activeModule.value = m.code
+      void focusQuestion(field)
       break
     }
   }
@@ -598,12 +693,13 @@ async function doSubmit(conflictResolutions?: Record<string, unknown>) {
       peopleId: peopleId.value,
       reason: isSupplement.value ? 'INTAKE_SUPPLEMENT' : 'INTAKE_SUBMITTED',
     })
-    // 首诊多为新标签打开：提交后关掉本页，回到原患者页签
-    await new Promise((r) => setTimeout(r, 350))
-    window.close()
-    if (!window.closed) {
-      await router.push(`/workspace/patients/${peopleId.value}/archive`)
+    if (isEmbedded.value) {
+      emit('submitted')
+      return
     }
+    // 同标签打开：提交后回患者档案
+    await new Promise((r) => setTimeout(r, 350))
+    await router.push(`/workspace/patients/${peopleId.value}/archive`)
   } catch (e) {
     const msg = (e as Error).message || '提交失败'
     if (msg.includes('冲突')) {
@@ -628,6 +724,10 @@ async function doSubmit(conflictResolutions?: Record<string, unknown>) {
 }
 
 function backToPatient() {
+  if (isEmbedded.value) {
+    emit('close')
+    return
+  }
   router.push(`/workspace/patients/${peopleId.value}/archive`)
 }
 
@@ -635,8 +735,20 @@ onMounted(() => {
   void bootstrap()
 })
 
+/** 抽屉内切换患者 / 随访 / 待补时重新拉卷 */
+watch(
+  () =>
+    [props.peopleId, props.followupRecordId ?? '', props.purpose ?? '', props.embedded] as const,
+  (next, prev) => {
+    if (!props.embedded || !prev) return
+    if (next[0] === prev[0] && next[1] === prev[1] && next[2] === prev[2]) return
+    void bootstrap()
+  },
+)
+
 onBeforeUnmount(() => {
   scheduleSave.cancel()
+  clearFocusTimer()
   if (hydrated.value && status.value === 'DRAFT') {
     void persistDraft()
   }
@@ -644,10 +756,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="intake" v-loading="loading">
+  <div class="intake" :class="{ 'intake--embedded': isEmbedded }" v-loading="loading">
     <header class="top">
       <div class="top-left">
-        <button type="button" class="back" @click="backToPatient" title="关闭本页">关闭</button>
+        <button
+          v-if="!isEmbedded"
+          type="button"
+          class="back"
+          @click="backToPatient"
+          title="关闭本页"
+        >
+          关闭
+        </button>
         <div class="who">
           <strong>{{ patientName || peopleId }}</strong>
           <span class="sub">{{ isSupplement ? '待补问卷' : '首诊问卷' }}</span>
@@ -702,18 +822,28 @@ onBeforeUnmount(() => {
           </el-radio-group>
         </div>
         <div class="pills" aria-label="填写进度">
-          <span
-            class="pill"
-            :class="{ warn: (localCompleteness.requiredDone || 0) < (localCompleteness.requiredTotal || 0) }"
-          >
-            必收 {{ localCompleteness.requiredDone || 0 }}/{{ localCompleteness.requiredTotal || 0 }}
-          </span>
-          <span
-            class="pill"
-            :class="{ soft: (localCompleteness.firstVisitDone || 0) < (localCompleteness.firstVisitTotal || 0) }"
-          >
-            建议 {{ localCompleteness.firstVisitDone || 0 }}/{{ localCompleteness.firstVisitTotal || 0 }}
-          </span>
+          <template v-if="isSupplement">
+            <span
+              class="pill soft"
+              :class="{ warn: (localCompleteness.allDone || 0) < (localCompleteness.allTotal || 0) }"
+            >
+              待补 {{ localCompleteness.allDone || 0 }}/{{ localCompleteness.allTotal || 0 }}
+            </span>
+          </template>
+          <template v-else>
+            <span
+              class="pill"
+              :class="{ warn: (localCompleteness.requiredDone || 0) < (localCompleteness.requiredTotal || 0) }"
+            >
+              必收 {{ localCompleteness.requiredDone || 0 }}/{{ localCompleteness.requiredTotal || 0 }}
+            </span>
+            <span
+              class="pill"
+              :class="{ soft: (localCompleteness.firstVisitDone || 0) < (localCompleteness.firstVisitTotal || 0) }"
+            >
+              建议 {{ localCompleteness.firstVisitDone || 0 }}/{{ localCompleteness.firstVisitTotal || 0 }}
+            </span>
+          </template>
           <span class="pill pct">
             <i class="pct-bar" :style="{ width: `${overallPct}%` }" />
             <em>{{ overallPct }}%</em>
@@ -726,7 +856,7 @@ onBeforeUnmount(() => {
         <el-button
           type="primary"
           :disabled="status !== 'DRAFT'"
-          :loading="submitting"
+          :loading="submitting || openingSummary"
           @click="openSummary"
         >
           提交
@@ -793,38 +923,60 @@ onBeforeUnmount(() => {
               <el-button
                 type="primary"
                 :loading="aiSummaryGenerating"
-                :disabled="status !== 'DRAFT'"
+                :disabled="status !== 'DRAFT' || requiredStillMissing()"
                 @click="runAiSummary(true)"
               >
                 {{ isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY]) ? '生成总结' : '重新生成' }}
+              </el-button>
+              <el-button
+                v-if="showAiSummaryBlocks"
+                text
+                type="primary"
+                @click="aiSummaryEditRaw = !aiSummaryEditRaw"
+              >
+                {{
+                  aiSummaryEditRaw
+                    ? '收起原文'
+                    : status === 'DRAFT'
+                      ? '编辑原文'
+                      : '查看原文'
+                }}
               </el-button>
               <span v-if="aiSummaryMeta" class="ai-meta">
                 {{ aiSummaryMeta.fromLlm ? '来源：AI' : '来源：模板' }}
                 <template v-if="aiSummaryMeta.note"> · {{ aiSummaryMeta.note }}</template>
               </span>
             </div>
-            <div v-if="aiSummaryExtras?.keyPoints?.length" class="ai-chips">
-              <span class="ai-chip-label">要点</span>
-              <span v-for="(k, i) in aiSummaryExtras.keyPoints" :key="`kp-${i}`" class="ai-chip">{{ k }}</span>
-            </div>
-            <ul v-if="aiSummaryExtras?.risks?.length" class="ai-list risks">
-              <li v-for="(r, i) in aiSummaryExtras.risks" :key="`risk-${i}`">{{ r }}</li>
-            </ul>
-            <ul v-if="aiSummaryExtras?.nextActions?.length" class="ai-list next">
-              <li v-for="(a, i) in aiSummaryExtras.nextActions" :key="`act-${i}`">{{ a }}</li>
-            </ul>
+            <IntakeAiSummaryBlocks
+              v-if="showAiSummaryBlocks"
+              class="ai-summary-blocks"
+              :parsed="aiSummaryParsed"
+            />
+            <p v-else-if="!aiSummaryGenerating" class="ai-empty-hint">
+              <template v-if="requiredStillMissing()">
+                请先完成必收项（{{ localCompleteness.requiredDone || 0 }}/{{
+                  localCompleteness.requiredTotal || 0
+                }}），再生成 AI 总结。
+              </template>
+              <template v-else>
+                点击「生成总结」后将按概况、要点、风险与下一步分节展示。
+              </template>
+            </p>
           </div>
 
           <div
             v-for="(it, qi) in currentModule.items"
             :key="it.field"
+            v-show="it.field !== FIELD_STAFF_AI_SUMMARY || aiSummaryEditRaw || !showAiSummaryBlocks"
             class="q"
+            :data-intake-field="it.field"
             :class="{
               hit: highlightHits.some((h) => h.field === it.field),
               req: it.level === 'REQUIRED',
               filled: isFilled(it.field),
               prefill: isPrefillTone(it.field),
               dirty: isDirty(it.field),
+              focus: focusedField === it.field,
             }"
           >
             <div class="q-head">
@@ -833,7 +985,7 @@ onBeforeUnmount(() => {
                 <div class="q-label-row">
                   <span class="q-label">
                     <i v-if="it.level === 'REQUIRED'" class="star" aria-hidden="true">*</i>
-                    {{ it.label }}
+                    {{ it.field === FIELD_STAFF_AI_SUMMARY ? '总结原文（可编辑）' : it.label }}
                   </span>
                   <span class="q-tags">
                     <span v-if="it.level === 'FIRST_VISIT'" class="tag tag-soft">首诊建议</span>
@@ -857,6 +1009,9 @@ onBeforeUnmount(() => {
                     恢复
                   </button>
                 </div>
+                <p v-if="it.field === FIELD_STAFF_AI_SUMMARY" class="ai-edit-hint">
+                  按【要点】【风险与禁忌】【建议下一步】分节书写时，上方会自动拆成要点展示。
+                </p>
                 <FieldInput
                   :field="it.field"
                   :type="it.type"
@@ -889,6 +1044,7 @@ onBeforeUnmount(() => {
               v-else
               type="primary"
               :disabled="status !== 'DRAFT'"
+              :loading="submitting || openingSummary"
               @click="openSummary"
             >
               去提交
@@ -920,7 +1076,25 @@ onBeforeUnmount(() => {
           </dl>
         </section>
 
-        <section class="panel">
+        <!-- 高风险未问优先：勿被长「高亮追问」挤出视口 -->
+        <section v-if="riskUnasked.length" class="panel risk-panel">
+          <h3>高风险未问 · {{ riskUnasked.length }}</h3>
+          <div class="risk-list">
+            <button
+              v-for="(it, idx) in riskUnasked.slice(0, 5)"
+              :key="it.field"
+              type="button"
+              class="risk-item"
+              @click="jumpToField(it.field)"
+            >
+              <span class="risk-idx">{{ idx + 1 }}</span>
+              <span class="risk-label">{{ it.label }}</span>
+            </button>
+          </div>
+          <p v-if="riskUnasked.length > 5" class="muted">还有 {{ riskUnasked.length - 5 }} 项…</p>
+        </section>
+
+        <section class="panel hits-panel">
           <div class="panel-head">
             <h3>高亮追问</h3>
             <span v-if="highlightHits.length" class="badge">{{ highlightHits.length }}</span>
@@ -941,16 +1115,6 @@ onBeforeUnmount(() => {
           </div>
           <p v-else class="muted">填写时若命中风险题，追问会出现在这里</p>
         </section>
-
-        <section v-if="riskUnasked.length" class="panel risk-panel">
-          <h3>高风险未问 · {{ riskUnasked.length }}</h3>
-          <ul class="risk-list">
-            <li v-for="it in riskUnasked.slice(0, 5)" :key="it.field">
-              <button type="button" class="link" @click="jumpToField(it.field)">{{ it.label }}</button>
-            </li>
-          </ul>
-          <p v-if="riskUnasked.length > 5" class="muted">还有 {{ riskUnasked.length - 5 }} 项…</p>
-        </section>
       </aside>
     </div>
 
@@ -958,21 +1122,35 @@ onBeforeUnmount(() => {
       <div class="sum">
         <section>
           <h4>必收缺项</h4>
-          <ul v-if="localCompleteness.requiredMissing?.length">
-            <li v-for="f in localCompleteness.requiredMissing" :key="f">
-              <button type="button" class="link" @click="jumpToField(f)">{{ labelOf(f) }}</button>
-            </li>
-          </ul>
+          <div v-if="localCompleteness.requiredMissing?.length" class="sum-risk-list">
+            <button
+              v-for="(f, idx) in localCompleteness.requiredMissing"
+              :key="f"
+              type="button"
+              class="sum-risk-item"
+              @click="jumpToField(f)"
+            >
+              <span class="risk-idx">{{ idx + 1 }}</span>
+              <span class="risk-label">{{ labelOf(f) }}</span>
+            </button>
+          </div>
           <p v-else class="ok">已齐全</p>
         </section>
 
         <section>
           <h4>高风险未问</h4>
-          <ul v-if="riskUnasked.length">
-            <li v-for="it in riskUnasked" :key="it.field">
-              <button type="button" class="link" @click="jumpToField(it.field)">{{ it.label }}</button>
-            </li>
-          </ul>
+          <div v-if="riskUnasked.length" class="sum-risk-list">
+            <button
+              v-for="(it, idx) in riskUnasked"
+              :key="it.field"
+              type="button"
+              class="sum-risk-item"
+              @click="jumpToField(it.field)"
+            >
+              <span class="risk-idx">{{ idx + 1 }}</span>
+              <span class="risk-label">{{ it.label }}</span>
+            </button>
+          </div>
           <p v-else class="ok">无</p>
           <el-checkbox v-if="riskUnasked.length" v-model="riskAck">已知晓未问高风险题，仍要提交</el-checkbox>
         </section>
@@ -1001,11 +1179,20 @@ onBeforeUnmount(() => {
         </section>
 
         <section>
-          <h4>AI 总结</h4>
-          <p v-if="!isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])" class="ai-preview">
-            {{ String(answers[FIELD_STAFF_AI_SUMMARY]) }}
-          </p>
-          <p v-else class="muted">尚未生成；可在「AI 总结」模块生成后提交，也可直接提交。</p>
+          <h4>AI 总结{{ isSupplement ? '' : '（必填）' }}</h4>
+          <IntakeAiSummaryBlocks
+            v-if="hasAiSummary"
+            class="ai-preview-blocks"
+            compact
+            :parsed="aiSummaryParsed"
+          />
+          <template v-else-if="isSupplement">
+            <p class="muted">尚未生成；待补问卷可跳过。</p>
+          </template>
+          <template v-else>
+            <p class="sum-warn">尚未生成或已清空，正式首诊须有总结正文后再提交。</p>
+            <button type="button" class="link" @click="jumpToAiSummary">去 AI 总结模块</button>
+          </template>
         </section>
       </div>
       <template #footer>
@@ -1030,6 +1217,10 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   background: var(--ink-50);
+}
+
+.intake--embedded {
+  background: transparent;
 }
 
 .top {
@@ -1295,7 +1486,7 @@ onBeforeUnmount(() => {
 .body {
   flex: 1;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 280px;
+  grid-template-columns: 200px minmax(0, 1fr) 340px;
   min-height: 0;
 }
 
@@ -1481,16 +1672,16 @@ onBeforeUnmount(() => {
 .ai-summary-bar {
   margin-bottom: 14px;
   padding: 12px 14px;
-  border: 1px solid var(--ink-200);
-  border-radius: 10px;
-  background: #fff;
+  border: 1px solid #99f6e4;
+  border-radius: 12px;
+  background: #f0fdfa;
 }
 
 .ai-summary-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
 }
 
 .ai-meta {
@@ -1498,55 +1689,30 @@ onBeforeUnmount(() => {
   color: var(--ink-500);
 }
 
-.ai-list {
+.ai-summary-blocks {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.ai-empty-hint {
   margin: 10px 0 0;
-  padding-left: 18px;
-  font-size: 13px;
-  color: var(--ink-700);
-  line-height: 1.5;
-}
-
-.ai-list.risks {
-  color: #b45309;
-}
-
-.ai-list.next {
-  color: var(--brand-700, #0f766e);
-}
-
-.ai-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin-top: 10px;
-}
-
-.ai-chip-label {
   font-size: 12px;
   color: var(--ink-400);
-  margin-right: 2px;
+  line-height: 1.45;
 }
 
-.ai-chip {
+.ai-edit-hint {
+  margin: 0 0 8px;
   font-size: 12px;
-  line-height: 1.35;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--ink-100, #f1f5f9);
-  color: var(--ink-700);
-  max-width: 100%;
+  color: var(--ink-400);
+  line-height: 1.4;
 }
 
-.ai-preview {
-  margin: 0;
-  white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--ink-700);
-  max-height: 220px;
+.ai-preview-blocks {
+  max-height: 280px;
   overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 4px 2px 0;
 }
 
 .script p {
@@ -1581,6 +1747,27 @@ onBeforeUnmount(() => {
 .q.req.hit {
   border-color: #ef4444;
   box-shadow: 0 0 0 1px color-mix(in srgb, #ef4444 30%, transparent);
+}
+
+.q.focus {
+  border-color: #0d9488;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, #0d9488 45%, transparent),
+    0 0 0 6px color-mix(in srgb, #0d9488 16%, transparent);
+  animation: q-focus-pulse 1.2s ease-out 1;
+}
+
+@keyframes q-focus-pulse {
+  0% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, #0d9488 55%, transparent),
+      0 0 0 10px color-mix(in srgb, #0d9488 22%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, #0d9488 45%, transparent),
+      0 0 0 6px color-mix(in srgb, #0d9488 16%, transparent);
+  }
 }
 
 .q-head {
@@ -1702,6 +1889,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .panel {
@@ -1744,6 +1932,7 @@ onBeforeUnmount(() => {
 }
 
 .bmi-panel {
+  flex-shrink: 0;
   background: linear-gradient(180deg, #f8fafc 0%, #fff 70%);
 }
 
@@ -1825,10 +2014,23 @@ onBeforeUnmount(() => {
   margin-left: 2px;
 }
 
+.hits-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .hits {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 吃满侧栏剩余高度，多了面板内滚，底下不再空一截 */
+  overflow: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
 }
 
 .hit-card {
@@ -1888,16 +2090,69 @@ onBeforeUnmount(() => {
 }
 
 .risk-panel {
+  flex-shrink: 0;
   border-color: #fde68a;
   background: #fffbeb;
 }
 
-.risk-list {
+.risk-list,
+.sum-risk-list {
   margin: 0;
-  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.risk-item,
+.sum-risk-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.72);
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink-800);
   font-size: 13px;
-  line-height: 1.7;
-  color: var(--ink-700);
+  line-height: 1.45;
+}
+
+.risk-item:hover,
+.sum-risk-item:hover {
+  border-color: #fcd34d;
+  background: #fff;
+}
+
+.risk-idx {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: #fde68a;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.risk-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--brand-700, #0f766e);
+}
+
+.sum-risk-item {
+  background: var(--ink-50, #f8fafc);
+}
+
+.sum-risk-item:hover {
+  border-color: var(--ink-200);
 }
 
 .muted {
@@ -1929,6 +2184,12 @@ onBeforeUnmount(() => {
   color: #059669;
 }
 
+.sum .sum-warn {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #b45309;
+}
+
 .link {
   border: none;
   background: none;
@@ -1948,7 +2209,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1100px) {
   .body {
-    grid-template-columns: 190px minmax(0, 1fr) 240px;
+    grid-template-columns: 180px minmax(0, 1fr) 300px;
   }
 }
 

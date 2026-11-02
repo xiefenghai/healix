@@ -157,7 +157,7 @@ async function onOcrFileChange(e: Event) {
 
 <style scoped>
 .obs-layout {
-  padding: 8px 0 24px;
+  padding: 0 0 16px;
 }
 
 .obs-toolbar {
@@ -165,7 +165,7 @@ async function onOcrFileChange(e: Event) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   flex-wrap: wrap;
 }
 

@@ -1,6 +1,7 @@
 package com.healix.core.careplan.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
@@ -40,6 +41,7 @@ import com.healix.core.careplan.mapper.CarePlanVersionMapper;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
 import com.healix.core.careplan.support.CarePlanContextService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
+import com.healix.core.careplan.support.CarePlanWeighTaskNormalizer;
 import com.healix.core.followup.catalog.FollowupType;
 import com.healix.core.followup.domain.FollowupRecord;
 import com.healix.core.followup.dto.FollowupRecordViewDto;
@@ -124,7 +126,10 @@ public class CarePlanService {
         bundle.setPlan(toHead(plan));
         CarePlanDraft draft = draftMapper.findByPlanId(plan.getId());
         if (draft != null) {
-            bundle.setDraft(toDraftDto(draft));
+            CarePlanDraftDto draftDto = toDraftDto(draft);
+            // 打开方案页时用最新首诊高亮刷新提示（带答卷），不改库
+            refreshDraftHighlightFlags(draftDto, tenantId, peopleId);
+            bundle.setDraft(draftDto);
         }
         if (StringUtils.hasText(plan.getCurrentVersionId())) {
             CarePlanVersion ver = versionMapper.findById(plan.getCurrentVersionId());
@@ -203,17 +208,21 @@ public class CarePlanService {
         ObjectNode emptyExec = JsonUtils.emptyObject();
         emptyExec.put("horizonDays", 14);
         emptyExec.putArray("tasks");
-        List<SafetyFlagDto> flags = safetyService.evaluate(
+        // 空白草稿尚未填写/生成：不写入「内容不完整」「上下文不完整」（保存或 AI 生成时再校验）
+        CarePlanContext ctx = contextService.load(tenantId, peopleId);
+        List<SafetyFlagDto> flags = new ArrayList<>(safetyService.evaluate(
                 emptyExercise,
                 emptyDiet,
                 emptyExec,
-                true,
+                ctx.contextIncomplete(),
                 false,
-                false,
+                ctx.hypoglycemiaRisk(),
                 allergens,
-                allergyQueryService.status(tenantId, peopleId),
+                ctx.allergyStatus(),
                 null,
-                false);
+                false));
+        flags.removeIf(f -> CarePlanSafetyService.ERR_INCOMPLETE.equals(f.code())
+                || CarePlanSafetyService.WARN_CONTEXT.equals(f.code()));
         CarePlanDraft draft = newDraft(
                 plan,
                 peopleId,
@@ -291,6 +300,7 @@ public class CarePlanService {
             log.info("[CarePlan] removed allergen conflicts peopleId={} items={}", peopleId, removed);
         }
         energyTargetService.applyFresh(tenantId, peopleId, generated.diet());
+        CarePlanWeighTaskNormalizer.normalize(generated.execution(), generated.contextSnapshot());
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 generated.exercise(),
                 generated.diet(),
@@ -440,8 +450,11 @@ public class CarePlanService {
             draft.setContextSnapshotJson(mergeSnapshotFields(
                     draft.getContextSnapshotJson(), planSummary, rationaleOverview));
         }
-        JsonNode snapshotNode = JsonUtils.readTree(
-                draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson());
+        ObjectNode snapshotNode = asObjectNode(JsonUtils.readTree(
+                draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
+        // 用最新首诊高亮（含答卷摘要）覆盖快照，避免旧草稿缺 answerDisplay
+        mergeLiveHighlights(snapshotNode, ctx);
+        CarePlanWeighTaskNormalizer.normalize(executionNorm, snapshotNode);
         CarePlanTemplateKeyEnum templateKey =
                 CarePlanTemplateKeyEnum.parseOrNull(snapshotNode.path("templateKey").asText(null));
         boolean specialtyMismatch = CarePlanDiseaseTags.specialtyMismatch(templateKey, ctx.diseaseCodes());
@@ -461,6 +474,7 @@ public class CarePlanService {
         draft.setExerciseJson(JsonUtils.toJson(exerciseNorm));
         draft.setDietJson(JsonUtils.toJson(dietNorm == null ? JsonUtils.emptyObject() : dietNorm));
         draft.setExecutionJson(JsonUtils.toJson(executionNorm));
+        draft.setContextSnapshotJson(JsonUtils.toJson(snapshotNode));
         draft.setSafetyFlagsJson(safetyService.toFlagsJson(flags));
         if (CarePlanSourceEnum.TEMPLATE.name().equals(draft.getSource())
                 || CarePlanSourceEnum.LLM.name().equals(draft.getSource())) {
@@ -826,8 +840,11 @@ public class CarePlanService {
             energyTargetService.onPublish(tenantId, peopleId, staffId, dietObj, syncDietGoal);
             draft.setDietJson(JsonUtils.toJson(dietObj));
         }
-        JsonNode publishSnapshot = JsonUtils.readTree(
-                draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson());
+        ObjectNode publishSnapshot = asObjectNode(JsonUtils.readTree(
+                draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
+        mergeLiveHighlights(publishSnapshot, ctx);
+        CarePlanWeighTaskNormalizer.normalize(execution, publishSnapshot);
+        draft.setExecutionJson(JsonUtils.toJson(execution));
         CarePlanTemplateKeyEnum publishKey =
                 CarePlanTemplateKeyEnum.parseOrNull(publishSnapshot.path("templateKey").asText(null));
         List<SafetyFlagDto> flags = safetyService.evaluate(
@@ -1381,6 +1398,72 @@ public class CarePlanService {
             case "NEED_REGENERATE" -> "需重做";
             default -> result;
         };
+    }
+
+    /** 草稿快照与最新上下文合并首诊高亮（含答卷摘要）。 */
+    private static void mergeLiveHighlights(ObjectNode snapshot, CarePlanContext ctx) {
+        if (snapshot == null || ctx == null || ctx.snapshot() == null) {
+            return;
+        }
+        JsonNode live = ctx.snapshot().get("highlights");
+        if (live != null && live.isArray() && !live.isEmpty()) {
+            snapshot.set("highlights", live.deepCopy());
+        }
+        JsonNode intake = ctx.snapshot().get("intakeBrief");
+        if (intake != null && intake.isObject()) {
+            snapshot.set("intakeBrief", intake.deepCopy());
+        }
+    }
+
+    private static ObjectNode asObjectNode(JsonNode node) {
+        if (node instanceof ObjectNode obj) {
+            return obj;
+        }
+        return JsonUtils.emptyObject();
+    }
+
+    /**
+     * 仅刷新首诊高亮类提示文案（含答卷），不改运动/饮食完整性等其它 flag。
+     * 失败时保留库内原 flags，避免拖垮整页 getBundle。
+     */
+    private void refreshDraftHighlightFlags(CarePlanDraftDto draftDto, String tenantId, String peopleId) {
+        if (draftDto == null) {
+            return;
+        }
+        try {
+            CarePlanContext ctx = contextService.load(tenantId, peopleId);
+            ObjectNode snap = asObjectNode(
+                    draftDto.getContextSnapshot() == null
+                            ? JsonUtils.emptyObject()
+                            : draftDto.getContextSnapshot().deepCopy());
+            mergeLiveHighlights(snap, ctx);
+            draftDto.setContextSnapshot(snap);
+            List<SafetyFlagDto> highlightOnly = safetyService.highlightFlags(snap);
+            ArrayNode next = JsonUtils.mapper().createArrayNode();
+            JsonNode old = draftDto.getSafetyFlags();
+            if (old != null && old.isArray()) {
+                for (JsonNode f : old) {
+                    String code = f.path("code").asText("");
+                    if (CarePlanSafetyService.WARN_HIGHLIGHT.equals(code)
+                            || CarePlanSafetyService.ERR_HIGHLIGHT_BLOCK.equals(code)) {
+                        continue;
+                    }
+                    next.add(f.deepCopy());
+                }
+            }
+            for (SafetyFlagDto f : highlightOnly) {
+                ObjectNode n = next.addObject();
+                n.put("level", f.level());
+                n.put("code", f.code());
+                n.put("message", f.message());
+            }
+            draftDto.setSafetyFlags(next);
+        } catch (RuntimeException e) {
+            log.warn(
+                    "[CarePlan] refresh highlight flags skipped peopleId={}: {}",
+                    peopleId,
+                    e.toString());
+        }
     }
 
     private static String textOrNull(JsonNode n) {

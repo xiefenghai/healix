@@ -12,6 +12,7 @@ import com.healix.core.allergy.enums.AllergyCategoryEnum;
 import com.healix.core.allergy.enums.AllergyStatusEnum;
 import com.healix.core.allergy.service.AllergyService;
 import com.healix.core.allergy.service.AllergyService.AllergyCommand;
+import com.healix.core.careplan.support.CarePlanPromptContextSupport;
 import com.healix.core.consent.domain.PeopleConsent;
 import com.healix.core.consent.mapper.PeopleConsentMapper;
 import com.healix.core.field.ArchiveFields;
@@ -55,6 +56,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -136,7 +138,8 @@ public class QuestionnaireResponseService {
     /**
      * 打开 / 续开首诊草稿。
      *
-     * @param programCode {@code WEIGHT_LOSS} / {@code NONE}；空则沿用草稿或默认减重
+     * @param programCode {@code WEIGHT_LOSS} / {@code DIABETES} / {@code HYPERTENSION} / {@code NONE}；
+     *     空则沿用草稿；新建草稿不默认减重，需健管师勾选管理方向
      */
     @Transactional
     public QuestionnaireResponseView openIntake(
@@ -177,7 +180,7 @@ public class QuestionnaireResponseService {
             return toView(draft, true);
         }
 
-        String prog = programCode == null || programCode.isBlank() ? ProgramEnrollmentService.WEIGHT_LOSS : programCode;
+        String prog = programCode == null || programCode.isBlank() ? ProgramEnrollmentService.NONE : programCode;
         ObjectNode prefill = buildPrefill(tenantId, peopleId, q);
         QuestionnaireResponse row = new QuestionnaireResponse();
         row.setTenantId(tenantId);
@@ -220,15 +223,21 @@ public class QuestionnaireResponseService {
         QuestionnaireResponse draft =
                 responseMapper.findDraft(tenantId, peopleId, PURPOSE_SUPPLEMENT, null, null);
         ObjectNode prefill = buildPrefill(tenantId, peopleId, q);
-        ObjectNode complete = completeness(q, JsonUtils.emptyObject(), answersLookup(JsonUtils.emptyObject()), filter);
+        // 答案上下文与 pending 统计对齐：预填铺底，仅保留待补题上的草稿值
+        // （避免草稿里被改窄的 careTracks/性别把模块藏掉，造成「N 项待补」与页内进度不一致）
+        ObjectNode draftAnswers = draft != null ? asObject(draft.getAnswersJson()) : JsonUtils.emptyObject();
+        ObjectNode answers = rebuildSupplementAnswers(prefill, draftAnswers, filter);
+        ObjectNode complete = completeness(q, answers, answersLookup(answers), filter);
         ArrayNode supplementFields = JsonUtils.mapper().createArrayNode();
         filter.forEach(supplementFields::add);
         complete.set("supplementFields", supplementFields);
+        complete.put("pendingCount", filter.size());
 
         if (draft != null) {
             draft.setQuestionnaireCode(q.code());
             draft.setQuestionnaireVersion(q.version());
             draft.setPrefillJson(JsonUtils.toJson(prefill));
+            draft.setAnswersJson(JsonUtils.toJson(answers));
             draft.setCompletenessJson(JsonUtils.toJson(complete));
             if (channel != null && !channel.isBlank()) {
                 draft.setChannel(channel);
@@ -250,13 +259,42 @@ public class QuestionnaireResponseService {
         row.setStatus(STATUS_DRAFT);
         row.setChannel(channel);
         row.setPrefillJson(JsonUtils.toJson(prefill));
-        row.setAnswersJson("{}");
+        row.setAnswersJson(JsonUtils.toJson(answers));
         row.setCompletenessJson(JsonUtils.toJson(complete));
         row.setFilledByType("STAFF");
         row.setFilledById(staffId);
         EntityMeta.onCreate(row);
         responseMapper.insert(row);
         return toView(row, true);
+    }
+
+    /**
+     * 待补作答上下文：先铺预填已有值（管理方向、性别等），再叠待补题上的草稿填写。
+     */
+    private static ObjectNode rebuildSupplementAnswers(
+            ObjectNode prefill, ObjectNode draftAnswers, Set<String> pendingFields) {
+        ObjectNode out = JsonUtils.emptyObject();
+        if (prefill != null) {
+            prefill.fields().forEachRemaining(e -> {
+                JsonNode cell = e.getValue();
+                if (cell == null || !cell.isObject()) {
+                    return;
+                }
+                JsonNode value = cell.get("value");
+                if (!ArchiveFields.isEmpty(value)) {
+                    out.set(e.getKey(), value.deepCopy());
+                }
+            });
+        }
+        if (draftAnswers != null && pendingFields != null) {
+            for (String field : pendingFields) {
+                JsonNode v = draftAnswers.get(field);
+                if (!ArchiveFields.isEmpty(v)) {
+                    out.set(field, v.deepCopy());
+                }
+            }
+        }
+        return out;
     }
 
     @Transactional
@@ -311,6 +349,13 @@ public class QuestionnaireResponseService {
         }
         if (complete.path("requiredMissing").isArray() && complete.get("requiredMissing").size() > 0) {
             throw new BusinessException(400, "必收项未填全");
+        }
+        // 正式首诊须有案头总结正文（可 AI 生成或手填）；待补问卷不强制
+        if (PURPOSE_INTAKE.equals(row.getPurpose())) {
+            JsonNode aiSummary = answers.get("staff.aiSummary");
+            if (aiSummary == null || aiSummary.isNull() || !StringUtils.hasText(aiSummary.asText())) {
+                throw new BusinessException(400, "请先生成或填写 AI 总结");
+            }
         }
 
         ObjectNode prefill = asObject(row.getPrefillJson());
@@ -810,9 +855,8 @@ public class QuestionnaireResponseService {
         if (!StringUtils.hasText(g.getGoalMode())) {
             g.setGoalMode(defaultGoalModeForTracks(tracks));
         }
-        putGoalMetric(
+        putWeightGoalMetric(
                 goalsJson,
-                "WEIGHT",
                 goals.get("goal.targetWeightKg"),
                 goals.get("goal.targetDate"),
                 answers.get("metric.WEIGHT"));
@@ -1223,7 +1267,10 @@ public class QuestionnaireResponseService {
                     continue; // 已有更新的真实值
                 }
                 try {
-                    if (FieldStore.of(code).responseOnly()) {
+                    FieldStore store = FieldStore.of(code);
+                    // staff.*（如 AI 总结）每次重填，不带入预填；
+                    // measure.* 必须带入，否则 responseOnly 永远进不了档案，待补会永远挂「这些数据怎么来的？」
+                    if (store == FieldStore.RESPONSE_STAFF) {
                         continue;
                     }
                 } catch (IllegalArgumentException ignored) {
@@ -1463,7 +1510,7 @@ public class QuestionnaireResponseService {
                 continue;
             }
             allTotal++;
-            boolean filled = !ArchiveFields.isEmpty(answers.get(item.field()));
+            boolean filled = isIntakeFieldFilled(item.field(), lookup);
             if (filled) {
                 allDone++;
             }
@@ -1515,9 +1562,7 @@ public class QuestionnaireResponseService {
                 if (item.showIf() != null && !item.showIf().matches(lookup)) {
                     continue;
                 }
-                JsonNode cell = prefill.get(item.field());
-                JsonNode value = cell == null ? null : cell.get("value");
-                if (!ArchiveFields.isEmpty(value)) {
+                if (isIntakeFieldFilled(item.field(), lookup)) {
                     continue;
                 }
                 IntakeStatusView.PendingField p = new IntakeStatusView.PendingField();
@@ -1530,6 +1575,25 @@ public class QuestionnaireResponseService {
             }
         }
         return pending;
+    }
+
+    /**
+     * 过敏选 HAS 后食物/药物两类都会展示：一类已有明细时，另一类空视为「该类无」，
+     * 避免档案里只有食物过敏时药物过敏一直挂「1 项待补」。
+     */
+    private boolean isIntakeFieldFilled(String field, Function<String, JsonNode> lookup) {
+        if (!ArchiveFields.isEmpty(lookup.apply(field))) {
+            return true;
+        }
+        if (!FIELD_ALLERGY_FOOD.equals(field) && !FIELD_ALLERGY_DRUG.equals(field)) {
+            return false;
+        }
+        JsonNode status = lookup.apply(FIELD_ALLERGY_STATUS);
+        if (status == null || status.isNull() || !"HAS".equalsIgnoreCase(status.asText())) {
+            return false;
+        }
+        String other = FIELD_ALLERGY_FOOD.equals(field) ? FIELD_ALLERGY_DRUG : FIELD_ALLERGY_FOOD;
+        return !ArchiveFields.isEmpty(lookup.apply(other));
     }
 
     private Set<String> supplementFieldFilter(QuestionnaireResponse row) {
@@ -1554,14 +1618,19 @@ public class QuestionnaireResponseService {
     }
 
     private ArrayNode collectHighlights(QuestionnaireDef q, Function<String, JsonNode> lookup) {
-        ArrayNode out = JsonUtils.mapper().createArrayNode();
+        // 同题多规则命中时合并：取最高级别，方案影响 / 追问去重拼接
+        Map<String, ObjectNode> byField = new LinkedHashMap<>();
         for (ModuleItem item : catalog.itemsOf(q, lookup)) {
             if (item.showIf() != null && !item.showIf().matches(lookup)) {
                 continue;
             }
             JsonNode answer = lookup.apply(item.field());
             for (HighlightRule rule : item.highlights()) {
-                if (rule.matches(answer)) {
+                if (!highlightMatches(rule, item.field(), answer, lookup)) {
+                    continue;
+                }
+                ObjectNode prev = byField.get(item.field());
+                if (prev == null) {
                     ObjectNode hit = JsonUtils.emptyObject();
                     hit.put("field", item.field());
                     if (StringUtils.hasText(item.label())) {
@@ -1574,11 +1643,132 @@ public class QuestionnaireResponseService {
                     if (rule.followUp() != null) {
                         hit.put("followUp", rule.followUp());
                     }
-                    out.add(hit);
+                    String answerDisplay = CarePlanPromptContextSupport.formatAnswerDisplay(item.field(), answer);
+                    if (StringUtils.hasText(answerDisplay)) {
+                        hit.put("answerDisplay", answerDisplay);
+                    }
+                    byField.put(item.field(), hit);
+                    continue;
                 }
+                if (highlightSeverityRank(rule.severity())
+                        > highlightSeverityRank(prev.path("severity").asText())) {
+                    prev.put("severity", rule.severity());
+                }
+                mergeHighlightText(prev, "planEffect", rule.planEffect(), "；");
+                mergeHighlightText(prev, "followUp", rule.followUp(), " ");
             }
         }
+        ArrayNode out = JsonUtils.mapper().createArrayNode();
+        byField.values().forEach(out::add);
         return out;
+    }
+
+    private static int highlightSeverityRank(String severity) {
+        if (!StringUtils.hasText(severity)) {
+            return 0;
+        }
+        return switch (severity.trim().toUpperCase()) {
+            case "BLOCK" -> 3;
+            case "REFER" -> 2;
+            case "CAUTION" -> 1;
+            default -> 0;
+        };
+    }
+
+    private static void mergeHighlightText(ObjectNode hit, String key, String next, String sep) {
+        if (!StringUtils.hasText(next)) {
+            return;
+        }
+        String cur = hit.path(key).asText("");
+        if (!StringUtils.hasText(cur)) {
+            hit.put(key, next.trim());
+            return;
+        }
+        LinkedHashSet<String> parts = new LinkedHashSet<>();
+        for (String p : cur.split(java.util.regex.Pattern.quote(sep))) {
+            if (StringUtils.hasText(p)) {
+                parts.add(p.trim());
+            }
+        }
+        parts.add(next.trim());
+        hit.put(key, String.join(sep, parts));
+    }
+
+    /**
+     * 高亮判定：普通 when 走 {@link HighlightRule#matches}；BMI / 目标BMI / 年龄需上下文。
+     * 缺身高或生日时不算命中，避免「还没填体测就提示目标 BMI 过低」。
+     */
+    private static boolean highlightMatches(
+            HighlightRule rule, String field, JsonNode answer, Function<String, JsonNode> lookup) {
+        JsonNode when = rule.when();
+        if (when != null && when.has("computed")) {
+            Double num = resolveHighlightComputed(when.path("computed").asText(""), answer, lookup);
+            if (num == null || !when.has("op") || !when.has("value")) {
+                return false;
+            }
+            return compareHighlightNum(num, when.path("op").asText(), when.path("value").asDouble());
+        }
+        return rule.matches(answer);
+    }
+
+    private static Double resolveHighlightComputed(
+            String name, JsonNode answer, Function<String, JsonNode> lookup) {
+        String n = name == null ? "" : name.trim();
+        if ("BMI".equals(n)) {
+            return calcBmiNum(lookup.apply("metric.HEIGHT"), firstNonEmpty(lookup.apply("metric.WEIGHT"), answer));
+        }
+        if ("目标BMI".equals(n)) {
+            return calcBmiNum(lookup.apply("metric.HEIGHT"), answer);
+        }
+        if ("年龄".equals(n)) {
+            return ageYearsFromBirthday(firstNonEmpty(lookup.apply("profile.birthday"), answer));
+        }
+        return null;
+    }
+
+    private static JsonNode firstNonEmpty(JsonNode a, JsonNode b) {
+        if (!ArchiveFields.isEmpty(a)) {
+            return a;
+        }
+        return b;
+    }
+
+    private static Double calcBmiNum(JsonNode heightCm, JsonNode weightKg) {
+        Double h = numAnswer(heightCm);
+        Double w = numAnswer(weightKg);
+        if (h == null || w == null || h <= 0 || w <= 0) {
+            return null;
+        }
+        double m = h / 100.0;
+        double bmi = w / (m * m);
+        return Double.isFinite(bmi) ? Math.round(bmi * 10.0) / 10.0 : null;
+    }
+
+    private static Double ageYearsFromBirthday(JsonNode raw) {
+        if (ArchiveFields.isEmpty(raw)) {
+            return null;
+        }
+        String s = raw.asText("").trim();
+        if (s.length() < 10) {
+            return null;
+        }
+        try {
+            LocalDate b = LocalDate.parse(s.substring(0, 10));
+            int age = (int) java.time.temporal.ChronoUnit.YEARS.between(b, LocalDate.now());
+            return age >= 0 && age < 150 ? (double) age : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static boolean compareHighlightNum(double num, String op, double thr) {
+        return switch (op == null ? "" : op.trim()) {
+            case "<" -> num < thr;
+            case "<=", "≤" -> num <= thr;
+            case ">" -> num > thr;
+            case ">=", "≥" -> num >= thr;
+            default -> false;
+        };
     }
 
     private ArrayNode detectConflicts(
@@ -1664,8 +1854,17 @@ public class QuestionnaireResponseService {
         v.setTitle(q.title());
         if (withModules) {
             Set<String> filter = supplementFieldFilter(row);
+            // 待补：用「预填 + 答案」判定 showIf，与页内可见题一致，避免把当前藏着的题塞进模块列表
+            ObjectNode effectiveAnswers =
+                    PURPOSE_SUPPLEMENT.equals(row.getPurpose())
+                            ? mergePrefillValues(asObject(row.getPrefillJson()), answersNode)
+                            : answersNode;
+            Function<String, JsonNode> visibilityLookup = answersLookup(effectiveAnswers);
             List<QuestionnaireResponseView.ModuleView> modules = new ArrayList<>();
             for (QuestionnaireDef.ModuleRef ref : q.modules()) {
+                if (filter != null && ref.showIf() != null && !ref.showIf().matches(visibilityLookup)) {
+                    continue;
+                }
                 ModuleDef m = catalog.requireModule(ref.code(), ref.version());
                 QuestionnaireResponseView.ModuleView mv = new QuestionnaireResponseView.ModuleView();
                 mv.setCode(m.code());
@@ -1678,6 +1877,9 @@ public class QuestionnaireResponseService {
                 List<QuestionnaireResponseView.ItemView> items = new ArrayList<>();
                 for (ModuleItem it : m.items()) {
                     if (filter != null && !filter.contains(it.field())) {
+                        continue;
+                    }
+                    if (filter != null && it.showIf() != null && !it.showIf().matches(visibilityLookup)) {
                         continue;
                     }
                     QuestionnaireResponseView.ItemView iv = new QuestionnaireResponseView.ItemView();
@@ -1762,6 +1964,30 @@ public class QuestionnaireResponseService {
         return code -> answers.get(code);
     }
 
+    /** 预填 value 铺底，answers 非空覆盖（待补可见性判定用）。 */
+    private static ObjectNode mergePrefillValues(ObjectNode prefill, ObjectNode answers) {
+        ObjectNode out = JsonUtils.emptyObject();
+        if (prefill != null) {
+            prefill.fields().forEachRemaining(e -> {
+                JsonNode cell = e.getValue();
+                if (cell != null && cell.isObject()) {
+                    JsonNode value = cell.get("value");
+                    if (!ArchiveFields.isEmpty(value)) {
+                        out.set(e.getKey(), value.deepCopy());
+                    }
+                }
+            });
+        }
+        if (answers != null) {
+            answers.fields().forEachRemaining(e -> {
+                if (!ArchiveFields.isEmpty(e.getValue())) {
+                    out.set(e.getKey(), e.getValue().deepCopy());
+                }
+            });
+        }
+        return out;
+    }
+
     private static ObjectNode asObject(String json) {
         JsonNode n = JsonUtils.readTree(json == null || json.isBlank() ? "{}" : json);
         return n instanceof ObjectNode o ? o : JsonUtils.emptyObject();
@@ -1827,6 +2053,62 @@ public class QuestionnaireResponseService {
         if (!ArchiveFields.isEmpty(deadline)) {
             item.set("deadline", deadline);
         }
+    }
+
+    /**
+     * 体重目标：问卷存周期码（M3/M6…），写目标库时换算为 deadline 日期；兼容旧答案里的 ISO 日期。
+     */
+    private static void putWeightGoalMetric(
+            ObjectNode goalsJson, JsonNode target, JsonNode horizonOrDate, JsonNode baseline) {
+        if (ArchiveFields.isEmpty(target) && ArchiveFields.isEmpty(horizonOrDate)) {
+            return;
+        }
+        String raw = textOrNull(horizonOrDate);
+        LocalDate deadline = resolveWeightDeadline(raw);
+        ObjectNode item = goalsJson.has("WEIGHT") && goalsJson.get("WEIGHT").isObject()
+                ? (ObjectNode) goalsJson.get("WEIGHT")
+                : goalsJson.putObject("WEIGHT");
+        item.put("metric", "WEIGHT");
+        if (!ArchiveFields.isEmpty(baseline) && !item.has("baseline")) {
+            item.set("baseline", baseline);
+        }
+        if (!ArchiveFields.isEmpty(target)) {
+            item.set("target", target);
+        }
+        if (StringUtils.hasText(raw)) {
+            String code = raw.trim().toUpperCase(Locale.ROOT);
+            if (code.startsWith("M") || "FLEXIBLE".equals(code)) {
+                item.put("horizon", code);
+            }
+        }
+        if (deadline != null) {
+            item.put("deadline", deadline.toString());
+        } else if (StringUtils.hasText(raw) && "FLEXIBLE".equalsIgnoreCase(raw.trim())) {
+            item.remove("deadline");
+        }
+    }
+
+    /** M1/M3/M6/M12 → 今天起算；已是 yyyy-MM-dd 则原样；FLEXIBLE / 空 → null。 */
+    private static LocalDate resolveWeightDeadline(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String v = raw.trim();
+        if (v.length() >= 10 && v.charAt(4) == '-' && v.charAt(7) == '-') {
+            try {
+                return LocalDate.parse(v.substring(0, 10));
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+        return switch (v.toUpperCase(Locale.ROOT)) {
+            case "M1" -> LocalDate.now().plusMonths(1);
+            case "M3" -> LocalDate.now().plusMonths(3);
+            case "M6" -> LocalDate.now().plusMonths(6);
+            case "M12" -> LocalDate.now().plusMonths(12);
+            case "FLEXIBLE" -> null;
+            default -> null;
+        };
     }
 
     private static void putIfPresent(ObjectNode obj, String key, JsonNode v) {

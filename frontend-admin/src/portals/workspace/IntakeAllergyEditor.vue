@@ -44,6 +44,13 @@ function blankItem(): IntakeAllergyDraft {
   return { ...emptyAllergyForm(), category: props.category, id: undefined }
 }
 
+/** 最近发生不可选未来日期 */
+function disabledLastOccurrenceDate(d: Date) {
+  const today = new Date()
+  today.setHours(23, 59, 59, 999)
+  return d.getTime() > today.getTime()
+}
+
 function dictLabel(
   options: Array<{ code: string; label: string }> | undefined,
   code?: string | null,
@@ -349,6 +356,7 @@ onMounted(async () => {
               type="date"
               value-format="YYYY-MM-DD"
               :disabled="disabled"
+              :disabled-date="disabledLastOccurrenceDate"
               placeholder="可选"
               style="width: 100%"
               @change="emitList"

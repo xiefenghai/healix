@@ -252,21 +252,6 @@ function metricLabel(code?: string) {
   return (code && METRIC_LABELS[code]) || code || '-'
 }
 
-function slotLabel(slot: LatestSlot) {
-  const base = metricLabel(slot.metricType)
-  if (slot.bpContext === 'HOME') return `${base}（家庭）`
-  if (slot.bpContext === 'CLINIC') return `${base}（诊室）`
-  if (slot.mealContext === 'FASTING') return `${base}（空腹）`
-  if (slot.mealContext === 'POSTPRANDIAL') return `${base}（餐后）`
-  if (slot.mealContext === 'RANDOM') return `${base}（随机）`
-  return base
-}
-
-function formatTime(v?: string) {
-  if (!v) return '-'
-  return v.replace('T', ' ').slice(0, 16)
-}
-
 function metricMeta(metricType: string): MetricDictMeta {
   const item = metricTypeOptions.value.find((d) => d.dictCode === metricType)
   return mergeMetricMeta(metricType, item?.content)
@@ -293,85 +278,6 @@ function judgeValue(
     abnormal: flag === 'H' || flag === 'L',
   }
 }
-
-interface LatestCard {
-  key: string
-  label: string
-  valueText: string
-  unit: string
-  time: string
-  refRange?: string
-  abnormal: boolean
-  abnormalLabel?: string
-  sortType: string
-}
-
-function toLatestCard(
-  key: string,
-  label: string,
-  metricType: string,
-  value: number,
-  unit: string,
-  recordedAt?: string,
-  mealContext?: string,
-): LatestCard {
-  const judged = judgeValue(metricType, value, mealContext)
-  return {
-    key,
-    label,
-    valueText: String(value),
-    unit,
-    time: formatTime(recordedAt),
-    refRange: judged.rangeText || undefined,
-    abnormal: judged.abnormal,
-    abnormalLabel: abnormalLabel(judged.flag) || undefined,
-    sortType: metricType,
-  }
-}
-
-const latestCards = computed((): LatestCard[] => {
-  const cards = latest.value.map((slot) =>
-    toLatestCard(
-      slot.slotKey,
-      slotLabel(slot),
-      slot.metricType,
-      Number(slot.value),
-      slot.unit || '',
-      slot.recordedAt,
-      slot.mealContext,
-    ),
-  )
-
-  const height = latest.value.find((s) => s.metricType === 'HEIGHT')
-  const weight = latest.value.find((s) => s.metricType === 'WEIGHT')
-  if (height && weight && Number(height.value) > 0) {
-    const m = Number(height.value) / 100
-    const bmi = Number((Number(weight.value) / (m * m)).toFixed(1))
-    if (Number.isFinite(bmi)) {
-      cards.push(
-        toLatestCard(
-          'BMI',
-          'BMI',
-          'BMI',
-          bmi,
-          '',
-          weight.recordedAt || height.recordedAt,
-        ),
-      )
-    }
-  }
-
-  return cards.sort((a, b) => {
-    const ia = LATEST_TYPE_ORDER.indexOf(a.sortType)
-    const ib = LATEST_TYPE_ORDER.indexOf(b.sortType)
-    const sa = ia === -1 ? 99 : ia
-    const sb = ib === -1 ? 99 : ib
-    if (sa !== sb) return sa - sb
-    return a.label.localeCompare(b.label, 'zh-CN')
-  })
-})
-
-const abnormalLatestCards = computed(() => latestCards.value.filter((c) => c.abnormal))
 
 function rowJudge(row: Metric) {
   return judgeValue(row.metricType, row.value, String(row.extra?.mealContext || ''))
@@ -406,6 +312,33 @@ const bmiDisplay = computed(() => {
   return (w / (m * m)).toFixed(1)
 })
 
+function latestHeightValue(): number | null {
+  const slot = latest.value.find((s) => s.metricType === 'HEIGHT')
+  if (!slot) return null
+  const n = Number(slot.value)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** 身高等于最新值时视为沿用预填（未改动且未录体重时不重复提交） */
+const heightFromPrefill = computed(() => {
+  const h = latestHeightValue()
+  return h != null && form.height === h
+})
+
+function applyHeightPrefill() {
+  form.height = latestHeightValue()
+}
+
+function onEntryKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Enter' || e.isComposing || e.shiftKey) return
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  if (t.tagName === 'TEXTAREA') return
+  if (t.closest('.el-select') || t.closest('.el-date-editor')) return
+  e.preventDefault()
+  if (!saving.value) void submitEntry()
+}
+
 async function loadAll() {
   if (!peopleId.value) return
   loading.value = true
@@ -424,6 +357,9 @@ async function loadAll() {
     latest.value = latestRes.data ?? []
     metricTypeOptions.value = dictRes.data ?? []
     patientGender.value = patientRes.data?.gender ?? ''
+    if (form.height == null || heightFromPrefill.value) {
+      applyHeightPrefill()
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载指标失败')
   } finally {
@@ -438,11 +374,11 @@ function resetForm() {
   form.dia = null
   form.glucose = null
   form.mealContext = 'FASTING'
-  form.height = null
   form.weight = null
   form.waist = null
   form.heartRate = null
   form.note = ''
+  applyHeightPrefill()
 }
 
 async function submitEntry() {
@@ -492,15 +428,16 @@ async function submitEntry() {
   ]
   for (const [field, code] of singles) {
     const v = form[field]
-    if (typeof v === 'number') {
-      items.push({
-        metricType: code,
-        value: v,
-        unit: DEFAULT_UNITS[code],
-        recordedAt,
-        note,
-      })
-    }
+    if (typeof v !== 'number') continue
+    // 预填身高未改动、且未同时录体重时，不重复入库
+    if (field === 'height' && heightFromPrefill.value && form.weight == null) continue
+    items.push({
+      metricType: code,
+      value: v,
+      unit: DEFAULT_UNITS[code],
+      recordedAt,
+      note,
+    })
   }
 
   if (!items.length) {
@@ -649,55 +586,9 @@ onMounted(() => {
   <div v-loading="loading" class="metric-page">
     <el-card shadow="never" class="section-card">
       <template #header>
-        <div class="card-head">
-          <span class="section-title">最新值</span>
-          <el-tag v-if="abnormalLatestCards.length" type="danger" effect="dark" size="small">
-            {{ abnormalLatestCards.length }} 项异常
-          </el-tag>
-        </div>
-      </template>
-      <div v-if="abnormalLatestCards.length" class="abnormal-banner">
-        <span v-for="card in abnormalLatestCards" :key="`abn-${card.key}`" class="abnormal-chip">
-          {{ card.label }}
-          <strong>{{ card.valueText }}{{ card.unit ? ` ${card.unit}` : '' }}</strong>
-          {{ card.abnormalLabel }}
-        </span>
-      </div>
-      <div v-if="latestCards.length" class="latest-grid">
-        <div
-          v-for="card in latestCards"
-          :key="card.key"
-          class="latest-item"
-          :class="{ 'latest-item--abnormal': card.abnormal }"
-        >
-          <div class="latest-head">
-            <div class="latest-name">{{ card.label }}</div>
-            <el-tag
-              v-if="card.abnormalLabel"
-              type="danger"
-              size="small"
-              effect="dark"
-              class="latest-tag"
-            >
-              {{ card.abnormalLabel }}
-            </el-tag>
-          </div>
-          <div class="latest-value" :class="{ abnormal: card.abnormal }">
-            {{ card.valueText }}
-            <span class="latest-unit">{{ card.unit }}</span>
-          </div>
-          <div v-if="card.refRange" class="latest-ref">参考 {{ card.refRange }}</div>
-          <div class="latest-time">{{ card.time }}</div>
-        </div>
-      </div>
-      <el-empty v-else description="暂无最新值" :image-size="64" />
-    </el-card>
-
-    <el-card shadow="never" class="section-card">
-      <template #header>
         <span class="section-title">就诊录入</span>
       </template>
-      <el-form label-width="88px" class="entry-form">
+      <el-form label-width="88px" class="entry-form" @keydown="onEntryKeydown">
         <el-form-item label="测量时间">
           <el-date-picker
             v-model="form.recordedAt"
@@ -741,6 +632,7 @@ onMounted(() => {
           <div class="inline-fields">
             <el-input-number v-model="form.height" :min="0" :max="250" :precision="1" controls-position="right" />
             <span class="unit">cm</span>
+            <span v-if="heightFromPrefill" class="prefill-tag">沿用</span>
             <el-input-number v-model="form.weight" :min="0" :max="300" :precision="1" controls-position="right" />
             <span class="unit">kg</span>
             <span v-if="bmiDisplay" class="bmi">BMI {{ bmiDisplay }}</span>
@@ -916,128 +808,6 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
-.abnormal-banner {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  background: linear-gradient(135deg, #fef2f2, #fff7ed);
-  border: 1px solid #fecaca;
-  border-radius: 10px;
-}
-
-.abnormal-chip {
-  font-size: 12px;
-  color: #b91c1c;
-  background: #fff;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  padding: 3px 10px;
-  font-weight: 500;
-}
-
-.abnormal-chip strong {
-  margin: 0 4px;
-}
-
-.latest-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 12px;
-}
-
-.latest-item {
-  position: relative;
-  overflow: hidden;
-  padding: 14px 16px;
-  background: #fff;
-  border: 1px solid var(--admin-border, #e2e8f0);
-  border-radius: var(--admin-radius, 12px);
-  box-shadow: var(--admin-shadow);
-}
-
-.latest-item::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 64px;
-  height: 64px;
-  background: radial-gradient(circle, var(--brand-50) 0%, transparent 70%);
-  opacity: 0.9;
-  border-radius: 50%;
-  transform: translate(30%, -30%);
-  pointer-events: none;
-}
-
-.latest-item--abnormal {
-  background: #fef2f2;
-  border-color: #fca5a5;
-  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.08);
-}
-
-.latest-item--abnormal::after {
-  background: radial-gradient(circle, #fecaca 0%, transparent 70%);
-}
-
-.latest-head {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-}
-
-.latest-tag {
-  flex-shrink: 0;
-}
-
-.latest-name {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--ink-400, #94a3b8);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.latest-value {
-  position: relative;
-  z-index: 1;
-  margin-top: 6px;
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.04em;
-  color: var(--ink-900, #0f172a);
-  font-variant-numeric: tabular-nums;
-}
-
-.latest-value.abnormal {
-  color: var(--rose-500, #ef4444);
-}
-
-.latest-unit {
-  font-size: 12px;
-  font-weight: 400;
-  margin-left: 2px;
-  color: var(--ink-400, #94a3b8);
-}
-
-.latest-ref,
-.latest-time {
-  position: relative;
-  z-index: 1;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--ink-400, #94a3b8);
-}
-
 .ref-text {
   color: var(--admin-text-secondary, #64748b);
   font-size: 12px;
@@ -1201,6 +971,11 @@ onMounted(() => {
   margin-left: 8px;
   color: var(--brand-500);
   font-weight: 600;
+}
+
+.prefill-tag {
+  font-size: 12px;
+  color: var(--ink-400, #94a3b8);
 }
 
 .metric-page :deep(.el-empty) {

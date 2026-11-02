@@ -34,7 +34,15 @@ onMounted(async () => {
               'hypertensionSymptoms',
               'hypertensionEmergencyComplications',
             ]
-          : []
+          : code === 'obesity'
+            ? [
+                'obesityType',
+                'obesityClass',
+                'obesityCentral',
+                'obesityComplications',
+                'obesityPriorInterventions',
+              ]
+            : []
 
     const [res, diseases, ...optLists] = await Promise.all([
       api<{ data: { contentJson?: Record<string, unknown> } }>(

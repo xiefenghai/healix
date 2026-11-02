@@ -2,7 +2,7 @@
   "code": "WL_RISK_SCREEN",
   "version": 2,
   "title": "减重风险筛查",
-  "script": "接下来有几题是为了让减重方案更安全。如果触到您不想谈的话题，可以直接说跳过，我们完全理解。",
+  "script": "还有几题是为了让减重方案更安全。碰到不想谈的，直接说跳过就行，我们完全理解。",
   "items": [
     {
       "field": "basic.psych.eatingDisorderHistory",

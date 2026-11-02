@@ -3,20 +3,25 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api } from './http'
 import { toggleExclusiveMulti } from './intake'
 
-const props = defineProps<{
-  field: string
-  label: string
-  type?: string
-  unit?: string
-  options?: string | null
-  min?: number | null
-  max?: number | null
-  exclusive?: string[] | null
-  modelValue: unknown
-  prefilled?: boolean
-  dirty?: boolean
-  sourceHint?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    field: string
+    label: string
+    type?: string
+    unit?: string
+    options?: string | null
+    min?: number | null
+    max?: number | null
+    exclusive?: string[] | null
+    modelValue: unknown
+    prefilled?: boolean
+    dirty?: boolean
+    sourceHint?: string
+    /** card：首诊问卷卡片；row：档案页左侧标签行（对齐 archive-row） */
+    variant?: 'card' | 'row'
+  }>(),
+  { variant: 'card' },
+)
 
 const emit = defineEmits<{
   'update:modelValue': [unknown]
@@ -125,61 +130,70 @@ function onDateInput(e: Event) {
 </script>
 
 <template>
-  <div class="fi" :class="{ prefilled: prefilled && !dirty, dirty }">
+  <div
+    class="fi"
+    :class="{
+      'fi--row': variant === 'row',
+      prefilled: prefilled && !dirty,
+      dirty,
+    }"
+  >
     <div class="fi-head">
       <label class="fi-label">{{ label }}</label>
       <span v-if="sourceHint" class="fi-hint">{{ sourceHint }}</span>
       <button v-if="dirty && prefilled" type="button" class="fi-restore" @click="emit('restore')">恢复预填</button>
     </div>
 
-    <div v-if="isChoice" class="fi-btns">
-      <button
-        v-for="opt in optionItems"
-        :key="opt.code"
-        type="button"
-        class="fi-btn"
-        :class="{ on: selectedCodes().includes(opt.code) }"
-        @click="isMulti ? toggleMulti(opt.code) : pickEnum(opt.code)"
-      >
-        {{ opt.label || opt.code }}
-      </button>
-      <span v-if="!optionItems.length && options" class="fi-empty">选项加载中或暂无字典：{{ options }}</span>
-    </div>
+    <div class="fi-body">
+      <div v-if="isChoice" class="fi-btns">
+        <button
+          v-for="opt in optionItems"
+          :key="opt.code"
+          type="button"
+          class="fi-btn"
+          :class="{ on: selectedCodes().includes(opt.code) }"
+          @click="isMulti ? toggleMulti(opt.code) : pickEnum(opt.code)"
+        >
+          {{ opt.label || opt.code }}
+        </button>
+        <span v-if="!optionItems.length && options" class="fi-empty">选项加载中或暂无字典：{{ options }}</span>
+      </div>
 
-    <div v-else-if="type === 'NUMBER'" class="fi-num">
+      <div v-else-if="type === 'NUMBER'" class="fi-num">
+        <input
+          type="number"
+          :min="numberMin"
+          :max="numberMax"
+          step="any"
+          :value="modelValue == null ? '' : String(modelValue)"
+          @input="onNumber"
+          @blur="onNumber"
+        />
+        <span v-if="unit" class="fi-unit">{{ unit }}</span>
+      </div>
+
       <input
-        type="number"
-        :min="numberMin"
-        :max="numberMax"
-        step="any"
+        v-else-if="type === 'DATE'"
+        type="date"
+        :max="isBirthdayField ? todayIso : undefined"
         :value="modelValue == null ? '' : String(modelValue)"
-        @input="onNumber"
-        @blur="onNumber"
+        @input="onDateInput"
       />
-      <span v-if="unit" class="fi-unit">{{ unit }}</span>
+
+      <input
+        v-else-if="type === 'TIME'"
+        type="time"
+        :value="modelValue == null ? '' : String(modelValue)"
+        @input="onText"
+      />
+
+      <textarea
+        v-else
+        rows="2"
+        :value="modelValue == null ? '' : String(modelValue)"
+        @input="onText"
+      />
     </div>
-
-    <input
-      v-else-if="type === 'DATE'"
-      type="date"
-      :max="isBirthdayField ? todayIso : undefined"
-      :value="modelValue == null ? '' : String(modelValue)"
-      @input="onDateInput"
-    />
-
-    <input
-      v-else-if="type === 'TIME'"
-      type="time"
-      :value="modelValue == null ? '' : String(modelValue)"
-      @input="onText"
-    />
-
-    <textarea
-      v-else
-      rows="2"
-      :value="modelValue == null ? '' : String(modelValue)"
-      @input="onText"
-    />
   </div>
 </template>
 
@@ -244,9 +258,9 @@ function onDateInput(e: Event) {
   gap: 8px;
 }
 .fi-num input,
-input[type='date'],
-input[type='time'],
-textarea {
+.fi-body > input[type='date'],
+.fi-body > input[type='time'],
+.fi-body > textarea {
   width: 100%;
   border: 1px solid #d1d5db;
   border-radius: 6px;
@@ -260,5 +274,53 @@ textarea {
 .fi-empty {
   font-size: 12px;
   color: #9ca3af;
+}
+
+/* 档案页：与 archive-row 同构（左标签 + 右控件 + 底部分隔线） */
+.fi--row {
+  display: grid;
+  grid-template-columns: minmax(72px, 112px) minmax(0, 1fr);
+  gap: 12px 16px;
+  padding: 16px 0;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--admin-border, #e5e7eb);
+  background: transparent;
+}
+.fi--row.prefilled,
+.fi--row.dirty {
+  background: transparent;
+}
+.fi--row.dirty .fi-body {
+  outline: 1px solid #f59e0b;
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+.fi--row .fi-head {
+  margin-bottom: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding-top: 2px;
+}
+.fi--row .fi-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--admin-text-secondary, #64748b);
+  line-height: 32px;
+}
+.fi--row .fi-restore {
+  margin-left: 0;
+}
+.fi--row .fi-body {
+  min-width: 0;
+}
+.fi--row .fi-btn {
+  border-radius: 4px;
+  padding: 8px 15px;
+  line-height: 1;
+}
+.fi--row:last-child {
+  border-bottom: none;
 }
 </style>

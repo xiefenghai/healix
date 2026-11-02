@@ -74,10 +74,12 @@ async function load() {
       const qs = new URLSearchParams()
       if (keyword.value.trim()) qs.set('keyword', keyword.value.trim())
       if (filter.value === 'watch') qs.set('watched', 'true')
-      const res = await api<{ data: OrgPatientListItem[] }>(
-        `/api/b/v1/org-patients${qs.toString() ? `?${qs}` : ''}`,
+      qs.set('page', '1')
+      qs.set('size', '50')
+      const res = await api<{ data: { items: OrgPatientListItem[] } }>(
+        `/api/b/v1/org-patients?${qs}`,
       )
-      items.value = res.data || []
+      items.value = res.data?.items || []
       priorityCards.value = []
     }
   } catch (e) {

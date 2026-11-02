@@ -82,6 +82,8 @@ public class CockpitFocusDto {
         private String priority;
         private boolean overdue;
         private LocalDateTime dueAt;
+        /** FOLLOW_UP 时 payload.followupType，如 ONBOARDING */
+        private String followupType;
     }
 
     /** 右栏「待你确认」草稿项 */

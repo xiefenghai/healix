@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
 import FollowupSectionFields from './FollowupSectionFields.vue'
@@ -14,9 +13,6 @@ import {
   validateFollowupSection,
   type FollowupSection,
 } from '../../shared/followup-labels'
-import { openInNewTab } from '../../shared/open-route'
-
-const router = useRouter()
 
 interface TaskDetail {
   id: string
@@ -57,7 +53,15 @@ const EXERCISE_DISPOSITION_OPTIONS = [
 const EXERCISE_INTENSITY_LABELS: Record<string, string> = { LIGHT: '轻松', MODERATE: '中等', VIGOROUS: '较累' }
 
 const props = defineProps<{ taskId: string | null }>()
-const emit = defineEmits<{ closed: []; submitted: []; saved: [] }>()
+const emit = defineEmits<{
+  closed: []
+  submitted: []
+  saved: []
+  /** 首诊待办：父级用抽屉或新标签打开问卷 */
+  'open-intake': [
+    opts: { peopleId: string; followupRecordId?: string | null },
+  ]
+}>()
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -220,18 +224,13 @@ watch(
             if (typeof c.note === 'string') note.value = c.note
           }
         }
-        // 首诊：关弹窗，新标签打开全屏问卷工作台
+        // 首诊：关弹窗，交给父级打开问卷工作台（驾驶舱抽屉 / 任务页新标签）
         if (res.data.taskType === 'FOLLOW_UP' && followupType.value === 'ONBOARDING') {
           const people = res.data.peopleId
           const fuId = openDraft?.id || (res.data.followups || []).find((f) => f.status === 'OPEN')?.id
           emit('closed')
-          if (people && fuId) {
-            openInNewTab(router, {
-              path: `/workspace/patients/${people}/intake`,
-              query: { followupRecordId: fuId },
-            })
-          } else if (people) {
-            openInNewTab(router, `/workspace/patients/${people}/intake`)
+          if (people) {
+            emit('open-intake', { peopleId: people, followupRecordId: fuId || null })
           } else {
             ElMessage.warning('无法打开首诊工作台，请从客户页进入')
           }
@@ -368,7 +367,7 @@ async function submit() {
       body = buildNudgeBody()
     } else if (isFollowUp.value) {
       if (followupType.value === 'ONBOARDING') {
-        ElMessage.warning('首诊请在全屏工作台提交问卷完成')
+        ElMessage.warning('首诊请在问卷工作台提交完成')
         submitting.value = false
         return
       }

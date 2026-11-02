@@ -538,8 +538,8 @@ function runAction(action: AgentAction) {
     }
     const target = sheetModeToPath(peopleId, action.path)
     drawerVisible.value = false
-    if (openCompose) {
-      router.push({ path: target, query: { mainTab: 'compose' } })
+    if (openCompose && peopleId) {
+      router.push(`/workspace/patients/${peopleId}/care-plan/compose`)
     } else {
       router.push(target)
     }

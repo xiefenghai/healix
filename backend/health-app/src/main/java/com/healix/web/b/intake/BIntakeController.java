@@ -59,7 +59,7 @@ public class BIntakeController {
                         null,
                         view.getLatestSubmittedId(),
                         null,
-                        SecurityUtils.requireContext().getAccountId(),
+                        SecurityUtils.requireAccountId(),
                         null);
             } catch (Exception e) {
                 log.warn(
@@ -140,6 +140,7 @@ public class BIntakeController {
         QuestionnaireResponseView submitted = responseService.submit(id, staffId, resolutions);
         String orgId = SecurityUtils.requireCurrentOrgId();
         String tenantId = SecurityUtils.requireTenantId();
+        String accountId = SecurityUtils.requireAccountId();
         // 入组/首诊：提交后办结 OPEN 的 ONBOARDING 随访（详情页开首诊常无 followupRecordId）
         if (QuestionnaireResponseService.PURPOSE_INTAKE.equals(submitted.getPurpose())) {
             try {
@@ -150,7 +151,7 @@ public class BIntakeController {
                         submitted.getFollowupRecordId(),
                         submitted.getId(),
                         submitted.getChannel(),
-                        SecurityUtils.requireContext().getAccountId(),
+                        accountId,
                         aiSummary);
             } catch (Exception e) {
                 log.warn("首诊作答已提交，但自动办结随访失败 responseId={}: {}", submitted.getId(), e.getMessage());
@@ -159,7 +160,8 @@ public class BIntakeController {
         if (QuestionnaireResponseService.PURPOSE_INTAKE.equals(submitted.getPurpose())
                 || QuestionnaireResponseService.PURPOSE_SUPPLEMENT.equals(submitted.getPurpose())) {
             try {
-                personaAppService.scheduleAfterIntakeSubmit(tenantId, orgId, submitted.getPeopleId());
+                personaAppService.scheduleAfterIntakeSubmit(
+                        tenantId, orgId, submitted.getPeopleId(), staffId, accountId);
             } catch (Exception e) {
                 log.warn("首诊提交后触发用户画像失败 peopleId={}: {}", submitted.getPeopleId(), e.getMessage());
             }

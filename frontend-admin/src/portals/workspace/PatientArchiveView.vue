@@ -46,18 +46,6 @@ import {
   smokingShowsQuitYear,
   drinkingShowsDetail,
 } from '../../shared/lifestyle-options'
-import {
-  abnormalLabel,
-  evaluateAbnormal,
-  evaluateBloodPressureFlags,
-  bloodPressureAbnormalLabel,
-  mergeMetricMeta,
-  refRangeText,
-  resolveGlucoseRange,
-  resolveWaistRange,
-  type AbnormalFlag,
-  type MetricDictMeta,
-} from '../../shared/metric-ranges'
 import FieldInput from '../../shared/FieldInput.vue'
 import {
   PSYCH_FIELDS,
@@ -109,23 +97,11 @@ interface RevisionBatch {
   items?: RevisionItem[]
 }
 
-interface MetricLatestSlot {
-  slotKey: string
-  metricType: string
-  bpContext?: string
-  mealContext?: string
-  value: number
-  unit?: string
-  recordedAt?: string
-  id: string
-  groupId?: string
-}
-
 const props = withDefaults(
   defineProps<{
     /** 随访等场景传入；不传则走路由 params */
     peopleId?: string
-    /** 嵌入随访表单：隐藏修订栏/指标录入，由父级统一保存 */
+    /** 嵌入随访表单：隐藏修订栏，由父级统一保存 */
     embedded?: boolean
   }>(),
   { embedded: false },
@@ -144,6 +120,8 @@ const DIABETES_COMPLICATION_HYPOGLYCEMIA = 'HYPOGLYCEMIA'
 
 const activeTab = ref('basic')
 const activeDiseaseTab = ref('')
+/** 基础档案内二级分区：健康 / 指标 / 生活方式 / … */
+const basicSubTab = ref('health')
 const saving = ref(false)
 const loading = ref(false)
 const enabledDiseaseCodes = ref<string[]>([])
@@ -162,7 +140,7 @@ const form = reactive({
   lifestyle: emptyLifestyle(),
 })
 
-/** 档案页新字段（减重史 / 心理 / 女性健康），与首诊同编码 */
+/** 档案扩展字段（减重史编辑在肥胖专病档；心理 / 女性健康仍在基础档案），与首诊同编码 */
 const extraAnswers = reactive<Record<string, unknown>>({
   ...emptyExtraAnswers(WEIGHT_HISTORY_FIELDS),
   ...emptyExtraAnswers(PSYCH_FIELDS),
@@ -181,35 +159,9 @@ const familyHistoryStatus = ref<'none' | 'has' | ''>('')
 const pastHistoryStructured = ref<PastHistoryStructured>(emptyPastHistory())
 const basicSavedFingerprint = ref('')
 const basicSnapshotReady = ref(false)
-const latestMetrics = ref<MetricLatestSlot[]>([])
-const latestMetricsLoading = ref(false)
-const metricTypeOptions = ref<DictItem[]>([])
 const patientGender = ref<string>('')
-const metricEntryVisible = ref(false)
-const metricEntrySaving = ref(false)
-const metricEntryForm = reactive({
-  recordedAt: '' as string,
-  bpContext: 'CLINIC',
-  sys: null as number | null,
-  dia: null as number | null,
-  glucose: null as number | null,
-  mealContext: 'FASTING',
-  height: null as number | null,
-  weight: null as number | null,
-  waist: null as number | null,
-  heartRate: null as number | null,
-  note: '',
-})
-
-const METRIC_DEFAULT_UNITS: Record<string, string> = {
-  BLOOD_PRESSURE_SYS: 'mmHg',
-  BLOOD_PRESSURE_DIA: 'mmHg',
-  BLOOD_GLUCOSE: 'mmol/L',
-  HEIGHT: 'cm',
-  WEIGHT: 'kg',
-  WAIST: 'cm',
-  HEART_RATE: 'bpm',
-}
+/** 男性不展示女性健康分区；未知性别仍展示以免漏填 */
+const showWomenHealthTab = computed(() => patientGender.value !== 'MALE')
 
 const illnessOptions = ref<DictItem[]>([])
 const appetiteOptions = ref<DictItem[]>([])
@@ -232,6 +184,13 @@ const hypertensionGradeOptions = ref<DictItem[]>([])
 const hypertensionCvRiskOptions = ref<DictItem[]>([])
 const hypertensionSymptomOptions = ref<DictItem[]>([])
 const hypertensionEmergencyOptions = ref<DictItem[]>([])
+const obesityTypeOptions = ref<DictItem[]>([])
+const obesityClassOptions = ref<DictItem[]>([])
+const obesityCentralOptions = ref<DictItem[]>([])
+const obesityComplicationOptions = ref<DictItem[]>([])
+const obesityPriorInterventionOptions = ref<DictItem[]>([])
+const OBESITY_INTERVENTION_PHARMA = 'PHARMACOTHERAPY'
+const OBESITY_INTERVENTION_SURGERY = 'BARIATRIC'
 
 const smokingOptionsVisible = computed(() => {
   const status = form.lifestyle.smoking.status
@@ -264,6 +223,16 @@ interface DiseaseFormState {
   hypoglycemiaHandling?: string
   /** 终末期慢性疾病（分标目标值分组③） */
   endStageChronicDisease?: boolean
+  /** 肥胖症 */
+  obesityType?: string
+  secondaryCause?: string
+  obesityClass?: string
+  centralObesity?: string
+  complications?: string[]
+  complicationsOther?: string
+  priorInterventions?: string[]
+  pharmacotherapyNote?: string
+  surgeryNote?: string
   remark?: string
 }
 
@@ -303,15 +272,34 @@ function emptyHypertensionForm(): DiseaseFormState {
   }
 }
 
+function emptyObesityForm(): DiseaseFormState {
+  return {
+    version: 0,
+    diagnosisDate: '',
+    obesityType: '',
+    secondaryCause: '',
+    obesityClass: '',
+    centralObesity: '',
+    complications: [],
+    complicationsOther: '',
+    priorInterventions: [],
+    pharmacotherapyNote: '',
+    surgeryNote: '',
+    remark: '',
+  }
+}
+
 function emptyFormForDisease(code: string): DiseaseFormState {
   if (code === 'diabetes') return emptyDiabetesForm()
   if (code === 'hypertension') return emptyHypertensionForm()
+  if (code === 'obesity') return emptyObesityForm()
   return emptyDiseaseForm()
 }
 
 const diseaseForms = reactive<Record<string, DiseaseFormState>>({
   diabetes: emptyDiabetesForm(),
   hypertension: emptyHypertensionForm(),
+  obesity: emptyObesityForm(),
 })
 
 const revisions = ref<RevisionBatch[]>([])
@@ -322,6 +310,22 @@ const showDiabetesHypoglycemiaFields = computed(() =>
 
 const showDiabetesSymptomsOther = computed(() =>
   (diseaseForms.diabetes.symptoms ?? []).includes(DISEASE_SYMPTOM_OTHER),
+)
+
+const showObesitySecondaryCause = computed(
+  () => diseaseForms.obesity.obesityType === 'SECONDARY',
+)
+
+const showObesityComplicationsOther = computed(() =>
+  (diseaseForms.obesity.complications ?? []).includes(DISEASE_SYMPTOM_OTHER),
+)
+
+const showObesityPharmacotherapyNote = computed(() =>
+  (diseaseForms.obesity.priorInterventions ?? []).includes(OBESITY_INTERVENTION_PHARMA),
+)
+
+const showObesitySurgeryNote = computed(() =>
+  (diseaseForms.obesity.priorInterventions ?? []).includes(OBESITY_INTERVENTION_SURGERY),
 )
 
 const showHypertensionSymptomsOther = computed(() =>
@@ -483,6 +487,59 @@ watch(showHypertensionEmergencyOther, (show) => {
   if (diseaseForms.hypertension.emergencyComplicationsOther) {
     diseaseForms.hypertension.emergencyComplicationsOther = ''
   }
+})
+
+watch(
+  () => [...(diseaseForms.obesity.complications ?? [])],
+  (next, prev) => {
+    const prevList = prev ?? []
+    const hasNone = next.includes(DISEASE_SYMPTOM_NONE)
+    const others = next.filter((c) => c !== DISEASE_SYMPTOM_NONE)
+    if (!hasNone) return
+    if (others.length === 0) {
+      if (diseaseForms.obesity.complicationsOther) diseaseForms.obesity.complicationsOther = ''
+      return
+    }
+    const noneJustAdded = !prevList.includes(DISEASE_SYMPTOM_NONE)
+    if (noneJustAdded) {
+      diseaseForms.obesity.complications = [DISEASE_SYMPTOM_NONE]
+      diseaseForms.obesity.complicationsOther = ''
+    } else {
+      diseaseForms.obesity.complications = others
+    }
+  },
+)
+
+watch(
+  () => diseaseForms.obesity.complicationsOther,
+  (val) => {
+    if (!val?.trim()) return
+    const items = diseaseForms.obesity.complications ?? []
+    if (items.includes(DISEASE_SYMPTOM_NONE)) {
+      diseaseForms.obesity.complications = items.filter((c) => c !== DISEASE_SYMPTOM_NONE)
+    }
+    if (!items.includes(DISEASE_SYMPTOM_OTHER)) {
+      diseaseForms.obesity.complications = [
+        ...items.filter((c) => c !== DISEASE_SYMPTOM_NONE),
+        DISEASE_SYMPTOM_OTHER,
+      ]
+    }
+  },
+)
+
+watch(showObesitySecondaryCause, (show) => {
+  if (show) return
+  if (diseaseForms.obesity.secondaryCause) diseaseForms.obesity.secondaryCause = ''
+})
+
+watch(showObesityPharmacotherapyNote, (show) => {
+  if (show) return
+  if (diseaseForms.obesity.pharmacotherapyNote) diseaseForms.obesity.pharmacotherapyNote = ''
+})
+
+watch(showObesitySurgeryNote, (show) => {
+  if (show) return
+  if (diseaseForms.obesity.surgeryNote) diseaseForms.obesity.surgeryNote = ''
 })
 
 function assignForm(content: Record<string, unknown>) {
@@ -658,7 +715,11 @@ async function loadDicts() {
     htnCvRisk,
     htnSymptoms,
     htnEmerg,
-    metricTypes,
+    obType,
+    obClass,
+    obCentral,
+    obCompl,
+    obPrior,
   ] = await Promise.all([
     api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=presentIllness'),
     api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=appetiteLevel'),
@@ -687,7 +748,13 @@ async function loadDicts() {
     api<{ data: DictItem[] }>(
       '/api/b/v1/dict?dictType=OPTION&parentCode=hypertensionEmergencyComplications',
     ),
-    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=metricType'),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityType'),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityClass'),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityCentral'),
+    api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=obesityComplications'),
+    api<{ data: DictItem[] }>(
+      '/api/b/v1/dict?dictType=OPTION&parentCode=obesityPriorInterventions',
+    ),
   ])
   illnessOptions.value = illness.data ?? []
   appetiteOptions.value = appetite.data ?? []
@@ -717,7 +784,11 @@ async function loadDicts() {
   hypertensionCvRiskOptions.value = htnCvRisk.data ?? []
   hypertensionSymptomOptions.value = htnSymptoms.data ?? []
   hypertensionEmergencyOptions.value = htnEmerg.data ?? []
-  metricTypeOptions.value = metricTypes.data ?? []
+  obesityTypeOptions.value = obType.data ?? []
+  obesityClassOptions.value = obClass.data ?? []
+  obesityCentralOptions.value = obCentral.data ?? []
+  obesityComplicationOptions.value = obCompl.data ?? []
+  obesityPriorInterventionOptions.value = obPrior.data ?? []
   for (const d of diseases.value) {
     if (!diseaseForms[d.dictCode]) {
       diseaseForms[d.dictCode] = emptyFormForDisease(d.dictCode)
@@ -842,6 +913,21 @@ async function loadDisease(code: string) {
     diseaseForms[code].emergencyComplicationsOther = String(
       content.emergencyComplicationsOther ?? '',
     )
+  } else if (code === 'obesity') {
+    diseaseForms[code].obesityType = String(content.obesityType ?? '')
+    diseaseForms[code].secondaryCause = String(content.secondaryCause ?? '')
+    diseaseForms[code].obesityClass = String(content.obesityClass ?? '')
+    diseaseForms[code].centralObesity = String(content.centralObesity ?? '')
+    diseaseForms[code].complications = Array.isArray(content.complications)
+      ? (content.complications as string[])
+      : []
+    diseaseForms[code].complicationsOther = String(content.complicationsOther ?? '')
+    diseaseForms[code].priorInterventions = Array.isArray(content.priorInterventions)
+      ? (content.priorInterventions as string[])
+      : []
+    diseaseForms[code].pharmacotherapyNote = String(content.pharmacotherapyNote ?? '')
+    diseaseForms[code].surgeryNote = String(content.surgeryNote ?? '')
+    diseaseForms[code].remark = String(content.remark ?? '')
   }
 }
 
@@ -895,6 +981,30 @@ function buildDiseaseContentJson(code: string): Record<string, unknown> {
         : undefined,
     }
   }
+  if (code === 'obesity') {
+    const complications = [...(state.complications ?? [])]
+    const interventions = [...(state.priorInterventions ?? [])]
+    return {
+      obesityType: state.obesityType || undefined,
+      secondaryCause:
+        state.obesityType === 'SECONDARY' ? state.secondaryCause?.trim() || undefined : undefined,
+      diagnosisDate: state.diagnosisDate || undefined,
+      obesityClass: state.obesityClass || undefined,
+      centralObesity: state.centralObesity || undefined,
+      complications: complications.length ? complications : undefined,
+      complicationsOther: complications.includes(DISEASE_SYMPTOM_OTHER)
+        ? state.complicationsOther?.trim() || undefined
+        : undefined,
+      priorInterventions: interventions.length ? interventions : undefined,
+      pharmacotherapyNote: interventions.includes(OBESITY_INTERVENTION_PHARMA)
+        ? state.pharmacotherapyNote?.trim() || undefined
+        : undefined,
+      surgeryNote: interventions.includes(OBESITY_INTERVENTION_SURGERY)
+        ? state.surgeryNote?.trim() || undefined
+        : undefined,
+      remark: state.remark?.trim() || undefined,
+    }
+  }
   return { diagnosisDate: state.diagnosisDate || undefined }
 }
 
@@ -905,234 +1015,6 @@ async function loadRevisions() {
   revisions.value = res.data ?? []
 }
 
-function formatMetricTime(v?: string) {
-  if (!v) return ''
-  return v.replace('T', ' ').slice(0, 16)
-}
-
-function findMetricSlot(type: string, opts?: { bpContext?: string; mealContext?: string }) {
-  return latestMetrics.value.find((s) => {
-    if (s.metricType !== type) return false
-    if (opts?.bpContext != null && s.bpContext !== opts.bpContext) return false
-    if (opts?.mealContext != null && s.mealContext !== opts.mealContext) return false
-    return true
-  })
-}
-
-function latestBloodPressure() {
-  for (const ctx of ['CLINIC', 'HOME']) {
-    const sys = findMetricSlot('BLOOD_PRESSURE_SYS', { bpContext: ctx })
-    const dia = findMetricSlot('BLOOD_PRESSURE_DIA', { bpContext: ctx })
-    if (sys && dia) return { sys, dia, ctx }
-  }
-  const sys = latestMetrics.value.find((s) => s.metricType === 'BLOOD_PRESSURE_SYS')
-  if (!sys) return null
-  const ctx = sys.bpContext || 'CLINIC'
-  const dia = findMetricSlot('BLOOD_PRESSURE_DIA', { bpContext: ctx })
-  return dia ? { sys, dia, ctx } : null
-}
-
-function latestGlucose() {
-  for (const meal of ['FASTING', 'POSTPRANDIAL', 'RANDOM']) {
-    const slot = findMetricSlot('BLOOD_GLUCOSE', { mealContext: meal })
-    if (slot) return slot
-  }
-  return latestMetrics.value.find((s) => s.metricType === 'BLOOD_GLUCOSE')
-}
-
-function mealContextLabel(meal?: string) {
-  if (meal === 'FASTING') return '空腹'
-  if (meal === 'POSTPRANDIAL') return '餐后'
-  if (meal === 'RANDOM') return '随机'
-  return ''
-}
-
-function bpContextLabel(ctx?: string) {
-  if (ctx === 'HOME') return '家庭'
-  if (ctx === 'CLINIC') return '诊室'
-  return ''
-}
-
-function computeBmi(height?: number | null, weight?: number | null) {
-  if (!height || !weight || height <= 0) return null
-  const m = height / 100
-  return (weight / (m * m)).toFixed(1)
-}
-
-function metricMeta(metricType: string): MetricDictMeta {
-  const item = metricTypeOptions.value.find((d) => d.dictCode === metricType)
-  return mergeMetricMeta(metricType, item?.content)
-}
-
-function metricAbnormal(
-  value: number | null | undefined,
-  range: { refLow?: number | null; refHigh?: number | null },
-): AbnormalFlag | null {
-  const flag = evaluateAbnormal(value, range)
-  return flag === 'N' ? null : flag
-}
-
-interface RecentMetricItem {
-  key: string
-  label: string
-  display: string
-  value: number | string | null
-  time?: string
-  refRange?: string
-  abnormal?: boolean
-  abnormalLabel?: string
-  displayParts?: Array<{ text: string; abnormal?: boolean }>
-}
-
-const recentMetricItems = computed((): RecentMetricItem[] => {
-  const height = findMetricSlot('HEIGHT')
-  const weight = findMetricSlot('WEIGHT')
-  const waist = findMetricSlot('WAIST')
-  const heart = findMetricSlot('HEART_RATE')
-  const glucose = latestGlucose()
-  const bp = latestBloodPressure()
-  const bmiStr = computeBmi(height?.value, weight?.value)
-  const bmiNum = bmiStr != null ? Number(bmiStr) : null
-
-  const bmiMeta = metricMeta('BMI')
-  const glucoseMeta = metricMeta('BLOOD_GLUCOSE')
-  const glucoseRange = resolveGlucoseRange(glucoseMeta, glucose?.mealContext)
-  const glucoseFlag = metricAbnormal(glucose?.value, glucoseRange)
-
-  const sysMeta = metricMeta('BLOOD_PRESSURE_SYS')
-  const diaMeta = metricMeta('BLOOD_PRESSURE_DIA')
-  const bpFlags = bp
-    ? evaluateBloodPressureFlags(bp.sys.value, bp.dia.value, sysMeta, diaMeta)
-    : { sys: null, dia: null }
-
-  const waistMeta = metricMeta('WAIST')
-  const waistRange = resolveWaistRange(waistMeta, patientGender.value)
-  const waistFlag = metricAbnormal(waist?.value, waistRange)
-
-  const heartMeta = metricMeta('HEART_RATE')
-  const heartFlag = metricAbnormal(heart?.value, heartMeta)
-
-  const bmiFlag = metricAbnormal(bmiNum, bmiMeta)
-
-  function pack(
-    key: string,
-    label: string,
-    value: number | string | null,
-    display: string,
-    time?: string,
-    range?: { refLow?: number | null; refHigh?: number | null },
-    flag?: AbnormalFlag | null,
-    refRangeOverride?: string,
-  ): RecentMetricItem {
-    const ref = refRangeOverride || (range ? refRangeText(range) : '')
-    return {
-      key,
-      label,
-      value,
-      display,
-      time,
-      refRange: ref || undefined,
-      abnormal: flag === 'H' || flag === 'L',
-      abnormalLabel: abnormalLabel(flag),
-    }
-  }
-
-  return [
-    pack(
-      'height',
-      '身高',
-      height?.value ?? null,
-      height ? `${height.value} ${height.unit || 'cm'}` : '',
-      formatMetricTime(height?.recordedAt),
-    ),
-    pack(
-      'weight',
-      '体重',
-      weight?.value ?? null,
-      weight ? `${weight.value} ${weight.unit || 'kg'}` : '',
-      formatMetricTime(weight?.recordedAt),
-    ),
-    pack(
-      'bmi',
-      'BMI',
-      bmiStr,
-      bmiStr ?? '',
-      formatMetricTime(height?.recordedAt || weight?.recordedAt),
-      bmiMeta,
-      bmiFlag,
-    ),
-    pack(
-      'glucose',
-      glucose && mealContextLabel(glucose.mealContext)
-        ? `血糖 · ${mealContextLabel(glucose.mealContext)}`
-        : '血糖',
-      glucose?.value ?? null,
-      glucose ? `${glucose.value} ${glucose.unit || 'mmol/L'}` : '',
-      formatMetricTime(glucose?.recordedAt),
-      glucoseRange,
-      glucoseFlag,
-    ),
-    bp
-      ? {
-          key: 'bp',
-          label: bpContextLabel(bp.ctx) ? `血压 · ${bpContextLabel(bp.ctx)}` : '血压',
-          value: `${bp.sys.value}/${bp.dia.value}`,
-          display: `${bp.sys.value}/${bp.dia.value} ${bp.sys.unit || 'mmHg'}`,
-          time: formatMetricTime(bp.sys.recordedAt),
-          refRange:
-            [refRangeText(sysMeta), refRangeText(diaMeta)].filter(Boolean).join(' / ') || undefined,
-          abnormal: !!(bpFlags.sys || bpFlags.dia),
-          abnormalLabel: bloodPressureAbnormalLabel(bpFlags.sys, bpFlags.dia) || undefined,
-          displayParts: [
-            {
-              text: String(bp.sys.value),
-              abnormal: bpFlags.sys === 'H' || bpFlags.sys === 'L',
-            },
-            { text: '/' },
-            {
-              text: String(bp.dia.value),
-              abnormal: bpFlags.dia === 'H' || bpFlags.dia === 'L',
-            },
-            { text: ` ${bp.sys.unit || 'mmHg'}` },
-          ],
-        }
-      : pack('bp', '血压', null, ''),
-    pack(
-      'waist',
-      '腰围',
-      waist?.value ?? null,
-      waist ? `${waist.value} ${waist.unit || 'cm'}` : '',
-      formatMetricTime(waist?.recordedAt),
-      waistRange,
-      waistFlag,
-    ),
-    pack(
-      'heart',
-      '心率',
-      heart?.value ?? null,
-      heart ? `${heart.value} ${heart.unit || 'bpm'}` : '',
-      formatMetricTime(heart?.recordedAt),
-      heartMeta,
-      heartFlag,
-    ),
-  ]
-})
-
-async function loadLatestMetrics() {
-  if (!peopleId.value) return
-  latestMetricsLoading.value = true
-  try {
-    const res = await api<{ data: MetricLatestSlot[] }>(
-      `/api/b/v1/patients/${peopleId.value}/metrics/latest`,
-    )
-    latestMetrics.value = res.data ?? []
-  } catch {
-    latestMetrics.value = []
-  } finally {
-    latestMetricsLoading.value = false
-  }
-}
-
 async function loadPatientGender() {
   if (!peopleId.value) return
   try {
@@ -1140,151 +1022,6 @@ async function loadPatientGender() {
     patientGender.value = res.data?.gender ?? ''
   } catch {
     patientGender.value = ''
-  }
-}
-
-function nowLocalMetricInput() {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function toMetricApiDateTime(local: string) {
-  if (!local) return undefined
-  return local.length === 16 ? `${local}:00` : local
-}
-
-const metricEntryBmi = computed(() => {
-  const h = metricEntryForm.height
-  const w = metricEntryForm.weight
-  if (!h || !w || h <= 0) return null
-  const m = h / 100
-  return (w / (m * m)).toFixed(1)
-})
-
-function resetMetricEntryForm() {
-  metricEntryForm.recordedAt = nowLocalMetricInput()
-  metricEntryForm.bpContext = 'CLINIC'
-  metricEntryForm.sys = null
-  metricEntryForm.dia = null
-  metricEntryForm.glucose = null
-  metricEntryForm.mealContext = 'FASTING'
-  metricEntryForm.height = null
-  metricEntryForm.weight = null
-  metricEntryForm.waist = null
-  metricEntryForm.heartRate = null
-  metricEntryForm.note = ''
-}
-
-function openMetricEntryDialog() {
-  resetMetricEntryForm()
-  metricEntryVisible.value = true
-}
-
-async function submitMetricEntry() {
-  const recordedAt = toMetricApiDateTime(metricEntryForm.recordedAt || nowLocalMetricInput())
-  const note = metricEntryForm.note || undefined
-  const items: Array<Record<string, unknown>> = []
-
-  if (metricEntryForm.sys != null || metricEntryForm.dia != null) {
-    if (metricEntryForm.sys == null || metricEntryForm.dia == null) {
-      ElMessage.warning('血压请同时填写收缩压与舒张压')
-      return
-    }
-    items.push({
-      metricType: 'BLOOD_PRESSURE_SYS',
-      value: metricEntryForm.sys,
-      unit: 'mmHg',
-      recordedAt,
-      bpContext: metricEntryForm.bpContext,
-      note,
-    })
-    items.push({
-      metricType: 'BLOOD_PRESSURE_DIA',
-      value: metricEntryForm.dia,
-      unit: 'mmHg',
-      recordedAt,
-      bpContext: metricEntryForm.bpContext,
-      note,
-    })
-  }
-
-  if (metricEntryForm.glucose != null) {
-    items.push({
-      metricType: 'BLOOD_GLUCOSE',
-      value: metricEntryForm.glucose,
-      unit: 'mmol/L',
-      recordedAt,
-      mealContext: metricEntryForm.mealContext,
-      note,
-    })
-  }
-
-  const singles: Array<[keyof typeof metricEntryForm, string]> = [
-    ['height', 'HEIGHT'],
-    ['weight', 'WEIGHT'],
-    ['waist', 'WAIST'],
-    ['heartRate', 'HEART_RATE'],
-  ]
-  for (const [field, code] of singles) {
-    const v = metricEntryForm[field]
-    if (typeof v === 'number') {
-      items.push({
-        metricType: code,
-        value: v,
-        unit: METRIC_DEFAULT_UNITS[code],
-        recordedAt,
-        note,
-      })
-    }
-  }
-
-  if (!items.length) {
-    ElMessage.warning('请至少填写一项指标')
-    return
-  }
-
-  metricEntrySaving.value = true
-  try {
-    const hasPair = items.some((i) => i.metricType === 'BLOOD_PRESSURE_SYS')
-    const hasHw = items.some((i) => i.metricType === 'HEIGHT' || i.metricType === 'WEIGHT')
-    if (items.length > 1 && (hasPair || hasHw)) {
-      await api(`/api/b/v1/patients/${peopleId.value}/metrics/batches`, {
-        method: 'POST',
-        body: JSON.stringify({ items }),
-      })
-    } else if (items.length === 1) {
-      await api(`/api/b/v1/patients/${peopleId.value}/metrics`, {
-        method: 'POST',
-        body: JSON.stringify(items[0]),
-      })
-    } else {
-      const batchable = items.filter(
-        (i) => i.metricType === 'HEIGHT' || i.metricType === 'WEIGHT',
-      )
-      const rest = items.filter(
-        (i) => i.metricType !== 'HEIGHT' && i.metricType !== 'WEIGHT',
-      )
-      if (batchable.length) {
-        await api(`/api/b/v1/patients/${peopleId.value}/metrics/batches`, {
-          method: 'POST',
-          body: JSON.stringify({ items: batchable }),
-        })
-      }
-      for (const item of rest) {
-        await api(`/api/b/v1/patients/${peopleId.value}/metrics`, {
-          method: 'POST',
-          body: JSON.stringify(item),
-        })
-      }
-    }
-    ElMessage.success('指标已保存')
-    metricEntryVisible.value = false
-    await Promise.all([loadLatestMetrics(), loadRevisions()])
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
-  } finally {
-    metricEntrySaving.value = false
   }
 }
 
@@ -1333,6 +1070,10 @@ async function saveBasic() {
 async function saveDisease(code: string) {
   saving.value = true
   try {
+    // 肥胖症页可改减重史（仍存基础档案），保存专病时一并落库
+    if (code === 'obesity' && basicDirty.value) {
+      await persistBasic()
+    }
     await persistDisease(code)
     ElMessage.success('病种档案已保存')
     if (!isEmbedded.value) {
@@ -1341,6 +1082,7 @@ async function saveDisease(code: string) {
     }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    if (code === 'obesity') await loadBasic()
     await loadDisease(code)
   } finally {
     saving.value = false
@@ -1404,18 +1146,25 @@ watch(basicDirty, (dirty) => {
   if (!isEmbedded.value) setBasicArchiveDirty(dirty)
 }, { immediate: true })
 
+watch(showWomenHealthTab, (show) => {
+  if (!show && basicSubTab.value === 'women') basicSubTab.value = 'health'
+})
+
 async function bootstrapArchive() {
   if (!peopleId.value) return
   loading.value = true
   basicSnapshotReady.value = false
+  basicSubTab.value = 'health'
   try {
     await loadDicts()
     await loadBasic()
     await loadEnabledDiseases()
+    await loadPatientGender()
+    if (basicSubTab.value === 'women' && !showWomenHealthTab.value) {
+      basicSubTab.value = 'health'
+    }
     if (!isEmbedded.value) {
       await loadRevisions()
-      await loadLatestMetrics()
-      await loadPatientGender()
     }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
@@ -1470,16 +1219,14 @@ onBeforeUnmount(() => {
       >
     <el-tabs
       :model-value="activeTab"
-      class="archive-tabs"
+      class="archive-tabs hx-pill-tabs"
       :before-leave="onArchiveTabBeforeLeave"
       @tab-change="onArchiveTabChange"
     >
       <el-tab-pane label="基础档案" name="basic">
+        <el-tabs v-model="basicSubTab" class="basic-sub-tabs hx-pill-tabs">
+          <el-tab-pane label="健康信息" name="health">
         <el-card shadow="never" class="section-card">
-          <template #header>
-            <span class="section-title">健康信息</span>
-          </template>
-
           <div class="archive-row">
             <label class="row-label">现有疾病</label>
             <div class="row-body">
@@ -1529,63 +1276,11 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </el-card>
+          </el-tab-pane>
 
-        <el-card v-if="!isEmbedded" v-loading="latestMetricsLoading" shadow="never" class="section-card">
-          <template #header>
-            <div class="card-head">
-              <span class="section-title">最近指标</span>
-              <el-button link type="primary" @click="openMetricEntryDialog">录入</el-button>
-            </div>
-          </template>
-          <div class="recent-metrics-grid">
-            <div
-              v-for="item in recentMetricItems"
-              :key="item.key"
-              class="recent-metric-item"
-              :class="{ 'recent-metric-item--abnormal': item.abnormal }"
-            >
-              <div class="recent-metric-head">
-                <div class="recent-metric-label">{{ item.label }}</div>
-                <el-tag
-                  v-if="item.abnormalLabel"
-                  type="danger"
-                  size="small"
-                  effect="dark"
-                  class="recent-metric-tag"
-                >
-                  {{ item.abnormalLabel }}
-                </el-tag>
-              </div>
-              <div class="recent-metric-value">
-                <template v-if="item.displayParts?.length">
-                  <span
-                    v-for="(part, idx) in item.displayParts"
-                    :key="idx"
-                    :class="{ abnormal: part.abnormal }"
-                  >{{ part.text }}</span>
-                </template>
-                <template v-else-if="item.value != null && item.value !== ''">
-                  <span :class="{ abnormal: item.abnormal }">{{ item.display }}</span>
-                </template>
-                <span v-else class="recent-metric-empty">—</span>
-              </div>
-              <div v-if="item.refRange" class="recent-metric-ref">参考 {{ item.refRange }}</div>
-              <div v-if="item.time && item.value != null && item.value !== ''" class="recent-metric-time">
-                {{ item.time }}
-              </div>
-            </div>
-          </div>
-        </el-card>
-
+          <el-tab-pane label="生活方式" name="lifestyle" lazy>
         <el-card shadow="never" class="section-card">
-          <template #header>
-            <div class="card-head">
-              <div class="card-head-left">
-                <span class="section-title">生活方式</span>
-                <span class="section-hint">患者可在 C 端自行更新；操作者见修订历史</span>
-              </div>
-            </div>
-          </template>
+          <p class="section-hint section-hint--block">患者可在 C 端自行更新；操作者见修订历史</p>
 
           <div class="archive-row">
             <label class="row-label">吸烟</label>
@@ -1921,39 +1616,16 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </el-card>
+          </el-tab-pane>
 
+          <el-tab-pane label="心理与情绪" name="psych" lazy>
         <el-card shadow="never" class="section-card">
-          <template #header>
-            <span class="section-title">减重史</span>
-            <span class="section-hint">与首诊问卷同字段；可在档案页补录或修改</span>
-          </template>
-          <div class="extra-fields">
-            <FieldInput
-              v-for="f in WEIGHT_HISTORY_FIELDS"
-              :key="f.field"
-              :field="f.field"
-              :label="f.label"
-              :type="f.type"
-              :unit="f.unit"
-              :options="f.options"
-              :min="f.min"
-              :max="f.max"
-              :exclusive="f.exclusive"
-              :model-value="extraAnswers[f.field]"
-              @update:model-value="(v) => (extraAnswers[f.field] = v)"
-            />
-          </div>
-        </el-card>
-
-        <el-card shadow="never" class="section-card">
-          <template #header>
-            <span class="section-title">心理与情绪</span>
-            <span class="section-hint">敏感信息；按角色在接口层脱敏</span>
-          </template>
-          <div class="extra-fields">
+          <p class="section-hint section-hint--block">敏感信息；按角色在接口层脱敏</p>
+          <div class="extra-fields extra-fields--rows">
             <FieldInput
               v-for="f in PSYCH_FIELDS"
               :key="f.field"
+              variant="row"
               :field="f.field"
               :label="f.label"
               :type="f.type"
@@ -1967,15 +1639,15 @@ onBeforeUnmount(() => {
             />
           </div>
         </el-card>
+          </el-tab-pane>
 
+          <el-tab-pane v-if="showWomenHealthTab" label="女性健康" name="women" lazy>
         <el-card shadow="never" class="section-card">
-          <template #header>
-            <span class="section-title">女性健康</span>
-          </template>
-          <div class="extra-fields">
+          <div class="extra-fields extra-fields--rows">
             <FieldInput
               v-for="f in WOMEN_FIELDS"
               :key="f.field"
+              variant="row"
               :field="f.field"
               :label="f.label"
               :type="f.type"
@@ -1989,11 +1661,13 @@ onBeforeUnmount(() => {
             />
           </div>
         </el-card>
+          </el-tab-pane>
+        </el-tabs>
       </el-tab-pane>
 
       <el-tab-pane label="病种档案" name="disease">
         <div class="disease-tabs-bar">
-          <el-tabs v-model="activeDiseaseTab" class="disease-tabs">
+          <el-tabs v-model="activeDiseaseTab" class="disease-tabs hx-pill-tabs">
             <el-tab-pane
               v-for="d in enabledDiseases"
               :key="d.dictCode"
@@ -2317,6 +1991,190 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
 
+                <template v-else-if="d.dictCode === 'obesity'">
+                  <div class="disease-pair">
+                    <div class="archive-row compact disease-pair-item">
+                      <label class="row-label">肥胖分型</label>
+                      <div class="row-body">
+                        <el-select
+                          v-model="diseaseForms.obesity.obesityType"
+                          clearable
+                          placeholder="请选择"
+                          class="disease-select"
+                        >
+                          <el-option
+                            v-for="o in obesityTypeOptions"
+                            :key="o.dictCode"
+                            :label="o.dictCodeDesc"
+                            :value="o.dictCode"
+                          />
+                        </el-select>
+                      </div>
+                    </div>
+                    <div class="archive-row compact disease-pair-item">
+                      <label class="row-label">患病时间</label>
+                      <div class="row-body">
+                        <el-date-picker
+                          v-model="diseaseForms.obesity.diagnosisDate"
+                          type="date"
+                          value-format="YYYY-MM-DD"
+                          placeholder="选择日期"
+                          class="disease-select"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="showObesitySecondaryCause" class="archive-row compact">
+                    <label class="row-label">继发原因</label>
+                    <div class="row-body">
+                      <el-input
+                        v-model="diseaseForms.obesity.secondaryCause"
+                        maxlength="200"
+                        show-word-limit
+                        placeholder="如内分泌疾病、药物相关等"
+                        clearable
+                      />
+                    </div>
+                  </div>
+
+                  <div class="disease-pair">
+                    <div class="archive-row compact disease-pair-item">
+                      <label class="row-label">BMI 分度</label>
+                      <div class="row-body">
+                        <el-select
+                          v-model="diseaseForms.obesity.obesityClass"
+                          clearable
+                          placeholder="请选择"
+                          class="disease-select"
+                        >
+                          <el-option
+                            v-for="o in obesityClassOptions"
+                            :key="o.dictCode"
+                            :label="o.dictCodeDesc"
+                            :value="o.dictCode"
+                          />
+                        </el-select>
+                        <p class="field-hint">临床记录值；可参考页头最新指标 BMI</p>
+                      </div>
+                    </div>
+                    <div class="archive-row compact disease-pair-item">
+                      <label class="row-label">中心性肥胖</label>
+                      <div class="row-body">
+                        <el-select
+                          v-model="diseaseForms.obesity.centralObesity"
+                          clearable
+                          placeholder="请选择"
+                          class="disease-select"
+                        >
+                          <el-option
+                            v-for="o in obesityCentralOptions"
+                            :key="o.dictCode"
+                            :label="o.dictCodeDesc"
+                            :value="o.dictCode"
+                          />
+                        </el-select>
+                        <p class="field-hint">男腰围 ≥90 cm / 女 ≥85 cm</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="archive-row">
+                    <label class="row-label">相关并发症</label>
+                    <div class="row-body">
+                      <el-checkbox-group
+                        v-model="diseaseForms.obesity.complications"
+                        class="illness-grid"
+                      >
+                        <el-checkbox
+                          v-for="o in obesityComplicationOptions"
+                          :key="o.dictCode"
+                          :value="o.dictCode"
+                          class="illness-check"
+                        >
+                          {{ o.dictCodeDesc }}
+                        </el-checkbox>
+                      </el-checkbox-group>
+                      <el-input
+                        v-if="showObesityComplicationsOther"
+                        v-model="diseaseForms.obesity.complicationsOther"
+                        type="textarea"
+                        :rows="2"
+                        maxlength="200"
+                        show-word-limit
+                        placeholder="请填写其它并发症"
+                        class="illness-other"
+                      />
+                      <p class="field-hint">合并症亦可对照基础档案「现有疾病」</p>
+                    </div>
+                  </div>
+
+                  <div class="archive-row">
+                    <label class="row-label">既往干预</label>
+                    <div class="row-body">
+                      <el-checkbox-group
+                        v-model="diseaseForms.obesity.priorInterventions"
+                        class="illness-grid"
+                      >
+                        <el-checkbox
+                          v-for="o in obesityPriorInterventionOptions"
+                          :key="o.dictCode"
+                          :value="o.dictCode"
+                          class="illness-check"
+                        >
+                          {{ o.dictCodeDesc }}
+                        </el-checkbox>
+                      </el-checkbox-group>
+                      <div
+                        v-if="showObesityPharmacotherapyNote || showObesitySurgeryNote"
+                        class="nested-fields"
+                      >
+                        <div
+                          v-if="showObesityPharmacotherapyNote"
+                          class="archive-row compact nested"
+                        >
+                          <label class="row-label">药物说明</label>
+                          <div class="row-body">
+                            <el-input
+                              v-model="diseaseForms.obesity.pharmacotherapyNote"
+                              maxlength="200"
+                              show-word-limit
+                              placeholder="药名 / 疗程简述"
+                              clearable
+                            />
+                          </div>
+                        </div>
+                        <div v-if="showObesitySurgeryNote" class="archive-row compact nested">
+                          <label class="row-label">手术说明</label>
+                          <div class="row-body">
+                            <el-input
+                              v-model="diseaseForms.obesity.surgeryNote"
+                              maxlength="200"
+                              show-word-limit
+                              placeholder="术式 / 时间简述"
+                              clearable
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="archive-row">
+                    <label class="row-label">备注</label>
+                    <div class="row-body">
+                      <el-input
+                        v-model="diseaseForms.obesity.remark"
+                        type="textarea"
+                        :rows="2"
+                        maxlength="500"
+                        show-word-limit
+                        placeholder="其他需记录的肥胖管理信息"
+                      />
+                    </div>
+                  </div>
+                </template>
+
                 <template v-else>
                   <div class="archive-row compact">
                     <label class="row-label">患病时间</label>
@@ -2331,18 +2189,49 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                 </template>
+              </el-card>
 
-                <div v-if="!isEmbedded" class="save-bar">
-                  <el-button
-                    type="primary"
-                    size="large"
-                    :loading="saving"
-                    @click="saveDisease(d.dictCode)"
-                  >
-                    保存{{ d.dictCodeDesc }}档案
-                  </el-button>
+              <!-- 减重史仍存 basic.weightHistory（首诊/方案兼容）；编辑入口在肥胖专病档 -->
+              <el-card
+                v-if="d.dictCode === 'obesity'"
+                shadow="never"
+                class="section-card disease-card disease-card--wide"
+              >
+                <template #header>
+                  <div class="card-head-left">
+                    <span class="section-title">减重史</span>
+                    <span class="section-hint">与首诊问卷同字段；保存本页时一并写入基础档案</span>
+                  </div>
+                </template>
+                <div class="extra-fields extra-fields--rows">
+                  <FieldInput
+                    v-for="f in WEIGHT_HISTORY_FIELDS"
+                    :key="f.field"
+                    variant="row"
+                    :field="f.field"
+                    :label="f.label"
+                    :type="f.type"
+                    :unit="f.unit"
+                    :options="f.options"
+                    :min="f.min"
+                    :max="f.max"
+                    :exclusive="f.exclusive"
+                    :model-value="extraAnswers[f.field]"
+                    @update:model-value="(v) => (extraAnswers[f.field] = v)"
+                  />
                 </div>
               </el-card>
+
+              <div v-if="!isEmbedded" class="save-bar">
+                <el-button
+                  type="primary"
+                  size="large"
+                  :loading="saving"
+                  @click="saveDisease(d.dictCode)"
+                >
+                  保存{{ d.dictCodeDesc }}档案
+                </el-button>
+              </div>
             </el-tab-pane>
           </el-tabs>
           <el-button type="primary" class="add-disease-btn" @click="openAddDisease">添加病种</el-button>
@@ -2417,122 +2306,6 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="metricEntryVisible"
-      title="就诊录入"
-      width="640px"
-      destroy-on-close
-      append-to-body
-    >
-      <el-form label-width="88px" class="metric-entry-form">
-        <el-form-item label="测量时间">
-          <el-date-picker
-            v-model="metricEntryForm.recordedAt"
-            type="datetime"
-            value-format="YYYY-MM-DDTHH:mm"
-            format="YYYY-MM-DD HH:mm"
-            placeholder="测量时间"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="血压">
-          <div class="metric-inline-fields">
-            <el-select v-model="metricEntryForm.bpContext" style="width: 110px">
-              <el-option label="诊室" value="CLINIC" />
-              <el-option label="家庭" value="HOME" />
-            </el-select>
-            <el-input-number
-              v-model="metricEntryForm.sys"
-              :min="0"
-              :max="300"
-              controls-position="right"
-              placeholder="收缩压"
-            />
-            <span>/</span>
-            <el-input-number
-              v-model="metricEntryForm.dia"
-              :min="0"
-              :max="200"
-              controls-position="right"
-              placeholder="舒张压"
-            />
-            <span class="metric-unit">mmHg</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="指尖血糖">
-          <div class="metric-inline-fields">
-            <el-select v-model="metricEntryForm.mealContext" style="width: 110px">
-              <el-option label="空腹" value="FASTING" />
-              <el-option label="餐后" value="POSTPRANDIAL" />
-              <el-option label="随机" value="RANDOM" />
-            </el-select>
-            <el-input-number
-              v-model="metricEntryForm.glucose"
-              :min="0"
-              :max="40"
-              :precision="1"
-              :step="0.1"
-              controls-position="right"
-            />
-            <span class="metric-unit">mmol/L</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="身高/体重">
-          <div class="metric-inline-fields">
-            <el-input-number
-              v-model="metricEntryForm.height"
-              :min="0"
-              :max="250"
-              :precision="1"
-              controls-position="right"
-            />
-            <span class="metric-unit">cm</span>
-            <el-input-number
-              v-model="metricEntryForm.weight"
-              :min="0"
-              :max="300"
-              :precision="1"
-              controls-position="right"
-            />
-            <span class="metric-unit">kg</span>
-            <span v-if="metricEntryBmi" class="metric-bmi">BMI {{ metricEntryBmi }}</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="腰围">
-          <div class="metric-inline-fields">
-            <el-input-number
-              v-model="metricEntryForm.waist"
-              :min="0"
-              :max="200"
-              :precision="1"
-              controls-position="right"
-            />
-            <span class="metric-unit">cm</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="心率">
-          <div class="metric-inline-fields">
-            <el-input-number
-              v-model="metricEntryForm.heartRate"
-              :min="0"
-              :max="250"
-              controls-position="right"
-            />
-            <span class="metric-unit">bpm</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="metricEntryForm.note" maxlength="200" show-word-limit />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="metricEntryVisible = false">取消</el-button>
-        <el-button type="primary" :loading="metricEntrySaving" @click="submitMetricEntry">
-          保存录入
-        </el-button>
-      </template>
-    </el-dialog>
-
   </div>
 </template>
 
@@ -2558,7 +2331,7 @@ onBeforeUnmount(() => {
 .archive-main--basic-dock {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 200px);
+  min-height: 0;
 }
 
 .archive-main--basic-dock .archive-tabs {
@@ -2597,8 +2370,85 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-.archive-tabs :deep(.el-tabs__header) {
-  margin-bottom: 12px;
+/* 与指标检验 sub-tabs 同构的胶囊 Tab */
+.hx-pill-tabs :deep(.el-tabs__header) {
+  margin-bottom: 14px;
+  border: none;
+}
+
+.hx-pill-tabs :deep(.el-tabs__nav-wrap::after),
+.hx-pill-tabs :deep(.el-tabs__active-bar) {
+  display: none;
+}
+
+.hx-pill-tabs :deep(.el-tabs__nav-wrap) {
+  margin-bottom: 0;
+}
+
+.hx-pill-tabs :deep(.el-tabs__nav-scroll) {
+  overflow: visible;
+}
+
+.hx-pill-tabs :deep(.el-tabs__nav) {
+  float: none;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: 10px;
+  background: #fff;
+  padding: 6px;
+  box-shadow: var(--admin-shadow, 0 1px 2px rgba(15, 23, 42, 0.04));
+}
+
+.hx-pill-tabs :deep(.el-tabs__item) {
+  height: auto !important;
+  line-height: 1.25 !important;
+  padding: 8px 16px !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-600, #475569);
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.hx-pill-tabs :deep(.el-tabs__item:hover) {
+  color: var(--ink-800, #1e293b);
+}
+
+.hx-pill-tabs :deep(.el-tabs__item.is-active) {
+  color: #fff !important;
+  background: var(--brand-500, #2c7ef8);
+  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
+}
+
+.hx-pill-tabs :deep(.el-tabs__item:focus),
+.hx-pill-tabs :deep(.el-tabs__item:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+.hx-pill-tabs :deep(.el-tabs__item.is-active:focus),
+.hx-pill-tabs :deep(.el-tabs__item.is-active:focus-visible) {
+  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
+}
+
+.basic-sub-tabs :deep(.el-tabs__header) {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-top: 2px;
+  background: var(--admin-bg, #f5f7fa);
+}
+
+.section-hint--block {
+  display: block;
+  margin: 0 0 12px;
 }
 
 .disease-tabs-bar {
@@ -2606,17 +2456,12 @@ onBeforeUnmount(() => {
 }
 
 .disease-tabs :deep(.el-tabs__header) {
-  margin-bottom: 16px;
   padding-right: 108px;
-}
-
-.disease-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
 }
 
 .add-disease-btn {
   position: absolute;
-  top: 0;
+  top: 6px;
   right: 0;
   z-index: 2;
 }
@@ -2634,7 +2479,8 @@ onBeforeUnmount(() => {
 
 .archive-aside {
   position: sticky;
-  top: 72px;
+  top: 0;
+  align-self: start;
 }
 
 .summary-card :deep(.el-card__header) {
@@ -2657,7 +2503,7 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: calc(100vh - 220px);
+  max-height: min(52vh, 480px);
   overflow-y: auto;
 }
 
@@ -2741,6 +2587,14 @@ onBeforeUnmount(() => {
   background: #f8fafc;
 }
 
+.card-head-left {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
 .section-title {
   font-size: 15px;
   font-weight: 600;
@@ -2752,130 +2606,14 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
 }
+
+.extra-fields--rows {
+  gap: 0;
+}
 .section-hint {
   font-size: 12px;
   font-weight: 400;
   color: var(--admin-muted, #64748b);
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-}
-
-.card-head-left {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  min-width: 0;
-}
-
-.recent-metrics-grid {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 10px;
-  overflow-x: auto;
-}
-
-.recent-metric-item {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 10px 12px;
-  background: #f8fafc;
-  border-radius: 8px;
-  border: 1px solid var(--admin-border);
-  transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease;
-}
-
-.recent-metric-item--abnormal {
-  background: #fef2f2;
-  border-color: #fca5a5;
-  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.08);
-}
-
-.recent-metric-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.recent-metric-tag {
-  flex-shrink: 0;
-}
-
-.recent-metric-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--admin-text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.recent-metric-value {
-  margin-top: 6px;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--admin-text);
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.recent-metric-value .abnormal {
-  color: var(--admin-danger, #dc2626);
-}
-
-.recent-metric-empty {
-  color: var(--admin-muted, #94a3b8);
-  font-weight: 400;
-}
-
-.recent-metric-ref {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--admin-muted, #94a3b8);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.recent-metric-time {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--admin-muted, #94a3b8);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.metric-inline-fields {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-}
-
-.metric-unit {
-  color: var(--admin-text-secondary, #666);
-  font-size: 13px;
-}
-
-.metric-bmi {
-  margin-left: 4px;
-  color: var(--el-color-primary);
-  font-weight: 500;
 }
 
 .section-card :deep(.el-card__body) {

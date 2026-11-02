@@ -39,7 +39,7 @@ public final class WorkspaceTaskLabels {
                 && FollowupType.ONBOARDING.name().equals(followupTypeFromPayload(payloadJson));
     }
 
-    private static String followupTypeFromPayload(String payloadJson) {
+    public static String followupTypeFromPayload(String payloadJson) {
         if (!StringUtils.hasText(payloadJson)) {
             return "";
         }

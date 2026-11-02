@@ -122,6 +122,11 @@ const router = createRouter({
           meta: { requireOrg: true, fullscreen: true },
         },
         {
+          path: 'patients/:peopleId/care-plan/compose',
+          component: () => import('../portals/workspace/PatientCarePlanView.vue'),
+          meta: { requireOrg: true, fullscreen: true },
+        },
+        {
           path: 'patients/:peopleId',
           component: () => import('../portals/workspace/PatientDetailLayout.vue'),
           meta: { requireOrg: true },

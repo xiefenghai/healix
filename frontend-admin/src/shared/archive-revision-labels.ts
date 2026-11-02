@@ -72,6 +72,15 @@ const FIELD_PATH_LABELS: Record<string, string> = {
   hypoglycemiaReaction: '低血糖反应（公卫）',
   hypoglycemiaCountLastMonth: '近一个月发生过低血糖',
   hypoglycemiaHandling: '发生低血糖时如何处理',
+  obesityType: '肥胖分型',
+  secondaryCause: '继发原因',
+  obesityClass: 'BMI分度',
+  centralObesity: '中心性肥胖',
+  complications: '肥胖相关并发症',
+  complicationsOther: '其它并发症',
+  priorInterventions: '既往干预',
+  pharmacotherapyNote: '减重药物说明',
+  surgeryNote: '减重手术说明',
   remark: '备注',
   drugName: '药品名称',
   usageMethod: '用法',
@@ -169,6 +178,7 @@ const ALLERGY_VALUE_LABELS: Record<string, Record<string, string>> = {
 const DISEASE_CODE_LABELS: Record<string, string> = {
   diabetes: '糖尿病',
   hypertension: '高血压',
+  obesity: '肥胖症',
 }
 
 const MEDICATION_STATUS_LABELS: Record<string, string> = {
@@ -538,11 +548,14 @@ function formatParsedValue(
   }
 
   if (
-    (fieldPath === 'symptoms' || fieldPath === 'emergencyComplications') &&
+    (fieldPath === 'symptoms' ||
+      fieldPath === 'emergencyComplications' ||
+      fieldPath === 'complications' ||
+      fieldPath === 'priorInterventions') &&
     Array.isArray(value)
   ) {
     const mapKey =
-      bizKey === 'hypertension' || bizKey === 'diabetes'
+      bizKey === 'hypertension' || bizKey === 'diabetes' || bizKey === 'obesity'
         ? `${bizKey}.${fieldPath}`
         : fieldPath
     const labels = value.map((c) => optionLabel(optionMaps, mapKey, String(c)))
@@ -648,6 +661,9 @@ function formatParsedValue(
     'hypertensionGrade',
     'cvRiskStratification',
     'hypoglycemiaReaction',
+    'obesityType',
+    'obesityClass',
+    'centralObesity',
     'doseUnit',
     'usageMethod',
     'frequency',

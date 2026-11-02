@@ -44,8 +44,16 @@ const watchOrNext = computed(() => {
   return next ? [next] : []
 })
 
-type DimRow = { label: string; value: string }
-type DimBlock = { key: string; title: string; rows: DimRow[]; empty?: string }
+type DimRow = { label: string; value: string; tone?: 'danger' | 'warn' | 'accent' | 'muted' }
+type DimBlock = {
+  key: string
+  title: string
+  rows: DimRow[]
+  empty?: string
+  /** 案头需优先扫到的维度 */
+  priority?: boolean
+  hint?: string
+}
 
 const DISEASE_TAG_LABELS: Record<string, string> = {
   HYPERTENSION: '高血压',
@@ -134,10 +142,14 @@ const dimBlocks = computed((): DimBlock[] => {
         const disease = codeLabel(DISEASE_TAG_LABELS, row.diseaseCode, String(row.diseaseCode || '病种'))
         const cat = codeLabel(RISK_CATEGORY_LABELS, row.category, '')
         const level = String(row.levelLabel || row.level || '')
+        const tierRaw = String(row.tier || '').toUpperCase()
         const tier = row.tier ? ` · ${codeLabel(TIER_LABELS, row.tier)}档` : ''
+        const tone: DimRow['tone'] =
+          tierRaw === 'HIGH' || /高|严重|极高/.test(level) ? 'danger' : tierRaw === 'MEDIUM' ? 'warn' : undefined
         return {
           label: disease,
           value: ([cat, level].filter(Boolean).join(' · ') + tier) || '—',
+          tone,
         }
       })
     : []
@@ -147,8 +159,16 @@ const dimBlocks = computed((): DimBlock[] => {
     ? openTasks.slice(0, 5).map((t, i) => ({
         label: `待办${i + 1}`,
         value: String(t?.title || t?.type || '—'),
+        tone: 'accent' as const,
       }))
-    : [{ label: '待办', value: '暂无' }]
+    : [{ label: '待办', value: '暂无', tone: 'muted' as const }]
+
+  const allergenText = listText(constraints.allergens)
+  const highlightText = listText(constraints.highlightCodes)
+  const notesText = listText(constraints.notes)
+  const nextStepText = String(focus.nextStep || '暂无')
+  const missStreak = Number(execution.planMissStreak)
+  const medMiss = Number(execution.medMissStreak)
 
   return [
     {
@@ -181,6 +201,7 @@ const dimBlocks = computed((): DimBlock[] => {
           value: goals.summary
             ? codeLabel(GOAL_SUMMARY_LABELS, goals.summary, String(goals.summary))
             : '暂无',
+          tone: goals.summary ? 'accent' : 'muted',
         },
         {
           label: '目标模式',
@@ -193,16 +214,32 @@ const dimBlocks = computed((): DimBlock[] => {
     {
       key: 'risk',
       title: '风险与病情',
+      priority: true,
+      hint: '评估与分层',
       rows: riskRows,
       empty: riskRows.length ? undefined : '暂无评估标签',
     },
     {
       key: 'constraints',
       title: '约束与禁忌',
+      priority: true,
+      hint: '方案安全边界',
       rows: [
-        { label: '过敏', value: listText(constraints.allergens) },
-        { label: '首诊高亮', value: listText(constraints.highlightCodes) },
-        { label: '备注', value: listText(constraints.notes) },
+        {
+          label: '过敏',
+          value: allergenText,
+          tone: allergenText !== '暂无' ? 'danger' : 'muted',
+        },
+        {
+          label: '首诊高亮',
+          value: highlightText,
+          tone: highlightText !== '暂无' ? 'warn' : 'muted',
+        },
+        {
+          label: '备注',
+          value: notesText,
+          tone: notesText !== '暂无' ? undefined : 'muted',
+        },
       ],
     },
     {
@@ -213,11 +250,23 @@ const dimBlocks = computed((): DimBlock[] => {
         {
           label: '方案连续未完成',
           value: execution.planMissStreak != null ? `${execution.planMissStreak} 天` : '未采集',
+          tone:
+            Number.isFinite(missStreak) && missStreak >= 3
+              ? 'danger'
+              : Number.isFinite(missStreak) && missStreak >= 1
+                ? 'warn'
+                : undefined,
         },
         { label: '用药完成', value: rateText(execution.medCompletion7d) },
         {
           label: '用药连续漏服',
           value: execution.medMissStreak != null ? `${execution.medMissStreak} 天` : '未采集',
+          tone:
+            Number.isFinite(medMiss) && medMiss >= 3
+              ? 'danger'
+              : Number.isFinite(medMiss) && medMiss >= 1
+                ? 'warn'
+                : undefined,
         },
         {
           label: '火苗',
@@ -230,13 +279,23 @@ const dimBlocks = computed((): DimBlock[] => {
     {
       key: 'focus',
       title: '当前焦点',
+      priority: true,
+      hint: '下一步动作',
       rows: [
         ...taskRows,
-        { label: '下一步', value: String(focus.nextStep || '暂无') },
+        {
+          label: '下一步',
+          value: nextStepText,
+          tone: nextStepText !== '暂无' ? 'accent' : 'muted',
+        },
       ],
     },
   ]
 })
+
+const watchSectionTitle = computed(() =>
+  view.value?.narrative?.watchPoints?.length ? '重点关注' : '建议下一步',
+)
 
 async function load() {
   if (!peopleId.value) return
@@ -350,12 +409,18 @@ watch(
         <p class="persona-headline" :class="{ muted: !hasNarrative }">
           {{ loading ? '加载中…' : view?.displayHeadline || '暂无案头摘要，可生成叙事' }}
         </p>
-        <ol v-if="watchOrNext.length" class="persona-points">
-          <li v-for="(p, i) in watchOrNext" :key="i">
-            <span class="point-index">{{ i + 1 }}</span>
-            <span>{{ p }}</span>
-          </li>
-        </ol>
+        <div v-if="watchOrNext.length" class="watch-panel">
+          <div class="watch-head">
+            <span class="watch-badge">{{ watchSectionTitle }}</span>
+            <span class="watch-count">{{ watchOrNext.length }} 条</span>
+          </div>
+          <ol class="persona-points">
+            <li v-for="(p, i) in watchOrNext" :key="i">
+              <span class="point-index">{{ i + 1 }}</span>
+              <span class="point-text">{{ p }}</span>
+            </li>
+          </ol>
+        </div>
       </div>
       <div class="persona-actions">
         <button
@@ -423,11 +488,27 @@ watch(
     </article>
 
     <div class="dim-grid">
-      <article v-for="b in dimBlocks" :key="b.key" class="dim-card" :data-dim="b.key">
-        <h4>{{ b.title }}</h4>
+      <article
+        v-for="b in dimBlocks"
+        :key="b.key"
+        class="dim-card"
+        :class="{ priority: b.priority }"
+        :data-dim="b.key"
+      >
+        <div class="dim-head">
+          <h4>{{ b.title }}</h4>
+          <span v-if="b.priority" class="dim-priority-tag">优先看</span>
+          <span v-else-if="b.hint" class="dim-hint">{{ b.hint }}</span>
+        </div>
+        <p v-if="b.hint && b.priority" class="dim-hint-line">{{ b.hint }}</p>
         <p v-if="b.empty" class="dim-empty">{{ b.empty }}</p>
         <dl v-else class="dim-rows">
-          <div v-for="(r, i) in b.rows" :key="`${b.key}-${i}`" class="dim-row">
+          <div
+            v-for="(r, i) in b.rows"
+            :key="`${b.key}-${i}`"
+            class="dim-row"
+            :class="r.tone ? `tone-${r.tone}` : undefined"
+          >
             <dt>{{ r.label }}</dt>
             <dd>{{ r.value }}</dd>
           </div>
@@ -527,16 +608,48 @@ watch(
 }
 
 .persona-headline {
-  margin: 0 0 10px;
-  font-size: 15px;
+  margin: 0 0 12px;
+  font-size: 16px;
   line-height: 1.5;
-  font-weight: 600;
-  color: #243447;
+  font-weight: 650;
+  color: #1a2b3c;
 }
 
 .persona-headline.muted {
   color: #8090a0;
   font-weight: 400;
+  font-size: 14px;
+}
+
+.watch-panel {
+  margin-top: 2px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #f0d59a;
+  background: linear-gradient(180deg, #fff9eb 0%, #fffdf7 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.watch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.watch-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #8a5a00;
+  background: #ffe8b0;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.watch-count {
+  font-size: 11px;
+  color: #a07830;
 }
 
 .persona-points {
@@ -545,30 +658,36 @@ watch(
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .persona-points li {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-start;
-  font-size: 13px;
-  line-height: 1.45;
-  color: #3d5163;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #3a2a10;
+  font-weight: 550;
 }
 
 .point-index {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   margin-top: 1px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   font-size: 11px;
   font-weight: 700;
-  color: #1f6b5c;
-  background: rgba(31, 107, 92, 0.12);
+  color: #8a5a00;
+  background: #ffe8b0;
+}
+
+.point-text {
+  min-width: 0;
+  flex: 1;
 }
 
 .persona-actions {
@@ -646,10 +765,78 @@ watch(
   box-shadow: 0 1px 0 rgba(15, 40, 60, 0.02);
 }
 
-.dim-card h4 {
-  margin-bottom: 10px;
+.dim-card.priority {
+  border-color: #f0d59a;
+  background: linear-gradient(180deg, #fffdf8 0%, #ffffff 48%);
+  box-shadow: 0 1px 0 rgba(138, 90, 0, 0.04);
+}
+
+.dim-card[data-dim='risk'].priority {
+  border-color: #f5c2c2;
+  background: linear-gradient(180deg, #fff8f8 0%, #ffffff 48%);
+}
+
+.dim-card[data-dim='focus'].priority {
+  border-color: #9fd6cb;
+  background: linear-gradient(180deg, #f3fbf9 0%, #ffffff 48%);
+}
+
+.dim-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid #eef2f5;
+}
+
+.dim-card.priority .dim-head {
+  border-bottom-color: rgba(138, 90, 0, 0.12);
+}
+
+.dim-card[data-dim='risk'].priority .dim-head {
+  border-bottom-color: rgba(185, 70, 70, 0.12);
+}
+
+.dim-card[data-dim='focus'].priority .dim-head {
+  border-bottom-color: rgba(31, 107, 92, 0.14);
+}
+
+.dim-card h4 {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.dim-priority-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #8a5a00;
+  background: #ffe8b0;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.dim-card[data-dim='risk'] .dim-priority-tag {
+  color: #9b2c2c;
+  background: #fde2e2;
+}
+
+.dim-card[data-dim='focus'] .dim-priority-tag {
+  color: #1f6b5c;
+  background: rgba(31, 107, 92, 0.12);
+}
+
+.dim-hint,
+.dim-hint-line {
+  font-size: 11px;
+  color: #8a98a6;
+  font-weight: 500;
+}
+
+.dim-hint-line {
+  margin: -2px 0 10px;
 }
 
 .dim-empty {
@@ -684,6 +871,26 @@ watch(
   margin: 0;
   color: #2c3e50;
   word-break: break-word;
+}
+
+.dim-row.tone-danger dd {
+  color: #9b2c2c;
+  font-weight: 650;
+}
+
+.dim-row.tone-warn dd {
+  color: #9a6700;
+  font-weight: 600;
+}
+
+.dim-row.tone-accent dd {
+  color: #1f6b5c;
+  font-weight: 600;
+}
+
+.dim-row.tone-muted dd {
+  color: #8a98a6;
+  font-weight: 400;
 }
 
 .persona-edit {

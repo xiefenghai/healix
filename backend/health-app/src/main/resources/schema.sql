@@ -2100,7 +2100,7 @@ CREATE TABLE IF NOT EXISTS people_health_goal (
     org_id                  VARCHAR(32)   NOT NULL,
     people_id               VARCHAR(32)   NOT NULL,
     enrollment_id           VARCHAR(32)   NULL,
-    primary_appeal          VARCHAR(32)   NULL,
+    primary_appeal          VARCHAR(512)  NULL COMMENT '核心诉求：单码或 JSON 数组字符串',
     doctor_advised          TINYINT       NULL,
     appeal_text             VARCHAR(500)  NULL,
     goal_mode               VARCHAR(32)   NULL COMMENT 'LOSS/BODY_COMPOSITION/MAINTAIN',
