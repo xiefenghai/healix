@@ -134,6 +134,11 @@ const steps = computed<Step[]>(() => {
 
 const totalSteps = computed(() => steps.value.length)
 const currentStep = computed(() => steps.value[stepIndex.value] || null)
+/** 单题步骤；模板回调里会丢掉 Step 联合收窄，用此计算属性访问 field/item */
+const currentSingle = computed(() => {
+  const s = currentStep.value
+  return s?.kind === 'single' ? s : null
+})
 const isLastStep = computed(() => stepIndex.value >= totalSteps.value - 1 && totalSteps.value > 0)
 const progressPct = computed(() => {
   if (totalSteps.value <= 0) return 0
@@ -826,16 +831,16 @@ onBeforeUnmount(() => {
       </template>
 
       <!-- 单题 -->
-      <template v-else-if="currentStep.kind === 'single'">
+      <template v-else-if="currentSingle">
         <h2 class="q-title">
-          {{ cLabel(currentStep.item) }}
-          <em v-if="currentStep.item.level === 'REQUIRED'" class="req">必填</em>
+          {{ cLabel(currentSingle.item) }}
+          <em v-if="currentSingle.item.level === 'REQUIRED'" class="req">必填</em>
           <em v-else class="opt-tag">选填</em>
         </h2>
-        <p v-if="currentStep.item.type === 'MULTI'" class="q-hint">可多选</p>
+        <p v-if="currentSingle.item.type === 'MULTI'" class="q-hint">可多选</p>
 
         <div
-          v-if="(currentStep.item.type === 'ENUM' || currentStep.item.type === 'MULTI') && !useSheetPicker"
+          v-if="(currentSingle.item.type === 'ENUM' || currentSingle.item.type === 'MULTI') && !useSheetPicker"
           class="choice-list"
         >
           <button
@@ -843,74 +848,74 @@ onBeforeUnmount(() => {
             :key="o.dictCode"
             type="button"
             class="choice"
-            :class="{ on: isOn(currentStep.item, o.dictCode) }"
-            @click="pick(currentStep.item, o.dictCode)"
+            :class="{ on: isOn(currentSingle.item, o.dictCode) }"
+            @click="pick(currentSingle.item, o.dictCode)"
           >
-            <span class="choice-mark">{{ isOn(currentStep.item, o.dictCode) ? '✓' : '' }}</span>
+            <span class="choice-mark">{{ isOn(currentSingle.item, o.dictCode) ? '✓' : '' }}</span>
             <span class="choice-label">{{ o.dictCodeDesc }}</span>
           </button>
           <p v-if="!currentOptions.length" class="hint">选项加载中…</p>
         </div>
 
         <button
-          v-else-if="currentStep.item.type === 'ENUM'"
+          v-else-if="currentSingle.item.type === 'ENUM'"
           type="button"
           class="sheet-trigger"
           @click="openOptionSheet"
         >
           {{
-            currentOptions.find((o) => o.dictCode === answers[currentStep.field])?.dictCodeDesc
+            currentOptions.find((o) => o.dictCode === answers[currentSingle!.field])?.dictCodeDesc
               || '点击选择'
           }}
         </button>
 
         <van-field
-          v-else-if="currentStep.item.type === 'NUMBER'"
-          :model-value="answers[currentStep.field] == null ? '' : String(answers[currentStep.field])"
+          v-else-if="currentSingle.item.type === 'NUMBER'"
+          :model-value="answers[currentSingle.field] == null ? '' : String(answers[currentSingle.field])"
           type="number"
           :placeholder="
-            currentStep.item.min != null && currentStep.item.max != null
-              ? `${currentStep.item.min}–${currentStep.item.max}`
+            currentSingle.item.min != null && currentSingle.item.max != null
+              ? `${currentSingle.item.min}–${currentSingle.item.max}`
               : '请输入'
           "
           class="big-input"
-          @update:model-value="(v: string) => onNumber(currentStep.item, v)"
+          @update:model-value="(v: string) => currentSingle && onNumber(currentSingle.item, v)"
         >
-          <template v-if="currentStep.item.unit" #right-icon>
-            <span class="unit">{{ currentStep.item.unit }}</span>
+          <template v-if="currentSingle.item.unit" #right-icon>
+            <span class="unit">{{ currentSingle.item.unit }}</span>
           </template>
         </van-field>
 
         <button
-          v-else-if="currentStep.item.type === 'DATE'"
+          v-else-if="currentSingle.item.type === 'DATE'"
           type="button"
           class="sheet-trigger"
-          @click="openDatePicker(currentStep.field)"
+          @click="openDatePicker(currentSingle.field)"
         >
-          {{ answers[currentStep.field] || '选择日期' }}
+          {{ answers[currentSingle.field] || '选择日期' }}
         </button>
 
         <van-field
-          v-else-if="isShortTextField(currentStep.field)"
-          :model-value="String(answers[currentStep.field] ?? '')"
+          v-else-if="isShortTextField(currentSingle.field)"
+          :model-value="String(answers[currentSingle.field] ?? '')"
           type="text"
-          :maxlength="currentStep.field.includes('mobile') ? 11 : 32"
+          :maxlength="currentSingle.field.includes('mobile') ? 11 : 32"
           placeholder="请填写"
           class="big-input"
-          @update:model-value="(v: string) => onText(currentStep.item, v)"
+          @update:model-value="(v: string) => currentSingle && onText(currentSingle.item, v)"
         />
 
         <van-field
-          v-else-if="currentStep.item.type === 'TEXT' || currentStep.item.type === 'STRING' || !currentStep.item.type"
-          :model-value="String(answers[currentStep.field] ?? '')"
+          v-else-if="currentSingle.item.type === 'TEXT' || currentSingle.item.type === 'STRING' || !currentSingle.item.type"
+          :model-value="String(answers[currentSingle.field] ?? '')"
           type="textarea"
           rows="3"
           autosize
           maxlength="200"
           show-word-limit
-          :placeholder="currentStep.item.level === 'REQUIRED' ? '请填写' : '选填，最多 200 字'"
+          :placeholder="currentSingle.item.level === 'REQUIRED' ? '请填写' : '选填，最多 200 字'"
           class="big-input"
-          @update:model-value="(v: string) => onText(currentStep.item, v)"
+          @update:model-value="(v: string) => currentSingle && onText(currentSingle.item, v)"
         />
 
         <p v-else class="hint">本题可跳过</p>
@@ -924,9 +929,9 @@ onBeforeUnmount(() => {
         </button>
         <button
           v-if="
-            currentStep.kind === 'single' &&
-            currentStep.item.level !== 'REQUIRED' &&
-            currentStep.item.type !== 'ENUM'
+            currentSingle &&
+            currentSingle.item.level !== 'REQUIRED' &&
+            currentSingle.item.type !== 'ENUM'
           "
           type="button"
           class="btn-text"
