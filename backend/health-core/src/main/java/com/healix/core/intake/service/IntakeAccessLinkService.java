@@ -14,8 +14,12 @@ import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.people.support.MobileNumbers;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Period;
+import java.time.ZoneId;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
@@ -42,8 +46,20 @@ public class IntakeAccessLinkService {
     private final OrganizationMapper organizationMapper;
     private final PatientOrgMembershipMapper membershipMapper;
 
-    @Value("${healix.public.user-base-url:http://localhost:5174}")
+    @Value("${healix.public.user-base-url:http://localhost:5173}")
     private String userBaseUrl;
+
+    private static final ZoneId CN_ZONE = ZoneId.of("Asia/Shanghai");
+
+    /** 常见复姓（长的优先匹配） */
+    private static final List<String> COMPOUND_SURNAMES = List.of(
+            "欧阳", "太史", "端木", "上官", "司马", "东方", "独孤", "南宫", "万俟", "闻人",
+            "夏侯", "诸葛", "尉迟", "公羊", "赫连", "澹台", "皇甫", "宗政", "濮阳", "公冶",
+            "太叔", "申屠", "公孙", "慕容", "仲孙", "钟离", "长孙", "宇文", "司徒", "鲜于",
+            "司空", "闾丘", "子车", "亓官", "司寇", "巫马", "公西", "颛孙", "壤驷", "公良",
+            "漆雕", "乐正", "宰父", "谷梁", "拓跋", "夹谷", "轩辕", "令狐", "段干", "百里",
+            "呼延", "东郭", "南门", "羊舌", "微生", "梁丘", "左丘", "西门", "第五", "南荣",
+            "东里", "东宫", "仲长", "子书", "子桑", "即墨", "达奚", "褚师");
 
     /** key = ip|token → 小时桶计数 */
     private final ConcurrentHashMap<String, RedeemBucket> redeemBuckets = new ConcurrentHashMap<>();
@@ -72,8 +88,9 @@ public class IntakeAccessLinkService {
         linkMapper.insert(link);
 
         String url = buildUrl(link.getToken());
-        String display = maskDisplayName(people.getDisplayName());
-        String copyText = "您好" + display + "，请点击链接完成初步评估（约几分钟，" + days + "天内有效）：\n" + url;
+        String display = politeAddress(people.getDisplayName(), people.getGender(), people.getBirthday());
+        String copyText =
+                "您好，" + display + "，请点击链接完成初步评估（约几分钟，" + days + "天内有效）：\n" + url;
         return new IssueResult(
                 link.getId(),
                 link.getToken(),
@@ -93,12 +110,15 @@ public class IntakeAccessLinkService {
         String status = link.getStatus();
         boolean usable = STATUS_OPEN.equals(status)
                 && (link.getExpireAt() == null || !link.getExpireAt().isBefore(LocalDateTime.now()));
+        String label = people == null
+                ? "患者"
+                : politeAddress(people.getDisplayName(), people.getGender(), people.getBirthday());
         return new PreviewResult(
                 usable,
                 status,
                 link.getExpireAt(),
                 org != null ? org.getName() : null,
-                maskDisplayName(people != null ? people.getDisplayName() : null),
+                label,
                 needMobileLast4);
     }
 
@@ -230,19 +250,59 @@ public class IntakeAccessLinkService {
         return MobileNumbers.trySelf(people.getMobile()) != null && "SELF".equals(people.getMobileOwner());
     }
 
-    /** 赵桐 → 赵*桐；单字原样；空则「患者」 */
-    static String maskDisplayName(String raw) {
-        String name = MobileNumbers.trimName(raw);
-        if (!StringUtils.hasText(name)) {
+    /**
+     * 分享/落地页称呼：贺先生、王阿姨、李叔叔。
+     * 女：&lt;50 女士，≥50 阿姨；男：&lt;45 先生，45–64 叔叔，≥65 伯伯；性别不明默认先生。
+     */
+    static String politeAddress(String rawName, String gender, LocalDate birthday) {
+        String surname = extractSurname(rawName);
+        if (!StringUtils.hasText(surname)) {
             return "患者";
         }
-        if (name.length() == 1) {
-            return name;
+        return surname + pickHonorific(gender, ageYears(birthday));
+    }
+
+    static String extractSurname(String raw) {
+        String name = MobileNumbers.trimName(raw);
+        if (!StringUtils.hasText(name)) {
+            return "";
         }
-        if (name.length() == 2) {
-            return name.charAt(0) + "*";
+        for (String compound : COMPOUND_SURNAMES) {
+            if (name.startsWith(compound)) {
+                return compound;
+            }
         }
-        return name.charAt(0) + "*" + name.charAt(name.length() - 1);
+        return name.substring(0, 1);
+    }
+
+    static String pickHonorific(String gender, Integer age) {
+        String g = gender == null ? "" : gender.trim().toUpperCase();
+        boolean female = "FEMALE".equals(g) || "女".equals(gender);
+        boolean male = "MALE".equals(g) || "男".equals(gender);
+        if (female) {
+            return age != null && age >= 50 ? "阿姨" : "女士";
+        }
+        if (male) {
+            if (age != null && age >= 65) {
+                return "伯伯";
+            }
+            if (age != null && age >= 45) {
+                return "叔叔";
+            }
+            return "先生";
+        }
+        // 性别不明：偏年长用叔叔，其余先生
+        if (age != null && age >= 55) {
+            return "叔叔";
+        }
+        return "先生";
+    }
+
+    static Integer ageYears(LocalDate birthday) {
+        if (birthday == null) {
+            return null;
+        }
+        return Period.between(birthday, LocalDate.now(CN_ZONE)).getYears();
     }
 
     private static String generateToken() {

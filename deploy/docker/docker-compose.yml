@@ -68,6 +68,8 @@ services:
       AGENT_OCR_MODE: ${AGENT_OCR_MODE:-TEXT_LLM}
       HEALIX_AGENT_PATIENT_ENABLED: ${PATIENT_AGENT_ENABLED:-false}
       HEALIX_CORS_ALLOWED_ORIGIN_PATTERNS: ${CORS_ALLOWED_ORIGIN_PATTERNS:-http://115.159.102.24,http://115.159.102.24:*,https://m.healixapp.com,https://admin.healixapp.com,https://staff.healixapp.com}
+      # C 端根地址：拼初步评估 Magic Link（生产默认正式域名，勿用 localhost）
+      HEALIX_USER_BASE_URL: ${HEALIX_USER_BASE_URL:-https://m.healixapp.com}
       # C 端短信：有值则固定验证码（联调）；空则走真实 OTP 落库（尚无短信网关时请保留 mock）
       HEALIX_SMS_MOCK_CODE: ${HEALIX_SMS_MOCK_CODE:-}
       HEALIX_SMS_LOG_CODE: ${HEALIX_SMS_LOG_CODE:-false}
