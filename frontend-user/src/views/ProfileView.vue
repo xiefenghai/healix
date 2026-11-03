@@ -100,6 +100,7 @@ function logout() {
       <van-cell title="用药管理" is-link to="/medications" />
       <van-cell title="随访记录" is-link to="/followups" />
       <van-cell title="管理报告" is-link to="/management-reports" />
+      <van-cell title="初步评估" is-link to="/intake" />
       <van-cell title="评估" is-link to="/assessment-questionnaire" />
     </section>
 

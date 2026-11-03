@@ -311,6 +311,9 @@ export interface IntakeStatusView {
   latestVersion: number
   pendingCount: number
   pendingFields?: IntakePendingField[]
+  /** C 端提交档位 MINIMAL / QUICK / FULL */
+  submittedDepth?: string | null
+  submittedDepthLabel?: string | null
 }
 
 export interface SaveDraftBody {

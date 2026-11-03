@@ -32,6 +32,15 @@
         ORDER BY COALESCE(joined_at, gmt_created) DESC, id DESC
     </select>
 
+    <select id="countActiveByOrg" resultType="int">
+        SELECT COUNT(1)
+        FROM people_org_membership
+        WHERE org_id = #{orgId}
+          AND status = 'ACTIVE'
+          AND left_at IS NULL
+          AND is_deleted = 0
+    </select>
+
     <select id="countActiveInTenant" resultType="int">
         SELECT COUNT(1)
         FROM people_org_membership

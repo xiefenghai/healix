@@ -16,6 +16,16 @@ public class CockpitFocusDto {
     private String birthday;
     private String careTeamId;
     private String careTeamName;
+    /** 尚未加入健管组时为 true，驾驶舱引导先分配 */
+    private Boolean needsCareTeamAssign;
+    /**
+     * 标准服务环节当前位置（0-based）：建档→首诊→方案→随访→周报→阶段评估→结束。
+     */
+    private Integer serviceStageIndex;
+    private String serviceStageCode;
+    private String serviceStageLabel;
+    /** 全链路步骤状态，供顶栏进度条 */
+    private List<ServiceStageStep> serviceStages = new ArrayList<>();
     private Boolean clientLinked;
     private String riskLevel;
     private Integer streakDays;
@@ -84,6 +94,15 @@ public class CockpitFocusDto {
         private LocalDateTime dueAt;
         /** FOLLOW_UP 时 payload.followupType，如 ONBOARDING */
         private String followupType;
+    }
+
+    /** 标准服务流程一步 */
+    @Data
+    public static class ServiceStageStep {
+        private String code;
+        private String label;
+        /** done / current / todo */
+        private String status;
     }
 
     /** 右栏「待你确认」草稿项 */

@@ -84,6 +84,7 @@ const isSupplement = computed(() => {
 const loading = ref(true)
 const saving = ref(false)
 const submitting = ref(false)
+const copyingLink = ref(false)
 const saveError = ref('')
 const lastSavedAt = ref<Date | null>(null)
 const patientName = ref('')
@@ -677,6 +678,27 @@ function jumpToField(field: string) {
   }
 }
 
+async function copyPatientFillLink() {
+  if (!peopleId.value || copyingLink.value) return
+  copyingLink.value = true
+  try {
+    const res = await api<{
+      data: { url: string; copyText: string; expireAt?: string }
+    }>(`/api/b/v1/patients/${peopleId.value}/intake-access-links`, {
+      method: 'POST',
+      body: JSON.stringify({ validDays: 7 }),
+    })
+    const text = res.data?.copyText || res.data?.url || ''
+    if (!text) throw new Error('未返回链接')
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制患者填写链接，可发微信')
+  } catch (e) {
+    ElMessage.error((e as Error).message || '生成链接失败')
+  } finally {
+    copyingLink.value = false
+  }
+}
+
 async function doSubmit(conflictResolutions?: Record<string, unknown>) {
   if (!responseId.value) return
   submitting.value = true
@@ -853,6 +875,13 @@ onBeforeUnmount(() => {
 
       <div class="top-right">
         <span class="save" :class="{ err: !!saveError, ok: !saveError && !!lastSavedAt }">{{ saveStatusText }}</span>
+        <el-button
+          v-if="!isSupplement"
+          :loading="copyingLink"
+          @click="copyPatientFillLink"
+        >
+          复制患者填写链接
+        </el-button>
         <el-button
           type="primary"
           :disabled="status !== 'DRAFT'"

@@ -464,6 +464,31 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """);
         ensureTable(
+                "intake_access_link",
+                """
+                CREATE TABLE IF NOT EXISTS intake_access_link (
+                    pk_id                   BIGINT       NOT NULL AUTO_INCREMENT,
+                    id                      VARCHAR(32)  NOT NULL,
+                    tenant_id               VARCHAR(32)  NOT NULL,
+                    org_id                  VARCHAR(32)  NOT NULL,
+                    people_id               VARCHAR(32)  NOT NULL,
+                    token                   VARCHAR(64)  NOT NULL,
+                    status                  VARCHAR(16)  NOT NULL DEFAULT 'OPEN',
+                    expire_at               DATETIME     NOT NULL,
+                    redeem_count            INT          NOT NULL DEFAULT 0,
+                    last_redeem_at          DATETIME     NULL,
+                    created_by_staff_id     VARCHAR(32)  NULL,
+                    is_deleted              TINYINT      NOT NULL DEFAULT 0,
+                    gmt_created             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    gmt_modified            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    gmt_deleted             DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59',
+                    PRIMARY KEY (pk_id),
+                    UNIQUE KEY uk_intake_access_link_id (id),
+                    UNIQUE KEY uk_intake_access_link_token (token, gmt_deleted),
+                    KEY idx_intake_access_link_people (people_id, org_id, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """);
+        ensureTable(
                 "sys_job_def",
                 """
                 CREATE TABLE IF NOT EXISTS sys_job_def (

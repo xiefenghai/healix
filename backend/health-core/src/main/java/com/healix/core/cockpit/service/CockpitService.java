@@ -29,6 +29,7 @@ import com.healix.core.identity.enums.StaffRoleEnum;
 import com.healix.core.job.support.JobCronSupport;
 import com.healix.core.observation.dto.MetricLatestSlotDto;
 import com.healix.core.observation.service.MetricService;
+import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.people.support.DiseaseCodeLabels;
@@ -37,7 +38,11 @@ import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.mapper.StaffPatientWatchMapper;
 import com.healix.core.workspace.service.OrgWorkspaceService;
 import com.healix.core.careplan.dto.CarePlanBundleDto;
+import com.healix.core.careplan.enums.CarePlanStatusEnum;
 import com.healix.core.careplan.service.CarePlanService;
+import com.healix.core.questionnaire.dto.IntakeStatusView;
+import com.healix.core.questionnaire.service.QuestionnaireResponseService;
+import com.healix.core.report.catalog.HealthReportPeriodType;
 import com.healix.core.report.catalog.HealthReportStatus;
 import com.healix.core.report.dto.HealthReportListItemDto;
 import com.healix.core.report.service.HealthReportService;
@@ -96,9 +101,18 @@ public class CockpitService {
     private final MetricService metricService;
     private final CarePlanService carePlanService;
     private final HealthReportService healthReportService;
+    private final QuestionnaireResponseService questionnaireResponseService;
     private final StaffPatientWatchMapper staffPatientWatchMapper;
+    private final PatientOrgMembershipMapper membershipMapper;
     private final ObjectProvider<RewardQueryService> rewardQueryService;
     private final AllergyQueryService allergyQueryService;
+
+    private static final String[] SERVICE_STAGE_CODES = {
+        "ARCHIVE", "INTAKE", "CARE_PLAN", "FOLLOWUP", "WEEKLY_REPORT", "STAGE_REPORT", "ENDED"
+    };
+    private static final String[] SERVICE_STAGE_LABELS = {
+        "建档", "首诊", "方案", "随访", "周报", "阶段", "结束"
+    };
 
     public CockpitSummaryDto summary(String tenantId, String orgId) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
@@ -141,7 +155,11 @@ public class CockpitService {
         // 「我的关注」= 个人重点关注人数，与任务分桶无关
         dto.setWatchCount(staffPatientWatchMapper.countByStaffOrg(staffId, orgId));
         dto.setMineCount(mine);
-        dto.setIntakeCount(buildPendingIntakeCards(tenantId, orgId).size());
+        // 待入组 Tab 已下线；字段保留兼容旧前端，恒为 0
+        dto.setIntakeCount(0);
+        dto.setOrgPatientCount(membershipMapper.countActiveByOrg(orgId));
+        List<CareTeam> myPrimaryTeams = careTeamMapper.listByPrimaryCareManager(orgId, staffId);
+        dto.setPrimaryCareTeamCount(myPrimaryTeams == null ? 0 : myPrimaryTeams.size());
         dto.setPendingCarePlanDraftCount(pendingPlan);
         dto.setPendingReportDraftCount(pendingReport);
         RewardQueryService rewards = rewardQueryService.getIfAvailable();
@@ -157,8 +175,8 @@ public class CockpitService {
     /**
      * 左栏优先患者。
      *
-     * @param tab urgent = 我的高优在办；intake = 待入组（公海首诊 / 分配健管组）；
-     *     watch = 个人重点关注患者；mine = 我的全部在办；默认 urgent
+     * @param tab urgent = 我的高优在办；watch = 个人重点关注；mine = 我的全部在办；默认 urgent。
+     *     历史值 {@code intake}（待入组）已下线，归一为 urgent——有真实待办的人仍会出现在立即处理。
      */
     public List<CockpitPriorityCardDto> priority(String tenantId, String orgId, String tab) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
@@ -166,9 +184,6 @@ public class CockpitService {
         String bucket = normalizeTab(tab);
         if ("watch".equals(bucket)) {
             return buildWatchedCards(orgId, staffId);
-        }
-        if ("intake".equals(bucket)) {
-            return buildPendingIntakeCards(tenantId, orgId);
         }
         return buildPriorityCards(tenantId, orgId, staffId).stream()
                 .filter(c -> matchTab(bucket, c))
@@ -359,6 +374,7 @@ public class CockpitService {
         }
         dto.setCareTeamId(patient.getCareTeamId());
         dto.setCareTeamName(patient.getCareTeamName());
+        dto.setNeedsCareTeamAssign(!StringUtils.hasText(patient.getCareTeamId()));
         dto.setClientLinked(patient.getClientLinked());
         dto.setRiskLevel(detail.getRiskLevel());
         if (detail.getPlan() != null) {
@@ -411,7 +427,111 @@ public class CockpitService {
             dto.getOpenTasks().add(brief);
         }
         fillPendingDrafts(dto, tenantId, orgId, peopleId);
+        fillServiceStages(dto, tenantId, orgId, peopleId);
         return dto;
+    }
+
+    /**
+     * 标准服务环节：建档→首诊→方案→随访→周报→阶段→结束。
+     * current = 第一个未完成环节；出过周报才把「随访」视为告一段落。
+     */
+    private void fillServiceStages(CockpitFocusDto dto, String tenantId, String orgId, String peopleId) {
+        boolean intakeDone = false;
+        try {
+            IntakeStatusView intake = questionnaireResponseService.intakeStatus(tenantId, peopleId);
+            intakeDone = intake != null && intake.isHasSubmitted();
+        } catch (Exception ignored) {
+            // 焦点快照不因首诊状态失败中断
+        }
+        if (!intakeDone) {
+            // 无 OPEN 入组/首诊任务时，可能已办结但 intake 接口异常——用任务侧再兜一层
+            boolean openOnboarding = false;
+            for (CockpitFocusDto.OpenTaskBrief t : dto.getOpenTasks()) {
+                if (t == null) continue;
+                if (WorkspaceTaskType.FOLLOW_UP.matches(t.getTaskType())
+                        && FollowupType.ONBOARDING.name().equalsIgnoreCase(
+                                t.getFollowupType() == null ? "" : t.getFollowupType())) {
+                    openOnboarding = true;
+                    break;
+                }
+            }
+            if (!openOnboarding
+                    && (StringUtils.hasText(dto.getCareTeamId())
+                            || dto.getPendingDrafts().stream()
+                                    .anyMatch(d -> "CARE_PLAN".equals(d.getKind())))) {
+                // 已入组或已有方案草稿，多半首诊已过
+                intakeDone = true;
+            }
+        }
+
+        boolean planActive = false;
+        try {
+            CarePlanBundleDto bundle = carePlanService.getBundle(tenantId, orgId, peopleId);
+            if (bundle != null && bundle.getPlan() != null) {
+                String st = bundle.getPlan().getStatus();
+                planActive = CarePlanStatusEnum.ACTIVE.name().equals(st)
+                        || CarePlanStatusEnum.REVIEWED.name().equals(st)
+                        || CarePlanStatusEnum.COMMUNICATING.name().equals(st);
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+
+        boolean weeklyDone = false;
+        boolean stageDone = false;
+        try {
+            for (HealthReportListItemDto r : healthReportService.listByPeople(orgId, peopleId, 20)) {
+                if (r == null || !HealthReportStatus.PUBLISHED.matches(r.getStatus())) {
+                    continue;
+                }
+                if (HealthReportPeriodType.WEEK.matches(r.getPeriodType())) {
+                    weeklyDone = true;
+                }
+                if (HealthReportPeriodType.QUARTER.matches(r.getPeriodType())
+                        || HealthReportPeriodType.MONTH.matches(r.getPeriodType())) {
+                    stageDone = true;
+                }
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+
+        boolean archiveDone = true;
+        boolean followupDone = weeklyDone; // 出过周报视为随访环节走完一程
+        boolean ended = false;
+        boolean[] done = {
+            archiveDone, intakeDone, planActive, followupDone, weeklyDone, stageDone, ended
+        };
+        int current = SERVICE_STAGE_CODES.length - 1;
+        for (int i = 0; i < done.length; i++) {
+            if (!done[i]) {
+                current = i;
+                break;
+            }
+        }
+        // 首诊+方案已过、周报未出：停在「随访」
+        if (intakeDone && planActive && !weeklyDone) {
+            current = 3;
+        }
+
+        List<CockpitFocusDto.ServiceStageStep> steps = new ArrayList<>();
+        for (int i = 0; i < SERVICE_STAGE_CODES.length; i++) {
+            CockpitFocusDto.ServiceStageStep step = new CockpitFocusDto.ServiceStageStep();
+            step.setCode(SERVICE_STAGE_CODES[i]);
+            step.setLabel(SERVICE_STAGE_LABELS[i]);
+            if (i < current) {
+                step.setStatus("done");
+            } else if (i == current) {
+                step.setStatus("current");
+            } else {
+                step.setStatus("todo");
+            }
+            steps.add(step);
+        }
+        dto.setServiceStages(steps);
+        dto.setServiceStageIndex(current);
+        dto.setServiceStageCode(SERVICE_STAGE_CODES[current]);
+        dto.setServiceStageLabel(SERVICE_STAGE_LABELS[current]);
     }
 
     private void fillPendingDrafts(CockpitFocusDto dto, String tenantId, String orgId, String peopleId) {
@@ -1036,10 +1156,14 @@ public class CockpitService {
             return "urgent";
         }
         String t = tab.trim().toLowerCase(Locale.ROOT);
-        if ("urgent".equals(t) || "intake".equals(t) || "watch".equals(t) || "mine".equals(t)) {
+        // 待入组 Tab 已下线：旧客户端/书签回落到立即处理
+        if ("intake".equals(t)) {
+            return "urgent";
+        }
+        if ("urgent".equals(t) || "watch".equals(t) || "mine".equals(t)) {
             return t;
         }
-        throw new BusinessException(400, "未知 tab，可选 urgent / intake / watch / mine");
+        throw new BusinessException(400, "未知 tab，可选 urgent / watch / mine");
     }
 
     private List<String> doctorPublicExclude() {

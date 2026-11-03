@@ -43,6 +43,31 @@ public class JwtTokenProvider {
         return builder.compact();
     }
 
+    /**
+     * 首诊 Magic Link 兑换后的受限 JWT：aud=C、scope=INTAKE_LINK，默认 TTL 2 小时。
+     */
+    public String createIntakeLinkToken(
+            String linkId, String peopleId, String tenantId, String orgId, long ttlSeconds) {
+        Instant now = Instant.now();
+        long ttl = ttlSeconds > 0 ? ttlSeconds : 7200;
+        // subject 会写入 questionnaire_response.filled_by_id（VARCHAR(32)），不可加前缀
+        return Jwts.builder()
+                .subject(linkId)
+                .audience()
+                .add(PortalEnum.C.code())
+                .and()
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(ttl)))
+                .claim("scope", "INTAKE_LINK")
+                .claim("patientId", peopleId)
+                .claim("homeTenantId", tenantId)
+                .claim("tenantId", tenantId)
+                .claim("currentOrgId", orgId)
+                .claim("linkId", linkId)
+                .signWith(secretKey)
+                .compact();
+    }
+
 
     public String createStaffToken(
             String accountId, String staffId, String tenantId, String currentOrgId, Collection<String> roles) {

@@ -130,9 +130,16 @@ onMounted(load)
 <template>
   <div class="hx-page">
     <header class="hx-page-head">
-      <p class="eyebrow">Patients</p>
-      <h1>患者</h1>
-      <p>优先名单点卡片进任务，右侧可看摘要</p>
+      <div class="head-row">
+        <div>
+          <p class="eyebrow">Patients</p>
+          <h1>患者</h1>
+        </div>
+        <button type="button" class="create-btn" @click="router.push('/patients/create')">
+          建档
+        </button>
+      </div>
+      <p>优先名单点卡片进任务；右上角可快速建档</p>
     </header>
 
     <div class="hx-seg" role="tablist">
@@ -240,6 +247,23 @@ onMounted(load)
 </template>
 
 <style scoped>
+.head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.create-btn {
+  flex-shrink: 0;
+  margin-top: 4px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--hx-teal-deep, #0b7a66);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
 .search {
   padding: 0 16px 4px !important;
 }

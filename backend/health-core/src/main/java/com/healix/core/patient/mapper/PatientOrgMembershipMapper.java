@@ -14,6 +14,8 @@ public interface PatientOrgMembershipMapper {
 
     List<PatientOrgMembership> listActiveByOrg(@Param("orgId") String orgId);
 
+    int countActiveByOrg(@Param("orgId") String orgId);
+
     int countActiveInTenant(@Param("peopleId") String peopleId, @Param("tenantId") String tenantId);
 
     int insert(PatientOrgMembership membership);

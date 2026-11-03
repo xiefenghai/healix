@@ -3,6 +3,7 @@ package com.healix.agent.gateway;
 import java.util.Locale;
 
 public enum AgentCapability {
+    CREATE_ARCHIVE("患者建档", true),
     CARE_PLAN("制定管理方案", true),
     OCR_LAB("检验单识别", true),
     OCR_EXAM("检查单识别", true),

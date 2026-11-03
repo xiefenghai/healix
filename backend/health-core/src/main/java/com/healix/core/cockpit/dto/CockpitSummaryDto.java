@@ -17,6 +17,10 @@ public class CockpitSummaryDto {
     private int mineCount;
     /** 左栏「待入组」人数（公海首诊 + 待分配健管组） */
     private int intakeCount;
+    /** 本机构在管患者数（ACTIVE membership），供空简报冷启动判断 */
+    private int orgPatientCount;
+    /** 当前员工作为主责健管师的健管组数量；0 时冷启动应先建组 */
+    private int primaryCareTeamCount;
     /** 当前员工可见范围内：待审阅方案草稿数 */
     private int pendingCarePlanDraftCount;
     /** 当前员工可见范围内：待审阅报告草稿数 */

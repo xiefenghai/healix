@@ -51,9 +51,15 @@ public class SecurityConfig {
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         // register/login/activate/bootstrap 均无需登录
                         .requestMatchers("/api/c/v1/auth/**").permitAll()
+                        .requestMatchers("/api/public/v1/**").permitAll()
                         .requestMatchers(HttpMethod.PATCH, "/api/c/v1/me/archive/lifestyle").hasAnyAuthority("ROLE_C", "ROLE_c")
                         .requestMatchers(HttpMethod.POST, "/api/b/v1/auth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/ops/v1/auth/**").permitAll()
+                        // 首诊 Magic Link JWT 仅能打 intake + 字典
+                        .requestMatchers("/api/c/v1/me/intake", "/api/c/v1/me/intake/**")
+                        .hasAnyAuthority("ROLE_C", "ROLE_c", "ROLE_INTAKE_LINK")
+                        .requestMatchers("/api/c/v1/dict", "/api/c/v1/dict/**")
+                        .hasAnyAuthority("ROLE_C", "ROLE_c", "ROLE_INTAKE_LINK")
                         .requestMatchers("/api/c/v1/**").hasAnyAuthority("ROLE_C", "ROLE_c")
                         .requestMatchers("/api/b/v1/**").hasAuthority("ROLE_B")
                         .requestMatchers("/api/ops/v1/**").hasAuthority("ROLE_OPS")

@@ -13,6 +13,8 @@ public class RequestContext {
     private String homeTenantId;
     private String tenantId;
     private String currentOrgId;
+    /** JWT scope，如 INTAKE_LINK；空表示完整门户会话 */
+    private String scope;
     private Set<String> roles = Collections.emptySet();
 
     public String getPortal() {
@@ -77,6 +79,14 @@ public class RequestContext {
 
     public void setCurrentOrgId(String currentOrgId) {
         this.currentOrgId = currentOrgId;
+    }
+
+    public String getScope() {
+        return scope;
+    }
+
+    public void setScope(String scope) {
+        this.scope = scope;
     }
 
     public Set<String> getRoles() {

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
+import { api, getCurrentOrgId, getCurrentOrgName, getStaffId } from '../../shared/http'
 import { StaffRole } from '../../shared/enums'
 
 interface CareTeamListItem {
@@ -25,6 +25,7 @@ interface OrgStaffItem {
 }
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const list = ref<CareTeamListItem[]>([])
 const keyword = ref('')
@@ -111,12 +112,25 @@ async function load() {
 }
 
 function openCreate() {
+  const selfId = getStaffId()
+  const selfIsCm =
+    !!selfId &&
+    careManagers.value.some((s) => s.staffId === selfId)
   createForm.value = {
     name: '',
-    primaryCareManagerStaffId: null,
+    primaryCareManagerStaffId: selfIsCm ? selfId : null,
     primaryDoctorStaffId: null,
   }
   createVisible.value = true
+}
+
+/** 驾驶舱冷启动：/workspace/care-teams?create=1 自动打开新建并预填自己为主责 */
+async function maybeOpenCreateFromQuery() {
+  if (route.query.create !== '1' && route.query.create !== 'true') return
+  openCreate()
+  const nextQuery = { ...route.query }
+  delete nextQuery.create
+  await router.replace({ path: route.path, query: nextQuery })
 }
 
 async function submitCreate() {
@@ -180,10 +194,18 @@ onMounted(async () => {
   if (!(await ensureOrg())) return
   try {
     await Promise.all([loadStaff(), load()])
+    await maybeOpenCreateFromQuery()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   }
 })
+
+watch(
+  () => route.query.create,
+  (v) => {
+    if (v === '1' || v === 'true') void maybeOpenCreateFromQuery()
+  },
+)
 </script>
 
 <template>

@@ -16,6 +16,7 @@ import com.healix.agent.extract.ChatScreenshotDetector;
 import com.healix.agent.skill.AgentSkill;
 import com.healix.agent.skill.AgentSkillContext;
 import com.healix.agent.skill.CarePlanSkill;
+import com.healix.agent.skill.CreateArchiveSkill;
 import com.healix.agent.skill.GeneralChatSkill;
 import com.healix.agent.skill.OcrExamSkill;
 import com.healix.agent.skill.OcrLabSkill;
@@ -116,8 +117,10 @@ public class StaffAgentGateway {
                 AgentSessionIds.normalize(cmd.sessionId()));
         var history = sessionStore.loadTurns(sessionId);
         AgentCapability routed = route(cmd);
-        if (orgSession && routed != AgentCapability.GENERAL_CHAT) {
-            // 机构首页会话禁止需患者的能力（方案 / OCR 等）
+        if (orgSession
+                && routed != AgentCapability.GENERAL_CHAT
+                && routed != AgentCapability.CREATE_ARCHIVE) {
+            // 机构首页会话禁止需患者的能力（方案 / OCR 等）；建档例外
             routed = AgentCapability.GENERAL_CHAT;
         }
         boolean ocrAuto =
@@ -234,6 +237,9 @@ public class StaffAgentGateway {
         }
         if (routed == AgentCapability.CHAT_EXTRACT) {
             return "正在整理这段记录…";
+        }
+        if (routed == AgentCapability.CREATE_ARCHIVE) {
+            return "正在建档…";
         }
         return "正在处理…";
     }
@@ -409,12 +415,21 @@ public class StaffAgentGateway {
     }
 
     private AgentCapability route(AgentChatCommand cmd) {
-        if (!StringUtils.hasText(cmd.peopleId())) {
-            return AgentCapability.GENERAL_CHAT;
-        }
         AgentCapability hinted = AgentCapability.fromHint(cmd.capabilityHint());
         if (hinted != null && hinted.enabled()) {
+            if (!StringUtils.hasText(cmd.peopleId())
+                    && hinted != AgentCapability.GENERAL_CHAT
+                    && hinted != AgentCapability.CREATE_ARCHIVE) {
+                return AgentCapability.GENERAL_CHAT;
+            }
             return hinted;
+        }
+        // 建档可在机构会话发起，优先于「无患者则闲聊」
+        if (CreateArchiveSkill.matchesMessage(cmd.message())) {
+            return AgentCapability.CREATE_ARCHIVE;
+        }
+        if (!StringUtils.hasText(cmd.peopleId())) {
+            return AgentCapability.GENERAL_CHAT;
         }
         if (CarePlanSkill.matchesMessage(cmd.message())) {
             return AgentCapability.CARE_PLAN;

@@ -61,9 +61,13 @@ management:
       endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
 
 healix:
+  public:
+    # C 端用户站根地址，用于拼首诊填写短链
+    user-base-url: ${HEALIX_USER_BASE_URL:http://localhost:5173}
   security:
     jwt-secret: ${JWT_SECRET:healix-dev-secret-key-change-me-32bytes!!}
     jwt-expiration-seconds: 86400
+    intake-link-jwt-seconds: ${HEALIX_INTAKE_LINK_JWT_SECONDS:7200}
     id-card-aes-key: ${ID_CARD_AES_KEY:healix-dev-idcard-aes-key!!}
     id-card-pepper: ${ID_CARD_PEPPER:healix-dev-idcard-pepper}
   bootstrap:

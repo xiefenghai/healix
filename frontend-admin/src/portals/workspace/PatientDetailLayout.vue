@@ -992,6 +992,13 @@ onBeforeUnmount(() => {
             >
               {{ intakeStatus.pendingCount }} 项待补
             </button>
+            <span
+              v-if="intakeStatus?.hasSubmitted && intakeStatus.submittedDepthLabel"
+              class="intake-depth"
+              :title="`患者已交${intakeStatus.submittedDepthLabel}首诊`"
+            >
+              已交{{ intakeStatus.submittedDepthLabel }}首诊
+            </span>
           </h1>
 
           <dl class="hero-fields">
@@ -2052,6 +2059,20 @@ onBeforeUnmount(() => {
 
 .text-btn.pending {
   color: #c2410c;
+}
+
+.intake-depth {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  vertical-align: middle;
 }
 
 /* ── Metrics band ───────────────────────── */

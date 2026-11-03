@@ -86,12 +86,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         ctx.setPortal(aud);
         ctx.setAccountId(accountId);
 
+        String scope = asString(claims.get("scope"));
+        ctx.setScope(scope);
+
         Set<String> authorities = Set.of("ROLE_" + aud.toUpperCase());
         if (PortalEnum.C.matchesCode(aud)) {
             ctx.setPatientId(asString(claims.get("patientId")));
             ctx.setActivePatientCardId(asString(claims.get("activePatientCardId")));
             ctx.setHomeTenantId(asString(claims.get("homeTenantId")));
             ctx.setTenantId(ctx.getHomeTenantId());
+            if (ctx.getTenantId() == null) {
+                ctx.setTenantId(asString(claims.get("tenantId")));
+            }
+            ctx.setCurrentOrgId(asString(claims.get("currentOrgId")));
+            // 首诊链接 JWT：仅 ROLE_INTAKE_LINK，不可访问其余 C 接口
+            if ("INTAKE_LINK".equals(scope)) {
+                authorities = Set.of("ROLE_INTAKE_LINK");
+            }
         } else if (PortalEnum.B.matchesCode(aud)) {
             ctx.setStaffId(asString(claims.get("staffId")));
             ctx.setTenantId(asString(claims.get("tenantId")));

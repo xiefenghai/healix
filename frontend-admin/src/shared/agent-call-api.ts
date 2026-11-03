@@ -1,4 +1,4 @@
-/** 智能体 CALL_API 共用执行：催办 / 建随访 / 发布报告 / 发布方案 / 发沟通 / 领任务 / 办结待办 */
+/** 智能体 CALL_API 共用执行：催办 / 建随访 / 发布报告 / 发布方案 / 发沟通 / 领任务 / 办结待办 / 建档 / 改挂健管组 */
 import { ElMessageBox } from 'element-plus'
 import { confirmCarePlanWarnAck } from './care-plan-warn-ack'
 import { api } from './http'
@@ -11,6 +11,8 @@ export type CallApiResult = {
   openSheet?: string
   /** 打开与工作台「处理」一致的任务填单弹窗 */
   openTaskForm?: string
+  /** 建档成功后切驾驶舱焦点 */
+  focusPeopleId?: string
 }
 
 /** 表单类待办由驾驶舱打开 WorkspaceTaskFormDialog（与工作台「处理」一致） */
@@ -155,6 +157,56 @@ export async function runAgentCallApi(
     return { message: '管理报告已发布给患者' }
   }
 
+  if (apiKey === 'CREATE_ARCHIVE') {
+    const name = strPayload(payload, 'name')
+    if (!name) throw new Error('缺少姓名')
+    const birthday = strPayload(payload, 'birthday')
+    const mobile = strPayload(payload, 'mobile')
+    const gender = strPayload(payload, 'gender')
+    const attachPeopleId = strPayload(payload, 'attachPeopleId') || undefined
+    const noMobile = payload?.noMobile === true
+    const res = await api<{
+      data?: { peopleId?: string; displayName?: string }
+    }>('/api/b/v1/patients/archives', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        gender: gender || undefined,
+        birthday: birthday || undefined,
+        mobile: noMobile ? undefined : mobile || undefined,
+        mobileOwner: noMobile
+          ? strPayload(payload, 'mobileOwner') || undefined
+          : strPayload(payload, 'mobileOwner') || 'SELF',
+        noMobile: noMobile || undefined,
+        attachPeopleId,
+        identityType: strPayload(payload, 'identityType') || undefined,
+        identityValue: strPayload(payload, 'identityValue') || undefined,
+      }),
+    })
+    const peopleId = res.data?.peopleId || ''
+    const displayName = res.data?.displayName || name
+    return {
+      message: attachPeopleId ? `已关联「${displayName}」并加入本机构` : `已建档「${displayName}」`,
+      focusPeopleId: peopleId || undefined,
+    }
+  }
+
+  if (apiKey === 'CHANGE_CARE_TEAM') {
+    const careTeamId = strPayload(payload, 'careTeamId')
+    if (!peopleId) throw new Error('缺少患者')
+    if (!careTeamId) throw new Error('缺少健管组')
+    await ElMessageBox.confirm(
+      '确认将患者改挂到你主责的健管组？变更后待办将按新组主责健管师重派。',
+      '确认改挂健管组',
+      { type: 'warning', confirmButtonText: '确认改挂', cancelButtonText: '取消' },
+    )
+    await api(`/api/b/v1/patients/${peopleId}/care-team`, {
+      method: 'PUT',
+      body: JSON.stringify({ careTeamId }),
+    })
+    return { message: '已改挂到你名下，可继续为首诊评估或跟进', focusPeopleId: peopleId }
+  }
+
   if (apiKey === 'PUBLISH_CARE_PLAN') {
     const bundle = await api<{
       data: {
@@ -214,5 +266,7 @@ export function callApiDoneLabel(apiKey: string): string | null {
   if (apiKey === 'ACK_TASK') return '已办结待办'
   if (apiKey === 'PUBLISH_REPORT') return '已发布报告'
   if (apiKey === 'PUBLISH_CARE_PLAN') return '已发布方案'
+  if (apiKey === 'CREATE_ARCHIVE') return '已建档'
+  if (apiKey === 'CHANGE_CARE_TEAM') return '已改挂健管组'
   return null
 }

@@ -35,6 +35,7 @@ import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.program.domain.PeopleProgramEnrollment;
 import com.healix.core.program.service.ProgramEnrollmentService;
 import com.healix.core.questionnaire.HighlightRule;
+import com.healix.core.questionnaire.IntakeDepth;
 import com.healix.core.questionnaire.ModuleDef;
 import com.healix.core.questionnaire.ModuleItem;
 import com.healix.core.questionnaire.QuestionnaireCatalog;
@@ -125,6 +126,9 @@ public class QuestionnaireResponseService {
             if (submitted.getSubmittedAt() != null) {
                 view.setSubmittedAt(submitted.getSubmittedAt().toString());
             }
+            IntakeDepth depth = IntakeDepth.fromCompletenessJson(submitted.getCompletenessJson());
+            view.setSubmittedDepth(depth.name());
+            view.setSubmittedDepthLabel(depth.label());
         }
         if (submitted == null) {
             return view;
@@ -202,6 +206,263 @@ public class QuestionnaireResponseService {
         EntityMeta.onCreate(row);
         responseMapper.insert(row);
         return toView(row, true);
+    }
+
+    /**
+     * C 端打开 / 续开首诊草稿；按 {@link IntakeDepth} 过滤可见题（不含 STAFF）。
+     */
+    @Transactional
+    public QuestionnaireResponseView openPatientIntake(
+            String tenantId, String orgId, String peopleId, String accountId, IntakeDepth depth) {
+        IntakeDepth d = depth == null ? IntakeDepth.MINIMAL : depth;
+        QuestionnaireResponseView view =
+                openIntake(tenantId, orgId, peopleId, accountId, null, null, "C_APP");
+        QuestionnaireResponse row = require(view.getId());
+        row.setFilledByType("PATIENT");
+        row.setFilledById(accountId);
+        row.setChannel("C_APP");
+        // 把建档预填铺进答案；姓名等已有值不再出题；授权方式由同意题代填
+        ObjectNode seeded =
+                mergePrefillValues(asObject(row.getPrefillJson()), asObject(row.getAnswersJson()));
+        ensureCareTracksFromAppeal(seeded);
+        ensurePatientConsentMethod(seeded);
+        row.setAnswersJson(JsonUtils.toJson(seeded));
+        ObjectNode complete = asObject(row.getCompletenessJson());
+        complete.put("depth", d.name());
+        complete.put("depthLabel", d.label());
+        row.setCompletenessJson(JsonUtils.toJson(complete));
+        EntityMeta.onUpdate(row);
+        responseMapper.updateDraft(row);
+        return toPatientView(require(row.getId()), d);
+    }
+
+    /** C 端存草稿：全量答案保留，仅更新当前档位标记。 */
+    @Transactional
+    public QuestionnaireResponseView savePatientDraft(
+            String id, String peopleId, String accountId, String answersJson, IntakeDepth depth) {
+        QuestionnaireResponse row = require(id);
+        assertPatientOwns(row, peopleId);
+        if (!STATUS_DRAFT.equals(row.getStatus())) {
+            throw new BusinessException("已提交的作答不能再改草稿");
+        }
+        IntakeDepth d = depth == null ? IntakeDepth.fromCompletenessJson(row.getCompletenessJson()) : depth;
+        QuestionnaireDef q = catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
+        ObjectNode answers = asObject(answersJson);
+        // C 端不填管理方向 / 授权方式：由诉求与同意题推导
+        ensureCareTracksFromAppeal(answers);
+        ensurePatientConsentMethod(answers);
+        row.setAnswersJson(JsonUtils.toJson(answers));
+        row.setChannel("C_APP");
+        row.setFilledByType("PATIENT");
+        row.setFilledById(accountId);
+        Function<String, JsonNode> lookup = answersLookup(answers);
+        ObjectNode complete = completeness(q, answers, lookup, null);
+        complete.put("depth", d.name());
+        complete.put("depthLabel", d.label());
+        row.setCompletenessJson(JsonUtils.toJson(complete));
+        row.setHighlightsJson(JsonUtils.toJson(collectHighlights(q, lookup)));
+        EntityMeta.onUpdate(row);
+        responseMapper.updateDraft(row);
+        return toPatientView(row, d);
+    }
+
+    /**
+     * C 端提交：按当前档位校验可见必填；不要求案头 AI 总结；办结逻辑由 Controller 调随访。
+     */
+    @Transactional
+    public QuestionnaireResponseView submitPatientIntake(
+            String id,
+            String peopleId,
+            String accountId,
+            IntakeDepth depth,
+            Map<String, JsonNode> conflictResolutions) {
+        QuestionnaireResponse row = require(id);
+        assertPatientOwns(row, peopleId);
+        if (!STATUS_DRAFT.equals(row.getStatus())) {
+            throw new BusinessException("作答已提交");
+        }
+        IntakeDepth d = depth == null ? IntakeDepth.fromCompletenessJson(row.getCompletenessJson()) : depth;
+        QuestionnaireDef q = catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
+        ObjectNode answers = asObject(row.getAnswersJson());
+        ensureCareTracksFromAppeal(answers);
+        ensurePatientConsentMethod(answers);
+        row.setAnswersJson(JsonUtils.toJson(answers));
+        Function<String, JsonNode> lookup = answersLookup(answers);
+        List<String> missing = depthMissingFields(q, lookup, d);
+        if (!missing.isEmpty()) {
+            throw new BusinessException(400, "还有必填项未完成，请补全后再提交");
+        }
+
+        ObjectNode prefill = asObject(row.getPrefillJson());
+        ObjectNode changes = diffChanges(prefill, answers);
+        ArrayNode conflicts = detectConflicts(row.getTenantId(), row.getPeopleId(), prefill, answers);
+        if (conflicts.size() > 0) {
+            if (conflictResolutions == null || conflictResolutions.isEmpty()) {
+                throw new BusinessException(409, "存在字段冲突，请先选择保留值");
+            }
+            for (JsonNode c : conflicts) {
+                String code = c.path("field").asText();
+                JsonNode chosen = conflictResolutions.get(code);
+                if (chosen != null) {
+                    answers.set(code, chosen);
+                }
+            }
+            lookup = answersLookup(answers);
+            changes = diffChanges(prefill, answers);
+        }
+
+        ArrayNode highlights = collectHighlights(q, lookup);
+        FieldWriteSource source = FieldWriteSource.of(
+                "INTAKE_QUESTIONNAIRE",
+                "C_APP",
+                row.getId(),
+                "PATIENT",
+                accountId,
+                row.getOrgId());
+        writeBack(row, answers, prefill, source);
+        activateEnrollments(row, answers);
+
+        ObjectNode complete = completeness(q, answers, lookup, null);
+        complete.put("depth", d.name());
+        complete.put("depthLabel", d.label());
+        row.setAnswersJson(JsonUtils.toJson(answers));
+        row.setChangesJson(JsonUtils.toJson(changes));
+        row.setHighlightsJson(JsonUtils.toJson(highlights));
+        row.setCompletenessJson(JsonUtils.toJson(complete));
+        ObjectNode snapshot = JsonUtils.emptyObject();
+        snapshot.put("questionnaire", q.key());
+        snapshot.put("depth", d.name());
+        snapshot.set("answers", answers);
+        snapshot.set("highlights", highlights);
+        row.setSnapshotJson(JsonUtils.toJson(snapshot));
+        row.setSubmittedAt(LocalDateTime.now());
+        row.setFilledByType("PATIENT");
+        row.setFilledById(accountId);
+        row.setChannel("C_APP");
+        EntityMeta.onUpdate(row);
+        int n = responseMapper.markSubmitted(row);
+        if (n == 0) {
+            throw new BusinessException("提交失败，请刷新后重试");
+        }
+        return toPatientView(require(row.getId()), d);
+    }
+
+    private void assertPatientOwns(QuestionnaireResponse row, String peopleId) {
+        if (row == null || !peopleId.equals(row.getPeopleId())) {
+            throw new BusinessException(403, "无权操作该问卷");
+        }
+        if (!PURPOSE_INTAKE.equals(row.getPurpose())) {
+            throw new BusinessException(400, "非首诊作答");
+        }
+    }
+
+    /**
+     * 建档已写入的身份信息：C 端有值则不再追问（健管师已填姓名/性别/生日/手机）。
+     */
+    private static final java.util.Set<String> PATIENT_SKIP_IF_FILLED = java.util.Set.of(
+            "profile.displayName", "profile.gender", "profile.birthday", "profile.mobile");
+
+    /** C 端永不展示：系统代填或仅 B 端使用 */
+    private static final java.util.Set<String> PATIENT_ALWAYS_HIDDEN = java.util.Set.of(
+            "goal.careTracks", "consent.method", "consent.sensitiveHealth");
+
+    /** 当前档位下 showIf 命中且 level 在档内的未填字段（跳过 C 端无法编辑的 LIST/外置题）。 */
+    private List<String> depthMissingFields(
+            QuestionnaireDef q, Function<String, JsonNode> lookup, IntakeDepth depth) {
+        List<String> missing = new ArrayList<>();
+        for (ModuleItem item : catalog.itemsOf(q, lookup)) {
+            if ("STAFF".equals(item.level()) || !depth.includes(item.level())) {
+                continue;
+            }
+            if (item.showIf() != null && !item.showIf().matches(lookup)) {
+                continue;
+            }
+            if (isPatientUneditableField(item.field())) {
+                continue;
+            }
+            if (PATIENT_ALWAYS_HIDDEN.contains(item.field())) {
+                continue;
+            }
+            if (isPatientSkipIfAlreadyFilled(item.field(), lookup)) {
+                continue;
+            }
+            if (!isIntakeFieldFilled(item.field(), lookup)) {
+                missing.add(item.field());
+            }
+        }
+        return missing;
+    }
+
+    /** 用药明细等 LIST / 外置题：C 端本期不强制、不展示编辑器。 */
+    private boolean isPatientUneditableField(String field) {
+        return fieldCatalog
+                .find(field)
+                .map(def -> def.external() || "LIST".equals(def.type() == null ? "" : def.type().name()))
+                .orElse(false);
+    }
+
+    private boolean isPatientSkipIfAlreadyFilled(String field, Function<String, JsonNode> lookup) {
+        return PATIENT_SKIP_IF_FILLED.contains(field) && isIntakeFieldFilled(field, lookup);
+    }
+
+    private QuestionnaireResponseView toPatientView(QuestionnaireResponse row, IntakeDepth depth) {
+        QuestionnaireResponseView v = toView(row, true);
+        if (v.getModules() == null) {
+            return v;
+        }
+        Function<String, JsonNode> lookup =
+                answersLookup(
+                        mergePrefillValues(asObject(row.getPrefillJson()), asObject(row.getAnswersJson())));
+        List<QuestionnaireResponseView.ModuleView> filtered = new ArrayList<>();
+        for (QuestionnaireResponseView.ModuleView mv : v.getModules()) {
+            if (mv.getItems() == null) {
+                continue;
+            }
+            List<QuestionnaireResponseView.ItemView> items = new ArrayList<>();
+            for (QuestionnaireResponseView.ItemView iv : mv.getItems()) {
+                if ("STAFF".equals(iv.getLevel())) {
+                    continue;
+                }
+                if (depth != null && !depth.includes(iv.getLevel())) {
+                    continue;
+                }
+                if (isPatientUneditableField(iv.getField())) {
+                    continue;
+                }
+                if (PATIENT_ALWAYS_HIDDEN.contains(iv.getField())) {
+                    continue;
+                }
+                if (isPatientSkipIfAlreadyFilled(iv.getField(), lookup)) {
+                    continue;
+                }
+                items.add(iv);
+            }
+            if (items.isEmpty()) {
+                continue;
+            }
+            mv.setItems(items);
+            filtered.add(mv);
+        }
+        v.setModules(filtered);
+        ObjectNode complete = asObject(row.getCompletenessJson());
+        if (depth != null) {
+            complete.put("depth", depth.name());
+            complete.put("depthLabel", depth.label());
+        }
+        // 附带本档缺失，供前端进度
+        try {
+            QuestionnaireDef q =
+                    catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
+            List<String> missing = depthMissingFields(q, lookup, depth == null ? IntakeDepth.MINIMAL : depth);
+            ArrayNode arr = JsonUtils.mapper().createArrayNode();
+            missing.forEach(arr::add);
+            complete.set("depthMissing", arr);
+            complete.put("depthMissingCount", missing.size());
+        } catch (Exception ignored) {
+            // ignore
+        }
+        v.setCompleteness(complete);
+        return v;
     }
 
     /**
@@ -1033,6 +1294,9 @@ public class QuestionnaireResponseService {
         if (explicitNone) {
             return List.of();
         }
+        if (out.isEmpty()) {
+            out.addAll(suggestedCareTracksFromAppeal(answers == null ? null : answers.get("goal.primaryAppeal")));
+        }
         if (out.isEmpty() && ProgramEnrollmentService.isKnownProgram(programCode)) {
             out.add(programCode.trim().toUpperCase());
         }
@@ -1116,6 +1380,56 @@ public class QuestionnaireResponseService {
             }
         }
         answers.set("goal.careTracks", arr);
+    }
+
+    /**
+     * 由核心诉求推导管理方向（与 B 端 suggestedCareTracksFromAppeal 对齐）。
+     * C 端不直接问 careTracks，但仍用它做专线模块 showIf / 入组。
+     */
+    static void ensureCareTracksFromAppeal(ObjectNode answers) {
+        if (answers == null) {
+            return;
+        }
+        syncCareTracksAnswer(answers, suggestedCareTracksFromAppeal(answers.get("goal.primaryAppeal")));
+    }
+
+    static List<String> suggestedCareTracksFromAppeal(JsonNode appealNode) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String code : flattenAppealCodes(appealNode)) {
+            switch (code) {
+                case "FAT_LOSS", "BODY_SHAPE", "LIPID" -> out.add(ProgramEnrollmentService.WEIGHT_LOSS);
+                case "GLUCOSE" -> out.add(ProgramEnrollmentService.DIABETES);
+                case "BP" -> out.add(ProgramEnrollmentService.HYPERTENSION);
+                case "METABOLIC" -> {
+                    out.add(ProgramEnrollmentService.WEIGHT_LOSS);
+                    out.add(ProgramEnrollmentService.DIABETES);
+                    out.add(ProgramEnrollmentService.HYPERTENSION);
+                }
+                default -> {
+                    // 先了解看看 / 其他 / 睡眠肠胃等：不自动入专线
+                }
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    /** C 端同意敏感信息处理后，授权方式记为电子（无需再问客户）。 */
+    static void ensurePatientConsentMethod(ObjectNode answers) {
+        if (answers == null) {
+            return;
+        }
+        JsonNode given = answers.get("consent.sensitiveHealth");
+        if (given == null || given.isNull()) {
+            return;
+        }
+        String g = given.asText("");
+        if (!"YES".equalsIgnoreCase(g) && !"true".equalsIgnoreCase(g)) {
+            return;
+        }
+        JsonNode method = answers.get("consent.method");
+        if (method == null || method.isNull() || method.asText("").isBlank()) {
+            answers.put("consent.method", "ELECTRONIC");
+        }
     }
 
     private static String defaultGoalModeForTracks(List<String> tracks) {
@@ -1824,6 +2138,7 @@ public class QuestionnaireResponseService {
         QuestionnaireResponseView v = new QuestionnaireResponseView();
         v.setId(row.getId());
         v.setPeopleId(row.getPeopleId());
+        v.setOrgId(row.getOrgId());
         v.setQuestionnaireCode(row.getQuestionnaireCode());
         v.setQuestionnaireVersion(row.getQuestionnaireVersion() == null ? 0 : row.getQuestionnaireVersion());
         v.setPurpose(row.getPurpose());

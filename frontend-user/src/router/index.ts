@@ -14,6 +14,11 @@ const router = createRouter({
     { path: '/register', component: () => import('../views/RegisterView.vue'), meta: { public: true, hideTab: true } },
     { path: '/activate', component: () => import('../views/ActivateView.vue'), meta: { public: true, hideTab: true } },
     {
+      path: '/intake/t/:token',
+      component: () => import('../views/IntakeAccessLandingView.vue'),
+      meta: { public: true, hideTab: true },
+    },
+    {
       path: '/legal/:doc(terms|privacy)',
       component: () => import('../views/LegalView.vue'),
       meta: { public: true, hideTab: true },
@@ -102,6 +107,11 @@ const router = createRouter({
       meta: { hideTab: true },
     },
     { path: '/assessments', redirect: '/assessment-questionnaire' },
+    {
+      path: '/intake',
+      component: () => import('../views/IntakeQuestionnaireView.vue'),
+      meta: { hideTab: true },
+    },
     {
       path: '/followups/:id',
       component: () => import('../views/FollowupDetailView.vue'),

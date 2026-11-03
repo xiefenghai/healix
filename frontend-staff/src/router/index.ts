@@ -61,6 +61,11 @@ const router = createRouter({
       meta: { requireOrg: true, title: '患者' },
     },
     {
+      path: '/patients/create',
+      component: () => import('../views/PatientCreateView.vue'),
+      meta: { requireOrg: true, hideTab: true },
+    },
+    {
       path: '/patients/:peopleId',
       component: () => import('../views/PatientDetailView.vue'),
       meta: { requireOrg: true, hideTab: true },

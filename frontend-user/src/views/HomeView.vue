@@ -694,6 +694,7 @@ function consumeRecordQuery() {
 }
 
 const assessRequest = ref<{ id: string; expiresAt?: string } | null>(null)
+const intakeNeeded = ref(false)
 
 onMounted(async () => {
   try {
@@ -710,6 +711,7 @@ onMounted(async () => {
       loadReward(),
       loadLatestReport(),
       loadAssessRequest(),
+      loadIntakeStatus(),
     ])
     await offerScience()
     consumeRecordQuery()
@@ -737,6 +739,15 @@ async function loadAssessRequest() {
     assessRequest.value = res.data || null
   } catch {
     assessRequest.value = null
+  }
+}
+
+async function loadIntakeStatus() {
+  try {
+    const res = await api<{ data: { hasSubmitted?: boolean } }>('/api/c/v1/me/intake/status')
+    intakeNeeded.value = !res.data?.hasSubmitted
+  } catch {
+    intakeNeeded.value = false
   }
 }
 
@@ -1086,6 +1097,15 @@ async function offerScience() {
           <div class="et">暂无今日方案任务</div>
         </div>
       </section>
+
+      <div v-if="intakeNeeded" class="assess">
+        <div class="ai"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.clipboard" /></div>
+        <div class="at">
+          <b>请完成初步评估</b>
+          <span>最快约 1 分钟，帮助定制更贴合的管理方案</span>
+        </div>
+        <button type="button" class="act-btn primary" @click="router.push('/intake')">去评估</button>
+      </div>
 
       <div v-if="assessRequest" class="assess">
         <div class="ai"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.clipboard" /></div>

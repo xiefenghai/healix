@@ -18,6 +18,9 @@ public class IntakeStatusView {
     private int latestVersion;
     private int pendingCount;
     private List<PendingField> pendingFields = new ArrayList<>();
+    /** C 端最近提交档位：MINIMAL / QUICK / FULL；B 端代填可为空 */
+    private String submittedDepth;
+    private String submittedDepthLabel;
 
     @Getter
     @Setter

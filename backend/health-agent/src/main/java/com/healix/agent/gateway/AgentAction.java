@@ -14,8 +14,8 @@ import org.springframework.util.StringUtils;
  *   <li>{@code OPEN_SHEET}：抽屉 mode（archive / followups / care-plan / …）
  *   <li>{@code NAVIGATE}：路由 path
  *   <li>{@code CALL_API}：API 键（NUDGE / NUDGE_BATCH / CREATE_FOLLOWUP / PUBLISH_REPORT / PUBLISH_CARE_PLAN /
- *       SEND_CARE_CHAT / CLAIM_TASK / COMPLETE_TASK / ACK_TASK），点击后调现有 B API 并回执
- *   <li>{@code TRIGGER_CAPABILITY}：会话内能力码（CARE_PLAN / REPORT_SUMMARY），点击后自动发带 hint 的消息
+ *       SEND_CARE_CHAT / CLAIM_TASK / COMPLETE_TASK / ACK_TASK / CREATE_ARCHIVE / CHANGE_CARE_TEAM），点击后调现有 B API 并回执
+ *   <li>{@code TRIGGER_CAPABILITY}：会话内能力码（CARE_PLAN / REPORT_SUMMARY / CREATE_ARCHIVE），点击后自动发带 hint 的消息
  * </ul>
  */
 public record AgentAction(
@@ -30,7 +30,29 @@ public record AgentAction(
     }
 
     public static AgentAction focusPatient(String label, String peopleId) {
-        return new AgentAction("FOCUS_PATIENT", label, null, peopleId, null);
+        return focusPatient(label, peopleId, true);
+    }
+
+    /** @param autoAsk false 时仅切焦点，不自动追问下一步建议（建档成功场景） */
+    public static AgentAction focusPatient(String label, String peopleId, boolean autoAsk) {
+        if (autoAsk) {
+            return new AgentAction("FOCUS_PATIENT", label, null, peopleId, null);
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("autoAsk", false);
+        return new AgentAction("FOCUS_PATIENT", label, null, peopleId, payload);
+    }
+
+    /** 确认建档 / 挂接已有档案（payload 对齐 POST /patients/archives）。 */
+    public static AgentAction createArchive(String label, Map<String, Object> payload) {
+        return callApi(label, "CREATE_ARCHIVE", null, payload);
+    }
+
+    /** 将患者变更到指定健管组（payload.careTeamId）。 */
+    public static AgentAction changeCareTeam(String label, String peopleId, String careTeamId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("careTeamId", careTeamId);
+        return callApi(label, "CHANGE_CARE_TEAM", peopleId, payload);
     }
 
     public static AgentAction refresh(String label) {

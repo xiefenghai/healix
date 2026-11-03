@@ -2,7 +2,7 @@
   "code": "GOALS_PREFERENCE",
   "version": 3,
   "title": "诉求与目标",
-  "script": "先确认这次最想解决什么、纳入哪条管理线。定好方向后，后面只问相关题，少打扰您。",
+  "script": "先了解这次最想改善什么。定好方向后，后面只问相关题，少打扰。",
   "items": [
     {
       "field": "goal.primaryAppeal",
@@ -12,11 +12,11 @@
     {
       "field": "goal.careTracks",
       "label": "本次纳入哪些管理方向？",
-      "level": "REQUIRED"
+      "level": "STAFF"
     },
     {
       "field": "goal.appealText",
-      "label": "客户原话（可摘一句）",
+      "label": "用一句话说说你的期望（选填）",
       "level": "FIRST_VISIT"
     },
     {
@@ -65,7 +65,7 @@
     {
       "field": "goal.targetWaistCm",
       "label": "腰围目标（健管师选填，可不问客户）",
-      "level": "LATER",
+      "level": "STAFF",
       "showIf": {
         "field": "goal.careTracks",
         "intersects": ["WEIGHT_LOSS"]
@@ -74,7 +74,7 @@
     {
       "field": "goal.targetBodyFat",
       "label": "体脂率目标（健管师选填）",
-      "level": "LATER",
+      "level": "STAFF",
       "showIf": {
         "all": [
           { "field": "goal.careTracks", "intersects": ["WEIGHT_LOSS"] },
@@ -85,7 +85,7 @@
     {
       "field": "goal.targetHba1c",
       "label": "糖化血红蛋白目标（%）（健管师按指南选填）",
-      "level": "LATER",
+      "level": "STAFF",
       "showIf": {
         "field": "goal.careTracks",
         "intersects": ["DIABETES"]
@@ -94,7 +94,7 @@
     {
       "field": "goal.targetFpg",
       "label": "空腹血糖目标（mmol/L）（健管师选填）",
-      "level": "LATER",
+      "level": "STAFF",
       "showIf": {
         "field": "goal.careTracks",
         "intersects": ["DIABETES"]
@@ -103,7 +103,7 @@
     {
       "field": "goal.targetBpSys",
       "label": "收缩压目标（高压）（健管师选填）",
-      "level": "LATER",
+      "level": "STAFF",
       "showIf": {
         "field": "goal.careTracks",
         "intersects": ["HYPERTENSION"]
@@ -112,7 +112,7 @@
     {
       "field": "goal.targetBpDia",
       "label": "舒张压目标（低压）（健管师选填）",
-      "level": "LATER",
+      "level": "STAFF",
       "showIf": {
         "field": "goal.careTracks",
         "intersects": ["HYPERTENSION"]

@@ -11,6 +11,7 @@ import lombok.Setter;
 public class QuestionnaireResponseView {
     private String id;
     private String peopleId;
+    private String orgId;
     private String questionnaireCode;
     private int questionnaireVersion;
     private String purpose;

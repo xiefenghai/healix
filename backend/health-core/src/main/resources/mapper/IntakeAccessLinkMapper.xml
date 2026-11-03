@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.intake.mapper.IntakeAccessLinkMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, token, status, expire_at,
+        redeem_count, last_redeem_at, created_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="findById" resultType="com.healix.core.intake.domain.IntakeAccessLink">
+        SELECT <include refid="cols"/>
+        FROM intake_access_link
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByToken" resultType="com.healix.core.intake.domain.IntakeAccessLink">
+        SELECT <include refid="cols"/>
+        FROM intake_access_link
+        WHERE token = #{token} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO intake_access_link(
+            id, tenant_id, org_id, people_id, token, status, expire_at,
+            redeem_count, last_redeem_at, created_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{token}, #{status}, #{expireAt},
+            #{redeemCount}, #{lastRedeemAt}, #{createdByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="revokeOpenByPeople">
+        UPDATE intake_access_link
+        SET status = 'REVOKED', gmt_modified = #{gmtModified}
+        WHERE people_id = #{peopleId}
+          AND org_id = #{orgId}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+    </update>
+
+    <update id="revokeById">
+        UPDATE intake_access_link
+        SET status = 'REVOKED', gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0 AND status = 'OPEN'
+    </update>
+
+    <update id="incrementRedeem">
+        UPDATE intake_access_link
+        SET redeem_count = IFNULL(redeem_count, 0) + 1,
+            last_redeem_at = #{lastRedeemAt},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0 AND status = 'OPEN'
+    </update>
+
+    <update id="markExpired">
+        UPDATE intake_access_link
+        SET status = 'EXPIRED', gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0 AND status = 'OPEN'
+    </update>
+</mapper>

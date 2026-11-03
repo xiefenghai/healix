@@ -28,7 +28,7 @@ import {
 import { setAgentDraft } from './agent-draft-bus'
 import { formatAssistantPlainHtml } from './agent-plain-text'
 import { callApiDoneLabel, runAgentCallApi } from './agent-call-api'
-import { resolveStickyCapabilityHint } from './agent-sticky'
+import { looksLikeArchiveDraft, resolveStickyCapabilityHint } from './agent-sticky'
 import {
   buildConfirmBody,
   buildOcrReview,
@@ -156,7 +156,7 @@ const knownMedCodes = {
   doseUnit: MED_DOSE_UNIT_CODES,
 }
 
-const AI_CAP_CODES = new Set(['CARE_PLAN', 'REPORT_SUMMARY', 'GENERAL_CHAT'])
+const AI_CAP_CODES = new Set(['CREATE_ARCHIVE', 'CARE_PLAN', 'REPORT_SUMMARY', 'GENERAL_CHAT'])
 
 const capabilityChips = computed(() => {
   const base = capabilities.value.filter((c) => AI_CAP_CODES.has(c.code))
@@ -164,13 +164,16 @@ const capabilityChips = computed(() => {
     ? base.map((c) => ({
         ...c,
         label:
-          c.code === 'CARE_PLAN'
-            ? '生成方案'
-            : c.code === 'REPORT_SUMMARY'
-              ? '报告点评'
-              : '健康咨询',
+          c.code === 'CREATE_ARCHIVE'
+            ? '建档'
+            : c.code === 'CARE_PLAN'
+              ? '生成方案'
+              : c.code === 'REPORT_SUMMARY'
+                ? '报告点评'
+                : '健康咨询',
       }))
     : [
+        { code: 'CREATE_ARCHIVE', label: '建档' },
         { code: 'CARE_PLAN', label: '生成方案' },
         { code: 'REPORT_SUMMARY', label: '报告点评' },
         { code: 'GENERAL_CHAT', label: '健康咨询' },
@@ -295,9 +298,14 @@ async function sendMessage(
   if (stickyCapability.value && !capabilityHint && !stickyHint && !image) {
     stickyCapability.value = null
   }
+  const archiveHint =
+    !capabilityHint && !image && !stickyHint && looksLikeArchiveDraft(message.trim())
+      ? 'CREATE_ARCHIVE'
+      : null
   const effectiveHint =
     capabilityHint ||
-    (!image && stickyHint ? stickyHint : null)
+    (!image && stickyHint ? stickyHint : null) ||
+    archiveHint
   const userText = message.trim() || (image ? '请识别这张单据' : '')
   const extractMode = effectiveHint === 'CHAT_EXTRACT'
   const isCarePlan = effectiveHint === 'CARE_PLAN'
@@ -425,6 +433,7 @@ function quickAction(code: string, label: string) {
     return
   }
   const prompts: Record<string, string> = {
+    CREATE_ARCHIVE: '帮我建档，请告诉我需要哪些信息',
     CARE_PLAN: '请为这位患者生成管理方案草稿',
     REPORT_SUMMARY: '请为这位患者生成或点评管理报告',
     GENERAL_CHAT: '请根据患者档案给出健康管理建议',
@@ -560,9 +569,15 @@ function runAction(action: AgentAction) {
 
 async function executeCallApi(action: AgentAction) {
   if (action.runState === 'busy' || action.runState === 'done') return
-  const peopleId = action.peopleId || props.peopleId
-  if (!peopleId) return
   const apiKey = action.path || ''
+  const peopleId = action.peopleId || props.peopleId || ''
+  if (
+    !peopleId &&
+    apiKey !== 'CREATE_ARCHIVE' &&
+    apiKey !== 'NUDGE_BATCH'
+  ) {
+    return
+  }
   action.runState = 'busy'
   try {
     const result = await runAgentCallApi(apiKey, peopleId, action.payload)
@@ -570,9 +585,24 @@ async function executeCallApi(action: AgentAction) {
     action.runState = 'done'
     const doneLabel = callApiDoneLabel(apiKey)
     if (doneLabel) action.label = doneLabel
-    if (apiKey === 'PUBLISH_REPORT' || apiKey === 'PUBLISH_CARE_PLAN') {
+    if (
+      apiKey === 'PUBLISH_REPORT' ||
+      apiKey === 'PUBLISH_CARE_PLAN' ||
+      apiKey === 'CREATE_ARCHIVE' ||
+      apiKey === 'CHANGE_CARE_TEAM'
+    ) {
       stickyCapability.value = null
-      emit('care-plan-updated')
+      if (apiKey !== 'CREATE_ARCHIVE' && apiKey !== 'CHANGE_CARE_TEAM') emit('care-plan-updated')
+    }
+    if (
+      (apiKey === 'CREATE_ARCHIVE' || apiKey === 'CHANGE_CARE_TEAM') &&
+      result.focusPeopleId
+    ) {
+      messages.value.push({ role: 'assistant', content: `回执：${receipt}` })
+      ElMessage.success(receipt)
+      drawerVisible.value = false
+      router.push({ path: '/workspace/cockpit', query: { peopleId: result.focusPeopleId } })
+      return
     }
     if (result.openSheet) {
       const target = sheetModeToPath(peopleId, result.openSheet)
