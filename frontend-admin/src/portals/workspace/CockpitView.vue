@@ -1908,7 +1908,7 @@ async function sendMessage(
         }
         // 新建档成功才自动切焦点；已存在需人确认是否改挂，留在机构会话看提示与按钮
         if (stillBound() && data.capability === 'CREATE_ARCHIVE' && data.intent === 'CREATE_ARCHIVE_OK') {
-          const focus = (data.actions || []).find(
+          const focusAction = (data.actions || []).find(
             (a) => a.type === 'FOCUS_PATIENT' && a.peopleId,
           )
           const nextActions = (data.actions || []).filter(
@@ -1920,29 +1920,29 @@ async function sendMessage(
           const needAssign = nextActions.some(
             (a) => a.type === 'NAVIGATE' && a.path === 'join-care-team',
           )
-          if (focus?.peopleId && focus.peopleId !== focusPeopleId.value) {
+          if (focusAction?.peopleId && focusAction.peopleId !== focusPeopleId.value) {
             const replyText =
               (data.reply && data.reply.trim()) ||
               row.content ||
               '建档完成，请先分配健管组。'
-            void selectPatient(focus.peopleId, { autoAsk: false, reason: '建档完成' }).then(() => {
-              if (focusPeopleId.value !== focus.peopleId) return
+            void selectPatient(focusAction.peopleId, { autoAsk: false, reason: '建档完成' }).then(() => {
+              if (focusPeopleId.value !== focusAction.peopleId) return
               messages.value.push({
                 role: 'assistant',
                 content: replyText,
                 actions: nextActions.length ? nextActions : undefined,
                 at: nowClock(),
               })
-              cachePatientSession(focus.peopleId!)
+              cachePatientSession(focusAction.peopleId!)
               void scrollToBottom()
               // 未入组：自动打开分配抽屉，降低小白操作成本
               if (needAssign) {
-                joinPeopleId.value = focus.peopleId!
+                joinPeopleId.value = focusAction.peopleId!
                 joinPeopleName.value = focus.value?.displayName || null
               }
             })
-          } else if (focus?.peopleId && needAssign) {
-            joinPeopleId.value = focus.peopleId
+          } else if (focusAction?.peopleId && needAssign) {
+            joinPeopleId.value = focusAction.peopleId
             joinPeopleName.value = focus.value?.displayName || null
           }
         }
