@@ -106,6 +106,19 @@ type AiSummary = ReportAiPrefill
 
 const isReview = computed(() => props.mode !== 'readonly' && report.value?.status === 'DRAFT')
 const isQuarter = computed(() => report.value?.periodType === 'QUARTER')
+/** 发布门槛：必须有健管师寄语（可 AI 生成后改），避免空点评直接推给患者 */
+const canPublish = computed(() => {
+  if (!isReview.value) return false
+  if (!staffComment.value.trim()) return false
+  if (isQuarter.value && !quarterAdvice.value.trim()) return false
+  return true
+})
+const publishBlockHint = computed(() => {
+  if (!isReview.value) return ''
+  if (!staffComment.value.trim()) return '请先填写健管师寄语（可点「AI 生成点评」）后再发布'
+  if (isQuarter.value && !quarterAdvice.value.trim()) return '三个月报告须填写阶段建议'
+  return ''
+})
 
 const scrollRef = ref<HTMLElement | null>(null)
 const sections = ref<Array<{ id: string; label: string }>>([])
@@ -338,6 +351,10 @@ async function refresh() {
 
 async function publish() {
   if (!report.value) return
+  if (!staffComment.value.trim()) {
+    ElMessage.warning('请先填写健管师寄语（可点「AI 生成点评」）后再发布给患者')
+    return
+  }
   if (isQuarter.value && !quarterAdvice.value.trim()) {
     ElMessage.warning('三个月报告须填写阶段建议')
     return
@@ -349,7 +366,7 @@ async function publish() {
       {
         method: 'POST',
         body: JSON.stringify({
-          staffComment: staffComment.value || null,
+          staffComment: staffComment.value.trim(),
           nextFocus: nextFocus.value || null,
           quarterAdvice: quarterAdvice.value || null,
           ...extrasPayload(),
@@ -440,10 +457,10 @@ function onClosed() {
           show-icon
           :closable="false"
           class="hint"
-          title="建议先刷新快照再发布；发布后内容冻结，患者端即可查看。"
+          title="须先填写健管师寄语再发布；建议先刷新快照，发布后内容冻结，患者端即可查看。"
         />
         <el-form label-position="top">
-          <el-form-item label="健管师寄语（选填）">
+          <el-form-item label="健管师寄语（必填）" required>
             <div class="ai-bar">
               <el-button
                 link
@@ -455,7 +472,7 @@ function onClosed() {
                 {{ aiLoading ? 'AI 生成中…' : 'AI 生成点评' }}
               </el-button>
               <span class="ai-hint">
-                {{ aiNote || '生成草稿后可自由修改，确认无误再发布' }}
+                {{ aiNote || '可点「AI 生成点评」后修改确认，寄语必填才能发布' }}
               </span>
             </div>
             <el-input
@@ -464,10 +481,10 @@ function onClosed() {
               :autosize="{ minRows: 6, maxRows: 14 }"
               maxlength="1000"
               show-word-limit
-              placeholder="写给患者看的寄语，用「您」说话；留空则使用分档模板"
+              placeholder="写给患者看的寄语，用「您」说话；可先点「AI 生成点评」再改"
             />
             <div v-if="commentPreview" class="preview">
-              <span class="preview-label">患者将看到：</span>{{ commentPreview }}
+              <span class="preview-label">未填写时参考模板（发布前须改成正式寄语）：</span>{{ commentPreview }}
             </div>
           </el-form-item>
           <el-form-item label="下期关注（选填）">
@@ -531,7 +548,22 @@ function onClosed() {
           <div class="footer-right">
             <el-button :loading="exporting" @click="exportPdf">导出 PDF</el-button>
             <el-button :loading="submitting" @click="skip">跳过本周期</el-button>
-            <el-button type="primary" :loading="submitting" @click="publish">发布给患者</el-button>
+            <el-tooltip
+              :disabled="canPublish"
+              :content="publishBlockHint"
+              placement="top"
+            >
+              <span class="publish-wrap">
+                <el-button
+                  type="primary"
+                  :loading="submitting"
+                  :disabled="!canPublish"
+                  @click="publish"
+                >
+                  发布给患者
+                </el-button>
+              </span>
+            </el-tooltip>
           </div>
         </template>
         <template v-else>
@@ -546,6 +578,9 @@ function onClosed() {
 </template>
 
 <style scoped>
+.publish-wrap {
+  display: inline-flex;
+}
 .loading {
   padding: 40px;
   text-align: center;

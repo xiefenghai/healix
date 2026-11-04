@@ -112,6 +112,10 @@ async function generateAi() {
 
 async function publish() {
   if (!report.value) return
+  if (!staffComment.value.trim()) {
+    showToast('请先填写健管师点评（可点「AI 草稿」）后再发布')
+    return
+  }
   if (isQuarter.value && !quarterAdvice.value.trim()) {
     showToast('三个月报告须填写阶段建议')
     return
@@ -121,7 +125,7 @@ async function publish() {
     await api(`/api/b/v1/health-reports/${report.value.id}/publish`, {
       method: 'POST',
       body: JSON.stringify({
-        staffComment: staffComment.value || null,
+        staffComment: staffComment.value.trim(),
         nextFocus: nextFocus.value || null,
         quarterAdvice: quarterAdvice.value || null,
         ...(aiExtras.value || {}),
@@ -195,7 +199,8 @@ onMounted(load)
           autosize
           type="textarea"
           label="寄语"
-          placeholder="写给患者的点评"
+          required
+          placeholder="必填：写给患者的点评（可先点 AI 草稿）"
         />
         <van-field
           v-model="nextFocus"
@@ -215,7 +220,15 @@ onMounted(load)
           required
           placeholder="三个月报告必填"
         />
-        <van-button block type="primary" round class="submit" :loading="submitting" @click="publish">
+        <van-button
+          block
+          type="primary"
+          round
+          class="submit"
+          :loading="submitting"
+          :disabled="!staffComment.trim() || (isQuarter && !quarterAdvice.trim())"
+          @click="publish"
+        >
           发布报告
         </van-button>
         <van-button block round plain class="skip" :loading="submitting" @click="skip">

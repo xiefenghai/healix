@@ -4819,6 +4819,10 @@ onUnmounted(() => {
       v-model="createCareTeamOpen"
       @created="
         async () => {
+          // 左栏冷启动 CTA 依赖 summary.primaryCareTeamCount，须先重拉再换「去建第一个档」
+          await loadSummary()
+          if (tab === 'mine') await searchPatients()
+          else await loadPriority()
           await refreshBriefing()
         }
       "

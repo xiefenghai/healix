@@ -406,11 +406,11 @@ public class HealthReportService {
                 && !StringUtils.hasText(str(narrative.get("quarterAdvice")))) {
             throw new BusinessException(400, "三个月报告须填写阶段建议");
         }
+        // 必须有健管师寄语后再发布，禁止空点评直接推给患者（模板兜底只用于展示预览）
         if (!StringUtils.hasText(str(narrative.get("staffComment")))) {
-            narrative.put("templateTier", resolveTemplateTier(content));
-        } else {
-            narrative.put("templateTier", null);
+            throw new BusinessException(400, "请先填写健管师寄语后再发布给患者");
         }
+        narrative.put("templateTier", null);
         content.put("narrative", narrative);
 
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
