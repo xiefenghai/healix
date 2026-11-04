@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
 import FollowupSectionFields from './FollowupSectionFields.vue'
-import PatientArchiveView from './PatientArchiveView.vue'
 import {
   FOLLOWUP_CONTACT_TARGET_OPTIONS,
   FOLLOWUP_METHOD_OPTIONS,
@@ -14,6 +14,9 @@ import {
   validateFollowupSection,
   type FollowupSection,
 } from '../../shared/followup-labels'
+import { openInNewTab } from '../../shared/open-route'
+
+const router = useRouter()
 
 interface TaskDetail {
   id: string
@@ -60,7 +63,6 @@ const loading = ref(false)
 const submitting = ref(false)
 const saving = ref(false)
 const task = ref<TaskDetail | null>(null)
-const archiveRef = ref<{ saveAllForFollowup: () => Promise<{ diseaseCodes: string[] }> } | null>(null)
 
 const contactChannel = ref('PHONE')
 const contactResult = ref('REACHED')
@@ -90,14 +92,12 @@ const isNudge = computed(() => task.value?.taskType === 'PLAN_NUDGE')
 const isAlert = computed(() => task.value?.taskType === 'METRIC_ALERT')
 const isFollowUp = computed(() => task.value?.taskType === 'FOLLOW_UP')
 const isExercise = computed(() => task.value?.taskType === 'EXERCISE_ALERT')
-const isOnboardingFollowUp = computed(() => isFollowUp.value && followupType.value === 'ONBOARDING')
 const dialogTitle = computed(() => {
   if (isAlert.value) return '指标异常处理'
   if (isExercise.value) return '运动不适处理'
-  if (isFollowUp.value) return '定期随访'
+  if (isFollowUp.value) return task.value?.taskTypeLabel || '定期随访'
   return task.value?.taskTypeLabel || '填单'
 })
-const peopleId = computed(() => String(task.value?.peopleId || ''))
 
 const alertHits = computed<MetricHit[]>(() => {
   const payload = task.value?.payload
@@ -196,7 +196,7 @@ watch(
         res.data.taskType === 'METRIC_ALERT' ||
         res.data.taskType === 'PLAN_NUDGE'
       ) {
-        const openDraft = (res.data.followups || []).find((f) => f.status === 'OPEN' && f.content)
+        const openDraft = (res.data.followups || []).find((f) => f.status === 'OPEN')
         if (openDraft?.content) {
           const c = openDraft.content
           if (res.data.taskType === 'FOLLOW_UP') {
@@ -219,6 +219,23 @@ watch(
             if (typeof c.patientFeedback === 'string') patientFeedback.value = c.patientFeedback
             if (typeof c.note === 'string') note.value = c.note
           }
+        }
+        // 首诊：关弹窗，新标签打开全屏问卷工作台
+        if (res.data.taskType === 'FOLLOW_UP' && followupType.value === 'ONBOARDING') {
+          const people = res.data.peopleId
+          const fuId = openDraft?.id || (res.data.followups || []).find((f) => f.status === 'OPEN')?.id
+          emit('closed')
+          if (people && fuId) {
+            openInNewTab(router, {
+              path: `/workspace/patients/${people}/intake`,
+              query: { followupRecordId: fuId },
+            })
+          } else if (people) {
+            openInNewTab(router, `/workspace/patients/${people}/intake`)
+          } else {
+            ElMessage.warning('无法打开首诊工作台，请从客户页进入')
+          }
+          return
         }
       }
     } catch (e) {
@@ -351,13 +368,9 @@ async function submit() {
       body = buildNudgeBody()
     } else if (isFollowUp.value) {
       if (followupType.value === 'ONBOARDING') {
-        if (!archiveRef.value) throw new Error('档案编辑器未就绪，请稍候再试')
-        const { diseaseCodes } = await archiveRef.value.saveAllForFollowup()
-        followupSection.value = {
-          ...followupSection.value,
-          archiveWritten: true,
-          diseaseCodes,
-        }
+        ElMessage.warning('首诊请在全屏工作台提交问卷完成')
+        submitting.value = false
+        return
       }
       body = buildFollowUpBody()
     } else {
@@ -390,7 +403,7 @@ async function submit() {
   <el-dialog
     v-model="open"
     :title="dialogTitle"
-    :width="isOnboardingFollowUp ? '920px' : isAlert ? '640px' : '560px'"
+    :width="isAlert ? '640px' : '560px'"
     destroy-on-close
     align-center
   >
@@ -572,10 +585,6 @@ async function submit() {
             </el-select>
           </el-form-item>
         </div>
-        <div v-if="followupType === 'ONBOARDING' && peopleId" class="archive-block">
-          <div class="archive-block-title">患者档案（提交时写回）</div>
-          <PatientArchiveView ref="archiveRef" :people-id="peopleId" embedded />
-        </div>
         <FollowupSectionFields v-model="followupSection" :followup-type="followupType" />
         <el-form-item label="指导建议">
           <el-input
@@ -713,18 +722,6 @@ async function submit() {
 }
 .form-col {
   margin-bottom: 14px;
-}
-.archive-block {
-  margin: 4px 0 14px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-blank);
-}
-.archive-block-title {
-  margin-bottom: 10px;
-  font-weight: 600;
-  font-size: 14px;
 }
 .switch-line {
   display: flex;

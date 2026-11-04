@@ -25,6 +25,7 @@ interface RevisionItem {
   newValue?: string
   oldDisplay?: string
   newDisplay?: string
+  quote?: string
 }
 
 interface RevisionBatch {
@@ -326,8 +327,9 @@ onMounted(bootstrap)
                         b.bizKey,
                         b.bizType,
                       )
-                    }}</span>
+                    }}                    </span>
                   </div>
+                  <p v-if="item.quote" class="rev-quote">原句：{{ item.quote }}</p>
                 </li>
               </ul>
             </div>

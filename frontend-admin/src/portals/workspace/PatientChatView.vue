@@ -71,6 +71,7 @@ const session = ref<Session | null>(null)
 const messages = ref<ChatMessage[]>([])
 const draft = ref('')
 const listRef = ref<HTMLElement | null>(null)
+const endRef = ref<HTMLElement | null>(null)
 const focus = ref<FocusSnapshot | null>(null)
 let stopMessagePoll: (() => void) | null = null
 let unsubSse: (() => void) | null = null
@@ -177,8 +178,19 @@ function formatTime(iso?: string) {
 
 async function scrollBottom() {
   await nextTick()
-  const el = listRef.value
-  if (el) el.scrollTop = el.scrollHeight
+  const pin = () => {
+    const el = listRef.value
+    if (el && el.scrollHeight > el.clientHeight + 1) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    endRef.value?.scrollIntoView({ block: 'end' })
+  }
+  pin()
+  requestAnimationFrame(() => {
+    pin()
+    requestAnimationFrame(pin)
+  })
 }
 
 async function markRead() {
@@ -201,12 +213,12 @@ async function loadSession() {
     session.value = res.data
     messages.value = [...(res.data.messages || [])]
     await markRead()
-    await scrollBottom()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载沟通失败')
   } finally {
     loading.value = false
   }
+  await scrollBottom()
 }
 
 async function loadFocusSnapshot() {
@@ -310,6 +322,7 @@ watch(peopleId, async () => {
   draft.value = ''
   focus.value = null
   await Promise.all([loadSession(), loadFocusSnapshot()])
+  await scrollBottom()
   startPoll()
   consumeAgentDraft()
 })
@@ -324,6 +337,7 @@ function consumeAgentDraft() {
 
 onMounted(async () => {
   await Promise.all([loadSession(), loadFocusSnapshot()])
+  await scrollBottom()
   startPoll()
   unsubSse = subscribeCareChatEvent(onSseEvent)
   consumeAgentDraft()
@@ -411,6 +425,7 @@ onBeforeUnmount(() => {
           <div class="text">{{ m.recalled ? '（已撤回）' : m.content }}</div>
         </div>
       </div>
+      <div ref="endRef" />
     </div>
 
     <div class="composer">
@@ -449,7 +464,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 560px;
+  min-height: 0;
   height: 100%;
   background: #fff;
   border: 1px solid var(--ink-200);

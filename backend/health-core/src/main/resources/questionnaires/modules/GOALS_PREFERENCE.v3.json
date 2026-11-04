@@ -1,0 +1,162 @@
+{
+  "code": "GOALS_PREFERENCE",
+  "version": 3,
+  "title": "诉求与目标",
+  "script": "先确认这次最想解决什么、纳入哪条管理线。定好方向后，后面只问相关题，少打扰您。",
+  "items": [
+    {
+      "field": "goal.primaryAppeal",
+      "label": "这次最想解决什么问题？（可多选）",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "goal.careTracks",
+      "label": "本次纳入哪些管理方向？",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "goal.appealText",
+      "label": "客户原话（可摘一句）",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "goal.doctorAdvised",
+      "label": "是医生建议做这次管理的吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "goal.mode",
+      "label": "本次主目标类型",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["WEIGHT_LOSS", "DIABETES", "HYPERTENSION"]
+      }
+    },
+    {
+      "field": "goal.targetWeightKg",
+      "label": "希望体重到多少？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "all": [
+          { "field": "goal.careTracks", "intersects": ["WEIGHT_LOSS"] },
+          { "field": "goal.mode", "eq": "LOSS" }
+        ]
+      },
+      "highlights": [
+        {
+          "when": { "always": true },
+          "severity": "CAUTION",
+          "planEffect": "校验：目标 BMI < 18.5 不可提交；命中阻断级高亮时不可设"
+        }
+      ]
+    },
+    {
+      "field": "goal.targetDate",
+      "label": "希望什么时候达到体重目标？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "all": [
+          { "field": "goal.careTracks", "intersects": ["WEIGHT_LOSS"] },
+          { "field": "goal.mode", "eq": "LOSS" }
+        ]
+      },
+      "highlights": [
+        {
+          "when": { "always": true },
+          "severity": "CAUTION",
+          "planEffect": "校验：平均每周 > 约 1 kg → 警告：建议延长期限或调整目标"
+        }
+      ]
+    },
+    {
+      "field": "goal.targetWaistCm",
+      "label": "腰围目标（健管师选填，可不问客户）",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["WEIGHT_LOSS"]
+      }
+    },
+    {
+      "field": "goal.targetBodyFat",
+      "label": "体脂率目标（健管师选填）",
+      "level": "LATER",
+      "showIf": {
+        "all": [
+          { "field": "goal.careTracks", "intersects": ["WEIGHT_LOSS"] },
+          { "field": "goal.mode", "eq": "BODY_COMPOSITION" }
+        ]
+      }
+    },
+    {
+      "field": "goal.targetHba1c",
+      "label": "糖化血红蛋白目标（%）（健管师按指南选填）",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["DIABETES"]
+      }
+    },
+    {
+      "field": "goal.targetFpg",
+      "label": "空腹血糖目标（mmol/L）（健管师选填）",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["DIABETES"]
+      }
+    },
+    {
+      "field": "goal.targetBpSys",
+      "label": "收缩压目标（高压）（健管师选填）",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["HYPERTENSION"]
+      }
+    },
+    {
+      "field": "goal.targetBpDia",
+      "label": "舒张压目标（低压）（健管师选填）",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["HYPERTENSION"]
+      }
+    },
+    {
+      "field": "goal.exerciseMinutesPerDay",
+      "label": "每天大概能拿出多少时间活动或运动？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["WEIGHT_LOSS", "DIABETES", "HYPERTENSION"]
+      }
+    },
+    {
+      "field": "goal.dietEffort",
+      "label": "饮食上能做多大调整？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["WEIGHT_LOSS", "DIABETES", "HYPERTENSION"]
+      }
+    },
+    {
+      "field": "goal.followupChannel",
+      "label": "希望怎么跟进？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "goal.followupFrequency",
+      "label": "希望多久沟通一次？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "goal.constraints",
+      "label": "经济或时间上有什么限制？",
+      "level": "LATER"
+    }
+  ]
+}

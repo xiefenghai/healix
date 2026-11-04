@@ -19,4 +19,22 @@ public record ExamOcrPrefillDto(
         String conclusion,
         Map<String, Object> findings,
         List<String> ignoredFindings,
-        List<String> warnings) {}
+        List<String> warnings,
+        String imageKey) {
+
+    public ExamOcrPrefillDto(
+            String examType,
+            String examTypeName,
+            LocalDateTime examinedAt,
+            String conclusion,
+            Map<String, Object> findings,
+            List<String> ignoredFindings,
+            List<String> warnings) {
+        this(examType, examTypeName, examinedAt, conclusion, findings, ignoredFindings, warnings, null);
+    }
+
+    public ExamOcrPrefillDto withImageKey(String imageKey) {
+        return new ExamOcrPrefillDto(
+                examType, examTypeName, examinedAt, conclusion, findings, ignoredFindings, warnings, imageKey);
+    }
+}

@@ -5,8 +5,8 @@
 
     <sql id="cols">
         pk_id, id, tenant_id, people_id, kind, engine_code, disease_code,
-        rule_pack_version, status, level, score, probability,
-        result_json, input_snapshot_json, trigger_source,
+        rule_pack_version, status, level, tier, score, probability,
+        result_json, input_snapshot_json, fingerprint, trigger_source,
         assessed_at, assessed_by_staff_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
@@ -14,14 +14,14 @@
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO people_assessment_snapshot(
             id, tenant_id, people_id, kind, engine_code, disease_code,
-            rule_pack_version, status, level, score, probability,
-            result_json, input_snapshot_json, trigger_source,
+            rule_pack_version, status, level, tier, score, probability,
+            result_json, input_snapshot_json, fingerprint, trigger_source,
             assessed_at, assessed_by_staff_id,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{peopleId}, #{kind}, #{engineCode}, #{diseaseCode},
-            #{rulePackVersion}, #{status}, #{level}, #{score}, #{probability},
-            #{resultJson}, #{inputSnapshotJson}, #{triggerSource},
+            #{rulePackVersion}, #{status}, #{level}, #{tier}, #{score}, #{probability},
+            #{resultJson}, #{inputSnapshotJson}, #{fingerprint}, #{triggerSource},
             #{assessedAt}, #{assessedByStaffId},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )

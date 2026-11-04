@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.science.mapper.ScienceMapper">
+
+    <select id="findDaily" resultType="com.healix.core.science.domain.ScienceDaily">
+        SELECT id, tenant_id, people_id, biz_date, clip_code, watched,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM science_daily
+        WHERE people_id = #{peopleId}
+          AND biz_date = #{bizDate}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="insertDaily" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO science_daily(
+            id, tenant_id, people_id, biz_date, clip_code, watched,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{bizDate}, #{clipCode}, #{watched},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="replaceClip">
+        UPDATE science_daily
+        SET clip_code = #{clipCode},
+            watched = #{watched},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="markWatched">
+        UPDATE science_daily
+        SET watched = #{watched},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="listWatched" resultType="com.healix.core.science.domain.ScienceWatch">
+        SELECT clip_code, MIN(biz_date) AS first_biz_date
+        FROM science_daily
+        WHERE people_id = #{peopleId}
+          AND watched = 1
+          AND is_deleted = 0
+        GROUP BY clip_code
+    </select>
+</mapper>

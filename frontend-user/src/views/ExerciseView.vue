@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../api/http'
 import { ymd } from '../shared/diet'
+import DailyTrendChart from '../shared/DailyTrendChart.vue'
+import type { TrendBar } from '../shared/daily-trend'
 import {
   hhmm,
+  exerciseHowTo,
   INTENSITY_LABELS,
-  WEEKDAY_LABELS,
   type ExerciseFlag,
   type ExerciseSession,
   type ExerciseTaskItem,
@@ -33,18 +35,24 @@ const ringPct = computed(() => {
 const ringMuted = computed(() => planState.value !== 'ACTIVE' || !week.value?.dueCount)
 
 const todaySteps = computed(() => week.value?.days.find((d) => d.date === today)?.steps ?? null)
-const maxDayMin = computed(() => Math.max(30, ...(week.value?.days.map((d) => d.totalMin) ?? [0])))
+const maxDayMin = computed(() => Math.max(30, ...(week.value?.days.map((d) => d.totalMin) ?? [0])) * 1.08)
 
 function taskDone(t: ExerciseTaskItem) {
   return t.checkinStatus === 'DONE'
 }
 
-function dayClass(d: ExerciseWeek['days'][number]) {
-  if (d.date > today) return 'future'
-  if (d.dueCount > 0 && d.doneCount >= d.dueCount) return 'done'
-  if (d.totalMin > 0) return 'partial'
-  return ''
-}
+const weekBars = computed<TrendBar[]>(() =>
+  (week.value?.days ?? []).map((d) => {
+    const future = d.date > today
+    const done = d.dueCount > 0 && d.doneCount >= d.dueCount
+    return {
+      date: d.date,
+      value: future ? 0 : d.totalMin,
+      tone: future ? 'future' : done ? 'on' : d.totalMin > 0 ? 'soft' : '',
+      display: d.totalMin > 0 ? `${d.totalMin} 分钟${done ? ' · 计划完成' : ''}` : '',
+    }
+  }),
+)
 
 function flagClass(f: ExerciseFlag) {
   return f.level === 'RED' ? 'red' : f.level === 'YELLOW' ? 'yellow' : 'info'
@@ -142,6 +150,7 @@ onMounted(load)
         <div v-for="t in day.tasks" :key="t.taskId" class="task" :class="{ done: taskDone(t) }">
           <div class="task-main">
             <strong>{{ t.title }}</strong>
+            <span v-if="exerciseHowTo(t.title)" class="howto">{{ exerciseHowTo(t.title) }}</span>
             <span class="muted">
               目标 {{ t.targetMin }} 分钟 · 强度{{ INTENSITY_LABELS[t.intensity] }} · 今日已累计 {{ t.doneMin }} 分钟
             </span>
@@ -186,17 +195,9 @@ onMounted(load)
       </section>
 
       <section class="card">
-        <div class="sec-head"><strong>本周</strong></div>
-        <div class="week">
-          <div v-for="(d, i) in week.days" :key="d.date" class="wd" :class="dayClass(d)">
-            <div class="col">
-              <div class="col-fill" :style="{ height: Math.round((d.totalMin / maxDayMin) * 100) + '%' }" />
-            </div>
-            <span class="wd-min">{{ d.totalMin || '' }}</span>
-            <span class="wd-label" :class="{ today: d.date === today }">{{ WEEKDAY_LABELS[i] }}</span>
-          </div>
-        </div>
-        <p class="muted legend">柱高为运动分钟；绿色表示当天计划已完成</p>
+        <div class="sec-head"><strong>本周</strong><span class="muted">分钟</span></div>
+        <DailyTrendChart :bars="weekBars" color="var(--hx-orange)" :max="maxDayMin" />
+        <p class="muted legend">深色表示当天计划已完成</p>
       </section>
 
       <p class="disclaimer">活跃分钟按世界卫生组织口径：中等强度 1 分钟计 1，较累计 2，轻松不计。</p>
@@ -207,18 +208,15 @@ onMounted(load)
 <style scoped>
 .page {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 12% -8%, rgba(92, 184, 184, 0.22), transparent 40%),
-    radial-gradient(circle at 92% 4%, rgba(245, 166, 35, 0.12), transparent 34%),
-    var(--hx-bg);
+  background: var(--hx-bg);
   padding-bottom: 32px;
 }
 :deep(.van-nav-bar) {
-  background: rgba(247, 249, 252, 0.88);
+  background: rgba(255, 250, 242, 0.86);
   backdrop-filter: blur(10px);
 }
 :deep(.van-nav-bar__title) {
-  font-weight: 650;
+  font-weight: 800;
   color: var(--hx-text);
 }
 :deep(.van-nav-bar .van-icon) {
@@ -239,9 +237,9 @@ onMounted(load)
 .card {
   margin: 12px 16px 0;
   padding: 16px;
-  border-radius: var(--hx-radius);
+  border-radius: var(--hx-r-lg);
   background: var(--hx-card);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 .summary {
   text-align: center;
@@ -259,7 +257,7 @@ onMounted(load)
 }
 .ring-bg {
   fill: none;
-  stroke: #eef4f4;
+  stroke: var(--hx-n-100);
   stroke-width: 12;
 }
 .ring-fg {
@@ -270,7 +268,7 @@ onMounted(load)
   transition: stroke-dashoffset 0.4s ease;
 }
 .ring-fg.muted {
-  stroke: #c8d2d8;
+  stroke: var(--hx-n-400);
 }
 .ring-text {
   position: absolute;
@@ -287,14 +285,14 @@ onMounted(load)
 }
 .ring-text strong {
   font-size: 30px;
-  font-weight: 750;
+  font-weight: 800;
 }
 .ring-text small {
   font-size: 16px;
   color: var(--hx-muted);
 }
 .muted-num {
-  color: #c8d2d8;
+  color: var(--hx-n-400);
 }
 .stat-row {
   display: flex;
@@ -325,12 +323,15 @@ onMounted(load)
 .sec-head strong {
   font-size: 16px;
 }
+.sec-head .muted {
+  font-size: 12px;
+}
 .notice {
   margin: 0 0 8px;
   padding: 8px 10px;
   border-radius: 10px;
   font-size: 13px;
-  color: #a16207;
+  color: var(--hx-warn-text);
   background: var(--hx-orange-soft);
 }
 .task {
@@ -338,7 +339,7 @@ onMounted(load)
   align-items: center;
   gap: 10px;
   padding: 10px 0;
-  border-top: 1px dashed #e6eef0;
+  border-top: 1px dashed var(--hx-n-200);
 }
 .task:first-of-type {
   border-top: 0;
@@ -352,10 +353,15 @@ onMounted(load)
 .task.done .task-main strong {
   color: var(--hx-muted);
 }
+.howto {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--hx-n-800, #3d4b58);
+}
 .bar {
   height: 6px;
   border-radius: 3px;
-  background: #eef4f4;
+  background: var(--hx-n-100);
   overflow: hidden;
 }
 .bar-fill {
@@ -382,7 +388,7 @@ onMounted(load)
   margin-top: 10px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: #f5f8fa;
+  background: var(--hx-n-50);
   font-size: 12px;
   line-height: 1.6;
   color: var(--hx-text);
@@ -396,7 +402,7 @@ onMounted(load)
   align-items: center;
   gap: 8px;
   padding: 10px 0;
-  border-top: 1px dashed #e6eef0;
+  border-top: 1px dashed var(--hx-n-200);
 }
 .rec:first-of-type {
   border-top: 0;
@@ -413,7 +419,7 @@ onMounted(load)
   border-radius: 50%;
 }
 .dot.red {
-  background: #e8743b;
+  background: var(--hx-warn);
 }
 .dot.yellow {
   background: var(--hx-orange);
@@ -427,62 +433,15 @@ onMounted(load)
   line-height: 1.5;
 }
 .flag.red {
-  color: #c2410c;
-  background: #fff1ec;
+  color: var(--hx-danger-text);
+  background: var(--hx-danger-bg);
 }
 .flag.yellow {
-  color: #a16207;
+  color: var(--hx-warn-text);
   background: var(--hx-orange-soft);
 }
-.week {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-}
-.wd {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-.col {
-  position: relative;
-  width: 100%;
-  max-width: 24px;
-  height: 72px;
-  border-radius: 6px;
-  background: #f1f5f7;
-  overflow: hidden;
-}
-.col-fill {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: #c8d2d8;
-}
-.wd.partial .col-fill {
-  background: var(--hx-orange);
-}
-.wd.done .col-fill {
-  background: var(--hx-teal-soft);
-}
-.wd-min {
-  min-height: 14px;
-  font-size: 11px;
-  color: var(--hx-muted);
-}
-.wd-label {
-  font-size: 12px;
-  color: var(--hx-muted);
-}
-.wd-label.today {
-  color: var(--hx-teal);
-  font-weight: 700;
-}
 .legend {
-  margin: 8px 0 0;
+  margin: 4px 0 0;
 }
 .disclaimer {
   margin: 16px 24px 0;

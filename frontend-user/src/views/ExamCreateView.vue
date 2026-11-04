@@ -45,6 +45,7 @@ interface ExamOcrResult {
   findings?: Record<string, unknown> | null
   ignoredFindings?: string[]
   warnings?: string[]
+  imageKey?: string
 }
 const findings = reactive<Record<string, unknown>>(blankFindings(examType.value))
 
@@ -57,6 +58,7 @@ const fieldRows = computed<ExamFindingField[]>(() => EXAM_FINDING_FIELDS[examTyp
 const showTypeSwitch = computed(() => activePanel.value.examTypes.length > 1)
 const navTitle = computed(() => (isEdit.value ? '修改检查' : '添加检查'))
 const submitLabel = computed(() => (isEdit.value ? '保存修改' : '保存'))
+const ocrImageKey = ref('')
 
 function nowLocalInput() {
   const d = new Date()
@@ -116,6 +118,7 @@ function openOcrPicker() {
 
 /** OCR 识别不出类型时保留当前选择，只回填结论与时间 */
 function applyOcr(data: ExamOcrResult) {
+  ocrImageKey.value = data.imageKey || ''
   const type = data.examType && EXAM_FINDING_FIELDS[data.examType] ? data.examType : ''
   if (type) {
     const panel = EXAM_PANELS.find((p) => p.examTypes.includes(type)) || EXAM_PANELS[0]
@@ -177,6 +180,7 @@ async function submit() {
       examinedAt: toApiDateTime(form.examinedAt),
       conclusion: form.conclusion.trim() || undefined,
       findings: Object.keys(payloadFindings).length ? payloadFindings : undefined,
+      imageKey: ocrImageKey.value || undefined,
     }
     if (isEdit.value) {
       await api(`/api/c/v1/me/exams/${editId.value}`, {
@@ -363,15 +367,15 @@ onMounted(async () => {
 }
 .card {
   background: #fff;
-  border-radius: 16px;
+  border-radius: var(--hx-r-lg);
   margin: 12px 16px;
   padding: 14px;
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 h2 {
   margin: 0 0 10px;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 800;
 }
 .hint {
   margin: 8px 0 0;
@@ -394,9 +398,9 @@ h2 {
   margin: 10px 0 0;
   display: inline-block;
   font-size: 11px;
-  font-weight: 650;
-  color: #b45309;
-  background: #fff7ed;
+  font-weight: 700;
+  color: var(--hx-warn-text);
+  background: var(--hx-warn-bg);
   border-radius: 999px;
   padding: 3px 8px;
 }
@@ -404,8 +408,8 @@ h2 {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #9a3412;
-  background: #fff7ed;
+  color: var(--hx-danger-text);
+  background: var(--hx-warn-bg);
   border-radius: 10px;
   padding: 8px 10px;
 }
@@ -417,7 +421,7 @@ h2 {
 }
 .panel-chip {
   border: 0;
-  background: #f3f6f8;
+  background: var(--hx-n-100);
   color: var(--hx-muted);
   font-size: 12px;
   font-weight: 600;
@@ -431,7 +435,7 @@ h2 {
 .type-row {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid #f0f3f3;
+  border-top: 1px solid var(--hx-n-100);
 }
 .type-label {
   display: block;
@@ -450,7 +454,7 @@ h2 {
 }
 .item-block + .item-block {
   margin-top: 8px;
-  border-top: 1px solid #f0f3f3;
+  border-top: 1px solid var(--hx-n-100);
   padding-top: 8px;
 }
 .item-head {
@@ -474,6 +478,6 @@ h2 {
   right: 0;
   bottom: 0;
   padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, transparent, #f7f9fc 30%);
+  background: linear-gradient(180deg, transparent, var(--hx-n-50) 30%);
 }
 </style>

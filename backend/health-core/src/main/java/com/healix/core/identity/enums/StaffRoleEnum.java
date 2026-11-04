@@ -6,6 +6,8 @@ public enum StaffRoleEnum {
     TENANT_ADMIN,
     /** 健管师 */
     CARE_MANAGER,
+    /** 营养师（可审核方案、可见敏感字段） */
+    NUTRITIONIST,
     /** 医生 */
     DOCTOR,
     /** 运营 */
@@ -16,7 +18,7 @@ public enum StaffRoleEnum {
 
     /** 租户管理员可分配/替换的岗位角色（不含 TENANT_ADMIN） */
     public boolean isAssignableByTenantAdmin() {
-        return this == CARE_MANAGER || this == DOCTOR || this == TENANT_OPERATOR;
+        return this == CARE_MANAGER || this == NUTRITIONIST || this == DOCTOR || this == TENANT_OPERATOR;
     }
 
     public static StaffRoleEnum requireAssignable(String code) {

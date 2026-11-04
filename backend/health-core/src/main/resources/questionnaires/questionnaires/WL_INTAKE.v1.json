@@ -1,0 +1,73 @@
+{
+  "code": "WL_INTAKE",
+  "version": 1,
+  "title": "减重入组问卷",
+  "program": "WEIGHT_LOSS",
+  "purpose": "INTAKE",
+  "modules": [
+    {
+      "code": "BASIC_PROFILE",
+      "version": 1
+    },
+    {
+      "code": "BODY_MEASURE",
+      "version": 1
+    },
+    {
+      "code": "WOMEN_HEALTH",
+      "version": 1
+    },
+    {
+      "code": "MEDICAL_HISTORY",
+      "version": 1
+    },
+    {
+      "code": "ALLERGY_DIET_RESTRICTION",
+      "version": 1
+    },
+    {
+      "code": "FAMILY_HISTORY",
+      "version": 1
+    },
+    {
+      "code": "DIET_BEHAVIOR",
+      "version": 1
+    },
+    {
+      "code": "EXERCISE_BEHAVIOR",
+      "version": 1
+    },
+    {
+      "code": "SLEEP_SUBSTANCE",
+      "version": 1
+    },
+    {
+      "code": "PSYCH_BASE",
+      "version": 1
+    },
+    {
+      "code": "WL_WEIGHT_HISTORY",
+      "version": 1
+    },
+    {
+      "code": "WL_RISK_SCREEN",
+      "version": 1
+    },
+    {
+      "code": "GOALS_PREFERENCE",
+      "version": 1
+    },
+    {
+      "code": "STAFF_NOTE",
+      "version": 1
+    },
+    {
+      "code": "CONSENT",
+      "version": 1
+    },
+    {
+      "code": "INTAKE_AI_SUMMARY",
+      "version": 1
+    }
+  ]
+}

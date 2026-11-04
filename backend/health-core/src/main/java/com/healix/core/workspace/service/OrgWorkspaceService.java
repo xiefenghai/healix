@@ -44,6 +44,8 @@ import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.enums.MembershipStatusEnum;
 import com.healix.core.people.enums.EducationLevelEnum;
 import com.healix.core.people.enums.MaritalStatusEnum;
+import com.healix.core.people.enums.MobileOwnerEnum;
+import com.healix.core.people.support.MobileNumbers;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
@@ -59,6 +61,7 @@ import com.healix.core.workspace.dto.CareTeamListItem;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.dto.OrgStaffItem;
 import com.healix.core.workspace.mapper.StaffPatientWatchMapper;
+import com.healix.core.followup.service.FollowupScheduleService;
 import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -68,6 +71,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import com.healix.core.reward.service.RewardQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -99,8 +103,10 @@ public class OrgWorkspaceService {
     private final IdCardCrypto idCardCrypto;
     private final AccountPatientMapper accountPatientMapper;
     private final ObjectProvider<WorkspaceTaskGenerator> workspaceTaskGenerator;
+    private final ObjectProvider<FollowupScheduleService> followupScheduleService;
     private final QuotaService quotaService;
     private final StaffPatientWatchMapper staffPatientWatchMapper;
+    private final ObjectProvider<RewardQueryService> rewardQueryService;
 
     public void requireOrgWorkspaceAccess(String orgId) {
         String tenantId = requireTenantId();
@@ -498,7 +504,7 @@ public class OrgWorkspaceService {
         auditAddMember(actorAccountId, teamId, member);
         WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
         if (gen != null) {
-            StaffProfile actor = staffProfileMapper.findByAccountId(actorAccountId);
+            StaffProfile actor = staffProfileMapper.findByAccountAndTenant(actorAccountId, team.getTenantId());
             gen.onPatientJoinedTeam(
                     team.getTenantId(),
                     orgId,
@@ -559,7 +565,7 @@ public class OrgWorkspaceService {
 
         WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
         if (gen != null) {
-            StaffProfile actor = staffProfileMapper.findByAccountId(actorAccountId);
+            StaffProfile actor = staffProfileMapper.findByAccountAndTenant(actorAccountId, target.getTenantId());
             String actorStaffId = actor == null ? null : actor.getId();
             if (fromTeamId == null) {
                 gen.onPatientJoinedTeam(
@@ -669,6 +675,7 @@ public class OrgWorkspaceService {
         Set<String> watchedPeopleIds = fillWatch ? currentWatchPeopleIds(orgId) : Set.of();
         List<PatientOrgMembership> memberships = membershipMapper.listActiveByOrg(orgId);
         List<OrgPatientListItem> items = new ArrayList<>();
+        Map<String, String> tenantOf = new HashMap<>();
         for (PatientOrgMembership m : memberships) {
             PeopleProfile p = peopleProfileMapper.findById(m.getPeopleId());
             if (p == null) {
@@ -696,13 +703,55 @@ public class OrgWorkspaceService {
             if (Boolean.TRUE.equals(watched) && !isWatched) {
                 continue;
             }
-            OrgPatientListItem item = toPatientItem(p, m, teamMember);
+            OrgPatientListItem item = toPatientItem(p, m, teamMember, false);
+            tenantOf.put(p.getId(), p.getTenantId());
             if (fillWatch) {
                 item.setWatched(isWatched);
             }
             items.add(item);
         }
+        fillAssessmentTags(items, tenantOf);
+        if (fillWatch) {
+            fillStreakDays(items);
+        }
         return items;
+    }
+
+    /** 评估标签只读最新结果表，按租户批量取，避免列表 N+1。 */
+    private void fillAssessmentTags(List<OrgPatientListItem> items, Map<String, String> tenantOf) {
+        Map<String, List<OrgPatientListItem>> byTenant = new HashMap<>();
+        for (OrgPatientListItem item : items) {
+            String tenantId = tenantOf.get(item.getPeopleId());
+            if (StringUtils.hasText(tenantId)) {
+                byTenant.computeIfAbsent(tenantId, k -> new ArrayList<>()).add(item);
+            }
+        }
+        byTenant.forEach((tenantId, group) -> {
+            try {
+                Map<String, List<AssessmentTagView>> tags = assessmentTagAssembler.assembleBatch(
+                        tenantId, group.stream().map(OrgPatientListItem::getPeopleId).toList());
+                group.forEach(i -> i.setAssessmentTags(tags.getOrDefault(i.getPeopleId(), List.of())));
+            } catch (Exception ignored) {
+                group.forEach(i -> i.setAssessmentTags(List.of()));
+            }
+        });
+    }
+
+    private void fillStreakDays(List<OrgPatientListItem> items) {
+        RewardQueryService rewards = rewardQueryService.getIfAvailable();
+        if (rewards == null || items.isEmpty()) {
+            return;
+        }
+        Map<String, RewardQueryService.PatientBrief> briefs = rewards.patientBriefs(
+                requireTenantId(), items.stream().map(OrgPatientListItem::getPeopleId).toList());
+        items.forEach(i -> {
+            RewardQueryService.PatientBrief b = briefs.get(i.getPeopleId());
+            if (b != null) {
+                i.setStreakDays(b.streak());
+                i.setTodayActions(b.todayActions());
+                i.setInactiveDays(b.inactiveDays());
+            }
+        });
     }
 
     public OrgPatientListItem getOrgPatient(String orgId, String peopleId) {
@@ -773,23 +822,65 @@ public class OrgWorkspaceService {
         return staffPatientWatchMapper.findActive(ctx.getStaffId(), orgId, peopleId) != null;
     }
 
+    /**
+     * 建档：姓名 + 性别 + 出生日期为必要信息，证件选填；联系电话须填（可标「暂无」）并注明归属。
+     *
+     * @param attachPeopleId 查重确认「就是此人」时传入，复用已有档案并入组本机构
+     */
     @Transactional
     public OrgPatientListItem createArchive(
             String orgId,
             String name,
             String attachPeopleId,
-            boolean noIdentity,
             String identityType,
             String identityValue,
             String gender,
             LocalDate birthday,
+            String mobile,
+            String mobileOwner,
+            boolean noMobile,
             String actorAccountId) {
         requireOrgWorkspaceAccess(orgId);
         String tenantId = requireTenantId();
         String staffId = requireStaffId();
         if (!StringUtils.hasText(name)) {
-            throw new BusinessException(400, "请填写名称");
+            throw new BusinessException(400, "请填写姓名");
         }
+        boolean noSelf = noMobile;
+        String mobileNorm;
+        String ownerNorm;
+        if (noSelf) {
+            mobileNorm = MobileNumbers.requireContact(mobile);
+            ownerNorm = MobileOwnerEnum.require(mobileOwner);
+            if (MobileOwnerEnum.SELF.name().equals(ownerNorm)) {
+                throw new BusinessException(400, "无本人号时，请选择联系人归属");
+            }
+            if (attachPeopleId != null) {
+                throw new BusinessException(400, "无本人号不能按号码关联已有档案");
+            }
+        } else {
+            ownerNorm = MobileOwnerEnum.require(mobileOwner);
+            if (!MobileOwnerEnum.SELF.name().equals(ownerNorm)) {
+                throw new BusinessException(400, "建档请填写本人手机号");
+            }
+            mobileNorm = MobileNumbers.requireSelf(mobile);
+            List<PeopleProfile> holders = peopleProfileMapper.listBySelfMobile(tenantId, mobileNorm);
+            if (holders.size() > 1) {
+                throw new BusinessException(409, "这个本人号有多份档案，请租户管理员合并");
+            }
+            if (holders.size() == 1) {
+                PeopleProfile hit = holders.get(0);
+                boolean same = MobileNumbers.sameName(name, hit.getDisplayName())
+                        && birthday != null
+                        && birthday.equals(hit.getBirthday());
+                if (same || hit.getId().equals(attachPeopleId)) {
+                    attachPeopleId = hit.getId();
+                } else {
+                    throw new BusinessException(409, "该本人手机号已有档案，姓名或出生日期不一致，请确认是否为同一人");
+                }
+            }
+        }
+        boolean hasIdentity = StringUtils.hasText(identityValue);
         PeopleProfile profile;
         boolean createdProfile = false;
         String resolvedType = null;
@@ -798,14 +889,14 @@ public class OrgWorkspaceService {
         if (attachPeopleId != null) {
             profile = peopleProfileMapper.findById(attachPeopleId);
             if (profile == null || !tenantId.equals(profile.getTenantId())) {
-                throw new BusinessException(404, "要挂靠的患者不存在");
+                throw new BusinessException(404, "要关联的档案不存在");
             }
-            if (!noIdentity) {
+            if (hasIdentity) {
                 IdentityPayload payload = resolveIdentity(tenantId, identityType, identityValue, gender, birthday);
                 PeopleIdentity occupied =
                         peopleIdentityMapper.findByTenantTypeHash(tenantId, payload.type().name(), payload.hash());
                 if (occupied != null && !occupied.getPeopleId().equals(profile.getId())) {
-                    throw new BusinessException(409, "该证件已绑定其他患者");
+                    throw new BusinessException(409, "该证件已属于另一份档案，如为同一人请由租户管理员合并档案");
                 }
                 if (peopleIdentityMapper.findByPeopleAndType(profile.getId(), payload.type().name()) == null) {
                     insertIdentity(tenantId, profile.getId(), payload);
@@ -816,16 +907,17 @@ public class OrgWorkspaceService {
                 if (payload.birthday() != null) {
                     profile.setBirthday(payload.birthday());
                 }
-                EntityMeta.onUpdate(profile);
-                peopleProfileMapper.updateProfile(profile);
                 resolvedType = payload.type().name();
                 resolvedMask = payload.mask();
             }
-        } else if (noIdentity) {
+            fillBlankDemographics(profile, gender, birthday, mobileNorm, ownerNorm);
+            EntityMeta.onUpdate(profile);
+            peopleProfileMapper.updateProfile(profile);
+        } else if (!hasIdentity) {
             if (!StringUtils.hasText(gender) || birthday == null) {
-                throw new BusinessException(400, "无证建档须填写性别和出生日期");
+                throw new BusinessException(400, "请填写性别和出生日期");
             }
-            profile = newPeople(tenantId, name.trim(), gender, birthday);
+            profile = newPeople(tenantId, name.trim(), gender, birthday, mobileNorm, ownerNorm);
             createdProfile = true;
         } else {
             IdentityPayload payload = resolveIdentity(tenantId, identityType, identityValue, gender, birthday);
@@ -836,24 +928,19 @@ public class OrgWorkspaceService {
                 if (profile == null) {
                     throw new BusinessException(500, "证件数据异常，请联系管理员");
                 }
-                // 历史档案可能缺生日/性别：用本次证件解析结果回填
-                boolean touched = false;
-                if (!StringUtils.hasText(profile.getGender()) && payload.gender() != null) {
-                    profile.setGender(payload.gender());
-                    touched = true;
+                if (!noSelf
+                        && StringUtils.hasText(profile.getMobile())
+                        && MobileOwnerEnum.SELF.name().equals(profile.getMobileOwner())
+                        && !mobileNorm.equals(profile.getMobile())) {
+                    throw new BusinessException(409, "证件和手机号不是同一人，请联系租户管理员合并档案");
                 }
-                if (profile.getBirthday() == null && payload.birthday() != null) {
-                    profile.setBirthday(payload.birthday());
-                    touched = true;
-                }
-                if (touched) {
-                    EntityMeta.onUpdate(profile);
-                    peopleProfileMapper.updateProfile(profile);
-                }
+                fillBlankDemographics(profile, payload.gender(), payload.birthday(), mobileNorm, ownerNorm);
+                EntityMeta.onUpdate(profile);
+                peopleProfileMapper.updateProfile(profile);
                 resolvedType = existing.getIdentityType();
                 resolvedMask = existing.getIdentityValueMask();
             } else {
-                profile = newPeople(tenantId, name.trim(), payload.gender(), payload.birthday());
+                profile = newPeople(tenantId, name.trim(), payload.gender(), payload.birthday(), mobileNorm, ownerNorm);
                 insertIdentity(tenantId, profile.getId(), payload);
                 createdProfile = true;
                 resolvedType = payload.type().name();
@@ -885,8 +972,112 @@ public class OrgWorkspaceService {
         return item;
     }
 
+    /**
+     * 建档前查重：同名且同生日，或同名且同号码。只返回辨认所需的最少信息。
+     *
+     * @param inCurrentOrg 已在本机构入组，无需再建
+     */
+    public record DuplicateCandidate(
+            String peopleId,
+            String displayName,
+            String gender,
+            LocalDate birthday,
+            String mobileMasked,
+            String mobileOwner,
+            boolean hasIdentity,
+            boolean inCurrentOrg,
+            boolean confirmRequired) {}
+
+    public List<DuplicateCandidate> findPossibleDuplicates(
+            String orgId, String name, LocalDate birthday, String mobile) {
+        requireOrgWorkspaceAccess(orgId);
+        String tenantId = requireTenantId();
+        String self = MobileNumbers.trySelf(mobile);
+        if (self == null) {
+            return List.of();
+        }
+        List<DuplicateCandidate> out = new ArrayList<>();
+        for (PeopleProfile p : peopleProfileMapper.listBySelfMobile(tenantId, self)) {
+            PatientOrgMembership m = membershipMapper.findByOrgAndPeople(orgId, p.getId());
+            boolean same = MobileNumbers.sameName(name, p.getDisplayName())
+                    && birthday != null
+                    && birthday.equals(p.getBirthday());
+            out.add(new DuplicateCandidate(
+                    p.getId(),
+                    p.getDisplayName(),
+                    p.getGender(),
+                    p.getBirthday(),
+                    maskMobile(p.getMobile()),
+                    p.getMobileOwner(),
+                    peopleIdentityMapper.findPrimaryMask(p.getId()) != null,
+                    m != null && MembershipStatusEnum.ACTIVE.matches(m.getStatus()),
+                    !same));
+        }
+        return out;
+    }
+
+    /** 已建档患者补充证件；证件属于另一份档案时提示合并，不自动处理。 */
+    @Transactional
+    public OrgPatientListItem addIdentity(
+            String orgId, String peopleId, String identityType, String identityValue, String actorAccountId) {
+        requireOrgWorkspaceAccess(orgId);
+        String tenantId = requireTenantId();
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile == null || !tenantId.equals(profile.getTenantId())) {
+            throw new BusinessException(404, "患者不存在");
+        }
+        PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
+        if (membership == null || !MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
+            throw new BusinessException(403, "患者未在本机构有效入组");
+        }
+        IdentityPayload payload =
+                resolveIdentity(tenantId, identityType, identityValue, profile.getGender(), profile.getBirthday());
+        if (peopleIdentityMapper.findByPeopleAndType(peopleId, payload.type().name()) != null) {
+            throw new BusinessException(409, "该患者已登记过此类证件");
+        }
+        PeopleIdentity occupied =
+                peopleIdentityMapper.findByTenantTypeHash(tenantId, payload.type().name(), payload.hash());
+        if (occupied != null) {
+            PeopleProfile other = peopleProfileMapper.findById(occupied.getPeopleId());
+            String otherName = other == null ? "另一份档案" : "「" + other.getDisplayName() + "」";
+            throw new BusinessException(409, "该证件已登记在" + otherName + "名下，如为同一人请联系租户管理员合并档案");
+        }
+        insertIdentity(tenantId, peopleId, payload);
+        if (payload.type() == PeopleIdentityTypeEnum.ID_CARD) {
+            profile.setGender(payload.gender());
+            profile.setBirthday(payload.birthday());
+            EntityMeta.onUpdate(profile);
+            peopleProfileMapper.updateProfile(profile);
+        }
+        auditService.record(
+                PortalEnum.B.code(),
+                actorAccountId,
+                "STAFF",
+                tenantId,
+                AuditActionEnum.PATIENT_IDENTITY_ADD.name(),
+                "people_identity",
+                peopleId,
+                peopleId,
+                AuditDetails.of("orgId", orgId, "identityType", payload.type().name()));
+        CareTeamMember tm = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
+        return toPatientItem(profile, membership, tm);
+    }
+
+    private static String maskMobile(String mobile) {
+        if (!StringUtils.hasText(mobile)) {
+            return null;
+        }
+        String m = mobile.trim();
+        return m.length() >= 7 ? m.substring(0, 3) + "****" + m.substring(m.length() - 4) : "****";
+    }
+
     private OrgPatientListItem toPatientItem(
             PeopleProfile p, PatientOrgMembership m, CareTeamMember teamMember) {
+        return toPatientItem(p, m, teamMember, true);
+    }
+
+    private OrgPatientListItem toPatientItem(
+            PeopleProfile p, PatientOrgMembership m, CareTeamMember teamMember, boolean withTags) {
         PeopleIdentity id = peopleIdentityMapper.findPrimaryMask(p.getId());
         backfillDemographicsFromIdentity(p, id);
         OrgPatientListItem item = new OrgPatientListItem();
@@ -911,17 +1102,18 @@ public class OrgWorkspaceService {
         item.setClientCardCount(cardCount);
         item.setClientLinked(cardCount > 0);
         item.setMobile(p.getMobile());
+        item.setMobileOwner(p.getMobileOwner());
         item.setAddress(p.getAddress());
         item.setEducationLevel(p.getEducationLevel());
         item.setMaritalStatus(p.getMaritalStatus());
         item.setOccupation(p.getOccupation());
-        enrichClinicalSummary(item, p.getTenantId(), m.getOrgId(), p.getId(), team);
+        enrichClinicalSummary(item, p.getTenantId(), m.getOrgId(), p.getId(), team, withTags);
         return item;
     }
 
     /** 病种 / 评估标签 / 主责健管师 / 档案完整度（列表展示用，失败不阻断）。 */
     private void enrichClinicalSummary(
-            OrgPatientListItem item, String tenantId, String orgId, String peopleId, CareTeam team) {
+            OrgPatientListItem item, String tenantId, String orgId, String peopleId, CareTeam team, boolean withTags) {
         try {
             List<String> labels = new ArrayList<>();
             for (DiseaseArchiveViewDto row : diseaseArchiveService.list(tenantId, peopleId)) {
@@ -938,11 +1130,13 @@ public class OrgWorkspaceService {
             item.setDiseaseLabels(List.of());
         }
 
-        try {
-            List<AssessmentTagView> tags = assessmentTagAssembler.assemble(tenantId, orgId, peopleId);
-            item.setAssessmentTags(tags == null ? List.of() : tags);
-        } catch (Exception ignored) {
-            item.setAssessmentTags(List.of());
+        if (withTags) {
+            try {
+                List<AssessmentTagView> tags = assessmentTagAssembler.assemble(tenantId, orgId, peopleId);
+                item.setAssessmentTags(tags == null ? List.of() : tags);
+            } catch (Exception ignored) {
+                item.setAssessmentTags(List.of());
+            }
         }
 
         try {
@@ -979,6 +1173,7 @@ public class OrgWorkspaceService {
             String peopleId,
             String displayName,
             String mobile,
+            String mobileOwner,
             String address,
             String educationLevel,
             String maritalStatus,
@@ -1040,6 +1235,7 @@ public class OrgWorkspaceService {
         profile.setDisplayName(name);
         profile.setNamePinyin(IdentityService.toPinyinKey(name));
         profile.setMobile(mobileNorm);
+        profile.setMobileOwner(mobileNorm == null ? null : MobileOwnerEnum.normalize(mobileOwner));
         profile.setAddress(addressNorm);
         profile.setEducationLevel(educationNorm);
         profile.setMaritalStatus(maritalNorm);
@@ -1061,6 +1257,33 @@ public class OrgWorkspaceService {
 
         CareTeamMember tm = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
         return toPatientItem(profile, membership, tm);
+    }
+
+    /** 历史档案缺的人口学信息 / 联系电话用本次填写补齐，不覆盖已有值。 */
+    private static void fillBlankDemographics(
+            PeopleProfile profile, String gender, LocalDate birthday, String mobile, String mobileOwner) {
+        if (!StringUtils.hasText(profile.getGender()) && StringUtils.hasText(gender)) {
+            profile.setGender(gender);
+        }
+        if (profile.getBirthday() == null && birthday != null) {
+            profile.setBirthday(birthday);
+        }
+        if (!StringUtils.hasText(profile.getMobile()) && mobile != null) {
+            profile.setMobile(mobile);
+            profile.setMobileOwner(mobileOwner);
+        }
+    }
+
+    /** 手机或座机；空返回 null。 */
+    private static String normalizeMobile(String mobile) {
+        String m = normalizeBlank(mobile);
+        if (m == null) {
+            return null;
+        }
+        if (m.length() > 32 || !m.matches("^[0-9+\\-\\s]{6,20}$")) {
+            throw new BusinessException(400, "联系电话格式不正确");
+        }
+        return m;
     }
 
     private static String normalizeBlank(String value) {
@@ -1111,7 +1334,8 @@ public class OrgWorkspaceService {
         }
     }
 
-    private PeopleProfile newPeople(String tenantId, String name, String gender, LocalDate birthday) {
+    private PeopleProfile newPeople(
+            String tenantId, String name, String gender, LocalDate birthday, String mobile, String mobileOwner) {
         quotaService.assertAvailable(tenantId, QuotaKeyEnum.PATIENT_TOTAL, 1);
         PeopleProfile profile = new PeopleProfile();
         profile.setTenantId(tenantId);
@@ -1119,6 +1343,8 @@ public class OrgWorkspaceService {
         profile.setDisplayName(name);
         profile.setGender(gender);
         profile.setBirthday(birthday);
+        profile.setMobile(mobile);
+        profile.setMobileOwner(mobileOwner);
         profile.setNamePinyin(IdentityService.toPinyinKey(name));
         profile.setAllergensJson("[]");
         EntityMeta.onCreate(profile);
@@ -1188,6 +1414,11 @@ public class OrgWorkspaceService {
             EntityMeta.onCreate(membership);
             membership.setJoinedAt(membership.getGmtCreated());
             membershipMapper.insert(membership);
+            FollowupScheduleService followups = followupScheduleService.getIfAvailable();
+            if (followups != null) {
+                // 先开入组/首诊；分配健管组等首诊办结后再开
+                followups.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
+            }
         } else if (!MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
             throw new BusinessException(409, "该患者机构关系已退出，请联系管理员处理");
         }

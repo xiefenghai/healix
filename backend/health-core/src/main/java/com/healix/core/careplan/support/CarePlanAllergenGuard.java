@@ -166,16 +166,36 @@ public final class CarePlanAllergenGuard {
         JsonNode sample = diet.get("sampleDay");
         if (sample != null && sample.isObject()) {
             sample.fields().forEachRemaining(e -> {
-                if (!e.getValue().isTextual()) {
-                    return;
-                }
                 String where = "示例食谱·" + MEAL_LABELS.getOrDefault(e.getKey(), e.getKey());
-                for (String seg : contentSegments(e.getValue().asText())) {
-                    segmentHit(seg, allergens).ifPresent(a -> hits.add(new Hit(where, seg.trim(), a)));
+                for (String text : sampleMealTexts(e.getValue())) {
+                    for (String seg : contentSegments(text)) {
+                        segmentHit(seg, allergens).ifPresent(a -> hits.add(new Hit(where, seg.trim(), a)));
+                    }
                 }
             });
         }
         return hits;
+    }
+
+    /** 兼容字符串餐次与 `{text, swapHint}`。 */
+    static List<String> sampleMealTexts(JsonNode meal) {
+        List<String> out = new ArrayList<>();
+        if (meal == null || meal.isNull()) {
+            return out;
+        }
+        if (meal.isTextual()) {
+            out.add(meal.asText());
+            return out;
+        }
+        if (meal.isObject()) {
+            if (meal.has("text") && meal.get("text").isTextual()) {
+                out.add(meal.get("text").asText());
+            }
+            if (meal.has("swapHint") && meal.get("swapHint").isTextual()) {
+                out.add(meal.get("swapHint").asText());
+            }
+        }
+        return out;
     }
 
     /**
@@ -204,23 +224,57 @@ public final class CarePlanAllergenGuard {
                 }
             }
         }
-        JsonNode sample = diet.get("sampleDay");
-        if (sample instanceof ObjectNode sampleObj) {
-            List<String> keys = new ArrayList<>();
-            sampleObj.fieldNames().forEachRemaining(keys::add);
-            for (String key : keys) {
-                JsonNode v = sampleObj.get(key);
-                if (v == null || !v.isTextual()) {
-                    continue;
-                }
-                String meal = MEAL_LABELS.getOrDefault(key, key);
+        sanitizeSampleMeals(diet.get("sampleDay"), "", strict, removed);
+        JsonNode week = diet.get("sampleWeek");
+        if (week instanceof ObjectNode weekObj) {
+            List<String> days = new ArrayList<>();
+            weekObj.fieldNames().forEachRemaining(days::add);
+            for (String day : days) {
+                sanitizeSampleMeals(weekObj.get(day), day + "·", strict, removed);
+            }
+        }
+        return removed;
+    }
+
+    private static void sanitizeSampleMeals(
+            JsonNode sample, String prefix, List<FoodAllergen> strict, List<String> removed) {
+        if (!(sample instanceof ObjectNode sampleObj)) {
+            return;
+        }
+        List<String> keys = new ArrayList<>();
+        sampleObj.fieldNames().forEachRemaining(keys::add);
+        for (String key : keys) {
+            JsonNode v = sampleObj.get(key);
+            if (v == null || v.isNull()) {
+                continue;
+            }
+            String meal = prefix + MEAL_LABELS.getOrDefault(key, key);
+            if (v.isTextual()) {
                 String cleaned = stripSegments(v.asText(), strict, meal, removed);
                 if (!cleaned.equals(v.asText())) {
                     sampleObj.put(key, cleaned);
                 }
+                continue;
+            }
+            if (v instanceof ObjectNode mealObj) {
+                if (mealObj.has("text") && mealObj.get("text").isTextual()) {
+                    String text = mealObj.get("text").asText();
+                    String cleaned = stripSegments(text, strict, meal, removed);
+                    if (!cleaned.equals(text)) {
+                        mealObj.put("text", cleaned);
+                    }
+                }
+                if (mealObj.has("swapHint") && mealObj.get("swapHint").isTextual()) {
+                    String hint = mealObj.get("swapHint").asText();
+                    String cleaned = stripSegments(hint, strict, meal + "·替换", removed);
+                    if (!StringUtils.hasText(cleaned) || EMPTY_MEAL_HINT.equals(cleaned)) {
+                        mealObj.putNull("swapHint");
+                    } else if (!cleaned.equals(hint)) {
+                        mealObj.put("swapHint", cleaned);
+                    }
+                }
             }
         }
-        return removed;
     }
 
     /** 给模型的硬约束：过敏原名称 + 需要回避的关键词。 */

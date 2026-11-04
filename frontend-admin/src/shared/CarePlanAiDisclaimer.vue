@@ -1,19 +1,22 @@
 <script setup lang="ts">
-/** AI 方案安全提示：始终展开展示，不做折叠。 */
+/** 患者可见说明：标明人工智能辅助起草，同时写明健管师审核责任。 */
+defineProps<{
+  pending?: boolean
+}>()
 </script>
 
 <template>
   <div class="ai-disclaimer">
     <div class="ai-disclaimer-head">
-      <span class="ai-disclaimer-icon" aria-hidden="true">
-        <el-icon><WarningFilled /></el-icon>
-      </span>
-      <span class="ai-disclaimer-title">AI 生成内容 · 安全提示</span>
+      <span class="ai-disclaimer-title">{{ pending ? '待健管师确认' : '健管师已审核' }}</span>
     </div>
     <div class="ai-disclaimer-body">
-      <p>
-        <strong>说明</strong>：本方案含 AI 辅助生成内容，仅供健康管理参考，<strong>不构成医学诊断或处方</strong>。
-        如需更个体化的完整方案，建议使用「制定管理方案」功能生成；如出现不适或疑问，请及时联系医生或健管师。
+      <p v-if="pending">
+        本方案由人工智能辅助起草，尚未发布。发布前需健康管理师确认。仅供健康管理参考，<strong>不构成医学诊断或处方</strong>。
+      </p>
+      <p v-else>
+        本方案由人工智能辅助起草，并经健康管理师审核后发布，供健康管理参考，<strong>不构成医学诊断或处方</strong>。
+        如出现不适或疑问，请及时联系医生或健管师。
       </p>
     </div>
   </div>
@@ -56,7 +59,6 @@
 
 .ai-disclaimer-body {
   margin-top: 8px;
-  padding-left: 38px;
 }
 
 .ai-disclaimer-body p {

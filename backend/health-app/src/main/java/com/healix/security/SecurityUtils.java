@@ -35,6 +35,10 @@ public final class SecurityUtils {
         return staffId;
     }
 
+    public static String requireAccountId() {
+        return requireContext().getAccountId();
+    }
+
     public static String requireTenantId() {
         String tenantId = requireContext().getTenantId();
         if (tenantId == null) {

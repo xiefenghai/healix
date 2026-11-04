@@ -45,11 +45,21 @@ html,
 body,
 #app {
   margin: 0;
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden; /* 滚动只在 .page-body，避免微信整页假长把底栏顶出屏 */
   background: var(--hx-bg);
   color: var(--hx-text);
   font-family: var(--hx-font);
   -webkit-font-smoothing: antialiased;
+}
+
+/* 对齐 C 端：轻微强化底栏层级与选中态 */
+.van-tabbar {
+  backdrop-filter: blur(10px);
+  box-shadow: 0 -6px 20px rgba(22, 70, 78, 0.05);
+}
+.van-tabbar-item--active {
+  font-weight: 700;
 }
 
 button,
@@ -69,19 +79,19 @@ a {
 }
 
 .hx-page {
-  min-height: 100%;
-  padding-bottom: 28px;
+  /* 不设 100vh，避免微信假长页；底栏由 Vant placeholder 占位 */
+  padding-bottom: 16px;
   animation: hx-enter 0.35s ease both;
 }
 
 .hx-page-head {
-  padding: 22px 20px 10px;
+  padding: 14px 16px 8px;
 }
 
 .hx-page-head .eyebrow {
-  margin: 0 0 6px;
-  font-size: 12px;
-  letter-spacing: 0.08em;
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--hx-teal-deep);
   font-weight: 600;
@@ -90,18 +100,18 @@ a {
 .hx-page-head h1 {
   margin: 0;
   font-family: var(--hx-display);
-  font-size: 28px;
-  line-height: 1.15;
+  font-size: 22px;
+  line-height: 1.2;
   letter-spacing: -0.02em;
   color: var(--hx-ink);
   font-weight: 700;
 }
 
 .hx-page-head p {
-  margin: 6px 0 0;
-  font-size: 13px;
+  margin: 4px 0 0;
+  font-size: 12px;
   color: var(--hx-muted);
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
 .hx-surface {

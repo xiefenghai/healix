@@ -17,6 +17,8 @@ public class ExamReport extends BaseEntity {
     private String findingsJson;
     /** MANUAL / PATIENT / STAFF … 见 {@link com.healix.core.observation.enums.HealthDataSourceEnum} */
     private String source;
+    /** 原图对象键 */
+    private String imageKey;
     private String createdByStaffId;
     private String updatedByStaffId;
 }

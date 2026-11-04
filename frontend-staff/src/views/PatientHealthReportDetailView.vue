@@ -3,14 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { api } from '../shared/http'
-import { lifestyleSections } from '../shared/report-lifestyle'
-import {
-  formatPeriodType,
-  formatReportStatus,
-  metricLabel,
-  pct,
-  sliceDate,
-} from '../shared/report-summary'
+import ReportContentBlocks from '../shared/ReportContentBlocks.vue'
+import { formatPeriodType, formatReportStatus, sliceDate } from '../shared/report-summary'
 
 interface HealthReportDetail {
   id: string
@@ -30,21 +24,6 @@ const reportId = computed(() => String(route.params.reportId || ''))
 const loading = ref(false)
 const report = ref<HealthReportDetail | null>(null)
 
-const adherence = computed(() => {
-  const a = report.value?.content?.adherence as
-    | {
-        plan?: { dueCount?: number; doneCount?: number; rate?: number | null }
-        med?: { dueDayCount?: number; okDayCount?: number; rate?: number | null }
-      }
-    | undefined
-  return a || null
-})
-const lifestyle = computed(() => lifestyleSections(report.value?.content))
-
-const metrics = computed(() => {
-  const m = report.value?.content?.metrics
-  return Array.isArray(m) ? (m as Array<Record<string, unknown>>) : []
-})
 const narrative = computed(() => {
   const n = report.value?.content?.narrative as
     | { nextFocus?: string; quarterAdvice?: string }
@@ -68,135 +47,162 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="hx-page">
-    <van-nav-bar title="报告详情" left-arrow @click-left="router.back()" />
+  <div class="hx-page report-page">
+    <van-nav-bar title="报告详情" left-arrow :border="false" @click-left="router.back()" />
     <van-loading v-if="loading" class="hx-loading" vertical>加载中</van-loading>
     <template v-else-if="report">
-      <section class="hero hx-surface">
+      <header class="hero">
         <div class="chips">
-          <span class="hx-chip">{{ formatPeriodType(report.periodType) }}</span>
-          <span class="hx-chip" :class="{ warn: report.status === 'DRAFT' }">
+          <span class="period-pill">{{ formatPeriodType(report.periodType) }}</span>
+          <span class="status-pill" :class="`status--${(report.status || '').toLowerCase()}`">
             {{ formatReportStatus(report.status) }}
           </span>
         </div>
-        <h2>{{ report.title || '管理报告' }}</h2>
-        <p class="hx-muted">
+        <h2><span class="mark">{{ report.title || '管理报告' }}</span></h2>
+        <p>
           {{ report.peopleName || '—' }} ·
           {{ sliceDate(report.periodStart) }} ~ {{ sliceDate(report.periodEnd) }}
         </p>
-      </section>
+      </header>
 
-      <section v-if="adherence" class="block hx-surface">
-        <h3>执行依从</h3>
-        <div class="kpis">
-          <div>
-            <strong>{{ pct(adherence.plan?.rate) }}</strong>
-            <span>方案完成</span>
-          </div>
-          <div>
-            <strong>{{ pct(adherence.med?.rate) }}</strong>
-            <span>用药达标</span>
-          </div>
+      <section v-if="report.staffComment || narrative?.nextFocus" class="block note">
+        <div class="note-head"><span class="note-avatar">健</span><b>健管师点评</b></div>
+        <p v-if="report.staffComment" class="note-quote">{{ report.staffComment }}</p>
+        <div v-if="narrative?.nextFocus" class="note-item">
+          <span class="note-tag">下期重点</span>
+          <p>{{ narrative.nextFocus }}</p>
         </div>
       </section>
 
-      <section v-if="metrics.length" class="block hx-surface">
-        <h3>指标摘要</h3>
-        <div v-for="m in metrics" :key="String(m.family)" class="metric">
-          <strong>{{ metricLabel(String(m.family)) }}</strong>
-          <span class="hx-muted">测量 {{ m.count || 0 }} 次</span>
-        </div>
-      </section>
+      <ReportContentBlocks :content="report.content" />
 
-      <section v-for="sec in lifestyle" :key="sec.key" class="block hx-surface">
-        <h3>{{ sec.title }}</h3>
-        <p v-if="sec.empty" class="hx-muted">{{ sec.empty }}</p>
-        <template v-else>
-          <div v-for="s in sec.stats" :key="s.label" class="metric">
-            <strong>{{ s.label }}</strong>
-            <span :class="s.warn ? 'warn' : ''">{{ s.value }}</span>
-            <span v-if="s.sub" class="hx-muted">{{ s.sub }}</span>
-          </div>
-        </template>
-      </section>
-
-      <section v-if="report.staffComment" class="block hx-surface">
-        <h3>健管师点评</h3>
-        <p>{{ report.staffComment }}</p>
-      </section>
-      <section v-if="narrative?.nextFocus" class="block hx-surface">
-        <h3>下期重点</h3>
-        <p>{{ narrative.nextFocus }}</p>
-      </section>
-      <section v-if="narrative?.quarterAdvice" class="block hx-surface">
-        <h3>阶段建议</h3>
-        <p>{{ narrative.quarterAdvice }}</p>
+      <section v-if="narrative?.quarterAdvice" class="block note">
+        <div class="note-head"><span class="note-avatar note-avatar--blue">阶</span><b>阶段建议</b></div>
+        <p class="note-quote">{{ narrative.quarterAdvice }}</p>
       </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-.hero,
-.block {
-  margin: 0 16px 12px;
-  padding: 14px 16px;
+.report-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 216, 77, 0.28), transparent 40%),
+    radial-gradient(circle at 0% 30%, rgba(92, 184, 184, 0.16), transparent 38%),
+    linear-gradient(170deg, #fff8ec 0%, #f4fbf8 45%, #eaf7f2 100%);
+  background-attachment: fixed;
+}
+.report-page :deep(.van-nav-bar) {
+  background: transparent;
+}
+.hero {
+  margin: 4px 16px 14px;
 }
 .chips {
   display: flex;
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+}
+.period-pill,
+.status-pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.period-pill {
+  background: var(--hx-ink);
+  color: #fff;
+}
+.status-pill {
+  background: #fff;
+  color: var(--hx-muted);
+}
+.status--draft {
+  background: #fff1d6;
+  color: #b07400;
+}
+.status--published {
+  background: #e3f6ef;
+  color: #0b7a66;
 }
 .hero h2 {
   margin: 0 0 6px;
-  font-size: 18px;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1.4;
   color: var(--hx-ink);
 }
-.hero p,
-.block p {
+.mark {
+  padding: 0 3px;
+  background: linear-gradient(transparent 60%, #ffd84d 60%);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.hero p {
   margin: 0;
   font-size: 13px;
-  line-height: 1.5;
+  font-weight: 600;
+  color: #4a5b68;
 }
-.block h3 {
-  margin: 0 0 10px;
-  font-size: 14px;
-  color: var(--hx-teal-deep);
+.block {
+  margin: 0 16px 14px;
+  padding: 16px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(19, 34, 46, 0.06);
 }
-.kpis {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.note {
+  background: linear-gradient(180deg, #fff 0%, #f6fbfb 100%);
+  border: 1px solid #e3f1f1;
+}
+.note-head {
+  display: flex;
+  align-items: center;
   gap: 8px;
-}
-.kpis div {
-  background: var(--hx-teal-light);
-  border-radius: 12px;
-  padding: 12px;
-  text-align: center;
-}
-.kpis strong {
-  display: block;
-  font-size: 20px;
+  font-size: 14px;
   color: var(--hx-ink);
 }
-.kpis span {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--hx-muted);
-}
-.metric {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+.note-avatar {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--hx-teal);
+  color: #fff;
   font-size: 13px;
-  padding: 6px 0;
+  font-weight: 800;
 }
-.metric + .metric {
-  border-top: 1px solid var(--hx-line);
+.note-avatar--blue {
+  background: #2f5fb3;
 }
-.warn {
-  color: #c44545;
-  font-weight: 600;
+.note-quote {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--hx-ink);
+}
+.note-item {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #dbe8e8;
+}
+.note-item p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.note-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: #fff1d6;
+  color: #b07400;
+  font-size: 12px;
+  font-weight: 800;
 }
 </style>

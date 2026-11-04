@@ -1,0 +1,79 @@
+{
+  "code": "WOMEN_HEALTH",
+  "version": 2,
+  "title": "女性健康",
+  "script": "有几个和女性健康相关的问题，主要是为了方案更安全。不方便说的可以跳过。",
+  "items": [
+    {
+      "field": "basic.women.reproductiveStatus",
+      "label": "目前有没有在备孕、怀孕或者哺乳？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "profile.gender",
+        "eq": "FEMALE"
+      },
+      "highlights": [
+        {
+          "when": { "in": ["PREGNANT", "LACTATING"] },
+          "severity": "BLOCK",
+          "planEffect": "不设热量缺口与减重目标，只给均衡营养与适度活动"
+        },
+        {
+          "when": { "eq": "PREPARING" },
+          "severity": "CAUTION",
+          "planEffect": "缺口与速度取保守值"
+        },
+        {
+          "when": { "eq": "UNSURE" },
+          "severity": "CAUTION",
+          "planEffect": "建议先确认"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.women.menstrualStatus",
+      "label": "月经情况",
+      "level": "LATER",
+      "showIf": {
+        "field": "profile.gender",
+        "eq": "FEMALE"
+      },
+      "highlights": [
+        {
+          "when": { "eq": "AMENORRHEA" },
+          "severity": "CAUTION",
+          "planEffect": "可能与过度节食或内分泌问题有关，建议就医明确"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.women.earlyMenopause",
+      "label": "是否在 50 岁之前绝经？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.women.menstrualStatus",
+        "in": ["POSTMENOPAUSE", "MENOPAUSE"]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.women.gdmHistory",
+      "label": "怀孕期间是否得过妊娠期糖尿病？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "profile.gender",
+        "eq": "FEMALE"
+      },
+      "sensitive": true,
+      "highlights": [
+        {
+          "when": { "eq": "YES" },
+          "severity": "CAUTION",
+          "planEffect": "远期糖尿病风险升高，控糖与体重管理宜更积极监测"
+        }
+      ]
+    }
+  ]
+}

@@ -86,6 +86,11 @@ const router = createRouter({
       meta: { requireOrg: true, hideTab: true },
     },
     {
+      path: '/patients/:peopleId/assessment-questionnaire',
+      component: () => import('../views/PatientAssessmentQuestionnaireView.vue'),
+      meta: { requireOrg: true, hideTab: true },
+    },
+    {
       path: '/patients/:peopleId/labs',
       component: () => import('../views/PatientLabsView.vue'),
       meta: { requireOrg: true, hideTab: true },

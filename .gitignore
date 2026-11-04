@@ -39,6 +39,9 @@ Thumbs.db
 logs/
 *.log
 
+# 本地对象存储（图片）
+data/objects/
+
 # Spring
 spring-boot-devtools.properties
 backend/health-app/src/main/resources/application-local.yml
@@ -63,5 +66,6 @@ deploy/docker/certs/
 *.pyc
 
 # Marketing / temp assets (not product code)
+docs/sales/
 healix-xiaohongshu*_assets/
 frontend-staff-public-tmp/

@@ -12,6 +12,9 @@ public final class HealthConstants {
 
     public static final String REDIS_CHAT_MEMORY_PREFIX = "healix:chat:memory:";
 
+    /** LangChain4j ChatMemory（MessageWindow）持久化前缀。 */
+    public static final String REDIS_LC4J_CHAT_MEMORY_PREFIX = "healix:agent:lc4j-memory:";
+
     public static final String REDIS_STAFF_AGENT_SESSION_PREFIX = "healix:agent:staff-session:";
 
     /** 驾驶舱开场简报日缓存：healix:cockpit:briefing:{staffId}:{orgId}:{yyyy-MM-dd} */

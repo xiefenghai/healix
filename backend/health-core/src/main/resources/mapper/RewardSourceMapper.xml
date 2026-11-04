@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.reward.mapper.RewardSourceMapper">
+
+    <select id="listDayEvents" resultType="com.healix.core.reward.dto.RewardSourceEvent">
+        SELECT 'PLAN' AS bizType, c.id AS ref, NULL AS occurredAt, c.gmt_created AS createdAt,
+               NULL AS groupId, NULL AS sub, t.title AS label, NULL AS metricValue
+        FROM care_plan_task_checkin c
+        LEFT JOIN care_plan_task t ON t.id = c.task_id
+        WHERE c.tenant_id = #{tenantId}
+          AND c.people_id = #{peopleId}
+          AND c.checkin_date = #{day}
+          AND c.status = 'DONE'
+          AND c.recorded_by_people_id IS NOT NULL
+          AND c.recorded_by_staff_id IS NULL
+          AND c.is_deleted = 0
+        UNION ALL
+        SELECT 'MED', i.id, NULL, i.gmt_created, NULL, NULL, m.drug_name, NULL
+        FROM people_medication_intake i
+        LEFT JOIN people_medication m ON m.id = i.medication_id
+        WHERE i.tenant_id = #{tenantId}
+          AND i.people_id = #{peopleId}
+          AND i.intake_date = #{day}
+          AND i.status = 'TAKEN'
+          AND i.time_slot &lt;&gt; 'PRN'
+          AND i.recorded_by_staff_id IS NULL
+          AND i.is_deleted = 0
+        UNION ALL
+        SELECT 'VITAL', v.id, v.recorded_at, v.gmt_created, v.group_id, v.metric_type, NULL, v.value
+        FROM vital_record v
+        WHERE v.tenant_id = #{tenantId}
+          AND v.people_id = #{peopleId}
+          AND v.recorded_at &gt;= #{day}
+          AND v.recorded_at &lt; DATE_ADD(#{day}, INTERVAL 1 DAY)
+          AND v.source &lt;&gt; 'STAFF'
+          AND v.recorded_by_staff_id IS NULL
+          AND v.is_deleted = 0
+        UNION ALL
+        SELECT 'DIET', d.id, NULL, d.gmt_created, NULL, d.meal_type,
+               CASE d.meal_type WHEN 'BREAKFAST' THEN '早餐' WHEN 'LUNCH' THEN '午餐'
+                                WHEN 'DINNER' THEN '晚餐' ELSE '加餐' END,
+               NULL
+        FROM diet_meal d
+        WHERE d.tenant_id = #{tenantId}
+          AND d.people_id = #{peopleId}
+          AND d.meal_date = #{day}
+          AND d.source &lt;&gt; 'STAFF'
+          AND d.recorded_by_staff_id IS NULL
+          AND d.is_deleted = 0
+          AND EXISTS (SELECT 1 FROM diet_meal_item it WHERE it.meal_id = d.id AND it.is_deleted = 0)
+        UNION ALL
+        SELECT 'EXERCISE', e.id, NULL, e.gmt_created, NULL, NULL, e.type_name, NULL
+        FROM exercise_session e
+        WHERE e.tenant_id = #{tenantId}
+          AND e.people_id = #{peopleId}
+          AND e.exercise_date = #{day}
+          AND e.source &lt;&gt; 'STAFF'
+          AND e.recorded_by_staff_id IS NULL
+          AND e.is_deleted = 0
+        UNION ALL
+        SELECT 'REPORT_READ', r.id, NULL, r.patient_read_at, NULL, NULL, r.title, NULL
+        FROM health_report r
+        WHERE r.tenant_id = #{tenantId}
+          AND r.people_id = #{peopleId}
+          AND r.status = 'PUBLISHED'
+          AND r.patient_read_at &gt;= #{day}
+          AND r.patient_read_at &lt; DATE_ADD(#{day}, INTERVAL 1 DAY)
+          AND r.is_deleted = 0
+    </select>
+
+    <select id="countPlanDoneNotStaff" resultType="int">
+        SELECT COUNT(1)
+        FROM care_plan_task_checkin
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND checkin_date = #{day}
+          AND status = 'DONE'
+          AND recorded_by_staff_id IS NULL
+          AND gmt_created &lt; #{before}
+          AND is_deleted = 0
+    </select>
+
+    <select id="listActiveDays" resultType="java.time.LocalDate">
+        SELECT DISTINCT d FROM (
+            SELECT checkin_date AS d
+            FROM care_plan_task_checkin
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND checkin_date BETWEEN #{from} AND #{to}
+              AND status = 'DONE' AND recorded_by_people_id IS NOT NULL AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+            UNION
+            SELECT intake_date
+            FROM people_medication_intake
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND intake_date BETWEEN #{from} AND #{to}
+              AND status = 'TAKEN' AND time_slot &lt;&gt; 'PRN' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+            UNION
+            SELECT DATE(recorded_at)
+            FROM vital_record
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND recorded_at &gt;= #{from} AND recorded_at &lt; DATE_ADD(#{to}, INTERVAL 1 DAY)
+              AND source &lt;&gt; 'STAFF' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+        ) x
+        ORDER BY d DESC
+    </select>
+
+    <select id="countSelfMeasurements" resultType="int">
+        SELECT COUNT(DISTINCT COALESCE(group_id, DATE_FORMAT(recorded_at, '%Y%m%d%H%i')))
+        FROM vital_record
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND source &lt;&gt; 'STAFF'
+          AND recorded_by_staff_id IS NULL
+          AND is_deleted = 0
+    </select>
+
+    <select id="countPhotoMeals" resultType="int">
+        SELECT COUNT(1)
+        FROM diet_meal
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND source = 'PHOTO_AI'
+          AND recorded_by_staff_id IS NULL
+          AND is_deleted = 0
+    </select>
+
+    <select id="countSelfMeasurementsBetween" resultType="int">
+        SELECT COUNT(DISTINCT COALESCE(group_id, DATE_FORMAT(recorded_at, '%Y%m%d%H%i')))
+        FROM vital_record
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND recorded_at &gt;= #{from}
+          AND recorded_at &lt; DATE_ADD(#{to}, INTERVAL 1 DAY)
+          AND source &lt;&gt; 'STAFF'
+          AND recorded_by_staff_id IS NULL
+          AND is_deleted = 0
+    </select>
+
+    <select id="countPhotoMealsBetween" resultType="int">
+        SELECT COUNT(1)
+        FROM diet_meal
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND meal_date BETWEEN #{from} AND #{to}
+          AND source = 'PHOTO_AI'
+          AND recorded_by_staff_id IS NULL
+          AND is_deleted = 0
+    </select>
+
+    <select id="listPeerPeopleIds" resultType="string">
+        SELECT m.people_id
+        FROM people_org_membership m
+        INNER JOIN reward_summary s
+            ON s.people_id = m.people_id AND s.is_deleted = 0
+           AND s.reward_disabled = 0 AND IFNULL(s.peer_opt_out, 0) = 0
+        WHERE m.tenant_id = #{tenantId}
+          AND m.org_id = #{orgId}
+          AND m.status = 'ACTIVE'
+          AND m.is_deleted = 0
+          AND DATE(COALESCE(m.joined_at, m.gmt_created)) BETWEEN #{joinFrom} AND #{joinTo}
+          AND m.people_id &lt;&gt; #{excludePeopleId}
+    </select>
+
+    <sql id="peopleIn">
+        AND people_id IN
+        <foreach collection="peopleIds" item="p" open="(" separator="," close=")">#{p}</foreach>
+    </sql>
+
+    <select id="listRecentActivity" resultType="com.healix.core.reward.dto.RewardActivityRow">
+        SELECT people_id AS peopleId, d AS day, SUM(n) AS actions FROM (
+            SELECT people_id, checkin_date AS d, COUNT(1) AS n
+            FROM care_plan_task_checkin
+            WHERE tenant_id = #{tenantId}
+              AND checkin_date &gt;= #{from}
+              AND status = 'DONE' AND recorded_by_people_id IS NOT NULL AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+              <include refid="peopleIn"/>
+            GROUP BY people_id, checkin_date
+            UNION ALL
+            SELECT people_id, intake_date, COUNT(1)
+            FROM people_medication_intake
+            WHERE tenant_id = #{tenantId}
+              AND intake_date &gt;= #{from}
+              AND status = 'TAKEN' AND time_slot &lt;&gt; 'PRN' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+              <include refid="peopleIn"/>
+            GROUP BY people_id, intake_date
+            UNION ALL
+            SELECT people_id, DATE(recorded_at),
+                   COUNT(DISTINCT COALESCE(group_id, DATE_FORMAT(recorded_at, '%Y%m%d%H%i')))
+            FROM vital_record
+            WHERE tenant_id = #{tenantId}
+              AND recorded_at &gt;= #{from}
+              AND source &lt;&gt; 'STAFF' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+              <include refid="peopleIn"/>
+            GROUP BY people_id, DATE(recorded_at)
+        ) x
+        GROUP BY people_id, d
+    </select>
+
+    <select id="countBackfills" resultType="int">
+        SELECT COUNT(1) FROM (
+            SELECT id FROM care_plan_task_checkin
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND checkin_date &gt;= #{from} AND DATE(gmt_created) &gt; checkin_date
+              AND status = 'DONE' AND recorded_by_people_id IS NOT NULL AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+            UNION ALL
+            SELECT id FROM people_medication_intake
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND intake_date &gt;= #{from} AND DATE(gmt_created) &gt; intake_date
+              AND status = 'TAKEN' AND time_slot &lt;&gt; 'PRN' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+            UNION ALL
+            SELECT MIN(id) FROM vital_record
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND recorded_at &gt;= #{from} AND gmt_created &gt; DATE_ADD(recorded_at, INTERVAL 12 HOUR)
+              AND source &lt;&gt; 'STAFF' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+            GROUP BY COALESCE(group_id, id)
+            UNION ALL
+            SELECT id FROM diet_meal
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND meal_date &gt;= #{from} AND DATE(gmt_created) &gt; meal_date
+              AND source &lt;&gt; 'STAFF' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+            UNION ALL
+            SELECT id FROM exercise_session
+            WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+              AND exercise_date &gt;= #{from} AND DATE(gmt_created) &gt; exercise_date
+              AND source &lt;&gt; 'STAFF' AND recorded_by_staff_id IS NULL
+              AND is_deleted = 0
+        ) x
+    </select>
+
+    <select id="listBoundPeople" resultType="java.util.LinkedHashMap">
+        SELECT DISTINCT tenant_id AS tenantId, people_id AS peopleId
+        FROM account_patient
+        WHERE is_deleted = 0
+        ORDER BY tenant_id, people_id
+    </select>
+</mapper>

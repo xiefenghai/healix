@@ -462,10 +462,7 @@ async function save() {
 <style scoped>
 .page {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 12% -8%, rgba(92, 184, 184, 0.22), transparent 40%),
-    radial-gradient(circle at 92% 4%, rgba(245, 166, 35, 0.12), transparent 34%),
-    var(--hx-bg);
+  background: var(--hx-bg);
   padding-bottom: 96px;
 }
 
@@ -474,11 +471,11 @@ async function save() {
 }
 
 :deep(.van-nav-bar) {
-  background: rgba(247, 249, 252, 0.88);
+  background: rgba(255, 250, 242, 0.86);
   backdrop-filter: blur(10px);
 }
 :deep(.van-nav-bar__title) {
-  font-weight: 650;
+  font-weight: 800;
   color: var(--hx-text);
 }
 :deep(.van-nav-bar .van-icon) {
@@ -493,31 +490,31 @@ async function save() {
   padding: 4px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.78);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
 }
 .seg-item {
   border: 0;
   background: transparent;
   color: var(--hx-muted);
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 600;
   line-height: 1;
   padding: 10px 0;
   border-radius: 10px;
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 .seg-item.active {
-  background: linear-gradient(145deg, #5cb8b8, #2b9e9e);
+  background: linear-gradient(145deg, var(--hx-teal-500), var(--hx-teal-600));
   color: #fff;
-  box-shadow: 0 4px 12px rgba(43, 158, 158, 0.28);
+  box-shadow: 0 4px 12px rgba(14, 159, 131, 0.28);
 }
 
 .panel {
   margin: 14px 16px 0;
   padding: 4px 0 8px;
-  border-radius: var(--hx-radius);
+  border-radius: var(--hx-r-lg);
   background: var(--hx-card);
-  box-shadow: var(--hx-shadow);
+  box-shadow: var(--hx-elev-2);
   overflow: hidden;
 }
 
@@ -525,12 +522,12 @@ async function save() {
   padding: 14px 16px 6px;
 }
 .block + .block {
-  border-top: 1px solid #f0f4f6;
+  border-top: 1px solid var(--hx-n-100);
 }
 .section-title {
   margin: 0 0 12px;
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 800;
   color: var(--hx-text);
 }
 .label {
@@ -550,8 +547,8 @@ async function save() {
   margin-bottom: 8px;
 }
 .chip {
-  border: 1px solid #e4ecec;
-  background: #f7fbfb;
+  border: 1px solid var(--hx-n-200);
+  background: var(--hx-n-50);
   color: var(--hx-text);
   font-size: 13px;
   padding: 8px 14px;
@@ -577,7 +574,7 @@ async function save() {
 .fields :deep(.van-cell::after) {
   left: 0;
   right: 0;
-  border-color: #f0f4f6;
+  border-color: var(--hx-n-100);
 }
 .fields :deep(.van-field__label) {
   color: var(--hx-muted);
@@ -585,7 +582,7 @@ async function save() {
 }
 .note-field {
   margin: 0 -4px;
-  background: #f7fbfb;
+  background: var(--hx-n-50);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -601,13 +598,13 @@ async function save() {
   width: min(375px, 100%);
   transform: translateX(-50%);
   padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, rgba(247, 249, 252, 0), rgba(247, 249, 252, 0.92) 28%, #f7f9fc);
+  background: linear-gradient(180deg, rgba(247, 249, 252, 0), rgba(247, 249, 252, 0.92) 28%, var(--hx-n-50));
 }
 :deep(.van-button--primary) {
-  background: linear-gradient(90deg, #5cb8b8, #2b9e9e);
+  background: var(--hx-grad);
   border: 0;
   height: 44px;
   font-weight: 600;
-  box-shadow: 0 8px 18px rgba(43, 158, 158, 0.28);
+  box-shadow: 0 8px 18px rgba(14, 159, 131, 0.28);
 }
 </style>

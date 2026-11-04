@@ -138,7 +138,8 @@ public class BCarePlanController {
                 request.execution(),
                 request.title(),
                 request.goalSummary(),
-                request.summary()));
+                request.summary(),
+                request.rationaleOverview()));
     }
 
     @DeleteMapping("/patients/{peopleId}/care-plan/draft")
@@ -159,17 +160,69 @@ public class BCarePlanController {
                 SecurityUtils.requireStaffId()));
     }
 
+    @PostMapping("/patients/{peopleId}/care-plan/review")
+    public ApiResult<CarePlanBundleDto> markReviewed(@PathVariable String peopleId) {
+        return ApiResult.ok(carePlanService.markReviewed(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId()));
+    }
+
+    @PostMapping("/patients/{peopleId}/care-plan/start-communication")
+    public ApiResult<CarePlanBundleDto> startCommunication(@PathVariable String peopleId) {
+        return ApiResult.ok(carePlanService.startCommunication(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId()));
+    }
+
+    @PostMapping("/patients/{peopleId}/care-plan/communication")
+    public ApiResult<CarePlanBundleDto> recordCommunication(
+            @PathVariable String peopleId, @RequestBody(required = false) CommunicationRequest request) {
+        CommunicationRequest req =
+                request == null ? new CommunicationRequest(null, null, null, false, List.of(), null) : request;
+        return ApiResult.ok(carePlanService.recordCommunication(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId(),
+                SecurityUtils.requireContext().getAccountId(),
+                req.result(),
+                req.customerFeedback(),
+                req.changePoints(),
+                Boolean.TRUE.equals(req.faceToFace()),
+                req.ackWarnCodes(),
+                req.title()));
+    }
+
+    @PostMapping("/patients/{peopleId}/care-plan/face-to-face-accept")
+    public ApiResult<CarePlanBundleDto> faceToFaceAccept(
+            @PathVariable String peopleId, @RequestBody(required = false) PublishRequest request) {
+        PublishRequest req = request == null ? new PublishRequest(List.of(), null, null) : request;
+        return ApiResult.ok(carePlanService.faceToFaceAccept(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId(),
+                SecurityUtils.requireContext().getAccountId(),
+                req.ackWarnCodes(),
+                req.title()));
+    }
+
     @PostMapping("/patients/{peopleId}/care-plan/publish")
     public ApiResult<CarePlanBundleDto> publish(
             @PathVariable String peopleId, @RequestBody(required = false) PublishRequest request) {
-        PublishRequest req = request == null ? new PublishRequest(List.of(), null) : request;
+        PublishRequest req = request == null ? new PublishRequest(List.of(), null, null) : request;
         return ApiResult.ok(carePlanService.publish(
                 SecurityUtils.requireTenantId(),
                 SecurityUtils.requireCurrentOrgId(),
                 peopleId,
                 SecurityUtils.requireStaffId(),
                 req.ackWarnCodes(),
-                req.title()));
+                req.title(),
+                req.syncDietGoal()));
     }
 
     @GetMapping("/patients/{peopleId}/care-plan/items")
@@ -219,14 +272,19 @@ public class BCarePlanController {
     /** 医生签署方案版本（临床复核）；开启「方案医生复核」开关后会同时关掉 PLAN_REVIEW 任务。 */
     @PostMapping("/patients/{peopleId}/care-plan/versions/{versionId}/sign")
     public ApiResult<CarePlanVersionDto> signVersion(
-            @PathVariable String peopleId, @PathVariable String versionId) {
+            @PathVariable String peopleId,
+            @PathVariable String versionId,
+            @RequestBody(required = false) SignBody body) {
         return ApiResult.ok(carePlanService.signVersion(
                 SecurityUtils.requireTenantId(),
                 SecurityUtils.requireCurrentOrgId(),
                 peopleId,
                 versionId,
-                SecurityUtils.requireStaffId()));
+                SecurityUtils.requireStaffId(),
+                body == null ? null : body.note()));
     }
+
+    public record SignBody(String note) {}
 
     @GetMapping("/patients/{peopleId}/care-plan/checkins/daily")
     public ApiResult<CarePlanDailyCheckinSummaryDto> dailyCheckins(
@@ -279,7 +337,18 @@ public class BCarePlanController {
             String title,
             String goalSummary,
             /** 方案总结（写入 context_snapshot.summary） */
-            String summary) {}
+            String summary,
+            /** 整份生成依据（写入 context_snapshot.rationale.overview） */
+            String rationaleOverview) {}
 
-    public record PublishRequest(List<String> ackWarnCodes, String title) {}
+    /** @param syncDietGoal 把方案热量同步为医护设定的饮食目标；不传时仅手改过的热量同步 */
+    public record PublishRequest(List<String> ackWarnCodes, String title, Boolean syncDietGoal) {}
+
+    public record CommunicationRequest(
+            String result,
+            String customerFeedback,
+            String changePoints,
+            Boolean faceToFace,
+            List<String> ackWarnCodes,
+            String title) {}
 }

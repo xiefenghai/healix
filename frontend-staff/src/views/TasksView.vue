@@ -57,7 +57,9 @@ const refreshing = ref(false)
 const summary = ref<WorkspaceTaskSummary>({ publicOpenCount: 0, mineOpenCount: 0, doneTodayCount: 0 })
 const cockpit = ref<CockpitSummary | null>(null)
 const adherenceGap = ref(0)
+const TASK_PREVIEW = 6
 const items = ref<WorkspaceTaskItem[]>([])
+const listOpen = ref(false)
 const teams = ref<CareTeamListItem[]>([])
 const taskType = ref(saved.taskType || '')
 const careTeamId = ref(saved.careTeamId || '')
@@ -90,6 +92,10 @@ const teamLabel = computed(
   () => teams.value.find((t) => t.id === careTeamId.value)?.name || '全部健管组',
 )
 const filterActive = computed(() => !!(taskType.value || careTeamId.value || keyword.value.trim()))
+const visibleItems = computed(() =>
+  listOpen.value ? items.value : items.value.slice(0, TASK_PREVIEW),
+)
+const hiddenTaskCount = computed(() => Math.max(0, items.value.length - TASK_PREVIEW))
 
 const todayCards = computed(() => [
   {
@@ -196,6 +202,7 @@ async function loadList() {
       `/api/b/v1/workspace/tasks?${qs}`,
     )
     items.value = res.data.items ?? []
+    if (items.value.length <= TASK_PREVIEW) listOpen.value = false
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -244,6 +251,7 @@ async function claim(row: WorkspaceTaskItem, e: Event) {
 }
 
 watch(pool, () => {
+  listOpen.value = false
   persistFilters()
   void loadList()
 })
@@ -260,7 +268,6 @@ onMounted(() => {
     <header class="hx-page-head">
       <p class="eyebrow">{{ orgName }}</p>
       <h1>{{ greeting }}</h1>
-      <p>先处理待办，再回患者消息</p>
     </header>
 
     <section class="today hx-surface">
@@ -343,7 +350,7 @@ onMounted(() => {
       <div v-else class="hx-list">
         <van-empty v-if="!items.length" description="暂无任务" />
         <article
-          v-for="row in items"
+          v-for="row in visibleItems"
           :key="row.id"
           class="task hx-row"
           :class="accentClass(row)"
@@ -388,6 +395,14 @@ onMounted(() => {
             </div>
           </div>
         </article>
+        <button
+          v-if="hiddenTaskCount"
+          type="button"
+          class="more-tasks"
+          @click="listOpen = !listOpen"
+        >
+          {{ listOpen ? '收起' : `查看全部 ${items.length} 项` }}
+        </button>
       </div>
     </van-pull-refresh>
 
@@ -617,6 +632,18 @@ h3 {
 .mine {
   color: var(--hx-teal);
   font-size: 12px;
+  font-weight: 650;
+}
+.more-tasks {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 4px 16px 12px;
+  height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--hx-teal-deep);
+  font-size: 14px;
   font-weight: 650;
 }
 </style>

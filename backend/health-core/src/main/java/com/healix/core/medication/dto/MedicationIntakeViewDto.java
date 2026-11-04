@@ -13,7 +13,10 @@ public class MedicationIntakeViewDto {
     private String drugName;
     private LocalDate intakeDate;
     private String timeSlot;
+    private Integer doseSeq;
     private String status;
+    private LocalDateTime takenAt;
+    private boolean backfill;
     private String note;
     private LocalDateTime gmtCreated;
 }

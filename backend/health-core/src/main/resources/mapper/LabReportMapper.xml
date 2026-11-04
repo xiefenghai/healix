@@ -4,18 +4,18 @@
 <mapper namespace="com.healix.core.observation.mapper.LabReportMapper">
 
     <sql id="cols">
-        pk_id, id, tenant_id, people_id, org_id, specimen_type, sampled_at, reported_at, source, note,
+        pk_id, id, tenant_id, people_id, org_id, specimen_type, sampled_at, reported_at, source, note, image_key,
         created_by_staff_id, updated_by_staff_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO lab_report(
-            id, tenant_id, people_id, org_id, specimen_type, sampled_at, reported_at, source, note,
+            id, tenant_id, people_id, org_id, specimen_type, sampled_at, reported_at, source, note, image_key,
             created_by_staff_id, updated_by_staff_id,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
-            #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{specimenType}, #{sampledAt}, #{reportedAt}, #{source}, #{note},
+            #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{specimenType}, #{sampledAt}, #{reportedAt}, #{source}, #{note}, #{imageKey},
             #{createdByStaffId}, #{updatedByStaffId},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
@@ -29,6 +29,7 @@
             reported_at = #{reportedAt},
             source = #{source},
             note = #{note},
+            image_key = #{imageKey},
             updated_by_staff_id = #{updatedByStaffId},
             gmt_modified = #{gmtModified}
         WHERE id = #{id}

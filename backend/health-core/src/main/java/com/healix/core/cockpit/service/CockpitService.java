@@ -3,8 +3,13 @@ package com.healix.core.cockpit.service;
 import com.healix.common.context.RequestContext;
 import com.healix.common.context.RequestContextHolder;
 import com.healix.common.exception.BusinessException;
+import com.healix.core.adherence.dto.AdherenceDayPointDto;
+import com.healix.core.adherence.dto.AdherenceLifestyleMetricsDto;
 import com.healix.core.adherence.dto.AdherencePatientDetailDto;
+import com.healix.core.adherence.dto.AdherencePatientItemDto;
 import com.healix.core.adherence.service.AdherenceQueryService;
+import com.healix.core.allergy.enums.AllergyStatusEnum;
+import com.healix.core.allergy.service.AllergyQueryService;
 import com.healix.core.archive.dto.ArchiveCompletenessDto;
 import com.healix.core.archive.dto.DiseaseArchiveViewDto;
 import com.healix.core.archive.service.ArchiveAccessService;
@@ -16,6 +21,7 @@ import com.healix.core.care.domain.CareTeam;
 import com.healix.core.care.domain.CareTeamMember;
 import com.healix.core.care.mapper.CareTeamMapper;
 import com.healix.core.care.mapper.CareTeamMemberMapper;
+import com.healix.core.cockpit.dto.CockpitDraftInboxItemDto;
 import com.healix.core.cockpit.dto.CockpitFocusDto;
 import com.healix.core.cockpit.dto.CockpitPriorityCardDto;
 import com.healix.core.cockpit.dto.CockpitSummaryDto;
@@ -40,9 +46,15 @@ import com.healix.core.worktask.catalog.WorkspaceTaskStatus;
 import com.healix.core.worktask.catalog.WorkspaceTaskType;
 import com.healix.core.worktask.domain.WorkspaceTask;
 import com.healix.core.worktask.dto.WorkspaceTaskQuery;
+import com.healix.core.reward.dto.RewardViews.CockpitWeek;
+import com.healix.core.reward.service.RewardQueryService;
 import com.healix.core.worktask.mapper.WorkspaceTaskMapper;
+import com.healix.core.worktask.support.WorkspaceTaskLabels;
+import com.healix.core.followup.catalog.FollowupType;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Period;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -52,19 +64,24 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 /**
  * 智能驾驶舱感知层：汇总摘要、按人聚合今日优先、焦点患者快照。
  *
- * <p>左栏优先名单只看当前员工名下（assignee）的 OPEN 任务，再按超期 / 优先级 / 待办数排序。
+ * <p>左栏「立即处理 / 我的」只看当前员工名下（assignee）的 OPEN 任务；
+ * 「待入组」看公海首诊与待分配健管组，引导先了解患者再分人。
  */
 @Service
 @RequiredArgsConstructor
 public class CockpitService {
 
     private static final int TASK_FETCH = 100;
+    private static final String PATIENT_REQUEST_LABEL = "申请回访";
+    private static final int BP_HIGH_SYS = 140;
+    private static final int BP_HIGH_DIA = 90;
 
     private final OrgWorkspaceService orgWorkspaceService;
     private final AdherenceQueryService adherenceQueryService;
@@ -80,6 +97,8 @@ public class CockpitService {
     private final CarePlanService carePlanService;
     private final HealthReportService healthReportService;
     private final StaffPatientWatchMapper staffPatientWatchMapper;
+    private final ObjectProvider<RewardQueryService> rewardQueryService;
+    private final AllergyQueryService allergyQueryService;
 
     public CockpitSummaryDto summary(String tenantId, String orgId) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
@@ -122,15 +141,24 @@ public class CockpitService {
         // 「我的关注」= 个人重点关注人数，与任务分桶无关
         dto.setWatchCount(staffPatientWatchMapper.countByStaffOrg(staffId, orgId));
         dto.setMineCount(mine);
+        dto.setIntakeCount(buildPendingIntakeCards(tenantId, orgId).size());
         dto.setPendingCarePlanDraftCount(pendingPlan);
         dto.setPendingReportDraftCount(pendingReport);
+        RewardQueryService rewards = rewardQueryService.getIfAvailable();
+        if (rewards != null) {
+            CockpitWeek week = rewards.cockpitWeek(tenantId, orgId);
+            dto.setRewardWeekPoints(week.weekPoints());
+            dto.setRewardFullDayCount(week.fullDayCount());
+            dto.setRewardActiveTodayCount(week.activeTodayCount());
+        }
         return dto;
     }
 
     /**
      * 左栏优先患者。
      *
-     * @param tab urgent = 我的高优在办；watch = 个人重点关注患者；mine = 我的全部在办；默认 urgent
+     * @param tab urgent = 我的高优在办；intake = 待入组（公海首诊 / 分配健管组）；
+     *     watch = 个人重点关注患者；mine = 我的全部在办；默认 urgent
      */
     public List<CockpitPriorityCardDto> priority(String tenantId, String orgId, String tab) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
@@ -138,6 +166,9 @@ public class CockpitService {
         String bucket = normalizeTab(tab);
         if ("watch".equals(bucket)) {
             return buildWatchedCards(orgId, staffId);
+        }
+        if ("intake".equals(bucket)) {
+            return buildPendingIntakeCards(tenantId, orgId);
         }
         return buildPriorityCards(tenantId, orgId, staffId).stream()
                 .filter(c -> matchTab(bucket, c))
@@ -217,6 +248,8 @@ public class CockpitService {
                 card = ensureCard(new HashMap<>(), p.getPeopleId(), p.getDisplayName());
                 card.setDisplayName(p.getDisplayName());
                 card.setGender(p.getGender());
+                fillProfile(card);
+                fillCardDiseases(card, requireTenantId());
                 card.setCareTeamId(p.getCareTeamId());
                 card.setCareTeamName(p.getCareTeamName());
                 card.setClientLinked(p.getClientLinked());
@@ -265,7 +298,16 @@ public class CockpitService {
             card.getTaskIds().add(task.getId());
             WorkspaceTaskType type = WorkspaceTaskType.require(task.getTaskType());
             addBadge(card, type.name());
-            addTaskType(card, type);
+            String label = taskLabel(task, type);
+            if ("PATIENT_REQUEST".equals(task.getSource())) {
+                addTaskType(card, type, PATIENT_REQUEST_LABEL);
+            }
+            addTaskType(card, type, label);
+            if (StringUtils.hasText(task.getSummary()) && !label.equals(task.getSummary().trim())) {
+                card.getReasonDetails().add(label + "：" + task.getSummary().trim());
+            } else {
+                card.getReasonDetails().add(label);
+            }
             touchLatestTaskAt(card, task.getOpenedAt());
             bumpMaxPriority(card, effectivePriority(task, type));
             addBadge(card, "MINE");
@@ -285,6 +327,7 @@ public class CockpitService {
             if (open <= 0) {
                 continue;
             }
+            fillCardDiseases(card, tenantId);
             card.setOpenTaskCount(open);
             if (!StringUtils.hasText(card.getMaxTaskPriority())) {
                 card.setMaxTaskPriority(WorkspaceTaskPriority.LOW.name());
@@ -328,10 +371,18 @@ public class CockpitService {
             dto.setMedDueDoseCount(detail.getMed().getDueDoseCount());
             dto.setMedTakenDoseCount(detail.getMed().getTakenDoseCount());
         }
+        fillMedWindow(dto, detail);
+        fillLifestyle(dto, tenantId, peopleId);
+        dto.setAllergyText(resolveAllergyText(tenantId, peopleId));
         dto.setArchivePath("/workspace/patients/" + peopleId + "/archive");
         dto.setCareChatPath("/workspace/care-chat/" + peopleId);
         fillDiseases(dto, tenantId, peopleId);
-        dto.setBloodPressure(resolveBloodPressure(tenantId, orgId, peopleId));
+        BloodPressure bp = resolveBloodPressure(tenantId, orgId, peopleId);
+        if (bp != null) {
+            dto.setBloodPressure(bp.text());
+            dto.setBloodPressureAt(bp.recordedAt());
+            dto.setBloodPressureHigh(bp.high());
+        }
         fillArchiveCompleteness(dto, tenantId, peopleId);
         fillAssessmentTags(dto, tenantId, orgId, peopleId);
 
@@ -349,6 +400,8 @@ public class CockpitService {
             brief.setSummary(task.getSummary());
             brief.setPriority(task.getPriority());
             brief.setOverdue(isOverdue(task));
+            brief.setDueAt(task.getDueAt());
+            brief.setTaskTypeLabel(taskLabel(task, type));
             dto.getOpenTasks().add(brief);
         }
         fillPendingDrafts(dto, tenantId, orgId, peopleId);
@@ -401,6 +454,64 @@ public class CockpitService {
         }
     }
 
+    /** 机构级草稿箱：未选患者时右栏展示，超期优先、到期早的在前。 */
+    public List<CockpitDraftInboxItemDto> draftInbox(String tenantId, String orgId) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        String staffId = requireStaffId();
+        Map<String, String> names = new HashMap<>();
+        List<CockpitDraftInboxItemDto> out = new ArrayList<>();
+        for (WorkspaceTask task : loadMineOpenTasks(tenantId, orgId, staffId)) {
+            if (task == null || !StringUtils.hasText(task.getPeopleId())) {
+                continue;
+            }
+            WorkspaceTaskType type;
+            try {
+                type = WorkspaceTaskType.require(task.getTaskType());
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            CockpitDraftInboxItemDto item = new CockpitDraftInboxItemDto();
+            switch (type) {
+                case PLAN_CREATE -> {
+                    item.setKind("CARE_PLAN");
+                    item.setSheetMode("care-plan");
+                    item.setActionLabel("去制定");
+                }
+                case PLAN_REVIEW -> {
+                    item.setKind("CARE_PLAN");
+                    item.setSheetMode("care-plan");
+                    item.setActionLabel("去复核");
+                }
+                case REPORT_REVIEW -> {
+                    item.setKind("REPORT");
+                    item.setSheetMode("reports");
+                    item.setActionLabel("去审阅");
+                    item.setReportId(task.getBizKey());
+                }
+                default -> {
+                    continue;
+                }
+            }
+            item.setTaskId(task.getId());
+            item.setTaskType(type.name());
+            item.setTaskTypeLabel(type.label());
+            item.setPeopleId(task.getPeopleId());
+            item.setDisplayName(names.computeIfAbsent(task.getPeopleId(), id -> {
+                PeopleProfile p = peopleProfileMapper.findById(id);
+                return p == null || !StringUtils.hasText(p.getDisplayName()) ? "未命名" : p.getDisplayName();
+            }));
+            item.setSummary(task.getSummary());
+            item.setOverdue(isOverdue(task));
+            item.setDueAt(task.getDueAt());
+            out.add(item);
+        }
+        out.sort(Comparator.comparing(CockpitDraftInboxItemDto::isOverdue)
+                .reversed()
+                .thenComparing(
+                        CockpitDraftInboxItemDto::getDueAt, Comparator.nullsLast(Comparator.naturalOrder())));
+        return out;
+    }
+
     /** 供简报生成：urgent 前 N 人摘要。 */
     public List<CockpitPriorityCardDto> topUrgent(String tenantId, String orgId, int limit) {
         return priority(tenantId, orgId, "urgent").stream().limit(Math.max(1, limit)).toList();
@@ -413,6 +524,96 @@ public class CockpitService {
         mine.setAssigneeStaffId(staffId);
         mine.setPageSize(TASK_FETCH);
         return workspaceTaskMapper.listByQuery(mine);
+    }
+
+    /**
+     * 待入组：公海 OPEN 的入组/首诊随访 + 分配健管组。
+     * 引导先做首诊了解情况，再分配健管组（首诊办结后开分配单；入组后再开制定方案）。
+     */
+    private List<CockpitPriorityCardDto> buildPendingIntakeCards(String tenantId, String orgId) {
+        Map<String, CockpitPriorityCardDto> byPeople = new HashMap<>();
+        List<String> exclude = doctorPublicExclude();
+        WorkspaceTaskQuery pub = baseOpenQuery(tenantId, orgId);
+        pub.setPool("PUBLIC");
+        pub.setExcludeTaskTypes(exclude.isEmpty() ? null : exclude);
+        pub.setPageSize(TASK_FETCH);
+        for (WorkspaceTask task : workspaceTaskMapper.listByQuery(pub)) {
+            if (task == null || !StringUtils.hasText(task.getTaskType())) {
+                continue;
+            }
+            WorkspaceTaskType type;
+            try {
+                type = WorkspaceTaskType.require(task.getTaskType());
+            } catch (IllegalArgumentException ex) {
+                continue;
+            }
+            boolean onboarding = WorkspaceTaskLabels.isOnboardingFollowUp(type, task.getPayloadJson());
+            boolean teamAssign = type == WorkspaceTaskType.TEAM_ASSIGN;
+            if (!onboarding && !teamAssign) {
+                continue;
+            }
+            CockpitPriorityCardDto card = ensureCard(byPeople, task.getPeopleId(), null);
+            if (!StringUtils.hasText(card.getDisplayName())) {
+                PeopleProfile p = peopleProfileMapper.findById(task.getPeopleId());
+                card.setDisplayName(p == null ? task.getPeopleId() : p.getDisplayName());
+            }
+            fillProfile(card);
+            fillTeamIfMissing(card, orgId, task.getPeopleId());
+            card.getTaskIds().add(task.getId());
+            addBadge(card, type.name());
+            addBadge(card, "PUBLIC");
+            if (onboarding) {
+                addBadge(card, "ONBOARDING");
+            }
+            String label = taskLabel(task, type);
+            addTaskType(card, type, label);
+            if (onboarding) {
+                card.getReasonDetails().add("请先完成首诊，了解情况后再分配健管组");
+            } else {
+                card.getReasonDetails().add("首诊已完成，请按患者情况分配健管组");
+            }
+            touchLatestTaskAt(card, task.getOpenedAt());
+            bumpMaxPriority(card, effectivePriority(task, type));
+            if (isOverdue(task)) {
+                addBadge(card, "OVERDUE");
+                card.setOverdueTaskCount(card.getOverdueTaskCount() + 1);
+            }
+        }
+
+        List<CockpitPriorityCardDto> all = new ArrayList<>();
+        for (CockpitPriorityCardDto card : byPeople.values()) {
+            int open = card.getTaskIds() == null ? 0 : card.getTaskIds().size();
+            if (open <= 0) {
+                continue;
+            }
+            fillCardDiseases(card, tenantId);
+            card.setOpenTaskCount(open);
+            if (!StringUtils.hasText(card.getMaxTaskPriority())) {
+                card.setMaxTaskPriority(WorkspaceTaskPriority.LOW.name());
+            }
+            card.setUrgencyScore(packUrgencyScore(card));
+            card.setTopReason(topReasonPendingIntake(card));
+            card.setBucket("intake");
+            all.add(card);
+        }
+        all.sort(Comparator.comparingInt(CockpitPriorityCardDto::getUrgencyScore)
+                .reversed()
+                .thenComparing(c -> c.getDisplayName() == null ? "" : c.getDisplayName()));
+        return all;
+    }
+
+    private static String topReasonPendingIntake(CockpitPriorityCardDto card) {
+        List<String> b = card.getBadges();
+        if (b.contains("ONBOARDING") || b.contains("FOLLOW_UP")) {
+            return "请先完成首诊";
+        }
+        if (b.contains("TEAM_ASSIGN")) {
+            return "待分配健管组";
+        }
+        if (b.contains("OVERDUE")) {
+            return "任务已超期";
+        }
+        return "待入组";
     }
 
     /** 焦点面板：公共池 + 我的池中该患者的 OPEN（便于看到机构侧全部待办）。 */
@@ -457,7 +658,9 @@ public class CockpitService {
     }
 
     private void fillProfile(CockpitPriorityCardDto card) {
-        if (StringUtils.hasText(card.getGender()) && StringUtils.hasText(card.getDisplayName())) {
+        if (StringUtils.hasText(card.getGender())
+                && StringUtils.hasText(card.getDisplayName())
+                && card.getAge() != null) {
             return;
         }
         PeopleProfile p = peopleProfileMapper.findById(card.getPeopleId());
@@ -470,13 +673,36 @@ public class CockpitService {
         if (!StringUtils.hasText(card.getGender())) {
             card.setGender(p.getGender());
         }
+        if (card.getAge() == null && p.getBirthday() != null) {
+            card.setAge(Period.between(p.getBirthday(), LocalDate.now(JobCronSupport.ZONE)).getYears());
+        }
     }
 
-    private static void addTaskType(CockpitPriorityCardDto card, WorkspaceTaskType type) {
+    private void fillCardDiseases(CockpitPriorityCardDto card, String tenantId) {
+        if (!card.getDiseaseLabels().isEmpty()) {
+            return;
+        }
+        try {
+            for (DiseaseArchiveViewDto row : diseaseArchiveService.list(tenantId, card.getPeopleId())) {
+                if (StringUtils.hasText(row.getDiseaseCode())) {
+                    card.getDiseaseLabels().add(DiseaseCodeLabels.label(row.getDiseaseCode()));
+                }
+            }
+        } catch (Exception ignored) {
+            // 病种读取失败不影响卡片
+        }
+    }
+
+    /** 展示文案：随访按 followupType 细分；方案复评见 {@link WorkspaceTaskLabels}。 */
+    private static String taskLabel(WorkspaceTask task, WorkspaceTaskType type) {
+        return WorkspaceTaskLabels.of(type, task.getPayloadJson());
+    }
+
+    private static void addTaskType(CockpitPriorityCardDto card, WorkspaceTaskType type, String label) {
         Set<String> codes = new LinkedHashSet<>(card.getTaskTypes());
         Set<String> labels = new LinkedHashSet<>(card.getTaskTypeLabels());
         codes.add(type.name());
-        labels.add(type.label());
+        labels.add(label);
         card.setTaskTypes(new ArrayList<>(codes));
         card.setTaskTypeLabels(new ArrayList<>(labels));
     }
@@ -519,6 +745,9 @@ public class CockpitService {
         for (AssessmentTagView view : assessmentTagAssembler.assemble(tenantId, orgId, peopleId)) {
             CockpitFocusDto.AssessmentTag tag = new CockpitFocusDto.AssessmentTag();
             tag.setEngineCode(view.getEngineCode());
+            tag.setDiseaseCode(view.getDiseaseCode());
+            tag.setCategory(view.getCategory());
+            tag.setTier(view.getTier());
             tag.setText(view.getText());
             tag.setTone(view.getTone());
             tag.setTitle(view.getTitle());
@@ -526,7 +755,125 @@ public class CockpitService {
         }
     }
 
-    private String resolveBloodPressure(String tenantId, String orgId, String peopleId) {
+    private record BloodPressure(String text, LocalDateTime recordedAt, boolean high) {}
+
+    private void fillMedWindow(CockpitFocusDto dto, AdherencePatientDetailDto detail) {
+        List<AdherenceDayPointDto> days = detail.getDays();
+        if (days == null || days.isEmpty()) {
+            return;
+        }
+        int due = 0;
+        int taken = 0;
+        int from = Math.max(0, days.size() - 7);
+        for (int i = from; i < days.size(); i++) {
+            due += days.get(i).getMedDue();
+            taken += days.get(i).getMedTakenDose();
+        }
+        if (due > 0) {
+            dto.setMedRate7d(Math.round(100.0d * taken / due) / 100.0d);
+        }
+        int streak = 0;
+        for (int i = days.size() - 1; i >= 0; i--) {
+            AdherenceDayPointDto d = days.get(i);
+            if (d.getMedDue() <= 0) {
+                continue;
+            }
+            if (!d.isMedIncomplete()) {
+                break;
+            }
+            streak++;
+        }
+        dto.setMedMissStreakDays(streak);
+    }
+
+    private void fillLifestyle(CockpitFocusDto dto, String tenantId, String peopleId) {
+        try {
+            AdherenceLifestyleMetricsDto ls =
+                    adherenceQueryService.lifestyle7d(tenantId, peopleId, LocalDate.now(JobCronSupport.ZONE));
+            dto.setDietDays7d(ls.getDietDays7d());
+            dto.setExerciseDays7d(ls.getExerciseDays7d());
+        } catch (Exception ignored) {
+            // 生活方式读取失败不阻断焦点面板
+        }
+    }
+
+    private String resolveAllergyText(String tenantId, String peopleId) {
+        try {
+            AllergyStatusEnum status = allergyQueryService.status(tenantId, peopleId);
+            if (status == AllergyStatusEnum.HAS) {
+                List<String> names = allergyQueryService.activeNames(peopleId);
+                return names.isEmpty() ? status.label() : String.join("、", names);
+            }
+            return status.label();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /** 近 7 日方案完成率最低的客户（仅含执行中方案），升序。 */
+    public List<AdherencePatientItemDto> lowestAdherence(String tenantId, String orgId, int limit) {
+        return myUniverse(tenantId, orgId).stream()
+                .filter(i -> i.getPlan() != null && i.getPlan().isHasActivePlan() && i.getPlan().getRate7d() != null)
+                .sorted(Comparator.comparingDouble((AdherencePatientItemDto i) -> i.getPlan().getRate7d())
+                        .thenComparing(i -> -i.getPlan().getStreakDays()))
+                .limit(Math.max(1, limit))
+                .toList();
+    }
+
+    /** 方案执行期在 withinDays 天内结束的客户，按到期日升序。 */
+    public List<AdherencePatientItemDto> plansEndingSoon(String tenantId, String orgId, int withinDays) {
+        LocalDate today = LocalDate.now(JobCronSupport.ZONE);
+        LocalDate until = today.plusDays(Math.max(0, withinDays));
+        return myUniverse(tenantId, orgId).stream()
+                .filter(i -> i.getPlanEndDate() != null
+                        && !i.getPlanEndDate().isBefore(today)
+                        && !i.getPlanEndDate().isAfter(until))
+                .sorted(Comparator.comparing(AdherencePatientItemDto::getPlanEndDate))
+                .toList();
+    }
+
+    /** 主责健管组下的客户；不是任何组主责时退回机构可见范围。 */
+    private List<AdherencePatientItemDto> myUniverse(String tenantId, String orgId) {
+        orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
+        String staffId = requireStaffId();
+        List<AdherencePatientItemDto> all =
+                adherenceQueryService.listUniverse(tenantId, orgId, LocalDate.now(JobCronSupport.ZONE));
+        Set<String> teamIds = new LinkedHashSet<>();
+        for (CareTeam team : careTeamMapper.listByPrimaryCareManager(orgId, staffId)) {
+            teamIds.add(team.getId());
+        }
+        if (teamIds.isEmpty()) {
+            return all;
+        }
+        return all.stream().filter(i -> teamIds.contains(i.getCareTeamId())).toList();
+    }
+
+    /** 简报用：某人近况事实短句（最新血压、打卡 / 服药连续未完成）。 */
+    public List<String> briefFacts(String tenantId, String orgId, String peopleId) {
+        List<String> out = new ArrayList<>();
+        BloodPressure bp = resolveBloodPressure(tenantId, orgId, peopleId);
+        if (bp != null && bp.recordedAt() != null
+                && !bp.recordedAt().toLocalDate().isBefore(LocalDate.now(JobCronSupport.ZONE).minusDays(2))) {
+            out.add("最近血压 " + bp.text() + (bp.high() ? "（偏高）" : "")
+                    + "，测于 " + bp.recordedAt().toLocalDate() + " " + bp.recordedAt().toLocalTime().withNano(0).withSecond(0));
+        }
+        try {
+            AdherencePatientDetailDto detail = adherenceQueryService.patientDetail(tenantId, orgId, peopleId, null, 7);
+            if (detail.getPlan() != null && detail.getPlan().getStreakDays() >= 2) {
+                out.add("方案打卡连续 " + detail.getPlan().getStreakDays() + " 天未完成");
+            }
+            CockpitFocusDto tmp = new CockpitFocusDto();
+            fillMedWindow(tmp, detail);
+            if (tmp.getMedMissStreakDays() >= 2) {
+                out.add("服药连续 " + tmp.getMedMissStreakDays() + " 天未按时完成");
+            }
+        } catch (Exception ignored) {
+            // 依从读取失败时只给血压
+        }
+        return out;
+    }
+
+    private BloodPressure resolveBloodPressure(String tenantId, String orgId, String peopleId) {
         try {
             BigDecimal sys = null;
             BigDecimal dia = null;
@@ -551,7 +898,10 @@ public class CockpitService {
             }
             String sysText = sys == null ? "-" : stripTrailingZero(sys);
             String diaText = dia == null ? "-" : stripTrailingZero(dia);
-            return sysText + "/" + diaText + " mmHg";
+            boolean high = (sys != null && sys.intValue() >= BP_HIGH_SYS)
+                    || (dia != null && dia.intValue() >= BP_HIGH_DIA);
+            LocalDateTime at = sysAt != null ? sysAt : diaAt;
+            return new BloodPressure(sysText + "/" + diaText + " mmHg", at, high);
         } catch (Exception ignored) {
             return null;
         }
@@ -630,7 +980,13 @@ public class CockpitService {
             return "打卡跟进";
         }
         if (b.contains("FOLLOW_UP")) {
+            if (card.getTaskTypeLabels().contains(FollowupType.ONBOARDING.label())) {
+                return FollowupType.ONBOARDING.label();
+            }
             return "定期随访";
+        }
+        if (card.getTaskTypeLabels().contains(WorkspaceTaskLabels.PLAN_RENEW_LABEL)) {
+            return WorkspaceTaskLabels.PLAN_RENEW_LABEL;
         }
         if (b.contains("PLAN_CREATE")) {
             return "待制定方案";
@@ -674,10 +1030,10 @@ public class CockpitService {
             return "urgent";
         }
         String t = tab.trim().toLowerCase(Locale.ROOT);
-        if ("urgent".equals(t) || "watch".equals(t) || "mine".equals(t)) {
+        if ("urgent".equals(t) || "intake".equals(t) || "watch".equals(t) || "mine".equals(t)) {
             return t;
         }
-        throw new BusinessException(400, "未知 tab，可选 urgent / watch / mine");
+        throw new BusinessException(400, "未知 tab，可选 urgent / intake / watch / mine");
     }
 
     private List<String> doctorPublicExclude() {

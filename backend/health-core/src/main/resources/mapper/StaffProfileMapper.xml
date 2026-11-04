@@ -8,6 +8,23 @@
                is_deleted, gmt_created, gmt_modified, gmt_deleted
         FROM staff_profile
         WHERE account_id = #{accountId} AND is_deleted = 0
+        ORDER BY gmt_created ASC
+        LIMIT 1
+    </select>
+
+    <select id="listByAccountId" resultType="com.healix.core.identity.domain.StaffProfile">
+        SELECT pk_id, id, tenant_id, account_id, display_name, mobile, title,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_profile
+        WHERE account_id = #{accountId} AND is_deleted = 0
+        ORDER BY gmt_created ASC
+    </select>
+
+    <select id="findByAccountAndTenant" resultType="com.healix.core.identity.domain.StaffProfile">
+        SELECT pk_id, id, tenant_id, account_id, display_name, mobile, title,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM staff_profile
+        WHERE account_id = #{accountId} AND tenant_id = #{tenantId} AND is_deleted = 0
     </select>
 
     <select id="findById" resultType="com.healix.core.identity.domain.StaffProfile">

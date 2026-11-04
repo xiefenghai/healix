@@ -8,6 +8,8 @@ import com.healix.core.observation.dto.ExamOcrPrefillDto;
 import com.healix.core.observation.dto.ExamReportViewDto;
 import com.healix.core.observation.service.ExamReportService;
 import com.healix.core.observation.service.ExamReportService.ExamCommand;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import com.healix.security.SecurityUtils;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
@@ -36,6 +38,7 @@ public class BExamReportController {
     private final ExamReportService examReportService;
     private final ExamOcrRecognitionService examOcrRecognitionService;
     private final ArchiveAccessService archiveAccessService;
+    private final ImageFileService imageFileService;
 
     @GetMapping
     public ApiResult<List<ExamReportViewDto>> list(
@@ -63,7 +66,11 @@ public class BExamReportController {
             throw new BusinessException("请上传检查报告图片");
         }
         try {
-            return ApiResult.ok(examOcrRecognitionService.recognize(file.getBytes(), file.getContentType()));
+            byte[] bytes = file.getBytes();
+            ExamOcrPrefillDto prefill = examOcrRecognitionService.recognize(bytes, file.getContentType());
+            String key = imageFileService.save(
+                    SecurityUtils.requireTenantId(), peopleId, ObjectKeys.EXAM, bytes, file.getContentType());
+            return ApiResult.ok(prefill.withImageKey(key));
         } catch (java.io.IOException e) {
             throw new BusinessException("读取图片失败");
         }
@@ -106,12 +113,14 @@ public class BExamReportController {
     }
 
     private ExamCommand toCommand(ExamRequest request) {
-        return new ExamCommand(request.examType(), request.examinedAt(), request.conclusion(), request.findings());
+        return new ExamCommand(
+                request.examType(), request.examinedAt(), request.conclusion(), request.findings(), request.imageKey());
     }
 
     public record ExamRequest(
             @NotBlank String examType,
             LocalDateTime examinedAt,
             String conclusion,
-            Map<String, Object> findings) {}
+            Map<String, Object> findings,
+            String imageKey) {}
 }

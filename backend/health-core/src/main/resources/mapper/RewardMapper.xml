@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.reward.mapper.RewardMapper">
+
+    <!-- ============================================================ 流水 -->
+
+    <insert id="insertLedger" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO reward_point_ledger(
+            id, tenant_id, people_id, biz_date, biz_type, biz_ref, seq, points, title,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{bizDate}, #{bizType}, #{bizRef}, #{seq}, #{points}, #{title},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="listLedgerNet" resultType="com.healix.core.reward.domain.RewardLedger">
+        SELECT biz_type, biz_ref, SUM(points) AS points, MAX(seq) AS seq, MIN(title) AS title
+        FROM reward_point_ledger
+        WHERE people_id = #{peopleId}
+          AND biz_date = #{bizDate}
+          AND is_deleted = 0
+          AND biz_type IN
+          <foreach collection="types" item="t" open="(" separator="," close=")">#{t}</foreach>
+        GROUP BY biz_type, biz_ref
+    </select>
+
+    <select id="listLedger" resultType="com.healix.core.reward.domain.RewardLedger">
+        SELECT id, tenant_id, people_id, biz_date, biz_type, biz_ref, seq, points, title, gmt_created
+        FROM reward_point_ledger
+        WHERE people_id = #{peopleId}
+          AND is_deleted = 0
+          <if test="from != null">AND biz_date &gt;= #{from}</if>
+          <if test="to != null">AND biz_date &lt;= #{to}</if>
+        ORDER BY biz_date DESC, gmt_created DESC, pk_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="sumPoints" resultType="java.lang.Integer">
+        SELECT COALESCE(SUM(points), 0)
+        FROM reward_point_ledger
+        WHERE people_id = #{peopleId}
+          AND is_deleted = 0
+          <if test="from != null">AND biz_date &gt;= #{from}</if>
+          <if test="to != null">AND biz_date &lt;= #{to}</if>
+    </select>
+
+    <select id="countPositiveRefs" resultType="int">
+        SELECT COUNT(1) FROM (
+            SELECT biz_ref
+            FROM reward_point_ledger
+            WHERE people_id = #{peopleId}
+              AND biz_type = #{bizType}
+              AND biz_date BETWEEN #{from} AND #{to}
+              AND is_deleted = 0
+            GROUP BY biz_ref
+            HAVING SUM(points) &gt; 0
+        ) x
+    </select>
+
+    <select id="countActiveDates" resultType="int">
+        SELECT COUNT(1) FROM (
+            SELECT biz_date
+            FROM reward_point_ledger
+            WHERE people_id = #{peopleId}
+              AND biz_type IN ('PLAN', 'MED', 'VITAL')
+              AND biz_date BETWEEN #{from} AND #{to}
+              AND is_deleted = 0
+            GROUP BY biz_date
+            HAVING SUM(points) &gt; 0
+        ) x
+    </select>
+
+    <select id="listActiveLedgerDates" resultType="com.healix.core.reward.domain.RewardLedger">
+        SELECT people_id, biz_date
+        FROM reward_point_ledger
+        WHERE biz_type IN ('PLAN', 'MED', 'VITAL')
+          AND biz_date &gt;= #{from}
+          AND is_deleted = 0
+          AND people_id IN
+          <foreach collection="peopleIds" item="p" open="(" separator="," close=")">#{p}</foreach>
+        GROUP BY people_id, biz_date
+        HAVING SUM(points) &gt; 0
+    </select>
+
+    <!-- ============================================================ 汇总 -->
+
+    <sql id="summaryCols">
+        pk_id, id, tenant_id, people_id, level_max, streak_days, best_streak, freeze_cards,
+        last_settled_date, last_push_date, reward_disabled, peer_opt_out,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <select id="findSummary" resultType="com.healix.core.reward.domain.RewardSummary">
+        SELECT <include refid="summaryCols"/>
+        FROM reward_summary
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listSummaries" resultType="com.healix.core.reward.domain.RewardSummary">
+        SELECT <include refid="summaryCols"/>
+        FROM reward_summary
+        WHERE is_deleted = 0
+          AND people_id IN
+          <foreach collection="peopleIds" item="p" open="(" separator="," close=")">#{p}</foreach>
+    </select>
+
+    <insert id="insertSummary" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO reward_summary(
+            id, tenant_id, people_id, level_max, streak_days, best_streak, freeze_cards,
+            last_settled_date, last_push_date, reward_disabled, peer_opt_out,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{levelMax}, #{streakDays}, #{bestStreak}, #{freezeCards},
+            #{lastSettledDate}, #{lastPushDate}, #{rewardDisabled}, #{peerOptOut},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateSummary">
+        UPDATE reward_summary
+        SET level_max = #{levelMax},
+            streak_days = #{streakDays},
+            best_streak = #{bestStreak},
+            freeze_cards = #{freezeCards},
+            last_settled_date = #{lastSettledDate},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateDisabled">
+        UPDATE reward_summary
+        SET reward_disabled = #{disabled}, gmt_modified = NOW()
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+    </update>
+
+    <update id="updateLastPushDate">
+        UPDATE reward_summary
+        SET last_push_date = #{day}, gmt_modified = NOW()
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+    </update>
+
+    <update id="updatePeerOptOut">
+        UPDATE reward_summary
+        SET peer_opt_out = #{optOut}, gmt_modified = NOW()
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+    </update>
+
+    <select id="sumOrgWeekPoints" resultType="java.lang.Integer">
+        SELECT COALESCE(SUM(l.points), 0)
+        FROM reward_point_ledger l
+        INNER JOIN people_org_membership m
+            ON m.people_id = l.people_id AND m.org_id = #{orgId} AND m.status = 'ACTIVE' AND m.is_deleted = 0
+        INNER JOIN reward_summary s
+            ON s.people_id = l.people_id AND s.is_deleted = 0 AND s.reward_disabled = 0
+        WHERE l.tenant_id = #{tenantId}
+          AND l.biz_date BETWEEN #{from} AND #{to}
+          AND l.is_deleted = 0
+    </select>
+
+    <select id="countOrgFullDays" resultType="int">
+        SELECT COUNT(1)
+        FROM reward_day d
+        INNER JOIN people_org_membership m
+            ON m.people_id = d.people_id AND m.org_id = #{orgId} AND m.status = 'ACTIVE' AND m.is_deleted = 0
+        INNER JOIN reward_summary s
+            ON s.people_id = d.people_id AND s.is_deleted = 0 AND s.reward_disabled = 0
+        WHERE d.tenant_id = #{tenantId}
+          AND d.biz_date BETWEEN #{from} AND #{to}
+          AND d.full_day = 1
+          AND d.is_deleted = 0
+    </select>
+
+    <select id="countOrgActiveToday" resultType="int">
+        SELECT COUNT(DISTINCT d.people_id)
+        FROM reward_day d
+        INNER JOIN people_org_membership m
+            ON m.people_id = d.people_id AND m.org_id = #{orgId} AND m.status = 'ACTIVE' AND m.is_deleted = 0
+        INNER JOIN reward_summary s
+            ON s.people_id = d.people_id AND s.is_deleted = 0 AND s.reward_disabled = 0
+        WHERE d.tenant_id = #{tenantId}
+          AND d.biz_date = #{day}
+          AND d.active = 1
+          AND d.is_deleted = 0
+    </select>
+
+    <!-- ============================================================ 日结 -->
+
+    <insert id="upsertDay">
+        INSERT INTO reward_day(
+            id, tenant_id, people_id, biz_date, active, full_day, due_count, done_count, freeze_used, streak_after,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{bizDate}, #{active}, #{fullDay}, #{dueCount}, #{doneCount},
+            #{freezeUsed}, #{streakAfter},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+        ON DUPLICATE KEY UPDATE
+            active = VALUES(active),
+            full_day = VALUES(full_day),
+            due_count = VALUES(due_count),
+            done_count = VALUES(done_count),
+            freeze_used = VALUES(freeze_used),
+            streak_after = VALUES(streak_after),
+            gmt_modified = VALUES(gmt_modified)
+    </insert>
+
+    <select id="listDays" resultType="com.healix.core.reward.domain.RewardDay">
+        SELECT id, tenant_id, people_id, biz_date, active, full_day, due_count, done_count, freeze_used, streak_after
+        FROM reward_day
+        WHERE people_id = #{peopleId}
+          AND biz_date BETWEEN #{from} AND #{to}
+          AND is_deleted = 0
+        ORDER BY biz_date ASC
+    </select>
+
+    <!-- ============================================================ 徽章 -->
+
+    <insert id="insertBadge">
+        INSERT IGNORE INTO reward_badge(
+            id, tenant_id, people_id, badge_code, badge_name, kind, earned_date, source_ref,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{badgeCode}, #{badgeName}, #{kind}, #{earnedDate}, #{sourceRef},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="listBadges" resultType="com.healix.core.reward.domain.RewardBadge">
+        SELECT id, tenant_id, people_id, badge_code, badge_name, kind, earned_date, source_ref, gmt_created
+        FROM reward_badge
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY earned_date DESC, pk_id DESC
+    </select>
+
+    <!-- ============================================================ 点赞 -->
+
+    <insert id="upsertKudos">
+        INSERT INTO reward_kudos(
+            id, tenant_id, org_id, people_id, staff_id, kudos_date, message,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{staffId}, #{kudosDate}, #{message},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+        ON DUPLICATE KEY UPDATE
+            message = VALUES(message),
+            gmt_modified = VALUES(gmt_modified)
+    </insert>
+
+    <select id="listKudos" resultType="com.healix.core.reward.domain.RewardKudos">
+        SELECT id, tenant_id, org_id, people_id, staff_id, kudos_date, message, gmt_created
+        FROM reward_kudos
+        WHERE people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY gmt_created DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

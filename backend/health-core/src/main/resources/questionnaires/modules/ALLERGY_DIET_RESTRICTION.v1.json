@@ -1,0 +1,56 @@
+{
+  "code": "ALLERGY_DIET_RESTRICTION",
+  "version": 1,
+  "title": "过敏与忌口",
+  "script": "想确认一下：有没有吃了会过敏或不舒服的食物、药物？另外有没有因为信仰或习惯需要忌口的？我们会记在方案里避开。",
+  "items": [
+    {
+      "field": "allergy.status",
+      "label": "有没有食物或药物过敏、不耐受？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "allergy.food",
+      "label": "对哪些食物过敏或不耐受？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "allergy.status",
+        "eq": "HAS"
+      },
+      "highlights": [
+        {
+          "when": {
+            "text": "严重或高危"
+          },
+          "severity": "CAUTION",
+          "planEffect": "方案饮食须完全避开，提醒随身药物"
+        }
+      ]
+    },
+    {
+      "field": "allergy.drug",
+      "label": "药物过敏",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "allergy.status",
+        "eq": "HAS"
+      }
+    },
+    {
+      "field": "basic.diet.restriction",
+      "label": "饮食上有什么忌口？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.restrictionOther",
+      "label": "其他忌口",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.diet.restriction",
+        "intersects": [
+          "OTHER"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Healix C 端 v11 · 总览</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#12181c;color:#e9eef1;
+  font-family:"PingFang SC","Hiragino Sans GB","Noto Sans SC",system-ui,sans-serif;
+  padding:34px 40px;
+  min-height:100vh;display:flex;flex-direction:column;justify-content:center;
+}
+header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:26px}
+h1{font-size:23px;font-weight:800;letter-spacing:-.01em;line-height:1.25}
+h1 em{font-style:normal;color:#2fbfa0}
+.sub{margin-top:7px;font-size:12.5px;font-weight:500;color:#7f8c93;letter-spacing:.01em}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;
+  background:rgba(47,191,160,.12);color:#2fbfa0;border:1px solid rgba(47,191,160,.26);
+  padding:5px 11px;border-radius:7px;margin-left:8px;
+}
+.chip.dim{background:rgba(255,255,255,.05);color:#96a3aa;border-color:rgba(255,255,255,.1)}
+.row{display:flex;gap:18px;align-items:flex-start}
+figure{width:380px;flex:none}
+figure img{
+  width:380px;display:block;border-radius:19px;
+  box-shadow:0 18px 40px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.055);
+}
+figcaption{margin-top:11px;font-size:12px;font-weight:600;color:#a4b0b6;letter-spacing:.01em}
+figcaption b{display:block;font-size:12.5px;font-weight:800;color:#e9eef1;margin-bottom:2px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Healix C 端界面设计方案 <em>v11</em> · 舵式导航 × 诊室秩序</h1>
+    <div class="sub">390 × 844 · PingFang SC · 主色 teal-600 #0e9f83（不变）</div>
+  </div>
+  <div>
+    <span class="chip">WCAG AA 实测通过</span>
+    <span class="chip dim">入口深度 4.2 → 2.6 步</span>
+  </div>
+</header>
+<div class="row">
+  <figure>
+    <img src="v11-home.png" alt="首页" />
+    <figcaption><b>屏 1 · 首页</b>L1 健管师焦点卡 + 今日待办单卡 + 速记横滑</figcaption>
+  </figure>
+  <figure>
+    <img src="v11-state-unread.png" alt="未读态" />
+    <figcaption><b>屏 1' · 焦点卡未读态</b>文字统一近白，语义靠状态圆点承载</figcaption>
+  </figure>
+  <figure>
+    <img src="v11-health.png" alt="健康" />
+    <figcaption><b>屏 2 · 健康</b>环形健康分 + 3×2 指标瓷片区 + 体重趋势</figcaption>
+  </figure>
+  <figure>
+    <img src="v11-discover.png" alt="发现" />
+    <figcaption><b>屏 3 · 发现</b>单列卡片流，一屏只放 2.5 张</figcaption>
+  </figure>
+  <figure>
+    <img src="v11-me.png" alt="我的" />
+    <figcaption><b>屏 4 · 我的</b>52px 行高 + 28px 圆角，宽松好点</figcaption>
+  </figure>
+  <figure>
+    <img src="v11-sheet.png" alt="快记面板" />
+    <figcaption><b>FAB · 记一笔</b>4×2 八入口，核心动作 1 次点击直达</figcaption>
+  </figure>
+</div>
+</body>
+</html>

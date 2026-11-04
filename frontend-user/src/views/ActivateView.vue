@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { showToast } from 'vant'
+import { showConfirmDialog, showToast } from 'vant'
 import { api, getToken, setToken } from '../api/http'
 import { resolveTenantId } from '../shared/tenant'
 import LegalConsent from '../shared/LegalConsent.vue'
@@ -10,18 +10,115 @@ const router = useRouter()
 const loggedIn = computed(() => !!getToken())
 const activationCode = ref('')
 const displayName = ref('')
-const username = ref('')
-const password = ref('')
+const birthday = ref('')
+const mobile = ref('')
+const otpCode = ref('')
+const sending = ref(false)
 const agreeTerms = ref(false)
 const agreeSensitive = ref(false)
 const loading = ref(false)
+const showBirthdayPicker = ref(false)
+const today = new Date()
+const minBirthday = new Date(1900, 0, 1)
+const birthdayPickerValue = ref<string[]>(['1990', '01', '01'])
+
+function openBirthdayPicker() {
+  if (birthday.value) birthdayPickerValue.value = birthday.value.split('-')
+  showBirthdayPicker.value = true
+}
+
+function onBirthdayConfirm({ selectedValues }: { selectedValues: string[] }) {
+  birthday.value = selectedValues.join('-')
+  showBirthdayPicker.value = false
+}
 
 onMounted(() => {
   const q = new URLSearchParams(location.search)
   if (q.get('code')) activationCode.value = q.get('code') || ''
 })
 
+interface TokenData {
+  accessToken: string
+  patientCardId?: string
+}
+
+interface MergeCandidate {
+  sourceCardId: string
+  displayName: string
+  counts?: Record<string, number>
+}
+
+async function offerMergeSelfCard(cardId?: string) {
+  if (!cardId) return
+  let candidate: MergeCandidate | null = null
+  try {
+    const res = await api<{ data: MergeCandidate | null }>(`/api/c/v1/patient-cards/${cardId}/merge-candidate`)
+    candidate = res.data
+  } catch {
+    return
+  }
+  if (!candidate) return
+  const summary = Object.entries(candidate.counts || {})
+    .filter(([, n]) => n > 0)
+    .map(([label, n]) => `${label} ${n} 条`)
+    .join('、')
+  try {
+    await showConfirmDialog({
+      title: '发现同一人的记录',
+      message:
+        `您之前自己添加过「${candidate.displayName}」${summary ? `，已有${summary}` : ''}。` +
+        '是否把这些记录并入机构档案？合并后只保留一个就诊人。',
+      confirmButtonText: '合并',
+      cancelButtonText: '暂不',
+    })
+  } catch {
+    return
+  }
+  try {
+    const res = await api<{ data: TokenData }>(
+      `/api/c/v1/patient-cards/${cardId}/merge-from/${candidate.sourceCardId}`,
+      { method: 'POST' },
+    )
+    setToken(res.data.accessToken)
+    showToast('已合并')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '合并失败')
+  }
+}
+
+async function sendCode() {
+  if (!/^1\d{10}$/.test(mobile.value.trim())) {
+    showToast('请输入 11 位手机号')
+    return
+  }
+  sending.value = true
+  try {
+    const tenantId = await resolveTenantId(api)
+    await api('/api/c/v1/auth/mobile-otp', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId, mobile: mobile.value.trim() }),
+    })
+    showToast('验证码已发送')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '发送失败')
+  } finally {
+    sending.value = false
+  }
+}
+
 async function submit() {
+  if (!displayName.value.trim() || !birthday.value) {
+    showToast('请填写档案姓名和出生日期')
+    return
+  }
+  const birth = new Date(birthday.value)
+  const startToday = new Date()
+  startToday.setHours(0, 0, 0, 0)
+  birth.setHours(0, 0, 0, 0)
+  if (Number.isNaN(birth.getTime()) || birth.getTime() > startToday.getTime()) {
+    showToast('出生日期不能晚于今天')
+    return
+  }
   if (!loggedIn.value && (!agreeTerms.value || !agreeSensitive.value)) {
     showToast('请先阅读并勾选同意相关协议')
     return
@@ -32,18 +129,20 @@ async function submit() {
     const body: Record<string, string | undefined> = {
       tenantId,
       activationCode: activationCode.value,
-      displayName: displayName.value || undefined,
+      displayName: displayName.value.trim(),
+      birthday: birthday.value,
     }
     if (!loggedIn.value) {
-      body.username = username.value
-      body.password = password.value
+      body.mobile = mobile.value.trim()
+      body.otpCode = otpCode.value.trim()
     }
-    const res = await api<{ data: { accessToken: string } }>('/api/c/v1/auth/activate', {
+    const res = await api<{ data: TokenData }>('/api/c/v1/auth/activate', {
       method: 'POST',
       body: JSON.stringify(body),
     })
     setToken(res.data.accessToken)
     showToast('激活成功')
+    await offerMergeSelfCard(res.data.patientCardId)
     await router.replace('/home')
   } catch (e) {
     showToast(e instanceof Error ? e.message : '操作失败')
@@ -60,9 +159,21 @@ async function submit() {
       <p class="hint">健管师已为你建档时，用激活码开通，并绑定到同一份档案。</p>
       <van-field v-model="activationCode" label="激活码" placeholder="如 A3K9-7X2M" />
       <van-field v-model="displayName" label="档案姓名" placeholder="与建档姓名一致" />
+      <van-field
+        is-link
+        readonly
+        label="出生日期"
+        placeholder="请选择"
+        :model-value="birthday"
+        @click="openBirthdayPicker"
+      />
       <template v-if="!loggedIn">
-        <van-field v-model="username" label="用户名" placeholder="设置登录账号" />
-        <van-field v-model="password" type="password" label="密码" placeholder="设置密码" />
+        <van-field v-model="mobile" type="tel" label="手机号" placeholder="用于登录" maxlength="11" />
+        <van-field v-model="otpCode" type="digit" label="验证码" placeholder="6 位验证码" maxlength="6">
+          <template #button>
+            <van-button size="small" type="primary" plain :loading="sending" @click="sendCode">获取验证码</van-button>
+          </template>
+        </van-field>
         <LegalConsent v-model:terms="agreeTerms" v-model:sensitive="agreeSensitive" />
       </template>
       <van-button round block type="primary" :loading="loading" @click="submit">
@@ -72,6 +183,17 @@ async function submit() {
         没有激活码？先注册账号
       </button>
     </div>
+
+    <van-popup v-model:show="showBirthdayPicker" position="bottom" round>
+      <van-date-picker
+        v-model="birthdayPickerValue"
+        title="出生日期"
+        :min-date="minBirthday"
+        :max-date="today"
+        @confirm="onBirthdayConfirm"
+        @cancel="showBirthdayPicker = false"
+      />
+    </van-popup>
   </div>
 </template>
 
@@ -80,9 +202,9 @@ async function submit() {
 .card {
   margin: 16px;
   padding: 20px;
-  border-radius: 16px;
+  border-radius: var(--hx-r-lg);
   background: #fff;
-  box-shadow: 0 8px 24px rgba(31, 111, 111, 0.08);
+  box-shadow: var(--hx-elev-2);
 }
 .hint { margin: 0 0 12px; color: var(--hx-muted); font-size: 13px; line-height: 1.5; }
 .link {
@@ -91,7 +213,7 @@ async function submit() {
   margin-top: 14px;
   border: 0;
   background: transparent;
-  color: #2b9e9e;
+  color: var(--hx-teal-600);
   font-size: 14px;
 }
 </style>

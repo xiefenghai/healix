@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.sleep.mapper.SleepLogMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, biz_date, segment, duration_min, quality,
+        bedtime, wake_time, note, recorded_by_people_id, recorded_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO sleep_log(
+            id, tenant_id, people_id, biz_date, segment, duration_min, quality,
+            bedtime, wake_time, note, recorded_by_people_id, recorded_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{bizDate}, #{segment}, #{durationMin}, #{quality},
+            #{bedtime}, #{wakeTime}, #{note}, #{recordedByPeopleId}, #{recordedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE sleep_log
+        SET segment = #{segment},
+            duration_min = #{durationMin},
+            quality = #{quality},
+            bedtime = #{bedtime},
+            wake_time = #{wakeTime},
+            note = #{note},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE sleep_log
+        SET is_deleted = 1, gmt_deleted = NOW(), gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.sleep.domain.SleepLog">
+        SELECT <include refid="cols"/>
+        FROM sleep_log
+        WHERE id = #{id}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleDate" resultType="com.healix.core.sleep.domain.SleepLog">
+        SELECT <include refid="cols"/>
+        FROM sleep_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date = #{bizDate}
+          AND is_deleted = 0
+        ORDER BY CASE WHEN segment = 'MAIN' THEN 0 ELSE 1 END, gmt_created ASC
+    </select>
+
+    <select id="findMainByPeopleDate" resultType="com.healix.core.sleep.domain.SleepLog">
+        SELECT <include refid="cols"/>
+        FROM sleep_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date = #{bizDate}
+          AND is_deleted = 0
+          AND (segment = 'MAIN' OR segment IS NULL OR segment = '')
+        ORDER BY gmt_created ASC
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleRange" resultType="com.healix.core.sleep.domain.SleepLog">
+        SELECT <include refid="cols"/>
+        FROM sleep_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date &gt;= #{from}
+          AND biz_date &lt;= #{to}
+          AND is_deleted = 0
+        ORDER BY biz_date ASC, CASE WHEN segment = 'MAIN' THEN 0 ELSE 1 END, gmt_created ASC
+    </select>
+</mapper>

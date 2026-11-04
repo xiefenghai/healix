@@ -15,10 +15,12 @@ import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.result.PageResult;
 import com.healix.core.audit.service.AuditService;
+import com.healix.core.identity.domain.OpsAccount;
 import com.healix.core.identity.domain.StaffAccount;
 import com.healix.core.identity.domain.StaffOrgBinding;
 import com.healix.core.identity.domain.StaffProfile;
 import com.healix.core.identity.domain.StaffRoleBinding;
+import com.healix.core.identity.mapper.OpsAccountMapper;
 import com.healix.core.identity.mapper.StaffAccountMapper;
 import com.healix.core.identity.mapper.StaffOrgBindingMapper;
 import com.healix.core.identity.mapper.StaffProfileMapper;
@@ -49,6 +51,7 @@ public class OpsTenantAdminService {
 
     private final TenantMapper tenantMapper;
     private final OrganizationMapper organizationMapper;
+    private final OpsAccountMapper opsAccountMapper;
     private final StaffAccountMapper staffAccountMapper;
     private final StaffProfileMapper staffProfileMapper;
     private final StaffOrgBindingMapper staffOrgBindingMapper;
@@ -78,7 +81,7 @@ public class OpsTenantAdminService {
         InitialAdminCommand admin = cmd.initialAdmin();
         if (admin != null) {
             if (staffAccountMapper.findByUsername(admin.username()) != null) {
-                throw new BusinessException(409, "员工用户名已存在");
+                throw new BusinessException(409, "该用户名已有账号，请建好租户后用「添加已有账号」加入");
             }
             StaffCreation created = createStaff(
                     tenant.getId(),
@@ -119,7 +122,7 @@ public class OpsTenantAdminService {
         Tenant tenant = requireTenant(tenantId);
 
         if (staffAccountMapper.findByUsername(cmd.username()) != null) {
-            throw new BusinessException(409, "员工用户名已存在");
+            throw new BusinessException(409, "该用户名已有账号，请使用「添加已有账号」加入本租户");
         }
 
         StaffCreation created = createStaff(
@@ -176,6 +179,91 @@ public class OpsTenantAdminService {
                     null,
                     AuditDetails.of("staffId", staffId, "roleCode", StaffRoleEnum.TENANT_ADMIN.name()));
         }
+
+        return new GrantTenantAdminResult(staffId, StaffRoleEnum.TENANT_ADMIN.name());
+    }
+
+    /**
+     * 把已有员工登录账号加入指定租户，并授予租户管理员。同一账号可加入多个租户，密码沿用原账号。
+     */
+    @Transactional
+    public GrantTenantAdminResult attachExistingAsTenantAdmin(
+            String tenantId, String username, String opsAccountId) {
+        requireSuperAdmin();
+        requireTenant(tenantId);
+        if (!StringUtils.hasText(username)) {
+            throw new BusinessException(400, "请填写用户名");
+        }
+        String normalizedUsername = username.trim();
+        StaffAccount account = staffAccountMapper.findByUsername(normalizedUsername);
+        boolean createdAccount = false;
+        String opsDisplayName = null;
+        if (account == null) {
+            OpsAccount ops = opsAccountMapper.findByUsername(normalizedUsername);
+            if (ops == null) {
+                throw new BusinessException(404, "没有这个账号，请填写平台超管或已注册员工的用户名");
+            }
+            if (!EnableStatusEnum.ACTIVE.matches(ops.getStatus())) {
+                throw new BusinessException(400, "该账号已停用");
+            }
+            account = new StaffAccount();
+            account.setUsername(ops.getUsername());
+            account.setPasswordHash(ops.getPasswordHash());
+            account.setStatus(EnableStatusEnum.ACTIVE.name());
+            EntityMeta.onCreate(account);
+            staffAccountMapper.insert(account);
+            createdAccount = true;
+            opsDisplayName = ops.getDisplayName();
+        } else if (!EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
+            throw new BusinessException(400, "该账号已停用");
+        }
+
+        StaffProfile existing = staffProfileMapper.findByAccountAndTenant(account.getId(), tenantId);
+        String staffId;
+        boolean createdProfile = false;
+        if (existing == null) {
+            quotaService.assertAvailable(tenantId, QuotaKeyEnum.STAFF_TOTAL, 1);
+            List<StaffProfile> profiles = staffProfileMapper.listByAccountId(account.getId());
+            StaffProfile source = profiles.isEmpty() ? null : profiles.get(0);
+            String displayName = source != null && StringUtils.hasText(source.getDisplayName())
+                    ? source.getDisplayName()
+                    : opsDisplayName;
+            StaffProfile profile = new StaffProfile();
+            profile.setTenantId(tenantId);
+            profile.setAccountId(account.getId());
+            profile.setDisplayName(StringUtils.hasText(displayName) ? displayName : account.getUsername());
+            profile.setMobile(source == null ? null : source.getMobile());
+            profile.setTitle(source == null ? null : source.getTitle());
+            EntityMeta.onCreate(profile);
+            staffProfileMapper.insert(profile);
+            staffId = profile.getId();
+            createdProfile = true;
+        } else {
+            staffId = existing.getId();
+        }
+
+        boolean granted = false;
+        if (staffRoleBindingMapper.findTenantAdminByStaff(staffId) == null) {
+            insertTenantAdminRole(tenantId, staffId);
+            granted = true;
+        }
+
+        auditService.record(
+                PortalEnum.OPS.code(),
+                opsAccountId,
+                "OPS",
+                tenantId,
+                AuditActionEnum.STAFF_ROLE_GRANT.name(),
+                "staff_role",
+                staffId,
+                null,
+                AuditDetails.of(
+                        "staffId", staffId,
+                        "username", account.getUsername(),
+                        "roleCode", StaffRoleEnum.TENANT_ADMIN.name(),
+                        "createdAccount", createdAccount,
+                        "createdProfile", createdProfile,
+                        "grantedTenantAdmin", granted));
 
         return new GrantTenantAdminResult(staffId, StaffRoleEnum.TENANT_ADMIN.name());
     }

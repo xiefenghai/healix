@@ -1,18 +1,118 @@
 :root {
-  --hx-teal: #2b9e9e;
-  --hx-teal-soft: #5cb8b8;
-  --hx-teal-light: #e6f6f6;
-  --hx-orange: #f5a623;
-  --hx-orange-soft: #fff4e0;
-  --hx-bg: #f7f9fc;
+  --hx-teal: #0e9f83;
+  --hx-teal-soft: #3fbfa3;
+  --hx-teal-light: #e3f6ef;
+  --hx-teal-deep: #0b7a66;
+  --hx-orange: #e5a100;
+  --hx-orange-soft: #fff3da;
+  --hx-red: #e0435a;
+  --hx-red-soft: #fde7ea;
+  --hx-red-text: #a8243a;
+  --hx-amber-text: #8a5c00;
+  --hx-blue: #5b8def;
+  --hx-blue-soft: #e9f0fd;
+  --hx-blue-text: #2c4f8f;
+  --hx-water: #1769a5;
+  --hx-water-soft: #dff3ff;
+  --hx-sleep: #5b3cc4;
+  --hx-sleep-soft: #ece7ff;
+  --hx-mood: #b03060;
+  --hx-mood-soft: #ffe8f0;
+  --hx-ink: #13222e;
+  --hx-mark: #ffd84d;
+  --hx-mark-red: #ffc2cb;
+  --hx-bg:
+    radial-gradient(circle at 108% -6%, rgba(255, 231, 179, 0.7), transparent 42%),
+    radial-gradient(circle at -14% 46%, rgba(200, 239, 227, 0.75), transparent 44%),
+    linear-gradient(170deg, #fff8ec 0%, #f4fbf8 50%, #e4f6ef 100%);
+  --hx-bg-flat: linear-gradient(180deg, #f2faf7 0%, #f6fbf9 40%, #f4fbf8 100%);
   --hx-card: #ffffff;
-  --hx-text: #2c3a47;
-  --hx-muted: #8a97a5;
-  --hx-radius: 18px;
-  --hx-shadow: 0 8px 24px rgba(43, 158, 158, 0.08);
-  --van-primary-color: #2b9e9e;
-  --van-success-color: #2b9e9e;
-  --van-warning-color: #f5a623;
+  --hx-text: #13222e;
+  --hx-muted: #6b7a87;
+  --hx-radius: 20px;
+  --hx-shadow: 0 10px 26px rgba(19, 34, 46, 0.06);
+  --hx-grad: linear-gradient(90deg, #14b394, #0e9f83);
+
+  /* v8 令牌 */
+  --hx-teal-50: #effaf6;
+  --hx-teal-100: #e3f6ef;
+  --hx-teal-200: #bfe9db;
+  --hx-teal-300: #86d7c1;
+  --hx-teal-400: #3fbfa3;
+  --hx-teal-500: #14b394;
+  --hx-teal-600: #0e9f83;
+  --hx-teal-700: #0b7a66;
+  --hx-teal-800: #0a6152;
+  --hx-teal-900: #084a3e;
+
+  --hx-n-50: #f7fafb;
+  --hx-n-100: #f0f4f6;
+  --hx-n-200: #e6ecf0;
+  --hx-n-300: #d5dee4;
+  --hx-n-400: #c5ced6;
+  --hx-n-500: #9aa8b5;
+  --hx-n-600: #7a8b99;
+  --hx-n-700: #5b6a77;
+  --hx-n-800: #3d4b58;
+  --hx-n-900: #13222e;
+  --hx-n-950: #0c1720;
+
+  --hx-danger: #e0435a;
+  --hx-danger-bg: #fde7ea;
+  --hx-danger-text: #a8243a;
+  --hx-warn: #e5a100;
+  --hx-warn-bg: #fff3da;
+  --hx-warn-text: #8a5c00;
+  --hx-info: #5b8def;
+  --hx-info-bg: #e9f0fd;
+  --hx-info-text: #2c4f8f;
+  --hx-mint: #2fa893;
+  --hx-mint-bg: #e4f6f1;
+
+  --hx-r-xs: 8px;
+  --hx-r-sm: 12px;
+  --hx-r-md: 14px;
+  --hx-r-lg: 20px;
+  --hx-r-xl: 28px;
+  --hx-r-pill: 999px;
+
+  --hx-elev-0: none;
+  --hx-elev-1: 0 1px 2px rgba(19, 34, 46, 0.04), 0 1px 1px rgba(19, 34, 46, 0.03);
+  --hx-elev-2: 0 6px 16px rgba(19, 34, 46, 0.06), 0 1px 3px rgba(19, 34, 46, 0.04);
+  --hx-elev-3: 0 16px 32px rgba(14, 159, 131, 0.14), 0 2px 8px rgba(19, 34, 46, 0.06);
+  --hx-elev-brand: 0 6px 14px rgba(14, 159, 131, 0.24);
+
+  --hx-dur-1: 120ms;
+  --hx-dur-2: 200ms;
+  --hx-dur-3: 320ms;
+  --hx-ease-std: cubic-bezier(0.2, 0, 0, 1);
+  --hx-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --van-primary-color: #0e9f83;
+  --van-success-color: #0e9f83;
+  --van-warning-color: #e5a100;
+  --van-danger-color: #e0435a;
+  --van-text-color: #13222e;
+  --van-text-color-2: #6b7a87;
+  --van-text-color-3: #8593a0;
+  --van-border-color: #eef2f4;
+  --van-active-color: #eef2f4;
+  --van-background: #f5f8fa;
+  --van-nav-bar-background: rgba(255, 250, 242, 0.86);
+  --van-nav-bar-title-text-color: #13222e;
+  --van-nav-bar-icon-color: #13222e;
+  --van-nav-bar-text-color: #0e9f83;
+  --van-tabbar-background: rgba(255, 255, 255, 0.94);
+  --van-tabbar-item-active-color: #0e9f83;
+  --van-tabbar-item-text-color: #8593a0;
+  --van-button-radius: 14px;
+  --van-button-default-border-color: #e3eaee;
+  --van-cell-group-inset-radius: 20px;
+  --van-tag-radius: 8px;
+  --van-tag-padding: 1px 8px;
+  --van-tabs-bottom-bar-color: #0e9f83;
+  --van-dialog-radius: 24px;
+  --van-popup-round-radius: 24px;
 }
 
 * {
@@ -24,7 +124,7 @@ body,
 #app {
   margin: 0;
   min-height: 100%;
-  background: var(--hx-bg);
+  background: #f4fbf8;
   color: var(--hx-text);
   font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -41,3 +141,127 @@ a {
   color: var(--hx-teal);
   text-decoration: none;
 }
+
+/* 管理方案任务类别分色（首页 / 方案今日） */
+.hx-cat {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  border-radius: 8px;
+  padding: 2px 8px;
+  line-height: 1.3;
+}
+.hx-cat.exercise,
+.hx-cat.diet {
+  color: var(--hx-teal-700);
+  background: var(--hx-teal-100);
+}
+.hx-cat.metric {
+  color: var(--hx-info-text);
+  background: var(--hx-info-bg);
+}
+.hx-cat.water {
+  color: var(--hx-water);
+  background: var(--hx-water-soft);
+}
+.hx-cat.sleep {
+  color: var(--hx-sleep);
+  background: var(--hx-sleep-soft);
+}
+.hx-cat.mood {
+  color: var(--hx-mood);
+  background: var(--hx-mood-soft);
+}
+.hx-cat.other {
+  color: var(--hx-n-700);
+  background: var(--hx-n-100);
+}
+
+.hx-ck {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--hx-n-300);
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: transparent;
+  background: #fff;
+  transition:
+    background var(--hx-dur-1) var(--hx-ease-std),
+    border-color var(--hx-dur-1) var(--hx-ease-std);
+}
+.hx-ck.on {
+  background: var(--hx-teal-600);
+  border-color: var(--hx-teal-600);
+  color: #fff;
+}
+
+.van-nav-bar {
+  backdrop-filter: blur(10px);
+}
+.van-nav-bar__title {
+  font-weight: 800;
+}
+.van-tabbar {
+  backdrop-filter: blur(10px);
+  box-shadow: 0 -6px 20px rgba(19, 34, 46, 0.05);
+}
+.van-tabbar-item--active {
+  font-weight: 700;
+}
+.van-button {
+  font-weight: 700;
+}
+.van-button--primary {
+  background: var(--hx-grad);
+  border: 0;
+}
+.van-button--primary.van-button--plain {
+  background: #fff;
+  color: var(--hx-teal-700);
+  border: 1px solid var(--hx-teal-200);
+}
+.van-tag {
+  font-weight: 700;
+}
+
+/* 荧光笔重点 */
+.hx-mark {
+  background: linear-gradient(transparent 58%, var(--hx-mark) 58%);
+  padding: 0 3px;
+}
+.hx-mark-red {
+  background: linear-gradient(transparent 58%, var(--hx-mark-red) 58%);
+  padding: 0 3px;
+}
+
+/* 带标签的提醒条 */
+.hx-flag {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.hx-flag > i {
+  flex: none;
+  margin-top: 1px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  color: #fff;
+}
+.hx-flag.red { background: var(--hx-red-soft); color: var(--hx-red-text); }
+.hx-flag.red > i { background: var(--hx-red); }
+.hx-flag.yellow { background: var(--hx-orange-soft); color: var(--hx-amber-text); }
+.hx-flag.yellow > i { background: var(--hx-orange); }
+.hx-flag.info { background: var(--hx-blue-soft); color: var(--hx-blue-text); }
+.hx-flag.info > i { background: var(--hx-blue); }

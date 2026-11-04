@@ -11,6 +11,7 @@ const loading = ref(true)
 const summary = ref<any>(null)
 const diseaseLabels = ref<Record<string, string>>({})
 const allergyText = ref('')
+const pendingRequest = ref(false)
 
 onMounted(async () => {
   try {
@@ -19,6 +20,9 @@ onMounted(async () => {
       loadDiseaseDict().catch(() => []),
       api<{ data: { status: string; bannerLabels: string[] } }>('/api/c/v1/me/allergies').catch(() => null),
     ])
+    api<{ data: { id: string } | null }>('/api/c/v1/me/assessments/questionnaire-request')
+      .then((r) => (pendingRequest.value = !!r.data))
+      .catch(() => (pendingRequest.value = false))
     summary.value = res.data
     diseaseLabels.value = toLabelMap(diseases)
     if (allergy) {
@@ -61,6 +65,13 @@ onMounted(async () => {
         />
         <van-cell title="生活方式" is-link to="/archive/lifestyle" />
         <van-cell title="过敏史" is-link :value="allergyText" to="/archive/allergies" />
+        <van-cell
+          title="完善健康信息"
+          label="补充家族史、既往病史等，帮助健管师更了解你"
+          is-link
+          :value="pendingRequest ? '待填写' : ''"
+          to="/assessment-questionnaire"
+        />
       </section>
 
       <section class="card">
@@ -85,8 +96,8 @@ onMounted(async () => {
 <style scoped>
 .page { min-height: 100vh; background: var(--hx-bg); padding-bottom: 24px; }
 .card {
-  margin: 12px 16px; padding: 16px; border-radius: 16px; background: #fff;
-  box-shadow: var(--hx-shadow);
+  margin: 12px 16px; padding: 16px; border-radius: var(--hx-r-lg); background: #fff;
+  box-shadow: var(--hx-elev-2);
 }
 h2 { margin: 0 0 6px; font-size: 20px; }
 h3 { margin: 0 0 8px; font-size: 15px; }

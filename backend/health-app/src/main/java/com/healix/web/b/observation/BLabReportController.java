@@ -9,6 +9,8 @@ import com.healix.core.observation.dto.LabReportViewDto;
 import com.healix.core.observation.service.LabReportService;
 import com.healix.core.observation.service.LabReportService.LabItemCommand;
 import com.healix.core.observation.service.LabReportService.LabReportCommand;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import com.healix.security.SecurityUtils;
 import jakarta.validation.constraints.NotEmpty;
 import java.math.BigDecimal;
@@ -37,6 +39,7 @@ public class BLabReportController {
     private final LabReportService labReportService;
     private final LabOcrRecognitionService labOcrRecognitionService;
     private final ArchiveAccessService archiveAccessService;
+    private final ImageFileService imageFileService;
 
     @GetMapping
     public ApiResult<List<LabReportViewDto>> list(@PathVariable String peopleId) {
@@ -59,7 +62,11 @@ public class BLabReportController {
         archiveAccessService.assertStaffCanAccessPeople(
                 SecurityUtils.requireTenantId(), SecurityUtils.requireCurrentOrgId(), peopleId);
         try {
-            return ApiResult.ok(labOcrRecognitionService.recognize(file.getBytes(), file.getContentType()));
+            byte[] bytes = file.getBytes();
+            LabOcrPrefillDto prefill = labOcrRecognitionService.recognize(bytes, file.getContentType());
+            String key = imageFileService.save(
+                    SecurityUtils.requireTenantId(), peopleId, ObjectKeys.LAB, bytes, file.getContentType());
+            return ApiResult.ok(prefill.withImageKey(key));
         } catch (java.io.IOException e) {
             throw new BusinessException("读取图片失败");
         }
@@ -119,7 +126,8 @@ public class BLabReportController {
                 request.reportedAt(),
                 request.note(),
                 request.source(),
-                items);
+                items,
+                request.imageKey());
     }
 
     public record LabReportRequest(
@@ -128,6 +136,7 @@ public class BLabReportController {
             LocalDateTime reportedAt,
             String note,
             String source,
+            String imageKey,
             @NotEmpty List<LabItemRequest> items) {}
 
     public record LabItemRequest(

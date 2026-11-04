@@ -1,0 +1,83 @@
+{
+  "code": "EXERCISE_BEHAVIOR",
+  "version": 2,
+  "title": "运动行为",
+  "script": "平时有活动或运动习惯吗？哪个时间段比较方便？我们按您的节奏来安排，不强求一下子做很多。",
+  "items": [
+    {
+      "field": "basic.exercise.frequency",
+      "label": "平时运动（每次约 30 分钟以上）的频率？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.exercise.types",
+      "label": "一般做什么运动？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "basic.exercise.frequency",
+        "notIn": ["NONE"]
+      }
+    },
+    {
+      "field": "basic.exercise.intensity",
+      "label": "运动强度大概怎样？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.exercise.frequency",
+        "notIn": ["NONE"]
+      }
+    },
+    {
+      "field": "basic.exercise.durationMin",
+      "label": "每次运动多长时间？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.exercise.frequency",
+        "notIn": ["NONE"]
+      }
+    },
+    {
+      "field": "basic.exercise.strengthExperience",
+      "label": "做过力量训练吗？",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["WEIGHT_LOSS", "HYPERTENSION", "DIABETES"]
+      }
+    },
+    {
+      "field": "basic.exercise.dailySteps",
+      "label": "平时一天大概走多少步？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.exercise.sedentaryHours",
+      "label": "一天大概坐多久？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.exercise.availableSlots",
+      "label": "一般什么时候有空运动？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.exercise.venue",
+      "label": "在哪运动方便？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.exercise.equipment",
+      "label": "家里有什么器械？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.exercise.venue",
+        "in": ["HOME", "GYM"]
+      }
+    },
+    {
+      "field": "basic.exercise.note",
+      "label": "运动备注",
+      "level": "LATER"
+    }
+  ]
+}

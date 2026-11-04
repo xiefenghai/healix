@@ -13,4 +13,6 @@ public class FieldRevisionItem extends BaseEntity {
     private String newValue;
     private String oldDisplay;
     private String newDisplay;
+    /** 聊天整理确认时带上的原句，最多 80 字。 */
+    private String quote;
 }

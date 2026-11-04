@@ -1,6 +1,8 @@
 package com.healix.core.patientcard.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.healix.common.domain.BaseEntity;
+import java.time.LocalDate;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -14,7 +16,11 @@ public class AccountPatient extends BaseEntity {
     private String displayName;
     private String relation;
     private String identityType;
+    @JsonIgnore
     private String identityValueHash;
     private String identityValueMask;
     private String mobile;
+    /** 列表展示用，取自档案，不落卡片表 */
+    private String gender;
+    private LocalDate birthday;
 }

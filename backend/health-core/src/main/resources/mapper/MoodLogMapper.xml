@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.mood.mapper.MoodLogMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, biz_date, score, tags_json, note,
+        recorded_by_people_id, recorded_by_staff_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO mood_log(
+            id, tenant_id, people_id, biz_date, score, tags_json, note,
+            recorded_by_people_id, recorded_by_staff_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{bizDate}, #{score}, #{tagsJson}, #{note},
+            #{recordedByPeopleId}, #{recordedByStaffId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE mood_log
+        SET score = #{score},
+            tags_json = #{tagsJson},
+            note = #{note},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE mood_log
+        SET is_deleted = 1, gmt_deleted = NOW(), gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="findByPeopleDate" resultType="com.healix.core.mood.domain.MoodLog">
+        SELECT <include refid="cols"/>
+        FROM mood_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date = #{bizDate}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByPeopleRange" resultType="com.healix.core.mood.domain.MoodLog">
+        SELECT <include refid="cols"/>
+        FROM mood_log
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND biz_date &gt;= #{from}
+          AND biz_date &lt;= #{to}
+          AND is_deleted = 0
+        ORDER BY biz_date ASC
+    </select>
+</mapper>

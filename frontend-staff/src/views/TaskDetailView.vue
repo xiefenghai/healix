@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { showToast } from 'vant'
+import { showConfirmDialog, showToast } from 'vant'
 import { api, getStaffId } from '../shared/http'
 import { formatDateTime, isOverdue } from '../shared/format'
 import { submitWithRetry } from '../shared/retry'
@@ -86,6 +86,30 @@ const isTeamAssign = computed(() => task.value?.taskType === 'TEAM_ASSIGN')
 const isPlanCreate = computed(() => task.value?.taskType === 'PLAN_CREATE')
 const isReportReview = computed(() => task.value?.taskType === 'REPORT_REVIEW')
 const isPlanReview = computed(() => task.value?.taskType === 'PLAN_REVIEW')
+const isSelfReport = computed(() => task.value?.taskType === 'ARCHIVE_SELF_REPORT')
+const isProfileLink = computed(() => task.value?.taskType === 'PROFILE_LINK')
+const isAssessmentEscalation = computed(() => task.value?.taskType === 'ASSESSMENT_ESCALATION')
+const isAssessmentSuspected = computed(() => task.value?.taskType === 'ASSESSMENT_SUSPECTED')
+const isQuestionnaireExpired = computed(() => task.value?.taskType === 'QUESTIONNAIRE_EXPIRED')
+const isAssessmentLoop = computed(
+  () => isAssessmentEscalation.value || isAssessmentSuspected.value || isQuestionnaireExpired.value,
+)
+const selfReportChanges = computed(() => {
+  const changes = task.value?.payload?.changes
+  if (!Array.isArray(changes)) return []
+  return changes as Array<{ label?: string; currentText?: string | null; newText?: string | null }>
+})
+const assessmentAdvice = computed(() => {
+  const p = task.value?.payload
+  if (!p) return ''
+  if (typeof p.advice === 'string' && p.advice.trim()) return p.advice.trim()
+  if (typeof p.reason === 'string' && p.reason.trim()) return p.reason.trim()
+  return ''
+})
+const assessmentDiseaseCode = computed(() => {
+  const code = task.value?.payload?.diseaseCode
+  return typeof code === 'string' ? code : ''
+})
 const canFillForm = computed(
   () => isMineOpen.value && (isNudge.value || isAlert.value || isFollowUp.value || isExercise.value),
 )
@@ -93,7 +117,8 @@ const formTitle = computed(() => {
   if (isNudge.value) return '打卡跟进'
   if (isAlert.value) return '指标异常处理'
   if (isExercise.value) return '运动不适处理'
-  return '定期随访'
+  if (isFollowUp.value) return task.value?.taskTypeLabel || '定期随访'
+  return task.value?.taskTypeLabel || '填单'
 })
 const canProcessFlow = computed(
   () =>
@@ -453,6 +478,103 @@ function goProcess() {
   if (processCta.value) void router.push(processCta.value.path)
 }
 
+function linkField(key: string) {
+  const payload = task.value?.payload
+  const value = payload?.[key]
+  return value == null || value === '' ? '—' : String(value)
+}
+
+async function decideLink(approve: boolean) {
+  submitting.value = true
+  try {
+    await api(`/api/b/v1/workspace/tasks/${taskId.value}/link-decision`, {
+      method: 'POST',
+      body: JSON.stringify({ approve }),
+    })
+    showToast(approve ? '已关联' : '已拒绝')
+    await load()
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '处理失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function ackSelfReport() {
+  if (!task.value) return
+  submitting.value = true
+  try {
+    const ok = await submitWithRetry(
+      () =>
+        api(`/api/b/v1/workspace/tasks/${taskId.value}/ack`, {
+          method: 'POST',
+        }),
+      { title: '办结失败' },
+    )
+    if (!ok) return
+    showToast('已核对办结')
+    await router.replace('/tasks')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function ackAssessmentTask() {
+  if (!task.value) return
+  submitting.value = true
+  try {
+    const ok = await submitWithRetry(
+      () =>
+        api(`/api/b/v1/workspace/tasks/${taskId.value}/ack`, {
+          method: 'POST',
+        }),
+      { title: '办结失败' },
+    )
+    if (!ok) return
+    showToast(isAssessmentSuspected.value ? '已办结（暂未建档）' : '已办结')
+    await router.replace('/tasks')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function createArchiveFromTask() {
+  if (!task.value?.peopleId || !assessmentDiseaseCode.value) {
+    showToast('缺少病种信息，请到评估页处理')
+    return
+  }
+  try {
+    await showConfirmDialog({
+      title: '确认建档',
+      message: '确认患者已患病并建立病种档案？建档后将切换严重等级分层，并自动关闭本任务。',
+    })
+  } catch {
+    return
+  }
+  submitting.value = true
+  try {
+    await api(
+      `/api/b/v1/patients/${task.value.peopleId}/assessments/disease-archives/${assessmentDiseaseCode.value}`,
+      { method: 'POST' },
+    )
+    showToast('已建档并办结')
+    await router.replace('/tasks')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '建档失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+function goAdjustPlan() {
+  void router.push(`/tasks/${taskId.value}/care-plan`)
+}
+
+function goAssessments() {
+  if (!task.value?.peopleId) return
+  void router.push(`/patients/${task.value.peopleId}/assessments`)
+}
+
 function staffName(s: OrgStaffItem) {
   return s.displayName || s.name || s.staffId
 }
@@ -504,6 +626,67 @@ onMounted(load)
           </span>
         </div>
       </section>
+
+      <section v-if="isProfileLink" class="hits hx-surface">
+        <h3>请核对是否同一人</h3>
+        <p>申请填写：{{ linkField('applicantName') }} · {{ linkField('applicantGender') }} · {{ linkField('applicantBirthday') }}</p>
+        <p>已有档案：{{ linkField('archiveName') }} · {{ linkField('archiveGender') }} · {{ linkField('archiveBirthday') }}</p>
+        <p class="hx-muted">本人号尾号 {{ linkField('mobileTail') }}</p>
+      </section>
+
+      <div v-if="isMineOpen && isProfileLink" class="actions stack">
+        <van-button block type="primary" round :loading="submitting" @click="decideLink(true)">关联此人</van-button>
+        <van-button block round plain type="primary" :loading="submitting" @click="decideLink(false)">不是同一人</van-button>
+      </div>
+
+      <section v-if="isSelfReport" class="hits hx-surface">
+        <h3>请核对是否调整方案</h3>
+        <p class="hx-muted self-report-lead">
+          患者在评估问卷里改了档案，系统已按患者填写更新。方案还合适就办结；要改方案先去调整，再回来办结。
+        </p>
+        <div v-for="(c, i) in selfReportChanges" :key="i" class="hit">
+          <strong>{{ c.label || '档案项' }}</strong>
+          <span>{{ c.currentText || '未填写' }} → {{ c.newText || '未填写' }}</span>
+        </div>
+        <p v-if="!selfReportChanges.length" class="hx-muted">{{ task.summary || '请到档案里核对本次更新' }}</p>
+      </section>
+
+      <div v-if="isMineOpen && isSelfReport" class="actions stack">
+        <van-button block type="primary" round :loading="submitting" @click="ackSelfReport">
+          无需调整，办结
+        </van-button>
+        <van-button block round plain type="primary" @click="goAdjustPlan">去调整方案</van-button>
+      </div>
+
+      <section v-if="isAssessmentLoop" class="hits hx-surface">
+        <h3>{{ task.taskTypeLabel || '评估待办' }}</h3>
+        <p v-if="assessmentAdvice">{{ assessmentAdvice }}</p>
+        <p v-else class="hx-muted">{{ task.summary || '请到评估页查看详情' }}</p>
+        <p v-if="isAssessmentEscalation" class="hx-muted">
+          等级已升高。跟进后办结；等级回落时系统也会自动关单。
+        </p>
+        <p v-else-if="isAssessmentSuspected" class="hx-muted">
+          可确认建档关单，或暂不建档先办结。
+        </p>
+        <p v-else class="hx-muted">问卷已过期，提醒或补录后可办结。</p>
+      </section>
+
+      <div v-if="isMineOpen && isAssessmentLoop" class="actions stack">
+        <van-button
+          v-if="isAssessmentSuspected && assessmentDiseaseCode"
+          block
+          type="primary"
+          round
+          :loading="submitting"
+          @click="createArchiveFromTask"
+        >
+          确认建档
+        </van-button>
+        <van-button block type="primary" round :loading="submitting" @click="ackAssessmentTask">
+          {{ isAssessmentSuspected ? '暂不建档，办结' : '已跟进，办结' }}
+        </van-button>
+        <van-button block round plain type="primary" @click="goAssessments">查看评估</van-button>
+      </div>
 
       <div v-if="canClaim" class="actions">
         <van-button block type="primary" round :loading="claiming" @click="claim">领取任务</van-button>
@@ -766,8 +949,10 @@ onMounted(load)
   color: var(--hx-muted, #8a97a5);
   text-decoration: line-through;
 }
-.actions {
-  padding: 0 16px 12px;
+.actions.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .actions.row {
   display: grid;

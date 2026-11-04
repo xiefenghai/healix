@@ -67,6 +67,7 @@ public class BWorkspaceController {
                 peopleId,
                 request.displayName(),
                 request.mobile(),
+                request.mobileOwner(),
                 request.address(),
                 request.educationLevel(),
                 request.maritalStatus(),
@@ -221,7 +222,31 @@ public class BWorkspaceController {
         return ApiResult.ok(orgWorkspaceService.listOrgPatients(orgId, keyword, careTeamId, unassigned, watched));
     }
 
-    /** 为当前机构创建患者档案头（可无证件建档，或挂接已有 people）。 */
+    /** 建档前查重：同名且同生日 / 同号码的已有档案。 */
+    @GetMapping("/patients/archives/duplicates")
+    public ApiResult<List<OrgWorkspaceService.DuplicateCandidate>> archiveDuplicates(
+            @RequestParam String name,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                            iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+                    java.time.LocalDate birthday,
+            @RequestParam(required = false) String mobile) {
+        return ApiResult.ok(orgWorkspaceService.findPossibleDuplicates(
+                SecurityUtils.requireCurrentOrgId(), name, birthday, mobile));
+    }
+
+    /** 已建档患者补充证件。 */
+    @PostMapping("/patients/{peopleId}/identity")
+    public ApiResult<OrgPatientListItem> addIdentity(
+            @PathVariable String peopleId, @RequestBody @Validated AddIdentityRequest request) {
+        return ApiResult.ok(orgWorkspaceService.addIdentity(
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                request.identityType(),
+                request.identityValue(),
+                SecurityUtils.requireContext().getAccountId()));
+    }
+
+    /** 为当前机构建档：证件选填，联系电话须填或标「暂无」；查重确认后可挂接已有档案。 */
     @PostMapping("/patients/archives")
     public ApiResult<OrgPatientListItem> createArchive(@RequestBody @Validated CreateArchiveRequest request) {
         String orgId = SecurityUtils.requireCurrentOrgId();
@@ -230,11 +255,13 @@ public class BWorkspaceController {
                 orgId,
                 request.name(),
                 request.attachPeopleId(),
-                Boolean.TRUE.equals(request.noIdentity()),
                 request.identityType(),
                 request.identityValue(),
                 request.gender(),
                 request.birthday(),
+                request.mobile(),
+                request.mobileOwner(),
+                Boolean.TRUE.equals(request.noMobile()),
                 accountId));
     }
 
@@ -265,16 +292,22 @@ public class BWorkspaceController {
     public record CreateArchiveRequest(
             @NotBlank String name,
             String attachPeopleId,
-            Boolean noIdentity,
             String identityType,
             String identityValue,
             String gender,
-            java.time.LocalDate birthday) {
+            java.time.LocalDate birthday,
+            @Size(max = 32) String mobile,
+            String mobileOwner,
+            Boolean noMobile) {
+    }
+
+    public record AddIdentityRequest(@NotBlank String identityType, @NotBlank @Size(max = 64) String identityValue) {
     }
 
     public record UpdatePatientBasicInfoRequest(
             @NotBlank @Size(max = 64) String displayName,
             @Size(max = 32) String mobile,
+            String mobileOwner,
             @Size(max = 256) String address,
             @Size(max = 32) String educationLevel,
             @Size(max = 32) String maritalStatus,

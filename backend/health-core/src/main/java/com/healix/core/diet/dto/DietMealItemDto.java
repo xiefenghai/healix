@@ -22,4 +22,6 @@ public class DietMealItemDto {
     private String precisionLevel;
     private Double confidence;
     private Boolean gramsConfirmed;
+    /** 仅识别草稿：AI 的份量估算依据，不落库 */
+    private String basis;
 }

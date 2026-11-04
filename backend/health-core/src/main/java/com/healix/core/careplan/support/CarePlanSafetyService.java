@@ -9,48 +9,93 @@ import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.careplan.dto.SafetyFlagDto;
 import com.healix.core.careplan.support.CarePlanAllergenGuard.Hit;
 import com.healix.core.careplan.enums.CarePlanSafetyLevelEnum;
+import com.healix.core.field.FieldCatalog;
+import com.healix.core.field.FieldDef;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
+@RequiredArgsConstructor
 public class CarePlanSafetyService {
+
+    private final FieldCatalog fieldCatalog;
 
     public static final String ERR_ALLERGEN = "DIET_ALLERGEN_CONFLICT";
     public static final String ERR_INCOMPLETE = "PLAN_INCOMPLETE";
+    public static final String ERR_HIGHLIGHT_BLOCK = "HIGHLIGHT_BLOCK";
     public static final String WARN_CONTEXT = "CONTEXT_INCOMPLETE";
     public static final String WARN_NO_DISEASE = "NO_DISEASE_TAG";
+    public static final String WARN_MISSING_RATIONALE = CarePlanRationaleSupport.WARN_MISSING;
     public static final String WARN_HYPO = "HYPOGLYCEMIA_RISK";
     public static final String WARN_INTOLERANCE = "DIET_INTOLERANCE";
     public static final String WARN_ALLERGY_UNKNOWN = "ALLERGY_UNKNOWN";
+    public static final String WARN_HIGHLIGHT = "HIGHLIGHT_CAUTION";
 
     public List<SafetyFlagDto> evaluate(
             JsonNode exercise,
             JsonNode diet,
             JsonNode execution,
             boolean contextIncomplete,
-            boolean noDiseaseTag,
+            boolean specialtyMismatch,
             boolean hypoglycemiaRisk) {
-        return evaluate(exercise, diet, execution, contextIncomplete, noDiseaseTag, hypoglycemiaRisk, List.of(), null);
+        return evaluate(
+                exercise,
+                diet,
+                execution,
+                contextIncomplete,
+                specialtyMismatch,
+                hypoglycemiaRisk,
+                List.of(),
+                null,
+                null,
+                false);
     }
 
     /**
      * @param foodAllergens 过敏史中的食物过敏/不耐受，用于全文命中推荐食物与示例食谱
      * @param allergyStatus 过敏史状态；UNKNOWN（未询问）时提示医护先采集
+     * @param contextSnapshot 含 rationale.overview；可空
+     * @param requireRationale 生成稿为 true；空白草稿为 false
      */
     public List<SafetyFlagDto> evaluate(
             JsonNode exercise,
             JsonNode diet,
             JsonNode execution,
             boolean contextIncomplete,
-            boolean noDiseaseTag,
+            boolean specialtyMismatch,
             boolean hypoglycemiaRisk,
             List<FoodAllergen> foodAllergens,
             AllergyStatusEnum allergyStatus) {
+        return evaluate(
+                exercise,
+                diet,
+                execution,
+                contextIncomplete,
+                specialtyMismatch,
+                hypoglycemiaRisk,
+                foodAllergens,
+                allergyStatus,
+                null,
+                false);
+    }
+
+    public List<SafetyFlagDto> evaluate(
+            JsonNode exercise,
+            JsonNode diet,
+            JsonNode execution,
+            boolean contextIncomplete,
+            boolean specialtyMismatch,
+            boolean hypoglycemiaRisk,
+            List<FoodAllergen> foodAllergens,
+            AllergyStatusEnum allergyStatus,
+            JsonNode contextSnapshot,
+            boolean requireRationale) {
         List<SafetyFlagDto> flags = new ArrayList<>();
         if (!isExercisePresent(exercise) || !isDietPresent(diet) || !hasEnabledTask(execution)) {
             flags.add(new SafetyFlagDto(
@@ -91,9 +136,18 @@ public class CarePlanSafetyService {
                     WARN_CONTEXT,
                     "患者档案或关键指标不完整，方案基于有限上下文生成"));
         }
-        if (noDiseaseTag) {
+        if (specialtyMismatch) {
             flags.add(new SafetyFlagDto(
-                    CarePlanSafetyLevelEnum.WARN.name(), WARN_NO_DISEASE, "未识别明确病种，已使用通用模板"));
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_NO_DISEASE,
+                    "已选专项管理但档案未见对应病种，请核对病种或改选方案类型"));
+        }
+        if (requireRationale
+                && CarePlanRationaleSupport.missingBlockOrOverview(exercise, diet, execution, contextSnapshot)) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_MISSING_RATIONALE,
+                    "生成理由不完整（缺总览或运动/饮食/执行块级理由），请审阅后确认"));
         }
         if (hypoglycemiaRisk) {
             flags.add(new SafetyFlagDto(
@@ -101,7 +155,67 @@ public class CarePlanSafetyService {
                     WARN_HYPO,
                     "存在低血糖相关风险信号，请审阅运动强度与注意事项"));
         }
+        addHighlightFlags(flags, contextSnapshot);
         return flags;
+    }
+
+    /** 首诊高亮：BLOCK 不可发布；CAUTION/REFER 需确认。 */
+    private void addHighlightFlags(List<SafetyFlagDto> flags, JsonNode contextSnapshot) {
+        if (contextSnapshot == null || contextSnapshot.isNull()) {
+            return;
+        }
+        JsonNode highlights = contextSnapshot.get("highlights");
+        if (highlights == null || !highlights.isArray() || highlights.isEmpty()) {
+            return;
+        }
+        List<String> blocks = new ArrayList<>();
+        List<String> warns = new ArrayList<>();
+        for (JsonNode h : highlights) {
+            String sev = h.path("severity").asText("");
+            String label = highlightLabel(h);
+            String effect = h.path("planEffect").asText("");
+            String msg = label + (StringUtils.hasText(effect) ? "：" + effect : "");
+            if ("BLOCK".equals(sev)) {
+                blocks.add(msg);
+            } else if ("CAUTION".equals(sev) || "REFER".equals(sev)) {
+                warns.add(("REFER".equals(sev) ? "建议转介 · " : "") + msg);
+            }
+        }
+        JsonNode goals = contextSnapshot.get("goals");
+        if (goals != null
+                && goals.path("lossBlocked").asBoolean(false)
+                && "LOSS".equalsIgnoreCase(goals.path("mode").asText(""))) {
+            blocks.add("高亮禁止减重，但目标模式仍为 LOSS");
+        }
+        if (!blocks.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.ERROR.name(),
+                    ERR_HIGHLIGHT_BLOCK,
+                    "存在阻断级高亮，不能按减重方案发布：" + String.join("；", blocks)));
+        }
+        if (!warns.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_HIGHLIGHT,
+                    "首诊高亮需在方案中落实：" + String.join("；", warns)));
+        }
+    }
+
+    /** 优先高亮自带中文 label，否则查字段目录，最后才回退编码。 */
+    private String highlightLabel(JsonNode h) {
+        String label = h.path("label").asText("");
+        if (StringUtils.hasText(label)) {
+            return label.trim();
+        }
+        String field = h.path("field").asText("");
+        if (!StringUtils.hasText(field)) {
+            return "高亮";
+        }
+        return fieldCatalog
+                .find(field)
+                .map(FieldDef::label)
+                .filter(StringUtils::hasText)
+                .orElse(field);
     }
 
     public void assertPublishable(List<SafetyFlagDto> flags, List<String> ackWarnCodes) {
@@ -220,6 +334,21 @@ public class CarePlanSafetyService {
             o.put("message", f.message());
         }
         return JsonUtils.toJson(arr);
+    }
+
+    public List<SafetyFlagDto> parseFlags(String flagsJson) {
+        List<SafetyFlagDto> out = new ArrayList<>();
+        JsonNode arr = JsonUtils.readTree(flagsJson == null ? "[]" : flagsJson);
+        if (arr == null || !arr.isArray()) {
+            return out;
+        }
+        for (JsonNode n : arr) {
+            out.add(new SafetyFlagDto(
+                    n.path("level").asText(""),
+                    n.path("code").asText(""),
+                    n.path("message").asText("")));
+        }
+        return out;
     }
 
 }

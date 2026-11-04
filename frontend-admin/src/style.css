@@ -198,6 +198,49 @@ a:hover {
   overflow: hidden;
 }
 
+/* 方案 / 报告 / 随访 / 评估等长内容详情：尽量占满视口，正文在框内滚动 */
+.el-dialog.care-plan-preview-dialog,
+.el-dialog.hr-review-dialog,
+.el-dialog.followup-detail-dialog,
+.el-dialog.assess-detail-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 92vh;
+}
+
+.el-dialog.hr-review-dialog {
+  height: 92vh;
+}
+
+.el-dialog.care-plan-preview-dialog .el-dialog__header,
+.el-dialog.hr-review-dialog .el-dialog__header,
+.el-dialog.followup-detail-dialog .el-dialog__header,
+.el-dialog.assess-detail-dialog .el-dialog__header,
+.el-dialog.care-plan-preview-dialog .el-dialog__footer,
+.el-dialog.hr-review-dialog .el-dialog__footer,
+.el-dialog.followup-detail-dialog .el-dialog__footer,
+.el-dialog.assess-detail-dialog .el-dialog__footer {
+  flex: none;
+}
+
+.el-dialog.care-plan-preview-dialog .el-dialog__body,
+.el-dialog.followup-detail-dialog .el-dialog__body,
+.el-dialog.assess-detail-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+.el-dialog.hr-review-dialog .el-dialog__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
 .el-dialog__header {
   padding: 18px 20px 12px !important;
   margin-right: 0 !important;

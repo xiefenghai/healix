@@ -26,6 +26,13 @@ const password = ref('')
 const mfaCode = ref('')
 const mfaRequired = ref(false)
 const loading = ref(false)
+const selectedTenantId = ref('')
+const tenantChoices = ref<Array<{ tenantId: string; tenantName: string; roles?: string[] }>>([])
+
+function resetTenantChoices() {
+  tenantChoices.value = []
+  selectedTenantId.value = ''
+}
 
 function isMfaPrompt(message: string) {
   return message.includes('动态验证码')
@@ -39,6 +46,7 @@ async function submit() {
       username: username.value,
       password: password.value,
       ...(mfaCode.value.trim() ? { mfaCode: mfaCode.value.trim() } : {}),
+      ...(selectedTenantId.value ? { tenantId: selectedTenantId.value } : {}),
     }
 
     if (entry.value === 'ops') {
@@ -56,12 +64,49 @@ async function submit() {
       return
     }
 
-    const res = await api<{
-      data: { accessToken: string; roles: string[]; currentOrgId: string | null }
+    let res = await api<{
+      data: {
+        accessToken: string | null
+        roles: string[] | null
+        currentOrgId: string | null
+        tenants?: Array<{ tenantId: string; tenantName: string; roles?: string[] }> | null
+      }
     }>('/api/b/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify(body),
     })
+
+    if (!res.data.accessToken) {
+      const all = res.data.tenants ?? []
+      const usable = entry.value === 'tenant'
+        ? all.filter((t) => t.roles?.includes('TENANT_ADMIN'))
+        : all
+      if (!usable.length) {
+        throw new Error('该账号不是租户管理员，请改用「机构工作台」入口')
+      }
+      if (usable.length === 1) {
+        selectedTenantId.value = usable[0].tenantId
+        res = await api<{
+          data: {
+            accessToken: string | null
+            roles: string[] | null
+            currentOrgId: string | null
+            tenants?: Array<{ tenantId: string; tenantName: string; roles?: string[] }> | null
+          }
+        }>('/api/b/v1/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ ...body, tenantId: usable[0].tenantId }),
+        })
+      } else {
+        tenantChoices.value = usable
+        selectedTenantId.value = usable[0].tenantId
+        ElMessage.info('该账号加入了多个租户，请选择要进入的租户')
+        return
+      }
+    }
+    if (!res.data.accessToken) {
+      throw new Error('请选择要进入的租户')
+    }
 
     const roles = res.data.roles ?? []
     if (entry.value === 'tenant' && !roles.includes('TENANT_ADMIN')) {
@@ -152,7 +197,13 @@ async function submit() {
         <div class="form-card">
           <el-form label-position="top" @submit.prevent="submit">
             <el-form-item label="用户名">
-              <el-input v-model="username" autocomplete="username" size="large" placeholder="请输入用户名" />
+              <el-input
+                v-model="username"
+                autocomplete="username"
+                size="large"
+                placeholder="请输入用户名"
+                @input="resetTenantChoices"
+              />
             </el-form-item>
             <el-form-item label="密码">
               <el-input
@@ -163,6 +214,16 @@ async function submit() {
                 size="large"
                 placeholder="请输入密码"
               />
+            </el-form-item>
+            <el-form-item v-if="tenantChoices.length" label="租户">
+              <el-select v-model="selectedTenantId" size="large" placeholder="选择要进入的租户" style="width: 100%">
+                <el-option
+                  v-for="item in tenantChoices"
+                  :key="item.tenantId"
+                  :label="item.tenantName"
+                  :value="item.tenantId"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item v-if="mfaRequired" label="动态验证码">
               <el-input

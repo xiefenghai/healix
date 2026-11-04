@@ -8,6 +8,7 @@ public enum AgentCapability {
     OCR_EXAM("检查单识别", true),
     OCR_MED("用药单识别", true),
     REPORT_SUMMARY("管理报告点评", true),
+    CHAT_EXTRACT("整理这段记录", true),
     GENERAL_CHAT("健康咨询", true);
 
     private final String label;

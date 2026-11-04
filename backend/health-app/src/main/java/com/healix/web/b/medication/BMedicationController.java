@@ -1,9 +1,14 @@
 package com.healix.web.b.medication;
 
 import com.healix.common.result.ApiResult;
+import com.healix.core.archive.service.ArchiveAccessService;
+import com.healix.core.medication.dto.MedicationAdherenceDto;
+import com.healix.core.medication.dto.MedicationFeedbackDto;
 import com.healix.core.medication.dto.MedicationIntakeViewDto;
 import com.healix.core.medication.dto.MedicationViewDto;
 import com.healix.core.medication.enums.MedicationSourceEnum;
+import com.healix.core.medication.service.MedicationAdherenceService;
+import com.healix.core.medication.service.MedicationFeedbackService;
 import com.healix.core.medication.service.MedicationService;
 import com.healix.core.medication.service.MedicationService.IntakeCommand;
 import com.healix.core.medication.service.MedicationService.MedicationCommand;
@@ -15,6 +20,7 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,7 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * B 端用药管理接口。
- * <p>患者级用药清单、处方批量开立、依从性打卡（C 端暂不开放）。
+ * <p>患者级用药清单、处方批量开立、依从性补录、自添加药核对、用药反馈处理。
  */
 @Validated
 @RestController
@@ -37,6 +43,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class BMedicationController {
 
     private final MedicationService medicationService;
+    private final MedicationAdherenceService adherenceService;
+    private final MedicationFeedbackService feedbackService;
+    private final ArchiveAccessService archiveAccessService;
 
     /** 列出患者用药清单（可按 ACTIVE/STOPPED 筛选）。 */
     @GetMapping("/patients/{peopleId}/medications")
@@ -156,6 +165,52 @@ public class BMedicationController {
                 new IntakeCommand(request.intakeDate(), request.timeSlot(), request.status(), request.note())));
     }
 
+    /** 核对患者自添加的药。 */
+    @PostMapping("/patients/{peopleId}/medications/{medicationId}/verify")
+    public ApiResult<MedicationViewDto> verify(@PathVariable String peopleId, @PathVariable String medicationId) {
+        return ApiResult.ok(medicationService.verify(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId(),
+                medicationId));
+    }
+
+    /** 近 N 天服药网格（药 × 日 × 时段）。 */
+    @GetMapping("/patients/{peopleId}/medications/adherence")
+    public ApiResult<MedicationAdherenceDto> adherence(
+            @PathVariable String peopleId, @RequestParam(defaultValue = "14") int days) {
+        String tenantId = SecurityUtils.requireTenantId();
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, SecurityUtils.requireCurrentOrgId(), peopleId);
+        return ApiResult.ok(adherenceService.range(tenantId, peopleId, days));
+    }
+
+    /** 患者用药反馈（不适 / 申请调整 / 停药 / 过敏冲突）。 */
+    @GetMapping("/patients/{peopleId}/medication-feedback")
+    public ApiResult<List<MedicationFeedbackDto>> feedback(
+            @PathVariable String peopleId, @RequestParam(required = false) String status) {
+        return ApiResult.ok(feedbackService.listForStaff(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                StringUtils.hasText(status) ? status.trim().toUpperCase() : null));
+    }
+
+    /** 处理反馈并回复患者，同时关闭关联任务。 */
+    @PutMapping("/patients/{peopleId}/medication-feedback/{feedbackId}")
+    public ApiResult<MedicationFeedbackDto> handleFeedback(
+            @PathVariable String peopleId,
+            @PathVariable String feedbackId,
+            @RequestBody @Validated HandleFeedbackRequest request) {
+        return ApiResult.ok(feedbackService.handle(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireStaffId(),
+                feedbackId,
+                request.reply()));
+    }
+
     private MedicationCommand toCommand(MedicationRequest request) {
         return new MedicationCommand(
                 request.drugName(),
@@ -169,7 +224,9 @@ public class BMedicationController {
                 request.courseDays(),
                 request.hasAdverseReaction(),
                 request.remark(),
-                request.status());
+                request.status(),
+                request.drugCode(),
+                request.slots());
     }
 
     /** B 端仅允许健管手工 / 处方来源，不可冒充患者自添加。 */
@@ -201,7 +258,11 @@ public class BMedicationController {
             Boolean hasAdverseReaction,
             @Size(max = 150) String remark,
             String status,
-            String source) {}
+            String source,
+            @Size(max = 64) String drugCode,
+            List<String> slots) {}
+
+    public record HandleFeedbackRequest(@NotBlank @Size(max = 500) String reply) {}
 
     public record PrescriptionRequest(@NotEmpty List<@NotNull MedicationRequest> items) {}
 

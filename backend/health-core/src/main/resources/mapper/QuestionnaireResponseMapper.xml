@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.questionnaire.mapper.QuestionnaireResponseMapper">
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, questionnaire_code, questionnaire_version, purpose,
+        enrollment_id, followup_record_id, request_id, status, channel, program_code,
+        prefill_json, answers_json, snapshot_json, changes_json, highlights_json, completeness_json,
+        filled_by_type, filled_by_id, submitted_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+    <select id="findById" resultType="com.healix.core.questionnaire.domain.QuestionnaireResponse">
+        SELECT <include refid="cols"/> FROM questionnaire_response
+        WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findDraft" resultType="com.healix.core.questionnaire.domain.QuestionnaireResponse">
+        SELECT <include refid="cols"/> FROM questionnaire_response
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+          AND purpose = #{purpose} AND status = 'DRAFT' AND is_deleted = 0
+        <if test="followupRecordId != null">AND followup_record_id = #{followupRecordId}</if>
+        <if test="followupRecordId == null">AND followup_record_id IS NULL</if>
+        <if test="requestId != null">AND request_id = #{requestId}</if>
+        <if test="requestId == null">AND request_id IS NULL</if>
+        ORDER BY gmt_created DESC LIMIT 1
+    </select>
+    <select id="listByPeople" resultType="com.healix.core.questionnaire.domain.QuestionnaireResponse">
+        SELECT <include refid="cols"/> FROM questionnaire_response
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY gmt_created DESC
+    </select>
+    <select id="findLatestSubmitted" resultType="com.healix.core.questionnaire.domain.QuestionnaireResponse">
+        SELECT <include refid="cols"/> FROM questionnaire_response
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+          AND purpose = #{purpose} AND status = 'SUBMITTED' AND is_deleted = 0
+        ORDER BY submitted_at DESC LIMIT 1
+    </select>
+    <select id="listSubmitted" resultType="com.healix.core.questionnaire.domain.QuestionnaireResponse">
+        SELECT <include refid="cols"/> FROM questionnaire_response
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId}
+          AND purpose = #{purpose} AND status = 'SUBMITTED' AND is_deleted = 0
+        ORDER BY submitted_at DESC
+        LIMIT #{limit}
+    </select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO questionnaire_response(
+            id, tenant_id, org_id, people_id, questionnaire_code, questionnaire_version, purpose,
+            enrollment_id, followup_record_id, request_id, status, channel, program_code,
+            prefill_json, answers_json, snapshot_json, changes_json, highlights_json, completeness_json,
+            filled_by_type, filled_by_id, submitted_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{questionnaireCode}, #{questionnaireVersion}, #{purpose},
+            #{enrollmentId}, #{followupRecordId}, #{requestId}, #{status}, #{channel}, #{programCode},
+            #{prefillJson}, #{answersJson}, #{snapshotJson}, #{changesJson}, #{highlightsJson}, #{completenessJson},
+            #{filledByType}, #{filledById}, #{submittedAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+    <update id="updateDraft">
+        UPDATE questionnaire_response SET
+            questionnaire_code = #{questionnaireCode},
+            questionnaire_version = #{questionnaireVersion},
+            enrollment_id = #{enrollmentId},
+            channel = #{channel},
+            program_code = #{programCode},
+            prefill_json = #{prefillJson},
+            answers_json = #{answersJson},
+            completeness_json = #{completenessJson},
+            highlights_json = #{highlightsJson},
+            filled_by_type = #{filledByType},
+            filled_by_id = #{filledById},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND status = 'DRAFT' AND is_deleted = 0
+    </update>
+    <update id="markSubmitted">
+        UPDATE questionnaire_response SET
+            status = 'SUBMITTED',
+            enrollment_id = #{enrollmentId},
+            channel = #{channel},
+            program_code = #{programCode},
+            answers_json = #{answersJson},
+            snapshot_json = #{snapshotJson},
+            changes_json = #{changesJson},
+            highlights_json = #{highlightsJson},
+            completeness_json = #{completenessJson},
+            submitted_at = #{submittedAt},
+            filled_by_type = #{filledByType},
+            filled_by_id = #{filledById},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND status = 'DRAFT' AND is_deleted = 0
+    </update>
+</mapper>

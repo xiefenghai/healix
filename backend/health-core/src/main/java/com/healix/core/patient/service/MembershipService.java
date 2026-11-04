@@ -10,6 +10,7 @@ import com.healix.core.org.mapper.OrgInviteCodeMapper;
 import com.healix.core.patient.domain.PatientCareAssignment;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.enums.MembershipStatusEnum;
+import com.healix.core.followup.service.FollowupScheduleService;
 import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.people.domain.PeopleProfile;
@@ -33,6 +34,7 @@ public class MembershipService {
     private final PeopleProfileMapper peopleProfileMapper;
     private final OrgInviteCodeMapper inviteCodeMapper;
     private final AuditService auditService;
+    private final FollowupScheduleService followupScheduleService;
 
     @Transactional
     public PatientOrgMembership joinByInvite(String peopleId, String peopleAccountId, String inviteCode) {
@@ -86,6 +88,9 @@ public class MembershipService {
                 careAssignmentMapper.insert(care);
             }
         }
+
+        // 先开入组/首诊；分配健管组等首诊办结后再开（见 FollowupService.openPlanAfterOnboarding）
+        followupScheduleService.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
 
         auditService.record(
                 PortalEnum.C.code(),

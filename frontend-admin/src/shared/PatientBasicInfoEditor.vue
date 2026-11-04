@@ -12,11 +12,14 @@ import {
   formatEducationLevel,
   formatMaritalStatus,
 } from './enums'
+import { MOBILE_OWNER_OPTIONS, mobileWithOwner } from './mobile-owner'
 
 export interface PatientBasicInfo {
   peopleId: string
   displayName: string
   mobile?: string | null
+  mobileOwner?: string | null
+  identityMask?: string | null
   address?: string | null
   educationLevel?: string | null
   maritalStatus?: string | null
@@ -41,6 +44,7 @@ const dialogVisible = ref(false)
 const form = reactive({
   displayName: '',
   mobile: '',
+  mobileOwner: 'SELF',
   address: '',
   educationLevel: '' as string,
   maritalStatus: '' as string,
@@ -49,7 +53,7 @@ const form = reactive({
 
 const displayRows = computed(() => [
   { label: '姓名', value: info.value?.displayName || '-' },
-  { label: '联系方式', value: info.value?.mobile || '-' },
+  { label: '联系电话', value: mobileWithOwner(info.value?.mobile, info.value?.mobileOwner) || '-' },
   { label: '家庭住址', value: info.value?.address || '-' },
   { label: '文化程度', value: formatEducationLevel(info.value?.educationLevel) },
   { label: '婚姻状况', value: formatMaritalStatus(info.value?.maritalStatus) },
@@ -65,6 +69,8 @@ async function load() {
       peopleId: res.data.peopleId,
       displayName: res.data.displayName,
       mobile: res.data.mobile,
+      mobileOwner: res.data.mobileOwner,
+      identityMask: res.data.identityMask,
       address: res.data.address,
       educationLevel: res.data.educationLevel,
       maritalStatus: res.data.maritalStatus,
@@ -81,6 +87,7 @@ function openEdit() {
   const src = info.value
   form.displayName = src?.displayName || ''
   form.mobile = src?.mobile || ''
+  form.mobileOwner = src?.mobileOwner || 'SELF'
   form.address = src?.address || ''
   form.educationLevel = src?.educationLevel || ''
   form.maritalStatus = src?.maritalStatus || ''
@@ -102,6 +109,7 @@ async function save() {
         body: JSON.stringify({
           displayName: form.displayName.trim(),
           mobile: form.mobile.trim() || null,
+          mobileOwner: form.mobile.trim() ? form.mobileOwner : null,
           address: form.address.trim() || null,
           educationLevel: form.educationLevel || null,
           maritalStatus: form.maritalStatus || null,
@@ -113,6 +121,8 @@ async function save() {
       peopleId: res.data.peopleId,
       displayName: res.data.displayName,
       mobile: res.data.mobile,
+      mobileOwner: res.data.mobileOwner,
+      identityMask: res.data.identityMask,
       address: res.data.address,
       educationLevel: res.data.educationLevel,
       maritalStatus: res.data.maritalStatus,
@@ -128,6 +138,46 @@ async function save() {
   }
 }
 
+const identityVisible = ref(false)
+const identitySaving = ref(false)
+const identityForm = reactive({ identityType: 'ID_CARD', identityValue: '' })
+const IDENTITY_OPTIONS = [
+  { label: '身份证', value: 'ID_CARD' },
+  { label: '军官证', value: 'MILITARY_ID' },
+  { label: '港澳通行证', value: 'HK_MACAU_PASS' },
+  { label: '台胞证', value: 'TAIWAN_PASS' },
+  { label: '其他', value: 'OTHER' },
+]
+
+function openIdentity() {
+  identityForm.identityType = 'ID_CARD'
+  identityForm.identityValue = ''
+  identityVisible.value = true
+}
+
+async function saveIdentity() {
+  const value = identityForm.identityValue.trim().toUpperCase()
+  if (!value) {
+    ElMessage.warning('请填写证件号码')
+    return
+  }
+  identitySaving.value = true
+  try {
+    await api(`/api/b/v1/patients/${props.peopleId}/identity`, {
+      method: 'POST',
+      body: JSON.stringify({ identityType: identityForm.identityType, identityValue: value }),
+    })
+    identityVisible.value = false
+    ElMessage.success('证件已补充')
+    await load()
+    if (info.value) emit('updated', info.value)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    identitySaving.value = false
+  }
+}
+
 watch(
   () => props.peopleId,
   () => {
@@ -136,7 +186,7 @@ watch(
   { immediate: true },
 )
 
-defineExpose({ openEdit, reload: load, info })
+defineExpose({ openEdit, openIdentity, reload: load, info })
 </script>
 
 <template>
@@ -152,6 +202,16 @@ defineExpose({ openEdit, reload: load, info })
         <span class="info-label">{{ row.label }}</span>
         <span class="info-value">{{ row.value }}</span>
       </div>
+      <div class="info-item">
+        <span class="info-label">证件</span>
+        <span class="info-value">
+          <template v-if="info?.identityMask">{{ info.identityMask }}</template>
+          <template v-else>
+            未登记
+            <el-button link type="primary" size="small" @click="openIdentity">补充</el-button>
+          </template>
+        </span>
+      </div>
     </div>
   </el-card>
 
@@ -166,8 +226,13 @@ defineExpose({ openEdit, reload: load, info })
       <el-form-item label="姓名" required>
         <el-input v-model="form.displayName" maxlength="64" show-word-limit />
       </el-form-item>
-      <el-form-item label="联系方式">
-        <el-input v-model="form.mobile" maxlength="32" placeholder="手机号" />
+      <el-form-item label="联系电话">
+        <div class="mobile-row">
+          <el-input v-model="form.mobile" maxlength="20" placeholder="手机或座机" class="mobile-input" />
+          <el-select v-model="form.mobileOwner" :disabled="!form.mobile.trim()" class="owner-select">
+            <el-option v-for="o in MOBILE_OWNER_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+          </el-select>
+        </div>
       </el-form-item>
       <el-form-item label="家庭住址">
         <el-input v-model="form.address" maxlength="256" type="textarea" :rows="2" />
@@ -199,6 +264,24 @@ defineExpose({ openEdit, reload: load, info })
     <template #footer>
       <el-button @click="dialogVisible = false">取消</el-button>
       <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="identityVisible" title="补充证件" width="440px" destroy-on-close append-to-body>
+    <el-form label-width="80px" @submit.prevent>
+      <el-form-item label="证件类型">
+        <el-select v-model="identityForm.identityType" style="width: 100%">
+          <el-option v-for="o in IDENTITY_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="证件号码">
+        <el-input v-model="identityForm.identityValue" maxlength="32" />
+      </el-form-item>
+    </el-form>
+    <p class="id-tip">加密保存，仅显示脱敏号码。身份证会校正性别与出生日期。</p>
+    <template #footer>
+      <el-button @click="identityVisible = false">取消</el-button>
+      <el-button type="primary" :loading="identitySaving" @click="saveIdentity">保存</el-button>
     </template>
   </el-dialog>
 </template>
@@ -241,6 +324,23 @@ defineExpose({ openEdit, reload: load, info })
   font-size: 14px;
   color: var(--ink-800);
   word-break: break-all;
+}
+
+.mobile-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.mobile-input {
+  flex: 1;
+}
+.owner-select {
+  width: 110px;
+}
+.id-tip {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-500);
 }
 
 @media (max-width: 720px) {

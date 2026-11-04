@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
+import { openInNewTab } from '../../shared/open-route'
 import {
   formatBaselineMetric,
   formatFollowupContactTarget,
@@ -20,6 +22,7 @@ import {
 
 interface FollowupDetail {
   id: string
+  peopleId?: string
   recordType: string
   recordTypeLabel?: string
   status: string
@@ -30,6 +33,8 @@ interface FollowupDetail {
   completedByName?: string
   completedAt?: string
 }
+
+const router = useRouter()
 
 const props = defineProps<{
   followupId: string | null
@@ -81,14 +86,7 @@ const exerciseEvents = computed<Record<string, unknown>[]>(() => {
   return Array.isArray(events) ? (events as Record<string, unknown>[]) : []
 })
 
-const detailDialogWidth = computed(() => {
-  if (!detail.value) return '560px'
-  if (detail.value.recordType === 'METRIC_REVIEW') return '640px'
-  if (contentText('followupType') === 'ROUTINE' || contentText('followupType') === 'ONBOARDING') {
-    return '640px'
-  }
-  return '560px'
-})
+const detailDialogWidth = computed(() => 'min(960px, 94vw)')
 
 watch(
   () => props.followupId,
@@ -129,6 +127,12 @@ function sectionText(key: string) {
   const v = s[key]
   if (Array.isArray(v)) return v.map((x) => String(x)).join('、')
   return v == null ? '' : String(v)
+}
+
+function openIntakeDetail() {
+  const id = sectionText('intakeResponseId')
+  if (!id) return
+  openInNewTab(router, `/workspace/intake-responses/${id}`)
 }
 
 function contentText(key: string) {
@@ -234,8 +238,8 @@ function detailTitle() {
     v-model="open"
     title="随访详情"
     :width="detailDialogWidth"
-    destroy-on-close
     align-center
+    destroy-on-close
     class="followup-detail-dialog"
     @closed="onClosed"
   >
@@ -266,11 +270,25 @@ function detailTitle() {
 
       <template v-if="contentText('followupType') === 'ONBOARDING' && detailSection">
         <div class="detail-card">
-          <div class="detail-card-title">入组结果</div>
+          <div class="detail-card-title">入组 / 首诊结果</div>
           <div class="kv-grid">
             <div class="kv-item">
-              <span class="kv-label">档案写回</span>
-              <span class="kv-value">{{ detailSection.archiveWritten ? '是' : '否' }}</span>
+              <span class="kv-label">完成方式</span>
+              <span class="kv-value">{{
+                sectionText('intakeResponseId') ? '首诊问卷已提交' : detailSection.archiveWritten ? '档案写回（旧）' : '-'
+              }}</span>
+            </div>
+            <div v-if="sectionText('intakeResponseId')" class="kv-item kv-item--full">
+              <span class="kv-label">首诊问卷</span>
+              <span class="kv-value">
+                <button type="button" class="link-btn" @click="openIntakeDetail">
+                  查看详情
+                </button>
+              </span>
+            </div>
+            <div v-if="sectionText('aiSummary')" class="kv-item kv-item--full">
+              <span class="kv-label">AI 总结摘要</span>
+              <span class="kv-value pre">{{ sectionText('aiSummary') }}</span>
             </div>
             <div v-if="sectionText('nextAction')" class="kv-item">
               <span class="kv-label">下次动作</span>
@@ -620,6 +638,24 @@ function detailTitle() {
   font-size: 14px;
   color: var(--el-text-color-primary);
   word-break: break-word;
+}
+.kv-value.pre {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.55;
+  max-height: 160px;
+  overflow: auto;
+}
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  font-size: 14px;
+}
+.link-btn:hover {
+  text-decoration: underline;
 }
 .text-block {
   margin-top: 12px;

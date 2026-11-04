@@ -1,6 +1,7 @@
 package com.healix.core.job.handler;
 
 import com.healix.core.followup.service.FollowupScheduleService;
+import com.healix.core.followup.service.FollowupScheduleService.OnboardingCompensateCounts;
 import com.healix.core.followup.service.FollowupScheduleService.ScheduleCounts;
 import com.healix.core.job.catalog.JobCatalog;
 import com.healix.core.job.support.JobCronSupport;
@@ -27,6 +28,7 @@ public class FollowupScheduleScanJobHandler implements JobHandler {
     public JobResult execute(JobContext ctx) {
         LocalDate day = LocalDate.now(ctx.clock());
         ScheduleCounts counts = followupScheduleService.scanAll(day);
+        OnboardingCompensateCounts onboarding = followupScheduleService.compensateMissingOnboarding(day);
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("scanDay", day.toString());
         detail.put("timezone", JobCronSupport.ZONE.getId());
@@ -35,8 +37,15 @@ public class FollowupScheduleScanJobHandler implements JobHandler {
         detail.put("created", counts.created());
         detail.put("skippedOpen", counts.skippedOpen());
         detail.put("skippedNotDue", counts.skippedNotDue());
+        detail.put("skippedDisabled", counts.skippedDisabled());
+        detail.put("onboardingScanned", onboarding.scanned());
+        detail.put("onboardingCreated", onboarding.created());
+        detail.put("onboardingRepaired", onboarding.repaired());
+        detail.put("onboardingSkipped", onboarding.skipped());
+        detail.put("onboardingFailed", onboarding.failed());
         String summary = "扫描 " + counts.orgs() + " 个机构 / " + counts.scanned()
-                + " 人，新排期 " + counts.created() + "，已有待办 " + counts.skippedOpen();
+                + " 人，新排期 " + counts.created() + "，已有待办 " + counts.skippedOpen()
+                + "；首诊补偿新开 " + onboarding.created() + "，补任务 " + onboarding.repaired();
         log.info("FOLLOWUP_SCHEDULE_SCAN done: {}", summary);
         return JobResult.of(summary, detail);
     }

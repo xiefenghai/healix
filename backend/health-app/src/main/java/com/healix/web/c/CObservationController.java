@@ -16,6 +16,8 @@ import com.healix.core.observation.service.LabReportService;
 import com.healix.core.observation.service.LabReportService.LabItemCommand;
 import com.healix.core.observation.service.LabReportService.LabReportCommand;
 import com.healix.core.observation.service.MetricService;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import com.healix.security.SecurityUtils;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -51,6 +53,7 @@ public class CObservationController {
     private final MetricService metricService;
     private final LabOcrRecognitionService labOcrRecognitionService;
     private final ExamOcrRecognitionService examOcrRecognitionService;
+    private final ImageFileService imageFileService;
 
     @GetMapping("/metrics/latest")
     public ApiResult<List<MetricLatestSlotDto>> metricsLatest() {
@@ -120,7 +123,15 @@ public class CObservationController {
             throw new BusinessException("请上传检验单图片");
         }
         try {
-            return ApiResult.ok(labOcrRecognitionService.recognize(file.getBytes(), file.getContentType()));
+            byte[] bytes = file.getBytes();
+            LabOcrPrefillDto prefill = labOcrRecognitionService.recognize(bytes, file.getContentType());
+            String key = imageFileService.save(
+                    SecurityUtils.requireTenantId(),
+                    SecurityUtils.requirePatientId(),
+                    ObjectKeys.LAB,
+                    bytes,
+                    file.getContentType());
+            return ApiResult.ok(prefill.withImageKey(key));
         } catch (java.io.IOException e) {
             throw new BusinessException("读取图片失败");
         }
@@ -146,7 +157,8 @@ public class CObservationController {
                 request.reportedAt(),
                 request.note(),
                 request.source(),
-                items);
+                items,
+                request.imageKey());
         return ApiResult.ok(labReportService.createForPatient(
                 SecurityUtils.requireTenantId(), SecurityUtils.requirePatientId(), cmd));
     }
@@ -177,7 +189,8 @@ public class CObservationController {
                 request.reportedAt(),
                 request.note(),
                 request.source(),
-                items);
+                items,
+                request.imageKey());
         return ApiResult.ok(labReportService.updateForPatient(
                 SecurityUtils.requireTenantId(), SecurityUtils.requirePatientId(), reportId, cmd));
     }
@@ -207,7 +220,15 @@ public class CObservationController {
             throw new BusinessException("请上传检查报告图片");
         }
         try {
-            return ApiResult.ok(examOcrRecognitionService.recognize(file.getBytes(), file.getContentType()));
+            byte[] bytes = file.getBytes();
+            ExamOcrPrefillDto prefill = examOcrRecognitionService.recognize(bytes, file.getContentType());
+            String key = imageFileService.save(
+                    SecurityUtils.requireTenantId(),
+                    SecurityUtils.requirePatientId(),
+                    ObjectKeys.EXAM,
+                    bytes,
+                    file.getContentType());
+            return ApiResult.ok(prefill.withImageKey(key));
         } catch (java.io.IOException e) {
             throw new BusinessException("读取图片失败");
         }
@@ -217,7 +238,11 @@ public class CObservationController {
     @PostMapping("/exams")
     public ApiResult<ExamReportViewDto> createExam(@RequestBody @Validated CreateExamRequest request) {
         ExamCommand cmd = new ExamCommand(
-                request.examType(), request.examinedAt(), request.conclusion(), request.findings());
+                request.examType(),
+                request.examinedAt(),
+                request.conclusion(),
+                request.findings(),
+                request.imageKey());
         return ApiResult.ok(examReportService.createForPatient(
                 SecurityUtils.requireTenantId(), SecurityUtils.requirePatientId(), cmd));
     }
@@ -232,7 +257,11 @@ public class CObservationController {
     public ApiResult<ExamReportViewDto> updateExam(
             @PathVariable String examId, @RequestBody @Validated CreateExamRequest request) {
         ExamCommand cmd = new ExamCommand(
-                request.examType(), request.examinedAt(), request.conclusion(), request.findings());
+                request.examType(),
+                request.examinedAt(),
+                request.conclusion(),
+                request.findings(),
+                request.imageKey());
         return ApiResult.ok(examReportService.updateForPatient(
                 SecurityUtils.requireTenantId(), SecurityUtils.requirePatientId(), examId, cmd));
     }
@@ -250,6 +279,7 @@ public class CObservationController {
             LocalDateTime reportedAt,
             String note,
             String source,
+            String imageKey,
             @NotEmpty List<CreateLabItemRequest> items) {}
 
     public record CreateLabItemRequest(
@@ -266,7 +296,8 @@ public class CObservationController {
             @NotBlank String examType,
             LocalDateTime examinedAt,
             String conclusion,
-            Map<String, Object> findings) {}
+            Map<String, Object> findings,
+            String imageKey) {}
 
     public record UpdateMetricRequest(
             @NotBlank String metricType,

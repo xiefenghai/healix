@@ -3,11 +3,14 @@ package com.healix.agent.careplan;
 import com.healix.agent.log.AgentInteractionLog;
 import com.healix.agent.log.AgentInteractionLogMapper;
 import com.healix.agent.llm.LlmClient;
+import com.healix.agent.llm.LlmClient.ChatTurn;
 import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.domain.EntityMeta;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.careplan.support.CarePlanEnergyTargetService;
 import com.healix.core.agent.enums.AgentTypeEnum;
 import com.healix.core.allergy.service.AllergyQueryService.FoodAllergen;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
@@ -16,10 +19,13 @@ import com.healix.core.careplan.enums.CarePlanSourceEnum;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
 import com.healix.core.careplan.service.CarePlanService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
+import com.healix.core.careplan.support.CarePlanPromptContextSupport;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry.GeneratedPlan;
 import com.healix.agent.careplan.CarePlanLlmGenerator.LlmPlanResult;
+import com.healix.agent.skill.SkillMarkdown;
 import com.healix.common.exception.BusinessException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
@@ -68,7 +74,17 @@ public class CarePlanAgentService {
             List<String> diseaseCodes,
             boolean replaceDraft) {
         return self.generateAndPersist(
-                tenantId, orgId, peopleId, staffId, instruction, templateKey, diseaseCodes, replaceDraft, null);
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                instruction,
+                templateKey,
+                diseaseCodes,
+                replaceDraft,
+                null,
+                false,
+                List.of());
     }
 
     public CarePlanBundleDto generateStream(
@@ -91,7 +107,8 @@ public class CarePlanAgentService {
                 diseaseCodes,
                 replaceDraft,
                 sink,
-                false);
+                false,
+                List.of());
     }
 
     public CarePlanBundleDto generateStream(
@@ -105,6 +122,32 @@ public class CarePlanAgentService {
             boolean replaceDraft,
             Consumer<AgentStreamEvent> sink,
             boolean requireLlm) {
+        return generateStream(
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                instruction,
+                templateKey,
+                diseaseCodes,
+                replaceDraft,
+                sink,
+                requireLlm,
+                List.of());
+    }
+
+    public CarePlanBundleDto generateStream(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String instruction,
+            String templateKey,
+            List<String> diseaseCodes,
+            boolean replaceDraft,
+            Consumer<AgentStreamEvent> sink,
+            boolean requireLlm,
+            List<ChatTurn> history) {
         CarePlanStreamSink.progress(sink, "开始制定管理方案…");
         CarePlanBundleDto bundle = self.generateAndPersist(
                 tenantId,
@@ -116,7 +159,8 @@ public class CarePlanAgentService {
                 diseaseCodes,
                 replaceDraft,
                 sink,
-                requireLlm);
+                requireLlm,
+                history);
         CarePlanStreamSink.progress(sink, "方案草稿已保存，可前往审阅");
         return bundle;
     }
@@ -131,15 +175,26 @@ public class CarePlanAgentService {
             String staffId,
             String instruction,
             Consumer<AgentStreamEvent> sink) {
+        return reviseStream(tenantId, orgId, peopleId, staffId, instruction, sink, List.of());
+    }
+
+    public CarePlanBundleDto reviseStream(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String instruction,
+            Consumer<AgentStreamEvent> sink,
+            List<ChatTurn> history) {
         CarePlanStreamSink.progress(sink, "开始按你的要求修订方案草稿…");
         CarePlanBundleDto current = carePlanService.getBundle(tenantId, orgId, peopleId);
         if (current == null || current.getDraft() == null) {
             CarePlanStreamSink.progress(sink, "当前无草稿，改为生成新方案…");
             return generateStream(
-                    tenantId, orgId, peopleId, staffId, instruction, null, null, true, sink, true);
+                    tenantId, orgId, peopleId, staffId, instruction, null, null, true, sink, true, history);
         }
         CarePlanBundleDto bundle =
-                self.reviseAndPersist(tenantId, orgId, peopleId, staffId, instruction, sink);
+                self.reviseAndPersist(tenantId, orgId, peopleId, staffId, instruction, sink, history);
         CarePlanStreamSink.progress(sink, "方案草稿已更新，可前往审阅");
         return bundle;
     }
@@ -151,7 +206,8 @@ public class CarePlanAgentService {
             String peopleId,
             String staffId,
             String instruction,
-            Consumer<AgentStreamEvent> sink) {
+            Consumer<AgentStreamEvent> sink,
+            List<ChatTurn> history) {
         CarePlanBundleDto current = carePlanService.getBundle(tenantId, orgId, peopleId);
         if (current == null || current.getDraft() == null) {
             throw new BusinessException("无草稿可修订，请先生成管理方案");
@@ -164,7 +220,7 @@ public class CarePlanAgentService {
                 tenantId,
                 peopleId,
                 (tool, status, detail) -> CarePlanStreamSink.tool(sink, tool, status, detail));
-        List<String> diseaseCodes = ctx.diseaseCodes();
+        List<String> diseaseCodes = sanitizeDiseaseCodes(ctx.diseaseCodes());
         CarePlanTemplateKeyEnum key = templateRegistry.resolveTemplateKey(diseaseCodes, null);
 
         AgentInteractionLog logEntity = new AgentInteractionLog();
@@ -192,12 +248,14 @@ public class CarePlanAgentService {
                 draft.getDiet(),
                 draft.getExecution(),
                 goalFromPlan,
+                history,
                 sink);
         if (llmResult.isEmpty()) {
             throw new BusinessException("AI 修订失败：请换一种说法重试，或打开方案页手工编辑");
         }
         LlmPlanResult r = llmResult.get();
         guardAllergens(ctx, r.plan().diet(), sink);
+        keepEnergyTarget(draft.getDiet(), r.plan().diet());
         logEntity.setDraftReply("LLM_REVISE");
         if (r.llmResponse() != null) {
             logEntity.setPromptTokens(r.llmResponse().promptTokens());
@@ -246,7 +304,8 @@ public class CarePlanAgentService {
                 diseaseCodesOverride,
                 replaceDraft,
                 sink,
-                false);
+                false,
+                List.of());
     }
 
     @Transactional
@@ -260,7 +319,8 @@ public class CarePlanAgentService {
             List<String> diseaseCodesOverride,
             boolean replaceDraft,
             Consumer<AgentStreamEvent> sink,
-            boolean requireLlm) {
+            boolean requireLlm,
+            List<ChatTurn> history) {
         return generateInternal(
                 tenantId,
                 orgId,
@@ -271,7 +331,8 @@ public class CarePlanAgentService {
                 diseaseCodesOverride,
                 replaceDraft,
                 sink,
-                requireLlm);
+                requireLlm,
+                history);
     }
 
     private CarePlanBundleDto generateInternal(
@@ -284,7 +345,8 @@ public class CarePlanAgentService {
             List<String> diseaseCodesOverride,
             boolean replaceDraft,
             Consumer<AgentStreamEvent> sink,
-            boolean requireLlm) {
+            boolean requireLlm,
+            List<ChatTurn> history) {
         CarePlanStreamSink.progress(sink, "正在加载患者档案与观测数据…");
         CarePlanContext ctx = contextTools.loadCarePlanContext(
                 tenantId,
@@ -292,9 +354,10 @@ public class CarePlanAgentService {
                 (tool, status, detail) -> CarePlanStreamSink.tool(sink, tool, status, detail));
 
         String skillBundle = loadSkillMarkdown(sink);
-        List<String> diseaseCodes = diseaseCodesOverride != null && !diseaseCodesOverride.isEmpty()
-                ? diseaseCodesOverride
-                : ctx.diseaseCodes();
+        List<String> diseaseCodes = sanitizeDiseaseCodes(
+                diseaseCodesOverride != null && !diseaseCodesOverride.isEmpty()
+                        ? diseaseCodesOverride
+                        : ctx.diseaseCodes());
         CarePlanTemplateKeyEnum key = templateRegistry.resolveTemplateKey(diseaseCodes, templateKey);
 
         AgentInteractionLog logEntity = new AgentInteractionLog();
@@ -325,7 +388,8 @@ public class CarePlanAgentService {
                     peopleId,
                     key,
                     requireLlm);
-            var llmResult = carePlanLlmGenerator.tryGenerate(key, ctx, instruction, diseaseCodes, sink);
+            var llmResult =
+                    carePlanLlmGenerator.tryGenerate(key, ctx, instruction, diseaseCodes, history, sink);
             if (llmResult.isPresent()) {
                 LlmPlanResult r = llmResult.get();
                 generated = r.plan();
@@ -399,6 +463,19 @@ public class CarePlanAgentService {
         return bundle;
     }
 
+    /** 修订不改热量目标：沿用草稿里的（含健管师手改值），保存时再按饮食目标刷新。 */
+    private static void keepEnergyTarget(JsonNode currentDiet, ObjectNode revisedDiet) {
+        if (revisedDiet == null) {
+            return;
+        }
+        JsonNode target = currentDiet == null ? null : currentDiet.get(CarePlanEnergyTargetService.FIELD);
+        if (target != null && target.isObject()) {
+            revisedDiet.set(CarePlanEnergyTargetService.FIELD, target.deepCopy());
+        } else {
+            revisedDiet.remove(CarePlanEnergyTargetService.FIELD);
+        }
+    }
+
     /** 按过敏史补齐回避清单，并移除模型误推荐的过敏食物（服务端兜底，不依赖模型自觉）。 */
     private static void guardAllergens(CarePlanContext ctx, ObjectNode diet, Consumer<AgentStreamEvent> sink) {
         List<FoodAllergen> allergens = ctx.foodAllergens();
@@ -440,6 +517,19 @@ public class CarePlanAgentService {
                         agentLlmEnabled);
     }
 
+    private static List<String> sanitizeDiseaseCodes(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(raw.size());
+        for (String code : raw) {
+            if (CarePlanPromptContextSupport.isMeaningfulDiseaseCode(code)) {
+                out.add(code);
+            }
+        }
+        return out;
+    }
+
     private String loadSkillMarkdown(Consumer<AgentStreamEvent> sink) {
         String path = "classpath:skills/management-plan/SKILL.md";
         CarePlanStreamSink.progress(sink, "正在加载方案生成指引…");
@@ -450,7 +540,8 @@ public class CarePlanAgentService {
                         StreamUtils.copyToString(res.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
                 SkillMeta meta = parseSkillMeta(content);
                 CarePlanStreamSink.skill(sink, meta.displayName(), meta.summary());
-                return "--- " + path + " ---\n" + content + "\n";
+                // 快照与模型一致：剥掉 Cursor YAML frontmatter
+                return "--- " + path + " ---\n" + SkillMarkdown.forLlm(content) + "\n";
             }
         } catch (Exception ignored) {
             // skill 文档缺失不影响生成

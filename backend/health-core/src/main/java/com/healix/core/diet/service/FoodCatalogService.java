@@ -119,6 +119,11 @@ public class FoodCatalogService {
         return hits.stream().limit(cap).map(h -> toDto(h.e())).toList();
     }
 
+    /** 按自然语言菜名映射到库内条目（供示例预填、OCR 等）；未命中返回 empty。 */
+    public Optional<FoodItemDto> matchDto(String rawName) {
+        return matchByName(rawName).map(this::toDto);
+    }
+
     /** 识别结果的名称映射：精确名/别名 → 包含关系；命中多条时优先菜肴与代表值。 */
     public Optional<FoodEntry> matchByName(String rawName) {
         String q = normalize(rawName);

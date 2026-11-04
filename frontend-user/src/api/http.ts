@@ -75,9 +75,15 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return data as T
 }
 
-export async function apiUpload<T>(path: string, file: File, fieldName = 'file'): Promise<T> {
+export async function apiUpload<T>(
+  path: string,
+  file: File | File[],
+  fieldName = 'file',
+  fields?: Record<string, string>,
+): Promise<T> {
   const form = new FormData()
-  form.append(fieldName, file)
+  for (const f of Array.isArray(file) ? file : [file]) form.append(fieldName, f)
+  for (const [k, v] of Object.entries(fields ?? {})) form.append(k, v)
   const headers = new Headers()
   const token = getToken()
   if (token) {

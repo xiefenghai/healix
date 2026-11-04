@@ -15,4 +15,5 @@ public class CarePlanTaskDto {
     private String relatedRef;
     private boolean enabled;
     private Integer sortOrder;
+    private Integer targetMl;
 }

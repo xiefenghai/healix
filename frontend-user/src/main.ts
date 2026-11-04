@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import {
+  ActionSheet,
   Button,
   Cell,
   CellGroup,
@@ -33,6 +34,7 @@ import './style.css'
 
 const app = createApp(App)
 ;[
+  ActionSheet,
   Button,
   Cell,
   CellGroup,

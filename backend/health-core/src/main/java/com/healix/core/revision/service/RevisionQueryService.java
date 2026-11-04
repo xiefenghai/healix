@@ -57,6 +57,7 @@ public class RevisionQueryService {
                 iv.setNewValue(item.getNewValue());
                 iv.setOldDisplay(item.getOldDisplay());
                 iv.setNewDisplay(item.getNewDisplay());
+                iv.setQuote(item.getQuote());
                 items.add(iv);
             }
             dto.setItems(items);

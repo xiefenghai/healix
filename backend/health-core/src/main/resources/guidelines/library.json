@@ -1,0 +1,211 @@
+{
+  "version": "GREC-0.1.0-draft",
+  "notice": "开发种子：全部为 DRAFT、未审定，数值与章节待临床顾问核对；生产环境（allow-draft=false）不进匹配。正式版由 scripts/guideline-import.mjs 从审定表格生成并覆盖本文件。",
+  "sources": [
+    { "code": "CN_PA", "name": "中国人群身体活动指南", "edition": "2021", "publisher": "国家卫生健康委疾病预防控制局", "status": "ACTIVE" },
+    { "code": "CN_DIET", "name": "中国居民膳食指南", "edition": "2022", "publisher": "中国营养学会", "status": "ACTIVE" },
+    { "code": "CN_HTN", "name": "中国高血压防治指南", "edition": "2018 年修订版", "publisher": "中国高血压防治指南修订委员会", "status": "ACTIVE" },
+    { "code": "CN_DM", "name": "中国2型糖尿病防治指南", "edition": "2020 年版", "publisher": "中华医学会糖尿病学分会", "status": "ACTIVE" },
+    { "code": "CN_OB", "name": "肥胖症诊疗指南", "edition": "2024 年版", "publisher": "国家卫生健康委办公厅", "status": "ACTIVE" },
+    { "code": "CN_MNT", "name": "中国超重/肥胖医学营养治疗指南", "edition": "2021", "publisher": "中国医师协会营养医师专业委员会", "status": "ACTIVE" }
+  ],
+  "recs": [
+    {
+      "code": "GEN.PA.AEROBIC", "rev": 1, "sourceCode": "CN_PA", "section": "成年人身体活动建议",
+      "kind": "TARGET", "block": "EXERCISE",
+      "appliesWhen": {}, "contraindicatedWhen": { "hypoglycemiaRisk": true },
+      "staffText": "成年人每周累计中等强度有氧活动 150–300 分钟，或高强度 75–150 分钟，或等量组合",
+      "patientHint": "每周大多数日子安排快走等能微微出汗、还能说话的活动，累计约 150 分钟",
+      "quant": { "metric": "EXERCISE_MODERATE_MIN_PER_WEEK", "op": ">=", "value": 150, "unit": "min/week" },
+      "priority": 50, "status": "DRAFT"
+    },
+    {
+      "code": "GEN.PA.STRENGTH", "rev": 1, "sourceCode": "CN_PA", "section": "成年人身体活动建议",
+      "kind": "TARGET", "block": "EXERCISE",
+      "appliesWhen": {},
+      "staffText": "每周至少 2 天进行肌肉力量练习",
+      "patientHint": "每周两三次居家力量练习，如靠墙静蹲、坐姿抬腿、弹力带拉伸",
+      "priority": 40, "status": "DRAFT"
+    },
+    {
+      "code": "GEN.PA.SEDENTARY", "rev": 1, "sourceCode": "CN_PA", "section": "成年人身体活动建议",
+      "kind": "TARGET", "block": "LIFESTYLE",
+      "appliesWhen": {},
+      "staffText": "减少静态行为，久坐时每小时起身活动",
+      "patientHint": "坐着超过一小时就起来走动几分钟",
+      "priority": 20, "status": "DRAFT"
+    },
+    {
+      "code": "GEN.DIET.SALT", "rev": 1, "sourceCode": "CN_DIET", "section": "准则五 少盐少油，控糖限酒",
+      "kind": "TARGET", "block": "DIET",
+      "appliesWhen": {},
+      "staffText": "成年人每日食盐不超过 5 g",
+      "patientHint": "做菜少放盐，少吃咸菜、腌肉等腌制食品",
+      "priority": 45, "status": "DRAFT"
+    },
+    {
+      "code": "GEN.DIET.OIL_SUGAR", "rev": 1, "sourceCode": "CN_DIET", "section": "准则五 少盐少油，控糖限酒",
+      "kind": "TARGET", "block": "DIET",
+      "appliesWhen": {},
+      "staffText": "烹调油每日 25–30 g；添加糖每日不超过 50 g，最好控制在 25 g 以下",
+      "patientHint": "少油烹调，少喝含糖饮料、少吃甜点",
+      "priority": 40, "status": "DRAFT"
+    },
+    {
+      "code": "GEN.DIET.VEG_FRUIT", "rev": 1, "sourceCode": "CN_DIET", "section": "准则三 多吃蔬果、奶类、全谷、大豆",
+      "kind": "TARGET", "block": "DIET",
+      "appliesWhen": {},
+      "staffText": "每日蔬菜不少于 300 g（深色蔬菜占一半），新鲜水果 200–350 g",
+      "patientHint": "每餐都有蔬菜，深色蔬菜占一半；每天吃适量新鲜水果",
+      "priority": 35, "status": "DRAFT"
+    },
+    {
+      "code": "GEN.WATER", "rev": 1, "sourceCode": "CN_DIET", "section": "准则六 规律进餐，足量饮水",
+      "kind": "TARGET", "block": "LIFESTYLE",
+      "appliesWhen": {}, "contraindicatedWhen": { "fluidRestricted": true },
+      "staffText": "足量饮水、少量多次；系统按体重估算饮水目标并限定在 1200–2000 ml",
+      "patientHint": "少量多次喝白开水，不要等口渴再喝",
+      "quant": { "metric": "WATER_ML_RANGE", "min": 1200, "max": 2000, "unit": "ml/day" },
+      "priority": 20, "status": "DRAFT"
+    },
+    {
+      "code": "HTN.DIET.SALT", "rev": 1, "sourceCode": "CN_HTN", "section": "生活方式干预",
+      "kind": "TARGET", "block": "DIET",
+      "appliesWhen": { "diseaseTags": ["HYPERTENSION"] },
+      "staffText": "减少钠盐摄入，每人每日食盐逐步降至 6 g 以下（2018 修订版口径，新版待核对）",
+      "patientHint": "做菜用限盐勺，少吃咸菜、酱料和加工肉",
+      "priority": 60, "status": "DRAFT"
+    },
+    {
+      "code": "HTN.EX.AEROBIC", "rev": 1, "sourceCode": "CN_HTN", "section": "生活方式干预",
+      "kind": "TARGET", "block": "EXERCISE",
+      "appliesWhen": { "diseaseTags": ["HYPERTENSION"] },
+      "staffText": "中等强度有氧运动为主，每周 4–7 天、每天累计 30–60 分钟；避免憋气用力",
+      "patientHint": "每周多数日子快走或骑车半小时以上，用力时不要憋气",
+      "priority": 55, "status": "DRAFT"
+    },
+    {
+      "code": "HTN.MON.HBPM", "rev": 1, "sourceCode": "CN_HTN", "section": "诊室外血压测量",
+      "kind": "TARGET", "block": "MONITOR",
+      "appliesWhen": { "diseaseTags": ["HYPERTENSION"] },
+      "staffText": "推荐家庭血压监测，用于长期观察血压与评估管理效果",
+      "patientHint": "每天固定时间在家测血压并记录",
+      "quant": { "metric": "MONITOR_TASK_PRESENT", "relatedRef": "BLOOD_PRESSURE" },
+      "priority": 60, "status": "DRAFT"
+    },
+    {
+      "code": "DM.EX.POSTMEAL", "rev": 1, "sourceCode": "CN_DM", "section": "运动治疗",
+      "kind": "TARGET", "block": "EXERCISE",
+      "appliesWhen": { "diseaseTags": ["DIABETES"] }, "contraindicatedWhen": { "hypoglycemiaRisk": true },
+      "staffText": "每周至少 150 分钟中等强度有氧运动，可安排在餐后进行",
+      "patientHint": "饭后一小时左右出门快走",
+      "quant": { "metric": "EXERCISE_MODERATE_MIN_PER_WEEK", "op": ">=", "value": 150, "unit": "min/week" },
+      "priority": 60, "status": "DRAFT"
+    },
+    {
+      "code": "DM.EX.HYPO_SESSION", "rev": 1, "sourceCode": "CN_DM", "section": "运动治疗 · 低血糖防范",
+      "kind": "SAFETY", "block": "EXERCISE",
+      "appliesWhen": { "diseaseTags": ["DIABETES"], "hypoglycemiaRisk": true },
+      "staffText": "有低血糖风险时运动宜短时进行，运动前后监测血糖并随身携带糖块；单次 25 分钟上限为产品默认值，待审定",
+      "patientHint": "每次运动时间短一些，运动前后测血糖，身上带几颗糖",
+      "quant": { "metric": "EXERCISE_SESSION_MAX_MIN", "value": 25, "unit": "min" },
+      "priority": 90, "status": "DRAFT"
+    },
+    {
+      "code": "DM.EX.HYPO_INTENSITY", "rev": 1, "sourceCode": "CN_DM", "section": "运动治疗 · 低血糖防范",
+      "kind": "SAFETY", "block": "EXERCISE",
+      "appliesWhen": { "diseaseTags": ["DIABETES"], "hypoglycemiaRisk": true },
+      "staffText": "有低血糖风险时以低强度活动为主，避免空腹及中高强度运动",
+      "patientHint": "以散步等轻松活动为主，不要空腹运动",
+      "quant": { "metric": "EXERCISE_INTENSITY_MAX", "level": "LIGHT" },
+      "priority": 90, "status": "DRAFT"
+    },
+    {
+      "code": "DM.DIET.CARB", "rev": 1, "sourceCode": "CN_DM", "section": "医学营养治疗",
+      "kind": "TARGET", "block": "DIET",
+      "appliesWhen": { "diseaseTags": ["DIABETES"] },
+      "staffText": "控制精制糖与精白米面，主食粗细搭配，增加膳食纤维，定时定量进餐",
+      "patientHint": "主食换一半杂粮，少吃甜食，三餐定时定量",
+      "priority": 60, "status": "DRAFT"
+    },
+    {
+      "code": "DM.MON.SMBG", "rev": 1, "sourceCode": "CN_DM", "section": "血糖监测",
+      "kind": "TARGET", "block": "MONITOR",
+      "appliesWhen": { "diseaseTags": ["DIABETES"] },
+      "staffText": "按用药与管理计划进行自我血糖监测",
+      "patientHint": "按约定时间测血糖并记录",
+      "quant": { "metric": "MONITOR_TASK_PRESENT", "relatedRef": "BLOOD_GLUCOSE" },
+      "priority": 60, "status": "DRAFT"
+    },
+    {
+      "code": "OB.DIET.DEFICIT", "rev": 1, "sourceCode": "CN_OB", "section": "营养治疗",
+      "kind": "TARGET", "block": "DIET",
+      "appliesWhen": { "diseaseTags": ["OBESITY"] },
+      "staffText": "在保证营养的前提下制造每日约 500–750 kcal 能量缺口，避免极端节食",
+      "patientHint": "每顿少吃几口主食和油，保证蛋白质和蔬菜，不要饿肚子减肥",
+      "priority": 60, "status": "DRAFT"
+    },
+    {
+      "code": "OB.EX.VOLUME", "rev": 1, "sourceCode": "CN_OB", "section": "运动治疗",
+      "kind": "TARGET", "block": "EXERCISE",
+      "appliesWhen": { "diseaseTags": ["OBESITY"] }, "contraindicatedWhen": { "hypoglycemiaRisk": true },
+      "staffText": "每周 150–300 分钟中等强度有氧运动，结合抗阻训练，循序渐进",
+      "patientHint": "从每天快走开始，逐步加时长，每周再加两三次力量练习",
+      "quant": { "metric": "EXERCISE_MODERATE_MIN_PER_WEEK", "op": ">=", "value": 150, "unit": "min/week" },
+      "priority": 55, "status": "DRAFT"
+    },
+    {
+      "code": "OB.MON.WEIGHT", "rev": 1, "sourceCode": "CN_OB", "section": "随访与监测",
+      "kind": "TARGET", "block": "MONITOR",
+      "appliesWhen": { "diseaseTags": ["OBESITY"] },
+      "staffText": "定期监测体重，记录变化趋势",
+      "patientHint": "每天早上空腹称体重并记录",
+      "quant": { "metric": "MONITOR_TASK_PRESENT", "relatedRef": "WEIGHT" },
+      "priority": 55, "status": "DRAFT"
+    },
+    {
+      "code": "WL.RATE", "rev": 1, "sourceCode": "CN_MNT", "section": "减重速度",
+      "kind": "SAFETY", "block": "DIET",
+      "appliesWhen": {},
+      "staffText": "安全减重速度建议不超过约 0.5–1 kg/周；更快需个案评估",
+      "patientHint": "每周减 0.5 到 1 公斤比较稳妥，别追求过快",
+      "quant": { "metric": "WEIGHT_LOSS_RATE_KG_PER_WEEK", "op": "<=", "value": 1, "unit": "kg/week" },
+      "priority": 80, "status": "DRAFT"
+    },
+    {
+      "code": "WL.ENERGY_DEFICIT", "rev": 1, "sourceCode": "CN_MNT", "section": "能量缺口",
+      "kind": "SAFETY", "block": "DIET",
+      "appliesWhen": {}, "contraindicatedWhen": { "pregnantOrLactating": true },
+      "staffText": "每日能量缺口一般控制在约 500–750 kcal，孕哺期不做热量缺口",
+      "patientHint": "每顿少一点油和主食就好，别饿着减肥",
+      "quant": { "metric": "ENERGY_DEFICIT_KCAL", "op": "<=", "value": 750, "unit": "kcal/day" },
+      "priority": 85, "status": "DRAFT"
+    },
+    {
+      "code": "WL.PREGNANT_BLOCK", "rev": 1, "sourceCode": "CN_OB", "section": "特殊人群",
+      "kind": "SAFETY", "block": "DIET",
+      "appliesWhen": { "pregnantOrLactating": true },
+      "staffText": "孕期或哺乳期不设减重目标与热量缺口，以均衡营养与适度活动为主",
+      "patientHint": "怀孕或哺乳期间以均衡吃好、适度活动为主，不做减重计划",
+      "priority": 95, "status": "DRAFT"
+    },
+    {
+      "code": "WL.ED_WEIGH", "rev": 1, "sourceCode": "CN_MNT", "section": "进食障碍风险",
+      "kind": "SAFETY", "block": "MONITOR",
+      "appliesWhen": { "eatingDisorderRisk": true },
+      "staffText": "有进食障碍风险时称重改为每周，不设激进热量缺口，并提示转介",
+      "patientHint": "体重每周称一次即可，先照顾好自己的情绪和吃饭节奏",
+      "quant": { "metric": "WEIGH_FREQUENCY", "op": "<=", "value": 1, "unit": "times/week" },
+      "priority": 90, "status": "DRAFT"
+    },
+    {
+      "code": "WL.EXERCISE_RESTRICT", "rev": 1, "sourceCode": "CN_PA", "section": "运动禁忌",
+      "kind": "SAFETY", "block": "EXERCISE",
+      "appliesWhen": { "exerciseRestricted": true },
+      "staffText": "存在运动禁忌或医生限制时，运动方案需降级或暂停高强度，先排除禁忌",
+      "patientHint": "有医生限制或运动不适时，先做轻松活动，必要时先就医",
+      "quant": { "metric": "EXERCISE_INTENSITY_MAX", "level": "LIGHT" },
+      "priority": 90, "status": "DRAFT"
+    }
+  ]
+}

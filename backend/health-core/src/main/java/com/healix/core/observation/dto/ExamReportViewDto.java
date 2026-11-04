@@ -12,4 +12,5 @@ public record ExamReportViewDto(
         String conclusion,
         Map<String, Object> findings,
         String source,
+        String imageKey,
         LocalDateTime gmtCreated) {}

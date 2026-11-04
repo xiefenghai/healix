@@ -2,6 +2,7 @@ package com.healix.agent.gateway;
 
 import com.healix.agent.careplan.CarePlanAgentService;
 import com.healix.agent.careplan.CarePlanStreamSummary;
+import com.healix.agent.llm.LlmClient.ChatTurn;
 import com.healix.agent.log.AgentInteractionLog;
 import com.healix.agent.log.AgentInteractionLogMapper;
 import com.healix.agent.memory.AgentConversationService;
@@ -9,6 +10,9 @@ import com.healix.agent.memory.StaffSessionStore;
 import com.healix.agent.ocr.ObservationReportIngestService;
 import com.healix.agent.support.AgentSessionIds;
 import com.healix.agent.support.AiUsageGuard;
+import com.healix.agent.extract.ChatExtractCard;
+import com.healix.agent.extract.ChatExtractService;
+import com.healix.agent.extract.ChatScreenshotDetector;
 import com.healix.agent.skill.AgentSkill;
 import com.healix.agent.skill.AgentSkillContext;
 import com.healix.agent.skill.CarePlanSkill;
@@ -30,7 +34,9 @@ import com.healix.core.observation.dto.ObservationOcrPreviewDto;
 import com.healix.core.people.domain.PeopleProfile;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -53,6 +59,7 @@ public class StaffAgentGateway {
     private final GeneralChatSkill generalChatSkill;
     private final ReportSummarySkill reportSummarySkill;
     private final ObservationReportIngestService observationReportIngestService;
+    private final ChatExtractService chatExtractService;
     private final AiUsageGuard aiUsageGuard;
 
     public List<CapabilityView> capabilities() {
@@ -81,6 +88,12 @@ public class StaffAgentGateway {
 
     private AgentResponse doChat(AgentChatCommand cmd, Consumer<AgentStreamEvent> sink) {
         long startedAt = System.currentTimeMillis();
+        if (isChatExtract(cmd)) {
+            String problem = chatExtractProblem(cmd);
+            if (problem != null) {
+                return finishRestore(sink, startedAt, problem);
+            }
+        }
         boolean orgSession = !StringUtils.hasText(cmd.peopleId());
         if (!orgSession) {
             archiveAccessService.assertStaffCanAccessPeople(cmd.tenantId(), cmd.orgId(), cmd.peopleId());
@@ -153,9 +166,26 @@ public class StaffAgentGateway {
         // 机构会话与患者会话同一路径：一问一答成对落库（中途断开不落半截 USER）
         // 助手为空时整轮不落库，避免刷新后只剩一排用户气泡
         if (StringUtils.hasText(response.reply())) {
-            sessionStore.appendTurn(sessionId, cmd.message(), response.reply());
-            conversationService.appendUser(sessionId, cmd.message());
-            conversationService.appendAssistant(sessionId, response.reply(), response.actions());
+            if (response.extracted() instanceof ChatExtractCard card) {
+                String preview = response.reply();
+                String storedUser = StringUtils.hasText(card.getSourceText()) ? card.getSourceText() : cmd.message();
+                sessionStore.appendTurn(sessionId, preview, preview);
+                conversationService.appendChatExtract(sessionId, storedUser, preview, card);
+                Map<String, Object> payload =
+                        JsonUtils.mapper().convertValue(card, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                response = new AgentResponse(
+                        sessionId,
+                        response.capability(),
+                        response.intent(),
+                        preview,
+                        List.of(new AgentAction("chat_extract", card.getTitle(), null, card.getPeopleId(), payload)),
+                        response.safetyFlags(),
+                        card);
+            } else {
+                sessionStore.appendTurn(sessionId, cmd.message(), response.reply());
+                conversationService.appendUser(sessionId, cmd.message());
+                conversationService.appendAssistant(sessionId, response.reply(), response.actions());
+            }
         }
         persistLog(cmd, sessionId, response);
         if (sink != null) {
@@ -163,7 +193,9 @@ public class StaffAgentGateway {
                     AgentCapability.OCR_LAB.name().equals(response.capability())
                             || AgentCapability.OCR_EXAM.name().equals(response.capability())
                             || AgentCapability.OCR_MED.name().equals(response.capability())
-                            || AgentCapability.REPORT_SUMMARY.name().equals(response.capability());
+                            || AgentCapability.REPORT_SUMMARY.name().equals(response.capability())
+                            || AgentCapability.CARE_PLAN.name().equals(response.capability())
+                            || AgentCapability.CHAT_EXTRACT.name().equals(response.capability());
             AgentStreamEvent.safeEmit(
                     sink,
                     AgentStreamEvent.result(
@@ -200,6 +232,9 @@ public class StaffAgentGateway {
         if (routed == AgentCapability.REPORT_SUMMARY) {
             return "正在生成报告点评…";
         }
+        if (routed == AgentCapability.CHAT_EXTRACT) {
+            return "正在整理这段记录…";
+        }
         return "正在处理…";
     }
 
@@ -214,9 +249,29 @@ public class StaffAgentGateway {
         try {
             byte[] bytes = decodeImageBase64(cmd.imageBase64());
             String mime = StringUtils.hasText(cmd.imageMimeType()) ? cmd.imageMimeType() : "image/jpeg";
+            String text = observationReportIngestService.readImageText(
+                    cmd.tenantId(), cmd.orgId(), cmd.peopleId(), bytes, mime);
+            if (ChatScreenshotDetector.isChatRecord(text)) {
+                if (sink != null) {
+                    AgentStreamEvent.safeEmit(
+                            sink, AgentStreamEvent.tool("OCR_AUTO", "done", "识别为聊天记录"));
+                    AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在整理这段记录…"));
+                }
+                ChatExtractCard card = chatExtractService.extract(cmd.tenantId(), cmd.peopleId(), text);
+                card.setSourceText(text.trim());
+                String preview = "已整理一段记录，共 " + text.trim().length() + " 字";
+                return new AgentResponse(
+                        ctx.sessionId(),
+                        AgentCapability.CHAT_EXTRACT.name(),
+                        "CHAT_EXTRACT",
+                        preview,
+                        List.of(),
+                        List.of(),
+                        card);
+            }
             ObservationOcrPreviewDto preview =
-                    observationReportIngestService.recognize(
-                            cmd.tenantId(), cmd.orgId(), cmd.peopleId(), bytes, mime);
+                    observationReportIngestService.structureFromText(
+                            cmd.tenantId(), cmd.peopleId(), bytes, mime, text);
             String kind = preview.kind() == null ? "EXAM" : preview.kind().trim().toUpperCase();
             AgentCapability cap =
                     switch (kind) {
@@ -289,6 +344,7 @@ public class StaffAgentGateway {
         String instruction = StringUtils.hasText(cmd.message()) ? cmd.message() : "生成管理方案";
         boolean revise = shouldReviseCarePlan(cmd);
         CarePlanBundleDto bundle;
+        List<ChatTurn> history = ctx.history() == null ? List.of() : ctx.history();
         if (revise) {
             bundle = carePlanAgentService.reviseStream(
                     cmd.tenantId(),
@@ -296,7 +352,8 @@ public class StaffAgentGateway {
                     cmd.peopleId(),
                     cmd.staffId(),
                     instruction,
-                    sink);
+                    sink,
+                    history);
         } else if (sink != null) {
             bundle = carePlanAgentService.generateStream(
                     cmd.tenantId(),
@@ -308,7 +365,8 @@ public class StaffAgentGateway {
                     null,
                     true,
                     sink,
-                    true);
+                    true,
+                    history);
         } else {
             bundle = carePlanAgentService.generateStream(
                     cmd.tenantId(),
@@ -320,7 +378,8 @@ public class StaffAgentGateway {
                     null,
                     true,
                     null,
-                    true);
+                    true,
+                    history);
         }
         return new AgentResponse(
                 ctx.sessionId(),
@@ -328,7 +387,7 @@ public class StaffAgentGateway {
                 revise ? "CARE_PLAN_REVISE" : "CARE_PLAN_GENERATE",
                 CarePlanStreamSummary.buildReply(bundle, revise),
                 List.of(
-                        AgentAction.openSheet("查看方案草稿", "care-plan", cmd.peopleId()),
+                        AgentAction.openSheet("编辑方案草稿", "care-plan", cmd.peopleId()),
                         AgentAction.publishCarePlan("确认发布方案", cmd.peopleId()),
                         AgentAction.triggerCapability("继续闲聊", "GENERAL_CHAT", cmd.peopleId())),
                 List.of(),
@@ -394,11 +453,11 @@ public class StaffAgentGateway {
         logEntity.setPeopleId(cmd.peopleId());
         logEntity.setStaffId(cmd.staffId());
         logEntity.setIntent(response.intent());
-        logEntity.setUserMessage(cmd.message());
+        logEntity.setUserMessage(redactedUserMessage(cmd, response));
         logEntity.setPromptSnapshot("capability=" + response.capability());
         logEntity.setToolCallsJson(summarizeExtracted(response.extracted()));
-        logEntity.setDraftReply(response.reply());
-        logEntity.setFinalReply(response.reply());
+        logEntity.setDraftReply(redactedReply(cmd, response));
+        logEntity.setFinalReply(redactedReply(cmd, response));
         EntityMeta.onCreate(logEntity);
         interactionLogMapper.insert(logEntity);
     }
@@ -420,7 +479,55 @@ public class StaffAgentGateway {
             }
             return JsonUtils.toJson(summary);
         }
+        if (extracted instanceof ChatExtractCard card) {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("rows", card.getItems() == null ? 0 : card.getItems().size());
+            summary.put("ignored", card.getIgnored() == null ? 0 : card.getIgnored().size());
+            return JsonUtils.toJson(summary);
+        }
         return JsonUtils.toJson(extracted);
+    }
+
+    private static boolean isChatExtract(AgentChatCommand cmd) {
+        return cmd.capabilityHint() != null && "CHAT_EXTRACT".equalsIgnoreCase(cmd.capabilityHint().trim());
+    }
+
+    private static String chatExtractProblem(AgentChatCommand cmd) {
+        if (!StringUtils.hasText(cmd.peopleId())) {
+            return "请先选择患者";
+        }
+        if (cmd.message() == null || cmd.message().isBlank()) {
+            return "请先粘贴一段记录";
+        }
+        if (cmd.message().trim().length() > 4000) {
+            return "请拆短后再贴";
+        }
+        return null;
+    }
+
+    private AgentResponse finishRestore(Consumer<AgentStreamEvent> sink, long startedAt, String reply) {
+        Map<String, Object> extracted = new LinkedHashMap<>();
+        extracted.put("restoreInput", true);
+        AgentResponse response = new AgentResponse(
+                null, AgentCapability.CHAT_EXTRACT.name(), "CHAT_EXTRACT", reply, List.of(), List.of(), extracted);
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.result(response));
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.done(System.currentTimeMillis() - startedAt));
+        return response;
+    }
+
+    private static String redactedUserMessage(AgentChatCommand cmd, AgentResponse response) {
+        if (AgentCapability.CHAT_EXTRACT.name().equals(response.capability())) {
+            int chars = cmd.message() == null ? 0 : cmd.message().trim().length();
+            if (response.extracted() instanceof ChatExtractCard card && StringUtils.hasText(card.getSourceText())) {
+                chars = card.getSourceText().trim().length();
+            }
+            return "已整理一段记录，共 " + chars + " 字";
+        }
+        return cmd.message();
+    }
+
+    private static String redactedReply(AgentChatCommand cmd, AgentResponse response) {
+        return response.reply();
     }
 
     public record CapabilityView(String code, String label) {}

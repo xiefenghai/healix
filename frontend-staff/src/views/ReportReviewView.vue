@@ -3,14 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api } from '../shared/http'
-import { lifestyleSections } from '../shared/report-lifestyle'
-import {
-  formatPeriodType,
-  formatReportStatus,
-  metricLabel,
-  pct,
-  sliceDate,
-} from '../shared/report-summary'
+import ReportContentBlocks from '../shared/ReportContentBlocks.vue'
+import { formatPeriodType, formatReportStatus, sliceDate } from '../shared/report-summary'
 
 interface TaskDetail {
   id: string
@@ -49,29 +43,11 @@ const quarterAdvice = ref('')
 const isReview = computed(() => report.value?.status === 'DRAFT')
 const isQuarter = computed(() => report.value?.periodType === 'QUARTER')
 
-const adherence = computed(() => {
-  const a = report.value?.content?.adherence as
-    | {
-        plan?: { dueCount?: number; doneCount?: number; rate?: number | null }
-        med?: { dueDayCount?: number; okDayCount?: number; rate?: number | null }
-      }
-    | undefined
-  return a || null
-})
-
-const lifestyle = computed(() => lifestyleSections(report.value?.content))
-
-const metrics = computed(() => {
-  const m = report.value?.content?.metrics
-  return Array.isArray(m) ? (m as Array<Record<string, unknown>>) : []
-})
-
-const followups = computed(() => {
-  const i = report.value?.content?.interventions as { followups?: Array<Record<string, unknown>> } | undefined
-  if (Array.isArray(i?.followups)) return i!.followups!
-  const legacy = report.value?.content?.followups
-  return Array.isArray(legacy) ? (legacy as Array<Record<string, unknown>>) : []
-})
+/** AI 生成的要点卡 / 章节解读，随发布提交（移动端不提供逐条编辑） */
+const aiExtras = ref<{
+  insights?: Record<string, string> | null
+  highlights?: Array<{ type: string; text: string }> | null
+} | null>(null)
 
 async function load() {
   loading.value = true
@@ -111,12 +87,21 @@ async function generateAi() {
   aiLoading.value = true
   try {
     const res = await api<{
-      data: { staffComment?: string; nextFocus?: string; quarterAdvice?: string; fromLlm?: boolean; note?: string }
+      data: {
+        staffComment?: string
+        nextFocus?: string
+        quarterAdvice?: string
+        insights?: Record<string, string> | null
+        highlights?: Array<{ type: string; text: string }> | null
+        fromLlm?: boolean
+        note?: string
+      }
     }>(`/api/b/v1/health-reports/${report.value.id}/ai-summary`, { method: 'POST' })
     const d = res.data || {}
     if (d.staffComment) staffComment.value = d.staffComment
     if (d.nextFocus) nextFocus.value = d.nextFocus
     if (isQuarter.value && d.quarterAdvice) quarterAdvice.value = d.quarterAdvice
+    aiExtras.value = d.insights || d.highlights?.length ? { insights: d.insights, highlights: d.highlights } : null
     showToast(d.fromLlm ? 'AI 草稿已生成' : d.note || '已填入模板草稿')
   } catch (e) {
     showToast(e instanceof Error ? e.message : 'AI 生成失败')
@@ -139,6 +124,7 @@ async function publish() {
         staffComment: staffComment.value || null,
         nextFocus: nextFocus.value || null,
         quarterAdvice: quarterAdvice.value || null,
+        ...(aiExtras.value || {}),
       }),
     })
     showToast('已发布')
@@ -176,67 +162,25 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="hx-page">
-    <van-nav-bar title="报告审阅" left-arrow @click-left="router.back()" />
+  <div class="hx-page report-page">
+    <van-nav-bar title="报告审阅" left-arrow :border="false" @click-left="router.back()" />
     <van-loading v-if="loading" class="hx-loading" vertical>加载中</van-loading>
     <template v-else-if="report">
-      <section class="hero hx-surface">
+      <header class="hero">
         <div class="chips">
-          <span class="hx-chip">{{ formatPeriodType(report.periodType) }}</span>
-          <span class="hx-chip" :class="{ warn: report.status === 'DRAFT' }">
+          <span class="period-pill">{{ formatPeriodType(report.periodType) }}</span>
+          <span class="status-pill" :class="`status--${(report.status || '').toLowerCase()}`">
             {{ formatReportStatus(report.status) }}
           </span>
         </div>
-        <h2>{{ report.title || '管理报告' }}</h2>
-        <p class="hx-muted">
+        <h2><span class="mark">{{ report.title || '管理报告' }}</span></h2>
+        <p>
           {{ report.peopleName || task?.peopleName || '—' }} ·
           {{ sliceDate(report.periodStart) }} ~ {{ sliceDate(report.periodEnd) }}
         </p>
-      </section>
+      </header>
 
-      <section v-if="adherence" class="block hx-surface">
-        <h3>执行依从</h3>
-        <div class="kpis">
-          <div>
-            <strong>{{ pct(adherence.plan?.rate) }}</strong>
-            <span>方案完成</span>
-            <small>{{ adherence.plan?.doneCount || 0 }}/{{ adherence.plan?.dueCount || 0 }}</small>
-          </div>
-          <div>
-            <strong>{{ pct(adherence.med?.rate) }}</strong>
-            <span>用药达标</span>
-            <small>{{ adherence.med?.okDayCount || 0 }}/{{ adherence.med?.dueDayCount || 0 }} 日</small>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="metrics.length" class="block hx-surface">
-        <h3>指标摘要</h3>
-        <div v-for="m in metrics" :key="String(m.family)" class="metric">
-          <strong>{{ metricLabel(String(m.family)) }}</strong>
-          <span class="hx-muted">测量 {{ m.count || 0 }} 次</span>
-          <span v-if="Number(m.abnormalCount) > 0" class="warn">异常 {{ m.abnormalCount }}</span>
-        </div>
-      </section>
-
-      <section v-for="sec in lifestyle" :key="sec.key" class="block hx-surface">
-        <h3>{{ sec.title }}</h3>
-        <p v-if="sec.empty" class="hx-muted">{{ sec.empty }}</p>
-        <template v-else>
-          <div v-for="s in sec.stats" :key="s.label" class="metric">
-            <strong>{{ s.label }}</strong>
-            <span :class="s.warn ? 'warn' : ''">{{ s.value }}</span>
-            <span v-if="s.sub" class="hx-muted">{{ s.sub }}</span>
-          </div>
-        </template>
-      </section>
-
-      <section v-if="followups.length" class="block hx-surface">
-        <h3>随访与干预</h3>
-        <p v-for="(f, idx) in followups.slice(0, 5)" :key="String(f.id || idx)" class="fu">
-          {{ f.followupType || f.recordType || '随访' }} · {{ f.summary || '—' }}
-        </p>
-      </section>
+      <ReportContentBlocks :content="report.content" />
 
       <section v-if="isReview" class="form hx-surface">
         <div class="form-head">
@@ -284,82 +228,88 @@ onMounted(load)
 </template>
 
 <style scoped>
-.hero,
-.block,
+.report-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 216, 77, 0.28), transparent 40%),
+    radial-gradient(circle at 0% 30%, rgba(92, 184, 184, 0.16), transparent 38%),
+    linear-gradient(170deg, #fff8ec 0%, #f4fbf8 45%, #eaf7f2 100%);
+  background-attachment: fixed;
+}
+.report-page :deep(.van-nav-bar) {
+  background: transparent;
+}
+.hero {
+  margin: 4px 16px 14px;
+}
 .form {
-  margin: 0 16px 12px;
-  padding: 14px 16px;
+  margin: 0 16px 14px;
+  padding: 16px;
+  border-radius: 20px;
+  border: none;
+  box-shadow: 0 8px 22px rgba(19, 34, 46, 0.06);
 }
 .chips {
   display: flex;
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+}
+.period-pill,
+.status-pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.period-pill {
+  background: var(--hx-ink);
+  color: #fff;
+}
+.status-pill {
+  background: #fff;
+  color: var(--hx-muted);
+}
+.status--draft {
+  background: #fff1d6;
+  color: #b07400;
+}
+.status--published {
+  background: #e3f6ef;
+  color: #0b7a66;
 }
 .hero h2 {
   margin: 0 0 6px;
-  font-size: 18px;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1.4;
   color: var(--hx-ink);
+}
+.mark {
+  padding: 0 3px;
+  background: linear-gradient(transparent 60%, #ffd84d 60%);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .hero p,
 .hint {
   margin: 0;
   font-size: 13px;
 }
+.hero p {
+  font-weight: 600;
+  color: #4a5b68;
+}
 .hint {
   padding: 0 20px 20px;
 }
-.block h3,
 .form h3 {
-  margin: 0 0 10px;
-  font-size: 15px;
+  display: inline;
+  margin: 0;
+  padding: 0 3px;
+  font-size: 17px;
+  font-weight: 900;
   color: var(--hx-ink);
-}
-.kpis {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.kpis div {
-  background: var(--hx-teal-light);
-  border-radius: 12px;
-  padding: 12px;
-  text-align: center;
-}
-.kpis strong {
-  display: block;
-  font-size: 20px;
-  color: var(--hx-ink);
-}
-.kpis span {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--hx-muted);
-}
-.kpis small {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--hx-muted);
-}
-.metric {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 13px;
-  padding: 6px 0;
-}
-.metric + .metric {
-  border-top: 1px solid var(--hx-line);
-}
-.warn {
-  color: var(--hx-danger);
-  font-weight: 600;
-}
-.fu {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--hx-text);
+  background: linear-gradient(transparent 62%, #ffd84d 62%);
 }
 .form-head {
   display: flex;

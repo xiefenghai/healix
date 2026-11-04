@@ -216,6 +216,10 @@ public class DietRuleEngine {
                 continue;
             }
             for (FoodEntry part : withIngredients(item.entry())) {
+                // 菜谱里的盐、酱油、糖属于烹调用量，由全天钠 / 糖规则把关；按标签算会让所有家常菜都命中「高盐」「含糖」限制项
+                if (part != item.entry() && "CONDIMENT".equals(part.item().getCategory())) {
+                    continue;
+                }
                 for (String tag : part.tags()) {
                     String rule = ctx.limitedTags().get(tag);
                     if (rule != null) {

@@ -39,6 +39,23 @@
           AND status = 'DRAFT'
     </update>
 
+    <update id="markPatientRead">
+        UPDATE health_report
+        SET patient_read_at = #{readAt}
+        WHERE id = #{id}
+          AND patient_read_at IS NULL
+          AND is_deleted = 0
+    </update>
+
+    <update id="updateSnapshot">
+        UPDATE health_report
+        SET content_json = #{contentJson},
+            schema_version = #{schemaVersion},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
     <update id="updateDraftNarrative">
         UPDATE health_report
         SET content_json = #{contentJson},

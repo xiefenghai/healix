@@ -28,6 +28,8 @@ public class OrgPatientListItem {
     private Integer clientCardCount;
     /** 联系手机号 */
     private String mobile;
+    /** 号码归属：SELF / SPOUSE / CHILD … */
+    private String mobileOwner;
     /** 家庭住址 */
     private String address;
     /** 文化程度 code */
@@ -49,4 +51,10 @@ public class OrgPatientListItem {
     private Integer archiveCompletenessPercent;
     /** 当前登录员工是否已将该患者标为个人重点关注 */
     private Boolean watched;
+    /** 激励火苗天数；租户或患者未开启激励时为空，0 为已熄灭 */
+    private Integer streakDays;
+    /** 今日打卡动作数（方案打卡、服药、测量）；未开启激励时为空 */
+    private Integer todayActions;
+    /** 距最近一次打卡的天数；近 30 天无打卡为空 */
+    private Integer inactiveDays;
 }

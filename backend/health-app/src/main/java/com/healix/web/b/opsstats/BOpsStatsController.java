@@ -1,10 +1,12 @@
 package com.healix.web.b.opsstats;
 
 import com.healix.common.result.ApiResult;
+import com.healix.common.result.PageResult;
 import com.healix.core.opsstats.dto.OpsStatsByStaffResponseDto;
 import com.healix.core.opsstats.dto.OpsStatsFollowupSummaryDto;
 import com.healix.core.opsstats.dto.OpsStatsSeriesPointDto;
 import com.healix.core.opsstats.dto.OpsStatsSummaryDto;
+import com.healix.core.opsstats.dto.OpsStatsTaskItemDto;
 import com.healix.core.opsstats.dto.OpsStatsTypeSliceDto;
 import com.healix.core.opsstats.service.OpsStatsService;
 import com.healix.security.SecurityUtils;
@@ -34,6 +36,19 @@ public class BOpsStatsController {
             @RequestParam(required = false) String staffId) {
         return ApiResult.ok(opsStatsService.summary(
                 SecurityUtils.requireCurrentOrgId(), from, to, careTeamId, staffId));
+    }
+
+    @GetMapping("/tasks")
+    public ApiResult<PageResult<OpsStatsTaskItemDto>> tasks(
+            @RequestParam String kind,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String careTeamId,
+            @RequestParam(required = false) String staffId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResult.ok(opsStatsService.listTasks(
+                SecurityUtils.requireCurrentOrgId(), from, to, careTeamId, staffId, kind, page, size));
     }
 
     @GetMapping("/tasks/series")

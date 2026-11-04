@@ -32,6 +32,6 @@ public class ExerciseSessionDto {
     private String source;
     private String note;
     private boolean recordedByStaff;
-    /** 患者端是否可编辑（代录记录只读） */
+    /** 当前视角是否可编辑：患者只能改自录，健管师只能改代录 */
     private boolean editable;
 }

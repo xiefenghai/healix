@@ -276,6 +276,10 @@ function openTodoTask(task: FocusTask) {
     goPatientPath('/exercise')
     return
   }
+  if (task.taskType === 'MED_FEEDBACK' || task.taskType === 'MED_VERIFY') {
+    goPatientPath('/medications')
+    return
+  }
   router.push('/workspace/tasks')
 }
 
@@ -541,13 +545,16 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr) 300px;
   gap: 14px;
-  min-height: calc(100vh - 120px);
+  height: calc(100vh - 112px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .inbox {
   display: flex;
   flex-direction: column;
-  min-height: 560px;
+  height: 100%;
+  min-height: 0;
   background: #fff;
   border: 1px solid var(--ink-200);
   border-radius: 12px;
@@ -628,6 +635,7 @@ onBeforeUnmount(() => {
 
 .groups {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 0 8px 12px;
 }
@@ -819,8 +827,11 @@ onBeforeUnmount(() => {
 
 .detail {
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .detail :deep(.chat-page) {
@@ -830,7 +841,7 @@ onBeforeUnmount(() => {
 
 .empty-detail {
   height: 100%;
-  min-height: 560px;
+  min-height: 0;
   display: grid;
   place-content: center;
   text-align: center;
@@ -854,7 +865,8 @@ onBeforeUnmount(() => {
 .snapshot {
   display: flex;
   flex-direction: column;
-  min-height: 560px;
+  height: 100%;
+  min-height: 0;
   background: #fff;
   border: 1px solid var(--ink-200);
   border-radius: 12px;
@@ -882,6 +894,7 @@ onBeforeUnmount(() => {
 
 .snap-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
 }
@@ -1131,6 +1144,15 @@ onBeforeUnmount(() => {
 @media (max-width: 960px) {
   .care-chat-page {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+
+  .inbox,
+  .detail,
+  .snapshot {
+    height: auto;
+    min-height: 420px;
   }
 
   .snapshot {

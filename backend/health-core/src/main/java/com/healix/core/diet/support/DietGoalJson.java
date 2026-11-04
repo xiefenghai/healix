@@ -33,10 +33,12 @@ public final class DietGoalJson {
             return "一般人群";
         }
         try {
-            return switch (CarePlanTemplateKeyEnum.valueOf(diseaseKey)) {
+            return switch (CarePlanTemplateKeyEnum.valueOf(diseaseKey).canonical()) {
                 case DIABETES -> "糖尿病";
                 case HYPERTENSION -> "高血压";
-                case DIABETES_HYPERTENSION -> "糖尿病合并高血压";
+                case OBESITY -> "肥胖";
+                case COMPREHENSIVE -> "综合慢病";
+                case WELLNESS -> "一般人群";
                 default -> "一般人群";
             };
         } catch (IllegalArgumentException e) {

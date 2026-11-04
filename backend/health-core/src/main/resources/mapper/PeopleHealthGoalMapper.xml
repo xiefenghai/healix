@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.goal.mapper.PeopleHealthGoalMapper">
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, enrollment_id, primary_appeal, doctor_advised,
+        appeal_text, goal_mode, goals_json, preferences_json, source, source_ref_id,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+    <select id="findByEnrollment" resultType="com.healix.core.goal.domain.PeopleHealthGoal">
+        SELECT <include refid="cols"/> FROM people_health_goal
+        WHERE enrollment_id = #{enrollmentId} AND is_deleted = 0
+        ORDER BY gmt_modified DESC LIMIT 1
+    </select>
+    <select id="findLatestByPeople" resultType="com.healix.core.goal.domain.PeopleHealthGoal">
+        SELECT <include refid="cols"/> FROM people_health_goal
+        WHERE tenant_id = #{tenantId} AND people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY gmt_modified DESC LIMIT 1
+    </select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_health_goal(
+            id, tenant_id, org_id, people_id, enrollment_id, primary_appeal, doctor_advised,
+            appeal_text, goal_mode, goals_json, preferences_json, source, source_ref_id,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{enrollmentId}, #{primaryAppeal}, #{doctorAdvised},
+            #{appealText}, #{goalMode}, #{goalsJson}, #{preferencesJson}, #{source}, #{sourceRefId},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+    <update id="update">
+        UPDATE people_health_goal SET
+            primary_appeal = #{primaryAppeal},
+            doctor_advised = #{doctorAdvised},
+            appeal_text = #{appealText},
+            goal_mode = #{goalMode},
+            goals_json = #{goalsJson},
+            preferences_json = #{preferencesJson},
+            source = #{source},
+            source_ref_id = #{sourceRefId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

@@ -8,7 +8,9 @@ public enum VitalSourceEnum {
     /** 设备同步 */
     DEVICE,
     /** 医护代录 */
-    STAFF;
+    STAFF,
+    /** 首诊 / 入组问卷基线 */
+    INTAKE;
 
     public static VitalSourceEnum fromOrDefault(String value) {
         if (value == null || value.isBlank()) {

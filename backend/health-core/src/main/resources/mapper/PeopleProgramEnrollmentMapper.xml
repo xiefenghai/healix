@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.program.mapper.PeopleProgramEnrollmentMapper">
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, people_id, program_code, status,
+        enrolled_at, onboarded_at, closed_at, owner_staff_id, intake_response_id, close_reason,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+    <select id="findById" resultType="com.healix.core.program.domain.PeopleProgramEnrollment">
+        SELECT <include refid="cols"/> FROM people_program_enrollment
+        WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findOpen" resultType="com.healix.core.program.domain.PeopleProgramEnrollment">
+        SELECT <include refid="cols"/> FROM people_program_enrollment
+        WHERE tenant_id = #{tenantId} AND org_id = #{orgId} AND people_id = #{peopleId}
+          AND program_code = #{programCode} AND status IN ('ONBOARDING','ACTIVE') AND is_deleted = 0
+        LIMIT 1
+    </select>
+    <select id="listByPeople" resultType="com.healix.core.program.domain.PeopleProgramEnrollment">
+        SELECT <include refid="cols"/> FROM people_program_enrollment
+        WHERE tenant_id = #{tenantId} AND org_id = #{orgId} AND people_id = #{peopleId} AND is_deleted = 0
+        ORDER BY enrolled_at DESC
+    </select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_program_enrollment(
+            id, tenant_id, org_id, people_id, program_code, status,
+            enrolled_at, onboarded_at, closed_at, owner_staff_id, intake_response_id, close_reason,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{peopleId}, #{programCode}, #{status},
+            #{enrolledAt}, #{onboardedAt}, #{closedAt}, #{ownerStaffId}, #{intakeResponseId}, #{closeReason},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+    <update id="updateStatus">
+        UPDATE people_program_enrollment SET
+            status = #{status},
+            onboarded_at = #{onboardedAt},
+            closed_at = #{closedAt},
+            intake_response_id = #{intakeResponseId},
+            close_reason = #{closeReason},
+            owner_staff_id = #{ownerStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+</mapper>

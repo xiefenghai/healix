@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.agent.card.AgentConfirmCardMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, card_type, status, payload_json, summary, expires_at,
+        is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO agent_confirm_card(
+            id, tenant_id, people_id, card_type, status, payload_json, summary, expires_at,
+            is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{cardType}, #{status}, #{payloadJson}, #{summary}, #{expiresAt},
+            #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <select id="findById" resultType="com.healix.agent.card.AgentConfirmCard">
+        SELECT <include refid="cols"/>
+        FROM agent_confirm_card
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <update id="update">
+        UPDATE agent_confirm_card
+        SET status = #{status},
+            payload_json = #{payloadJson},
+            summary = #{summary},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="expirePending">
+        UPDATE agent_confirm_card
+        SET status = 'EXPIRED',
+            gmt_modified = NOW()
+        WHERE people_id = #{peopleId}
+          AND status = 'PENDING'
+          AND is_deleted = 0
+    </update>
+</mapper>

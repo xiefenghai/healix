@@ -53,11 +53,22 @@ export interface OcrReview {
   title: string
   warnings: string[]
   imageUrl?: string
+  imageKey?: string
   lab?: OcrLabDraft | null
   exam?: OcrExamDraft | null
   med?: OcrMedDraft | null
   status: 'pending' | 'saving' | 'confirmed' | 'discarded'
   reportId?: string
+  /** 检验单：图片是否同时识别出采样时间和报告时间。缺一则不能入库。 */
+  labTimesReady?: boolean
+}
+
+export const LAB_TIME_BLOCK_MESSAGE = '未识别出采样时间或报告时间，不能入库'
+
+export function labOcrUploadBlocked(review: Pick<OcrReview, 'kind' | 'labTimesReady' | 'lab'>): boolean {
+  if (review.kind !== 'LAB') return false
+  if (review.labTimesReady === false) return true
+  return !review.lab?.sampledAt || !review.lab?.reportedAt
 }
 
 export const MED_USAGE_OPTIONS = [
@@ -166,6 +177,7 @@ export function buildOcrReview(
 ): OcrReview | null {
   const raw = extracted as Record<string, unknown>
   if (!raw) return null
+  const imageKey = readImageKey(raw)
 
   if (raw.kind === 'LAB' || raw.kind === 'EXAM' || raw.kind === 'MED') {
     const kind = raw.kind as 'LAB' | 'EXAM' | 'MED'
@@ -177,31 +189,37 @@ export function buildOcrReview(
           : kind === 'MED'
             ? '用药单'
             : '检查单'
+    const lab = kind === 'LAB' && raw.lab ? cloneLabDraft(raw.lab as OcrLabDraft) : null
     return {
       peopleId,
       kind,
       title,
       warnings: Array.isArray(raw.warnings) ? (raw.warnings as string[]) : [],
       imageUrl: previewUrl,
-      lab: kind === 'LAB' && raw.lab ? cloneLabDraft(raw.lab as OcrLabDraft) : null,
+      imageKey,
+      lab,
       exam: kind === 'EXAM' && raw.exam ? cloneExamDraft(raw.exam as OcrExamDraft) : null,
       med: kind === 'MED' && raw.med ? cloneMedDraft(raw.med as OcrMedDraft, known) : null,
       status: 'pending',
+      labTimesReady: kind === 'LAB' ? !!(lab?.sampledAt && lab?.reportedAt) : undefined,
     }
   }
 
   if (capability === 'OCR_LAB') {
     const lab = raw as unknown as OcrLabDraft
     if (!lab.items?.length) return null
+    const cloned = cloneLabDraft(lab)
     return {
       peopleId,
       kind: 'LAB',
       title: '检验单',
       warnings: lab.warnings || [],
       imageUrl: previewUrl,
-      lab: cloneLabDraft(lab),
+      imageKey,
+      lab: cloned,
       exam: null,
       status: 'pending',
+      labTimesReady: !!(cloned.sampledAt && cloned.reportedAt),
     }
   }
   if (capability === 'OCR_EXAM') {
@@ -214,6 +232,7 @@ export function buildOcrReview(
       title: exam.examTypeName || '检查单',
       warnings: exam.warnings || [],
       imageUrl: previewUrl,
+      imageKey,
       lab: null,
       exam: cloneExamDraft(exam),
       status: 'pending',
@@ -228,6 +247,7 @@ export function buildOcrReview(
       title: '用药单',
       warnings: med.warnings || [],
       imageUrl: previewUrl,
+      imageKey,
       lab: null,
       exam: null,
       med: cloneMedDraft(med, known),
@@ -237,10 +257,24 @@ export function buildOcrReview(
   return null
 }
 
+function readImageKey(raw: Record<string, unknown>): string | undefined {
+  if (typeof raw.imageKey === 'string' && raw.imageKey) return raw.imageKey
+  for (const part of ['lab', 'exam', 'med'] as const) {
+    const nested = raw[part]
+    if (nested && typeof nested === 'object' && 'imageKey' in nested) {
+      const key = (nested as { imageKey?: unknown }).imageKey
+      if (typeof key === 'string' && key) return key
+    }
+  }
+  return undefined
+}
+
 export function buildConfirmBody(review: OcrReview): Record<string, unknown> {
+  const imageKey = review.imageKey || undefined
   if (review.kind === 'LAB') {
     return {
       kind: 'LAB',
+      imageKey,
       lab: {
         specimenType: review.lab?.specimenType || undefined,
         sampledAt: toApiDateTime(review.lab?.sampledAt),
@@ -262,6 +296,7 @@ export function buildConfirmBody(review: OcrReview): Record<string, unknown> {
   if (review.kind === 'MED') {
     return {
       kind: 'MED',
+      imageKey,
       med: {
         items: (review.med?.items || [])
           .filter((i) => i.drugName?.trim())
@@ -280,6 +315,7 @@ export function buildConfirmBody(review: OcrReview): Record<string, unknown> {
   }
   return {
     kind: 'EXAM',
+    imageKey,
     exam: {
       examType: review.exam?.examType,
       examTypeName: review.exam?.examTypeName || undefined,

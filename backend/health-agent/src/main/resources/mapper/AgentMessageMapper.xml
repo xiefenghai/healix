@@ -43,4 +43,17 @@
           AND tool_name = #{toolName}
           AND is_deleted = 0
     </update>
+
+    <select id="findById" resultType="com.healix.agent.memory.AgentMessageEntity">
+        SELECT id, session_id AS sessionId, role, content, tool_name AS toolName,
+               is_deleted AS isDeleted, gmt_created AS gmtCreated
+        FROM agent_message
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <update id="updateContent">
+        UPDATE agent_message
+        SET content = #{content}, gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
 </mapper>

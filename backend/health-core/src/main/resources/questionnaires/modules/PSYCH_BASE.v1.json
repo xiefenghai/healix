@@ -1,0 +1,65 @@
+{
+  "code": "PSYCH_BASE",
+  "version": 1,
+  "title": "心理与情绪",
+  "script": "减重不只关乎吃和动，心情、压力也会影响。如果您愿意，我们简单聊几句；不想说的可以跳过。",
+  "items": [
+    {
+      "field": "basic.psych.stressLevel",
+      "label": "最近压力大吗？",
+      "level": "LATER",
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.stressEating",
+      "label": "压力大的时候吃东西会变吗？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.psych.stressLevel",
+        "notIn": [
+          "LOW"
+        ]
+      },
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.emotionalEating",
+      "label": "心情不好或无聊时会想吃东西吗？",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": {
+            "eq": "OFTEN"
+          },
+          "severity": "CAUTION",
+          "planEffect": "以行为替代为主，避免严格限制"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.readiness",
+      "label": "现在想改变生活习惯的程度？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "eq": "NOT_READY"
+          },
+          "severity": "CAUTION",
+          "planEffect": "首版方案只设 1–2 个小目标"
+        }
+      ]
+    },
+    {
+      "field": "basic.psych.familySupport",
+      "label": "家里人支持你减重吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.psych.willingToRecord",
+      "label": "愿意每天记录饮食或体重吗？",
+      "level": "LATER"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+﻿InputField,原标签,原写回,新字段编码,新写回,取值换算,进入哪份问卷,备注
+GENDER,性别,NONE,profile.gender,people_profile,原值,WL_INTAKE；评估补充问卷不出题（提示去基本信息）,
+BIRTHDAY,出生日期,NONE,profile.birthday,people_profile,原值,WL_INTAKE；评估补充问卷不出题,
+HEIGHT,身高,METRIC,metric.HEIGHT,指标表,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+WEIGHT,体重,METRIC,metric.WEIGHT,指标表,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+WAIST,腰围,METRIC,metric.WAIST,指标表,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+BODY_FAT,体脂率,FACT,metric.BODY_FAT,指标表（新指标）,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,存量事实迁为指标记录（source = ASSESSMENT）
+BLOOD_PRESSURE,血压,NONE,metric.BLOOD_PRESSURE_SYS + metric.BLOOD_PRESSURE_DIA,指标表,原值,不出题（填写提示保留：去健康数据记录）,
+HEART_RATE,静息心率,NONE,metric.HEART_RATE,指标表,原值,不出题（填写提示保留）,
+GLUCOSE,血糖,NONE,metric.BLOOD_GLUCOSE,指标表,原值,不出题（填写提示保留）,
+HBA1C,糖化血红蛋白,NONE,lab.HBA1C,检验报告,原值,不出题（填写提示保留）,新增前缀 lab.*（检验项编码沿用 labItemCode）
+LIPIDS,血脂,NONE,lab.TC + lab.TG + lab.LDL_C + lab.HDL_C,检验报告,任一有值即视为已采集,不出题（填写提示保留）,
+URIC_ACID,尿酸,NONE,lab.UA,检验报告,原值,不出题（填写提示保留）,
+RENAL,肾功能,NONE,lab.CR + lab.EGFR + lab.UACR,检验报告,任一有值即视为已采集,不出题（填写提示保留）,
+LIVER,肝功能,NONE,lab.ALT + lab.AST,检验报告,任一有值即视为已采集,不出题（填写提示保留）,
+SMOKING,吸烟,ARCHIVE,basic.lifestyle.smoking.status,元数据,原值（编码一致）,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+PASSIVE_SMOKING,被动吸烟,FACT,basic.lifestyle.smoking.passive,元数据,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+DRINKING,饮酒,ARCHIVE,basic.lifestyle.drinking.status + basic.lifestyle.drinking.frequency,元数据,NEVER → status = NEVER；其他频率 → status = CURRENT + frequency,WL_INTAKE / ASSESSMENT_SUPPLEMENT,与现有写回逻辑一致
+EXERCISE,运动频率,ARCHIVE,basic.exercise.frequency,元数据,原值（编码一致）,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+HIGH_SALT,高盐饮食,FACT,basic.diet.taste,元数据,YES ⇔ 含 SALTY；NO ⇔ 已采集且不含 SALTY；UNKNOWN ⇔ 未采集,WL_INTAKE / ASSESSMENT_SUPPLEMENT,存量 YES 迁为 taste = [SALTY]；存量 NO 迁为 taste = []（已采集）
+CHRONIC_STRESS,长期精神紧张,FACT,basic.psych.stressLevel,元数据,YES ⇔ HIGH；NO ⇔ LOW / MEDIUM,WL_INTAKE / ASSESSMENT_SUPPLEMENT,存量 YES → HIGH；NO → MEDIUM（待评审：NO 迁成 LOW 还是 MEDIUM）
+FAMILY_HISTORY,一级亲属家族史,ARCHIVE,basic.familyHistoryStatus + basic.familyHistoryItems,元数据,沿用现有 applyFamilyHistory 规则（只改一级亲属）,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+PRESENT_ILLNESS,现有疾病,ARCHIVE,basic.presentIllness,元数据,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+PREDIABETES,糖尿病前期史,FACT,basic.presentIllness,元数据,YES ⇔ 含 PREDIABETES（新选项）,WL_INTAKE / ASSESSMENT_SUPPLEMENT,三态换算同 HIGH_SALT
+GDM_HISTORY,妊娠期糖尿病史,FACT,basic.women.gdmHistory,元数据,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+STEROID_DIABETES,类固醇糖尿病史,FACT,basic.medical.steroidHyperglycemia,元数据,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+PCOS,多囊卵巢综合征,FACT,basic.presentIllness,元数据,YES ⇔ 含 PCOS（新选项）,WL_INTAKE / ASSESSMENT_SUPPLEMENT,三态换算同 HIGH_SALT
+ACANTHOSIS,黑棘皮症,FACT,basic.medical.acanthosis,元数据,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+PSYCH_DRUGS,长期精神类用药,FACT,basic.medicationFlags,元数据,YES ⇔ 含 PSYCH,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+ANTIHYPERTENSIVE,降压治疗,FACT,basic.medicationFlags,元数据,YES ⇔ 含 ANTIHYPERTENSIVE,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+STATIN,调脂治疗,FACT,basic.medicationFlags,元数据,YES ⇔ 含 STATIN,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+EARLY_MENOPAUSE,早发绝经,FACT,basic.women.earlyMenopause,元数据,原值,WL_INTAKE / ASSESSMENT_SUPPLEMENT,
+OSA,睡眠呼吸暂停,FACT,basic.presentIllness,元数据,YES ⇔ 含 OSA（新选项）,WL_INTAKE / ASSESSMENT_SUPPLEMENT,三态换算同 HIGH_SALT
+HTN_MAX_SBP,既往最高收缩压,DISEASE_ARCHIVE,disease.hypertension.highestSystolic,元数据（病种）,原值,ASSESSMENT_SUPPLEMENT,沿用现有病种档案字段；存量 fact 优先级低于档案值，迁移时档案无值才写
+HTN_MAX_DBP,既往最高舒张压,DISEASE_ARCHIVE,disease.hypertension.highestDiastolic,元数据（病种）,原值,ASSESSMENT_SUPPLEMENT,同上
+DM_COMPLICATIONS,糖尿病并发症,FACT,disease.diabetes.chronicComplications,元数据（病种，新字段）,原值（NEPHROPATHY / RETINOPATHY / NEUROPATHY / DIABETIC_FOOT / NONE）,ASSESSMENT_SUPPLEMENT,
+LVH,左心室肥厚,FACT,basic.clinical.lvh,元数据,原值,ASSESSMENT_SUPPLEMENT（仅 B 端）,
+CAROTID_PLAQUE,颈动脉内中膜增厚或斑块,FACT,basic.clinical.carotidPlaque,元数据,原值,ASSESSMENT_SUPPLEMENT（仅 B 端）,
+PWV_HIGH,脉搏波传导速度增快,FACT,basic.clinical.pwvHigh,元数据,原值,ASSESSMENT_SUPPLEMENT（仅 B 端）,
+ABI_LOW,踝臂指数降低,FACT,basic.clinical.abiLow,元数据,原值,ASSESSMENT_SUPPLEMENT（仅 B 端）,
+HCY_HIGH,高同型半胱氨酸,FACT,basic.clinical.hcyHigh,元数据,原值,ASSESSMENT_SUPPLEMENT（仅 B 端）,
+PERIPHERAL_ARTERY_DISEASE,外周血管疾病,FACT,basic.clinical.peripheralArteryDisease,元数据,原值,ASSESSMENT_SUPPLEMENT（仅 B 端）,
+ADVANCED_RETINOPATHY,视网膜病变（出血/渗出/视乳头水肿）,FACT,basic.clinical.advancedRetinopathy,元数据,原值,ASSESSMENT_SUPPLEMENT（仅 B 端）,

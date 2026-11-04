@@ -68,6 +68,24 @@ interface SelfCompare {
   avgScopeLabel: string
 }
 
+interface TaskItem {
+  id: string
+  peopleId?: string | null
+  peopleName?: string | null
+  taskType?: string
+  taskTypeLabel?: string
+  title?: string | null
+  summary?: string | null
+  status?: string
+  assigneeName?: string | null
+  doneByName?: string | null
+  dueAt?: string | null
+  doneAt?: string | null
+  onTime?: boolean | null
+}
+
+type TaskKind = 'DONE' | 'ON_TIME_SCOPE' | 'ON_TIME' | 'LATE' | 'OVERDUE_OPEN'
+
 interface ByStaffResp {
   canViewRanking: boolean
   ranking: StaffRow[]
@@ -105,6 +123,13 @@ const typeRef = ref<HTMLDivElement | null>(null)
 let seriesChart: EChartsType | null = null
 let typeChart: EChartsType | null = null
 
+const drillOpen = ref(false)
+const drillKind = ref<TaskKind>('DONE')
+const drillPage = ref(1)
+const drillTotal = ref(0)
+const drillItems = ref<TaskItem[]>([])
+const drillLoading = ref(false)
+
 const isTenantAdmin = computed(() => hasRole('TENANT_ADMIN'))
 
 const kpiCards = computed(() => {
@@ -116,6 +141,7 @@ const kpiCards = computed(() => {
       value: s?.doneCount ?? 0,
       hint: '区间内关单',
       tone: 'teal' as const,
+      drill: true,
     },
     {
       key: 'onTime',
@@ -126,6 +152,7 @@ const kpiCards = computed(() => {
           ? `${s.onTimeCount}/${s.doneWithDueCount} 有截止`
           : '无有截止的办结',
       tone: 'blue' as const,
+      drill: true,
     },
     {
       key: 'overdue',
@@ -133,6 +160,7 @@ const kpiCards = computed(() => {
       value: s?.overdueOpenCount ?? 0,
       hint: '此刻存量',
       tone: 'rose' as const,
+      drill: true,
     },
     {
       key: 'followup',
@@ -140,6 +168,7 @@ const kpiCards = computed(() => {
       value: s?.followupDoneCount ?? 0,
       hint: '区间内完成',
       tone: 'violet' as const,
+      drill: false,
     },
     {
       key: 'report',
@@ -147,6 +176,7 @@ const kpiCards = computed(() => {
       value: s?.reportPublishedCount ?? 0,
       hint: '区间内发布',
       tone: 'amber' as const,
+      drill: false,
     },
   ]
 })
@@ -202,6 +232,7 @@ async function load() {
     await nextTick()
     renderSeries()
     renderTypes()
+    if (drillOpen.value) void loadDrill()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -215,9 +246,32 @@ function renderSeries() {
   const pts = summary.value?.series ?? []
   seriesChart.setOption({
     color: ['#0D9488', '#2563EB'],
-    grid: { left: 40, right: 48, top: 32, bottom: 28 },
-    legend: { top: 0, right: 0, textStyle: { color: '#64748B', fontSize: 12 } },
-    tooltip: { trigger: 'axis' },
+    grid: { left: 8, right: 12, top: 40, bottom: 4, containLabel: true },
+    legend: {
+      top: 0,
+      left: 'center',
+      itemWidth: 14,
+      itemHeight: 8,
+      itemGap: 20,
+      textStyle: { color: '#64748B', fontSize: 12 },
+    },
+    tooltip: {
+      trigger: 'axis',
+      formatter(params: unknown) {
+        const list = (Array.isArray(params) ? params : [params]) as Array<{
+          axisValue?: string
+          marker?: string
+          seriesName?: string
+          value?: number | null
+        }>
+        const title = list[0]?.axisValue ?? ''
+        const lines = list.map((p) => {
+          const text = p.value == null ? '—' : p.seriesName === '及时率' ? `${p.value}%` : String(p.value)
+          return `${p.marker || ''}${p.seriesName}　${text}`
+        })
+        return [title, ...lines].join('<br/>')
+      },
+    },
     xAxis: {
       type: 'category',
       data: pts.map((p) => (p.date || '').slice(5)),
@@ -227,17 +281,15 @@ function renderSeries() {
     yAxis: [
       {
         type: 'value',
-        name: '办结',
         minInterval: 1,
-        axisLabel: { color: '#94A3B8' },
+        axisLabel: { color: '#94A3B8', fontSize: 11 },
         splitLine: { lineStyle: { color: '#F1F5F9' } },
       },
       {
         type: 'value',
-        name: '及时率%',
         min: 0,
         max: 100,
-        axisLabel: { color: '#94A3B8' },
+        axisLabel: { color: '#94A3B8', fontSize: 11, formatter: '{value}%' },
         splitLine: { show: false },
       },
     ],
@@ -254,11 +306,13 @@ function renderSeries() {
         type: 'line',
         yAxisIndex: 1,
         smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
         data: pts.map((p) => p.onTimeRate ?? null),
         connectNulls: false,
       },
     ],
-  })
+  }, true)
 }
 
 function renderTypes() {
@@ -306,13 +360,103 @@ function goTasks(opts: { pool?: string; status?: string }) {
 }
 
 function onKpiClick(key: string) {
-  if (key === 'overdue') {
-    goTasks({ pool: isTenantAdmin.value ? 'ALL' : 'MINE', status: isTenantAdmin.value ? 'OPEN' : undefined })
-    return
+  if (key === 'done') openDrill('DONE')
+  else if (key === 'onTime') openDrill('ON_TIME_SCOPE')
+  else if (key === 'overdue') openDrill('OVERDUE_OPEN')
+}
+
+const onTimeFamily = computed(
+  () => drillKind.value === 'ON_TIME_SCOPE' || drillKind.value === 'ON_TIME' || drillKind.value === 'LATE',
+)
+
+const drillTitle = computed(() => {
+  switch (drillKind.value) {
+    case 'DONE':
+      return '办结任务'
+    case 'ON_TIME_SCOPE':
+      return '计入及时率的办结'
+    case 'ON_TIME':
+      return '及时办结'
+    case 'LATE':
+      return '超时办结'
+    default:
+      return '超期未结'
   }
-  if (key === 'done' || key === 'onTime') {
-    goTasks({ pool: isTenantAdmin.value ? 'ALL' : 'DONE', status: isTenantAdmin.value ? 'DONE' : undefined })
+})
+
+const drillHint = computed(() => {
+  if (drillKind.value === 'OVERDUE_OPEN') return '此刻仍未办结，且已经过了截止时间'
+  return `${from.value} 至 ${to.value} 内关单`
+})
+
+function openDrill(kind: TaskKind) {
+  drillKind.value = kind
+  drillPage.value = 1
+  drillOpen.value = true
+  void loadDrill()
+}
+
+function setOnTimeKind(kind: TaskKind) {
+  if (drillKind.value === kind) return
+  drillKind.value = kind
+  drillPage.value = 1
+  void loadDrill()
+}
+
+async function loadDrill() {
+  if (!drillOpen.value) return
+  drillLoading.value = true
+  try {
+    const q = queryParams()
+    q.set('kind', drillKind.value)
+    q.set('page', String(drillPage.value))
+    q.set('size', '20')
+    const res = await api<{ data: { total: number; items: TaskItem[] } }>(
+      `/api/b/v1/ops-stats/tasks?${q}`,
+    )
+    drillTotal.value = Number(res.data?.total ?? 0)
+    drillItems.value = res.data?.items ?? []
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '任务列表加载失败')
+  } finally {
+    drillLoading.value = false
   }
+}
+
+function onDrillPage(p: number) {
+  drillPage.value = p
+  void loadDrill()
+}
+
+function formatDt(value?: string | null) {
+  if (!value) return '—'
+  return String(value).replace('T', ' ').slice(0, 16)
+}
+
+function taskTitle(row: TaskItem) {
+  const title = (row.title || '').trim()
+  const summary = (row.summary || '').trim()
+  if (title && summary && title !== summary) return `${title} · ${summary}`
+  return title || summary || row.taskTypeLabel || '任务'
+}
+
+function handlerName(row: TaskItem) {
+  if (drillKind.value === 'OVERDUE_OPEN') return row.assigneeName || '未分配'
+  return row.doneByName || row.assigneeName || '—'
+}
+
+function onTimeText(row: TaskItem) {
+  if (row.onTime === true) return '及时'
+  if (row.onTime === false) return '超时'
+  return '无截止'
+}
+
+function openPatient(row: TaskItem) {
+  if (!row.peopleId) return
+  router.push({
+    path: `/workspace/patients/${row.peopleId}`,
+    query: row.peopleName ? { name: row.peopleName } : {},
+  })
 }
 
 function onResize() {
@@ -393,8 +537,8 @@ onBeforeUnmount(() => {
         :key="c.key"
         type="button"
         class="kpi"
-        :class="c.tone"
-        @click="onKpiClick(c.key)"
+        :class="[c.tone, { static: !c.drill }]"
+        @click="c.drill && onKpiClick(c.key)"
       >
         <div class="kpi-label">{{ c.label }}</div>
         <div class="kpi-value">{{ c.value }}</div>
@@ -485,6 +629,64 @@ onBeforeUnmount(() => {
         · 取消/过期 {{ summary.cancelledOrExpiredCount }} 笔
       </template>
     </p>
+
+    <el-dialog v-model="drillOpen" :title="drillTitle" width="920px" destroy-on-close>
+      <div class="drill-head">
+        <span>{{ drillHint }}</span>
+        <span class="muted">共 {{ drillTotal }} 笔</span>
+      </div>
+      <el-radio-group
+        v-if="onTimeFamily"
+        :model-value="drillKind"
+        size="small"
+        class="drill-kinds"
+        @change="setOnTimeKind"
+      >
+        <el-radio-button label="ON_TIME_SCOPE">计入及时率</el-radio-button>
+        <el-radio-button label="ON_TIME">及时</el-radio-button>
+        <el-radio-button label="LATE">超时</el-radio-button>
+      </el-radio-group>
+      <el-table v-loading="drillLoading" :data="drillItems" stripe>
+        <el-table-column label="患者" min-width="100">
+          <template #default="{ row }">{{ row.peopleName || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="类型" width="120">
+          <template #default="{ row }">{{ row.taskTypeLabel || row.taskType || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="任务" min-width="220">
+          <template #default="{ row }">{{ taskTitle(row) }}</template>
+        </el-table-column>
+        <el-table-column label="办理人" width="100">
+          <template #default="{ row }">{{ handlerName(row) }}</template>
+        </el-table-column>
+        <el-table-column label="截止" width="140">
+          <template #default="{ row }">{{ formatDt(row.dueAt) }}</template>
+        </el-table-column>
+        <el-table-column v-if="drillKind !== 'OVERDUE_OPEN'" label="办结" width="140">
+          <template #default="{ row }">{{ formatDt(row.doneAt) }}</template>
+        </el-table-column>
+        <el-table-column v-if="drillKind !== 'OVERDUE_OPEN'" label="及时" width="80">
+          <template #default="{ row }">
+            <span :class="{ late: row.onTime === false, ok: row.onTime === true }">{{ onTimeText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="" width="72" align="right">
+          <template #default="{ row }">
+            <el-button v-if="row.peopleId" link type="primary" @click="openPatient(row)">患者</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="drillTotal > 20" class="drill-pager">
+        <el-pagination
+          :current-page="drillPage"
+          :page-size="20"
+          :total="drillTotal"
+          layout="prev, pager, next"
+          background
+          @current-change="onDrillPage"
+        />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -546,6 +748,13 @@ onBeforeUnmount(() => {
 .kpi:hover {
   border-color: #cbd5e1;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+.kpi.static {
+  cursor: default;
+}
+.kpi.static:hover {
+  border-color: #e2e8f0;
+  box-shadow: none;
 }
 .kpi-label {
   font-size: 12px;
@@ -673,5 +882,29 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.6;
   color: #94a3b8;
+}
+.drill-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #475569;
+}
+.drill-kinds {
+  margin-bottom: 12px;
+}
+.drill-pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.late {
+  color: #be123c;
+  font-weight: 650;
+}
+.ok {
+  color: #0f766e;
+  font-weight: 650;
 }
 </style>

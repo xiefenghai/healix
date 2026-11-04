@@ -14,6 +14,7 @@ import com.healix.core.org.mapper.OrganizationMapper;
 import com.healix.core.patient.domain.PatientCareAssignment;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.enums.MembershipStatusEnum;
+import com.healix.core.followup.service.FollowupScheduleService;
 import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.patientcard.domain.AccountPatient;
@@ -25,6 +26,7 @@ import com.healix.core.people.mapper.PeopleAccountMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.portal.enums.PortalEnum;
 import java.security.SecureRandom;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -50,6 +52,7 @@ public class PatientActivationService {
     private final PatientCardService patientCardService;
     private final AuditService auditService;
     private final IdentityService identityService;
+    private final FollowupScheduleService followupScheduleService;
 
     @Transactional
     public PeopleActivationInvite issue(
@@ -65,6 +68,10 @@ public class PatientActivationService {
         PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
         if (membership == null || !MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
             throw new BusinessException(403, "患者未在本机构有效入组");
+        }
+        if (com.healix.core.people.support.MobileNumbers.trySelf(people.getMobile()) != null
+                && "SELF".equals(people.getMobileOwner())) {
+            throw new BusinessException(400, "该患者已有本人手机号，请让患者用手机号添加就诊人");
         }
 
         int days = validDays > 0 ? validDays : 7;
@@ -109,6 +116,7 @@ public class PatientActivationService {
             String username,
             String password,
             String displayName,
+            LocalDate birthday,
             String relation,
             String existingAccountId) {
         PeopleActivationInvite invite = requireUsableInvite(activationCode);
@@ -119,9 +127,15 @@ public class PatientActivationService {
         if (people == null) {
             throw new BusinessException(404, "患者不存在");
         }
-        if (StringUtils.hasText(displayName)
-                && !people.getDisplayName().trim().equals(displayName.trim())) {
+        if (!StringUtils.hasText(displayName) || !people.getDisplayName().trim().equals(displayName.trim())) {
             throw new BusinessException(400, "姓名与档案不一致");
+        }
+        if (birthday == null || people.getBirthday() == null || !people.getBirthday().equals(birthday)) {
+            throw new BusinessException(400, "出生日期与档案不一致");
+        }
+        if (com.healix.core.people.support.MobileNumbers.trySelf(people.getMobile()) != null
+                && "SELF".equals(people.getMobileOwner())) {
+            throw new BusinessException(400, "该档案已有本人手机号，请直接添加就诊人");
         }
 
         PeopleAccount account;
@@ -201,6 +215,7 @@ public class PatientActivationService {
 
     private void ensureMembership(String orgId, String tenantId, String peopleId, String staffId) {
         PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
+        boolean newlyJoined = false;
         if (membership == null) {
             membership = new PatientOrgMembership();
             membership.setTenantId(tenantId);
@@ -211,6 +226,7 @@ public class PatientActivationService {
             EntityMeta.onCreate(membership);
             membership.setJoinedAt(membership.getGmtCreated());
             membershipMapper.insert(membership);
+            newlyJoined = true;
         } else if (!MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
             throw new BusinessException(409, "该患者机构关系已退出，请联系管理员处理");
         }
@@ -222,6 +238,11 @@ public class PatientActivationService {
             care.setPrimaryOrgId(orgId);
             EntityMeta.onCreate(care);
             careAssignmentMapper.insert(care);
+        }
+
+        if (newlyJoined) {
+            // 先开入组/首诊；分配健管组等首诊办结后再开
+            followupScheduleService.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
         }
     }
 

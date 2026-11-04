@@ -9,6 +9,8 @@ public enum MetricTypeEnum {
     HEIGHT,
     WEIGHT,
     WAIST,
+    HIP,
+    BODY_FAT,
     TEMPERATURE,
     STEPS,
     SLEEP_HOURS;

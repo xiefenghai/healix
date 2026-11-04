@@ -23,6 +23,8 @@ import com.healix.core.org.domain.Organization;
 import com.healix.core.org.service.OrganizationService;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.service.MembershipService;
+import com.healix.core.tenant.domain.Tenant;
+import com.healix.core.tenant.mapper.TenantMapper;
 import com.healix.core.tenantadmin.service.TenantAdminService;
 import com.healix.core.tenantadmin.service.TenantAdminService.RegisterStaffCommand;
 import com.healix.core.tenantadmin.service.TenantAdminService.ReplaceOrgsResult;
@@ -39,6 +41,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -63,6 +66,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class BPortalController {
 
     private final IdentityService identityService;
+    private final TenantMapper tenantMapper;
     private final OrganizationService organizationService;
     private final MembershipService membershipService;
     private final VitalService vitalService;
@@ -73,15 +77,45 @@ public class BPortalController {
     private final MfaService mfaService;
     private final AuditService auditService;
 
-    /** 员工登录，签发 Staff JWT（含租户、默认机构、角色）。 */
+    /** 员工登录，签发 Staff JWT（含租户、默认机构、角色）。账号加入多个租户且未指定租户时，只返回可选租户。 */
     @PostMapping("/auth/login")
-    public ApiResult<StaffTokenResponse> login(@RequestBody @Validated LoginRequest request) {
+    public ApiResult<StaffLoginResponse> login(@RequestBody @Validated LoginRequest request) {
         StaffAccount account = identityService.requireStaffAccount(request.username());
         if (!identityService.matches(request.password(), account.getPasswordHash())) {
             throw new BusinessException(401, "用户名或密码错误");
         }
         mfaService.assertLoginCode(MfaService.TYPE_STAFF, account.getId(), request.mfaCode());
-        StaffProfile profile = identityService.requireStaffByAccount(account.getId());
+        List<StaffProfile> profiles = identityService.listStaffByAccount(account.getId());
+        if (profiles.isEmpty()) {
+            throw new BusinessException("员工资料不存在");
+        }
+
+        String requestedTenantId = request.tenantId() == null ? "" : request.tenantId().trim();
+        if (!requestedTenantId.isEmpty()) {
+            StaffProfile profile = profiles.stream()
+                    .filter(p -> requestedTenantId.equals(p.getTenantId()))
+                    .findFirst()
+                    .orElseThrow(() -> new BusinessException(403, "该账号未加入此租户"));
+            return ApiResult.ok(issueStaffLogin(account, profile));
+        }
+        if (profiles.size() == 1) {
+            return ApiResult.ok(issueStaffLogin(account, profiles.get(0)));
+        }
+
+        List<TenantOption> options = new ArrayList<>();
+        for (StaffProfile profile : profiles) {
+            Tenant tenant = tenantMapper.findById(profile.getTenantId());
+            String name = tenant == null || tenant.getName() == null || tenant.getName().isBlank()
+                    ? profile.getTenantId()
+                    : tenant.getName();
+            options.add(new TenantOption(
+                    profile.getTenantId(), name, List.copyOf(identityService.staffRoles(profile.getId()))));
+        }
+        return ApiResult.ok(new StaffLoginResponse(
+                null, account.getId(), null, null, null, null, options));
+    }
+
+    private StaffLoginResponse issueStaffLogin(StaffAccount account, StaffProfile profile) {
         Set<String> roles = identityService.staffRoles(profile.getId());
         List<StaffOrgBinding> orgs = identityService.staffOrgs(profile.getId());
         String currentOrgId = orgs.stream()
@@ -91,8 +125,8 @@ public class BPortalController {
                 .orElse(orgs.isEmpty() ? null : orgs.get(0).getOrgId());
         String token = jwtTokenProvider.createStaffToken(
                 account.getId(), profile.getId(), profile.getTenantId(), currentOrgId, roles);
-        return ApiResult.ok(new StaffTokenResponse(
-                token, account.getId(), profile.getId(), profile.getTenantId(), currentOrgId, roles));
+        return new StaffLoginResponse(
+                token, account.getId(), profile.getId(), profile.getTenantId(), currentOrgId, roles, null);
     }
 
     /** 切换当前工作机构，重新签发 JWT（租户管理员可切本租户任意机构）。 */
@@ -330,7 +364,23 @@ public class BPortalController {
     }
 
     /** @param mfaCode 启用二次校验的账号必填；未启用时忽略 */
-    public record LoginRequest(@NotBlank String username, @NotBlank String password, String mfaCode) {
+    /** @param tenantId 账号加入多个租户时指定要进入的租户 */
+    public record LoginRequest(
+            @NotBlank String username, @NotBlank String password, String mfaCode, String tenantId) {
+    }
+
+    public record TenantOption(String tenantId, String tenantName, List<String> roles) {
+    }
+
+    /** accessToken 为空时表示需要先从 tenants 里选定租户再登录。 */
+    public record StaffLoginResponse(
+            String accessToken,
+            String accountId,
+            String staffId,
+            String tenantId,
+            String currentOrgId,
+            Set<String> roles,
+            List<TenantOption> tenants) {
     }
 
     public record SwitchOrgRequest(@NotNull String orgId) {

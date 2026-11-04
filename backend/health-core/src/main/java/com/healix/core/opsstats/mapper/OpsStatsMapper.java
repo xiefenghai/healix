@@ -3,6 +3,7 @@ package com.healix.core.opsstats.mapper;
 import com.healix.core.opsstats.dto.OpsStatsDayAggRow;
 import com.healix.core.opsstats.dto.OpsStatsStaffAggRow;
 import com.healix.core.opsstats.dto.OpsStatsTaskAggRow;
+import com.healix.core.opsstats.dto.OpsStatsTaskItemDto;
 import com.healix.core.opsstats.dto.OpsStatsTypeSliceDto;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -77,6 +78,26 @@ public interface OpsStatsMapper {
             @Param("to") LocalDateTime to,
             @Param("careTeamId") String careTeamId,
             @Param("staffId") String staffId);
+
+    long countTaskItems(
+            @Param("orgId") String orgId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("now") LocalDateTime now,
+            @Param("careTeamId") String careTeamId,
+            @Param("staffId") String staffId,
+            @Param("kind") String kind);
+
+    List<OpsStatsTaskItemDto> listTaskItems(
+            @Param("orgId") String orgId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("now") LocalDateTime now,
+            @Param("careTeamId") String careTeamId,
+            @Param("staffId") String staffId,
+            @Param("kind") String kind,
+            @Param("limit") int limit,
+            @Param("offset") int offset);
 
     List<String> listStaffIdsInCareTeam(@Param("careTeamId") String careTeamId);
 

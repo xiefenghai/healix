@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.medication.mapper.PeopleMedicationFeedbackMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, people_id, medication_id, kind, symptoms_json, severity, content, status,
+        work_task_id, handled_by_staff_id, handled_at, reply, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO people_medication_feedback(
+            id, tenant_id, people_id, medication_id, kind, symptoms_json, severity, content, status,
+            work_task_id, handled_by_staff_id, handled_at, reply, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{peopleId}, #{medicationId}, #{kind}, #{symptomsJson}, #{severity}, #{content},
+            #{status}, #{workTaskId}, #{handledByStaffId}, #{handledAt}, #{reply}, #{isDeleted},
+            #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="updateTask">
+        UPDATE people_medication_feedback
+        SET work_task_id = #{workTaskId},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="handle">
+        UPDATE people_medication_feedback
+        SET status = #{status},
+            handled_by_staff_id = #{handledByStaffId},
+            handled_at = #{handledAt},
+            reply = #{reply},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.medication.domain.PeopleMedicationFeedback">
+        SELECT <include refid="cols"/>
+        FROM people_medication_feedback
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </select>
+
+    <select id="listByMedication" resultType="com.healix.core.medication.domain.PeopleMedicationFeedback">
+        SELECT <include refid="cols"/>
+        FROM people_medication_feedback
+        WHERE medication_id = #{medicationId}
+          AND is_deleted = 0
+        ORDER BY gmt_created DESC
+    </select>
+
+    <select id="listByPeople" resultType="com.healix.core.medication.domain.PeopleMedicationFeedback">
+        SELECT <include refid="cols"/>
+        FROM people_medication_feedback
+        WHERE tenant_id = #{tenantId}
+          AND people_id = #{peopleId}
+          AND is_deleted = 0
+        <if test="status != null and status != ''">
+          AND status = #{status}
+        </if>
+        ORDER BY gmt_created DESC
+        LIMIT 200
+    </select>
+</mapper>

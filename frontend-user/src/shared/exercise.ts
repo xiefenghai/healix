@@ -105,6 +105,40 @@ export const INTENSITY_LABELS: Record<string, string> = {
   VIGOROUS: '较累',
 }
 
+/**
+ * 大类任务（抗阻、有氧、拉伸等）补一句患者能照做的动作。
+ * 标题里已经点了具体运动（步行、太极、弹力带等）时不再追加。
+ */
+export function exerciseHowTo(title?: string | null): string | null {
+  const t = (title || '').replace(/\s/g, '')
+  if (!t) return null
+  if (/步行|散步|快走|慢跑|跑步|骑车|骑行|游泳|太极|广场舞|瑜伽|八段锦|靠墙|深蹲|弹力带|哑铃|平板支撑|抬腿|划船/.test(t)) {
+    return null
+  }
+  if (/抗阻|力量训练|力量练习|阻力训练|负重训练/.test(t)) {
+    return '可以这样做：靠墙静蹲、坐着抬腿、弹力带往后拉，各 8～12 次，做 2～3 组。自然呼吸，不要憋气。'
+  }
+  if (/有氧/.test(t)) {
+    return '可以这样做：快走、骑车或游泳，保持能正常说话。'
+  }
+  if (/柔韧|拉伸/.test(t)) {
+    return '可以这样做：肩、大腿后侧、小腿各停 15～20 秒，拉到有感觉即可，不要弹振。'
+  }
+  if (/平衡/.test(t)) {
+    return '可以这样做：扶着椅背站稳，再轻轻抬起一只脚，每次 10～20 秒，左右轮换。'
+  }
+  if (/核心/.test(t)) {
+    return '可以这样做：靠墙静蹲或仰卧抬腿，动作放慢，不要憋气。'
+  }
+  if (/呼吸训练|呼吸练习/.test(t)) {
+    return '可以这样做：坐直，鼻子吸气 4 秒，嘴巴慢慢呼气 6 秒，重复 8～10 次。'
+  }
+  if (/床旁|卧床/.test(t)) {
+    return '可以这样做：躺着勾脚尖再绷直，坐着把腿抬平，每边 10 次，量力而行。'
+  }
+  return null
+}
+
 export const SYMPTOM_OPTIONS: { value: string; label: string; red?: boolean }[] = [
   { value: 'DIZZY', label: '头晕' },
   { value: 'PALPITATION', label: '心慌' },

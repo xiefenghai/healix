@@ -213,6 +213,7 @@ public class FollowupService {
                 EntityMeta.onUpdate(reuse);
                 followupRecordMapper.updateOnComplete(reuse);
                 maybeOpenPlanCreateTask(tenantId, orgId, peopleId, reuse.getId(), normalized, reuse);
+                openPlanAfterOnboarding(tenantId, orgId, peopleId, reuse.getId(), followupType);
                 closeLinkedTaskIfOpen(reuse, staffId, now, actorAccountId);
                 closeMatchingOpenFollowUpTasks(
                         orgId, peopleId, followupType, staffId, now, actorAccountId, reuse.getId());
@@ -227,6 +228,7 @@ public class FollowupService {
             applyCompleteFields(record, normalized, staffId, now);
             followupRecordMapper.insert(record);
             maybeOpenPlanCreateTask(tenantId, orgId, peopleId, record.getId(), normalized, record);
+            openPlanAfterOnboarding(tenantId, orgId, peopleId, record.getId(), followupType);
             // 新建 DONE 仍关掉同人同类型工作台 FOLLOW_UP（排期/旧待办）
             closeMatchingOpenFollowUpTasks(
                     orgId, peopleId, followupType, staffId, now, actorAccountId, record.getId());
@@ -238,9 +240,11 @@ public class FollowupService {
         } else {
             record.setStatus(FollowupRecordStatus.OPEN.name());
             WorkspaceTaskType taskType = WorkspaceTaskType.FOLLOW_UP;
-            record.setDueAt(LocalDate.now(JobCronSupport.ZONE)
-                    .plusDays(Math.max(0, taskType.dueDaysInclusive() - 1))
-                    .atTime(LocalTime.of(23, 59, 59)));
+            record.setDueAt(plannedAt != null && plannedAt.isAfter(now)
+                    ? plannedAt
+                    : LocalDate.now(JobCronSupport.ZONE)
+                            .plusDays(Math.max(0, taskType.dueDaysInclusive() - 1))
+                            .atTime(LocalTime.of(23, 59, 59)));
             followupRecordMapper.insert(record);
             boolean wantTask = createTask == null || createTask;
             if (wantTask) {
@@ -282,9 +286,89 @@ public class FollowupService {
                 FollowupType.require(String.valueOf(normalized.get("followupType")));
         closeMatchingOpenFollowUpTasks(
                 orgId, record.getPeopleId(), completedType, staffId, now, actorAccountId, record.getId());
+        openPlanAfterOnboarding(
+                requireTenantId(), orgId, record.getPeopleId(), record.getId(), completedType);
         audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_COMPLETE, record.getId(), record.getPeopleId(),
                 AuditDetails.of("recordType", record.getRecordType(), "source", record.getSource()));
         return toView(followupRecordMapper.findById(record.getId()));
+    }
+
+    /**
+     * 首诊问卷提交后办结入组/首诊随访。
+     *
+     * <p>优先用答卷上的 {@code preferredFollowupId}；从患者详情直接开首诊时往往没有该 ID，
+     * 则回退查找该患者当前 OPEN 的 ONBOARDING 随访并办结（关工作台任务、按是否入组开后续待办）。
+     *
+     * @return 办结后的随访视图；无可办结记录时返回 null
+     */
+    @Transactional
+    public FollowupRecordViewDto completeOnboardingAfterIntakeSubmit(
+            String orgId,
+            String peopleId,
+            String preferredFollowupId,
+            String intakeResponseId,
+            String channel,
+            String actorAccountId,
+            String aiSummary) {
+        String followupId = preferredFollowupId;
+        if (StringUtils.hasText(followupId)) {
+            FollowupRecord preferred = followupRecordMapper.findById(followupId);
+            if (preferred == null || !FollowupRecordStatus.OPEN.matches(preferred.getStatus())) {
+                followupId = null;
+            }
+        }
+        if (!StringUtils.hasText(followupId)) {
+            FollowupRecord open = findOpenOnboardingByPeople(orgId, peopleId);
+            if (open == null) {
+                return null;
+            }
+            followupId = open.getId();
+        }
+        return completeOnboardingByIntake(
+                orgId, followupId, intakeResponseId, channel, actorAccountId, aiSummary);
+    }
+
+    /** 首诊问卷提交后自动办结关联的 ONBOARDING 随访（含关任务、开分配健管组或制定方案）。 */
+    @Transactional
+    public FollowupRecordViewDto completeOnboardingByIntake(
+            String orgId,
+            String followupId,
+            String intakeResponseId,
+            String channel,
+            String actorAccountId,
+            String aiSummary) {
+        Map<String, Object> section = new LinkedHashMap<>();
+        section.put("nextAction", "CREATE_PLAN");
+        section.put("intakeResponseId", intakeResponseId);
+        section.put("archiveWritten", true);
+        if (StringUtils.hasText(aiSummary)) {
+            section.put("aiSummary", aiSummary.trim());
+        }
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("followupType", FollowupType.ONBOARDING.name());
+        content.put("contactTarget", "PATIENT");
+        content.put("followupMethod", mapIntakeChannel(channel));
+        content.put("guidance", "首诊问卷已提交");
+        content.put("section", section);
+        return complete(orgId, followupId, content, actorAccountId);
+    }
+
+    /** 患者当前 OPEN 的入组/首诊随访（PERIODIC + followupType=ONBOARDING）。 */
+    public FollowupRecord findOpenOnboardingByPeople(String orgId, String peopleId) {
+        return findOpenPeriodicSameType(orgId, peopleId, FollowupType.ONBOARDING);
+    }
+
+    private static String mapIntakeChannel(String channel) {
+        if (channel == null || channel.isBlank()) {
+            return "FACE_TO_FACE";
+        }
+        return switch (channel.trim().toUpperCase()) {
+            case "PHONE" -> "PHONE";
+            case "WECHAT" -> "WECHAT";
+            case "VIDEO" -> "ONLINE";
+            case "ONSITE" -> "FACE_TO_FACE";
+            default -> "FACE_TO_FACE";
+        };
     }
 
     @Transactional
@@ -637,6 +721,12 @@ public class FollowupService {
             audit(actorAccountId, AuditActionEnum.FOLLOWUP_RECORD_COMPLETE, record.getId(), task.getPeopleId(),
                     AuditDetails.of("recordType", "PERIODIC", "source", "WORKSPACE_TASK", "taskId", task.getId()));
         }
+        openPlanAfterOnboarding(
+                task.getTenantId(),
+                task.getOrgId(),
+                task.getPeopleId(),
+                followupIdForPlan,
+                FollowupType.require(FollowupContentValidator.str(normalized.get("followupType"))));
         workspaceTaskMapper.close(
                 task.getId(),
                 WorkspaceTaskStatus.DONE.name(),
@@ -683,7 +773,7 @@ public class FollowupService {
             assignee = a.getPrimaryCareManagerStaffId();
         }
         row.setAssigneeStaffId(assignee);
-        row.setTitle(type.label());
+        row.setTitle(followupType.label());
         row.setSummary(StringUtils.hasText(record.getSummary()) ? record.getSummary() : followupType.label());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("followupId", record.getId());
@@ -695,9 +785,11 @@ public class FollowupService {
         row.setSource("FOLLOWUP");
         LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
         row.setOpenedAt(now);
-        row.setDueAt(LocalDate.now(JobCronSupport.ZONE)
-                .plusDays(Math.max(0, type.dueDaysInclusive() - 1))
-                .atTime(LocalTime.of(23, 59, 59)));
+        row.setDueAt(record.getPlannedAt() != null && record.getPlannedAt().isAfter(now)
+                ? record.getPlannedAt()
+                : LocalDate.now(JobCronSupport.ZONE)
+                        .plusDays(Math.max(0, type.dueDaysInclusive() - 1))
+                        .atTime(LocalTime.of(23, 59, 59)));
         EntityMeta.onCreate(row);
         workspaceTaskMapper.insert(row);
         return row.getId();
@@ -886,6 +978,18 @@ public class FollowupService {
         }
     }
 
+    /**
+     * 首诊办结后：未入组只开「分配健管组」；已在组内才开「制定方案」。
+     * 入组后再由 {@link com.healix.core.worktask.service.WorkspaceTaskGenerator#onPatientJoinedTeam} 开制定方案。
+     */
+    private void openPlanAfterOnboarding(
+            String tenantId, String orgId, String peopleId, String followupId, FollowupType type) {
+        if (type != FollowupType.ONBOARDING) {
+            return;
+        }
+        workspaceTaskGenerator.afterOnboardingCompleted(tenantId, orgId, peopleId, followupId);
+    }
+
     /** 勾选建议调整方案时，确保工作台有 OPEN 的制定方案待办。 */
     private void maybeOpenPlanCreateTask(
             String tenantId,
@@ -964,6 +1068,7 @@ public class FollowupService {
     private FollowupRecordViewDto toView(FollowupRecord rec) {
         FollowupRecordViewDto v = new FollowupRecordViewDto();
         v.setId(rec.getId());
+        v.setPeopleId(rec.getPeopleId());
         v.setRecordType(rec.getRecordType());
         try {
             v.setRecordTypeLabel(FollowupRecordType.require(rec.getRecordType()).label());

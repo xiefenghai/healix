@@ -1,0 +1,101 @@
+{
+  "code": "DIET_BEHAVIOR",
+  "version": 2,
+  "title": "饮食行为",
+  "script": "想了解一下平时一天大概怎么吃。按真实情况说就好，没有对错，这样定出来的建议才好坚持。",
+  "items": [
+    {
+      "field": "basic.diet.mealRegularity",
+      "label": "一日三餐规律吗？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.breakfast",
+      "label": "早餐吃吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.diet.takeoutFrequency",
+      "label": "点外卖或在外面吃的频率？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.snackNight",
+      "label": "吃零食或夜宵的频率？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.sugaryDrinks",
+      "label": "奶茶、可乐、果汁这类含糖饮料喝多少？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "in": ["DAILY_1", "DAILY_2PLUS"] },
+          "severity": "CAUTION",
+          "planEffect": "控糖 / 减重方案优先减含糖饮料"
+        }
+      ]
+    },
+    {
+      "field": "basic.diet.taste",
+      "label": "口味更偏哪种？（可多选）",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "intersects": ["SALTY"] },
+          "severity": "CAUTION",
+          "planEffect": "高血压管理重点限盐；减重也建议减腌制食品"
+        }
+      ]
+    },
+    {
+      "field": "basic.diet.staple",
+      "label": "主食一般吃什么？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.vegFruit",
+      "label": "蔬菜水果吃得多吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.diet.cooking",
+      "label": "家里做菜常用哪些方式？",
+      "level": "LATER",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": ["HYPERTENSION", "WEIGHT_LOSS", "DIABETES"]
+      }
+    },
+    {
+      "field": "basic.diet.eatingSpeed",
+      "label": "吃一顿饭大概多久？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.diet.waterMl",
+      "label": "每天大概喝多少水？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.diet.cook",
+      "label": "平时主要谁做饭？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.livingAlone",
+      "label": "是一个人住吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.diet.trackedBefore",
+      "label": "以前记录过饮食吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.diet.note",
+      "label": "饮食备注",
+      "level": "LATER"
+    }
+  ]
+}

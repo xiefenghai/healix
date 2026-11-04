@@ -12,6 +12,8 @@ public enum FollowupType {
     MEDICATION,
     SYMPTOM_METRIC,
     ONBOARDING,
+    /** 方案审核后的客户沟通 */
+    PLAN_COMMUNICATION,
     OTHER;
 
     public static final Set<String> CODES = Set.of(
@@ -20,6 +22,7 @@ public enum FollowupType {
             MEDICATION.name(),
             SYMPTOM_METRIC.name(),
             ONBOARDING.name(),
+            PLAN_COMMUNICATION.name(),
             OTHER.name());
 
     public String label() {
@@ -29,6 +32,7 @@ public enum FollowupType {
             case MEDICATION -> "用药随访";
             case SYMPTOM_METRIC -> "指标/症状随访";
             case ONBOARDING -> "入组/首诊随访";
+            case PLAN_COMMUNICATION -> "方案沟通";
             case OTHER -> "其他随访";
         };
     }

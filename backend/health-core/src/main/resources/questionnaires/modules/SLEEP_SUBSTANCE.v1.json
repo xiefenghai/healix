@@ -1,0 +1,159 @@
+{
+  "code": "SLEEP_SUBSTANCE",
+  "version": 1,
+  "title": "睡眠与烟酒",
+  "script": "睡眠和作息对体重和精力影响不小，想跟您简单了解几句平时几点睡、睡得怎么样。",
+  "items": [
+    {
+      "field": "basic.lifestyle.activityLevel",
+      "label": "工作和日常活动量属于哪种？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.sleep.hours",
+      "label": "每天大概睡几个小时？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "op": "<",
+            "value": 6.0
+          },
+          "severity": "CAUTION",
+          "planEffect": "睡眠不足影响食欲与减重效果，方案加入睡眠改善"
+        }
+      ]
+    },
+    {
+      "field": "basic.sleep.bedTime",
+      "label": "一般几点睡？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.sleep.wakeTime",
+      "label": "一般几点起？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.sleep.quality",
+      "label": "睡眠质量",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.sleep.disorder",
+      "label": "睡眠问题",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": {
+            "eq": "SNORING"
+          },
+          "severity": "CAUTION",
+          "planEffect": "打鼾伴憋醒建议就医筛查睡眠呼吸暂停"
+        }
+      ]
+    },
+    {
+      "field": "basic.sleep.lateNight",
+      "label": "多久熬一次夜（凌晨以后睡）？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.sleep.note",
+      "label": "睡眠备注",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.lifestyle.smoking.status",
+      "label": "吸烟吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.lifestyle.smoking.cigarettesPerDay",
+      "label": "每天几支？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.lifestyle.smoking.status",
+        "in": [
+          "CURRENT",
+          "OCCASIONAL"
+        ]
+      }
+    },
+    {
+      "field": "basic.lifestyle.smoking.years",
+      "label": "吸了多少年？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.lifestyle.smoking.status",
+        "in": [
+          "CURRENT",
+          "OCCASIONAL",
+          "QUIT"
+        ]
+      }
+    },
+    {
+      "field": "basic.lifestyle.smoking.quitYear",
+      "label": "哪年戒的？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.lifestyle.smoking.status",
+        "eq": "QUIT"
+      }
+    },
+    {
+      "field": "basic.lifestyle.smoking.passive",
+      "label": "家里或单位经常有人在身边吸烟吗？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.lifestyle.smoking.status",
+        "in": [
+          "NEVER",
+          "QUIT"
+        ]
+      }
+    },
+    {
+      "field": "basic.lifestyle.drinking.status",
+      "label": "喝酒吗？",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.lifestyle.drinking.frequency",
+      "label": "多久喝一次？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.lifestyle.drinking.status",
+        "in": [
+          "CURRENT",
+          "OCCASIONAL"
+        ]
+      }
+    },
+    {
+      "field": "basic.lifestyle.drinking.type",
+      "label": "常喝什么酒？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.lifestyle.drinking.status",
+        "in": [
+          "CURRENT",
+          "OCCASIONAL"
+        ]
+      }
+    },
+    {
+      "field": "basic.lifestyle.drinking.amountPerDay",
+      "label": "一次喝多少？",
+      "level": "LATER",
+      "showIf": {
+        "field": "basic.lifestyle.drinking.status",
+        "in": [
+          "CURRENT",
+          "OCCASIONAL"
+        ]
+      }
+    }
+  ]
+}

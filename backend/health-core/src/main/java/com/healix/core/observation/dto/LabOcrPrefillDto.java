@@ -11,7 +11,24 @@ public record LabOcrPrefillDto(
         String note,
         List<LabOcrItemDto> items,
         List<LabOcrIgnoredItemDto> ignoredItems,
-        List<String> warnings) {
+        List<String> warnings,
+        String imageKey) {
+
+    public LabOcrPrefillDto(
+            String specimenType,
+            LocalDateTime sampledAt,
+            LocalDateTime reportedAt,
+            String note,
+            List<LabOcrItemDto> items,
+            List<LabOcrIgnoredItemDto> ignoredItems,
+            List<String> warnings) {
+        this(specimenType, sampledAt, reportedAt, note, items, ignoredItems, warnings, null);
+    }
+
+    public LabOcrPrefillDto withImageKey(String imageKey) {
+        return new LabOcrPrefillDto(
+                specimenType, sampledAt, reportedAt, note, items, ignoredItems, warnings, imageKey);
+    }
 
     public record LabOcrItemDto(
             String itemCode,

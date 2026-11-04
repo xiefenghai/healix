@@ -17,4 +17,8 @@ public interface AgentMessageMapper {
     /** 软删某会话下指定 tool_name 的历史消息（如旧简报）。 */
     int softDeleteBySessionAndTool(
             @Param("sessionId") String sessionId, @Param("toolName") String toolName);
+
+    AgentMessageEntity findById(@Param("id") String id);
+
+    int updateContent(@Param("id") String id, @Param("content") String content);
 }

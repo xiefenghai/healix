@@ -9,7 +9,13 @@ import org.apache.ibatis.annotations.Param;
 @Mapper
 public interface StaffProfileMapper {
 
+    /** 最早加入的一份档案。账号跨多个租户时请用 {@link #listByAccountId} 或 {@link #findByAccountAndTenant}。 */
     StaffProfile findByAccountId(@Param("accountId") String accountId);
+
+    List<StaffProfile> listByAccountId(@Param("accountId") String accountId);
+
+    StaffProfile findByAccountAndTenant(
+            @Param("accountId") String accountId, @Param("tenantId") String tenantId);
 
     StaffProfile findById(@Param("id") String id);
 

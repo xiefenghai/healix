@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.followup.mapper.FollowupScheduleRuleMapper">
+
+    <sql id="cols">
+        pk_id, id, tenant_id, org_id, disease_code, interval_with_plan, interval_no_plan, enabled,
+        updated_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
+        INSERT INTO followup_schedule_rule(
+            id, tenant_id, org_id, disease_code, interval_with_plan, interval_no_plan, enabled,
+            updated_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
+        ) VALUES (
+            #{id}, #{tenantId}, #{orgId}, #{diseaseCode}, #{intervalWithPlan}, #{intervalNoPlan}, #{enabled},
+            #{updatedByStaffId}, #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE followup_schedule_rule
+        SET interval_with_plan = #{intervalWithPlan},
+            interval_no_plan = #{intervalNoPlan},
+            enabled = #{enabled},
+            updated_by_staff_id = #{updatedByStaffId},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE followup_schedule_rule
+        SET is_deleted = 1,
+            gmt_deleted = NOW(),
+            gmt_modified = NOW()
+        WHERE id = #{id}
+          AND is_deleted = 0
+    </update>
+
+    <select id="findById" resultType="com.healix.core.followup.domain.FollowupScheduleRule">
+        SELECT <include refid="cols"/>
+        FROM followup_schedule_rule
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByScope" resultType="com.healix.core.followup.domain.FollowupScheduleRule">
+        SELECT <include refid="cols"/>
+        FROM followup_schedule_rule
+        WHERE tenant_id = #{tenantId}
+          AND org_id = #{orgId}
+          AND disease_code = #{diseaseCode}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByTenant" resultType="com.healix.core.followup.domain.FollowupScheduleRule">
+        SELECT <include refid="cols"/>
+        FROM followup_schedule_rule
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+        ORDER BY org_id, disease_code
+    </select>
+</mapper>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.healix.core.people.mapper.PeopleMobileStateMapper">
+
+    <select id="findByPeople" resultType="com.healix.core.people.domain.PeopleMobileState">
+        SELECT people_id, tenant_id, no_self_mobile, demo_review_json, gmt_modified
+        FROM people_mobile_state
+        WHERE people_id = #{peopleId}
+    </select>
+
+    <insert id="upsert">
+        INSERT INTO people_mobile_state(people_id, tenant_id, no_self_mobile, demo_review_json, gmt_modified)
+        VALUES (#{peopleId}, #{tenantId}, #{noSelfMobile}, #{demoReviewJson}, #{gmtModified})
+        ON DUPLICATE KEY UPDATE
+            no_self_mobile = VALUES(no_self_mobile),
+            demo_review_json = VALUES(demo_review_json),
+            gmt_modified = VALUES(gmt_modified)
+    </insert>
+</mapper>

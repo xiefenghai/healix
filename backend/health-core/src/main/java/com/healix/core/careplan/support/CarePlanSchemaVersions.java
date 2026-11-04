@@ -13,8 +13,13 @@ public final class CarePlanSchemaVersions {
      * 当前产品规则版本；改运动/饮食方案字段或生成规则时 +1。
      *
      * <p>V2：运动任务 payload（targetMin / intensity）、exercise.targets、weeklyPlan 改为每天。
+     * <p>V3：执行任务类别 WATER + targetMl；sampleDay 每餐支持 {text, swapHint}。
+     * <p>V4：SLEEP/MOOD 任务；diet.sampleWeek；机构食谱库应用。
+     * <p>V5：五类方案类型；块/任务 rationale；体重监测自动打卡。
+     * <p>V6：块/任务 refs 指南条目引用；context_snapshot.guideline 记录条目库版本与匹配结果。
+     * <p>V7：goals 块（mode/items/phase/pace）；首诊高亮进安全校验与生成上下文。
      */
-    public static final int CURRENT = 2;
+    public static final int CURRENT = 7;
 
     private CarePlanSchemaVersions() {}
 

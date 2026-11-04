@@ -21,6 +21,8 @@ import CockpitPatientSheet, { type CockpitSheetMode } from '../../shared/Cockpit
 import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
 import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
+import { onAgentCarePlanUpdated } from '../../shared/agent-events'
+import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
 import {
   notifyCockpitTasksPossiblyChanged,
   onCockpitTasksPossiblyChanged,
@@ -28,8 +30,16 @@ import {
 import { formatAssistantPlainHtml, visibleAnswerFromRawStream } from '../../shared/agent-plain-text'
 import { AGENT_LOGO, AGENT_NAME } from '../../shared/agent-brand'
 import { debounce } from '../../shared/debounce'
+import AgentCarePlanCard from '../../shared/AgentCarePlanCard.vue'
 import AgentOcrReviewCard from '../../shared/AgentOcrReviewCard.vue'
+import ChatExtractReviewCard from '../../shared/ChatExtractReviewCard.vue'
+import { asChatExtract, blockPlainEnter, chatExtractFromActions, type ChatExtractReview } from '../../shared/chat-extract'
 import AgentReportReviewCard from '../../shared/AgentReportReviewCard.vue'
+import {
+  buildCarePlanChatPreview,
+  carePlanStatusLine,
+  type CarePlanChatPreview,
+} from '../../shared/agent-care-plan'
 import { callApiDoneLabel, runAgentCallApi } from '../../shared/agent-call-api'
 import { resolveStickyCapabilityHint } from '../../shared/agent-sticky'
 import {
@@ -37,6 +47,8 @@ import {
   buildOcrReview,
   buildReportReview,
   formatOcrDt,
+  LAB_TIME_BLOCK_MESSAGE,
+  labOcrUploadBlocked,
   MED_DOSE_UNIT_FALLBACK,
   MED_FREQUENCY_FALLBACK,
   MED_USAGE_OPTIONS,
@@ -49,14 +61,20 @@ interface Summary {
   openTaskCount: number
   overdueCount: number
   urgentCount?: number
+  intakeCount?: number
   watchCount?: number
   mineCount?: number
+  rewardWeekPoints?: number | null
+  rewardFullDayCount?: number | null
+  rewardActiveTodayCount?: number | null
 }
 
 /** 左栏优先卡：与 /cockpit/priority 对齐，仅保留前端用到的字段 */
 interface PriorityCard {
   peopleId: string
   displayName: string
+  age?: number | null
+  diseaseLabels?: string[]
   riskLevel?: string
   planRate7d?: number | null
   topReason?: string
@@ -74,6 +92,7 @@ interface FocusTask {
   taskTypeLabel: string
   summary?: string
   overdue: boolean
+  dueAt?: string | null
 }
 
 /** 右栏焦点快照：与 /cockpit/focus/:id 对齐 */
@@ -87,6 +106,13 @@ interface Focus {
   planRate7d?: number | null
   diseaseLabels?: string[]
   bloodPressure?: string | null
+  bloodPressureAt?: string | null
+  bloodPressureHigh?: boolean
+  allergyText?: string | null
+  medRate7d?: number | null
+  medMissStreakDays?: number
+  dietDays7d?: number | null
+  exerciseDays7d?: number | null
   archiveCompletenessPercent?: number | null
   archiveFilledCount?: number | null
   archiveTotalCount?: number | null
@@ -111,9 +137,30 @@ interface PendingDraft {
   actionLabel?: string
 }
 
+interface DraftInboxItem {
+  taskId: string
+  taskType: string
+  taskTypeLabel: string
+  kind: 'CARE_PLAN' | 'REPORT'
+  peopleId: string
+  reportId?: string
+  displayName: string
+  summary?: string
+  overdue: boolean
+  dueAt?: string
+  sheetMode: string
+  actionLabel: string
+}
+
 interface Briefing {
   text: string
-  actions: Array<{ peopleId: string; label: string }>
+  actions: Array<{
+    peopleId: string
+    label: string
+    type?: string | null
+    path?: string | null
+    payload?: Record<string, unknown> | null
+  }>
 }
 
 interface AgentAction {
@@ -145,9 +192,11 @@ interface ChatMessage {
   activity?: ActivityItem[]
   elapsedMs?: number | null
   reportReview?: ReportReviewPreview
+  carePlanPreview?: CarePlanChatPreview
+  chatExtract?: ChatExtractReview
 }
 
-type TabKey = 'urgent' | 'watch' | 'mine'
+type TabKey = 'urgent' | 'intake' | 'watch' | 'mine'
 
 type ChipKind = 'tasks' | 'overdue'
 
@@ -191,6 +240,7 @@ const summary = ref<Summary>({
   openTaskCount: 0,
   overdueCount: 0,
   urgentCount: 0,
+  intakeCount: 0,
   watchCount: 0,
   mineCount: 0,
 })
@@ -224,6 +274,7 @@ function abortActiveChat(reason = 'focus-switch') {
   uploading.value = false
 }
 const reportFileRef = ref<HTMLInputElement | null>(null)
+const imageDropActive = ref(false)
 const imagePreviewUrl = ref<string | null>(null)
 
 function openImagePreview(url?: string | null) {
@@ -237,6 +288,8 @@ function closeImagePreview() {
 const sheetOpen = ref(false)
 const sheetMode = ref<CockpitSheetMode>('archive')
 const sheetPeopleId = ref('')
+/** 健康数据抽屉打开时的子页（如 trends） */
+const sheetObservationsSub = ref<string | undefined>(undefined)
 /** 与工作台「处理」同款的任务填单弹窗 */
 const formTaskId = ref<string | null>(null)
 const joinPeopleId = ref<string | null>(null)
@@ -532,6 +585,36 @@ watch(
   },
 )
 const planRateLabel = computed(() => rateText(focus.value?.planRate7d))
+/** 右栏「近 7 天」：服药 57% · 饮食 5/7 · 运动 2/7 */
+const executionText = computed(() => {
+  const f = focus.value
+  if (!f) return ''
+  const parts: string[] = []
+  if (f.medRate7d != null) {
+    let med = `服药 ${Math.round(f.medRate7d * 100)}%`
+    if ((f.medMissStreakDays ?? 0) >= 2) med += `（连续 ${f.medMissStreakDays} 天未完成）`
+    parts.push(med)
+  }
+  if (f.dietDays7d != null) parts.push(`饮食 ${f.dietDays7d}/7`)
+  if (f.exerciseDays7d != null) parts.push(`运动 ${f.exerciseDays7d}/7`)
+  return parts.join(' · ')
+})
+
+/** 今天 08:12 / 昨天 21:40 / 10-12 09:00 */
+function shortWhen(iso?: string | null) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const today = new Date()
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const diff = Math.round((startOf(d) - startOf(today)) / 86400000)
+  if (diff === 0) return `今天 ${hm}`
+  if (diff === -1) return `昨天 ${hm}`
+  if (diff === 1) return `明天 ${hm}`
+  if (diff > 1 && diff <= 6) return `${diff} 天后`
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`
+}
 const focusAge = computed(() => ageFromBirthday(focus.value?.birthday))
 const archivePercent = computed(() => focus.value?.archiveCompletenessPercent ?? null)
 const archivePercentLabel = computed(() =>
@@ -606,6 +689,8 @@ const threadMessages = computed(() =>
 
 /** 有对话后默认收起简报，把纵向空间留给聊天；可手动展开 */
 const briefingCollapsed = ref(false)
+/** 刷新简报请求中（防连点，并配合占位打字动画） */
+const briefingLoading = ref(false)
 const briefingPreview = computed(() => {
   const raw = (briefingMsg.value?.content || '').replace(/\s+/g, ' ').trim()
   if (!raw) return '点击展开查看今日建议'
@@ -693,9 +778,16 @@ function isDraftTask(t: FocusTask) {
 const draftTaskCount = computed(() => todoTasks.value.filter(isDraftTask).length)
 
 /** 优先展示中文任务标签，否则回退类型码 / 相关 badge */
+function cardMeta(card: PriorityCard) {
+  const parts: string[] = []
+  if (card.age != null) parts.push(`${card.age}岁`)
+  if (card.diseaseLabels?.length) parts.push(card.diseaseLabels.slice(0, 2).join('/'))
+  return parts.join(' · ')
+}
+
 function cardTags(card: PriorityCard) {
   const labels = card.taskTypeLabels || []
-  if (labels.length) return labels.slice(0, 3)
+  if (labels.length) return labels.slice(0, 4)
 
   const tags: string[] = []
   for (const t of card.taskTypes || []) {
@@ -711,6 +803,12 @@ function cardTags(card: PriorityCard) {
       'REPORT_REVIEW',
       'TEAM_ASSIGN',
       'PLAN_REVIEW',
+      'MED_FEEDBACK',
+      'MED_VERIFY',
+      'ASSESSMENT_ESCALATION',
+      'ASSESSMENT_SUSPECTED',
+      'ARCHIVE_SELF_REPORT',
+      'QUESTIONNAIRE_EXPIRED',
     ])
     for (const b of card.badges || []) {
       if (badgeAllow.has(b) && !tags.includes(b)) tags.push(b)
@@ -754,6 +852,41 @@ async function loadSummary() {
   summary.value = res.data
 }
 
+const draftInbox = ref<DraftInboxItem[]>([])
+const draftInboxLoading = ref(false)
+
+async function loadDraftInbox() {
+  draftInboxLoading.value = true
+  try {
+    const res = await api<{ data: DraftInboxItem[] }>('/api/b/v1/cockpit/drafts')
+    draftInbox.value = res.data ?? []
+  } catch {
+    draftInbox.value = []
+  } finally {
+    draftInboxLoading.value = false
+  }
+}
+
+async function openInboxItem(item: DraftInboxItem) {
+  await selectPatient(item.peopleId, { autoAsk: false })
+  if (item.kind === 'REPORT' && item.reportId) {
+    setAgentDraft({
+      peopleId: item.peopleId,
+      mode: 'reports',
+      reportId: item.reportId,
+      openReview: true,
+    })
+  }
+  openSheet(item.sheetMode as CockpitSheetMode, item.peopleId)
+}
+
+function inboxDueLabel(item: DraftInboxItem) {
+  if (item.overdue) return '已超期'
+  if (!item.dueAt) return ''
+  const d = String(item.dueAt).slice(5, 10).replace('-', '/')
+  return `${d} 前`
+}
+
 async function loadPriority() {
   if (tab.value === 'mine') return
   loading.value = true
@@ -771,7 +904,7 @@ async function loadPriority() {
  * 办结 / 入组 / 领取等会改待办数量：同步刷新左栏名单 + Tab 角标，并可选刷新右栏焦点。
  */
 async function refreshAfterTaskChange(peopleId?: string | null) {
-  const jobs: Promise<unknown>[] = [loadSummary()]
+  const jobs: Promise<unknown>[] = [loadSummary(), loadDraftInbox()]
   if (tab.value === 'mine') {
     jobs.push(searchPatients())
   } else {
@@ -836,32 +969,39 @@ async function loadBriefing(force = false) {
       : await api<{ data: Briefing }>('/api/b/v1/cockpit/briefing')
     const b = res.data
     const actions: AgentAction[] = [
-      ...(b.actions || []).map((a) => ({
-        type: 'FOCUS_PATIENT',
-        label: a.label,
-        peopleId: a.peopleId,
-      })),
+      ...(b.actions || []).map(
+        (a): AgentAction => ({
+          type: a.type || 'FOCUS_PATIENT',
+          label: a.label,
+          peopleId: a.peopleId,
+          ...(a.path ? { path: a.path } : {}),
+          ...(a.payload ? { payload: a.payload } : {}),
+        }),
+      ),
       { type: 'REFRESH', label: '刷新今日建议' },
     ]
     const content = sanitizeBriefingText(b.text)
-    if (force) {
-      messages.value = []
-    }
-    if (messages.value.length === 0) {
-      messages.value.push({
-        role: 'system',
-        content,
-        at: nowClock(),
-        actions,
-      })
+    if (force || messages.value.length === 0) {
+      messages.value = [
+        {
+          role: 'system',
+          content,
+          at: nowClock(),
+          actions,
+          streaming: false,
+        },
+      ]
       await persistVisibleMessage(null, content, actions, 'briefing')
     }
   } catch (e) {
-    messages.value.push({
-      role: 'system',
-      content: '今日简报暂时不可用，请查看左侧优先名单。',
-      at: nowClock(),
-    })
+    messages.value = [
+      {
+        role: 'system',
+        content: '今日简报暂时不可用，请查看左侧优先名单。',
+        at: nowClock(),
+        streaming: false,
+      },
+    ]
     ElMessage.warning(e instanceof Error ? e.message : '简报加载失败')
   }
 }
@@ -902,6 +1042,7 @@ function applySessionBundle(
       content: m.content,
       at: m.createdAt ? String(m.createdAt).slice(11, 16) : nowClock(),
       actions: m.actions?.length ? m.actions : undefined,
+      chatExtract: chatExtractFromActions(m.actions) || undefined,
     }
   })
   const incoming = dropOrphanUserTurns(collapseDuplicateBriefings(mapped))
@@ -1110,6 +1251,8 @@ async function loadFocus(peopleId: string) {
   try {
     const res = await api<{ data: Focus }>(`/api/b/v1/cockpit/focus/${peopleId}`)
     focus.value = res.data
+    // 首诊等多在新标签办结：焦点刷新后把已关闭任务的气泡按钮变灰
+    retireCompletedTaskActions(peopleId, res.data?.openTasks || [])
   } catch (e) {
     focus.value = null
     ElMessage.error(e instanceof Error ? e.message : '加载患者快照失败')
@@ -1235,7 +1378,9 @@ async function loadCapabilities() {
 
 /** 芯片展示：GENERAL_CHAT 随是否选中患者切换文案；单据录入 / 完成待办为本地能力 */
 const capabilityChips = computed(() => {
-  const chips = capabilities.value.map((c) => {
+  const chips = capabilities.value
+    .filter((c) => c.code !== 'CHAT_EXTRACT')
+    .map((c) => {
     if (c.code === 'GENERAL_CHAT') {
       const hasPatient = !!focusPeopleId.value
       return {
@@ -1327,6 +1472,35 @@ function quickCapability(code: string, label: string) {
 }
 
 /** @param keepInput 自动追问时保留输入框内容 */
+function onComposerEnter() {
+  if (blockPlainEnter(input.value)) {
+    ElMessage.info('请点「整理这段记录」。要提问请缩短文字后再发送')
+    return
+  }
+  void sendMessage(input.value)
+}
+
+function organizeRecord() {
+  const text = input.value
+  if (!focusPeopleId.value) {
+    ElMessage.info('请先选择患者')
+    return
+  }
+  if (!text.trim()) {
+    ElMessage.info('请先粘贴一段记录')
+    return
+  }
+  if (text.trim().length > 4000) {
+    ElMessage.info('请拆短后再贴')
+    return
+  }
+  void sendMessage(text, false, 'CHAT_EXTRACT')
+}
+
+function visibleActions(msg: ChatMessage) {
+  return (msg.actions || []).filter((action) => action.type !== 'chat_extract')
+}
+
 async function sendMessage(
   text: string,
   keepInput = false,
@@ -1475,6 +1649,7 @@ async function sendMessage(
           reply?: string
           actions?: AgentAction[]
           capability?: string
+          intent?: string
           extracted?: unknown
         }
         const row = rowAt()
@@ -1496,11 +1671,43 @@ async function sendMessage(
         }
         row.streamContent = ''
         row.rawStream = ''
-        row.actions = data.actions
+        row.actions =
+          data.capability === 'CARE_PLAN'
+            ? [
+                ...(data.actions || []).map((a) =>
+                  a.type === 'OPEN_SHEET' && (a.path === 'care-plan' || a.label?.includes('方案'))
+                    ? { ...a, label: a.label?.includes('查看') ? '编辑方案草稿' : a.label }
+                    : a,
+                ),
+                { type: 'PREVIEW', label: '编辑方案草稿', path: 'care-plan' },
+              ].filter((a, i, arr) => {
+                // 避免「编辑方案草稿」重复
+                if (a.label !== '编辑方案草稿') return true
+                return arr.findIndex((x) => x.label === '编辑方案草稿') === i
+              })
+            : data.actions
         row.streaming = false
         finishAllActivity(row.activity)
         if (stillBound() && data.capability === 'REPORT_SUMMARY' && data.extracted) {
           applyReportReview(row, data.extracted)
+        }
+        if (stillBound() && data.capability === 'CARE_PLAN' && data.extracted) {
+          applyCarePlanPreview(row, data.extracted, data.intent === 'CARE_PLAN_REVISE')
+        }
+        if (
+          stillBound() &&
+          boundPeopleId &&
+          data.capability === 'CHAT_EXTRACT' &&
+          data.extracted
+        ) {
+          const card = asChatExtract(data.extracted)
+          if (card?.restoreInput) {
+            removeMessagePair(userRow, row)
+            input.value = userText
+            ElMessage.info(data.reply || '请先选择患者')
+            return
+          }
+          if (card) row.chatExtract = card
         }
         if (
           stillBound() &&
@@ -1559,6 +1766,12 @@ async function sendMessage(
       },
       onError: (msg) => {
         if (!stillBound()) return
+        if (effectiveHint === 'CHAT_EXTRACT') {
+          removeMessagePair(userRow, rowAt())
+          input.value = userText
+          ElMessage.error(msg || '这次没整理成功')
+          return
+        }
         const row = rowAt()
         if (!(row.content || '').trim()) {
           row.content = msg || '生成失败，请重试'
@@ -1581,6 +1794,7 @@ async function sendMessage(
         removeMessagePair(userRow, assistantRow)
       }
     } else {
+      if (effectiveHint === 'CHAT_EXTRACT') input.value = userText
       removeMessagePair(userRow, assistantRow)
       if (image?.previewUrl) URL.revokeObjectURL(image.previewUrl)
       ElMessage.error(e instanceof Error ? e.message : '发送失败')
@@ -1651,7 +1865,7 @@ function runAction(action: AgentAction) {
   }
   if (action.type === 'SET_COCKPIT_TAB' && action.path) {
     const next = action.path as TabKey
-    if (next === 'urgent' || next === 'watch' || next === 'mine') {
+    if (next === 'urgent' || next === 'intake' || next === 'watch' || next === 'mine') {
       tab.value = next
       sheetOpen.value = false
       void refreshBriefing()
@@ -1683,27 +1897,38 @@ function runAction(action: AgentAction) {
   if (action.type === 'OPEN_SHEET' && action.path) {
     const mode = action.path as CockpitSheetMode
     const peopleId = action.peopleId || focusPeopleId.value || undefined
+    if (mode === 'observations' && typeof action.payload?.sub === 'string') {
+      openSheet(mode, peopleId, action.payload.sub)
+      return
+    }
+    const openCompose =
+      mode === 'care-plan' ||
+      !!action.payload?.openCompose ||
+      !!action.payload?.openCreate
     if (
       action.payload?.draftContent ||
       action.payload?.openCreate ||
+      action.payload?.openCompose ||
       action.payload?.openReview ||
       action.payload?.staffComment ||
-      action.payload?.reportId
+      action.payload?.reportId ||
+      openCompose
     ) {
       if (peopleId) {
         setAgentDraft({
           peopleId,
           mode,
           draftContent:
-            typeof action.payload.draftContent === 'string' ? action.payload.draftContent : undefined,
-          openCreate: !!action.payload.openCreate,
-          reportId: typeof action.payload.reportId === 'string' ? action.payload.reportId : undefined,
-          openReview: !!action.payload.openReview,
+            typeof action.payload?.draftContent === 'string' ? action.payload.draftContent : undefined,
+          openCreate: !!action.payload?.openCreate,
+          openCompose: mode === 'care-plan' ? true : !!action.payload?.openCompose,
+          reportId: typeof action.payload?.reportId === 'string' ? action.payload.reportId : undefined,
+          openReview: !!action.payload?.openReview,
           staffComment:
-            typeof action.payload.staffComment === 'string' ? action.payload.staffComment : undefined,
-          nextFocus: typeof action.payload.nextFocus === 'string' ? action.payload.nextFocus : undefined,
+            typeof action.payload?.staffComment === 'string' ? action.payload.staffComment : undefined,
+          nextFocus: typeof action.payload?.nextFocus === 'string' ? action.payload.nextFocus : undefined,
           quarterAdvice:
-            typeof action.payload.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
+            typeof action.payload?.quarterAdvice === 'string' ? action.payload.quarterAdvice : undefined,
         })
       }
     }
@@ -1711,6 +1936,10 @@ function runAction(action: AgentAction) {
     return
   }
   if (action.type === 'PREVIEW' || isCarePlanPath(action.path)) {
+    const peopleId = action.peopleId || focusPeopleId.value || undefined
+    if (peopleId) {
+      setAgentDraft({ peopleId, mode: 'care-plan', openCompose: true })
+    }
     openSheet('care-plan', action.peopleId)
     return
   }
@@ -1758,8 +1987,9 @@ function runAction(action: AgentAction) {
 
 async function executeCallApi(action: AgentAction) {
   if (action.runState === 'busy' || action.runState === 'done') return
-  const peopleId = action.peopleId || focusPeopleId.value
-  if (!peopleId) {
+  const orgWide = action.path === 'NUDGE_BATCH'
+  const peopleId: string = orgWide ? '' : action.peopleId || focusPeopleId.value || ''
+  if (!peopleId && !orgWide) {
     ElMessage.info('请先选择患者')
     return
   }
@@ -1776,11 +2006,15 @@ async function executeCallApi(action: AgentAction) {
     action.runState = 'done'
     const doneLabel = callApiDoneLabel(apiKey)
     if (doneLabel) action.label = doneLabel
+    if (apiKey === 'PUBLISH_CARE_PLAN') {
+      retireCarePlanChatActions(peopleId)
+    }
     if (
       apiKey === 'CREATE_FOLLOWUP' ||
       apiKey === 'PUBLISH_REPORT' ||
       apiKey === 'PUBLISH_CARE_PLAN' ||
       apiKey === 'CLAIM_TASK' ||
+      apiKey === 'ACK_TASK' ||
       apiKey === 'SEND_CARE_CHAT'
     ) {
       await refreshAfterTaskChange(peopleId)
@@ -1798,7 +2032,7 @@ async function executeCallApi(action: AgentAction) {
       at: nowClock(),
     }
     messages.value.push(msg)
-    await persistVisibleMessage(peopleId, msg.content, undefined, 'receipt')
+    await persistVisibleMessage(peopleId || null, msg.content, undefined, 'receipt')
     ElMessage.success(receipt)
     await scrollToBottom()
   } catch (e) {
@@ -1875,7 +2109,12 @@ async function openWorkspaceTaskForm(
     const row = detail.data
     if (!row || (row.status || '').toUpperCase() !== 'OPEN') {
       ElMessage.warning('任务已关闭或不存在')
-      if (opts?.fromAction) opts.fromAction.runState = undefined
+      if (opts?.fromAction) {
+        opts.fromAction.runState = 'done'
+        const doneLabel = callApiDoneLabel('COMPLETE_TASK')
+        if (doneLabel) opts.fromAction.label = doneLabel
+      }
+      if (peopleId) retireCompletedTaskActions(peopleId, focus.value?.openTasks || [])
       return
     }
     if (!row.assigneeStaffId) {
@@ -1906,6 +2145,19 @@ function openTodoTask(task: FocusTask) {
     joinPeopleName.value = focus.value?.displayName || null
     return
   }
+  if (task.taskType === 'MED_FEEDBACK' || task.taskType === 'MED_VERIFY') {
+    openSheet('medications')
+    return
+  }
+  if (
+    task.taskType === 'ASSESSMENT_ESCALATION' ||
+    task.taskType === 'ASSESSMENT_SUSPECTED' ||
+    task.taskType === 'QUESTIONNAIRE_EXPIRED'
+  ) {
+    // 评估闭环：抽屉看详情；正式办结走工作台「处理」或气泡 ACK_TASK
+    openSheet('assessments')
+    return
+  }
   if (DRAFT_TASK_TYPES.has(task.taskType)) {
     if (task.taskType === 'REPORT_REVIEW') goReports()
     else goCarePlan()
@@ -1916,6 +2168,114 @@ function openTodoTask(task: FocusTask) {
 
 function isCarePlanPath(path?: string) {
   return !!path && path.includes('/care-plan')
+}
+
+function isCarePlanChatAction(a: AgentAction): boolean {
+  if (a.path === 'PUBLISH_CARE_PLAN') return true
+  if (a.type === 'PREVIEW') return true
+  if (a.type === 'OPEN_SHEET' && a.path === 'care-plan') return true
+  if (a.label && /(编辑|查看)?方案草稿|确认发布方案|发布方案|预览全文/.test(a.label)) return true
+  return false
+}
+
+/**
+ * 气泡「确认办结」在首诊等流程里往往新开标签完成，本页拿不到 submitted。
+ * 按焦点 OPEN 待办对照：任务已不在列表则灰掉对应 COMPLETE_TASK 按钮；
+ * 无 OPEN 的 TEAM_ASSIGN 时灰掉「去分配健管组」。
+ */
+function retireCompletedTaskActions(peopleId: string, openTasks: FocusTask[]) {
+  if (!peopleId) return
+  const openIds = new Set(openTasks.map((t) => t.id).filter(Boolean))
+  const doneLabel = callApiDoneLabel('COMPLETE_TASK') || '已办结待办'
+  let touched = false
+  const patch = (list: ChatMessage[]) => {
+    for (const msg of list) {
+      if (!msg.actions?.length) continue
+      for (const a of msg.actions) {
+        if (a.path !== 'COMPLETE_TASK' && a.path !== 'ACK_TASK') continue
+        if (a.runState === 'done') continue
+        if (a.peopleId && a.peopleId !== peopleId) continue
+        const taskId = typeof a.payload?.taskId === 'string' ? a.payload.taskId.trim() : ''
+        if (!taskId) continue
+        if (openIds.has(taskId)) continue
+        a.runState = 'done'
+        a.label = a.path === 'ACK_TASK' ? callApiDoneLabel('ACK_TASK') || doneLabel : doneLabel
+        touched = true
+      }
+    }
+  }
+  patch(messages.value)
+  const cached = patientSessionCache.get(peopleId)
+  if (cached) patch(cached.messages)
+  if (touched && focusPeopleId.value === peopleId) cachePatientSession(peopleId)
+  if (!openTasks.some((t) => t.taskType === 'TEAM_ASSIGN')) {
+    retireJoinCareTeamActions(peopleId)
+  }
+}
+
+/** 入组成功后灰掉气泡「去分配健管组」（NAVIGATE join-care-team，非 COMPLETE_TASK）。 */
+function retireJoinCareTeamActions(peopleId: string) {
+  if (!peopleId) return
+  const doneLabel = '已分配健管组'
+  let touched = false
+  const patch = (list: ChatMessage[]) => {
+    for (const msg of list) {
+      if (!msg.actions?.length) continue
+      for (const a of msg.actions) {
+        if (a.runState === 'done') continue
+        if (a.peopleId && a.peopleId !== peopleId) continue
+        if (!(a.type === 'NAVIGATE' && a.path === 'join-care-team')) continue
+        a.runState = 'done'
+        a.label = doneLabel
+        touched = true
+      }
+    }
+  }
+  patch(messages.value)
+  const cached = patientSessionCache.get(peopleId)
+  if (cached) patch(cached.messages)
+  if (touched && focusPeopleId.value === peopleId) cachePatientSession(peopleId)
+}
+
+/** 方案已在抽屉或聊天内发布后，收掉过期的编辑/发布按钮，避免回到驾驶舱再点一遍 */
+function retireCarePlanChatActions(peopleId: string) {
+  if (!peopleId) return
+  const patch = (list: ChatMessage[]) => {
+    for (const msg of list) {
+      if (!msg.actions?.length) continue
+      const hit = msg.actions.some(
+        (a) => (!a.peopleId || a.peopleId === peopleId) && isCarePlanChatAction(a),
+      )
+      if (!hit) continue
+      for (const a of msg.actions) {
+        if (a.peopleId && a.peopleId !== peopleId) continue
+        if (!isCarePlanChatAction(a)) continue
+        a.runState = 'done'
+        if (a.path === 'PUBLISH_CARE_PLAN') a.label = '已发布方案'
+        else a.label = '方案已发布'
+      }
+      if (msg.carePlanPreview) {
+        msg.carePlanPreview = {
+          ...msg.carePlanPreview,
+          status: 'ACTIVE',
+          statusLabel: '已发布',
+        }
+      }
+    }
+  }
+  patch(messages.value)
+  const cached = patientSessionCache.get(peopleId)
+  if (cached) patch(cached.messages)
+  if (focusPeopleId.value === peopleId) cachePatientSession(peopleId)
+}
+
+function onCarePlanPublishedFromSheet() {
+  const id = sheetPeopleId.value || focusPeopleId.value
+  if (!id) return
+  retireCarePlanChatActions(id)
+  stickyCapability.value = null
+  sheetOpen.value = false
+  void refreshAfterTaskChange(id)
 }
 function isFollowupPath(path?: string) {
   return !!path && path.includes('/followups')
@@ -1939,7 +2299,7 @@ function isAssessmentsPath(path?: string) {
   return !!path && (path === 'assessments' || path.includes('/assessments'))
 }
 
-async function openSheet(mode: CockpitSheetMode, peopleId?: string) {
+async function openSheet(mode: CockpitSheetMode, peopleId?: string, observationsSub?: string) {
   const id = peopleId || focusPeopleId.value
   if (!id) {
     ElMessage.info('请先从左侧选择一位患者')
@@ -1949,9 +2309,11 @@ async function openSheet(mode: CockpitSheetMode, peopleId?: string) {
     void selectPatient(peopleId, { autoAsk: false })
   }
   const sameOpen = sheetOpen.value && sheetMode.value === mode && sheetPeopleId.value === id
+  const subChanged = mode === 'observations' && sheetObservationsSub.value !== observationsSub
   sheetPeopleId.value = id
   sheetMode.value = mode
-  if (sameOpen) {
+  sheetObservationsSub.value = observationsSub
+  if (sameOpen || (sheetOpen.value && subChanged)) {
     // destroy-on-close：同页再开时强制重挂载，以便消费 Agent 草稿预填
     sheetOpen.value = false
     await nextTick()
@@ -1960,15 +2322,29 @@ async function openSheet(mode: CockpitSheetMode, peopleId?: string) {
 }
 
 async function refreshBriefing() {
+  if (briefingLoading.value) return
+  briefingLoading.value = true
   revokeMessageBlobs()
-  messages.value = []
+  // 请求返回前先占位，避免会话区空白
+  messages.value = [
+    {
+      role: 'system',
+      content: '',
+      streaming: true,
+      at: nowClock(),
+    },
+  ]
   orgSessionId.value = null
   patientSessionId.value = null
   orgSessionCache = null
   writeOrgCacheToStorage(null)
   sessionStatus.value = 'ACTIVE'
   briefingCollapsed.value = false
-  await loadBriefing(true)
+  try {
+    await loadBriefing(true)
+  } finally {
+    briefingLoading.value = false
+  }
 }
 
 async function scrollToBottom() {
@@ -1991,6 +2367,8 @@ function goArchive() {
   openSheet('archive')
 }
 function goCarePlan() {
+  const id = focusPeopleId.value
+  if (id) setAgentDraft({ peopleId: id, mode: 'care-plan', openCompose: true })
   openSheet('care-plan')
 }
 function goFollowups() {
@@ -2025,12 +2403,80 @@ function openReportUpload() {
   reportFileRef.value?.click()
 }
 
+function dragHasFile(e: DragEvent) {
+  const types = e.dataTransfer?.types
+  if (!types) return false
+  return Array.from(types).includes('Files')
+}
+
+function resetImageDrop() {
+  imageDropActive.value = false
+}
+
+function onAgentDragEnter(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  e.preventDefault()
+  imageDropActive.value = true
+}
+
+function onAgentDragOver(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onAgentDragLeave(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  const next = e.relatedTarget
+  const current = e.currentTarget
+  if (next instanceof Node && current instanceof Node && current.contains(next)) return
+  imageDropActive.value = false
+}
+
+function imageDropHint() {
+  if (!focusPeopleId.value) return '请先从左侧选择患者，再松开图片'
+  if (isArchivedSession.value) return '请先继续当前会话，再松开图片'
+  if (uploading.value || sending.value) return '正在处理，请稍候再拖入'
+  return '松开即可开始识别'
+}
+
+async function onAgentDrop(e: DragEvent) {
+  if (!dragHasFile(e)) return
+  e.preventDefault()
+  resetImageDrop()
+  const files = Array.from(e.dataTransfer?.files || [])
+  const file = files.find((item) => item.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(item.name))
+  if (!file) {
+    ElMessage.warning('请拖入 JPG、PNG 或 WEBP 图片')
+    return
+  }
+  if (files.length > 1) {
+    ElMessage.info('一次识别一张，已开始解析第一张图片')
+  }
+  await ingestReportImage(file)
+}
+
 async function onReportFile(e: Event) {
   const inputEl = e.target as HTMLInputElement
   const file = inputEl.files?.[0]
   inputEl.value = ''
-  const peopleId = focusPeopleId.value
-  if (!file || !peopleId || uploading.value || sending.value) return
+  if (!file) return
+  await ingestReportImage(file)
+}
+
+async function ingestReportImage(file: File) {
+  if (uploading.value || sending.value) {
+    ElMessage.info('正在处理上一张图片，请稍候')
+    return
+  }
+  if (isArchivedSession.value) {
+    ElMessage.info('当前为历史会话，请先点击「继续此会话」')
+    return
+  }
+  if (!focusPeopleId.value) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
   if (file.size > 5 * 1024 * 1024) {
     ElMessage.warning('图片大小不能超过 5MB')
     return
@@ -2076,6 +2522,13 @@ function applyReportReview(msg: ChatMessage, extracted: unknown) {
   msg.content = reportStatusLine(preview)
 }
 
+function applyCarePlanPreview(msg: ChatMessage, extracted: unknown, revised = false) {
+  const preview = buildCarePlanChatPreview(extracted)
+  if (!preview) return
+  msg.carePlanPreview = preview
+  msg.content = carePlanStatusLine(preview, revised)
+}
+
 function applyOcrExtracted(
   msg: ChatMessage,
   capability: string,
@@ -2090,6 +2543,10 @@ function applyOcrExtracted(
 async function confirmOcr(msg: ChatMessage) {
   const review = msg.ocrReview
   if (!review || review.status !== 'pending' || !review.peopleId) return
+  if (labOcrUploadBlocked(review)) {
+    ElMessage.warning(LAB_TIME_BLOCK_MESSAGE)
+    return
+  }
 
   const kindLabel =
     review.kind === 'LAB' ? '检验报告' : review.kind === 'MED' ? '用药单' : '检查报告'
@@ -2211,6 +2668,9 @@ watch(tab, (t) => {
 const COCKPIT_FOCUS_KEY = 'healix.cockpit.focusPeopleId'
 
 let stopCockpitTasksRefresh: (() => void) | null = null
+let stopCarePlanUpdated: (() => void) | null = null
+let stopPatientCrossTab: (() => void) | null = null
+let stopVisibilityRefresh: (() => void) | null = null
 
 watch(sheetOpen, (open, wasOpen) => {
   // 快捷办理抽屉关闭：随访/录入/方案等可能已改待办
@@ -2224,13 +2684,33 @@ onMounted(async () => {
   stopCockpitTasksRefresh = onCockpitTasksPossiblyChanged((id) => {
     scheduleRefreshAfterTaskChange(id)
   })
+  stopCarePlanUpdated = onAgentCarePlanUpdated(
+    () => sheetPeopleId.value || focusPeopleId.value || '',
+    () => {
+      const id = sheetPeopleId.value || focusPeopleId.value
+      if (id) retireCarePlanChatActions(id)
+    },
+  )
+  // 首诊在新标签提交后，驾驶舱页签收到广播 → 刷新焦点并灰掉办结气泡
+  stopPatientCrossTab = subscribePatientCrossTab((ev) => {
+    if (!ev.peopleId) return
+    if (ev.reason !== 'INTAKE_SUBMITTED' && ev.reason !== 'INTAKE_SUPPLEMENT') return
+    scheduleRefreshAfterTaskChange(ev.peopleId)
+  })
+  const onVis = () => {
+    if (document.visibilityState !== 'visible') return
+    const id = focusPeopleId.value
+    if (id) scheduleRefreshAfterTaskChange(id)
+  }
+  document.addEventListener('visibilitychange', onVis)
+  stopVisibilityRefresh = () => document.removeEventListener('visibilitychange', onVis)
   try {
-    await Promise.all([loadSummary(), loadPriority(), loadCapabilities()])
+    await Promise.all([loadSummary(), loadPriority(), loadCapabilities(), loadDraftInbox()])
     // 先恢复机构会话（以服务端为准）
     await loadBriefing(false)
     const qPeople = typeof route.query.peopleId === 'string' ? route.query.peopleId : ''
     const qTab = typeof route.query.tab === 'string' ? route.query.tab : ''
-    if (qTab === 'urgent' || qTab === 'watch' || qTab === 'mine') {
+    if (qTab === 'urgent' || qTab === 'intake' || qTab === 'watch' || qTab === 'mine') {
       tab.value = qTab
     }
     // 仅 URL 显式带 peopleId 时恢复患者焦点；避免 sessionStorage 残留导致刷新后看不到机构会话
@@ -2244,7 +2724,7 @@ onMounted(async () => {
       }
     }
     if (qTab === 'mine') void searchPatients()
-    else if (qTab === 'urgent' || qTab === 'watch') void loadPriority()
+    else if (qTab === 'urgent' || qTab === 'intake' || qTab === 'watch') void loadPriority()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '驾驶舱加载失败')
   }
@@ -2253,6 +2733,12 @@ onMounted(async () => {
 onUnmounted(() => {
   stopCockpitTasksRefresh?.()
   stopCockpitTasksRefresh = null
+  stopCarePlanUpdated?.()
+  stopCarePlanUpdated = null
+  stopPatientCrossTab?.()
+  stopPatientCrossTab = null
+  stopVisibilityRefresh?.()
+  stopVisibilityRefresh = null
   if (refreshTasksTimer) {
     clearTimeout(refreshTasksTimer)
     refreshTasksTimer = null
@@ -2274,7 +2760,9 @@ onUnmounted(() => {
                   ? '主责健管组 · 可搜索'
                   : tab === 'watch'
                     ? '个人重点关注患者'
-                    : `智能排序 · 占比 ${urgentShare}`
+                    : tab === 'intake'
+                      ? '先完成首诊，再分配健管组'
+                      : `智能排序 · 占比 ${urgentShare}`
               }}
             </p>
           </div>
@@ -2309,6 +2797,17 @@ onUnmounted(() => {
           <button
             type="button"
             role="tab"
+            :aria-selected="tab === 'intake'"
+            :class="{ active: tab === 'intake' }"
+            title="待入组：先做首诊，再分配健管组"
+            @click="tab = 'intake'"
+          >
+            <span class="tab-label">待入组</span>
+            <span v-if="summary.intakeCount" class="count">{{ summary.intakeCount }}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
             :aria-selected="tab === 'watch'"
             :class="{ active: tab === 'watch' }"
             title="我的关注"
@@ -2328,6 +2827,16 @@ onUnmounted(() => {
             <span class="tab-label">我的患者</span>
             <span v-if="searchResults.length" class="count muted">{{ searchResults.length }}</span>
           </button>
+        </div>
+
+        <div
+          v-if="summary.rewardWeekPoints != null"
+          class="reward-week"
+          title="本机构开启激励的患者本周汇总"
+        >
+          <span>🫘 本周 {{ summary.rewardWeekPoints }} 豆</span>
+          <span>🌟 全勤 {{ summary.rewardFullDayCount ?? 0 }} 人次</span>
+          <span>🔥 今日打卡 {{ summary.rewardActiveTodayCount ?? 0 }} 人</span>
         </div>
 
         <div v-if="tab === 'mine'" class="search-box">
@@ -2361,6 +2870,7 @@ onUnmounted(() => {
                 {{ nameInitial(c.displayName) }}
               </span>
               <strong class="name">{{ c.displayName || c.peopleId }}</strong>
+              <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
               <span class="risk" :class="riskBadge(c).tone">
                 <i class="dot" />
                 {{ riskBadge(c).text }}
@@ -2402,13 +2912,27 @@ onUnmounted(() => {
           />
           <el-empty
             v-else-if="tab !== 'mine' && !loading && !listCards.length"
-            :description="tab === 'watch' ? '暂无重点关注患者，可在患者详情页添加' : '本 Tab 暂无优先对象'"
+            :description="
+              tab === 'watch'
+                ? '暂无重点关注患者，可在患者详情页添加'
+                : tab === 'intake'
+                  ? '暂无待入组患者'
+                  : '本 Tab 暂无优先对象'
+            "
             :image-size="52"
           />
         </div>
 
         <button v-if="tab === 'urgent'" type="button" class="view-all" @click="goTasks">
           查看全部优先患者 →
+        </button>
+        <button
+          v-else-if="tab === 'intake'"
+          type="button"
+          class="view-all"
+          @click="router.push('/workspace/tasks?pool=PUBLIC')"
+        >
+          去公共池处理 →
         </button>
         <button
           v-else-if="tab === 'watch'"
@@ -2421,7 +2945,16 @@ onUnmounted(() => {
       </section>
 
       <!-- 中：健管智能体 -->
-      <section class="col center">
+      <section
+        class="col center"
+        :class="{ 'drop-active': imageDropActive }"
+        @dragenter="onAgentDragEnter"
+        @dragover="onAgentDragOver"
+        @dragleave="onAgentDragLeave"
+        @drop="onAgentDrop"
+        @dragend="resetImageDrop"
+      >
+        <div v-if="imageDropActive" class="drop-mask">{{ imageDropHint() }}</div>
         <div class="chat-head">
           <div class="ai-avatar" aria-hidden="true">
             <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
@@ -2454,7 +2987,13 @@ onUnmounted(() => {
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
-            <button type="button" class="icon-btn" title="刷新简报" @click="refreshBriefing">
+            <button
+              type="button"
+              class="icon-btn"
+              title="刷新简报"
+              :disabled="briefingLoading || sending"
+              @click="refreshBriefing"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                 <path d="M3 3v5h5" />
@@ -2485,10 +3024,13 @@ onUnmounted(() => {
             <template v-if="!briefingCollapsed">
               <div
                 v-if="briefingMsg.streaming && !(briefingMsg.streamContent || briefingMsg.content)"
-                class="typing"
+                class="briefing-loading"
                 aria-label="生成中"
               >
-                <span /><span /><span />
+                <div class="typing">
+                  <span /><span /><span />
+                </div>
+                <p class="briefing-loading-hint">正在生成今日简报…</p>
               </div>
               <div v-else class="briefing-text md-body" v-html="messageHtml(briefingMsg)" />
               <div v-if="briefingMsg.actions?.length" class="bubble-actions">
@@ -2516,7 +3058,7 @@ onUnmounted(() => {
             v-for="(msg, idx) in threadMessages"
             :key="idx"
             class="msg-row"
-            :class="msg.role"
+            :class="[msg.role, { 'has-extract': msg.chatExtract }]"
           >
             <div v-if="msg.role === 'assistant'" class="msg-avatar ai" aria-hidden="true">
               <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
@@ -2541,15 +3083,22 @@ onUnmounted(() => {
                 @toggle="(id) => toggleActivity(msg, id)"
               />
               <div
-                v-if="msg.streamContent || (msg.content && !msg.reportReview)"
+                v-if="
+                  msg.streamContent ||
+                  (msg.content && !msg.reportReview && !msg.carePlanPreview)
+                "
                 class="bubble-text md-body"
                 :class="{ 'stream-live': !!(msg.streamContent && msg.streaming) }"
                 v-html="messageHtml(msg)"
               />
-              <div v-else-if="msg.reportReview" class="bubble-text md-body report-status">
+              <div
+                v-else-if="msg.reportReview || msg.carePlanPreview"
+                class="bubble-text md-body report-status"
+              >
                 {{ msg.content }}
               </div>
               <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
+              <AgentCarePlanCard v-if="msg.carePlanPreview" :preview="msg.carePlanPreview" />
               <button
                 v-if="msg.imageUrl"
                 type="button"
@@ -2566,9 +3115,15 @@ onUnmounted(() => {
                 @confirm="confirmOcr(msg)"
                 @discard="discardOcr(msg)"
               />
-              <div v-if="msg.actions?.length" class="bubble-actions">
+              <ChatExtractReviewCard
+                v-if="msg.chatExtract && focusPeopleId"
+                :review="msg.chatExtract"
+                :people-id="focusPeopleId"
+                :gender="focus?.gender"
+              />
+              <div v-if="visibleActions(msg).length" class="bubble-actions">
                 <button
-                  v-for="(a, ai) in msg.actions"
+                  v-for="(a, ai) in visibleActions(msg)"
                   :key="ai"
                   type="button"
                   class="action-chip"
@@ -2622,11 +3177,19 @@ onUnmounted(() => {
               resize="none"
               :disabled="isArchivedSession"
               placeholder="问问健管智能体，或让他帮你写方案、起话术…"
-              @keydown.enter.exact.prevent="sendMessage(input)"
+              @keydown.enter.exact.prevent="onComposerEnter"
             />
             <div class="composer-bar">
               <div class="composer-send">
-                <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+                <span class="hint">Enter 发送 · 长文字请点整理这段记录</span>
+                <button
+                  type="button"
+                  class="send-btn ghost"
+                  :disabled="sending || uploading || isArchivedSession || !input.trim()"
+                  @click="organizeRecord"
+                >
+                  整理这段记录
+                </button>
                 <button
                   type="button"
                   class="send-btn"
@@ -2807,6 +3370,26 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
+
+              <dl class="focus-facts">
+                <template v-if="focus.bloodPressure">
+                  <dt>最近血压</dt>
+                  <dd :class="{ bad: focus.bloodPressureHigh }">
+                    {{ focus.bloodPressure }}<template v-if="focus.bloodPressureHigh"> ↑</template>
+                    <small v-if="focus.bloodPressureAt">{{ shortWhen(focus.bloodPressureAt) }}</small>
+                  </dd>
+                </template>
+                <template v-if="executionText">
+                  <dt>近 7 天</dt>
+                  <dd>{{ executionText }}</dd>
+                </template>
+                <template v-if="focus.allergyText">
+                  <dt>过敏史</dt>
+                  <dd :class="{ bad: focus.allergyText !== '无已知过敏' && focus.allergyText !== '未询问' }">
+                    {{ focus.allergyText }}
+                  </dd>
+                </template>
+              </dl>
             </div>
 
             <div class="focus-mid">
@@ -2888,6 +3471,7 @@ onUnmounted(() => {
                         {{ t.summary || '待处理' }}
                         <template v-if="t.overdue"> · 超期</template>
                         <template v-else-if="isDraftTask(t)"> · AI 草稿</template>
+                        <template v-if="!t.overdue && t.dueAt"> · 截止 {{ shortWhen(t.dueAt) }}</template>
                       </span>
                     </span>
                   </button>
@@ -2989,6 +3573,42 @@ onUnmounted(() => {
           </div>
         </template>
 
+        <div v-else-if="draftInbox.length" v-loading="draftInboxLoading" class="focus-body inbox-body">
+          <div class="section compact">
+            <div class="section-title">
+              待我确认
+              <span class="count">{{ draftInbox.length }} 项</span>
+            </div>
+            <div class="draft-list">
+              <button
+                v-for="item in draftInbox"
+                :key="item.taskId"
+                type="button"
+                class="draft-item draft"
+                :class="{ report: item.kind === 'REPORT', plan: item.kind === 'CARE_PLAN' }"
+                :title="`${item.displayName} · ${item.taskTypeLabel}${item.summary ? ' · ' + item.summary : ''}`"
+                @click="openInboxItem(item)"
+              >
+                <span class="draft-icon" :class="{ warn: item.overdue }">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </span>
+                <span class="draft-body">
+                  <span class="draft-title">{{ item.displayName }} · {{ item.taskTypeLabel }}</span>
+                  <span class="draft-meta">
+                    {{ item.summary || '待处理' }}
+                    <template v-if="inboxDueLabel(item)"> · {{ inboxDueLabel(item) }}</template>
+                  </span>
+                </span>
+                <span class="draft-cta">{{ item.actionLabel }}</span>
+              </button>
+            </div>
+          </div>
+          <p class="inbox-hint">点左侧名单可切换到单个患者</p>
+        </div>
+
         <div v-else class="right-empty">
           <div class="empty-ico">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -3005,8 +3625,10 @@ onUnmounted(() => {
       v-model="sheetOpen"
       :people-id="sheetPeopleId"
       :mode="sheetMode"
+      :observations-sub="sheetObservationsSub"
       :patient-name="focus?.displayName"
       @published="onReportPublished"
+      @care-plan-published="onCarePlanPublishedFromSheet"
     />
 
     <WorkspaceTaskFormDialog
@@ -3028,6 +3650,7 @@ onUnmounted(() => {
       @joined="
         async () => {
           const id = focusPeopleId
+          if (id) retireJoinCareTeamActions(id)
           await refreshAfterTaskChange(id)
         }
       "
@@ -3072,6 +3695,32 @@ onUnmounted(() => {
   border: 1px solid var(--ink-200);
   border-radius: var(--admin-radius, 12px);
   box-shadow: var(--admin-shadow);
+}
+
+.col.center {
+  position: relative;
+}
+
+.col.center.drop-active {
+  border-color: var(--brand-500, #2c7ef8);
+}
+
+.drop-mask {
+  position: absolute;
+  inset: 8px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 2px dashed var(--brand-500, #2c7ef8);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--brand-700, #1d4ed8);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
 }
 
 .col-head {
@@ -3137,7 +3786,7 @@ onUnmounted(() => {
 
 .priority-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
   margin: 10px 10px 0;
   padding: 4px;
@@ -3150,8 +3799,8 @@ onUnmounted(() => {
   min-width: 0;
   border: 0;
   background: transparent;
-  padding: 6px 2px;
-  font-size: 11.5px;
+  padding: 6px 1px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--ink-500);
   border-radius: 6px;
@@ -3160,7 +3809,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
 }
 
 .priority-tabs .tab-label {
@@ -3170,6 +3819,18 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.reward-week {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #fff6ea, #f4fbf8);
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6b7a;
+}
 .search-box {
   padding: 8px 12px 0;
   flex-shrink: 0;
@@ -3302,11 +3963,21 @@ onUnmounted(() => {
 }
 
 .card-top .name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--ink-800);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-500);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3321,6 +3992,7 @@ onUnmounted(() => {
   border-radius: 4px;
   font-weight: 600;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .risk .dot {
@@ -3799,6 +4471,21 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+.briefing-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 2px 0;
+}
+
+.briefing-loading-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-500);
+}
+
 .briefing-text {
   margin-top: 8px;
   font-size: 13px;
@@ -3860,6 +4547,14 @@ onUnmounted(() => {
 .msg-row.assistant {
   align-self: flex-start;
   max-width: min(760px, 96%);
+}
+
+.msg-row.assistant.has-extract {
+  max-width: min(1080px, 100%);
+}
+
+.msg-row.assistant.has-extract .bubble {
+  width: 100%;
 }
 
 .msg-row.user {
@@ -4659,6 +5354,16 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
+.send-btn.ghost {
+  background: #fff;
+  color: var(--brand-600, #1d4ed8);
+  border: 1px solid var(--brand-200, #bfdbfe);
+}
+
+.send-btn.ghost:hover:not(:disabled) {
+  background: var(--brand-50, #eff6ff);
+}
+
 .send-btn svg {
   width: 14px;
   height: 14px;
@@ -4860,6 +5565,34 @@ onUnmounted(() => {
   gap: 6px;
 }
 
+.focus-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 8px 0 0;
+  font-size: 11.5px;
+}
+
+.focus-facts dt {
+  color: var(--ink-500);
+}
+
+.focus-facts dd {
+  margin: 0;
+  color: var(--ink-800);
+  font-weight: 600;
+}
+
+.focus-facts dd.bad {
+  color: var(--rose-500, #f43f5e);
+}
+
+.focus-facts dd small {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--ink-400);
+}
+
 .metric {
   background: #fff;
   border-radius: 8px;
@@ -5049,6 +5782,15 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
+.inbox-body {
+  overflow-y: auto;
+}
+.inbox-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+}
 .draft-list {
   display: flex;
   flex-direction: column;

@@ -167,8 +167,8 @@ async function removeReport() {
 <style scoped>
 .page { min-height: 100vh; background: var(--hx-bg); padding-bottom: 24px; }
 .card {
-  margin: 12px 16px; padding: 16px; border-radius: 16px; background: #fff;
-  box-shadow: var(--hx-shadow);
+  margin: 12px 16px; padding: 16px; border-radius: var(--hx-r-lg); background: #fff;
+  box-shadow: var(--hx-elev-2);
 }
 h3 { margin: 0 0 12px; font-size: 15px; }
 .meta-row {
@@ -177,21 +177,21 @@ h3 { margin: 0 0 12px; font-size: 15px; }
 }
 .meta-row + .meta-row { margin-top: 10px; }
 .label { color: var(--hx-muted); font-size: 12px; flex-shrink: 0; }
-.block { margin-top: 14px; padding-top: 14px; border-top: 1px solid #f0f3f3; }
+.block { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hx-n-100); }
 .conclusion { margin: 6px 0 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .finding-row {
   display: flex; justify-content: space-between; gap: 12px;
   margin-top: 8px; font-size: 14px;
 }
-.lab-item + .lab-item { margin-top: 14px; padding-top: 14px; border-top: 1px solid #f0f3f3; }
+.lab-item + .lab-item { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hx-n-100); }
 .lab-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .lab-value { margin-top: 4px; font-size: 18px; font-weight: 600; }
 .lab-ref { margin-top: 2px; color: var(--hx-muted); font-size: 12px; }
 .flag {
   font-size: 11px; padding: 2px 6px; border-radius: 999px;
-  background: #fee2e2; color: #b91c1c;
+  background: var(--hx-danger-bg); color: var(--hx-danger-text);
 }
-.abnormal { color: #b91c1c; }
+.abnormal { color: var(--hx-danger-text); }
 .actions {
   display: grid;
   gap: 10px;

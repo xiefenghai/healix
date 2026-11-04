@@ -1,0 +1,23 @@
+{
+  "code": "STAFF_NOTE",
+  "version": 1,
+  "title": "健管师补充",
+  "script": "【内部】仅健管师填写：重点跟进、转介与备注，请勿对客户朗读。",
+  "items": [
+    {
+      "field": "staff.keyFollowups",
+      "label": "重点跟进事项",
+      "level": "STAFF"
+    },
+    {
+      "field": "staff.referral",
+      "label": "转介建议",
+      "level": "STAFF"
+    },
+    {
+      "field": "staff.note",
+      "label": "备注",
+      "level": "STAFF"
+    }
+  ]
+}

@@ -18,6 +18,8 @@ public class PeopleProfile extends BaseEntity {
     private String namePinyin;
     /** 联系手机号 */
     private String mobile;
+    /** 号码归属：本人 / 配偶 / 子女等，见 MobileOwnerEnum */
+    private String mobileOwner;
     /** 家庭住址 */
     private String address;
     /** 文化程度 code，见 EducationLevelEnum */
@@ -26,6 +28,9 @@ public class PeopleProfile extends BaseEntity {
     private String maritalStatus;
     /** 职业（自由文本） */
     private String occupation;
+    private String wechatId;
+    /** 作息类型：DAY/SHIFT/NIGHT/IRREGULAR */
+    private String workSchedule;
     private String allergensJson;
     private String chronicTagsJson;
     private String emergencyContactJson;

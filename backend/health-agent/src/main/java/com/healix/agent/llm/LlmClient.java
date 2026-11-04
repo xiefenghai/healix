@@ -53,6 +53,10 @@ public class LlmClient {
     @Value("${healix.agent.vision.model:}")
     private String visionModelName;
 
+    /** 为 true 时打印完整 system/user 请求体（含管理方案上下文），仅建议开发环境开启。 */
+    @Value("${healix.agent.llm.log-request:false}")
+    private boolean logRequest;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -76,10 +80,14 @@ public class LlmClient {
                 length(systemPrompt),
                 length(userMessage),
                 historySize);
+        logRequestPayload(scene, "chat", systemPrompt, userMessage, history);
         try {
-            Prompt prompt = new Prompt(buildMessages(systemPrompt, userMessage, history));
+            List<Message> messages = buildMessages(systemPrompt, userMessage, history);
+            logLlmRequest(chatModelName, formatMessagesInput(messages));
+            Prompt prompt = new Prompt(messages);
             ChatResponse response = chatModel.call(prompt);
             LlmResponse result = toResponse(response);
+            logLlmReturn(chatModelName, result.content());
             logSuccess(scene, "chat", started, result);
             return result;
         } catch (Exception e) {
@@ -113,12 +121,15 @@ public class LlmClient {
                 length(systemPrompt),
                 length(userMessage),
                 historySize);
+        logRequestPayload(scene, "stream", systemPrompt, userMessage, history);
         StringBuilder full = new StringBuilder();
         int[] promptTokens = new int[1];
         int[] completionTokens = new int[1];
         boolean[] hasUsage = new boolean[1];
         try {
-            Prompt prompt = new Prompt(buildMessages(systemPrompt, userMessage, history));
+            List<Message> messages = buildMessages(systemPrompt, userMessage, history);
+            logLlmRequest(chatModelName, formatMessagesInput(messages));
+            Prompt prompt = new Prompt(messages);
             Flux<ChatResponse> flux = chatModel.stream(prompt);
             flux.doOnNext(chunk -> {
                         if (chunk.getMetadata() != null && chunk.getMetadata().getUsage() != null) {
@@ -141,6 +152,7 @@ public class LlmClient {
                     hasUsage[0] ? promptTokens[0] : null,
                     hasUsage[0] ? completionTokens[0] : null);
             if (!result.fromLlm() || !StringUtils.hasText(result.content())) {
+                logLlmReturn(chatModelName, result.content());
                 log.warn(
                         "[LLM] empty scene={} mode=stream provider={} model={} elapsedMs={}",
                         scene,
@@ -149,6 +161,7 @@ public class LlmClient {
                         System.currentTimeMillis() - started);
                 return LlmResponse.disabled();
             }
+            logLlmReturn(chatModelName, result.content());
             logSuccess(scene, "stream", started, result);
             return result;
         } catch (Exception e) {
@@ -192,11 +205,17 @@ public class LlmClient {
 
     public LlmResponse chatWithImage(
             String scene, String systemPrompt, String userMessage, String imageBase64, String mimeType) {
+        return chatWithImages(scene, systemPrompt, userMessage, List.of(new VisionImage(imageBase64, mimeType)));
+    }
+
+    /** 多张图放在同一条用户消息里，模型一次看全（如同一餐的多角度照片）。 */
+    public LlmResponse chatWithImages(
+            String scene, String systemPrompt, String userMessage, List<VisionImage> images) {
         if (!enabled) {
             log.debug("[LLM] skipped scene={} reason=disabled", scene);
             return LlmResponse.disabled();
         }
-        if (!StringUtils.hasText(imageBase64)) {
+        if (images == null || images.isEmpty() || images.stream().anyMatch(i -> !StringUtils.hasText(i.base64()))) {
             log.debug("[LLM] skipped scene={} reason=empty_image", scene);
             return LlmResponse.disabled();
         }
@@ -204,17 +223,23 @@ public class LlmClient {
         String modelLabel = visionChatModel != null ? visionModelName : chatModelName;
         long started = System.currentTimeMillis();
         log.info(
-                "[LLM] start scene={} mode=vision provider={} model={} systemChars={} userChars={} imageBytes={}",
+                "[LLM] start scene={} mode=vision provider={} model={} systemChars={} userChars={} images={} imageBytes={}",
                 scene,
                 provider,
                 modelLabel,
                 length(systemPrompt),
                 length(userMessage),
-                imageBase64.length());
+                images.size(),
+                images.stream().mapToInt(i -> i.base64().length()).sum());
+        // 识图不落 base64，只打文本侧 system/user
+        logRequestPayload(scene, "vision", systemPrompt, userMessage, List.of());
         try {
             if (deepSeekChatCompletionsClient != null && visionChatModel != null) {
-                String dataUrl = toImageDataUrl(imageBase64, mimeType);
-                var ds = deepSeekChatCompletionsClient.chatWithImage(scene, systemPrompt, userMessage, dataUrl);
+                List<String> dataUrls = images.stream()
+                        .map(i -> toImageDataUrl(i.base64(), i.mimeType()))
+                        .toList();
+                // 请求/返回日志在 DeepSeekChatCompletionsClient 真实 HTTP 调用处打印
+                var ds = deepSeekChatCompletionsClient.chatWithImages(scene, systemPrompt, userMessage, dataUrls);
                 LlmResponse result = new LlmResponse(
                         ds.content(), ds.hasContent(), ds.promptTokens(), ds.completionTokens());
                 if (!StringUtils.hasText(result.content())) {
@@ -228,21 +253,26 @@ public class LlmClient {
                 logSuccess(scene, "vision", started, result, modelLabel);
                 return result;
             }
-            byte[] bytes = Base64.getDecoder().decode(stripDataUrl(imageBase64));
-            MimeType mediaType = StringUtils.hasText(mimeType)
-                    ? MimeTypeUtils.parseMimeType(mimeType)
-                    : MimeTypeUtils.IMAGE_JPEG;
-            Media media = Media.builder()
-                    .mimeType(mediaType)
-                    .data(new ByteArrayResource(bytes))
-                    .build();
+            List<Media> medias = new ArrayList<>();
+            for (VisionImage image : images) {
+                byte[] bytes = Base64.getDecoder().decode(stripDataUrl(image.base64()));
+                MimeType mediaType = StringUtils.hasText(image.mimeType())
+                        ? MimeTypeUtils.parseMimeType(image.mimeType())
+                        : MimeTypeUtils.IMAGE_JPEG;
+                medias.add(Media.builder()
+                        .mimeType(mediaType)
+                        .data(new ByteArrayResource(bytes))
+                        .build());
+            }
             UserMessage user = UserMessage.builder()
                     .text(userMessage)
-                    .media(media)
+                    .media(medias)
                     .build();
             List<Message> messages = List.of(new SystemMessage(systemPrompt), user);
+            logLlmRequest(modelLabel, formatVisionInput(systemPrompt, userMessage, images.size()));
             ChatResponse response = model.call(new Prompt(messages));
             LlmResponse result = toResponse(response);
+            logLlmReturn(modelLabel, result.content());
             if (!StringUtils.hasText(result.content())) {
                 log.warn(
                         "[LLM] empty-content scene={} mode=vision provider={} model={} rawResponse={}",
@@ -318,6 +348,100 @@ public class LlmClient {
         return new BusinessException("检验单识图失败：" + message);
     }
 
+    /** 真实发往模型前：模型名 + 完整输入（system / history / user）。 */
+    private static void logLlmRequest(String model, String input) {
+        log.info("请求LLM，模型名称： {},输入：{}", model, input == null ? "" : input);
+    }
+
+    /** 模型返回后：模型名 + 完整回复正文。 */
+    private static void logLlmReturn(String model, String content) {
+        log.info("模型：{},返回:{}", model, content == null ? "" : content);
+    }
+
+    private static String formatMessagesInput(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < messages.size(); i++) {
+            Message msg = messages.get(i);
+            if (i > 0) {
+                sb.append('\n');
+            }
+            String role;
+            if (msg instanceof SystemMessage) {
+                role = "system";
+            } else if (msg instanceof UserMessage) {
+                role = "user";
+            } else if (msg instanceof AssistantMessage) {
+                role = "assistant";
+            } else {
+                role = msg.getMessageType() == null ? "unknown" : msg.getMessageType().getValue();
+            }
+            sb.append('[').append(role).append("] ").append(msg.getText() == null ? "" : msg.getText());
+        }
+        return sb.toString();
+    }
+
+    private static String formatVisionInput(String systemPrompt, String userMessage, int imageCount) {
+        return "[system] "
+                + (systemPrompt == null ? "" : systemPrompt)
+                + "\n[user] "
+                + (userMessage == null ? "" : userMessage)
+                + "\n[images] count="
+                + imageCount
+                + " (base64 omitted)";
+    }
+
+    private void logRequestPayload(
+            String scene, String mode, String systemPrompt, String userMessage, List<ChatTurn> history) {
+        if (!logRequest) {
+            return;
+        }
+        log.info(
+                "[LLM] request scene={} mode={} --- system ---\n{}",
+                scene,
+                mode,
+                systemPrompt == null ? "" : systemPrompt);
+        if (history != null) {
+            for (int i = 0; i < history.size(); i++) {
+                ChatTurn turn = history.get(i);
+                if (StringUtils.hasText(turn.user())) {
+                    log.info(
+                            "[LLM] request scene={} mode={} --- history[{}].user ---\n{}",
+                            scene,
+                            mode,
+                            i,
+                            turn.user());
+                }
+                if (StringUtils.hasText(turn.assistant())) {
+                    log.info(
+                            "[LLM] request scene={} mode={} --- history[{}].assistant ---\n{}",
+                            scene,
+                            mode,
+                            i,
+                            turn.assistant());
+                }
+            }
+        }
+        log.info(
+                "[LLM] request scene={} mode={} --- user ---\n{}",
+                scene,
+                mode,
+                userMessage == null ? "" : userMessage);
+    }
+
+    private void logResponsePayload(String scene, String mode, LlmResponse result) {
+        if (!logRequest || result == null) {
+            return;
+        }
+        log.info(
+                "[LLM] response scene={} mode={} --- content ---\n{}",
+                scene,
+                mode,
+                result.content() == null ? "" : result.content());
+    }
+
     private void logSuccess(String scene, String mode, long startedMs, LlmResponse result) {
         logSuccess(scene, mode, startedMs, result, chatModelName);
     }
@@ -333,6 +457,7 @@ public class LlmClient {
                 length(result.content()),
                 result.promptTokens(),
                 result.completionTokens());
+        logResponsePayload(scene, mode, result);
     }
 
     private void logFailure(String scene, String mode, long startedMs, Exception e) {
@@ -361,4 +486,6 @@ public class LlmClient {
     }
 
     public record ChatTurn(String user, String assistant) {}
+
+    public record VisionImage(String base64, String mimeType) {}
 }

@@ -1,5 +1,7 @@
 package com.healix.core.people.service;
 
+import com.healix.core.assessment.mapper.AssessmentStoreMapper;
+import com.healix.core.assessment.service.AssessmentDirtyMarker;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.AuditDetails;
 import com.healix.core.audit.enums.AuditActionEnum;
@@ -75,6 +77,8 @@ public class PatientMergeService {
 
     private final PeopleProfileMapper peopleProfileMapper;
     private final PatientMergeMapper mergeMapper;
+    private final AssessmentStoreMapper assessmentStoreMapper;
+    private final AssessmentDirtyMarker assessmentDirtyMarker;
     private final AuditService auditService;
 
     /**
@@ -252,6 +256,7 @@ public class PatientMergeService {
 
         mergeByCode("people_disease_archive", "disease_code", sourcePeopleId, targetPeopleId, now, moved, dropped);
         mergeByCode("people_metadata_info", "metadata_code", sourcePeopleId, targetPeopleId, now, moved, dropped);
+        mergeAssessment(tenantId, sourcePeopleId, targetPeopleId, moved);
 
         if (mergeMapper.markMerged(sourcePeopleId, targetPeopleId, now) == 0) {
             throw new BusinessException("被合并档案状态已变化，请重试");
@@ -281,6 +286,18 @@ public class PatientMergeService {
                 moved,
                 dropped);
         return new MergeResult(targetPeopleId, sourcePeopleId, moved, dropped);
+    }
+
+    /** 评估请求随人迁移；最新结果作废，目标标脏由自动任务重算。作答已在 questionnaire_response。 */
+    private void mergeAssessment(String tenantId, String sourcePeopleId, String targetPeopleId, Map<String, Integer> moved) {
+        assessmentStoreMapper.cancelPendingRequests(tenantId, sourcePeopleId);
+        int reqs = assessmentStoreMapper.repointRequests(sourcePeopleId, targetPeopleId);
+        assessmentStoreMapper.deleteLatest(sourcePeopleId);
+        assessmentStoreMapper.deleteState(sourcePeopleId);
+        assessmentDirtyMarker.mark(tenantId, targetPeopleId);
+        if (reqs > 0) {
+            moved.put("assessment_questionnaire_request", reqs);
+        }
     }
 
     private void mergeByCode(

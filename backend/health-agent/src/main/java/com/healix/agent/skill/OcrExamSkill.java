@@ -7,6 +7,8 @@ import com.healix.agent.gateway.AgentResponse;
 import com.healix.agent.ocr.ExamOcrRecognitionService;
 import com.healix.common.exception.BusinessException;
 import com.healix.core.observation.dto.ExamOcrPrefillDto;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -23,6 +25,7 @@ import org.springframework.util.StringUtils;
 public class OcrExamSkill implements AgentSkill {
 
     private final ExamOcrRecognitionService examOcrRecognitionService;
+    private final ImageFileService imageFileService;
 
     @Override
     public AgentCapability capability() {
@@ -52,6 +55,10 @@ public class OcrExamSkill implements AgentSkill {
             byte[] bytes = decodeImage(cmd.imageBase64());
             String mime = StringUtils.hasText(cmd.imageMimeType()) ? cmd.imageMimeType() : "image/jpeg";
             ExamOcrPrefillDto prefill = examOcrRecognitionService.recognize(bytes, mime);
+            if (StringUtils.hasText(cmd.tenantId()) && StringUtils.hasText(cmd.peopleId())) {
+                prefill = prefill.withImageKey(
+                        imageFileService.save(cmd.tenantId(), cmd.peopleId(), ObjectKeys.EXAM, bytes, mime));
+            }
             return new AgentResponse(
                     ctx.sessionId(),
                     AgentCapability.OCR_EXAM.name(),

@@ -11,9 +11,9 @@ public interface PeopleMetadataInfoMapper {
     PeopleMetadataInfo findByPeopleAndCode(
             @Param("peopleId") String peopleId, @Param("metadataCode") String metadataCode);
 
-    List<String> listCodesByPrefix(
-            @Param("peopleId") String peopleId,
+    List<PeopleMetadataInfo> listByPrefix(
             @Param("tenantId") String tenantId,
+            @Param("peopleId") String peopleId,
             @Param("codePrefix") String codePrefix);
 
     int insert(PeopleMetadataInfo row);

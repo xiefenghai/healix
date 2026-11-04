@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import AgentDrawer from './AgentDrawer.vue'
@@ -19,6 +19,94 @@ const peopleId = computed(() => {
   const match = route.path.match(/^\/workspace\/patients\/([^/]+)/)
   return match?.[1] || ''
 })
+
+const FAB_SIZE = 68
+const EDGE_GAP = 16
+const DRAG_THRESHOLD = 4
+const POS_KEY = 'healix.agentFab.pos'
+
+/** 以右下角为锚点存偏移，窗口缩放后仍贴在同一侧 */
+const pos = ref<{ right: number; bottom: number }>(loadPos())
+const dragging = ref(false)
+let start: { x: number; y: number; right: number; bottom: number; id: number } | null = null
+let moved = false
+
+function loadPos() {
+  try {
+    const raw = localStorage.getItem(POS_KEY)
+    if (raw) {
+      const p = JSON.parse(raw) as { right?: number; bottom?: number }
+      if (typeof p.right === 'number' && typeof p.bottom === 'number') return clamp(p.right, p.bottom)
+    }
+  } catch {
+    // ignore
+  }
+  return { right: 22, bottom: 22 }
+}
+
+function clamp(right: number, bottom: number) {
+  const maxRight = Math.max(EDGE_GAP, window.innerWidth - FAB_SIZE - EDGE_GAP)
+  const maxBottom = Math.max(EDGE_GAP, window.innerHeight - FAB_SIZE - EDGE_GAP)
+  return {
+    right: Math.min(Math.max(right, EDGE_GAP), maxRight),
+    bottom: Math.min(Math.max(bottom, EDGE_GAP), maxBottom),
+  }
+}
+
+const fabStyle = computed(() => ({
+  right: `${pos.value.right}px`,
+  bottom: `${pos.value.bottom}px`,
+}))
+
+function onPointerDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  start = { x: e.clientX, y: e.clientY, right: pos.value.right, bottom: pos.value.bottom, id: e.pointerId }
+  moved = false
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!start || e.pointerId !== start.id) return
+  const dx = e.clientX - start.x
+  const dy = e.clientY - start.y
+  if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
+  moved = true
+  dragging.value = true
+  pos.value = clamp(start.right - dx, start.bottom - dy)
+}
+
+function onPointerUp(e: PointerEvent) {
+  if (!start || e.pointerId !== start.id) return
+  start = null
+  dragging.value = false
+  if (!moved) return
+  const centerX = window.innerWidth - pos.value.right - FAB_SIZE / 2
+  const snapRight = centerX >= window.innerWidth / 2
+    ? EDGE_GAP
+    : window.innerWidth - FAB_SIZE - EDGE_GAP
+  pos.value = clamp(snapRight, pos.value.bottom)
+  try {
+    localStorage.setItem(POS_KEY, JSON.stringify(pos.value))
+  } catch {
+    // ignore
+  }
+}
+
+function onClick(e: MouseEvent) {
+  if (moved) {
+    moved = false
+    e.preventDefault()
+    return
+  }
+  openDrawer()
+}
+
+function onResize() {
+  pos.value = clamp(pos.value.right, pos.value.bottom)
+}
+
+onMounted(() => window.addEventListener('resize', onResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 function openDrawer() {
   if (!peopleId.value) {
@@ -41,9 +129,15 @@ function onCarePlanUpdated() {
       v-show="!visible"
       type="button"
       class="agent-fab"
+      :class="{ dragging }"
+      :style="fabStyle"
       :aria-label="AGENT_NAME"
-      :title="AGENT_NAME"
-      @click="openDrawer"
+      :title="`${AGENT_NAME}（可拖动）`"
+      @pointerdown="onPointerDown"
+      @pointermove="onPointerMove"
+      @pointerup="onPointerUp"
+      @pointercancel="onPointerUp"
+      @click="onClick"
     >
       <span class="agent-fab-glow" aria-hidden="true" />
       <span class="agent-fab-ring" aria-hidden="true" />
@@ -64,26 +158,45 @@ function onCarePlanUpdated() {
 <style scoped>
 .agent-fab {
   position: fixed;
-  right: 22px;
-  bottom: 22px;
   z-index: 1200;
-  width: 84px;
-  height: 84px;
+  width: 68px;
+  height: 68px;
   padding: 0;
   border: none;
   border-radius: 50%;
-  cursor: pointer;
+  cursor: grab;
   background: transparent;
   overflow: visible;
+  touch-action: none;
+  user-select: none;
   transition:
+    right 0.25s ease,
+    bottom 0.25s ease,
     transform 0.2s ease,
     filter 0.2s ease,
     opacity 0.2s ease;
 }
 
-.agent-fab:hover {
+.agent-fab.dragging {
+  cursor: grabbing;
+  transition: none;
+  transform: scale(1.06);
+}
+
+.agent-fab.dragging .agent-fab-ring,
+.agent-fab.dragging .agent-fab-glow {
+  animation: none;
+  opacity: 0;
+}
+
+.agent-fab:hover:not(.dragging) {
   transform: translateY(-3px) scale(1.05);
   filter: brightness(1.03);
+}
+
+.agent-fab-logo {
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
 
 .agent-fab:active {

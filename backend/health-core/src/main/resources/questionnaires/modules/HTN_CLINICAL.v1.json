@@ -1,0 +1,54 @@
+{
+  "code": "HTN_CLINICAL",
+  "version": 1,
+  "title": "高血压管理",
+  "script": "了解一下血压控制与自测习惯，方便定控压目标和运动、限盐方面的注意点。",
+  "items": [
+    {
+      "field": "disease.hypertension.diagnosedYear",
+      "label": "大概哪一年得知患高血压？",
+      "level": "FIRST_VISIT",
+      "sensitive": true
+    },
+    {
+      "field": "disease.hypertension.homeMonitor",
+      "label": "在家有测血压吗？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "disease.hypertension.latestSystolic",
+      "label": "近期收缩压大概多少？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "op": ">=",
+            "value": 160
+          },
+          "severity": "CAUTION",
+          "planEffect": "血压偏高时力量训练与高强度运动需谨慎，优先稳压"
+        }
+      ]
+    },
+    {
+      "field": "disease.hypertension.latestDiastolic",
+      "label": "近期舒张压大概多少？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "disease.hypertension.highestSystolic",
+      "label": "以前测到过的最高收缩压？",
+      "level": "LATER"
+    },
+    {
+      "field": "disease.hypertension.highestDiastolic",
+      "label": "以前测到过的最高舒张压？",
+      "level": "LATER"
+    },
+    {
+      "field": "disease.hypertension.morningPeak",
+      "label": "有没有晨起血压明显偏高？",
+      "level": "FIRST_VISIT"
+    }
+  ]
+}

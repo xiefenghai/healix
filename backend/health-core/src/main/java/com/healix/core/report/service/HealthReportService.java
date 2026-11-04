@@ -53,6 +53,8 @@ import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.healix.core.reward.service.RewardService;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -77,6 +79,7 @@ public class HealthReportService {
     private final ArchiveAccessService archiveAccessService;
     private final NotifyFacade notifyFacade;
     private final AccountPatientMapper accountPatientMapper;
+    private final ObjectProvider<RewardService> rewardService;
 
     /**
      * 生成报告。fromJob=true 时门槛不足/已存在则返回 null（静默跳过）。
@@ -163,7 +166,7 @@ public class HealthReportService {
         row.setPeriodEnd(periodEnd);
         row.setTitle(buildTitle(periodType, periodStart, periodEnd, joinDate));
         row.setStatus(HealthReportStatus.DRAFT.name());
-        row.setSchemaVersion(1);
+        row.setSchemaVersion(HealthReportContentBuilder.SCHEMA_VERSION);
         row.setContentJson(JsonUtils.toJson(built.content()));
         row.setGeneratedBy(
                 StringUtils.hasText(generatedBy) ? generatedBy : HealthReportGeneratedBy.MANUAL.name());
@@ -269,7 +272,7 @@ public class HealthReportService {
         Map<String, Object> content = built.content();
         mergeNarrativeFromExisting(content, row.getContentJson());
         row.setContentJson(JsonUtils.toJson(content));
-        row.setSchemaVersion(1);
+        row.setSchemaVersion(HealthReportContentBuilder.SCHEMA_VERSION);
         row.setTitle(buildTitle(periodType, row.getPeriodStart(), row.getPeriodEnd(), joinDate));
         row.setCareTeamId(resolveCareTeamId(row.getOrgId(), row.getPeopleId()));
         EntityMeta.onUpdate(row);
@@ -278,11 +281,57 @@ public class HealthReportService {
     }
 
     /**
+     * 运维用：按当前 schema 重算快照（含已发布），保留状态与寄语，不校验门槛、不通知。
+     */
+    @Transactional
+    public void rebuildContent(String id) {
+        HealthReport row = healthReportMapper.findById(id);
+        if (row == null) {
+            throw new BusinessException(404, "报告不存在");
+        }
+        BuildResult built = contentBuilder.build(
+                row.getTenantId(),
+                row.getPeopleId(),
+                row.getPeriodStart(),
+                row.getPeriodEnd(),
+                row.getPeriodType());
+        Map<String, Object> content = built.content();
+        mergeNarrativeFromExisting(content, row.getContentJson());
+        Object tier = narrativeMap(readContent(row.getContentJson())).get("templateTier");
+        if (tier != null) {
+            Map<String, Object> nar = narrativeMap(content);
+            nar.put("templateTier", tier);
+            content.put("narrative", nar);
+        }
+        row.setContentJson(JsonUtils.toJson(content));
+        row.setSchemaVersion(HealthReportContentBuilder.SCHEMA_VERSION);
+        EntityMeta.onUpdate(row);
+        healthReportMapper.updateSnapshot(row);
+    }
+
+    /**
      * 将 AI/人工寄语写入报告草稿（仍为 DRAFT，不发布）。供对话内点评与多轮修订。
      */
     @Transactional
     public HealthReportViewDto saveNarrativeDraft(
             String orgId, String id, String staffId, String staffComment, String nextFocus, String quarterAdvice) {
+        return saveNarrativeDraft(orgId, id, staffId, staffComment, nextFocus, quarterAdvice, null, null);
+    }
+
+    /**
+     * @param insights 各章节一句话解读（plan/med/metrics/diet/exercise/observations），null 表示不改
+     * @param highlights 改写后的要点卡 [{type,text}]，null 表示不改
+     */
+    @Transactional
+    public HealthReportViewDto saveNarrativeDraft(
+            String orgId,
+            String id,
+            String staffId,
+            String staffComment,
+            String nextFocus,
+            String quarterAdvice,
+            Map<String, String> insights,
+            List<Map<String, String>> highlights) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
         HealthReport row = requireInOrg(orgId, id);
         archiveAccessService.assertStaffCanAccessPeople(requireTenantId(), orgId, row.getPeopleId());
@@ -303,6 +352,7 @@ public class HealthReportService {
         if (StringUtils.hasText(quarterAdvice)) {
             narrative.put("quarterAdvice", quarterAdvice.trim());
         }
+        applyNarrativeExtras(narrative, insights, highlights);
         if (StringUtils.hasText(str(narrative.get("staffComment")))) {
             narrative.put("templateTier", null);
         }
@@ -318,6 +368,19 @@ public class HealthReportService {
     @Transactional
     public HealthReportViewDto publish(
             String orgId, String id, String staffId, String staffComment, String nextFocus, String quarterAdvice) {
+        return publish(orgId, id, staffId, staffComment, nextFocus, quarterAdvice, null, null);
+    }
+
+    @Transactional
+    public HealthReportViewDto publish(
+            String orgId,
+            String id,
+            String staffId,
+            String staffComment,
+            String nextFocus,
+            String quarterAdvice,
+            Map<String, String> insights,
+            List<Map<String, String>> highlights) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
         HealthReport row = requireInOrg(orgId, id);
         archiveAccessService.assertStaffCanAccessPeople(requireTenantId(), orgId, row.getPeopleId());
@@ -338,6 +401,7 @@ public class HealthReportService {
         if (StringUtils.hasText(quarterAdvice)) {
             narrative.put("quarterAdvice", quarterAdvice.trim());
         }
+        applyNarrativeExtras(narrative, insights, highlights);
         if (HealthReportPeriodType.QUARTER.matches(row.getPeriodType())
                 && !StringUtils.hasText(str(narrative.get("quarterAdvice")))) {
             throw new BusinessException(400, "三个月报告须填写阶段建议");
@@ -359,8 +423,22 @@ public class HealthReportService {
         healthReportMapper.updateStatus(row);
         closeReportTask(row, staffId, WorkspaceTaskStatus.DONE, WorkspaceTaskCloseReason.FORM);
         maybeOpenPlanCreateFromQuarterAdvice(row, str(narrative.get("quarterAdvice")));
+        awardOutcomeBadges(row, content, now.toLocalDate());
         scheduleReportPublishedNotify(row);
         return toView(healthReportMapper.findById(id));
+    }
+
+    /** 报告中的结果类里程碑 → 患者荣誉徽章（不给豆）；失败不影响发布。 */
+    private void awardOutcomeBadges(HealthReport row, Map<String, Object> content, LocalDate day) {
+        RewardService svc = rewardService.getIfAvailable();
+        if (svc == null) {
+            return;
+        }
+        try {
+            svc.awardOutcomeBadges(row.getTenantId(), row.getPeopleId(), row.getId(), day, content);
+        } catch (Exception ex) {
+            log.warn("award outcome badges failed report={}: {}", row.getId(), ex.getMessage());
+        }
     }
 
     /** 三月报发布且填了阶段建议 → 确保工作台有 OPEN 的制定方案单。 */
@@ -549,16 +627,16 @@ public class HealthReportService {
                 || !HealthReportStatus.PUBLISHED.matches(row.getStatus())) {
             throw new BusinessException(404, "报告不存在");
         }
-        if (StringUtils.hasText(activePeopleId) && activePeopleId.equals(row.getPeopleId())) {
-            return toView(row);
-        }
-        if (StringUtils.hasText(accountId)) {
+        boolean allowed = StringUtils.hasText(activePeopleId) && activePeopleId.equals(row.getPeopleId());
+        if (!allowed && StringUtils.hasText(accountId)) {
             var card = accountPatientMapper.findByAccountAndPeople(accountId, row.getPeopleId());
-            if (card != null && row.getTenantId().equals(card.getTenantId())) {
-                return toView(row);
-            }
+            allowed = card != null && row.getTenantId().equals(card.getTenantId());
         }
-        throw new BusinessException(404, "报告不存在");
+        if (!allowed) {
+            throw new BusinessException(404, "报告不存在");
+        }
+        healthReportMapper.markPatientRead(id, LocalDateTime.now());
+        return toView(row);
     }
 
     public List<String> listPeopleIdsByPrimaryOrg(String tenantId, String orgId, int limit) {
@@ -828,7 +906,53 @@ public class HealthReportService {
         if (StringUtils.hasText(str(oldNar.get("quarterAdvice")))) {
             nar.put("quarterAdvice", oldNar.get("quarterAdvice"));
         }
+        if (oldNar.get("insights") != null) {
+            nar.put("insights", oldNar.get("insights"));
+        }
+        if (oldNar.get("highlights") != null) {
+            nar.put("highlights", oldNar.get("highlights"));
+        }
         content.put("narrative", nar);
+    }
+
+    private static final Set<String> INSIGHT_KEYS =
+            Set.of("plan", "med", "metrics", "diet", "exercise", "observations");
+    private static final Set<String> HIGHLIGHT_TYPES = Set.of(
+            HealthReportOverviewBuilder.GOOD, HealthReportOverviewBuilder.WATCH, HealthReportOverviewBuilder.FOCUS);
+    private static final int MAX_INSIGHT_CHARS = 120;
+    private static final int MAX_HIGHLIGHT_CHARS = 60;
+    private static final int MAX_HIGHLIGHTS = 9;
+
+    /** 只收白名单章节与要点类型；传空集合表示清空。 */
+    private static void applyNarrativeExtras(
+            Map<String, Object> narrative, Map<String, String> insights, List<Map<String, String>> highlights) {
+        if (insights != null) {
+            Map<String, String> clean = new LinkedHashMap<>();
+            insights.forEach((k, v) -> {
+                if (INSIGHT_KEYS.contains(k) && StringUtils.hasText(v)) {
+                    clean.put(k, clip(v.trim(), MAX_INSIGHT_CHARS));
+                }
+            });
+            narrative.put("insights", clean.isEmpty() ? null : clean);
+        }
+        if (highlights != null) {
+            List<Map<String, String>> clean = new ArrayList<>();
+            for (Map<String, String> h : highlights) {
+                if (h == null || clean.size() >= MAX_HIGHLIGHTS) {
+                    continue;
+                }
+                String type = h.get("type");
+                String text = h.get("text");
+                if (HIGHLIGHT_TYPES.contains(type) && StringUtils.hasText(text)) {
+                    clean.add(Map.of("type", type, "text", clip(text.trim(), MAX_HIGHLIGHT_CHARS)));
+                }
+            }
+            narrative.put("highlights", clean.isEmpty() ? null : clean);
+        }
+    }
+
+    private static String clip(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max);
     }
 
     private static Map<String, Object> readContent(String json) {

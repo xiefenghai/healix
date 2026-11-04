@@ -26,6 +26,8 @@ import com.healix.core.diet.support.DietContextLoader.DietContext;
 import com.healix.core.diet.support.DietGoalJson;
 import com.healix.core.diet.support.DietRuleEngine;
 import com.healix.core.diet.support.DietRuleEngine.RuleItem;
+import com.healix.core.storage.ImageFileService;
+import com.healix.core.storage.ObjectKeys;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -40,7 +42,12 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 /** 饮食记录：餐次增删改查、营养重算、规则提示、DIET_LOG 自动打卡。 */
@@ -54,6 +61,7 @@ public class DietRecordService {
     private static final int MAX_ITEMS = 30;
     private static final double MAX_ITEM_GRAMS = 3000;
     private static final int BACKFILL_DAYS = 30;
+    private static final int STAFF_BACKFILL_DAYS = 7;
     private static final int MAX_SUMMARY_DAYS = 92;
     /** 估算项能量密度上限（纯脂肪约 900 kcal/100g） */
     private static final double MAX_KCAL_PER_GRAM = 9.0;
@@ -66,6 +74,8 @@ public class DietRecordService {
     private final DietContextLoader contextLoader;
     private final DietRuleEngine ruleEngine;
     private final CarePlanCheckinService checkinService;
+    private final PlatformTransactionManager transactionManager;
+    private final ImageFileService imageFileService;
 
     /**
      * 明细输入。foodCode 命中食物库时营养由服务端按克数计算，客户端营养值忽略；
@@ -93,7 +103,19 @@ public class DietRecordService {
             LocalDateTime eatenAt,
             String source,
             String note,
-            List<MealItemInput> items) {}
+            List<MealItemInput> items,
+            List<String> imageKeys) {
+
+        public MealInput(
+                LocalDate mealDate,
+                String mealType,
+                LocalDateTime eatenAt,
+                String source,
+                String note,
+                List<MealItemInput> items) {
+            this(mealDate, mealType, eatenAt, source, note, items, null);
+        }
+    }
 
     /** 录入人：患者本人或医护代录（二选一）。 */
     public record Actor(String peopleId, String staffId) {
@@ -130,6 +152,7 @@ public class DietRecordService {
     @Transactional
     public DietMealDto update(String tenantId, String peopleId, String mealId, MealInput input, Actor actor) {
         DietMeal meal = requireMeal(tenantId, peopleId, mealId);
+        assertWritable(meal, actor);
         LocalDate oldDate = meal.getMealDate();
         List<DietMealItem> items = fill(meal, input, actor);
         EntityMeta.onUpdate(meal);
@@ -143,9 +166,37 @@ public class DietRecordService {
         return toDto(meal, items);
     }
 
+    /**
+     * 按餐次整体保存：mealIds 为页面上合并编辑的同餐次记录，第一条保留并改写，其余删除；
+     * items 为空时全部删除并返回 null。
+     */
     @Transactional
-    public void delete(String tenantId, String peopleId, String mealId) {
+    public DietMealDto saveSlot(String tenantId, String peopleId, List<String> mealIds, MealInput input, Actor actor) {
+        List<DietMeal> olds = (mealIds == null ? List.<String>of() : mealIds).stream()
+                .filter(StringUtils::hasText)
+                .distinct()
+                .map(id -> requireMeal(tenantId, peopleId, id))
+                .toList();
+        boolean empty = input == null || input.items() == null || input.items().isEmpty();
+        if (empty) {
+            if (olds.isEmpty()) {
+                throw new BusinessException(400, "请至少添加一种食物");
+            }
+            olds.forEach(m -> delete(tenantId, peopleId, m.getId(), actor));
+            return null;
+        }
+        if (olds.isEmpty()) {
+            return create(tenantId, peopleId, input, actor);
+        }
+        DietMealDto saved = update(tenantId, peopleId, olds.get(0).getId(), input, actor);
+        olds.stream().skip(1).forEach(m -> delete(tenantId, peopleId, m.getId(), actor));
+        return saved;
+    }
+
+    @Transactional
+    public void delete(String tenantId, String peopleId, String mealId, Actor actor) {
         DietMeal meal = requireMeal(tenantId, peopleId, mealId);
+        assertWritable(meal, actor);
         mealMapper.softDelete(meal.getId());
         itemMapper.softDeleteByMeal(meal.getId());
         syncDietLog(tenantId, peopleId, meal.getMealDate());
@@ -194,12 +245,20 @@ public class DietRecordService {
         out.setGoal(DietGoalJson.toDto(goal));
         out.setIntake(intake.rounded());
         if (goal != null && goal.getEnergyKcal() != null) {
-            out.setRemainingKcal((int) Math.round(goal.getEnergyKcal() - intake.energyKcal()));
+            // 与前端「已摄入」同一套取整，避免 159.5→显示160、剩余却算成 1961
+            out.setRemainingKcal(goal.getEnergyKcal() - (int) Math.round(intake.energyKcal()));
             Map<String, Integer> targets = new LinkedHashMap<>();
             for (MealTypeEnum t : List.of(MealTypeEnum.BREAKFAST, MealTypeEnum.LUNCH, MealTypeEnum.DINNER)) {
                 targets.put(t.name(), (int) Math.round(goal.getEnergyKcal() * DietRuleEngine.mealShare(goal, t)));
             }
             out.setMealTargetsKcal(targets);
+            if (goal.getCarbG() != null) {
+                Map<String, Integer> carbs = new LinkedHashMap<>();
+                for (MealTypeEnum t : List.of(MealTypeEnum.BREAKFAST, MealTypeEnum.LUNCH, MealTypeEnum.DINNER)) {
+                    carbs.put(t.name(), (int) Math.round(goal.getCarbG() * DietRuleEngine.mealShare(goal, t)));
+                }
+                out.setMealTargetsCarbG(carbs);
+            }
         }
         out.setMainMealsLogged(logged.stream().map(Enum::name).toList());
         out.setThreeMealsComplete(complete);
@@ -262,6 +321,9 @@ public class DietRecordService {
         if (date.isBefore(today.minusDays(BACKFILL_DAYS))) {
             throw new BusinessException(400, "仅支持补记最近 " + BACKFILL_DAYS + " 天");
         }
+        if (actor.staffId() != null && date.isBefore(today.minusDays(STAFF_BACKFILL_DAYS - 1L))) {
+            throw new BusinessException(400, "仅支持代录最近 " + STAFF_BACKFILL_DAYS + " 天");
+        }
         List<MealItemInput> inputs = input.items() == null ? List.of() : input.items();
         if (inputs.isEmpty()) {
             throw new BusinessException(400, "请至少添加一种食物");
@@ -307,6 +369,17 @@ public class DietRecordService {
         meal.setQualityLevel(DietRuleEngine.qualityOf(flags));
         meal.setFlagsJson(JsonUtils.toJson(flags));
         meal.setNote(StringUtils.hasText(input.note()) ? input.note().trim() : null);
+        if (input.imageKeys() != null) {
+            List<String> keys = input.imageKeys().stream()
+                    .filter(StringUtils::hasText)
+                    .map(String::trim)
+                    .distinct()
+                    .limit(6)
+                    .map(key -> imageFileService.requireOwned(
+                            meal.getTenantId(), meal.getPeopleId(), ObjectKeys.DIET, key))
+                    .toList();
+            meal.setImageKeysJson(keys.isEmpty() ? null : JsonUtils.toJson(keys));
+        }
         return computed.stream().map(ComputedItem::row).toList();
     }
 
@@ -376,14 +449,44 @@ public class DietRecordService {
         itemMapper.insertBatch(items);
     }
 
-    /** DIET_LOG 打卡失败不影响饮食保存。 */
+    /**
+     * 饮食事务提交后再同步 DIET_LOG 打卡：打卡失败不能把饮食保存一起回滚。
+     *
+     * <p>afterCommit 时原事务资源仍绑定在线程上，须 REQUIRES_NEW 才会真正提交。
+     */
     private void syncDietLog(String tenantId, String peopleId, LocalDate date) {
-        try {
-            List<DietMeal> meals = mealMapper.listByPeopleRange(tenantId, peopleId, date, date);
-            checkinService.syncSystemCheckin(tenantId, peopleId, DIET_LOG_TASK, date, mainMealsLogged(meals).size() == 3);
-        } catch (RuntimeException e) {
-            log.warn("sync DIET_LOG checkin failed people={} date={}: {}", peopleId, date, e.getMessage());
+        Runnable sync = () -> {
+            try {
+                requiresNew().executeWithoutResult(st -> {
+                    List<DietMeal> meals = mealMapper.listByPeopleRange(tenantId, peopleId, date, date);
+                    checkinService.syncSystemCheckin(
+                            tenantId,
+                            peopleId,
+                            DIET_LOG_TASK,
+                            date,
+                            mainMealsLogged(meals).size() == 3,
+                            peopleId);
+                });
+            } catch (RuntimeException e) {
+                log.warn("sync DIET_LOG checkin failed people={} date={}: {}", peopleId, date, e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    sync.run();
+                }
+            });
+        } else {
+            sync.run();
         }
+    }
+
+    private TransactionTemplate requiresNew() {
+        TransactionTemplate t = new TransactionTemplate(transactionManager);
+        t.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return t;
     }
 
     private static Set<MealTypeEnum> mainMealsLogged(List<DietMeal> meals) {
@@ -399,6 +502,17 @@ public class DietRecordService {
             }
         }
         return set;
+    }
+
+    /** 患者只能改自己记的，健管师只能改代录的（点评不受限）。 */
+    private static void assertWritable(DietMeal meal, Actor actor) {
+        boolean byStaff = StringUtils.hasText(meal.getRecordedByStaffId());
+        if (actor.staffId() == null && byStaff) {
+            throw new BusinessException(400, "健管师代录的记录不可修改");
+        }
+        if (actor.staffId() != null && !byStaff) {
+            throw new BusinessException(400, "患者自行记录的数据不可修改");
+        }
     }
 
     private DietMeal requireMeal(String tenantId, String peopleId, String mealId) {
@@ -432,6 +546,7 @@ public class DietRecordService {
         d.setQualityLevel(m.getQualityLevel());
         d.setFlags(parseFlags(m.getFlagsJson()));
         d.setNote(m.getNote());
+        d.setImageKeys(parseImageKeys(m.getImageKeysJson()));
         d.setStaffComment(m.getStaffComment());
         d.setCommentedAt(m.getCommentedAt());
         d.setRecordedByStaff(StringUtils.hasText(m.getRecordedByStaffId()));
@@ -458,6 +573,18 @@ public class DietRecordService {
         d.setConfidence(it.getConfidence());
         d.setGramsConfirmed(it.getGramsConfirmed() == null || it.getGramsConfirmed() == 1);
         return d;
+    }
+
+    private static List<String> parseImageKeys(String json) {
+        if (!StringUtils.hasText(json)) {
+            return List.of();
+        }
+        try {
+            List<String> list = JsonUtils.fromJson(json, new TypeReference<List<String>>() {});
+            return list == null ? List.of() : list;
+        } catch (RuntimeException e) {
+            return List.of();
+        }
     }
 
     private static List<DietFlagDto> parseFlags(String json) {

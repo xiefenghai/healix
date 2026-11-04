@@ -17,6 +17,8 @@ public class DietDayDto {
     private Integer remainingKcal;
     /** 各正餐热量目标 */
     private Map<String, Integer> mealTargetsKcal;
+    /** 各正餐碳水建议（g），与控糖提醒同一口径；目标未设碳水时为 null */
+    private Map<String, Integer> mealTargetsCarbG;
     /** 已记录的正餐 */
     private List<String> mainMealsLogged;
     private boolean threeMealsComplete;

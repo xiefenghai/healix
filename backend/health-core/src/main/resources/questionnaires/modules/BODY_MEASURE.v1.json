@@ -1,0 +1,94 @@
+{
+  "code": "BODY_MEASURE",
+  "version": 1,
+  "title": "体测",
+  "script": "我们先记一下现在的身高、体重，作为后面一起看变化的起点。如果方便，尽量用今天早上空腹、穿轻薄衣服时称的数。",
+  "items": [
+    {
+      "field": "metric.HEIGHT",
+      "label": "身高",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "metric.WEIGHT",
+      "label": "体重",
+      "level": "REQUIRED",
+      "highlights": [
+        {
+          "when": {
+            "computed": "BMI",
+            "op": "<",
+            "value": 18.5
+          },
+          "severity": "REFER",
+          "planEffect": "不设减重目标"
+        }
+      ]
+    },
+    {
+      "field": "metric.WAIST",
+      "label": "腰围（肚脐上方一横指水平绕一圈）",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "metric.HIP",
+      "label": "臀围（臀部最突出处水平一圈）",
+      "level": "LATER"
+    },
+    {
+      "field": "metric.BODY_FAT",
+      "label": "体脂率（体脂秤或体成分仪）",
+      "level": "LATER"
+    },
+    {
+      "field": "metric.HEART_RATE",
+      "label": "静息心率",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": {
+            "op": "<",
+            "value": 50.0
+          },
+          "severity": "CAUTION",
+          "planEffect": "运动前建议先就医评估"
+        }
+      ]
+    },
+    {
+      "field": "metric.BLOOD_PRESSURE_SYS",
+      "label": "血压：高压（收缩压）",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": {
+            "op": "≥",
+            "value": 180.0
+          },
+          "severity": "REFER",
+          "planEffect": "血压很高，建议先就医，暂缓运动安排"
+        }
+      ]
+    },
+    {
+      "field": "metric.BLOOD_PRESSURE_DIA",
+      "label": "血压：低压（舒张压）",
+      "level": "LATER",
+      "highlights": [
+        {
+          "when": {
+            "op": "≥",
+            "value": 110.0
+          },
+          "severity": "REFER",
+          "planEffect": "同上"
+        }
+      ]
+    },
+    {
+      "field": "measure.method",
+      "label": "这些数据怎么来的？",
+      "level": "FIRST_VISIT"
+    }
+  ]
+}

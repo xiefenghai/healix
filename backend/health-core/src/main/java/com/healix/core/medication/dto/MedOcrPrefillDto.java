@@ -4,7 +4,15 @@ import java.time.LocalDate;
 import java.util.List;
 
 /** 用药单 / 处方 OCR 预填，供人工确认后开立处方。 */
-public record MedOcrPrefillDto(List<MedOcrItemDto> items, List<String> warnings) {
+public record MedOcrPrefillDto(List<MedOcrItemDto> items, List<String> warnings, String imageKey) {
+
+    public MedOcrPrefillDto(List<MedOcrItemDto> items, List<String> warnings) {
+        this(items, warnings, null);
+    }
+
+    public MedOcrPrefillDto withImageKey(String imageKey) {
+        return new MedOcrPrefillDto(items, warnings, imageKey);
+    }
 
     public record MedOcrItemDto(
             String drugName,

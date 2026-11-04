@@ -36,6 +36,13 @@ public interface VitalRecordMapper {
 
     List<VitalRecord> listByGroupId(@Param("groupId") String groupId);
 
+    int countAtMinute(
+            @Param("tenantId") String tenantId,
+            @Param("peopleId") String peopleId,
+            @Param("metricType") String metricType,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
     /** 按 recorded_at 倒序取最近一批，供分槽 latest 聚合。 */
     List<VitalRecord> listRecentForLatest(
             @Param("tenantId") String tenantId,

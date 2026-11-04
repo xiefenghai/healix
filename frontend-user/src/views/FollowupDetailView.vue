@@ -467,15 +467,15 @@ onMounted(() => void load())
   font-size: 14px;
 }
 .group :deep(.tone-ok) {
-  color: #1f8a6e !important;
+  color: var(--hx-teal-700) !important;
   font-weight: 600;
 }
 .group :deep(.tone-warn) {
-  color: #c4841a !important;
+  color: var(--hx-warn) !important;
   font-weight: 600;
 }
 .group :deep(.tone-bad) {
   color: #c45a5a !important;
-  font-weight: 650;
+  font-weight: 700;
 }
 </style>

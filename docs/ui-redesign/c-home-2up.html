@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Healix · C 端首页设计稿</title>
+<style>
+  :root{
+    --teal:#0e9f83; --teal-deep:#0b7a66; --teal-soft:#e3f6ef;
+    --mark:#ffd84d; --amber:#e5a100; --amber-soft:#fff3da;
+    --red:#e0435a; --red-soft:#fde7ea;
+    --blue:#5b8def; --blue-soft:#e9f0fd;
+    --ink:#13222e; --muted:#6b7a87; --faint:#8593a0;
+    --card:#fff; --line:#eef2f4;
+    --grad:linear-gradient(135deg,#14b394,#0e9f83);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:"PingFang SC","Hiragino Sans GB",system-ui,"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;
+    background:radial-gradient(circle at 20% 10%,#e8eef5,transparent 55%),radial-gradient(circle at 85% 90%,#e6f3ef,transparent 50%),#eef1f5;
+    padding:44px 40px; display:flex; gap:52px; justify-content:center; align-items:flex-start;
+  }
+  .device{background:#0b0f14;border-radius:54px;padding:13px;box-shadow:0 44px 80px rgba(15,26,35,.32),0 0 0 1px rgba(0,0,0,.5);}
+  .screen{width:390px;height:844px;border-radius:42px;overflow:hidden;position:relative;display:flex;flex-direction:column;
+    background:radial-gradient(circle at 108% -6%,rgba(255,231,179,.75),transparent 42%),radial-gradient(circle at -14% 52%,rgba(200,239,227,.8),transparent 44%),linear-gradient(170deg,#fff8ec 0%,#f4fbf8 50%,#e4f6ef 100%);}
+  .cap{text-align:center;font-size:12px;color:#8b98a5;font-weight:700;margin-top:12px;letter-spacing:.5px;}
+
+  /* 状态栏 */
+  .status{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 26px 0 30px;font-size:14px;font-weight:800;color:var(--ink);flex:none;}
+  .status .r{display:flex;align-items:center;gap:6px;font-size:12px;}
+
+  .body{flex:1;overflow:hidden;padding:0 20px;}
+  .scroll{display:flex;flex-direction:column;gap:8px;}
+
+  /* 顶部问候 */
+  .hd{display:flex;align-items:flex-start;justify-content:space-between;padding:2px 2px 4px;}
+  .hd h1{font-size:21px;font-weight:800;color:var(--ink);letter-spacing:-.3px;}
+  .hd p{font-size:12.5px;color:var(--muted);font-weight:600;margin-top:5px;}
+  .hd .acts{display:flex;align-items:center;gap:10px;}
+  .bell{width:38px;height:38px;border-radius:13px;background:#fff;box-shadow:0 6px 16px rgba(19,34,46,.07);display:grid;place-items:center;font-size:17px;position:relative;}
+  .bell i{position:absolute;top:8px;right:9px;width:7px;height:7px;border-radius:50%;background:var(--red);box-shadow:0 0 0 2px #fff;}
+  .ava{width:38px;height:38px;border-radius:13px;background:var(--grad);color:#fff;display:grid;place-items:center;font-size:14px;font-weight:800;box-shadow:0 6px 16px rgba(14,159,131,.3);}
+
+  /* 今日完成主卡 */
+  .hero{background:var(--grad);border-radius:24px;padding:16px 20px;color:#fff;position:relative;overflow:hidden;box-shadow:0 16px 32px rgba(14,159,131,.26);}
+  .hero::after{content:"";position:absolute;width:200px;height:200px;border-radius:50%;background:rgba(255,255,255,.12);right:-70px;top:-90px;}
+  .hero-top{display:flex;align-items:center;justify-content:space-between;position:relative;}
+  .hero .lab{font-size:12.5px;font-weight:700;opacity:.88;}
+  .hero .big{font-size:38px;font-weight:900;line-height:1.1;margin-top:4px;letter-spacing:-1px;}
+  .hero .big span{font-size:19px;font-weight:800;opacity:.7;margin-left:2px;}
+  .ring{position:relative;width:74px;height:74px;flex:none;}
+  .ring svg{transform:rotate(-90deg);}
+  .ring b{position:absolute;inset:0;display:grid;place-items:center;font-size:16px;font-weight:900;}
+  .streak{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.2);border-radius:999px;padding:5px 13px;font-size:12.5px;font-weight:800;margin-top:11px;position:relative;}
+  .bar{height:7px;border-radius:4px;background:rgba(255,255,255,.25);margin-top:11px;overflow:hidden;position:relative;}
+  .bar i{display:block;height:100%;border-radius:4px;background:#fff;}
+  .hero .hint{font-size:11.5px;font-weight:700;opacity:.85;margin-top:9px;position:relative;}
+
+  /* 通用卡片 */
+  .card{background:var(--card);border-radius:22px;padding:13px 16px;box-shadow:0 10px 26px rgba(19,34,46,.06);}
+  .ch{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;}
+  .ch b{font-size:15px;font-weight:800;color:var(--ink);}
+  .ch small{font-size:11.5px;font-weight:700;color:var(--faint);}
+
+  /* 任务 */
+  .task{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);}
+  .task:last-child{border-bottom:none;padding-bottom:2px;}
+  .task .ic{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;font-size:19px;flex:none;}
+  .task .ic.ex{background:var(--teal-soft);} .task .ic.di{background:var(--amber-soft);}
+  .task .ic.me{background:var(--blue-soft);} .task .ic.wa{background:#dff3ff;}
+  .task .tx{flex:1;min-width:0;}
+  .task .tx b{font-size:14px;font-weight:800;color:var(--ink);display:block;}
+  .task .tx span{font-size:11.5px;color:var(--faint);font-weight:600;display:block;margin-top:3px;}
+  .ck{font-size:11.5px;font-weight:800;border-radius:999px;padding:7px 14px;flex:none;}
+  .ck.on{background:var(--teal-soft);color:var(--teal-deep);}
+  .ck.go{background:var(--grad);color:#fff;box-shadow:0 6px 14px rgba(14,159,131,.28);}
+
+  /* 指标四宫格 */
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center;}
+  .m{background:var(--card);border-radius:18px;padding:14px 15px;box-shadow:0 10px 26px rgba(19,34,46,.06);}
+  .m span{font-size:11.5px;color:var(--muted);font-weight:700;}
+  .m b{display:block;font-size:16px;font-weight:900;color:var(--ink);margin-top:5px;letter-spacing:-.4px;}
+  .m b i{font-size:11px;font-weight:700;color:var(--faint);font-style:normal;margin-left:1px;}
+  .m .st{display:inline-block;font-size:10px;font-weight:800;border-radius:6px;padding:2px 7px;margin-top:6px;}
+  .st.ok{background:var(--teal-soft);color:var(--teal-deep);}
+  .st.bad{background:var(--red-soft);color:#c8324a;}
+  .st.mid{background:var(--amber-soft);color:#b07400;}
+
+  /* 用药 */
+  .med{display:flex;align-items:center;gap:12px;}
+  .med .pill{width:42px;height:42px;border-radius:14px;background:var(--blue-soft);display:grid;place-items:center;font-size:19px;flex:none;}
+  .med .tx{flex:1;}
+  .med .tx b{font-size:14.5px;font-weight:800;color:var(--ink);}
+  .med .tx span{font-size:11.5px;color:var(--faint);font-weight:600;display:block;margin-top:3px;}
+
+  /* 快捷入口 */
+  .quick{display:grid;grid-template-columns:repeat(4,1fr);gap:6px 8px;text-align:center;}
+  .quick div{display:flex;flex-direction:column;align-items:center;gap:5px;}
+  .quick em{width:46px;height:46px;border-radius:16px;display:grid;place-items:center;font-size:21px;font-style:normal;background:#fff;box-shadow:0 8px 18px rgba(19,34,46,.07);}
+  .quick span{font-size:11.5px;font-weight:700;color:#4a5b68;}
+
+  /* 成就 */
+  .ach{display:flex;gap:9px;}
+  .ach .a{flex:1;background:linear-gradient(160deg,#fff8ec,#fff3da);border-radius:16px;padding:11px 10px;text-align:center;border:1px solid #ffeccc;}
+  .ach .a em{font-size:20px;font-style:normal;display:block;}
+  .ach .a b{display:block;font-size:14.5px;font-weight:900;color:#b07400;margin-top:5px;}
+  .ach .a span{font-size:10.5px;color:#a8843d;font-weight:700;}
+
+  /* AI 管家 */
+  .ai{background:linear-gradient(150deg,#eafaf5,#f6fcf9);border:1px solid #cdeee4;border-radius:22px;padding:12px 15px;display:flex;gap:11px;align-items:center;box-shadow:0 10px 26px rgba(14,159,131,.08);}
+  .ai .av{width:40px;height:40px;border-radius:14px;background:var(--grad);display:grid;place-items:center;font-size:19px;flex:none;box-shadow:0 8px 18px rgba(14,159,131,.28);position:relative;}
+  .ai .av i{position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;background:#34c759;border:2px solid #f6fcf9;}
+  .ai .tx{flex:1;min-width:0;}
+  .ai .tx b{font-size:13.5px;font-weight:800;color:var(--ink);}
+  .ai .tx p{font-size:11.5px;color:#4a5b68;font-weight:600;line-height:1.45;margin-top:3px;}
+  .ai .go{font-size:11.5px;font-weight:800;color:#fff;background:var(--grad);border-radius:999px;padding:8px 13px;flex:none;box-shadow:0 6px 14px rgba(14,159,131,.28);}
+
+  /* TabBar */
+  .tabbar{flex:none;height:74px;background:rgba(255,255,255,.94);backdrop-filter:blur(12px);border-top:1px solid rgba(238,242,244,.9);display:flex;align-items:flex-start;padding:10px 6px 0;}
+  .tabbar div{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:10.5px;font-weight:700;color:#a3b0bb;}
+  .tabbar div em{font-size:20px;font-style:normal;filter:grayscale(1) opacity(.55);}
+  .tabbar div.on{color:var(--teal);}
+  .tabbar div.on em{filter:none;}
+
+  /* 进度条小图 */
+  .spark{display:flex;align-items:flex-end;justify-content:space-between;gap:0;height:46px;margin-top:6px;}
+  .spark i{width:24px;border-radius:6px 6px 3px 3px;background:var(--teal-soft);}
+  .spark i.hi{background:var(--grad);}
+  .spark i.warn{background:var(--amber-soft);}
+</style>
+</head>
+<body>
+
+<!-- ========== 屏 1：首页首屏 ========== -->
+<div>
+  <div class="device">
+    <div class="screen">
+      <div class="status"><span>9:41</span><span class="r">●●● ▮</span></div>
+      <div class="body">
+        <div class="scroll">
+
+          <div class="hd">
+            <div>
+              <h1>早上好，王阿姨</h1>
+              <p>今天也要好好照顾自己</p>
+            </div>
+            <div class="acts">
+              <div class="bell">🔔<i></i></div>
+              <div class="ava">王</div>
+            </div>
+          </div>
+
+          <div class="hero">
+            <div class="hero-top">
+              <div>
+                <div class="lab">今日完成</div>
+                <div class="big">3<span>/5</span></div>
+              </div>
+              <div class="ring">
+                <svg width="74" height="74" viewBox="0 0 74 74">
+                  <circle cx="37" cy="37" r="31" fill="none" stroke="rgba(255,255,255,.28)" stroke-width="7"/>
+                  <circle cx="37" cy="37" r="31" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round"
+                          stroke-dasharray="116.9 194.8"/>
+                </svg>
+                <b>60%</b>
+              </div>
+            </div>
+            <div class="streak">🔥 连续打卡 12 天</div>
+            <div class="bar"><i style="width:60%"></i></div>
+            <div class="hint">再完成 2 项，今天就达标啦</div>
+          </div>
+
+          <div class="card">
+            <div class="ch"><b>今日任务</b><small>已完成 3 / 5</small></div>
+            <div class="task">
+              <div class="ic ex">🏃</div>
+              <div class="tx"><b>步行 30 分钟</b><span>运动 · 08:00</span></div>
+              <div class="ck on">已完成</div>
+            </div>
+            <div class="task">
+              <div class="ic di">📷</div>
+              <div class="tx"><b>拍照记午餐</b><span>饮食 · 12:20</span></div>
+              <div class="ck on">已完成</div>
+            </div>
+            <div class="task">
+              <div class="ic me">💊</div>
+              <div class="tx"><b>二甲双胍 0.5g</b><span>用药 · 18:00 晚餐后</span></div>
+              <div class="ck go">去打卡</div>
+            </div>
+            <div class="task">
+              <div class="ic wa">💧</div>
+              <div class="tx"><b>饮水 8 杯</b><span>饮水 · 全天 · 已完成 5 杯</span></div>
+              <div class="ck go">去打卡</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="ch"><b>健康指标</b><small>最近一次</small></div>
+            <div class="grid4">
+              <div class="m" style="box-shadow:none;padding:2px 0"><span>BMI</span><b>23.1</b><i class="st ok">正常</i></div>
+              <div class="m" style="box-shadow:none;padding:2px 0"><span>血压</span><b>128<i>/82</i></b><i class="st ok">正常</i></div>
+              <div class="m" style="box-shadow:none;padding:2px 0"><span>血糖</span><b>7.2<i>↑</i></b><i class="st bad">偏高</i></div>
+              <div class="m" style="box-shadow:none;padding:2px 0"><span>心率</span><b>76<i>次/分</i></b><i class="st ok">正常</i></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="on"><em>🏠</em>首页</div>
+        <div><em>📋</em>方案</div>
+        <div><em>📊</em>数据</div>
+        <div><em>💬</em>消息</div>
+        <div><em>👤</em>我的</div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">首页 · 首屏</div>
+</div>
+
+<!-- ========== 屏 2：首页下滑 ========== -->
+<div>
+  <div class="device">
+    <div class="screen">
+      <div class="status"><span>9:41</span><span class="r">●●● ▮</span></div>
+      <div class="body">
+        <div class="scroll">
+
+          <div class="ai">
+            <div class="av">🤖<i></i></div>
+            <div class="tx">
+              <b>小 Healix</b>
+              <p>王阿姨，这周血糖有点起伏，晚餐后散步 20 分钟会好很多哦～</p>
+            </div>
+            <div class="go">聊聊</div>
+          </div>
+
+          <div class="card">
+            <div class="ch"><b>用药提醒</b><small>今天还有 1 次</small></div>
+            <div class="med">
+              <div class="pill">💊</div>
+              <div class="tx"><b>二甲双胍缓释片 0.5g</b><span>晚餐后服用 · 已连续服用 8 天</span></div>
+              <div class="ck go" style="padding:7px 12px">提醒我</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="ch"><b>本周趋势</b><small>血糖 mmol/L</small></div>
+            <div class="spark">
+              <i style="height:46%"></i><i class="warn" style="height:58%"></i><i style="height:42%"></i>
+              <i class="warn" style="height:62%"></i><i style="height:44%"></i><i class="hi" style="height:38%"></i>
+              <i class="hi" style="height:34%"></i>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint);font-weight:700;margin-top:8px">
+              <span>周一</span><span>周三</span><span>周五</span><span>今天</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="ch"><b>快捷记录</b></div>
+            <div class="quick">
+              <div><em>🍽️</em><span>饮食</span></div>
+              <div><em>🏃</em><span>运动</span></div>
+              <div><em>💧</em><span>饮水</span></div>
+              <div><em>😴</em><span>睡眠</span></div>
+              <div><em>😊</em><span>心情</span></div>
+              <div><em>🩺</em><span>体征</span></div>
+              <div><em>🧪</em><span>化验单</span></div>
+              <div><em>📄</em><span>报告</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="ch"><b>我的坚持</b><small>查看全部</small></div>
+            <div class="ach">
+              <div class="a"><em>🔥</em><b>12 天</b><span>连续打卡</span></div>
+              <div class="a"><em>🏅</em><b>3 枚</b><span>成就徽章</span></div>
+              <div class="a"><em>🛡️</em><b>2 张</b><span>保护卡</span></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="on"><em>🏠</em>首页</div>
+        <div><em>📋</em>方案</div>
+        <div><em>📊</em>数据</div>
+        <div><em>💬</em>消息</div>
+        <div><em>👤</em>我的</div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">首页 · 下滑内容</div>
+</div>
+
+</body>
+</html>

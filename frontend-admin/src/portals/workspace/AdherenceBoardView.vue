@@ -62,6 +62,21 @@ interface AdherencePatientItem {
   lifestyle?: LifestyleMetrics
 }
 
+interface AdherenceTeamSlice {
+  careTeamId?: string | null
+  careTeamName: string
+  patientCount: number
+  planDueSum: number
+  planDoneSum: number
+  planRate?: number | null
+  medDueDoseSum: number
+  medTakenDoseSum: number
+  medRate?: number | null
+  followUpCount: number
+  planIncompleteCount: number
+  medIncompleteCount: number
+}
+
 interface AdherenceOverview {
   date: string
   careTeamId?: string | null
@@ -71,6 +86,15 @@ interface AdherenceOverview {
   medIncompleteCount: number
   streakGe3Count: number
   lifestyleInactiveCount?: number
+  planDueSum?: number
+  planDoneSum?: number
+  planRate?: number | null
+  medDueDoseSum?: number
+  medTakenDoseSum?: number
+  medRate?: number | null
+  dietLoggedCount?: number
+  exerciseLoggedCount?: number
+  teams?: AdherenceTeamSlice[]
 }
 
 interface AdherenceTrendPoint {
@@ -130,9 +154,10 @@ let trendChart: EChartsType | null = null
 
 const date = ref(defaultBoardDate())
 const careTeamId = ref<string | ''>('')
+const unassignedOnly = ref(false)
 const keyword = ref('')
-/** 早班默认聚焦连续未执行，可点卡片取消。 */
-const filter = ref<AdherenceFilter>('STREAK_GE_3')
+/** 默认看全机构；点下方卡片再收成某一类缺口。 */
+const filter = ref<AdherenceFilter>('')
 
 const todayYmd = computed(() => shiftLocalYmd(new Date(), 0))
 const yesterdayYmd = computed(() => shiftLocalYmd(new Date(), -1))
@@ -194,7 +219,7 @@ const filterTitle = computed(() => {
     case 'LIFESTYLE_INACTIVE':
       return '近 7 天饮食运动无记录'
     default:
-      return '患者名单'
+      return '全机构患者'
   }
 })
 
@@ -243,7 +268,8 @@ async function loadTeams() {
 function buildQuery(extra?: Record<string, string>) {
   const q = new URLSearchParams()
   if (date.value) q.set('date', date.value)
-  if (careTeamId.value) q.set('careTeamId', careTeamId.value)
+  if (unassignedOnly.value) q.set('unassigned', 'true')
+  else if (careTeamId.value) q.set('careTeamId', careTeamId.value)
   if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
   if (filter.value) q.set('filter', filter.value)
   if (extra) {
@@ -252,8 +278,19 @@ function buildQuery(extra?: Record<string, string>) {
   return q
 }
 
+const scopeName = computed(() => {
+  if (unassignedOnly.value) return '未入组'
+  return teams.value.find((t) => t.id === careTeamId.value)?.name || ''
+})
+
+const listHeading = computed(() => {
+  const scope = scopeName.value
+  return scope ? `${scope} · ${filterTitle.value}` : filterTitle.value
+})
+
 async function loadOverview() {
-  const q = buildQuery()
+  const q = new URLSearchParams()
+  if (date.value) q.set('date', date.value)
   const res = await api<{ data: AdherenceOverview }>(`/api/b/v1/adherence/overview?${q}`)
   overview.value = res.data
 }
@@ -275,7 +312,6 @@ async function loadTrend() {
   trendLoading.value = true
   try {
     const q = new URLSearchParams({ days: String(trendDays.value) })
-    if (careTeamId.value) q.set('careTeamId', careTeamId.value)
     const res = await api<{ data: AdherenceTrendPoint[] }>(`/api/b/v1/adherence/trend?${q}`)
     trend.value = res.data ?? []
     await nextTick()
@@ -298,7 +334,7 @@ function renderTrend() {
   const pct = (v?: number | null) => (v == null ? null : Math.round(v * 100))
   trendChart.setOption(
     {
-      color: ['#2C7EF8', '#00B8A9', '#F59E0B'],
+      color: ['#2C7EF8', '#00B8A9'],
       title: points.length
         ? { show: false }
         : {
@@ -312,9 +348,10 @@ function renderTrend() {
         backgroundColor: '#fff',
         borderColor: '#E2E8F0',
         textStyle: { color: '#1E293B', fontSize: 12 },
+        valueFormatter: (value: unknown) => (value == null || value === '' ? '—' : `${value}%`),
       },
       legend: { top: 0, right: 0, textStyle: { color: '#64748B', fontSize: 12 } },
-      grid: { left: 48, right: 48, top: 36, bottom: 32 },
+      grid: { left: 48, right: 16, top: 36, bottom: 32 },
       xAxis: {
         type: 'category',
         data: cats,
@@ -322,23 +359,14 @@ function renderTrend() {
         axisLine: { lineStyle: { color: '#E2E8F0' } },
         axisTick: { show: false },
       },
-      yAxis: [
-        {
-          type: 'value',
-          min: 0,
-          max: 100,
-          name: '%',
-          axisLabel: { color: '#64748B', fontSize: 11 },
-          splitLine: { lineStyle: { type: 'dashed', color: '#F1F5F9' } },
-        },
-        {
-          type: 'value',
-          min: 0,
-          name: '人',
-          axisLabel: { color: '#64748B', fontSize: 11 },
-          splitLine: { show: false },
-        },
-      ],
+      yAxis: {
+        type: 'value',
+        min: 0,
+        max: 100,
+        name: '%',
+        axisLabel: { color: '#64748B', fontSize: 11 },
+        splitLine: { lineStyle: { type: 'dashed', color: '#F1F5F9' } },
+      },
       series: [
         {
           name: '方案完成率',
@@ -371,32 +399,6 @@ function renderTrend() {
           lineStyle: { width: 2.5 },
           data: points.map((p) => pct(p.medRate)),
         },
-        {
-          name: '待跟进人数',
-          type: 'line',
-          yAxisIndex: 1,
-          smooth: true,
-          showSymbol: true,
-          symbolSize: 6,
-          lineStyle: { width: 2, type: 'dashed' },
-          data: points.map((p) => p.followUpCount),
-        },
-        {
-          name: '饮食记录人数',
-          type: 'bar',
-          yAxisIndex: 1,
-          barMaxWidth: 8,
-          itemStyle: { color: 'rgba(16,185,129,.55)' },
-          data: points.map((p) => p.dietLoggedCount ?? 0),
-        },
-        {
-          name: '运动记录人数',
-          type: 'bar',
-          yAxisIndex: 1,
-          barMaxWidth: 8,
-          itemStyle: { color: 'rgba(245,158,11,.55)' },
-          data: points.map((p) => p.exerciseLoggedCount ?? 0),
-        },
       ],
     },
     true,
@@ -418,12 +420,53 @@ async function load() {
 function applyFilter(next: AdherenceFilter) {
   filter.value = filter.value === next ? '' : next
   page.value = 1
-  void load()
+  void loadList()
 }
 
-function onSearch() {
+function onListQuery() {
   page.value = 1
-  void load()
+  void loadList()
+}
+
+const ignoreTeamSelect = ref(false)
+
+function onTeamSelect() {
+  if (ignoreTeamSelect.value) return
+  unassignedOnly.value = false
+  page.value = 1
+  void loadList()
+}
+
+function clearScope() {
+  careTeamId.value = ''
+  unassignedOnly.value = false
+  page.value = 1
+  void loadList()
+}
+
+function selectTeam(slice: AdherenceTeamSlice) {
+  ignoreTeamSelect.value = true
+  const id = slice.careTeamId || ''
+  if (!id) {
+    const turningOff = unassignedOnly.value
+    unassignedOnly.value = !turningOff
+    careTeamId.value = ''
+  } else if (careTeamId.value === id && !unassignedOnly.value) {
+    careTeamId.value = ''
+  } else {
+    unassignedOnly.value = false
+    careTeamId.value = id
+  }
+  page.value = 1
+  void loadList()
+  void nextTick(() => {
+    ignoreTeamSelect.value = false
+  })
+}
+
+function teamActive(slice: AdherenceTeamSlice) {
+  if (!slice.careTeamId) return unassignedOnly.value
+  return !unassignedOnly.value && careTeamId.value === slice.careTeamId
 }
 
 function riskLabel(level?: string) {
@@ -636,9 +679,9 @@ onBeforeUnmount(() => {
       <div>
         <h1>依从性看板</h1>
         <p>
-          共 <strong class="em">{{ overview?.universeCount ?? 0 }}</strong> 位患者数据
-          · 数据日期 <strong class="em">{{ date || '-' }}</strong>
-          · {{ dayScopeLabel }}
+          {{ dayScopeLabel }}机构整体
+          · 在管 <strong class="em">{{ overview?.universeCount ?? 0 }}</strong> 人
+          · {{ date || '-' }}
           · {{ getCurrentOrgName() || '-' }}
         </p>
       </div>
@@ -665,11 +708,88 @@ onBeforeUnmount(() => {
           value-format="YYYY-MM-DD"
           placeholder="统计日"
           style="width: 150px"
-          @change="onSearch"
+          @change="load"
         />
         <el-button @click="load">刷新</el-button>
       </div>
     </div>
+
+    <section v-loading="loading" class="org-hero">
+      <div class="rate-hero" :class="`band-${planRateBand(overview?.planRate)}`">
+        <div class="rate-kicker">方案完成率</div>
+        <div class="rate-num">{{ formatRate7d(overview?.planRate) }}</div>
+        <div class="rate-detail">
+          <template v-if="overview?.planRate == null">{{ dayScopeLabel }}没有应打的方案任务</template>
+          <template v-else>完成 {{ overview?.planDoneSum ?? 0 }} / 应打 {{ overview?.planDueSum ?? 0 }} 项</template>
+        </div>
+      </div>
+      <div class="rate-hero" :class="`band-${planRateBand(overview?.medRate)}`">
+        <div class="rate-kicker">用药达标率</div>
+        <div class="rate-num">{{ formatRate7d(overview?.medRate) }}</div>
+        <div class="rate-detail">
+          <template v-if="overview?.medRate == null">{{ dayScopeLabel }}没有应服次数</template>
+          <template v-else>已服 {{ overview?.medTakenDoseSum ?? 0 }} / 应服 {{ overview?.medDueDoseSum ?? 0 }} 次</template>
+        </div>
+      </div>
+      <div class="rate-hero band-people">
+        <div class="rate-kicker">待跟进</div>
+        <div class="rate-num">
+          {{ overview?.followUpCount ?? 0 }}
+          <span class="rate-of">/ {{ overview?.universeCount ?? 0 }}</span>
+        </div>
+        <div class="rate-detail">
+          高风险 · 连续未执行 {{ overview?.streakGe3Count ?? 0 }} 人
+        </div>
+      </div>
+      <div class="rate-aside">
+        <div class="aside-line">
+          <span>方案未完成</span>
+          <strong>{{ overview?.planIncompleteCount ?? 0 }} 人</strong>
+        </div>
+        <div class="aside-line">
+          <span>用药未完成</span>
+          <strong>{{ overview?.medIncompleteCount ?? 0 }} 人</strong>
+        </div>
+        <div class="aside-line">
+          <span>{{ dayScopeLabel }}饮食记录</span>
+          <strong>{{ overview?.dietLoggedCount ?? 0 }} 人</strong>
+        </div>
+        <div class="aside-line">
+          <span>{{ dayScopeLabel }}运动记录</span>
+          <strong>{{ overview?.exerciseLoggedCount ?? 0 }} 人</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="team-board">
+      <div class="team-head">
+        <div>
+          <div class="card-title">各组对比</div>
+          <div class="card-sub">按方案完成率从低到高。点一组，下面只看这组的人。</div>
+        </div>
+        <button v-if="scopeName" type="button" class="scope-clear" @click="clearScope">看全机构</button>
+      </div>
+      <div v-if="overview && !(overview.teams || []).length" class="team-empty">
+        {{ overview.universeCount ? '这一天没有可对比的分组' : '这一天还没有在管患者' }}
+      </div>
+      <button
+        v-for="team in overview?.teams || []"
+        :key="team.careTeamId || 'none'"
+        type="button"
+        class="team-row"
+        :class="{ active: teamActive(team) }"
+        @click="selectTeam(team)"
+      >
+        <span class="team-name">{{ team.careTeamName }}</span>
+        <span class="team-bar" aria-hidden="true">
+          <i :class="`fill-${planRateBand(team.planRate)}`" :style="{ width: `${planRateBarWidth(team.planRate)}%` }" />
+        </span>
+        <span class="team-rate" :class="`tone-${planRateBand(team.planRate)}`">{{ formatRate7d(team.planRate) }}</span>
+        <span class="team-meta">用药 {{ formatRate7d(team.medRate) }}</span>
+        <span class="team-meta">{{ team.patientCount }} 人</span>
+        <span class="team-meta" :class="{ warn: team.followUpCount > 0 }">待跟进 {{ team.followUpCount }}</span>
+      </button>
+    </section>
 
     <div v-loading="loading" class="summary-row">
       <button
@@ -688,7 +808,13 @@ onBeforeUnmount(() => {
 
     <el-card shadow="never" class="filter-card">
       <div class="toolbar">
-        <el-select v-model="careTeamId" clearable placeholder="健管组: 全部" style="width: 180px">
+        <el-select
+          v-model="careTeamId"
+          clearable
+          placeholder="健管组: 全部"
+          style="width: 180px"
+          @change="onTeamSelect"
+        >
           <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
         <el-input
@@ -696,9 +822,9 @@ onBeforeUnmount(() => {
           placeholder="搜索患者姓名"
           clearable
           class="toolbar-search"
-          @keyup.enter="onSearch"
+          @keyup.enter="onListQuery"
         />
-        <el-button type="primary" @click="onSearch">查询</el-button>
+        <el-button type="primary" @click="onListQuery">查询</el-button>
       </div>
     </el-card>
 
@@ -707,7 +833,7 @@ onBeforeUnmount(() => {
         <div class="trend-head">
           <div>
             <div class="card-title">依从率趋势</div>
-            <div class="card-sub">方案完成率 / 用药达标率 / 待跟进与饮食运动记录人数 · 来自每日快照</div>
+            <div class="card-sub">机构整体的方案完成率和用药达标率 · 来自每日快照</div>
           </div>
           <div class="trend-actions">
             <el-radio-group v-model="trendDays" size="small" @change="loadTrend">
@@ -725,7 +851,7 @@ onBeforeUnmount(() => {
       <template #header>
         <div class="table-head-bar">
           <div class="table-title">
-            {{ filterTitle }}
+            {{ listHeading }}
             <span class="count">· {{ total }} 位 · 按优先级排序</span>
           </div>
         </div>
@@ -948,6 +1074,186 @@ onBeforeUnmount(() => {
 
 .summary-row {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.org-hero {
+  display: grid;
+  grid-template-columns: 1.1fr 1.1fr 0.9fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.rate-hero,
+.rate-aside {
+  background: var(--admin-card, #fff);
+  border: 1px solid var(--ink-200);
+  border-radius: 12px;
+  box-shadow: var(--admin-shadow);
+  padding: 16px 18px;
+}
+
+.rate-kicker {
+  font-size: 12.5px;
+  color: var(--ink-500);
+  font-weight: 600;
+}
+
+.rate-num {
+  margin-top: 6px;
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  line-height: 1.1;
+  color: var(--ink-900, #0f172a);
+}
+
+.rate-of {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink-400);
+}
+
+.rate-detail {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ink-500);
+}
+
+.band-good .rate-num { color: #047857; }
+.band-fair .rate-num { color: #1d4ed8; }
+.band-concern .rate-num { color: #b45309; }
+.band-poor .rate-num { color: #b91c1c; }
+.band-empty .rate-num,
+.band-people .rate-num { color: var(--ink-900, #0f172a); }
+
+.rate-aside {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+
+.aside-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--ink-500);
+}
+
+.aside-line strong {
+  color: var(--ink-800);
+  font-weight: 650;
+}
+
+.team-board {
+  margin-bottom: 14px;
+  padding: 14px 16px 8px;
+  background: var(--admin-card, #fff);
+  border: 1px solid var(--ink-200);
+  border-radius: 12px;
+  box-shadow: var(--admin-shadow);
+}
+
+.team-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.scope-clear {
+  border: 1px solid var(--ink-200);
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--brand-600, #1e63d9);
+  cursor: pointer;
+}
+
+.team-empty {
+  padding: 12px 0 16px;
+  color: var(--ink-400);
+  font-size: 13px;
+}
+
+.team-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 140px minmax(80px, 1fr) 52px 88px 64px 88px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink-700);
+}
+
+.team-row:hover {
+  background: var(--ink-50, #f8fafc);
+}
+
+.team-row.active {
+  border-color: var(--brand-100, #d6e6ff);
+  background: #f8fbff;
+}
+
+.team-name {
+  font-weight: 650;
+  color: var(--ink-800);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ink-100, #f1f5f9);
+  overflow: hidden;
+}
+
+.team-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.fill-good { background: #10b981; }
+.fill-fair { background: #3b82f6; }
+.fill-concern { background: #f59e0b; }
+.fill-poor { background: #ef4444; }
+.fill-empty { background: var(--ink-300, #cbd5e1); width: 0; }
+
+.team-rate {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tone-good { color: #047857; }
+.tone-fair { color: #1d4ed8; }
+.tone-concern { color: #b45309; }
+.tone-poor { color: #b91c1c; }
+.tone-empty { color: var(--ink-400); }
+
+.team-meta {
+  font-size: 12.5px;
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.team-meta.warn {
+  color: #b91c1c;
+  font-weight: 650;
 }
 
 .tone-slate .summary-value {
@@ -1216,14 +1522,33 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1280px) {
-  .summary-row {
+  .summary-row,
+  .org-hero {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .team-row {
+    grid-template-columns: 120px minmax(60px, 1fr) 48px 72px;
+  }
+
+  .team-row .team-meta:nth-child(n + 5) {
+    display: none;
   }
 }
 
 @media (max-width: 960px) {
+  .org-hero,
   .summary-row {
     grid-template-columns: 1fr;
+  }
+
+  .team-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .team-bar,
+  .team-meta {
+    display: none;
   }
 }
 </style>

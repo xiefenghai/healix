@@ -16,6 +16,8 @@ public class LabReport extends BaseEntity {
     private LocalDateTime reportedAt;
     private String source;
     private String note;
+    /** 原图对象键，如 lab/2026/10/uuid.jpg */
+    private String imageKey;
     private String createdByStaffId;
     private String updatedByStaffId;
 }

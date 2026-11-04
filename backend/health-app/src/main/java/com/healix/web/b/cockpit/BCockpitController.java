@@ -11,6 +11,7 @@ import com.healix.agent.ocr.ObservationReportIngestService.ConfirmMedItem;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.result.ApiResult;
 import com.healix.core.cockpit.dto.CockpitBriefingDto;
+import com.healix.core.cockpit.dto.CockpitDraftInboxItemDto;
 import com.healix.core.cockpit.dto.CockpitFocusDto;
 import com.healix.core.cockpit.dto.CockpitPriorityCardDto;
 import com.healix.core.cockpit.dto.CockpitSummaryDto;
@@ -65,7 +66,7 @@ public class BCockpitController {
 
     /**
      * 我的患者：当前员工作为主责健管师的健管组下患者列表（可 keyword 筛选）。
-     * 返回结构与 /priority 优先卡一致，便于左栏三 Tab 共用同一套卡片。
+     * 返回结构与 /priority 优先卡一致，便于左栏 Tab 共用同一套卡片。
      */
     @GetMapping("/my-patients")
     public ApiResult<List<CockpitPriorityCardDto>> myPatients(
@@ -77,6 +78,13 @@ public class BCockpitController {
     public ApiResult<CockpitFocusDto> focus(@PathVariable String peopleId) {
         return ApiResult.ok(cockpitService.focus(
                 SecurityUtils.requireTenantId(), SecurityUtils.requireCurrentOrgId(), peopleId));
+    }
+
+    /** 机构级草稿箱：我名下待制定 / 复核方案、待审阅报告。 */
+    @GetMapping("/drafts")
+    public ApiResult<List<CockpitDraftInboxItemDto>> drafts() {
+        return ApiResult.ok(cockpitService.draftInbox(
+                SecurityUtils.requireTenantId(), SecurityUtils.requireCurrentOrgId()));
     }
 
     @GetMapping("/briefing")
@@ -167,7 +175,7 @@ public class BCockpitController {
                 SecurityUtils.requireCurrentOrgId(),
                 peopleId,
                 SecurityUtils.requireStaffId(),
-                new ConfirmCommand(request.kind(), lab, exam, med)));
+                new ConfirmCommand(request.kind(), lab, exam, med, request.imageKey())));
     }
 
     /** 兼容旧路径：等同 recognize（不再自动入库）。 */
@@ -186,7 +194,8 @@ public class BCockpitController {
                 true));
     }
 
-    public record ConfirmRequest(String kind, ConfirmLabBody lab, ConfirmExamBody exam, ConfirmMedBody med) {}
+    public record ConfirmRequest(
+            String kind, ConfirmLabBody lab, ConfirmExamBody exam, ConfirmMedBody med, String imageKey) {}
 
     public record ConfirmLabBody(
             String specimenType,

@@ -15,4 +15,10 @@ public class CarePlanHeadDto {
     private JsonNode diseaseTags;
     private String currentVersionId;
     private Integer version;
+    private String reviewedAt;
+    private String reviewedByStaffId;
+    private String lastCommResult;
+    private String lastCommAt;
+    private String lastCommFollowupId;
+    private String lastCommNote;
 }

@@ -54,6 +54,14 @@ export function resolveTemplateTier(content?: Record<string, unknown> | null): T
   return 'POOR'
 }
 
+/** 报告角标：对患者说话，不做成考评用语。 */
+export function templateTierLabel(tier: TemplateTier | null): string {
+  if (tier === 'GOOD') return '做得不错'
+  if (tier === 'FAIR') return '还差一点点'
+  if (tier === 'POOR') return '我们一起调整'
+  return ''
+}
+
 export function templateCommentForTier(tier: TemplateTier): string {
   switch (tier) {
     case 'GOOD':

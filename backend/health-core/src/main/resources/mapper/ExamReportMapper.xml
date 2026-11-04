@@ -5,18 +5,18 @@
 
     <sql id="cols">
         pk_id, id, tenant_id, people_id, org_id, exam_type, examined_at, conclusion, findings_json,
-        source, created_by_staff_id, updated_by_staff_id,
+        source, image_key, created_by_staff_id, updated_by_staff_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO exam_report(
             id, tenant_id, people_id, org_id, exam_type, examined_at, conclusion, findings_json,
-            source, created_by_staff_id, updated_by_staff_id,
+            source, image_key, created_by_staff_id, updated_by_staff_id,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{peopleId}, #{orgId}, #{examType}, #{examinedAt}, #{conclusion}, #{findingsJson},
-            #{source}, #{createdByStaffId}, #{updatedByStaffId},
+            #{source}, #{imageKey}, #{createdByStaffId}, #{updatedByStaffId},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
     </insert>
@@ -29,6 +29,7 @@
             conclusion = #{conclusion},
             findings_json = #{findingsJson},
             source = #{source},
+            image_key = #{imageKey},
             updated_by_staff_id = #{updatedByStaffId},
             gmt_modified = #{gmtModified}
         WHERE id = #{id}

@@ -12,6 +12,7 @@ import com.healix.core.revision.support.FieldDiffUtils;
 import com.healix.core.revision.support.FieldDiffUtils.FieldChange;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -40,6 +41,34 @@ public class FieldRevisionService {
             String orgId,
             String oldContentJson,
             String newContentJson) {
+        recordIfChanged(
+                tenantId,
+                targetPeopleId,
+                operatorType,
+                operatorId,
+                bizType,
+                bizKey,
+                versionBefore,
+                versionAfter,
+                orgId,
+                oldContentJson,
+                newContentJson,
+                null);
+    }
+
+    public void recordIfChanged(
+            String tenantId,
+            String targetPeopleId,
+            String operatorType,
+            String operatorId,
+            String bizType,
+            String bizKey,
+            int versionBefore,
+            int versionAfter,
+            String orgId,
+            String oldContentJson,
+            String newContentJson,
+            Map<String, String> quotesByPath) {
         List<FieldChange> changes = new ArrayList<>(FieldDiffUtils.diffJson(oldContentJson, newContentJson));
         boolean isCreate = versionBefore == 0;
         if (isCreate) {
@@ -58,7 +87,8 @@ public class FieldRevisionService {
                 versionBefore,
                 versionAfter,
                 orgId,
-                changes);
+                changes,
+                quotesByPath);
     }
 
     /**
@@ -101,7 +131,8 @@ public class FieldRevisionService {
                 1,
                 0,
                 orgId,
-                changes);
+                changes,
+                null);
     }
 
     private void persistBatch(
@@ -114,7 +145,8 @@ public class FieldRevisionService {
             int versionBefore,
             int versionAfter,
             String orgId,
-            List<FieldChange> changes) {
+            List<FieldChange> changes,
+            Map<String, String> quotesByPath) {
         FieldRevisionBatch batch = new FieldRevisionBatch();
         batch.setTenantId(tenantId);
         batch.setTargetPeopleId(targetPeopleId);
@@ -134,9 +166,22 @@ public class FieldRevisionService {
             item.setFieldPath(change.fieldPath());
             item.setOldValue(nodeToStoredJson(change.oldValue()));
             item.setNewValue(nodeToStoredJson(change.newValue()));
+            item.setQuote(quoteFor(quotesByPath, change.fieldPath()));
             EntityMeta.onCreate(item);
             itemMapper.insert(item);
         }
+    }
+
+    private static String quoteFor(Map<String, String> quotesByPath, String fieldPath) {
+        if (quotesByPath == null || fieldPath == null) {
+            return null;
+        }
+        String quote = quotesByPath.get(fieldPath);
+        if (quote == null || quote.isBlank()) {
+            return null;
+        }
+        String trimmed = quote.trim();
+        return trimmed.length() <= 80 ? trimmed : trimmed.substring(0, 80);
     }
 
     private static String nodeToStoredJson(JsonNode node) {

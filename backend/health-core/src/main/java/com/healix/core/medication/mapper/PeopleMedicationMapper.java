@@ -24,6 +24,9 @@ public interface PeopleMedicationMapper {
     List<PeopleMedication> listActiveByTenantAndPeopleIds(
             @Param("tenantId") String tenantId, @Param("peopleIds") List<String> peopleIds);
 
+    /** 患者自添加、未核对的在用药。 */
+    List<PeopleMedication> listPendingVerify(@Param("tenantId") String tenantId, @Param("peopleId") String peopleId);
+
     /** 将启用租户中已过结束日的 ACTIVE 用药批量改为 STOPPED，返回本批更新行数。 */
     int expireDueForActiveTenants(@Param("today") java.time.LocalDate today, @Param("limit") int limit);
 }

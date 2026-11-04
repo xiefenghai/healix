@@ -6,7 +6,7 @@
     <sql id="cols">
         pk_id, id, tenant_id, people_id, meal_date, meal_type, eaten_at, source,
         energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, estimated_kcal_ratio,
-        quality_level, flags_json, note, staff_comment, comment_staff_id, commented_at,
+        quality_level, flags_json, note, image_keys, staff_comment, comment_staff_id, commented_at,
         recorded_by_people_id, recorded_by_staff_id, is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
 
@@ -14,12 +14,12 @@
         INSERT INTO diet_meal(
             id, tenant_id, people_id, meal_date, meal_type, eaten_at, source,
             energy_kcal, carb_g, protein_g, fat_g, fiber_g, sodium_mg, estimated_kcal_ratio,
-            quality_level, flags_json, note, recorded_by_people_id, recorded_by_staff_id,
+            quality_level, flags_json, note, image_keys, recorded_by_people_id, recorded_by_staff_id,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{tenantId}, #{peopleId}, #{mealDate}, #{mealType}, #{eatenAt}, #{source},
             #{energyKcal}, #{carbG}, #{proteinG}, #{fatG}, #{fiberG}, #{sodiumMg}, #{estimatedKcalRatio},
-            #{qualityLevel}, #{flagsJson}, #{note}, #{recordedByPeopleId}, #{recordedByStaffId},
+            #{qualityLevel}, #{flagsJson}, #{note}, #{imageKeysJson}, #{recordedByPeopleId}, #{recordedByStaffId},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
     </insert>
@@ -40,6 +40,7 @@
             quality_level = #{qualityLevel},
             flags_json = #{flagsJson},
             note = #{note},
+            image_keys = #{imageKeysJson},
             gmt_modified = #{gmtModified}
         WHERE id = #{id}
           AND is_deleted = 0

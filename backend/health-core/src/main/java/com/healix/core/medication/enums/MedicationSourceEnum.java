@@ -7,5 +7,7 @@ public enum MedicationSourceEnum {
     /** 处方开立 */
     PRESCRIPTION,
     /** C 端患者自助添加 */
-    PATIENT
+    PATIENT,
+    /** 首诊 / 入组问卷采集 */
+    INTAKE
 }

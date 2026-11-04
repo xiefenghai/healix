@@ -40,6 +40,7 @@ export const KINSHIP_MEMBERS: Record<KinshipLevel, LabeledOption[]> = {
     { value: 'DAUGHTER', label: '女' },
     { value: 'BROTHER', label: '兄/弟' },
     { value: 'SISTER', label: '姐/妹' },
+    { value: 'UNSPECIFIED', label: '未细分' },
   ],
   '2': [
     { value: 'P_GRANDFATHER', label: '祖父' },

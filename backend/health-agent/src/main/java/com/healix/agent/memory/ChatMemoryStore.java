@@ -1,44 +1,46 @@
 package com.healix.agent.memory;
 
+import com.healix.agent.llm.LlmClient.ChatTurn;
 import com.healix.common.constant.HealthConstants;
-import java.time.Duration;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.memory.ChatMemory;
+import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /**
- * Short-term conversation memory backed by Redis (last N turns).
+ * C 端患者短期会话记忆：LangChain4j {@link MessageWindowChatMemory} + Redis。
  */
 @Component
 @RequiredArgsConstructor
 public class ChatMemoryStore {
 
-    private static final Duration TTL = Duration.ofHours(24);
+    private final RedisChatMemoryStore chatMemoryStore;
 
-    private final StringRedisTemplate redisTemplate;
+    public List<ChatTurn> loadTurns(String userId) {
+        return StaffSessionStore.toChatTurns(memory(userId).messages());
+    }
 
+    /** 兼容旧调用：压成「U: … | A: …」摘要块，供 prompt 快照等使用。 */
     public List<String> loadRecentSummaries(String userId) {
-        String key = key(userId);
-        Long size = redisTemplate.opsForList().size(key);
-        if (size == null || size == 0) {
-            return List.of();
+        List<String> out = new ArrayList<>();
+        for (ChatTurn turn : loadTurns(userId)) {
+            out.add("U: " + truncate(turn.user()) + " | A: " + truncate(turn.assistant()));
         }
-        long start = Math.max(0, size - HealthConstants.DEFAULT_CHAT_MEMORY_TURNS);
-        List<String> range = redisTemplate.opsForList().range(key, start, -1);
-        return range != null ? range : List.of();
+        return out;
     }
 
     public void appendTurn(String userId, String userMessage, String assistantReply) {
-        String key = key(userId);
-        String summary = "U: " + truncate(userMessage) + " | A: " + truncate(assistantReply);
-        redisTemplate.opsForList().rightPush(key, summary);
-        redisTemplate.expire(key, TTL);
-
-        Long size = redisTemplate.opsForList().size(key);
-        if (size != null && size > HealthConstants.DEFAULT_CHAT_MEMORY_TURNS * 2L) {
-            redisTemplate.opsForList().trim(key, -HealthConstants.DEFAULT_CHAT_MEMORY_TURNS, -1);
+        ChatMemory memory = memory(userId);
+        if (StringUtils.hasText(userMessage)) {
+            memory.add(UserMessage.from(userMessage.trim()));
+        }
+        if (StringUtils.hasText(assistantReply)) {
+            memory.add(AiMessage.from(assistantReply.trim()));
         }
     }
 
@@ -46,8 +48,21 @@ public class ChatMemoryStore {
         return new ArrayList<>(loadRecentSummaries(userId));
     }
 
-    private static String key(String userId) {
-        return HealthConstants.REDIS_CHAT_MEMORY_PREFIX + userId;
+    public void clear(String userId) {
+        memory(userId).clear();
+    }
+
+    private ChatMemory memory(String userId) {
+        int maxMessages = Math.max(4, HealthConstants.DEFAULT_CHAT_MEMORY_TURNS * 2);
+        return MessageWindowChatMemory.builder()
+                .id(patientMemoryId(userId))
+                .maxMessages(maxMessages)
+                .chatMemoryStore(chatMemoryStore)
+                .build();
+    }
+
+    private static String patientMemoryId(String userId) {
+        return "patient:" + userId;
     }
 
     private static String truncate(String text) {

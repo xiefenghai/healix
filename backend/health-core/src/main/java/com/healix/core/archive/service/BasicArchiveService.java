@@ -1,16 +1,15 @@
 package com.healix.core.archive.service;
 
 import com.healix.common.domain.EntityMeta;
-import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.archive.dto.ArchiveViewDto;
-import com.healix.core.metadata.service.MetadataSyncService;
+import com.healix.core.field.FieldCatalog;
+import com.healix.core.field.PeopleFieldService;
+import com.healix.core.field.SensitiveFieldMask;
 import com.healix.core.patient.enums.PatientArchiveSourceEnum;
 import com.healix.core.people.domain.PeopleBasicArchive;
 import com.healix.core.people.mapper.PeopleBasicArchiveMapper;
 import com.healix.core.revision.annotation.RecordFieldRevision;
-import com.healix.core.revision.enums.RevisionBizTypeEnum;
-import com.healix.core.revision.service.FieldRevisionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,27 +18,38 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class BasicArchiveService {
 
-    private static final String SCHEMA_VERSION = "1.0";
-    private static final String META_BIZ = "BASIC_ARCHIVE";
-
     private final PeopleBasicArchiveMapper basicArchiveMapper;
     private final ArchiveAccessService archiveAccessService;
-    private final MetadataSyncService metadataSyncService;
-    private final FieldRevisionService fieldRevisionService;
+    private final PeopleFieldService peopleFieldService;
+    private final FieldCatalog fieldCatalog;
 
     public ArchiveViewDto get(String tenantId, String peopleId) {
+        return get(tenantId, peopleId, true);
+    }
+
+    /** @param canViewSensitive false 时对 sensitive 字段脱敏为「已采集」 */
+    public ArchiveViewDto get(String tenantId, String peopleId, boolean canViewSensitive) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        peopleFieldService.ensureMigrated(tenantId, peopleId);
         PeopleBasicArchive archive = basicArchiveMapper.findByTenantAndPeople(tenantId, peopleId);
         if (archive == null) {
             ArchiveViewDto empty = new ArchiveViewDto();
             empty.setPeopleId(peopleId);
             empty.setTenantId(tenantId);
             empty.setVersion(0);
-            empty.setSchemaVersion(SCHEMA_VERSION);
+            empty.setSchemaVersion(PeopleFieldService.SCHEMA_V2);
             empty.setContentJson(JsonUtils.emptyObject());
             return empty;
         }
-        return toView(archive);
+        ArchiveViewDto view = toView(archive);
+        if (!canViewSensitive && view.getContentJson() != null) {
+            com.fasterxml.jackson.databind.JsonNode raw =
+                    view.getContentJson() instanceof com.fasterxml.jackson.databind.JsonNode n
+                            ? n
+                            : JsonUtils.readTree(JsonUtils.toJson(view.getContentJson()));
+            view.setContentJson(SensitiveFieldMask.maskBasicContent(raw, fieldCatalog, false));
+        }
+        return view;
     }
 
     @Transactional
@@ -50,60 +60,30 @@ public class BasicArchiveService {
             int expectedVersion,
             String contentJson,
             ArchiveOperatorContext operator) {
+        return save(tenantId, peopleId, expectedVersion, contentJson, operator, null);
+    }
+
+    @Transactional
+    @RecordFieldRevision(bizType = "BASIC_ARCHIVE")
+    public ArchiveViewDto save(
+            String tenantId,
+            String peopleId,
+            int expectedVersion,
+            String contentJson,
+            ArchiveOperatorContext operator,
+            java.util.Map<String, String> quotesByPath) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         if (operator.orgId() != null) {
             archiveAccessService.assertStaffCanAccessPeople(tenantId, operator.orgId(), peopleId);
         }
-        String normalized = normalizeContent(contentJson);
-        PeopleBasicArchive archive = basicArchiveMapper.findByTenantAndPeople(tenantId, peopleId);
-        String oldJson = "{}";
-        int versionBefore = 0;
-        if (archive == null) {
-            if (expectedVersion != 0) {
-                throw new BusinessException(409, "档案版本冲突，请刷新后重试");
-            }
-            archive = new PeopleBasicArchive();
-            archive.setTenantId(tenantId);
-            archive.setPeopleId(peopleId);
-            archive.setSchemaVersion(SCHEMA_VERSION);
-            archive.setContentJson(normalized);
-            archive.setVersion(1);
-            archive.setSource(PatientArchiveSourceEnum.B_SIDE.name());
-            archive.setCreatedByStaffId("STAFF".equals(operator.operatorType()) ? operator.operatorId() : null);
-            archive.setUpdatedByStaffId("STAFF".equals(operator.operatorType()) ? operator.operatorId() : null);
-            EntityMeta.onCreate(archive);
-            basicArchiveMapper.insert(archive);
-        } else {
-            versionBefore = archive.getVersion() == null ? 1 : archive.getVersion();
-            if (expectedVersion != versionBefore) {
-                throw new BusinessException(409, "档案版本冲突，请刷新后重试");
-            }
-            oldJson = archive.getContentJson() == null ? "{}" : archive.getContentJson();
-            archive.setContentJson(normalized);
-            archive.setSchemaVersion(SCHEMA_VERSION);
-            archive.setVersion(versionBefore + 1);
-            if ("STAFF".equals(operator.operatorType())) {
-                archive.setUpdatedByStaffId(operator.operatorId());
-            }
-            EntityMeta.onUpdate(archive);
-            basicArchiveMapper.updateContent(archive);
-        }
-
-        fieldRevisionService.recordIfChanged(
-                tenantId,
-                peopleId,
-                operator.operatorType(),
-                operator.operatorId(),
-                RevisionBizTypeEnum.BASIC_ARCHIVE.name(),
-                null,
-                versionBefore,
-                archive.getVersion(),
-                operator.orgId(),
-                oldJson,
-                normalized);
-
-        metadataSyncService.syncBasicArchive(
-                tenantId, peopleId, normalized, META_BIZ, operator.sourceClientCode());
+        PeopleBasicArchive archive =
+                peopleFieldService.replaceBasicArchive(
+                        tenantId,
+                        peopleId,
+                        expectedVersion,
+                        contentJson,
+                        operator.toFieldSource(),
+                        quotesByPath);
         return toView(archive);
     }
 
@@ -115,7 +95,7 @@ public class BasicArchiveService {
         archive = new PeopleBasicArchive();
         archive.setTenantId(tenantId);
         archive.setPeopleId(peopleId);
-        archive.setSchemaVersion(SCHEMA_VERSION);
+        archive.setSchemaVersion(PeopleFieldService.SCHEMA_V2);
         archive.setContentJson("{}");
         archive.setVersion(1);
         archive.setSource(PatientArchiveSourceEnum.B_SIDE.name());
@@ -124,13 +104,6 @@ public class BasicArchiveService {
         EntityMeta.onCreate(archive);
         basicArchiveMapper.insert(archive);
         return archive;
-    }
-
-    private static String normalizeContent(String contentJson) {
-        if (contentJson == null || contentJson.isBlank()) {
-            return "{}";
-        }
-        return JsonUtils.toJson(JsonUtils.readTree(contentJson));
     }
 
     private static ArchiveViewDto toView(PeopleBasicArchive archive) {

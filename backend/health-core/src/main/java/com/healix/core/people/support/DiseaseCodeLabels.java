@@ -10,8 +10,23 @@ public final class DiseaseCodeLabels {
 
     private DiseaseCodeLabels() {}
 
+    /** 占位/无病选项，不应进入管理方案病种列表或模型上下文。 */
+    public static boolean isMeaningful(String code) {
+        if (!StringUtils.hasText(code)) {
+            return false;
+        }
+        String key = code.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
+            case "NONE", "NULL", "N/A", "NA", "UNKNOWN", "无", "无病", "无疾病" -> false;
+            default -> true;
+        };
+    }
+
     public static String label(String code) {
         if (!StringUtils.hasText(code)) {
+            return "";
+        }
+        if (!isMeaningful(code)) {
             return "";
         }
         String key = code.trim().toLowerCase(Locale.ROOT);

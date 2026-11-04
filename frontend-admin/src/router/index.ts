@@ -37,6 +37,10 @@ const router = createRouter({
         { path: '', redirect: '/tenant/orgs' },
         { path: 'orgs', component: () => import('../portals/tenant/TenantOrgsView.vue') },
         { path: 'staff', component: () => import('../portals/tenant/TenantStaffView.vue') },
+        {
+          path: 'followup-schedule',
+          component: () => import('../portals/tenant/TenantFollowupScheduleView.vue'),
+        },
         { path: 'patient-merge', component: () => import('../portals/tenant/TenantPatientMergeView.vue') },
         { path: 'security', component: () => import('../shared/SecuritySettingsView.vue') },
       ],
@@ -93,9 +97,29 @@ const router = createRouter({
           meta: { requireOrg: true },
         },
         {
+          path: 'recipes',
+          component: () => import('../portals/workspace/OrgRecipesView.vue'),
+          meta: { requireOrg: true },
+        },
+        {
+          path: 'guidelines',
+          component: () => import('../portals/workspace/GuidelineLibraryView.vue'),
+          meta: { requireOrg: true },
+        },
+        {
           path: 'ops-stats',
           component: () => import('../portals/workspace/OpsStatsView.vue'),
           meta: { requireOrg: true },
+        },
+        {
+          path: 'patients/:peopleId/intake',
+          component: () => import('../portals/workspace/PatientIntakeView.vue'),
+          meta: { requireOrg: true, fullscreen: true },
+        },
+        {
+          path: 'intake-responses/:responseId',
+          component: () => import('../portals/workspace/PatientIntakeDetailView.vue'),
+          meta: { requireOrg: true, fullscreen: true },
         },
         {
           path: 'patients/:peopleId',
@@ -122,6 +146,10 @@ const router = createRouter({
             {
               path: 'exercise',
               component: () => import('../portals/workspace/PatientExerciseView.vue'),
+            },
+            {
+              path: 'lifestyle',
+              component: () => import('../portals/workspace/PatientLifestyleView.vue'),
             },
             {
               path: 'adherence',
