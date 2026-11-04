@@ -953,7 +953,11 @@ public class OrgWorkspaceService {
                 if (same || hit.getId().equals(attachPeopleId)) {
                     attachPeopleId = hit.getId();
                 } else {
-                    throw new BusinessException(409, "该本人手机号已有档案，姓名或出生日期不一致，请确认是否为同一人");
+                    throw new BusinessException(
+                            409,
+                            "该本人手机号已有档案，且姓名/出生日期不一致。"
+                                    + "若为同一人请确认后关联已有档案；若不是同一人请换一个本人手机号再建档"
+                                    + "（本人号在本租户只能绑定一份档案）");
                 }
             }
         }
@@ -1217,12 +1221,15 @@ public class OrgWorkspaceService {
         }
 
         try {
+            // 主责以「当前所在健管组」为准；未入组不展示残留 assignment，避免未入组却显示主责
             String cmStaffId = null;
-            PatientCareAssignment assignment = careAssignmentMapper.find(tenantId, peopleId);
-            if (assignment != null && StringUtils.hasText(assignment.getPrimaryCareManagerStaffId())) {
-                cmStaffId = assignment.getPrimaryCareManagerStaffId();
-            } else if (team != null && StringUtils.hasText(team.getPrimaryCareManagerStaffId())) {
+            if (team != null && StringUtils.hasText(team.getPrimaryCareManagerStaffId())) {
                 cmStaffId = team.getPrimaryCareManagerStaffId();
+            } else if (team != null) {
+                PatientCareAssignment assignment = careAssignmentMapper.find(tenantId, peopleId);
+                if (assignment != null && StringUtils.hasText(assignment.getPrimaryCareManagerStaffId())) {
+                    cmStaffId = assignment.getPrimaryCareManagerStaffId();
+                }
             }
             if (StringUtils.hasText(cmStaffId)) {
                 item.setPrimaryCareManagerStaffId(cmStaffId);

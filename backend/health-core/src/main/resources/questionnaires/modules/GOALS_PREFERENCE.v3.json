@@ -148,8 +148,8 @@
     },
     {
       "field": "goal.constraints",
-      "label": "经济或时间上有什么限制？",
-      "level": "LATER"
+      "label": "目前最大的阻力或限制是什么？（经济、时间、家人等）",
+      "level": "FIRST_VISIT"
     }
   ]
 }

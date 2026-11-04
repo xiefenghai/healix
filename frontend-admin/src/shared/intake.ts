@@ -215,8 +215,10 @@ export interface IntakeHighlightHit {
  */
 const INTAKE_FIELD_LABELS: Record<string, string> = {
   'allergy.status': '过敏史',
-  'allergy.food': '食物过敏与不耐受',
-  'allergy.drug': '药物过敏',
+  'allergy.foodTags': '常见食物过敏',
+  'allergy.drugTags': '常见药物过敏',
+  'allergy.food': '食物过敏明细',
+  'allergy.drug': '药物过敏明细',
   'medication.current': '在用药物明细',
   'basic.presentIllness': '现有疾病',
   'basic.presentIllnessOther': '其他疾病',
@@ -530,17 +532,26 @@ export function isAnswerEmpty(v: unknown): boolean {
  * 首诊题是否算已填。
  * 过敏选「有」后食物/药物两类都会出现：一类已有明细时，另一类空视为「该类无」，避免总挂 1 项未填。
  */
+const FIELD_ALLERGY_FOOD_TAGS = 'allergy.foodTags'
+const FIELD_ALLERGY_DRUG_TAGS = 'allergy.drugTags'
+
+function allergySiblingField(field: string): string | null {
+  if (field === FIELD_ALLERGY_FOOD) return FIELD_ALLERGY_DRUG
+  if (field === FIELD_ALLERGY_DRUG) return FIELD_ALLERGY_FOOD
+  if (field === FIELD_ALLERGY_FOOD_TAGS) return FIELD_ALLERGY_DRUG_TAGS
+  if (field === FIELD_ALLERGY_DRUG_TAGS) return FIELD_ALLERGY_FOOD_TAGS
+  return null
+}
+
 export function isIntakeAnswerFilled(field: string, answers: Record<string, unknown>): boolean {
   if (!isAnswerEmpty(answers[field])) return true
-  if (field === FIELD_ALLERGY_FOOD || field === FIELD_ALLERGY_DRUG) {
-    const status = String(answers[FIELD_ALLERGY_STATUS] ?? '')
-      .trim()
-      .toUpperCase()
-    if (status !== 'HAS') return false
-    const other = field === FIELD_ALLERGY_FOOD ? FIELD_ALLERGY_DRUG : FIELD_ALLERGY_FOOD
-    return !isAnswerEmpty(answers[other])
-  }
-  return false
+  const other = allergySiblingField(field)
+  if (!other) return false
+  const status = String(answers[FIELD_ALLERGY_STATUS] ?? '')
+    .trim()
+    .toUpperCase()
+  if (status !== 'HAS') return false
+  return !isAnswerEmpty(answers[other])
 }
 
 function flattenAnswer(v: unknown): string[] {
@@ -901,6 +912,32 @@ const OPTION_SET_FALLBACKS: Record<string, string[]> = {
     'OTHER=其他',
   ],
   allergyStatus: ['NKA=没有已知过敏', 'HAS=有'],
+  foodAllergyTags: [
+    'SEAFOOD=海鲜（统称）',
+    'FISH=鱼类',
+    'SHELLFISH=虾蟹贝类',
+    'MILK=牛奶/乳制品',
+    'EGG=鸡蛋',
+    'PEANUT=花生',
+    'TREE_NUT=坚果',
+    'SOY=大豆',
+    'WHEAT=小麦/麸质',
+    'SESAME=芝麻',
+    'MANGO=芒果',
+    'LACTOSE=乳糖不耐受',
+    'OTHER=其他（请健管师补明细）',
+  ],
+  drugAllergyTags: [
+    'PENICILLIN=青霉素类',
+    'CEPHALOSPORIN=头孢类',
+    'SULFONAMIDE=磺胺类',
+    'NSAID=阿司匹林/解热镇痛药',
+    'QUINOLONE=喹诺酮类',
+    'MACROLIDE=大环内酯类',
+    'IODINE_CONTRAST=碘造影剂',
+    'INSULIN=胰岛素制剂',
+    'OTHER=其他（请健管师补明细）',
+  ],
   dietRestriction: [
     'NONE=没有',
     'VEGETARIAN=蛋奶素',
@@ -1309,6 +1346,8 @@ const FIELD_OPTION_PARENT: Record<string, string> = {
   'basic.medical.steroidHyperglycemia': 'yesNoUnknown',
   'basic.medical.acanthosis': 'yesNoUnknown',
   'allergy.status': 'allergyStatus',
+  'allergy.foodTags': 'foodAllergyTags',
+  'allergy.drugTags': 'drugAllergyTags',
   'basic.psych.stressLevel': 'stressLevel',
   'basic.psych.stressEating': 'stressEating',
   'basic.psych.emotionalEating': 'emotionalEating',

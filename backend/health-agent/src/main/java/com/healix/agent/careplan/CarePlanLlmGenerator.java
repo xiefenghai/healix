@@ -340,6 +340,7 @@ public class CarePlanLlmGenerator {
                 叙事与监测须对齐 patientContext.goals.careTracks（及 diabetesClinical / hypertensionClinical）；
                 无减重方向时不要写成减肥方案。
                 若有 patientContext.highlightGuidance，须把每条 mustApply 落实到运动/饮食/执行（clinicianNote 只吸收约束，勿照抄进患者正文）。
+                有食物过敏时 sampleDay 早午晚每餐须给安全 swapHint（过敏平替）；有 lifestyleProfile/cook/availableSlots/constraints/用药 timingNote 时须落实到 notes、timeSlot 与家属一句提示。
                 仅输出 JSON，不要 markdown。
 
                 %s

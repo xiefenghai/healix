@@ -144,6 +144,7 @@ display_name: 管理方案生成
 - 不要输出 `energyTarget` 字段，由服务端按饮食目标写入；与目标不符的热量数字会被服务端改写
 - `sampleDay` 与 `sampleWeek` 的份量与热量目标大致匹配，不写具体千卡数
 - `swapHint` 写具体可执行替换（如「米饭可换成杂粮饭」），不要写成空泛「清淡为主」；无合适替换则省略或 `null`
+- **有食物过敏时（`foodAllergyGuard` type=ALLERGY 非空）**：`sampleDay` 的早/午/晚 **每餐必须** 给 1 条安全 `swapHint`（点名过敏原 → 可吃平替，如「鸡蛋过敏：蒸蛋换成无糖豆浆或豆腐」）；`sampleWeek` 至少周一三餐带平替；服务端会删掉仍含过敏关键词的 hint
 - `sampleWeek` 必须输出完整七天。每天至少含早、午、晚；过敏约束同 `sampleDay`；菜品按天轮换，不要七天完全相同
 
 **饮食规则**：
@@ -155,7 +156,11 @@ display_name: 管理方案生成
   - 糖尿病：控精制糖、规律三餐、增加膳食纤维
   - 高血压：低盐、限制腌制食品
 - 合并症：取保守合并原则
-- 结合在用药物在 `notes` 中提示（如与降糖药相关的进餐时间）
+- **作息与做饭人**（见 `lifestyleProfile` / `basicArchive.diet`）：
+  - `lifestyleProfile.workSchedule`：`SHIFT`/`NIGHT` → `notes` 写错峰餐次与用药提醒；示例餐用「班前/班后」而非固定 7/12/18 点；`IRREGULAR` → 给时间窗
+  - `basicArchive.diet.cook=FAMILY` → `notes` **必须**加一句家属提示（如「请家人少放油盐，主食换成杂粮」）
+  - `cook=EAT_OUT`/`CANTEEN` → 示例餐与 `swapHint` 偏外卖/食堂可执行（少油少糖点餐话术），不要默认「自己蒸煮」
+- **药-餐配合**：优先读 `activeMedicationDetails[]`（`name`/`timingNote`/`frequency`）；`diet.notes` 写清饭前/饭后/与餐同服等（有 timingNote 则照写，无则按常见降糖/降压谨慎提示）；勿编造未在清单中的药名
 
 ---
 
@@ -195,7 +200,10 @@ display_name: 管理方案生成
 **编制原则**：
 
 1. **运动任务**：从 `weeklyPlan` 提炼 1–2 条高频任务，`category=EXERCISE`。标题要点名动作（如「餐后步行 30 分钟」「靠墙静蹲与坐姿抬腿 20 分钟」），不要只写「抗阻训练」「有氧运动」「拉伸训练」这类患者不知道做什么的大类
+    - 有 `basicArchive.exercise.availableSlots` / `availableSlotsLabels` 时：`timeSlot` **必须**对齐可运动时段（`MORNING`→`MORNING`，`EVENING`/`NIGHT`→`EVENING` 或 `AFTER_DINNER`，`WEEKEND`→标题写「周末」且 frequency 用 `QW`/`TIW` 而非默认每日）
+    - 有 `lifestyleProfile.workSchedule=SHIFT|NIGHT` 时，运动任务避开「刚下夜班」表述，优先白班清醒时段或周末
 2. **饮食任务**：至少 1 条「记录三餐与加餐」等，`category=DIET`（**不要**再把饮水写进 DIET）
+    - 有 `goals.constraints` 或 `basicArchive.weightHistory.failReasons` 时：执行标题/总结点出对应阻力破解（如太饿→加优质蛋白加餐；没时间→外卖少油少糖话术；应酬多→点菜策略）
 3. **饮水任务**：无限水禁忌时编入 1 条 `code=WATER_LOG`，`category=WATER`，`frequency=QD`，`timeSlot=ALL`（全天少量多次），填写 `targetMl`（有体重用约 `kg×30` 并落在 1200–2000，否则 1600；标题可写「足量饮水，每日约 {targetMl} ml」）
 4. **限水**：上下文出现心衰、慢性肾病、医嘱限水等 → **不要生成** `WATER` 任务（由健管师决定是否手加）
 5. **糖尿病标签**：增加「按时监测血糖」`relatedRef=BLOOD_GLUCOSE`
@@ -262,7 +270,10 @@ display_name: 管理方案生成
   - 有 `HBA1C`/`FPG`/`BP_SYS`/`BP_DIA` 目标时，在 `goalSummary` 与监测任务中体现
   - 无减重方向时不要默认「每日称重 / 快速减脂」话术
 - `patientContext.diabetesClinical` / `hypertensionClinical`（首诊慢病专属要点：分型、低血糖、监测频率、用药规律、家庭自测、晨峰等）→ 运动强度、监测任务与饮食限盐/控糖
-- `patientContext.basicArchive` 生活方式摘要（饮食含口味/含糖饮料、运动习惯、睡眠烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史等，含 `*Label`）→ 个体化强度与示例餐
+- `patientContext.basicArchive` 生活方式摘要（饮食含口味/含糖饮料/`cook`、运动习惯与 `availableSlots`、睡眠烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史 `failReasons` 等，含 `*Label`）→ 个体化强度、示例餐与执行时段
+- `patientContext.lifestyleProfile`（`workSchedule` / `workScheduleLabel` / `scheduleHint`）→ 餐次、用药提醒与运动时段对齐班次
+- `patientContext.goals.preferences.constraints`（或同级 `constraints`）→ 经济/时间/家庭阻力，写入执行与总结的可执行破解，勿空喊「要坚持」
+- `patientContext.activeMedicationDetails`（药名 + `timingNote`）→ 药-餐配合进 `diet.notes`；兼容旧字段 `activeMedications` 字符串列表
 - `patientContext.intakeBrief`（最近首诊/待补）与高亮：
   - `keyAnswers`：核心诉求、管理方向、糖/压/体重目标与临床关键答（带 `label`/`display`），优先落实，**勿整段照抄**到患者正文
   - 有 `aiSummary` 时吸收要点、风险与下一步

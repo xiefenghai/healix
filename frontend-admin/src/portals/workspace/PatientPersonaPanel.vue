@@ -37,11 +37,52 @@ const staffLocked = computed(() => !!view.value?.narrative?.staffLocked)
 const isTemplate = computed(() => view.value?.narrative?.model === 'template')
 const generating = computed(() => view.value?.status === 'GENERATING')
 
-const watchOrNext = computed(() => {
-  const n = view.value?.narrative
-  if (n?.watchPoints?.length) return n.watchPoints.slice(0, 3)
-  const next = view.value?.dimensions?.focus?.nextStep
-  return next ? [next] : []
+/** 医疗风险：评估高/中档 + 过敏 + 方案影响备注 */
+const medicalFocus = computed(() => {
+  const d = view.value?.dimensions
+  const out: string[] = []
+  const tags = d?.risk?.tags || []
+  for (const t of tags) {
+    if (out.length >= 4) break
+    const row = t as Record<string, unknown>
+    const tier = String(row.tier || row.level || '').toUpperCase()
+    if (!/HIGH|MEDIUM|MID|高|中/.test(tier) && !/高|严重/.test(String(row.levelLabel || ''))) {
+      continue
+    }
+    const disease = codeLabel(DISEASE_TAG_LABELS, row.diseaseCode, String(row.diseaseCode || ''))
+    const level = String(row.levelLabel || row.level || '')
+    const line = [disease, level].filter(Boolean).join(' · ')
+    if (line) out.push(line)
+  }
+  for (const a of d?.constraints?.allergens || []) {
+    if (out.length >= 4) break
+    const s = String(a || '').trim()
+    if (s) out.push(`过敏：${s}`)
+  }
+  for (const n of d?.constraints?.notes || []) {
+    if (out.length >= 4) break
+    const s = String(n || '').trim()
+    if (s) out.push(s)
+  }
+  return out
+})
+
+/** 运营待办：工作台任务 + 下一步 */
+const opsFocus = computed(() => {
+  const d = view.value?.dimensions
+  const out: string[] = []
+  for (const t of d?.focus?.openTasks || []) {
+    if (out.length >= 4) break
+    const title = String(t?.title || t?.type || '').trim()
+    if (title) out.push(title)
+  }
+  const next = String(d?.focus?.nextStep || '').trim()
+  if (next && !out.includes(next)) out.push(next)
+  // 叙事里的盯梢点仅作补充（已锁定文案）
+  if (!out.length && view.value?.narrative?.watchPoints?.length) {
+    return view.value.narrative.watchPoints.slice(0, 3)
+  }
+  return out
 })
 
 type DimRow = { label: string; value: string; tone?: 'danger' | 'warn' | 'accent' | 'muted' }
@@ -92,10 +133,11 @@ const TIER_LABELS: Record<string, string> = {
   LOW: '低',
 }
 
-const FLAME_LABELS: Record<string, string> = {
-  LIT: '点燃',
-  BROKEN: '熄灭',
-  FROZEN: '冻结',
+const SEVERITY_LABELS: Record<string, string> = {
+  BLOCK: '阻断',
+  REFER: '建议转介',
+  CAUTION: '谨慎',
+  UNKNOWN: '待核对',
 }
 
 function codeLabel(map: Record<string, string>, code: unknown, fallback = '—'): string {
@@ -104,8 +146,10 @@ function codeLabel(map: Record<string, string>, code: unknown, fallback = '—')
   return map[c] || map[c.toUpperCase()] || c
 }
 
-function rateText(v: unknown): string {
-  if (v == null || v === '') return '未采集'
+/** 无应打/无方案 → 暂无数据；有数据才显示百分比（含 0%） */
+function rateText(v: unknown, hasActivePlan?: unknown): string {
+  if (hasActivePlan === false) return '暂无数据'
+  if (v == null || v === '') return '暂无数据'
   const n = Number(v)
   if (Number.isNaN(n)) return String(v)
   const pct = n <= 1 ? Math.round(n * 1000) / 10 : Math.round(n * 10) / 10
@@ -113,7 +157,7 @@ function rateText(v: unknown): string {
 }
 
 function listText(v: unknown, map?: Record<string, string>): string {
-  if (!Array.isArray(v) || !v.length) return '暂无'
+  if (!Array.isArray(v) || !v.length) return '—'
   return v
     .map((x) => {
       const s = String(x ?? '').trim()
@@ -121,7 +165,7 @@ function listText(v: unknown, map?: Record<string, string>): string {
       return map ? codeLabel(map, s, s) : s
     })
     .filter(Boolean)
-    .join('、') || '暂无'
+    .join('、') || '—'
 }
 
 const dimBlocks = computed((): DimBlock[] => {
@@ -132,6 +176,7 @@ const dimBlocks = computed((): DimBlock[] => {
   const goals = (d.goals || {}) as Record<string, unknown>
   const risk = d.risk || {}
   const constraints = d.constraints || {}
+  const behavior = d.behavior || {}
   const execution = (d.execution || {}) as Record<string, unknown>
   const focus = d.focus || {}
 
@@ -161,14 +206,52 @@ const dimBlocks = computed((): DimBlock[] => {
         value: String(t?.title || t?.type || '—'),
         tone: 'accent' as const,
       }))
-    : [{ label: '待办', value: '暂无', tone: 'muted' as const }]
+    : [{ label: '待办', value: '—', tone: 'muted' as const }]
 
   const allergenText = listText(constraints.allergens)
-  const highlightText = listText(constraints.highlightCodes)
+  const highlightText = listText(constraints.highlightCodes, SEVERITY_LABELS)
   const notesText = listText(constraints.notes)
-  const nextStepText = String(focus.nextStep || '暂无')
+  const dietText = listText(behavior.diet)
+  const exerciseText = listText(behavior.exercise)
+  const psychText = listText(behavior.psych)
+  const nextStepText = String(focus.nextStep || '—')
   const missStreak = Number(execution.planMissStreak)
   const medMiss = Number(execution.medMissStreak)
+  const hasPlan = execution.hasActivePlan
+
+  const execRows: DimRow[] = [
+    {
+      label: '近7日方案完成',
+      value: rateText(execution.planCompletion7d, hasPlan),
+      tone: hasPlan === false || execution.planCompletion7d == null ? 'muted' : undefined,
+    },
+    {
+      label: '方案连续未完成',
+      value: hasPlan === false ? '暂无数据' : execution.planMissStreak != null ? `${execution.planMissStreak} 天` : '暂无数据',
+      tone:
+        hasPlan !== false && Number.isFinite(missStreak) && missStreak >= 3
+          ? 'danger'
+          : hasPlan !== false && Number.isFinite(missStreak) && missStreak >= 1
+            ? 'warn'
+            : 'muted',
+    },
+    {
+      label: '用药完成',
+      value: rateText(execution.medCompletion7d),
+      tone: execution.medCompletion7d == null ? 'muted' : undefined,
+    },
+    {
+      label: '用药连续漏服',
+      value: execution.medMissStreak != null ? `${execution.medMissStreak} 天` : '暂无数据',
+      tone:
+        Number.isFinite(medMiss) && medMiss >= 3
+          ? 'danger'
+          : Number.isFinite(medMiss) && medMiss >= 1
+            ? 'warn'
+            : 'muted',
+    },
+  ]
+  // 激励火苗未接入时不展示，避免「未接入」技术黑话
 
   return [
     {
@@ -228,74 +311,56 @@ const dimBlocks = computed((): DimBlock[] => {
         {
           label: '过敏',
           value: allergenText,
-          tone: allergenText !== '暂无' ? 'danger' : 'muted',
+          tone: allergenText !== '—' ? 'danger' : 'muted',
         },
         {
           label: '首诊高亮',
           value: highlightText,
-          tone: highlightText !== '暂无' ? 'warn' : 'muted',
+          tone: highlightText !== '—' ? 'warn' : 'muted',
         },
         {
           label: '备注',
           value: notesText,
-          tone: notesText !== '暂无' ? undefined : 'muted',
+          tone: notesText !== '—' ? undefined : 'muted',
         },
       ],
     },
     {
+      key: 'behavior',
+      title: '行为与偏好',
+      priority: true,
+      hint: '开方切入点',
+      rows: [
+        { label: '饮食', value: dietText, tone: dietText !== '—' ? 'accent' : 'muted' },
+        { label: '运动', value: exerciseText, tone: exerciseText !== '—' ? 'accent' : 'muted' },
+        { label: '心理', value: psychText, tone: psychText !== '—' ? 'accent' : 'muted' },
+      ],
+      empty:
+        dietText === '—' && exerciseText === '—' && psychText === '—'
+          ? '暂无行为标签（完成首诊后自动提炼）'
+          : undefined,
+    },
+    {
       key: 'execution',
       title: '执行画像',
-      rows: [
-        { label: '近7日方案完成', value: rateText(execution.planCompletion7d) },
-        {
-          label: '方案连续未完成',
-          value: execution.planMissStreak != null ? `${execution.planMissStreak} 天` : '未采集',
-          tone:
-            Number.isFinite(missStreak) && missStreak >= 3
-              ? 'danger'
-              : Number.isFinite(missStreak) && missStreak >= 1
-                ? 'warn'
-                : undefined,
-        },
-        { label: '用药完成', value: rateText(execution.medCompletion7d) },
-        {
-          label: '用药连续漏服',
-          value: execution.medMissStreak != null ? `${execution.medMissStreak} 天` : '未采集',
-          tone:
-            Number.isFinite(medMiss) && medMiss >= 3
-              ? 'danger'
-              : Number.isFinite(medMiss) && medMiss >= 1
-                ? 'warn'
-                : undefined,
-        },
-        {
-          label: '火苗',
-          value: execution.flameStatus
-            ? codeLabel(FLAME_LABELS, execution.flameStatus)
-            : '未接入',
-        },
-      ],
+      rows: execRows,
     },
     {
       key: 'focus',
       title: '当前焦点',
       priority: true,
-      hint: '下一步动作',
+      hint: '运营待办',
       rows: [
         ...taskRows,
         {
           label: '下一步',
           value: nextStepText,
-          tone: nextStepText !== '暂无' ? 'accent' : 'muted',
+          tone: nextStepText !== '—' ? 'accent' : 'muted',
         },
       ],
     },
   ]
 })
-
-const watchSectionTitle = computed(() =>
-  view.value?.narrative?.watchPoints?.length ? '重点关注' : '建议下一步',
-)
 
 async function load() {
   if (!peopleId.value) return
@@ -409,17 +474,31 @@ watch(
         <p class="persona-headline" :class="{ muted: !hasNarrative }">
           {{ loading ? '加载中…' : view?.displayHeadline || '暂无案头摘要，可生成叙事' }}
         </p>
-        <div v-if="watchOrNext.length" class="watch-panel">
-          <div class="watch-head">
-            <span class="watch-badge">{{ watchSectionTitle }}</span>
-            <span class="watch-count">{{ watchOrNext.length }} 条</span>
+        <div v-if="medicalFocus.length || opsFocus.length" class="watch-split">
+          <div v-if="medicalFocus.length" class="watch-panel watch-panel--risk">
+            <div class="watch-head">
+              <span class="watch-badge watch-badge--risk">医疗风险</span>
+              <span class="watch-count">{{ medicalFocus.length }} 条</span>
+            </div>
+            <ol class="persona-points">
+              <li v-for="(p, i) in medicalFocus" :key="`m-${i}`">
+                <span class="point-index">{{ i + 1 }}</span>
+                <span class="point-text">{{ p }}</span>
+              </li>
+            </ol>
           </div>
-          <ol class="persona-points">
-            <li v-for="(p, i) in watchOrNext" :key="i">
-              <span class="point-index">{{ i + 1 }}</span>
-              <span class="point-text">{{ p }}</span>
-            </li>
-          </ol>
+          <div v-if="opsFocus.length" class="watch-panel watch-panel--ops">
+            <div class="watch-head">
+              <span class="watch-badge watch-badge--ops">待办</span>
+              <span class="watch-count">{{ opsFocus.length }} 条</span>
+            </div>
+            <ol class="persona-points">
+              <li v-for="(p, i) in opsFocus" :key="`o-${i}`">
+                <span class="point-index">{{ i + 1 }}</span>
+                <span class="point-text">{{ p }}</span>
+              </li>
+            </ol>
+          </div>
         </div>
       </div>
       <div class="persona-actions">
@@ -621,13 +700,29 @@ watch(
   font-size: 14px;
 }
 
-.watch-panel {
+.watch-split {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 2px;
+}
+
+.watch-panel {
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid #f0d59a;
   background: linear-gradient(180deg, #fff9eb 0%, #fffdf7 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.watch-panel--risk {
+  border-color: #f0c0b8;
+  background: linear-gradient(180deg, #fff5f3 0%, #fffdfc 100%);
+}
+
+.watch-panel--ops {
+  border-color: #c5d8e8;
+  background: linear-gradient(180deg, #f3f8fc 0%, #fbfdfe 100%);
 }
 
 .watch-head {
@@ -647,9 +742,27 @@ watch(
   padding: 2px 8px;
 }
 
+.watch-badge--risk {
+  color: #a33b2c;
+  background: #ffd5ce;
+}
+
+.watch-badge--ops {
+  color: #2f5f7a;
+  background: #d5e8f5;
+}
+
 .watch-count {
   font-size: 11px;
-  color: #a07830;
+  color: #8090a0;
+}
+
+.watch-panel--risk .watch-count {
+  color: #b06055;
+}
+
+.watch-panel--ops .watch-count {
+  color: #5a7a90;
 }
 
 .persona-points {

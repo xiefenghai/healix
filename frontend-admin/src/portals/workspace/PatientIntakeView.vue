@@ -183,6 +183,29 @@ const careTracks = computed(() => normalizeCareTracks(answers['goal.careTracks']
 
 const illnessTrackHints = computed(() => suggestedCareTracksFromIllness(answers['basic.presentIllness']))
 
+/**
+ * 健管师补录缺口：C 端跳过的 LIST / 外置题 + 未填 STAFF 题（在当前可见模块内）。
+ * 用于案头一眼看到「还要补什么」。
+ */
+const staffGapItems = computed(() => {
+  const gaps: Array<{ field: string; label: string; reason: string; moduleCode: string }> = []
+  for (const mod of visibleModules.value) {
+    for (const it of mod.items) {
+      if (isFilled(it.field)) continue
+      const isList = it.type === 'LIST' || it.type === 'EXTERNAL'
+      const isStaff = it.level === 'STAFF'
+      if (!isList && !isStaff) continue
+      gaps.push({
+        field: it.field,
+        label: it.label || labelOf(it.field),
+        reason: isStaff ? '健管师题' : '明细需补录',
+        moduleCode: mod.code,
+      })
+    }
+  }
+  return gaps
+})
+
 const currentModule = computed(() => visibleModules.value.find((m) => m.code === activeModule.value) || null)
 
 type ModuleTone = 'red' | 'orange' | 'green' | 'gray'
@@ -340,6 +363,28 @@ const bmiBand = computed(() => {
   if (v < 24) return { label: '正常', tone: 'ok' as const }
   if (v < 28) return { label: '超重', tone: 'warn' as const }
   return { label: '肥胖', tone: 'danger' as const }
+})
+
+/** 按身高推算 BMI 18.5–23.9 体重区间 */
+const healthyWeightRange = computed(() => {
+  const h = Number(answers['metric.HEIGHT'])
+  if (!Number.isFinite(h) || h < 100) return null
+  const m = h / 100
+  return {
+    min: Math.round(18.5 * m * m * 10) / 10,
+    max: Math.round(23.9 * m * m * 10) / 10,
+  }
+})
+
+const targetBmi = computed(() => calcBmi(answers['metric.HEIGHT'], answers['goal.targetWeightKg']))
+
+const targetBmiBand = computed(() => {
+  const v = targetBmi.value
+  if (v == null) return null
+  if (v < 18.5) return { label: '目标偏瘦', tone: 'danger' as const }
+  if (v < 24) return { label: '目标在健康区', tone: 'ok' as const }
+  if (v < 28) return { label: '目标仍超重', tone: 'warn' as const }
+  return { label: '目标仍肥胖', tone: 'warn' as const }
 })
 
 const highlightHits = computed(() =>
@@ -865,6 +910,15 @@ onBeforeUnmount(() => {
             >
               建议 {{ localCompleteness.firstVisitDone || 0 }}/{{ localCompleteness.firstVisitTotal || 0 }}
             </span>
+            <button
+              v-if="staffGapItems.length"
+              type="button"
+              class="pill warn gap-pill"
+              :title="staffGapItems.map((g) => g.label).join('、')"
+              @click="focusQuestion(staffGapItems[0].field)"
+            >
+              建议补录 {{ staffGapItems.length }}
+            </button>
           </template>
           <span class="pill pct">
             <i class="pct-bar" :style="{ width: `${overallPct}%` }" />
@@ -892,6 +946,27 @@ onBeforeUnmount(() => {
         </el-button>
       </div>
     </header>
+
+    <div
+      v-if="!loading && status === 'DRAFT' && staffGapItems.length"
+      class="gap-banner"
+      role="status"
+    >
+      <div class="gap-banner-title">建议健管师补录（{{ staffGapItems.length }}）</div>
+      <div class="gap-banner-list">
+        <button
+          v-for="g in staffGapItems.slice(0, 8)"
+          :key="g.field"
+          type="button"
+          class="gap-chip"
+          @click="focusQuestion(g.field)"
+        >
+          <span>{{ g.label }}</span>
+          <em>{{ g.reason }}</em>
+        </button>
+        <span v-if="staffGapItems.length > 8" class="gap-more">+{{ staffGapItems.length - 8 }}</span>
+      </div>
+    </div>
 
     <div v-if="!loading" class="body">
       <aside class="nav">
@@ -1102,7 +1177,23 @@ onBeforeUnmount(() => {
               <dt>体重</dt>
               <dd>{{ formatAnswerBrief(answers['metric.WEIGHT']) || '—' }} <small>kg</small></dd>
             </div>
+            <div v-if="healthyWeightRange">
+              <dt>健康体重</dt>
+              <dd>{{ healthyWeightRange.min }}–{{ healthyWeightRange.max }} <small>kg</small></dd>
+            </div>
+            <div v-if="answers['goal.targetWeightKg'] != null && answers['goal.targetWeightKg'] !== ''">
+              <dt>目标体重</dt>
+              <dd>
+                {{ formatAnswerBrief(answers['goal.targetWeightKg']) }} <small>kg</small>
+                <span v-if="targetBmi != null" class="bmi-band" :class="targetBmiBand?.tone">
+                  BMI {{ targetBmi }}{{ targetBmiBand ? ` · ${targetBmiBand.label}` : '' }}
+                </span>
+              </dd>
+            </div>
           </dl>
+          <p v-if="targetBmi != null && targetBmi < 18.5" class="bmi-caution">
+            目标 BMI &lt; 18.5，请上调目标体重或核对身高
+          </p>
         </section>
 
         <!-- 高风险未问优先：勿被长「高亮追问」挤出视口 -->
@@ -1452,6 +1543,63 @@ onBeforeUnmount(() => {
   background: var(--ink-50);
   border: 1px solid var(--ink-200);
   white-space: nowrap;
+}
+
+.gap-pill {
+  font: inherit;
+  cursor: pointer;
+}
+
+.gap-banner {
+  flex-shrink: 0;
+  margin: 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #f0d59a;
+  border-radius: 10px;
+  background: #fff9eb;
+}
+
+.gap-banner-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8a5a00;
+  margin-bottom: 6px;
+}
+
+.gap-banner-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.gap-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  border: 1px solid #e8d2a0;
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #5a4a28;
+  cursor: pointer;
+}
+
+.gap-chip:hover {
+  border-color: #d4b56a;
+  background: #fffdf7;
+}
+
+.gap-chip em {
+  font-style: normal;
+  font-size: 11px;
+  color: #a07830;
+}
+
+.gap-more {
+  font-size: 12px;
+  color: #a07830;
 }
 
 .pill.warn {
@@ -2012,6 +2160,13 @@ onBeforeUnmount(() => {
 
 .bmi-band.danger {
   background: #fee2e2;
+  color: #b91c1c;
+}
+
+.bmi-caution {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
   color: #b91c1c;
 }
 

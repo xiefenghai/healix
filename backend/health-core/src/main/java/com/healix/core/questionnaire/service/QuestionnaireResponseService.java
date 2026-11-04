@@ -12,6 +12,7 @@ import com.healix.core.allergy.enums.AllergyCategoryEnum;
 import com.healix.core.allergy.enums.AllergyStatusEnum;
 import com.healix.core.allergy.service.AllergyService;
 import com.healix.core.allergy.service.AllergyService.AllergyCommand;
+import com.healix.core.allergy.support.AllergenCatalog;
 import com.healix.core.careplan.support.CarePlanPromptContextSupport;
 import com.healix.core.consent.domain.PeopleConsent;
 import com.healix.core.consent.mapper.PeopleConsentMapper;
@@ -38,6 +39,7 @@ import com.healix.core.questionnaire.HighlightRule;
 import com.healix.core.questionnaire.IntakeDepth;
 import com.healix.core.questionnaire.ModuleDef;
 import com.healix.core.questionnaire.ModuleItem;
+import com.healix.core.questionnaire.PatientCQuickFields;
 import com.healix.core.questionnaire.QuestionnaireCatalog;
 import com.healix.core.questionnaire.QuestionnaireDef;
 import com.healix.core.questionnaire.ShowIf;
@@ -64,6 +66,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -71,6 +74,7 @@ import org.springframework.util.StringUtils;
 /**
  * 问卷作答：打开预填、草稿保存、提交写回。草稿不写元数据；提交走 {@link PeopleFieldService}。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class QuestionnaireResponseService {
@@ -99,6 +103,8 @@ public class QuestionnaireResponseService {
     private static final String FIELD_ALLERGY_STATUS = "allergy.status";
     private static final String FIELD_ALLERGY_FOOD = "allergy.food";
     private static final String FIELD_ALLERGY_DRUG = "allergy.drug";
+    private static final String FIELD_ALLERGY_FOOD_TAGS = "allergy.foodTags";
+    private static final String FIELD_ALLERGY_DRUG_TAGS = "allergy.drugTags";
 
     public QuestionnaireResponseView get(String id) {
         QuestionnaireResponse row = require(id);
@@ -383,7 +389,14 @@ public class QuestionnaireResponseService {
             if (PATIENT_ALWAYS_HIDDEN.contains(item.field())) {
                 continue;
             }
+            if (depth == IntakeDepth.QUICK && !PatientCQuickFields.includes(item.field())) {
+                continue;
+            }
             if (isPatientSkipIfAlreadyFilled(item.field(), lookup)) {
+                continue;
+            }
+            // 非必填自由文本：C 端可跳过，空答不挡提交（如 goal.appealText / goal.constraints）
+            if (!"REQUIRED".equals(item.level()) && isOptionalFreeTextField(item.field())) {
                 continue;
             }
             if (!isIntakeFieldFilled(item.field(), lookup)) {
@@ -391,6 +404,14 @@ public class QuestionnaireResponseService {
             }
         }
         return missing;
+    }
+
+    /** TEXT 类选填：档位校验不强制。 */
+    private boolean isOptionalFreeTextField(String field) {
+        return fieldCatalog
+                .find(field)
+                .map(def -> def.type() == com.healix.core.field.FieldType.TEXT)
+                .orElse(false);
     }
 
     /** 用药明细等 LIST / 外置题：C 端本期不强制、不展示编辑器。 */
@@ -424,6 +445,9 @@ public class QuestionnaireResponseService {
                     continue;
                 }
                 if (depth != null && !depth.includes(iv.getLevel())) {
+                    continue;
+                }
+                if (depth == IntakeDepth.QUICK && !PatientCQuickFields.includes(iv.getField())) {
                     continue;
                 }
                 if (isPatientUneditableField(iv.getField())) {
@@ -918,7 +942,15 @@ public class QuestionnaireResponseService {
         Function<String, JsonNode> lookup = answersLookup(answers);
         boolean touchFood = filter == null || filter.contains(FIELD_ALLERGY_FOOD);
         boolean touchDrug = filter == null || filter.contains(FIELD_ALLERGY_DRUG);
+        boolean touchFoodTags = filter == null || filter.contains(FIELD_ALLERGY_FOOD_TAGS);
+        boolean touchDrugTags = filter == null || filter.contains(FIELD_ALLERGY_DRUG_TAGS);
         boolean touchStatus = filter == null || filter.contains(FIELD_ALLERGY_STATUS);
+        if (touchFoodTags && isVisible(row, FIELD_ALLERGY_FOOD_TAGS, lookup)) {
+            writeAllergyTags(row, answers.get(FIELD_ALLERGY_FOOD_TAGS), AllergyCategoryEnum.FOOD, source);
+        }
+        if (touchDrugTags && isVisible(row, FIELD_ALLERGY_DRUG_TAGS, lookup)) {
+            writeAllergyTags(row, answers.get(FIELD_ALLERGY_DRUG_TAGS), AllergyCategoryEnum.DRUG, source);
+        }
         if (touchFood && isVisible(row, FIELD_ALLERGY_FOOD, lookup)) {
             writeAllergyItems(row, answers.get(FIELD_ALLERGY_FOOD), AllergyCategoryEnum.FOOD, source);
         }
@@ -927,6 +959,57 @@ public class QuestionnaireResponseService {
         }
         if (touchStatus && isVisible(row, FIELD_ALLERGY_STATUS, lookup)) {
             writeAllergyStatus(row, answers.get(FIELD_ALLERGY_STATUS), source);
+        }
+    }
+
+    /** C 端常见过敏 Tag → 过敏档案条目（字典码对齐 AllergenCatalog）。 */
+    private void writeAllergyTags(
+            QuestionnaireResponse row, JsonNode value, AllergyCategoryEnum category, FieldWriteSource source) {
+        if (value == null || value.isNull() || value.isMissingNode() || !value.isArray()) {
+            return;
+        }
+        String tenantId = row.getTenantId();
+        String peopleId = row.getPeopleId();
+        String staffId = source.updatedById();
+        String orgId = row.getOrgId();
+        boolean byPatient = "PEOPLE".equalsIgnoreCase(source.updatedByType());
+        for (JsonNode n : value) {
+            String code = n == null || n.isNull() ? null : n.asText(null);
+            if (!StringUtils.hasText(code) || "OTHER".equalsIgnoreCase(code.trim())) {
+                continue;
+            }
+            var allergenOpt = AllergenCatalog.find(code.trim());
+            if (allergenOpt.isEmpty() || allergenOpt.get().category() != category) {
+                continue;
+            }
+            var allergen = allergenOpt.get();
+            AllergyCommand cmd = new AllergyCommand(
+                    category.name(),
+                    allergen.code(),
+                    allergen.label(),
+                    allergen.defaultType() == null ? "ALLERGY" : allergen.defaultType().name(),
+                    null,
+                    null,
+                    "UNKNOWN",
+                    "ACTIVE",
+                    "UNCONFIRMED",
+                    null,
+                    null,
+                    "来自首诊点选");
+            try {
+                if (byPatient) {
+                    allergyService.createByPatient(tenantId, peopleId, cmd);
+                } else {
+                    allergyService.createByStaff(tenantId, orgId, peopleId, staffId, cmd);
+                }
+            } catch (BusinessException ex) {
+                // 重复等可忽略，避免阻断整卷提交
+                log.debug(
+                        "[Intake] allergy tag skip peopleId={} code={}: {}",
+                        peopleId,
+                        allergen.code(),
+                        ex.getMessage());
+            }
         }
     }
 
@@ -1892,22 +1975,39 @@ public class QuestionnaireResponseService {
     }
 
     /**
-     * 过敏选 HAS 后食物/药物两类都会展示：一类已有明细时，另一类空视为「该类无」，
+     * 过敏选 HAS 后食物/药物两类都会展示：一类已有明细（LIST 或 Tag）时，另一类空视为「该类无」，
      * 避免档案里只有食物过敏时药物过敏一直挂「1 项待补」。
      */
     private boolean isIntakeFieldFilled(String field, Function<String, JsonNode> lookup) {
         if (!ArchiveFields.isEmpty(lookup.apply(field))) {
             return true;
         }
-        if (!FIELD_ALLERGY_FOOD.equals(field) && !FIELD_ALLERGY_DRUG.equals(field)) {
+        String other = allergySiblingField(field);
+        if (other == null) {
             return false;
         }
         JsonNode status = lookup.apply(FIELD_ALLERGY_STATUS);
         if (status == null || status.isNull() || !"HAS".equalsIgnoreCase(status.asText())) {
             return false;
         }
-        String other = FIELD_ALLERGY_FOOD.equals(field) ? FIELD_ALLERGY_DRUG : FIELD_ALLERGY_FOOD;
         return !ArchiveFields.isEmpty(lookup.apply(other));
+    }
+
+    /** 食物/药物过敏 LIST 或 Tag 的成对字段；非过敏明细返回 null。 */
+    private static String allergySiblingField(String field) {
+        if (FIELD_ALLERGY_FOOD.equals(field)) {
+            return FIELD_ALLERGY_DRUG;
+        }
+        if (FIELD_ALLERGY_DRUG.equals(field)) {
+            return FIELD_ALLERGY_FOOD;
+        }
+        if (FIELD_ALLERGY_FOOD_TAGS.equals(field)) {
+            return FIELD_ALLERGY_DRUG_TAGS;
+        }
+        if (FIELD_ALLERGY_DRUG_TAGS.equals(field)) {
+            return FIELD_ALLERGY_FOOD_TAGS;
+        }
+        return null;
     }
 
     private Set<String> supplementFieldFilter(QuestionnaireResponse row) {

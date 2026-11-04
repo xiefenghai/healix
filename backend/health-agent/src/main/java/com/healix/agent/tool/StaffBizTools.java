@@ -45,6 +45,26 @@ public class StaffBizTools {
     public record OrgBriefBundle(
             CockpitSummaryDto summary, List<CockpitPriorityCardDto> top, String text, List<AgentAction> actions) {}
 
+    /** 机构会话轻量感知：待办数 +「我的患者」首位（不跑完整优先名单格式化）。 */
+    public record MinePeek(
+            int openTaskCount, int overdueCount, int mineCount, CockpitPriorityCardDto firstMine) {}
+
+    public MinePeek peekMineContext(String tenantId, String orgId) {
+        try {
+            CockpitSummaryDto summary = cockpitService.summary(tenantId, orgId);
+            List<CockpitPriorityCardDto> mine = cockpitService.myPatients(orgId, null);
+            CockpitPriorityCardDto first =
+                    mine == null || mine.isEmpty() ? null : mine.get(0);
+            int open = summary == null ? 0 : summary.getOpenTaskCount();
+            int overdue = summary == null ? 0 : summary.getOverdueCount();
+            int mineCount = mine == null ? 0 : mine.size();
+            return new MinePeek(open, overdue, mineCount, first);
+        } catch (Exception e) {
+            log.debug("peekMineContext failed org={}", orgId, e);
+            return new MinePeek(0, 0, 0, null);
+        }
+    }
+
     public FocusBundle loadFocusContext(String tenantId, String orgId, String peopleId) {
         try {
             CockpitFocusDto focus = cockpitService.focus(tenantId, orgId, peopleId);

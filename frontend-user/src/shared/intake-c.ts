@@ -11,8 +11,14 @@ export const DEPTH_TABS: {
   about: string
 }[] = [
   { code: 'MINIMAL', label: '快捷', hint: '只答最关键的几题', eta: '约 1 分钟', about: '最快了解你的情况' },
-  { code: 'QUICK', label: '标准', hint: '覆盖常用健康问题', eta: '约 5 分钟', about: '够定制一版方案' },
-  { code: 'FULL', label: '详细', hint: '尽量说清楚习惯与病史', eta: '约 10 分钟', about: '方便更精细的方案' },
+  {
+    code: 'QUICK',
+    label: '标准',
+    hint: '禁忌、习惯与开方关键项（约 30–40 题）',
+    eta: '约 5 分钟',
+    about: '够定制一版方案',
+  },
+  { code: 'FULL', label: '详细', hint: '尽量说清楚习惯与病史', eta: '约 12 分钟', about: '方便更精细的方案' },
 ]
 
 export const C_INTAKE_TITLE = '初步评估'
@@ -84,7 +90,79 @@ export const C_LABEL_OVERRIDES: Record<string, string> = {
   'goal.appealText': '用一句话说说你的期望（选填）',
   'goal.mode': '这次你最看重哪一类目标？',
   'goal.doctorAdvised': '是医生建议你来做这次管理的吗？',
+  'goal.constraints': '目前最大的阻力或限制是什么？（选填）',
+  'basic.exercise.availableSlots': '一般什么时候方便运动？（可多选）',
+  'allergy.foodTags': '对哪些食物过敏或不耐受？（可多选）',
+  'allergy.drugTags': '对哪些药物过敏？（可多选）',
 }
+
+/**
+ * C 端「标准」档白名单（与后端 PatientCQuickFields 对齐）。
+ * FULL 档不受此限制；MINIMAL 仅 REQUIRED。
+ */
+export const C_QUICK_FIELDS = new Set<string>([
+  'goal.primaryAppeal',
+  'goal.appealText',
+  'goal.mode',
+  'goal.targetWeightKg',
+  'goal.targetDate',
+  'goal.exerciseMinutesPerDay',
+  'goal.dietEffort',
+  'goal.followupChannel',
+  'goal.followupFrequency',
+  'goal.constraints',
+  'profile.displayName',
+  'profile.gender',
+  'profile.birthday',
+  'profile.mobile',
+  'profile.occupation',
+  'profile.workSchedule',
+  'metric.HEIGHT',
+  'metric.WEIGHT',
+  'metric.WAIST',
+  'metric.BLOOD_PRESSURE_SYS',
+  'metric.BLOOD_PRESSURE_DIA',
+  'measure.method',
+  'basic.presentIllness',
+  'basic.medicationFlags',
+  'basic.medical.mainDiscomfort',
+  'basic.medical.exerciseRestriction',
+  'basic.medical.jointIssues',
+  'basic.women.reproductiveStatus',
+  'basic.women.gdmHistory',
+  'allergy.status',
+  'allergy.foodTags',
+  'allergy.drugTags',
+  'basic.diet.restriction',
+  'basic.familyHistoryStatus',
+  'disease.diabetes.type',
+  'disease.diabetes.hypoglycemia',
+  'disease.diabetes.latestHba1c',
+  'disease.diabetes.monitorFreq',
+  'disease.hypertension.homeMonitor',
+  'disease.hypertension.latestSystolic',
+  'disease.hypertension.latestDiastolic',
+  'disease.hypertension.orthostatic',
+  'basic.weightHistory.triedBefore',
+  'basic.weightHistory.failReasons',
+  'basic.weightHistory.expectedPace',
+  'basic.psych.eatingDisorderHistory',
+  'basic.diet.mealRegularity',
+  'basic.diet.takeoutFrequency',
+  'basic.diet.snackNight',
+  'basic.diet.sugaryDrinks',
+  'basic.diet.taste',
+  'basic.diet.cook',
+  'basic.exercise.frequency',
+  'basic.exercise.types',
+  'basic.exercise.availableSlots',
+  'basic.lifestyle.activityLevel',
+  'basic.sleep.hours',
+  'basic.sleep.quality',
+  'basic.psych.stressLevel',
+  'basic.psych.stressEating',
+  'basic.psych.readiness',
+])
 
 export function cLabel(item: IntakeItem): string {
   return C_LABEL_OVERRIDES[item.field] || item.label
@@ -222,14 +300,20 @@ export function initAnswers(view: IntakeView): Record<string, unknown> {
   return out
 }
 
-/** 是否应在 C 端步骤中出现 */
-export function shouldAskOnC(item: IntakeItem, answers: Record<string, unknown>): boolean {
+/** 是否应在 C 端步骤中出现（depth 与后端 PatientCQuickFields 对齐） */
+export function shouldAskOnC(
+  item: IntakeItem,
+  answers: Record<string, unknown>,
+  depth: IntakeDepth = 'FULL',
+): boolean {
   if (item.type === 'LIST' || item.type === 'EXTERNAL') return false
   if (item.level === 'STAFF') return false
   if (C_HIDDEN_FIELDS.has(item.field)) return false
   if (ARCHIVE_IDENTITY_FIELDS.has(item.field) && isFilledValue(answers[item.field])) return false
   // 文案含「健管师」的题默认不对客户展示（双保险）
   if (/健管师|案头|内部|请勿对客户/.test(item.label || '')) return false
+  if (depth === 'QUICK' && !C_QUICK_FIELDS.has(item.field)) return false
+  if (depth === 'MINIMAL' && item.level !== 'REQUIRED') return false
   return true
 }
 

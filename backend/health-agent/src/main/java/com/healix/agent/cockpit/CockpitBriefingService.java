@@ -25,7 +25,7 @@ import org.springframework.util.StringUtils;
 /**
  * 驾驶舱开场简报：优先 LLM，失败降级模板；同 staff+org 自然日缓存（G8）。
  *
- * <p>无待办时不改服务流程，只讲清标准链路并给出下一步可点动作。
+ * <p>无待办时给欢迎/下一步短句；0 患者不提「左侧选人」，建档交给前端引导卡。
  */
 @Slf4j
 @Service
@@ -36,10 +36,6 @@ public class CockpitBriefingService {
     private static final int TOP_N = 5;
     /** 拉取近况事实的人数（每人几次查询，控制开销） */
     private static final int FACT_N = 3;
-
-    /** 健管服务标准流程（开场引导口径，勿擅自缩短） */
-    private static final String SERVICE_FLOW =
-            "建档 → 首诊评估 → 制定方案 → 持续跟进随访 → 周报 → 阶段评估报告 → 服务结束";
 
     private final CockpitService cockpitService;
     private final LlmClient llmClient;
@@ -100,32 +96,30 @@ public class CockpitBriefingService {
     private static CockpitBriefingDto guidedIdleBriefing(CockpitSummaryDto summary) {
         boolean noPrimaryTeam = summary.getPrimaryCareTeamCount() <= 0;
         boolean coldStart = summary.getOrgPatientCount() <= 0;
-        StringBuilder sb = new StringBuilder();
+        // 短句 + 单一下一步：小白不读说明书也能动手；0 患者绝不提「去左侧选人」
+        String text;
         if (noPrimaryTeam) {
-            sb.append("欢迎使用健管驾驶舱。服务患者前，请先创建以你为主责的健管组：")
-                    .append("「我的患者」、待办归属都按健管组主责划分。")
-                    .append("点下方「先创建我的健管组」，选自己为主责即可。")
-                    .append("建组后再建档入组，标准服务流程是：")
-                    .append(SERVICE_FLOW)
-                    .append("。");
+            text = "欢迎使用智能驾驶舱。开始服务前，请先创建以你为主责的健管组"
+                    + "（「我的患者」和待办都按主责组分）。点下方按钮即可，建好组后再建档。";
         } else if (coldStart) {
-            sb.append("健管组已就绪。标准服务流程是：")
-                    .append(SERVICE_FLOW)
-                    .append("。当前还没有在管患者，建议下一步「建档」：点下方「开始建档」，")
-                    .append("或直接对我说「建档 姓名 性别 生日 手机号」。建档后记得加入你的健管组，再依次做首诊评估与制定方案。");
+            text = "欢迎使用智能驾驶舱！今天还没有待办。"
+                    + "请点下方卡片开始第一位客户建档；"
+                    + "若已有客户名单，也可直接发给我（如：张三 女 45岁 13800000000）。";
         } else {
-            sb.append("今日暂无紧急待办。服务流程提醒：")
-                    .append(SERVICE_FLOW)
-                    .append("。可从左侧「我的患者」选人，继续其当前环节（首诊、方案、随访或报告）；")
-                    .append("也可为新客户建档，开启一轮新的服务。");
+            // 空会话下方已有引导卡，此处只报状态，避免「点下方卡片」双重啰嗦
+            text = "今天没有紧急待办。需要跟进时，可从左侧「我的患者」选人。";
         }
         CockpitBriefingDto dto = new CockpitBriefingDto();
-        dto.setText(sb.toString());
+        dto.setText(text);
         dto.setFromLlm(false);
         dto.setNote(noPrimaryTeam ? "冷启动-先建健管组" : coldStart ? "冷启动-建档" : "清闲日引导简报");
         return dto;
     }
 
+    /**
+     * 空态简报动作：建档交给下方「不知道聊什么」大卡片，避免与紫色框双重引导。
+     * 前端还会追加「刷新今日建议」。
+     */
     private static List<CockpitBriefingDto.BriefingAction> idleActions(CockpitSummaryDto summary) {
         List<CockpitBriefingDto.BriefingAction> out = new ArrayList<>();
         if (summary.getPrimaryCareTeamCount() <= 0) {
@@ -137,11 +131,6 @@ public class CockpitBriefingService {
             out.add(createTeam);
             return out;
         }
-        CockpitBriefingDto.BriefingAction archive = new CockpitBriefingDto.BriefingAction();
-        archive.setType("TRIGGER_CAPABILITY");
-        archive.setPath("CREATE_ARCHIVE");
-        archive.setLabel(summary.getOrgPatientCount() <= 0 ? "开始建档（下一步）" : "为新客户建档");
-        out.add(archive);
         if (summary.getOrgPatientCount() > 0) {
             CockpitBriefingDto.BriefingAction mine = new CockpitBriefingDto.BriefingAction();
             mine.setType("SET_COCKPIT_TAB");
@@ -165,10 +154,10 @@ public class CockpitBriefingService {
                     硬性规则：
                     1. 只能依据下方「摘要」与「优先名单」写，禁止编造名单外的患者、人数或分类标签。
                        理由优先引用名单里给出的具体读数、连续天数（如「今早血压 162/98」「服药连续 3 天未完成」），不得自行编造数值。
-                    2. 优先名单为空时：不要空转说「去看左侧」；应提醒标准服务流程
-                       （建档→首诊评估→制定方案→持续跟进随访→周报→阶段评估报告→服务结束）。
-                       若摘要显示主责健管组数为 0：优先建议先创建以自己为主责的健管组；
-                       已有主责组但无患者：建议建档；有患者则从「我的患者」选人继续当前环节。
+                    2. 优先名单为空时：用一两句说清「现在立刻该做什么」，不要背诵整段服务流程说明书。
+                       若摘要显示主责健管组数为 0：只建议先创建以自己为主责的健管组；
+                       已有主责组但无患者：只建议建档或把客户信息发给助手，禁止说「去左侧选患者」；
+                       有患者则建议点下方卡片或从「我的患者」选人继续，勿暗示今日优先名单一定有人。
                     3. 若摘要中方案待确认或报告待审阅大于 0，用一句提醒健管师处理右栏草稿箱（勿虚构具体患者）。
                     4. 禁止使用「红人」「红标」「依从红人」「红灯」等说法；也不要用同义改写暗示这类标签。
                     5. 不做诊断、不开方；禁止 Markdown（不要 #、**、表格、列表符号），用纯中文短句。
@@ -205,9 +194,11 @@ public class CockpitBriefingService {
                 .append(summary.getOverdueCount())
                 .append("。");
         if (top.isEmpty()) {
-            sb.append("当前没有紧急优先对象。服务流程：")
-                    .append(SERVICE_FLOW)
-                    .append("。可从左侧「我的患者」继续跟进，或为新客户建档。");
+            if (summary.getOrgPatientCount() <= 0) {
+                sb.append("机构里还没有客户档案。请点下方卡片建档，或直接把客户信息发给我。");
+            } else {
+                sb.append("当前没有紧急优先对象。可点下方卡片开始，或从左侧「我的患者」继续跟进。");
+            }
         } else {
             sb.append("建议优先：");
             int n = Math.min(3, top.size());
@@ -382,14 +373,14 @@ public class CockpitBriefingService {
 
     private static String cacheKey(String staffId, String orgId, int primaryTeamCount, int orgPatientCount) {
         LocalDate day = LocalDate.now(JobCronSupport.ZONE);
-        // v10：入组/首诊不再误挂「开随访」；键含组数/患者数
+        // v13：清闲日简报去重「点下方卡片」；键含组数/患者数
         return HealthConstants.REDIS_COCKPIT_BRIEFING_PREFIX
                 + staffId
                 + ":"
                 + orgId
                 + ":"
                 + day
-                + ":v10:t"
+                + ":v13:t"
                 + primaryTeamCount
                 + ":p"
                 + orgPatientCount;

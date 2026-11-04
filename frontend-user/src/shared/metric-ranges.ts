@@ -134,6 +134,52 @@ export function evaluateBmi(value: number | null | undefined): AbnormalFlag | nu
   return evaluateAbnormal(value, REFS.BMI)
 }
 
+export type BmiBand = { label: string; tone: 'ok' | 'warn' | 'danger' }
+
+/** 成人 BMI 分档（与 B 端案头一致） */
+export function bmiBand(value: number | null | undefined): BmiBand | null {
+  if (value == null || Number.isNaN(value)) return null
+  if (value < 18.5) return { label: '偏瘦', tone: 'warn' }
+  if (value < 24) return { label: '正常', tone: 'ok' }
+  if (value < 28) return { label: '超重', tone: 'warn' }
+  return { label: '肥胖', tone: 'danger' }
+}
+
+/** 按身高推算 BMI 18.5–23.9 对应体重区间（kg，一位小数） */
+export function healthyWeightRangeKg(heightCm?: number | null): { min: number; max: number } | null {
+  const h = Number(heightCm)
+  if (!Number.isFinite(h) || h < 100 || h > 230) return null
+  const m = h / 100
+  const min = Math.round(18.5 * m * m * 10) / 10
+  const max = Math.round(23.9 * m * m * 10) / 10
+  return { min, max }
+}
+
+/** 目标体重相对当前身高的安全提示；无身高或未填目标时返回 null */
+export function targetWeightBmiHint(
+  heightCm?: number | null,
+  targetKg?: number | null,
+): { text: string; tone: 'ok' | 'warn' | 'danger' } | null {
+  const bmi = calcBmi(heightCm, targetKg)
+  if (bmi == null) {
+    if (targetKg != null && Number(targetKg) > 0 && (heightCm == null || !Number(heightCm))) {
+      return { text: '补上身高后可校验目标 BMI 是否安全', tone: 'warn' }
+    }
+    return null
+  }
+  if (bmi < 18.5) {
+    return {
+      text: `目标 BMI ${bmi}（偏瘦）：请上调目标体重，或先核对身高`,
+      tone: 'danger',
+    }
+  }
+  const band = bmiBand(bmi)
+  return {
+    text: `目标 BMI ${bmi}${band ? ` · ${band.label}` : ''}（健康参考 18.5–23.9）`,
+    tone: band?.tone === 'ok' ? 'ok' : 'warn',
+  }
+}
+
 export function evaluateBloodPressure(
   sys: number | null | undefined,
   dia: number | null | undefined,

@@ -20,6 +20,12 @@ export type PersonaDimensions = {
     highlightCodes?: string[]
     notes?: string[]
   }
+  /** 饮食 / 运动 / 心理开方抓手 */
+  behavior?: {
+    diet?: string[]
+    exercise?: string[]
+    psych?: string[]
+  }
   execution?: Record<string, unknown>
   focus?: {
     openTasks?: Array<{ type?: string; title?: string }>

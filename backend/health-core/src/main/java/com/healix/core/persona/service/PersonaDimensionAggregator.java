@@ -72,6 +72,7 @@ public class PersonaDimensionAggregator {
         ObjectNode goals = root.putObject("goals");
         ObjectNode risk = root.putObject("risk");
         ObjectNode constraints = root.putObject("constraints");
+        ObjectNode behavior = root.putObject("behavior");
         ObjectNode execution = root.putObject("execution");
         ObjectNode focus = root.putObject("focus");
 
@@ -79,6 +80,7 @@ public class PersonaDimensionAggregator {
         fillGoals(goals, tenantId, peopleId);
         fillRisk(risk, tenantId, orgId, peopleId);
         fillConstraints(constraints, tenantId, peopleId);
+        fillBehavior(behavior, tenantId, peopleId);
         fillExecution(execution, tenantId, orgId, peopleId);
         fillFocus(focus, orgId, peopleId, execution);
 
@@ -228,49 +230,167 @@ public class PersonaDimensionAggregator {
         }
 
         try {
-            List<QuestionnaireResponse> rows = questionnaireResponseMapper.listByPeople(tenantId, peopleId);
-            for (QuestionnaireResponse r : rows) {
-                if (!"SUBMITTED".equals(r.getStatus())) {
-                    continue;
-                }
-                if (!"INTAKE".equals(r.getPurpose()) && !"SUPPLEMENT".equals(r.getPurpose())) {
-                    continue;
-                }
-                if (!StringUtils.hasText(r.getHighlightsJson())) {
-                    break;
-                }
-                JsonNode hs = JsonUtils.readTree(r.getHighlightsJson());
-                if (hs != null && hs.isArray()) {
-                    for (JsonNode h : hs) {
-                        String code = h.path("code").asText(null);
-                        if (!StringUtils.hasText(code)) {
-                            code = h.path("type").asText(null);
-                        }
-                        if (StringUtils.hasText(code)) {
-                            highlightCodes.add(code);
-                        }
-                        String note = h.path("note").asText(null);
-                        if (!StringUtils.hasText(note)) {
-                            note = h.path("label").asText(null);
-                        }
-                        if (StringUtils.hasText(note)) {
-                            notes.add(note);
-                        }
-                    }
-                }
-                break;
+            QuestionnaireResponse intake = latestSubmittedIntake(tenantId, peopleId);
+            if (intake == null || !StringUtils.hasText(intake.getHighlightsJson())) {
+                return;
+            }
+            JsonNode hs = JsonUtils.readTree(intake.getHighlightsJson());
+            if (hs == null || !hs.isArray()) {
+                return;
+            }
+            for (JsonNode h : hs) {
+                appendConstraintHighlight(highlightCodes, notes, h);
             }
         } catch (Exception e) {
             log.debug("[Persona] load highlights failed peopleId={}", peopleId, e);
         }
     }
 
+    /**
+     * 备注只用方案影响（planEffect）；禁止回退到题干 label。
+     * 高亮码用 severity（CAUTION/REFER/BLOCK）。
+     */
+    static void appendConstraintHighlight(ArrayNode highlightCodes, ArrayNode notes, JsonNode h) {
+        if (h == null || h.isNull()) {
+            return;
+        }
+        String severity = textOrNull(h, "severity");
+        if (StringUtils.hasText(severity)) {
+            highlightCodes.add(severity.trim().toUpperCase());
+        }
+        String note = textOrNull(h, "planEffect");
+        if (!StringUtils.hasText(note)) {
+            note = textOrNull(h, "note");
+        }
+        // 明确不使用 label（题干）
+        if (StringUtils.hasText(note)) {
+            notes.add(note.trim());
+        }
+    }
+
+    private void fillBehavior(ObjectNode behavior, String tenantId, String peopleId) {
+        ArrayNode diet = behavior.putArray("diet");
+        ArrayNode exercise = behavior.putArray("exercise");
+        ArrayNode psych = behavior.putArray("psych");
+        try {
+            QuestionnaireResponse intake = latestSubmittedIntake(tenantId, peopleId);
+            if (intake == null || !StringUtils.hasText(intake.getAnswersJson())) {
+                return;
+            }
+            JsonNode answers = JsonUtils.readTree(intake.getAnswersJson());
+            if (answers == null || !answers.isObject()) {
+                return;
+            }
+            appendBehaviorTags(diet, exercise, psych, answers);
+        } catch (Exception e) {
+            log.debug("[Persona] load behavior from intake failed peopleId={}", peopleId, e);
+        }
+    }
+
+    /** 从首诊答案提炼开方抓手标签（饮食 / 运动 / 心理）。 */
+    static void appendBehaviorTags(
+            ArrayNode diet, ArrayNode exercise, ArrayNode psych, JsonNode answers) {
+        String takeout = textAns(answers, "basic.diet.takeoutFrequency");
+        if ("WEEKLY_4_7".equals(takeout) || "DAILY_MULTI".equals(takeout)) {
+            diet.add("外卖高频");
+        } else if ("WEEKLY_1_3".equals(takeout)) {
+            diet.add("偶尔外卖");
+        }
+        String cook = textAns(answers, "basic.diet.cook");
+        if ("FAMILY".equals(cook)) {
+            diet.add("家人做饭");
+        } else if ("EAT_OUT".equals(cook)) {
+            diet.add("外卖/外食为主");
+        } else if ("SELF".equals(cook)) {
+            diet.add("自己做饭");
+        }
+        if (multiHas(answers, "basic.diet.taste", "SALTY")) {
+            diet.add("口味偏咸");
+        }
+        if (multiHas(answers, "basic.diet.taste", "OILY")) {
+            diet.add("偏油");
+        }
+        if (multiHas(answers, "basic.diet.taste", "SWEET")) {
+            diet.add("偏甜");
+        }
+        String snack = textAns(answers, "basic.diet.snackNight");
+        if ("MOST_DAYS".equals(snack)) {
+            diet.add("常吃夜宵");
+        }
+        String sugar = textAns(answers, "basic.diet.sugaryDrinks");
+        if ("DAILY_1".equals(sugar) || "DAILY_2PLUS".equals(sugar)) {
+            diet.add("含糖饮料多");
+        }
+
+        String freq = textAns(answers, "basic.exercise.frequency");
+        if ("NONE".equals(freq) || "RARELY".equals(freq)) {
+            exercise.add("几乎不运动");
+        } else if (StringUtils.hasText(freq) && !"NONE".equals(freq)) {
+            exercise.add("有运动习惯");
+        }
+        if (multiHas(answers, "basic.exercise.types", "WALK")) {
+            exercise.add("偏好快走");
+        }
+        if (multiHas(answers, "basic.exercise.types", "STRENGTH")) {
+            exercise.add("有力量训练");
+        }
+        JsonNode sedentary = answers.get("basic.exercise.sedentaryHours");
+        if (sedentary != null && sedentary.isNumber() && sedentary.asDouble() >= 8) {
+            exercise.add("久坐（≥8h）");
+        }
+        String strength = textAns(answers, "basic.exercise.strengthExperience");
+        if ("NONE".equals(strength)) {
+            exercise.add("力量零基础");
+        }
+
+        String stressEat = textAns(answers, "basic.psych.stressEating");
+        // catalog: NO / EAT_MORE / EAT_LESS
+        if ("EAT_MORE".equals(stressEat)) {
+            psych.add("压力性进食");
+        }
+        String emoEat = textAns(answers, "basic.psych.emotionalEating");
+        // catalog: NEVER / SOMETIMES / OFTEN
+        if ("OFTEN".equals(emoEat) || "SOMETIMES".equals(emoEat)) {
+            psych.add("情绪性进食");
+        }
+        String pace = textAns(answers, "basic.weightHistory.expectedPace");
+        if ("ASAP".equals(pace)) {
+            psych.add("求速减重");
+        } else if ("STEADY".equals(pace)) {
+            psych.add("接受稳健节奏");
+        }
+        String readiness = textAns(answers, "basic.psych.readiness");
+        if ("HIGH".equals(readiness) || "READY".equals(readiness)) {
+            psych.add("改变意愿高");
+        }
+        String ed = textAns(answers, "basic.psych.eatingDisorderHistory");
+        if ("YES".equals(ed) || "UNSURE".equals(ed)) {
+            psych.add("进食障碍风险需关注");
+        }
+    }
+
+    private QuestionnaireResponse latestSubmittedIntake(String tenantId, String peopleId) {
+        List<QuestionnaireResponse> rows = questionnaireResponseMapper.listByPeople(tenantId, peopleId);
+        for (QuestionnaireResponse r : rows) {
+            if (!"SUBMITTED".equals(r.getStatus())) {
+                continue;
+            }
+            if (!"INTAKE".equals(r.getPurpose()) && !"SUPPLEMENT".equals(r.getPurpose())) {
+                continue;
+            }
+            return r;
+        }
+        return null;
+    }
+
     private void fillExecution(ObjectNode execution, String tenantId, String orgId, String peopleId) {
-        execution.putNull("flameStatus");
+        // 激励火苗尚未接入画像；不写 flameStatus，前端隐藏该行
         execution.putNull("medMissStreak");
         try {
             AdherencePatientSummaryDto summary =
                     adherenceQueryService.patientSummary(tenantId, orgId, peopleId, LocalDate.now());
+            boolean hasPlan = summary.isHasActivePlan();
+            execution.put("hasActivePlan", hasPlan);
             if (summary.getRate() != null) {
                 execution.put("planCompletion7d", summary.getRate());
             } else {
@@ -278,13 +398,14 @@ public class PersonaDimensionAggregator {
             }
             execution.put("planMissStreak", summary.getStreakDays());
             if (summary.getMedPercent() != null) {
-                // P1：用当日用药完成率近似；7 日用药率后续可对齐看板
+                // 用当日用药完成率近似；7 日用药率后续可对齐看板
                 execution.put("medCompletion7d", summary.getMedPercent() / 100.0d);
             } else {
                 execution.putNull("medCompletion7d");
             }
         } catch (Exception e) {
             log.debug("[Persona] adherence failed peopleId={}", peopleId, e);
+            execution.put("hasActivePlan", false);
             execution.putNull("planCompletion7d");
             execution.put("planMissStreak", 0);
             execution.putNull("medCompletion7d");
@@ -349,5 +470,51 @@ public class PersonaDimensionAggregator {
         } catch (Exception e) {
             return "sha256:na";
         }
+    }
+
+    private static String textOrNull(JsonNode node, String field) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        JsonNode v = node.get(field);
+        if (v == null || v.isNull()) {
+            return null;
+        }
+        String s = v.asText(null);
+        return StringUtils.hasText(s) ? s : null;
+    }
+
+    private static String textAns(JsonNode answers, String field) {
+        if (answers == null) {
+            return null;
+        }
+        JsonNode v = answers.get(field);
+        if (v == null || v.isNull()) {
+            return null;
+        }
+        if (v.isTextual() || v.isNumber() || v.isBoolean()) {
+            String s = v.asText(null);
+            return StringUtils.hasText(s) ? s.trim() : null;
+        }
+        return null;
+    }
+
+    private static boolean multiHas(JsonNode answers, String field, String code) {
+        if (answers == null || !StringUtils.hasText(code)) {
+            return false;
+        }
+        JsonNode v = answers.get(field);
+        if (v == null || v.isNull()) {
+            return false;
+        }
+        if (v.isArray()) {
+            for (JsonNode n : v) {
+                if (code.equalsIgnoreCase(n.asText(""))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return code.equalsIgnoreCase(v.asText(""));
     }
 }

@@ -51,6 +51,17 @@ public class GeneralChatSkill implements AgentSkill {
     public AgentResponse executeStream(AgentSkillContext ctx, Consumer<AgentStreamEvent> sink) {
         AgentChatCommand cmd = ctx.command();
         boolean orgSession = !StringUtils.hasText(cmd.peopleId());
+        // 机构会话：轻量意图不跑「产品说明书」长链路
+        if (orgSession) {
+            LightTone tone = classifyLightTone(cmd.message());
+            if (tone != LightTone.NONE) {
+                return shortOrgLightReply(ctx, tone, sink);
+            }
+            OrgGuideIntent guide = classifyOrgGuideIntent(cmd.message());
+            if (guide != OrgGuideIntent.NONE) {
+                return shortOrgGuideReply(ctx, guide, sink);
+            }
+        }
         String systemPrompt;
         CockpitFocusDto focus = null;
         StaffBizTools.OrgBriefBundle orgBrief = null;
@@ -70,16 +81,23 @@ public class GeneralChatSkill implements AgentSkill {
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingStart("整理机构级会话目标…"));
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.thinkingDelta("依据今日优先名单回答，禁止编造名单外患者。\n"));
-            systemPrompt = buildOrgSystemPrompt(orgBrief.text());
+            actions.addAll(orgBrief.actions());
+            boolean hasPatientButtons = actions.stream()
+                    .anyMatch(a -> a != null && "FOCUS_PATIENT".equals(a.type()));
+            systemPrompt = buildOrgSystemPrompt(orgBrief.text(), hasPatientButtons);
             if (StaffBizTools.wantsCompleteTask(cmd.message())) {
-                systemPrompt +=
-                        """
+                systemPrompt += hasPatientButtons
+                        ? """
 
-                        用户想办结今日待办：机构会话不能直接关单。请依据优先名单，引导健管师先点击下方「处理某某的待办」注入患者，
-                        再在患者会话里用「确认办结」打开与工作台一致的填单弹窗（填完提交才写库）。
+                        用户想办结今日待办：机构会话不能直接关单。请引导健管师先点击本回复下方带姓名的按钮切入患者，
+                        再在患者会话里用「确认办结」打开填单弹窗（填完提交才写库）。
+                        """
+                        : """
+
+                        用户想办结今日待办：机构会话不能直接关单，且本回复下方不会挂任何患者按钮。
+                        请引导到左侧「我的患者」点选后再办结。严禁写「点击下方患者按钮」「回复下方的患者按钮」。
                         """;
             }
-            actions.addAll(orgBrief.actions());
         } else {
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.tool("loadFocusSnapshot", "running", "读取评估/完整度/依从/任务"));
@@ -209,7 +227,14 @@ public class GeneralChatSkill implements AgentSkill {
             }
         }
 
-        if (!orgSession) {
+        if (orgSession) {
+            boolean hasPatientButtons = actions.stream()
+                    .anyMatch(a -> a != null && "FOCUS_PATIENT".equals(a.type()));
+            // 模型偶发仍写「点下方患者按钮」：无真实动作时清掉误导句
+            if (!hasPatientButtons) {
+                reply = stripFakePatientButtonHints(reply);
+            }
+        } else {
             appendDraftActions(cmd, focus, actions, sink);
         }
 
@@ -221,6 +246,23 @@ public class GeneralChatSkill implements AgentSkill {
                 dedupeActions(actions),
                 List.of(),
                 null);
+    }
+
+    /** 无 FOCUS_PATIENT 动作时，去掉「点下方患者按钮」类空指引。 */
+    static String stripFakePatientButtonHints(String reply) {
+        if (!StringUtils.hasText(reply)) {
+            return reply;
+        }
+        String out = reply;
+        out = out.replaceAll(
+                "[^\n]*点击[^。\\n]{0,24}下方[^。\\n]{0,16}患者按钮[^。\\n]*。?", "");
+        out = out.replaceAll(
+                "[^\n]*回复下方的患者按钮[^。\\n]*。?", "");
+        out = out.replaceAll(
+                "[^\n]*点(?:击)?本?回复下方[^。\\n]{0,20}按钮[^。\\n]*。?", "");
+        // 压缩多空行
+        out = out.replaceAll("\n{3,}", "\n\n").trim();
+        return out;
     }
 
     private void appendDraftActions(
@@ -407,22 +449,247 @@ public class GeneralChatSkill implements AgentSkill {
             7) 病种一律用中文（糖尿病、高血压等），禁止输出 diabetes / hypertension 等英文 code。
             """;
 
-    private static String buildOrgSystemPrompt(String orgBriefText) {
+    /** 机构会话：默认短答；勿逼模型每次写「一、二、三」报告。 */
+    private static final String ORG_PLAIN_TEXT_RULE =
+            """
+            输出格式（必须遵守）：
+            1) 可选用【思考】【回答】标记；【回答】给健管师看。
+            2) 纯中文，不要 Markdown（禁止 #、**、表格、代码块）。
+            3) 默认一两句口语短回（约 30～60 字）；只有用户明确要求「安排今日工作 / 解释多条待办」时，才用「一、二、三」分节。
+            4) 禁止主动抛出「评估/用药不在协助范围」等免责句；仅当用户真的在问诊断、开药或评估解读时再简要说明边界。
+            5) 病种用中文，禁止输出英文病种 code。
+            """;
+
+    /**
+     * 机构会话轻量意图：语气词 / 乱码不进 LLM、不查库。
+     * 包内可见便于单测。
+     */
+    enum LightTone {
+        NONE,
+        ACK,
+        GIBBERISH
+    }
+
+    /** 「你能干什么 / 我现在要干什么 / 任务类型」等场景问答。 */
+    enum OrgGuideIntent {
+        NONE,
+        CAPABILITY,
+        NEXT_STEP,
+        TASK_TYPES
+    }
+
+    static LightTone classifyLightTone(String message) {
+        if (!StringUtils.hasText(message)) {
+            return LightTone.GIBBERISH;
+        }
+        String t = message.trim();
+        if (t.matches(
+                "^(嗯+|哦+|噢+|呃+|啊+|哎+|好的?|行|可以|收到|知道了|明白了|了解了?|嗯嗯+|ok|OK|Okay|okay|谢谢|感谢|哈哈+|呵呵+|嘻嘻+)[.。!！?？…~～\\s]*$")) {
+            return LightTone.ACK;
+        }
+        // 纯数字/符号串（排除像手机号）
+        if (t.length() <= 32
+                && t.matches("^[\\d\\s._\\-]+$")
+                && !t.matches(".*1[3-9]\\d{9}.*")) {
+            return LightTone.GIBBERISH;
+        }
+        // 同一字符狂按（aaaa / 1111）
+        if (t.length() >= 4 && t.length() <= 24) {
+            long distinct = t.chars().distinct().count();
+            if (distinct <= 2 && t.matches("^[a-zA-Z0-9]+$")) {
+                return LightTone.GIBBERISH;
+            }
+        }
+        return LightTone.NONE;
+    }
+
+    static OrgGuideIntent classifyOrgGuideIntent(String message) {
+        if (!StringUtils.hasText(message)) {
+            return OrgGuideIntent.NONE;
+        }
+        // 去掉空白，兼容「你能做点啥」「你 能 干 什么」
+        String n = message.trim().replaceAll("\\s+", "");
+        // 「你能做点啥」：做与啥之间可夹字，避免旧正则只认「做啥」连写
+        if (n.contains("能做点啥")
+                || n.contains("能干点啥")
+                || n.contains("能干什么")
+                || n.contains("能做啥")
+                || n.contains("能干啥")
+                || n.contains("可以干什么")
+                || n.contains("可以做啥")
+                || n.contains("你会什么")
+                || n.contains("你有什么能力")
+                || n.contains("能帮我什么")
+                || n.contains("有什么功能")
+                || n.contains("帮我省什么")
+                || n.equals("功能介绍")
+                || n.equals("帮助")
+                || n.matches(".*(你|您).{0,8}(能|会|可以).{0,8}(干|做).{0,6}(什么|啥).*")) {
+            return OrgGuideIntent.CAPABILITY;
+        }
+        if (n.contains("任务类型")
+                || n.contains("解释任务")
+                || n.contains("什么任务")
+                || n.contains("有哪些任务")) {
+            return OrgGuideIntent.TASK_TYPES;
+        }
+        if (n.contains("先忙什么")
+                || n.contains("从哪开始")
+                || n.contains("怎么开始")
+                || n.contains("无事可做")
+                || n.equals("下一步")
+                || n.matches(".*(我)?(现在|今天|接下来)?.{0,4}(要|该|应该)?(干|做)(什么|啥).*")) {
+            return OrgGuideIntent.NEXT_STEP;
+        }
+        return OrgGuideIntent.NONE;
+    }
+
+    private AgentResponse shortOrgLightReply(
+            AgentSkillContext ctx, LightTone tone, Consumer<AgentStreamEvent> sink) {
+        String reply =
+                tone == LightTone.ACK
+                        ? "收到。需要帮忙时随时叫我，或点下方按钮开始。"
+                        : "没太明白您的意思。您是想建档，还是去看看我的患者？可直接点下方按钮告诉我。";
+        return finishShortOrg(ctx, sink, "ORG_CHAT_LIGHT", reply, orgGuideActions());
+    }
+
+    private AgentResponse shortOrgGuideReply(
+            AgentSkillContext ctx, OrgGuideIntent guide, Consumer<AgentStreamEvent> sink) {
+        AgentChatCommand cmd = ctx.command();
+        if (guide == OrgGuideIntent.CAPABILITY) {
+            // 纯场景话术：不查库、不推送活动轨迹事件
+            String reply =
+                    """
+                    我是您的贴身健管助理，最擅长帮您做这三件事：
+                    1. 快速建档：直接把信息发我（如：张三 女 45岁 13800000000），我帮您建档。
+                    2. 写方案与话术：例如「帮我写一份血糖控制方案」或「写段回访话术」。
+                    3. 盯重点：提醒今天该回访谁、谁指标异常，或帮您总结某位患者的画像要点。
+                    点下方按钮开始，或直接把需求发给我试试。""";
+            return finishShortOrg(ctx, sink, "ORG_CHAT_CAPABILITY", reply, orgGuideActions());
+        }
+
+        if (guide == OrgGuideIntent.TASK_TYPES) {
+            StaffBizTools.MinePeek peek =
+                    staffBizTools.peekMineContext(cmd.tenantId(), cmd.orgId());
+            boolean idle = peek.openTaskCount() <= 0 && peek.overdueCount() <= 0;
+            String reply =
+                    """
+                    好，常见任务类型大致这几类：
+                    1. 随访跟进：按方案周期回访，了解近况和打卡，约下次沟通。
+                    2. 方案到期：服务周期快结束，提前联系续约或调整方案。
+                    3. 打卡提醒：客户连续没打卡，提醒并了解原因。
+                    4. 资料完善：档案信息缺失，补齐后再正常跟进。
+                    """
+                            + (idle
+                                    ? "您今天这几类都没有，优先名单是空的。可以直接问我「如果明天想重点跟进糖尿病患者，该怎么定任务」，或点下方先建个档试试。"
+                                    : "需要处理时，点左侧「立即处理」或下方按钮选人跟进。");
+            List<AgentAction> actions = new ArrayList<>();
+            actions.add(AgentAction.triggerCapability("新建患者", "CREATE_ARCHIVE", null));
+            if (!idle) {
+                actions.add(AgentAction.setCockpitTab("查看立即处理", "urgent"));
+            } else {
+                actions.add(AgentAction.setCockpitTab("查看我的患者", "mine"));
+            }
+            return finishShortOrg(ctx, sink, "ORG_CHAT_TASK_TYPES", reply, actions);
+        }
+
+        // NEXT_STEP：静默扫一眼「我的患者」，有人就点名（不刷工具轨迹）
+        StaffBizTools.MinePeek peek =
+                staffBizTools.peekMineContext(cmd.tenantId(), cmd.orgId());
+        String reply;
+        List<AgentAction> actions = new ArrayList<>();
+        var first = peek.firstMine();
+        if (peek.openTaskCount() > 0 || peek.overdueCount() > 0) {
+            reply = "今天还有待办"
+                    + (peek.overdueCount() > 0 ? "（含超期 " + peek.overdueCount() + "）" : "")
+                    + "。建议先点左侧「立即处理」，或点下方「查看我的患者」选人跟进；也可以新建一位患者。";
+            actions.add(AgentAction.setCockpitTab("查看立即处理", "urgent"));
+            actions.add(AgentAction.triggerCapability("新建患者", "CREATE_ARCHIVE", null));
+        } else if (first != null && StringUtils.hasText(first.getPeopleId())) {
+            String name =
+                    StringUtils.hasText(first.getDisplayName()) ? first.getDisplayName() : "这位患者";
+            reply = "今天暂时没有紧急待办。我看到您名下有「"
+                    + name
+                    + "」，可以点下方继续服务；也可以先建一位新患者。";
+            actions.add(AgentAction.focusPatient("为" + name + "健管服务", first.getPeopleId(), false));
+            actions.add(AgentAction.triggerCapability("新建患者", "CREATE_ARCHIVE", null));
+        } else {
+            reply = "今天暂时没有紧急待办。闲不下来的话，点下方「新建患者」接待第一位客户，或到左侧看看「我的患者」。";
+            actions = orgGuideActions();
+        }
+        return finishShortOrg(ctx, sink, "ORG_CHAT_NEXT_STEP", reply, actions);
+    }
+
+    /** 轻量短回：只推气泡正文，不推 thinking/tool，避免闲聊也刷「7步轨迹」。 */
+    private AgentResponse finishShortOrg(
+            AgentSkillContext ctx,
+            Consumer<AgentStreamEvent> sink,
+            String intent,
+            String reply,
+            List<AgentAction> actions) {
+        if (sink != null) {
+            new AnswerTokenStreamer(sink).finish(reply);
+        }
+        return new AgentResponse(
+                ctx.sessionId(),
+                AgentCapability.GENERAL_CHAT.name(),
+                intent,
+                reply,
+                actions,
+                List.of(),
+                null);
+    }
+
+    /** 意图不清时的可点引路（最多 2 个）。 */
+    private static List<AgentAction> orgGuideActions() {
+        List<AgentAction> out = new ArrayList<>();
+        out.add(AgentAction.triggerCapability("新建患者", "CREATE_ARCHIVE", null));
+        out.add(AgentAction.setCockpitTab("查看我的患者", "mine"));
+        return out;
+    }
+
+    private static String buildOrgSystemPrompt(String orgBriefText, boolean hasPatientButtons) {
+        // 有 FOCUS_PATIENT 动作才可以说「点下方姓名」；名单空时绝不能编「下方患者按钮」
+        boolean priorityEmpty = !StringUtils.hasText(orgBriefText) || orgBriefText.contains("优先名单为空");
+        String nextStepRule;
+        if (hasPatientButtons && !priorityEmpty) {
+            nextStepRule =
+                    "3. 需要针对某位患者深入处理时，可提示：点击本回复下方带姓名的按钮（例如「张三」）切入该患者，"
+                            + "或到左侧「我的患者」点选。不要使用含糊的「患者按钮」三字单独指代。";
+        } else if (hasPatientButtons) {
+            nextStepRule =
+                    "3. 本回复下方会挂姓名按钮，可提示点击下方姓名切入；左侧「立即处理」可能暂无待办，"
+                            + "勿写「去今日优先点选」造成左右矛盾。不要说含糊的「患者按钮」。";
+        } else {
+            nextStepRule =
+                    "3. 本回复下方可提示点「新建患者」等行动按钮；也可说到左侧「我的患者」选人。"
+                            + "严禁写「点击下方患者按钮」「回复下方的患者按钮」；"
+                            + "也不要写「到今日优先点选」——当前名单为空时左侧今日优先也是空的。";
+        }
+        String idleRule = priorityEmpty
+                ? "6. 今日待办/优先名单为空时：一两句说明暂无紧急事项即可，引导新建患者或查看我的患者；"
+                        + "禁止每次复读「待办0、超期0」并展开一、二、三长报告。"
+                : "6. 有待办时再按摘要给办理顺序；不要堆砌与用户问题无关的状态复读。";
         return """
                 你是 Healix 灵犀，健管师机构工作台（智能驾驶舱）的 AI 协作者。
                 当前处于机构级会话（未绑定具体患者）。
                 规则：
                 1. 只能依据下方「机构摘要」回答，禁止编造名单外的患者、人数或标签；摘要里有打卡排名、到期方案等统计时，直接引用其中的姓名、百分比和日期作答，摘要没有的统计如实说明暂不支持。
-                2. 协助安排今日优先、解释任务类型与处理建议；不做诊断或处方。
-                3. 需要针对某位患者深入处理时，请提示用户点击回复下方的患者按钮，或在左侧「今日优先」点选。
-                4. 回答简洁、结构化，使用中文。
+                2. 协助安排今日优先、解释任务类型与处理建议；不做诊断或处方。摘要写「优先名单为空」时，不要编造具体患者姓名或待办。
+                %s
+                4. 回答简洁、口语化，使用中文；默认短回，不要写成工作报告。
                 5. 禁止使用「红人」「红标」「依从红人」「红灯患者」等说法，也不要用同义改写暗示这类标签。
+                %s
                 %s
 
                 机构摘要：
                 %s
                 """
-                .formatted(PLAIN_TEXT_RULE, StringUtils.hasText(orgBriefText) ? orgBriefText : "（暂无数据）");
+                .formatted(
+                        nextStepRule,
+                        idleRule,
+                        ORG_PLAIN_TEXT_RULE,
+                        StringUtils.hasText(orgBriefText) ? orgBriefText : "（暂无数据）");
     }
 
     private static String buildSystemPrompt(
@@ -452,7 +719,7 @@ public class GeneralChatSkill implements AgentSkill {
 
     private static String fallbackReply(boolean orgSession) {
         if (orgSession) {
-            return "灵犀暂时不可用。请先查看左侧今日优先名单，或点击「刷新今日建议」。";
+            return "灵犀暂时不可用。可点下方卡片开始，或点击「刷新今日建议」后重试。";
         }
         return "灵犀暂时不可用（LLM 未启用或调用失败）。您可以尝试使用「制定管理方案」快捷能力。";
     }

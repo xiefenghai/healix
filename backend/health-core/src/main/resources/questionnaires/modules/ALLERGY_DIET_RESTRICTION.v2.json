@@ -10,8 +10,8 @@
       "level": "FIRST_VISIT"
     },
     {
-      "field": "allergy.food",
-      "label": "对哪些食物过敏或不耐受？",
+      "field": "allergy.foodTags",
+      "label": "对哪些食物过敏或不耐受？（点选常见项）",
       "level": "FIRST_VISIT",
       "showIf": {
         "field": "allergy.status",
@@ -19,9 +19,27 @@
       }
     },
     {
-      "field": "allergy.drug",
-      "label": "药物过敏",
+      "field": "allergy.drugTags",
+      "label": "对哪些药物过敏？（点选常见项）",
       "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "allergy.status",
+        "eq": "HAS"
+      }
+    },
+    {
+      "field": "allergy.food",
+      "label": "食物过敏明细（健管师补录）",
+      "level": "STAFF",
+      "showIf": {
+        "field": "allergy.status",
+        "eq": "HAS"
+      }
+    },
+    {
+      "field": "allergy.drug",
+      "label": "药物过敏明细（健管师补录）",
+      "level": "STAFF",
       "showIf": {
         "field": "allergy.status",
         "eq": "HAS"

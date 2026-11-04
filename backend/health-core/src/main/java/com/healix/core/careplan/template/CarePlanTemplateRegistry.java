@@ -73,7 +73,7 @@ public class CarePlanTemplateRegistry {
         List<String> meds = ctx == null ? List.of() : ctx.activeMedications();
 
         ObjectNode exercise = buildExercise(templateKey, hypo, flags);
-        ObjectNode diet = buildDiet(templateKey, allergens, meds, flags);
+        ObjectNode diet = buildDiet(templateKey, allergens, meds, flags, ctx);
         ObjectNode execution = buildExecution(templateKey, hypo, walkDurationMin(templateKey, hypo), ctx, flags);
 
         ObjectNode snapshot = ctx != null && ctx.snapshot() != null
@@ -193,7 +193,11 @@ public class CarePlanTemplateRegistry {
     }
 
     private ObjectNode buildDiet(
-            CarePlanTemplateKeyEnum key, List<FoodAllergen> allergens, List<String> meds, Flags flags) {
+            CarePlanTemplateKeyEnum key,
+            List<FoodAllergen> allergens,
+            List<String> meds,
+            Flags flags,
+            CarePlanContext ctx) {
         List<FoodAllergen> all = allergens == null ? List.of() : allergens;
         List<FoodAllergen> strict = all.stream().filter(a -> !a.intolerance()).toList();
         ObjectNode diet = JsonUtils.emptyObject();
@@ -253,24 +257,32 @@ public class CarePlanTemplateRegistry {
         breakfast.put("rationale", "燕麦替代精制主食，搭配优质蛋白与蔬菜");
         ObjectNode lunch = sample.putObject("lunch");
         lunch.put("text", "杂粮饭 + 瘦肉 + 大量蔬菜");
-        lunch.put("swapHint", "杂粮饭可换成荞麦面");
+        lunch.put(
+                "swapHint",
+                !strict.isEmpty()
+                        ? "过敏食材请换成：" + pick(strict, "杂粮饭+瘦肉", "荞麦面", "杂粮饭")
+                        : "杂粮饭可换成荞麦面");
         lunch.put("rationale", "午餐保证蔬菜量与杂粮主食");
         ObjectNode dinner = sample.putObject("dinner");
         dinner.put("text", "清淡主食 + " + pick(strict, "鱼/豆制品", "鱼", "豆制品", "去皮禽肉") + " + 蔬菜");
+        if (!strict.isEmpty()) {
+            dinner.put("swapHint", "过敏食材请换成：" + pick(strict, "豆腐/瘦肉", "豆制品", "去皮禽肉", "绿叶菜"));
+        }
         dinner.put("rationale", "晚餐清淡、控制油盐");
         sample.put("snacks", pick(strict, "原味坚果少量或无糖酸奶", "无糖酸奶", "原味坚果少量", "低糖水果（如苹果、柚子）"));
         List<String> noteParts = new ArrayList<>();
         if (meds != null && !meds.isEmpty()) {
-            noteParts.add("在用药物：" + String.join("、", meds.stream().limit(8).toList()) + "；饮食需结合药物说明。");
+            noteParts.add("在用药物：" + String.join("、", meds.stream().limit(8).toList()) + "；请按药盒时机（饭前/饭后）配合进餐，勿自行停药。");
         }
         if (!strict.isEmpty()) {
             noteParts.add("食物过敏：" + String.join("、", strict.stream().map(FoodAllergen::name).toList())
-                    + "，外出就餐注意询问菜品成分。");
+                    + "，示例餐已给平替；外出就餐注意询问菜品成分。");
         }
         List<String> intolerances = all.stream().filter(FoodAllergen::intolerance).map(FoodAllergen::name).toList();
         if (!intolerances.isEmpty()) {
             noteParts.add("不耐受：" + String.join("、", intolerances) + "，注意食用量。");
         }
+        appendLifestyleDietNotes(noteParts, ctx);
         diet.put("notes", String.join("", noteParts));
         CarePlanAllergenGuard.enforce(diet, all);
         CarePlanAllergenGuard.sanitize(diet, all);
@@ -286,6 +298,48 @@ public class CarePlanTemplateRegistry {
         return options[options.length - 1];
     }
 
+    /** 作息 / 做饭人 → 模板兜底 notes（LLM 生成时由 Skill 再强化）。 */
+    private static void appendLifestyleDietNotes(List<String> noteParts, CarePlanContext ctx) {
+        if (ctx == null || ctx.snapshot() == null || noteParts == null) {
+            return;
+        }
+        JsonNode lifestyle = ctx.snapshot().get("lifestyleProfile");
+        if (lifestyle != null && lifestyle.isObject()) {
+            String hint = lifestyle.path("scheduleHint").asText("");
+            String label = lifestyle.path("workScheduleLabel").asText("");
+            if (StringUtils.hasText(hint)) {
+                noteParts.add(StringUtils.hasText(label) ? "作息（" + label + "）：" + hint + "。" : hint + "。");
+            }
+        }
+        String cookCode = ctx.snapshot().path("basicArchive").path("diet").path("cook").asText("").trim();
+        String cookLabel = ctx.snapshot().path("basicArchive").path("diet").path("cookLabel").asText("").trim();
+        String cookUpper = cookCode.toUpperCase(Locale.ROOT);
+        if ("FAMILY".equals(cookUpper) || cookLabel.contains("家人")) {
+            noteParts.add("请家人少放油盐、主食尽量换成杂粮，外食时帮忙盯忌口。");
+        } else if ("EAT_OUT".equals(cookUpper) || cookLabel.contains("外卖") || cookLabel.contains("外食")) {
+            noteParts.add("外卖/外食为主：点菜少油少糖、酱料另加，优先蒸煮烤。");
+        } else if ("CANTEEN".equals(cookUpper) || cookLabel.contains("食堂")) {
+            noteParts.add("食堂就餐：少选红烧油炸，汤汁少喝，主食换杂粮若有。");
+        }
+        JsonNode details = ctx.snapshot().get("activeMedicationDetails");
+        if (details != null && details.isArray()) {
+            List<String> tips = new ArrayList<>();
+            for (JsonNode d : details) {
+                if (d == null || !d.isObject()) {
+                    continue;
+                }
+                String name = d.path("name").asText("");
+                String timing = d.path("timingNote").asText("");
+                if (StringUtils.hasText(name) && StringUtils.hasText(timing)) {
+                    tips.add(name + "（" + timing + "）");
+                }
+            }
+            if (!tips.isEmpty()) {
+                noteParts.add("药-餐时机：" + String.join("、", tips.stream().limit(4).toList()) + "。");
+            }
+        }
+    }
+
     private ObjectNode buildExecution(
             CarePlanTemplateKeyEnum key,
             boolean hypoRisk,
@@ -295,12 +349,14 @@ public class CarePlanTemplateRegistry {
         ObjectNode exec = JsonUtils.emptyObject();
         exec.put("horizonDays", 14);
         ArrayNode tasks = exec.putArray("tasks");
+        String walkSlot = preferExerciseSlot(ctx, "AFTER_DINNER");
+        String walkFreq = "WEEKEND".equalsIgnoreCase(firstAvailableSlot(ctx)) ? "TIW" : "QD";
         ObjectNode walk = task(
                 "EX_WALK_30",
                 (hypoRisk ? "短时步行 " : "步行 ") + walkMin + " 分钟",
                 "EXERCISE",
-                "QD",
-                "AFTER_DINNER",
+                walkFreq,
+                walkSlot,
                 "WALKING",
                 "落实运动方案中的步行目标");
         ObjectNode payload = walk.putObject("payload");
@@ -376,6 +432,41 @@ public class CarePlanTemplateRegistry {
         }
         exec.put("rationale", "执行清单含基础生活任务，并按档案病种标签叠加监测");
         return exec;
+    }
+
+    private static String firstAvailableSlot(CarePlanContext ctx) {
+        if (ctx == null || ctx.snapshot() == null) {
+            return null;
+        }
+        JsonNode slots = ctx.snapshot().path("basicArchive").path("exercise").path("availableSlots");
+        if (slots != null && slots.isArray() && !slots.isEmpty()) {
+            JsonNode first = slots.get(0);
+            if (first != null && first.isTextual()) {
+                return first.asText();
+            }
+            if (first != null && first.isObject()) {
+                String code = first.path("code").asText("");
+                if (StringUtils.hasText(code)) {
+                    return code;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String preferExerciseSlot(CarePlanContext ctx, String fallback) {
+        String slot = firstAvailableSlot(ctx);
+        if (!StringUtils.hasText(slot)) {
+            return fallback;
+        }
+        return switch (slot.trim().toUpperCase(Locale.ROOT)) {
+            case "MORNING" -> "MORNING";
+            case "NOON" -> "AFTERNOON";
+            case "EVENING" -> "EVENING";
+            case "NIGHT" -> "AFTER_DINNER";
+            case "WEEKEND" -> "AFTERNOON";
+            default -> fallback;
+        };
     }
 
     private static Double weightKg(CarePlanContext ctx) {

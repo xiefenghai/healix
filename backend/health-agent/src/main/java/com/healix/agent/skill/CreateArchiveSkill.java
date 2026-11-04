@@ -15,6 +15,8 @@ import com.healix.core.care.mapper.CareTeamMapper;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.service.OrgWorkspaceService;
 import com.healix.core.workspace.service.OrgWorkspaceService.DuplicateCandidate;
+import java.time.LocalDate;
+import java.time.Period;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,7 +29,7 @@ import org.springframework.util.StringUtils;
 /**
  * 对话建档：抽四要素 → 查重 → 无冲突直接建档并切焦点；需确认时挂 CALL_API。
  *
- * <p>已在本机构时：告知健管组 / 主责健管师，并询问是否改挂到当前员工名下。
+ * <p>已在本机构时：顺势调出档案继续服务；他人主责时柔和提示并可改挂/协同查看。
  */
 @Component
 @RequiredArgsConstructor
@@ -49,14 +51,18 @@ public class CreateArchiveSkill implements AgentSkill {
     @Override
     public AgentResponse execute(AgentSkillContext ctx) {
         AgentChatCommand cmd = ctx.command();
-        CreateArchiveDraft draft = mergeFromHistory(ctx.history(), CreateArchiveParser.parse(cmd.message()));
+        CreateArchiveDraft current = CreateArchiveParser.parse(cmd.message());
+        // 芯片「建档」/「需要哪些信息」等开场话：本轮无身份要素 → 不吞历史里旧患者，避免误报「已建过档」
+        CreateArchiveDraft draft = isFreshArchiveStart(cmd.message(), current)
+                ? current
+                : mergeFromHistory(ctx.history(), current);
 
         if (draft.noMobile() && !draft.hasMobile()) {
             return needInfo(
                     ctx,
                     draft,
                     "可以标「暂无本人号」，但还需要联系人手机号和归属（配偶/子女等）。"
-                            + "本版对话建档请先给本人手机号，例如：建档 李敏 女 1990-05-01 13800138000");
+                            + "本版对话建档请先给本人手机号，例如：建档 张三 女 1990-05-01 13800138000");
         }
         if (!draft.isComplete()) {
             return needInfo(ctx, draft, missingPrompt(draft));
@@ -98,62 +104,105 @@ public class CreateArchiveSkill implements AgentSkill {
     }
 
     /**
-     * 患者已在本机构：展示当前服务归属，并询问是否改挂到当前健管师名下（不自动改组）。
+     * 患者已在本机构：顺势继续服务，不说「无需重复创建」。
+     * 自己主责 → 直接引导首诊；他人主责 → 柔和说明并可改挂/协同查看。
      */
     private AgentResponse alreadyExistsResponse(AgentSkillContext ctx, String peopleId) {
         AgentChatCommand cmd = ctx.command();
         OrgPatientListItem item = orgWorkspaceService.getOrgPatient(cmd.orgId(), peopleId);
         String name = StringUtils.hasText(item.getDisplayName()) ? item.getDisplayName() : "该患者";
-        String teamName = StringUtils.hasText(item.getCareTeamName()) ? item.getCareTeamName() : "尚未加入健管组";
-        String managerName = StringUtils.hasText(item.getPrimaryCareManagerName())
+        boolean hasTeam = StringUtils.hasText(item.getCareTeamId());
+        String teamName = hasTeam && StringUtils.hasText(item.getCareTeamName())
+                ? item.getCareTeamName()
+                : null;
+        // 未入组时不展示残留 assignment 上的主责名，避免「未入组却服务在你名下」
+        String managerName = hasTeam && StringUtils.hasText(item.getPrimaryCareManagerName())
                 ? item.getPrimaryCareManagerName()
-                : "暂无主责健管师";
+                : null;
 
         String staffId = requireStaffId();
-        boolean alreadyMine = StringUtils.hasText(item.getPrimaryCareManagerStaffId())
+        boolean alreadyMine = hasTeam
+                && StringUtils.hasText(item.getPrimaryCareManagerStaffId())
                 && item.getPrimaryCareManagerStaffId().equals(staffId);
 
+        Integer age = ageYears(item.getBirthday());
         StringBuilder reply = new StringBuilder();
-        reply.append("「")
-                .append(name)
-                .append("」已经建过档，无需重复新建。\n")
-                .append("当前健管组：")
-                .append(teamName)
-                .append("\n")
-                .append("主责健管师：")
-                .append(managerName)
-                .append("。");
+        reply.append("「").append(name).append("」已在档案库中");
+        if (age != null) {
+            reply.append("（").append(age).append("岁）");
+        }
+        reply.append("。");
 
         List<AgentAction> actions = new ArrayList<>();
-        actions.add(AgentAction.focusPatient("打开该患者", peopleId, false));
 
         if (alreadyMine) {
-            reply.append("\n服务已在你名下，可直接打开患者继续首诊评估或跟进。");
-            actions.add(AgentAction.openSheet("去做首诊评估", "intake", peopleId));
+            reply.append("服务已在你名下，已为你准备好继续跟进。可直接开始首诊，或切入会话。");
+            actions.add(AgentAction.openSheet("开始首诊", "intake", peopleId));
+            actions.add(AgentAction.focusPatient("为" + name + "健管服务", peopleId, false));
         } else {
             List<CareTeam> myTeams = careTeamMapper.listByPrimaryCareManager(cmd.orgId(), staffId);
-            if (myTeams == null || myTeams.isEmpty()) {
-                reply.append("\n你名下暂无主责健管组。可先打开患者手动分配，或到「健管组」创建以你为主责的小组后再改挂。");
-                actions.add(AgentAction.navigate("去分配健管组", "join-care-team", peopleId));
+            List<CareTeam> candidates = assignableTeams(myTeams, item.getCareTeamId());
+            boolean alreadyOnMyTeam = hasTeam
+                    && StringUtils.hasText(item.getCareTeamId())
+                    && myTeams != null
+                    && myTeams.stream()
+                            .anyMatch(t -> t != null && item.getCareTeamId().equals(t.getId()));
+
+            if (alreadyOnMyTeam) {
+                reply.append("你已在相关健管组内，可直接开始首诊或切入会话。");
+                actions.add(AgentAction.openSheet("开始首诊", "intake", peopleId));
+                actions.add(AgentAction.focusPatient("为" + name + "健管服务", peopleId, false));
+            } else if (candidates.isEmpty()) {
+                if (hasTeam) {
+                    reply.append("当前由健管组「")
+                            .append(teamName != null ? teamName : "未命名组")
+                            .append("」跟进");
+                    if (StringUtils.hasText(managerName)) {
+                        reply.append("（主责：").append(managerName).append("）");
+                    }
+                    reply.append("。你名下暂无其他主责组可改挂，可先协同查看，或先创建自己的健管组后再接手。");
+                } else {
+                    reply.append("尚未加入健管组。请先创建以你为主责的健管组，再把患者分配进来。");
+                }
+                actions.add(AgentAction.navigate("去创建/分配健管组", "join-care-team", peopleId));
+                actions.add(AgentAction.focusPatient("先协同查看", peopleId, false));
+            } else if (candidates.size() == 1) {
+                CareTeam team = candidates.get(0);
+                String teamLabel = nullToEmpty(team.getName());
+                if (hasTeam) {
+                    reply.append("当前由健管组「")
+                            .append(teamName != null ? teamName : "未命名组")
+                            .append("」跟进");
+                    if (StringUtils.hasText(managerName)) {
+                        reply.append("（主责：").append(managerName).append("）");
+                    }
+                    reply.append("。如需由你接手，可改挂到「")
+                            .append(teamLabel)
+                            .append("」；也可先协同查看。");
+                    actions.add(AgentAction.changeCareTeam("接手并改挂到" + teamLabel, peopleId, team.getId()));
+                } else {
+                    reply.append("尚未入组。可一键分配到你的健管组「")
+                            .append(teamLabel)
+                            .append("」，再做首诊；也可先协同查看。");
+                    actions.add(AgentAction.changeCareTeam("分配到" + teamLabel, peopleId, team.getId()));
+                }
+                actions.add(AgentAction.focusPatient("先协同查看", peopleId, false));
             } else {
-                reply.append("\n如需由你继续服务，可确认将患者改挂到你主责的健管组；不改组也可先打开患者查看。");
-                for (CareTeam team : myTeams) {
-                    if (team == null || !StringUtils.hasText(team.getId())) {
-                        continue;
+                // 多组：只给一个入口，进选组面板，避免芯片爆炸
+                if (hasTeam) {
+                    reply.append("当前由健管组「")
+                            .append(teamName != null ? teamName : "未命名组")
+                            .append("」跟进");
+                    if (StringUtils.hasText(managerName)) {
+                        reply.append("（主责：").append(managerName).append("）");
                     }
-                    // 已在该组则不必再挂「改到本组」
-                    if (team.getId().equals(item.getCareTeamId())) {
-                        continue;
-                    }
-                    String label = myTeams.size() == 1
-                            ? "确认改到我名下（" + nullToEmpty(team.getName()) + "）"
-                            : "改到「" + nullToEmpty(team.getName()) + "」";
-                    actions.add(AgentAction.changeCareTeam(label, peopleId, team.getId()));
+                    reply.append("。如需由你接手，请选择要改挂的健管组；也可先协同查看。");
+                    actions.add(AgentAction.navigate("接手：改挂健管组", "join-care-team", peopleId));
+                } else {
+                    reply.append("尚未入组。请选择要挂的健管组，入组后再做首诊；也可先协同查看。");
+                    actions.add(AgentAction.navigate("分配健管组", "join-care-team", peopleId));
                 }
-                if (actions.stream().noneMatch(a -> "CHANGE_CARE_TEAM".equals(a.path()))) {
-                    // 人已在我的某一组但 primary 字段不一致等边缘情况
-                    reply.append("\n患者已在你相关健管组内，可直接打开继续服务。");
-                }
+                actions.add(AgentAction.focusPatient("先协同查看", peopleId, false));
             }
         }
 
@@ -167,13 +216,40 @@ public class CreateArchiveSkill implements AgentSkill {
                 null);
     }
 
+    private static Integer ageYears(LocalDate birthday) {
+        if (birthday == null) {
+            return null;
+        }
+        int years = Period.between(birthday, LocalDate.now()).getYears();
+        return years >= 0 && years < 150 ? years : null;
+    }
+
     private static String nullToEmpty(String s) {
         return StringUtils.hasText(s) ? s.trim() : "未命名组";
+    }
+
+    /** 可改挂/分配的主责组：排除患者已在的组。 */
+    private static List<CareTeam> assignableTeams(List<CareTeam> myTeams, String currentCareTeamId) {
+        if (myTeams == null || myTeams.isEmpty()) {
+            return List.of();
+        }
+        List<CareTeam> out = new ArrayList<>();
+        for (CareTeam team : myTeams) {
+            if (team == null || !StringUtils.hasText(team.getId())) {
+                continue;
+            }
+            if (StringUtils.hasText(currentCareTeamId) && currentCareTeamId.equals(team.getId())) {
+                continue;
+            }
+            out.add(team);
+        }
+        return out;
     }
 
     private AgentResponse doCreate(AgentSkillContext ctx, CreateArchiveDraft draft, String attachPeopleId) {
         AgentChatCommand cmd = ctx.command();
         String accountId = requireAccountId();
+        String staffId = requireStaffId();
         OrgPatientListItem item = orgWorkspaceService.createArchive(
                 cmd.orgId(),
                 draft.name().trim(),
@@ -188,19 +264,38 @@ public class CreateArchiveSkill implements AgentSkill {
                 accountId);
         String peopleId = item.getPeopleId();
         String name = StringUtils.hasText(item.getDisplayName()) ? item.getDisplayName() : draft.name();
+        if (!StringUtils.hasText(name)) {
+            name = "该患者";
+        }
         String verb = attachPeopleId != null ? "已关联已有档案并加入本机构" : "已建档";
         List<AgentAction> actions = new ArrayList<>();
-        actions.add(AgentAction.focusPatient("打开该患者", peopleId, false));
+        AgentAction servePatient = AgentAction.focusPatient("为" + name + "健管服务", peopleId, false);
         String reply;
         // 新建档默认未入组：先分配健管组，再首诊（「我的患者」/待办归属都靠组）
         if (!StringUtils.hasText(item.getCareTeamId())) {
-            reply = verb + "：「" + name + "」。下一步请先把患者分配到健管组（建议挂到你主责的组），"
-                    + "再去做首诊评估与制定方案。";
-            actions.add(AgentAction.navigate("分配健管组", "join-care-team", peopleId));
+            List<CareTeam> candidates =
+                    assignableTeams(careTeamMapper.listByPrimaryCareManager(cmd.orgId(), staffId), null);
+            if (candidates.size() == 1) {
+                CareTeam team = candidates.get(0);
+                String teamLabel = nullToEmpty(team.getName());
+                reply = verb + "：「" + name + "」。可一键分配到你的健管组「" + teamLabel + "」，"
+                        + "再去做首诊评估与制定方案。";
+                actions.add(AgentAction.changeCareTeam("分配到" + teamLabel, peopleId, team.getId()));
+            } else if (candidates.isEmpty()) {
+                reply = verb + "：「" + name + "」。你名下暂无主责健管组，请先创建后再分配，"
+                        + "再去做首诊评估与制定方案。";
+                actions.add(AgentAction.navigate("去创建/分配健管组", "join-care-team", peopleId));
+            } else {
+                reply = verb + "：「" + name + "」。下一步请点「分配健管组」选择目标组，"
+                        + "再去做首诊评估与制定方案。";
+                actions.add(AgentAction.navigate("分配健管组", "join-care-team", peopleId));
+            }
+            actions.add(servePatient);
             actions.add(AgentAction.openSheet("稍后再做首诊", "intake", peopleId));
         } else {
             reply = verb + "：「" + name + "」。建议下一步：完成首诊评估，再制定管理方案。";
-            actions.add(AgentAction.openSheet("去做首诊评估", "intake", peopleId));
+            actions.add(AgentAction.openSheet("开始首诊", "intake", peopleId));
+            actions.add(servePatient);
         }
         return new AgentResponse(
                 ctx.sessionId(),
@@ -214,7 +309,8 @@ public class CreateArchiveSkill implements AgentSkill {
 
     private AgentResponse confirmDuplicates(
             AgentSkillContext ctx, CreateArchiveDraft draft, List<DuplicateCandidate> needConfirm) {
-        StringBuilder sb = new StringBuilder("发现可能的重复档案，请确认：\n");
+        StringBuilder sb = new StringBuilder();
+        sb.append("这个本人手机号已有档案，但姓名/生日与你刚填的不一致，请确认：\n");
         List<AgentAction> actions = new ArrayList<>();
         int i = 1;
         for (DuplicateCandidate d : needConfirm) {
@@ -227,14 +323,25 @@ public class CreateArchiveSkill implements AgentSkill {
                     .append(d.inCurrentOrg() ? "（已在本机构）" : "")
                     .append('\n');
             if (d.inCurrentOrg()) {
-                actions.add(AgentAction.focusPatient("打开「" + d.displayName() + "」", d.peopleId(), false));
+                String dupName = StringUtils.hasText(d.displayName()) ? d.displayName() : "该患者";
+                actions.add(AgentAction.focusPatient("就是" + dupName + "，去服务", d.peopleId(), false));
             } else {
                 actions.add(AgentAction.createArchive(
                         "就是「" + d.displayName() + "」，挂接到本机构", archivePayload(draft, d.peopleId())));
             }
         }
-        actions.add(AgentAction.createArchive("不是同一人，新建档案", archivePayload(draft, null)));
-        sb.append("请点下方按钮确认。");
+        // 本人手机号租户内唯一：同号不能再建一份，勿挂会 409 的「不是同一人，新建」
+        String exampleMobile = "13900139000";
+        sb.append("本人手机号在本租户只能绑定一份档案。\n");
+        sb.append("· 若就是上方此人：点下方按钮继续。\n");
+        sb.append("· 若不是同一人：请换一个本人手机号后重新发送，例如：\n");
+        sb.append("建档 ")
+                .append(draft.name().trim())
+                .append(genderLabel(draft.gender()).replace(" · ", " "))
+                .append(' ')
+                .append(draft.birthday())
+                .append(' ')
+                .append(exampleMobile);
         return new AgentResponse(
                 ctx.sessionId(),
                 AgentCapability.CREATE_ARCHIVE.name(),
@@ -290,7 +397,7 @@ public class CreateArchiveSkill implements AgentSkill {
             miss.add("本人手机号");
         }
         return "建档还需要：" + String.join("、", miss)
-                + "。可直接回复，例如：李敏 女 1990-05-01 13800138000";
+                + "。可直接回复，例如：张三 女 1990-05-01 13800138000";
     }
 
     private static CreateArchiveDraft mergeFromHistory(List<ChatTurn> history, CreateArchiveDraft current) {
@@ -306,6 +413,34 @@ public class CreateArchiveSkill implements AgentSkill {
             }
         }
         return CreateArchiveParser.merge(merged, current);
+    }
+
+    /**
+     * 开场建档（无姓名/手机/生日等）：视为新开一档，不合并历史。
+     * 多轮补全（本轮带了任一要素）仍走 {@link #mergeFromHistory}。
+     */
+    static boolean isFreshArchiveStart(String message, CreateArchiveDraft current) {
+        if (current != null
+                && (current.hasName()
+                        || current.hasMobile()
+                        || current.hasBirthday()
+                        || current.hasGender())) {
+            return false;
+        }
+        if (!StringUtils.hasText(message)) {
+            return false;
+        }
+        String msg = message.trim();
+        if (msg.contains("需要哪些信息")
+                || msg.contains("需要什么信息")
+                || msg.contains("怎么建档")
+                || msg.contains("重新建档")
+                || msg.contains("再建一个")
+                || msg.contains("再建一个档")) {
+            return true;
+        }
+        // 「帮我建档」「建档」等口令且本轮抽不到身份字段
+        return matchesMessage(msg);
     }
 
     private static String requireAccountId() {

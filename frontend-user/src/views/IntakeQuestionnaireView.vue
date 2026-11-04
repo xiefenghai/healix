@@ -25,6 +25,13 @@ import {
   type IntakeModule,
   type IntakeView,
 } from '../shared/intake-c'
+import {
+  bmiBand,
+  calcBmi,
+  healthyWeightRangeKg,
+  parseMetricInput,
+  targetWeightBmiHint,
+} from '../shared/metric-ranges'
 
 type Phase = 'intro' | 'fill' | 'confirm' | 'done'
 
@@ -80,13 +87,46 @@ function getAns(field: string) {
   return answers[field]
 }
 
+function numOf(field: string): number | null {
+  return parseMetricInput(String(answers[field] ?? ''))
+}
+
+const liveBmi = computed(() => calcBmi(numOf('metric.HEIGHT'), numOf('metric.WEIGHT')))
+const liveBmiBand = computed(() => bmiBand(liveBmi.value))
+const healthyWeight = computed(() => healthyWeightRangeKg(numOf('metric.HEIGHT')))
+const targetBmiTip = computed(() =>
+  targetWeightBmiHint(numOf('metric.HEIGHT'), numOf('goal.targetWeightKg')),
+)
+
+/** 滑块用易拖区间（精确值仍靠输入框；校验仍走字段 min/max） */
+function sliderValue(item: IntakeItem, lo: number, hi: number, fallback: number) {
+  const n = numOf(item.field)
+  if (n == null) return fallback
+  return Math.min(hi, Math.max(lo, n))
+}
+function onSlider(item: IntakeItem, v: number) {
+  onNumber(item, String(v))
+}
+
+const BODY_SLIDER_DEFAULTS: Record<string, number> = {
+  'metric.HEIGHT': 165,
+  'metric.WEIGHT': 65,
+  'goal.targetWeightKg': 60,
+}
+
+function isBodyMetricField(field: string) {
+  return field === 'metric.HEIGHT' || field === 'metric.WEIGHT' || field === 'goal.targetWeightKg'
+}
+
 const visibleModules = computed(() => {
   const mods = view.value?.modules || []
   return mods
     .filter((m) => matchShowIf(m.showIf, getAns))
     .map((m) => ({
       ...m,
-      items: (m.items || []).filter((it) => matchShowIf(it.showIf, getAns) && shouldAskOnC(it, answers)),
+      items: (m.items || []).filter(
+        (it) => matchShowIf(it.showIf, getAns) && shouldAskOnC(it, answers, depth.value),
+      ),
     }))
     .filter((m) => m.items.length)
 })
@@ -658,10 +698,15 @@ async function agreeAndSubmit() {
 
 onMounted(async () => {
   const q = String(route.query.depth || '').toUpperCase()
-  const initial: IntakeDepth =
-    q === 'QUICK' || q === 'FULL' || q === 'MINIMAL' ? q : 'MINIMAL'
+  // Magic Link 固定极简档，避免长问卷劝退
+  // 登录 C 端默认「标准」精简档；Magic Link 仍固定极简
+  const initial: IntakeDepth = isLinkSession.value
+    ? 'MINIMAL'
+    : q === 'QUICK' || q === 'FULL' || q === 'MINIMAL'
+      ? q
+      : 'QUICK'
   await load(initial, false)
-  // 链接会话：少一次选择摩擦，直接进填写（深度已默认极简）
+  // 链接会话：少一次选择摩擦，直接进填写
   if (isLinkSession.value && steps.value.length) {
     phase.value = 'fill'
   } else {
@@ -826,8 +871,36 @@ onBeforeUnmount(() => {
                 <span class="unit">{{ it.unit }}</span>
               </template>
             </van-field>
+            <van-slider
+              v-if="isBodyMetricField(it.field)"
+              class="body-slider"
+              :model-value="
+                sliderValue(
+                  it,
+                  it.field === 'metric.HEIGHT' ? 140 : 40,
+                  it.field === 'metric.HEIGHT' ? 200 : 150,
+                  BODY_SLIDER_DEFAULTS[it.field] ?? 60,
+                )
+              "
+              :min="it.field === 'metric.HEIGHT' ? 140 : 40"
+              :max="it.field === 'metric.HEIGHT' ? 200 : 150"
+              :step="1"
+              active-color="var(--hx-teal-600)"
+              @update:model-value="(v: number) => onSlider(it, v)"
+            />
           </label>
         </div>
+        <div v-if="liveBmi != null" class="bmi-chip" :class="liveBmiBand?.tone || 'ok'">
+          <strong>BMI {{ liveBmi }}</strong>
+          <span v-if="liveBmiBand">{{ liveBmiBand.label }}</span>
+          <span class="bmi-ref">参考 18.5–23.9</span>
+        </div>
+        <p v-else-if="healthyWeight" class="bmi-hint">
+          身高对应健康体重约 {{ healthyWeight.min }}–{{ healthyWeight.max }} kg
+        </p>
+        <p v-if="liveBmi != null && liveBmi < 18.5" class="bmi-hint warn">
+          偏瘦：建议优先营养评估，不宜设激进减重目标
+        </p>
       </template>
 
       <!-- 单题 -->
@@ -869,22 +942,54 @@ onBeforeUnmount(() => {
           }}
         </button>
 
-        <van-field
-          v-else-if="currentSingle.item.type === 'NUMBER'"
-          :model-value="answers[currentSingle.field] == null ? '' : String(answers[currentSingle.field])"
-          type="number"
-          :placeholder="
-            currentSingle.item.min != null && currentSingle.item.max != null
-              ? `${currentSingle.item.min}–${currentSingle.item.max}`
-              : '请输入'
-          "
-          class="big-input"
-          @update:model-value="(v: string) => currentSingle && onNumber(currentSingle.item, v)"
-        >
-          <template v-if="currentSingle.item.unit" #right-icon>
-            <span class="unit">{{ currentSingle.item.unit }}</span>
-          </template>
-        </van-field>
+        <template v-else-if="currentSingle.item.type === 'NUMBER'">
+          <van-field
+            :model-value="answers[currentSingle.field] == null ? '' : String(answers[currentSingle.field])"
+            type="number"
+            :placeholder="
+              currentSingle.item.min != null && currentSingle.item.max != null
+                ? `${currentSingle.item.min}–${currentSingle.item.max}`
+                : '请输入'
+            "
+            class="big-input"
+            @update:model-value="(v: string) => currentSingle && onNumber(currentSingle.item, v)"
+          >
+            <template v-if="currentSingle.item.unit" #right-icon>
+              <span class="unit">{{ currentSingle.item.unit }}</span>
+            </template>
+          </van-field>
+          <van-slider
+            v-if="isBodyMetricField(currentSingle.field)"
+            class="body-slider solo"
+            :model-value="
+              sliderValue(
+                currentSingle.item,
+                currentSingle.field === 'metric.HEIGHT' ? 140 : 40,
+                currentSingle.field === 'metric.HEIGHT' ? 200 : 150,
+                BODY_SLIDER_DEFAULTS[currentSingle.field] ??
+                  (healthyWeight ? Math.round((healthyWeight.min + healthyWeight.max) / 2) : 60),
+              )
+            "
+            :min="currentSingle.field === 'metric.HEIGHT' ? 140 : 40"
+            :max="currentSingle.field === 'metric.HEIGHT' ? 200 : 150"
+            :step="1"
+            active-color="var(--hx-teal-600)"
+            @update:model-value="(v: number) => currentSingle && onSlider(currentSingle.item, v)"
+          />
+          <p
+            v-if="currentSingle.field === 'goal.targetWeightKg' && healthyWeight"
+            class="bmi-hint"
+          >
+            按当前身高，健康体重约 {{ healthyWeight.min }}–{{ healthyWeight.max }} kg
+          </p>
+          <div
+            v-if="currentSingle.field === 'goal.targetWeightKg' && targetBmiTip"
+            class="bmi-chip"
+            :class="targetBmiTip.tone"
+          >
+            {{ targetBmiTip.text }}
+          </div>
+        </template>
 
         <button
           v-else-if="currentSingle.item.type === 'DATE'"
@@ -962,10 +1067,18 @@ onBeforeUnmount(() => {
       <h2>{{ C_INTAKE_TITLE }}已提交</h2>
       <p>
         健康管理师会据此跟进。
-        <template v-if="depth === 'MINIMAL'">若还方便，补一份「标准」评估，方案会更贴合你。</template>
+        <template v-if="depth === 'MINIMAL' && !isLinkSession">
+          若还方便，补一份「标准」评估，方案会更贴合你。
+        </template>
         <template v-else>感谢你的耐心填写。</template>
       </p>
-      <button v-if="depth === 'MINIMAL'" type="button" class="btn-primary" @click="continueQuick">
+      <!-- Magic Link 会话固定极简档，不引导加长问卷 -->
+      <button
+        v-if="depth === 'MINIMAL' && !isLinkSession"
+        type="button"
+        class="btn-primary"
+        @click="continueQuick"
+      >
         再花约 5 分钟补全
       </button>
       <button
@@ -1308,6 +1421,55 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 700;
   color: var(--hx-n-800);
+}
+.body-slider {
+  margin: 6px 4px 2px;
+}
+.body-slider.solo {
+  margin: 14px 4px 4px;
+}
+.bmi-chip {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--hx-n-100);
+  color: var(--hx-n-700);
+}
+.bmi-chip.ok {
+  background: var(--hx-teal-50);
+  color: var(--hx-teal-800);
+}
+.bmi-chip.warn {
+  background: var(--hx-warn-bg);
+  color: var(--hx-warn-text);
+}
+.bmi-chip.danger {
+  background: #fde8e8;
+  color: #b42318;
+}
+.bmi-chip strong {
+  font-size: 15px;
+  font-weight: 800;
+}
+.bmi-ref {
+  margin-left: auto;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.bmi-hint {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--hx-muted);
+  line-height: 1.45;
+}
+.bmi-hint.warn {
+  color: var(--hx-warn-text);
 }
 .num-input, .big-input {
   padding: 10px 14px;

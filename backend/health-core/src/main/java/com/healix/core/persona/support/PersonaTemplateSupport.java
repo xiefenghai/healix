@@ -36,7 +36,80 @@ public final class PersonaTemplateSupport {
         return n;
     }
 
+    /**
+     * 模板盯梢点：医疗风险优先，再补运营待办（合计最多 3 条）。
+     * UI 侧会分别展示「医疗风险」与「待办」两栏；此处供叙事模板兜底。
+     */
     public static List<String> watchPointsFromDimensions(JsonNode dimensions) {
+        List<String> out = new ArrayList<>();
+        for (String p : medicalWatchPoints(dimensions)) {
+            if (out.size() >= 3) {
+                break;
+            }
+            out.add(p);
+        }
+        for (String p : opsWatchPoints(dimensions)) {
+            if (out.size() >= 3) {
+                break;
+            }
+            out.add(p);
+        }
+        return out;
+    }
+
+    /** 医疗风险：高/中档评估 + 过敏 + 首诊方案影响备注。 */
+    public static List<String> medicalWatchPoints(JsonNode dimensions) {
+        List<String> out = new ArrayList<>();
+        JsonNode tags = dimensions == null ? null : dimensions.path("risk").path("tags");
+        if (tags != null && tags.isArray()) {
+            for (JsonNode t : tags) {
+                if (out.size() >= 3) {
+                    break;
+                }
+                int rank = tierRank(text(t, "tier"), text(t, "level"));
+                if (rank < 2) {
+                    continue;
+                }
+                String disease = text(t, "diseaseCode");
+                String label = text(t, "levelLabel");
+                if (!StringUtils.hasText(label)) {
+                    label = text(t, "level");
+                }
+                String line = StringUtils.hasText(disease) ? disease + "·" + label : label;
+                if (StringUtils.hasText(line)) {
+                    out.add(line.trim());
+                }
+            }
+        }
+        JsonNode allergens = dimensions == null ? null : dimensions.path("constraints").path("allergens");
+        if (allergens != null && allergens.isArray()) {
+            for (JsonNode a : allergens) {
+                if (out.size() >= 3) {
+                    break;
+                }
+                String name = a.asText(null);
+                if (StringUtils.hasText(name)) {
+                    out.add("过敏：" + name.trim());
+                }
+            }
+        }
+        JsonNode notes = dimensions == null ? null : dimensions.path("constraints").path("notes");
+        if (notes != null && notes.isArray()) {
+            for (JsonNode n : notes) {
+                if (out.size() >= 3) {
+                    break;
+                }
+                String s = n.asText(null);
+                if (StringUtils.hasText(s)) {
+                    out.add(truncate(s.trim(), 28));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 运营待办：工作台 OPEN 任务标题。 */
+    public static List<String> opsWatchPoints(JsonNode dimensions) {
         List<String> out = new ArrayList<>();
         JsonNode tasks = dimensions == null ? null : dimensions.path("focus").path("openTasks");
         if (tasks != null && tasks.isArray()) {
@@ -47,18 +120,6 @@ public final class PersonaTemplateSupport {
                 String title = text(t, "title");
                 if (StringUtils.hasText(title)) {
                     out.add(title.trim());
-                }
-            }
-        }
-        JsonNode allergens = dimensions == null ? null : dimensions.path("constraints").path("allergens");
-        if (allergens != null && allergens.isArray() && out.size() < 3) {
-            for (JsonNode a : allergens) {
-                if (out.size() >= 3) {
-                    break;
-                }
-                String name = a.asText(null);
-                if (StringUtils.hasText(name)) {
-                    out.add("过敏：" + name.trim());
                 }
             }
         }

@@ -194,6 +194,7 @@ public class CarePlanContextService {
                 medicationMapper.listByPeople(tenantId, peopleId, MedicationStatusEnum.ACTIVE.name());
         List<String> medNames = new ArrayList<>();
         ArrayNode medSnap = snapshot.putArray("activeMedications");
+        ArrayNode medDetailSnap = snapshot.putArray("activeMedicationDetails");
         LocalDate today = LocalDate.now();
         if (meds != null) {
             for (PeopleMedication m : meds) {
@@ -203,10 +204,23 @@ public class CarePlanContextService {
                 if (StringUtils.hasText(m.getDrugName())) {
                     medNames.add(m.getDrugName());
                     medSnap.add(m.getDrugName());
+                    ObjectNode detail = medDetailSnap.addObject();
+                    detail.put("name", m.getDrugName());
+                    if (StringUtils.hasText(m.getTimingNote())) {
+                        detail.put("timingNote", m.getTimingNote());
+                    }
+                    if (StringUtils.hasText(m.getFrequency())) {
+                        detail.put("frequency", m.getFrequency());
+                    }
+                    if (StringUtils.hasText(m.getDoseAmount())) {
+                        detail.put("dose", m.getDoseAmount() + (StringUtils.hasText(m.getDoseUnit()) ? m.getDoseUnit() : ""));
+                    }
                 }
             }
         }
         trace(tracer, "PeopleMedication", "done", medNames.isEmpty() ? "无在用药" : "在用药: " + String.join(", ", medNames));
+
+        putLifestyleProfile(snapshot, peopleId, tracer);
 
         trace(tracer, "VitalRecord", "running", "读取最新体征指标");
         List<MetricBrief> metrics = loadLatestMetrics(tenantId, peopleId, snapshot);
@@ -631,6 +645,38 @@ public class CarePlanContextService {
             return "FEMALE";
         }
         return null;
+    }
+
+    /**
+     * 档案作息 → 方案快照（餐次/用药/运动时段对齐班次）。
+     * 饮食 cook 已在 basicArchive；此处补 profile.workSchedule。
+     */
+    private void putLifestyleProfile(ObjectNode snapshot, String peopleId, CarePlanLoadTracer tracer) {
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile == null || !StringUtils.hasText(profile.getWorkSchedule())) {
+            trace(tracer, "LifestyleProfile", "done", "无作息信息");
+            return;
+        }
+        ObjectNode lifestyle = snapshot.putObject("lifestyleProfile");
+        String code = profile.getWorkSchedule().trim().toUpperCase(Locale.ROOT);
+        lifestyle.put("workSchedule", code);
+        String label =
+                switch (code) {
+                    case "DAY" -> "规律白班";
+                    case "SHIFT" -> "倒班";
+                    case "NIGHT" -> "夜班为主";
+                    case "IRREGULAR" -> "作息不固定";
+                    default -> code;
+                };
+        lifestyle.put("workScheduleLabel", label);
+        lifestyle.put(
+                "scheduleHint",
+                switch (code) {
+                    case "SHIFT", "NIGHT" -> "餐次与用药提醒按班次错峰；运动避开刚下夜班时段";
+                    case "IRREGULAR" -> "示例餐给时间窗而非固定钟点；运动任务用灵活 timeSlot";
+                    default -> "可按常规三餐与晚间运动安排";
+                });
+        trace(tracer, "LifestyleProfile", "done", "作息: " + label);
     }
 
     private static void trace(CarePlanLoadTracer tracer, String tool, String status, String detail) {

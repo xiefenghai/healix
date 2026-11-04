@@ -56,6 +56,25 @@ export function looksLikeArchiveDraft(userText: string): boolean {
   return false
 }
 
+/**
+ * 建档多轮补全：像在填姓名/性别/生日/手机时才续粘性。
+ * 「收到」「什么」「2121」等闲聊必须松掉，否则会反复刷「当前：姓名✗…」模板。
+ */
+export function looksLikeArchiveContinue(userText: string): boolean {
+  const text = (userText || '').trim()
+  if (!text) return false
+  if (looksLikeArchiveDraft(text)) return true
+  if (containsAny(text, ['继续建档', '补全', '暂无手机', '暂无本人', '没有手机'])) return true
+  if (/^(男|女|男性|女性)$/.test(text)) return true
+  // 纯中文短姓名
+  if (/^[\u4e00-\u9fff·]{2,4}$/.test(text)) return true
+  if (/(19\d{2}|20\d{2})[-/.年]/.test(text)) return true
+  // 11 位手机；或「手机/电话」标签 + 数字
+  if (/(?<!\d)1[3-9]\d{9}(?!\d)/.test(text)) return true
+  if (/(手机|电话|号码)/.test(text) && /\d{5,}/.test(text)) return true
+  return false
+}
+
 /** 若用户话术不像续写该能力，返回 null（清粘性）。 */
 export function resolveStickyCapabilityHint(
   sticky: string | null | undefined,
@@ -74,9 +93,10 @@ export function resolveStickyCapabilityHint(
   if (sticky === 'REPORT_SUMMARY') {
     return containsAny(text, REPORT_CONTINUE) ? sticky : null
   }
-  // 建档补全多轮：除非明确取消，否则继续挂 CREATE_ARCHIVE
+  // 建档：仅身份补全类话术续粘；取消或闲聊都松掉
   if (sticky === 'CREATE_ARCHIVE') {
-    return containsAny(text, ARCHIVE_CANCEL) ? null : sticky
+    if (containsAny(text, ARCHIVE_CANCEL)) return null
+    return looksLikeArchiveContinue(text) ? sticky : null
   }
   return null
 }

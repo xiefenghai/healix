@@ -65,6 +65,8 @@ interface Summary {
   intakeCount?: number
   watchCount?: number
   mineCount?: number
+  orgPatientCount?: number
+  primaryCareTeamCount?: number
   rewardWeekPoints?: number | null
   rewardFullDayCount?: number | null
   rewardActiveTodayCount?: number | null
@@ -204,9 +206,21 @@ interface ChatMessage {
   ocrReview?: OcrReview
   activity?: ActivityItem[]
   elapsedMs?: number | null
+  /** 后端 intent；轻量闲聊意图用于隐藏活动轨迹 */
+  intent?: string
   reportReview?: ReportReviewPreview
   carePlanPreview?: CarePlanChatPreview
   chatExtract?: ChatExtractReview
+}
+
+function isLightChatIntent(intent?: string | null) {
+  return (
+    !!intent &&
+    (intent === 'ORG_CHAT_LIGHT' ||
+      intent === 'ORG_CHAT_CAPABILITY' ||
+      intent === 'ORG_CHAT_NEXT_STEP' ||
+      intent === 'ORG_CHAT_TASK_TYPES')
+  )
 }
 
 /** 左栏今日优先：只保留「要做什么」相关分桶；待入组已下线（漠雪反馈） */
@@ -257,6 +271,8 @@ const summary = ref<Summary>({
   intakeCount: 0,
   watchCount: 0,
   mineCount: 0,
+  orgPatientCount: 0,
+  primaryCareTeamCount: 0,
 })
 const tab = ref<TabKey>('urgent')
 const cards = ref<PriorityCard[]>([])
@@ -563,11 +579,66 @@ const isArchivedSession = computed(
   () => (sessionStatus.value || '').toUpperCase() === 'CLOSED',
 )
 
-const contextHint = computed(() =>
-  focus.value
-    ? `当前患者：${focus.value.displayName}`
-    : '机构级会话 · 点左侧名单注入患者',
+/** 机构 0 患者或无主责组：新手态，避免「暂无待办 + 全 0」被当成故障 */
+const isColdStart = computed(
+  () =>
+    (summary.value.primaryCareTeamCount ?? 0) <= 0 || (summary.value.orgPatientCount ?? 0) <= 0,
 )
+
+const contextHint = computed(() => {
+  if (focus.value) return `当前患者：${focus.value.displayName}`
+  if (isColdStart.value) return '机构级会话 · 点下方卡片或直接说建档'
+  return '机构级会话 · 点左侧名单或下方快捷开始'
+})
+
+/** 右栏无焦点时的副标题：0 患者勿再催「点左侧名单」 */
+const focusEmptyHint = computed(() =>
+  isColdStart.value
+    ? '暂无选中患者。请先建档或选择患者。'
+    : '点左侧名单或下方快捷开始',
+)
+
+/** 激励条：全 0 时隐藏，避免新人挫败；有数时用「健康豆」通俗说法 */
+const hasRewardStats = computed(() => {
+  const s = summary.value
+  if (s.rewardWeekPoints == null) return false
+  return (
+    (s.rewardWeekPoints ?? 0) > 0 ||
+    (s.rewardFullDayCount ?? 0) > 0 ||
+    (s.rewardActiveTodayCount ?? 0) > 0
+  )
+})
+
+const coldStartCta = computed(() => {
+  if ((summary.value.primaryCareTeamCount ?? 0) <= 0) {
+    return { kind: 'create-team' as const, label: '先创建我的健管组' }
+  }
+  return { kind: 'archive' as const, label: '去建第一个档' }
+})
+
+/** 空会话可点示例（机构会话、尚无对话时） */
+const emptyStarters = computed(() => {
+  if (focusPeopleId.value) return [] as Array<{ label: string; text: string; capability?: string }>
+  return [
+    {
+      label: '新建患者档案',
+      text: '帮我建档，请告诉我需要哪些信息',
+      capability: 'CREATE_ARCHIVE',
+    },
+    {
+      label: '今天先忙什么？',
+      text: isColdStart.value
+        ? '我是第一次用驾驶舱，请告诉我现在最该先做什么'
+        : '请根据今日优先名单，给出我现在可推进的工作建议',
+      capability: 'GENERAL_CHAT',
+    },
+    {
+      label: '回访话术怎么说',
+      text: '请给我一段通用的健管回访话术模板，语气亲切、可复制给客户',
+      capability: 'GENERAL_CHAT',
+    },
+  ]
+})
 
 const SERVICE_FLOW_FALLBACK = [
   { code: 'ARCHIVE', label: '建档' },
@@ -751,11 +822,34 @@ const threadMessages = computed(() =>
   briefingMsg.value ? messages.value.slice(1) : messages.value,
 )
 
-/** 有对话后默认收起简报，把纵向空间留给聊天；可手动展开 */
+const showEmptyStarters = computed(
+  () =>
+    !focusPeopleId.value &&
+    !sending.value &&
+    emptyStarters.value.length > 0 &&
+    threadMessages.value.length === 0,
+)
+
+/**
+ * 空会话引导卡已有「新建患者档案」时，简报区隐藏重复建档 chip，只留「查看我的患者 / 刷新」等。
+ * 历史会话里残留的建档动作也会被滤掉。
+ */
+const briefingUiActions = computed(() => {
+  const actions = briefingMsg.value?.actions || []
+  if (!showEmptyStarters.value) return actions
+  return actions.filter((a) => {
+    if (a.type === 'TRIGGER_CAPABILITY' && (a.path || '') === 'CREATE_ARCHIVE') return false
+    if (/建档|开始建档/.test(a.label || '')) return false
+    return true
+  })
+})
+
+/** 有对话 / 空态引导卡时默认收起简报，突出下方可点卡片；可手动展开 */
 const briefingCollapsed = ref(false)
 /** 刷新简报请求中（防连点，并配合占位打字动画） */
 const briefingLoading = ref(false)
 const briefingPreview = computed(() => {
+  if (showEmptyStarters.value) return '点下方卡片开始，或展开查看今日简报'
   const raw = (briefingMsg.value?.content || '').replace(/\s+/g, ' ').trim()
   if (!raw) return '点击展开查看今日建议'
   return raw.length > 72 ? `${raw.slice(0, 72)}…` : raw
@@ -766,6 +860,105 @@ watch(
     if (n > 0 && (prev === 0 || prev == null)) briefingCollapsed.value = true
   },
 )
+watch(
+  showEmptyStarters,
+  (show) => {
+    if (show) briefingCollapsed.value = true
+  },
+  { immediate: true },
+)
+
+/** 输入框上方：打出已有患者姓名时轻提示，避免再走一遍建档撞档 */
+const composerNameHint = ref<{
+  peopleId: string
+  displayName: string
+  age?: number | null
+} | null>(null)
+
+function extractLikelyPatientName(raw: string): string | null {
+  const text = (raw || '').trim()
+  if (text.length < 2) return null
+  const skip = /^(建档|新建|登记|男|女|暂无|帮我|请|今天)/
+  const labeled = text.match(
+    /(?:姓名|患者姓名|客户姓名)[：:\s]*([\u4e00-\u9fff]{2,4})/,
+  )
+  if (labeled?.[1] && !skip.test(labeled[1])) return labeled[1]
+  const withCmd = text.match(/(?:建档|新建患者|新建客户|登记患者)\s*([\u4e00-\u9fff]{2,4})/)
+  if (withCmd?.[1] && !skip.test(withCmd[1])) return withCmd[1]
+  if (/^[\u4e00-\u9fff]{2,4}$/.test(text) && !skip.test(text)) return text
+  const tokens = text.split(/[\s,，、/;；]+/).filter(Boolean)
+  for (const t of tokens) {
+    if (/^[\u4e00-\u9fff]{2,4}$/.test(t) && !skip.test(t)) return t
+  }
+  return null
+}
+
+function pickNameHintFromCards(
+  name: string,
+  list: PriorityCard[],
+): PriorityCard | null {
+  const exact = list.find((c) => (c.displayName || '') === name)
+  if (exact) return exact
+  const starts = list.find((c) => (c.displayName || '').startsWith(name))
+  return starts || null
+}
+
+async function lookupComposerNameHint(name: string) {
+  const local =
+    pickNameHintFromCards(name, searchResults.value) ||
+    pickNameHintFromCards(name, cards.value)
+  if (local?.peopleId) {
+    composerNameHint.value = {
+      peopleId: local.peopleId,
+      displayName: local.displayName || name,
+      age: local.age,
+    }
+    return
+  }
+  try {
+    const res = await api<{ data: PriorityCard[] }>(
+      `/api/b/v1/cockpit/my-patients?keyword=${encodeURIComponent(name)}`,
+    )
+    const hit = pickNameHintFromCards(name, res.data || [])
+    if (hit?.peopleId) {
+      composerNameHint.value = {
+        peopleId: hit.peopleId,
+        displayName: hit.displayName || name,
+        age: hit.age,
+      }
+    } else {
+      composerNameHint.value = null
+    }
+  } catch {
+    composerNameHint.value = null
+  }
+}
+
+const debouncedComposerNameHint = debounce(() => {
+  if (focusPeopleId.value || sending.value || isArchivedSession.value) {
+    composerNameHint.value = null
+    return
+  }
+  const name = extractLikelyPatientName(input.value)
+  if (!name) {
+    composerNameHint.value = null
+    return
+  }
+  void lookupComposerNameHint(name)
+}, 280)
+
+function continueHintPatient() {
+  const h = composerNameHint.value
+  if (!h?.peopleId || sending.value) return
+  input.value = ''
+  composerNameHint.value = null
+  void selectPatient(h.peopleId, { autoAsk: true, reason: '输入联想继续服务' })
+}
+
+watch(input, () => debouncedComposerNameHint())
+watch(focusPeopleId, (id) => {
+  if (id) composerNameHint.value = null
+})
 
 const diseaseText = computed(() => {
   const labels = focus.value?.diseaseLabels || []
@@ -1025,7 +1218,10 @@ async function loadBriefing(force = false) {
   if (!force) {
     // 浏览器刷新：优先拉服务端已落库会话，不被本地半截缓存盖掉
     const restored = await restoreSession(null, { preferServer: true })
-    if (restored) return
+    if (restored) {
+      collapseBriefingForEmptyStarters()
+      return
+    }
   }
   try {
     const res = force
@@ -1061,13 +1257,22 @@ async function loadBriefing(force = false) {
     messages.value = [
       {
         role: 'system',
-        content: '今日简报暂时不可用，请查看左侧优先名单。',
+        content: isColdStart.value
+          ? '今日简报暂时不可用。请点下方卡片建档，或直接把客户信息发给我。'
+          : '今日简报暂时不可用，请查看左侧优先名单。',
         at: nowClock(),
         streaming: false,
       },
     ]
     ElMessage.warning(e instanceof Error ? e.message : '简报加载失败')
+  } finally {
+    // 空态有引导卡时收起简报，避免与「点下方卡片」文案双重啰嗦；用户点刷新后仍可手动展开
+    if (!force) collapseBriefingForEmptyStarters()
   }
+}
+
+function collapseBriefingForEmptyStarters() {
+  if (showEmptyStarters.value) briefingCollapsed.value = true
 }
 
 type SessionBundlePayload = {
@@ -1303,9 +1508,15 @@ async function persistVisibleMessage(
 /** 驾驶舱暂不展示「红人」口径；旧缓存/模型偶发带出时降级文案 */
 function sanitizeBriefingText(text?: string) {
   const raw = (text || '').trim()
-  if (!raw) return '今日简报暂时不可用，请查看左侧优先名单或顶栏待办。'
+  if (!raw) {
+    return isColdStart.value
+      ? '今日简报暂时不可用。请点下方卡片建档，或直接把客户信息发给我。'
+      : '今日简报暂时不可用，请查看左侧优先名单或顶栏待办。'
+  }
   if (/红人|红标|依从红|红灯患者/.test(raw)) {
-    return '今日请以左侧优先名单与顶栏待办/超期为准安排工作；点选患者即可带入对话处理。'
+    return isColdStart.value
+      ? '请点下方卡片开始建档，或直接把客户信息发给我。'
+      : '今日请以左侧优先名单与顶栏待办/超期为准安排工作；点选患者即可带入对话处理。'
   }
   return raw
 }
@@ -1328,6 +1539,151 @@ async function loadFocus(peopleId: string) {
   } finally {
     focusLoading.value = false
   }
+}
+
+/** 根据焦点快照给出「立刻下一步」文案与按钮（本地规则，不靠 LLM 说明书） */
+function resolveFocusNextStep(f: Focus): { content: string; actions: AgentAction[] } {
+  const name = f.displayName || '该患者'
+  const pid = f.peopleId
+  const tasks = f.openTasks || []
+  const drafts = f.pendingDrafts || []
+  const needTeam =
+    f.needsCareTeamAssign === true || (!f.careTeamId && f.needsCareTeamAssign !== false)
+
+  if (needTeam) {
+    return {
+      content: `正在为「${name}」服务。他还未入组，分配健管组后才能跟进待办与首诊。`,
+      actions: [
+        { type: 'NAVIGATE', path: 'join-care-team', label: '分配健管组', peopleId: pid },
+        { type: 'OPEN_SHEET', path: 'intake', label: '先看首诊', peopleId: pid },
+      ],
+    }
+  }
+
+  const onboarding = tasks.find(
+    (t) =>
+      (t.taskType || '').toUpperCase() === 'FOLLOW_UP' &&
+      String(t.followupType || '').toUpperCase() === 'ONBOARDING',
+  )
+  if (onboarding) {
+    return {
+      content: `正在为「${name}」服务。当前卡在首诊评估，做完后就能制定管理方案。`,
+      actions: [
+        {
+          type: 'OPEN_SHEET',
+          path: 'intake',
+          label: '开始首诊',
+          peopleId: pid,
+          payload: { followupRecordId: onboarding.id },
+        },
+      ],
+    }
+  }
+
+  const planDraft = drafts.find((d) => d.kind === 'CARE_PLAN')
+  if (planDraft) {
+    return {
+      content: `正在为「${name}」服务。有一份方案草稿待你确认。`,
+      actions: [
+        {
+          type: 'OPEN_SHEET',
+          path: planDraft.sheetMode || 'care-plan',
+          label: planDraft.actionLabel || '审阅方案',
+          peopleId: pid,
+        },
+      ],
+    }
+  }
+
+  if (tasks.some((t) => ['PLAN_CREATE', 'PLAN_REVIEW'].includes((t.taskType || '').toUpperCase()))) {
+    return {
+      content: `正在为「${name}」服务。建议下一步生成管理方案草稿。`,
+      actions: [
+        { type: 'TRIGGER_CAPABILITY', path: 'CARE_PLAN', label: '生成方案草稿', peopleId: pid },
+      ],
+    }
+  }
+
+  const reportDraft = drafts.find((d) => d.kind === 'REPORT')
+  if (reportDraft) {
+    return {
+      content: `正在为「${name}」服务。有报告草稿待审阅。`,
+      actions: [
+        {
+          type: 'OPEN_SHEET',
+          path: reportDraft.sheetMode || 'reports',
+          label: reportDraft.actionLabel || '审阅报告',
+          peopleId: pid,
+        },
+      ],
+    }
+  }
+
+  if (tasks.some((t) => (t.taskType || '').toUpperCase() === 'REPORT_REVIEW')) {
+    return {
+      content: `正在为「${name}」服务。建议点评或生成管理报告。`,
+      actions: [
+        {
+          type: 'TRIGGER_CAPABILITY',
+          path: 'REPORT_SUMMARY',
+          label: '生成报告点评',
+          peopleId: pid,
+        },
+      ],
+    }
+  }
+
+  const topTask = tasks[0]
+  if (topTask) {
+    const label = topTask.taskTypeLabel || '待办'
+    return {
+      content: `正在为「${name}」服务。当前有待办「${label}」${topTask.overdue ? '（已超期）' : ''}，可先处理。`,
+      actions: [
+        {
+          type: 'OPEN_SHEET',
+          path: 'archive',
+          label: '打开档案',
+          peopleId: pid,
+        },
+      ],
+    }
+  }
+
+  const stage = f.serviceStageLabel || '跟进'
+  return {
+    content: `正在为「${name}」服务。当前环节：${stage}。可继续跟进，或让我帮你生成方案 / 写话术。`,
+    actions: [
+      { type: 'TRIGGER_CAPABILITY', path: 'CARE_PLAN', label: '生成方案', peopleId: pid },
+      {
+        type: 'TRIGGER_CAPABILITY',
+        path: 'GENERAL_CHAT',
+        label: '请帮我写一段给客户的回访话术',
+        peopleId: pid,
+      },
+    ],
+  }
+}
+
+function pushFocusNextStepNudge(peopleId: string) {
+  const f = focus.value
+  if (!f || f.peopleId !== peopleId) return
+  const step = resolveFocusNextStep(f)
+  messages.value.push({
+    role: 'assistant',
+    content: step.content,
+    actions: step.actions,
+    at: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+  })
+  cachePatientSession(peopleId)
+}
+
+function runColdStartCta() {
+  const cta = coldStartCta.value
+  if (cta.kind === 'create-team') {
+    createCareTeamOpen.value = true
+    return
+  }
+  void sendMessage('帮我建档，请告诉我需要哪些信息', false, 'CREATE_ARCHIVE')
 }
 
 async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reason?: string }) {
@@ -1367,7 +1723,7 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
   const name = focus.value?.displayName || '该患者'
   if (!switching && messages.value.length) {
     // 同患者重复点击不刷屏
-  } else {
+  } else if (opts?.autoAsk === false) {
     messages.value.push({
       role: 'system',
       content: `已切换焦点：${name}${opts?.reason ? ` · ${opts.reason}` : ''}`,
@@ -1376,11 +1732,15 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
   }
   await scrollToBottom()
   if (opts?.autoAsk === false) return
+  // 已有用户对话则不打断；否则用本地「下一步」卡片（比让 AI 背说明书更清晰）
+  const hasUserChat = messages.value.some((m) => m.role === 'user')
+  if (hasUserChat) return
   const now = Date.now()
   const last = lastAutoAskAt.value[peopleId] || 0
   if (now - last > 5 * 60 * 1000) {
     lastAutoAskAt.value[peopleId] = now
-    await sendMessage(`请根据档案与今日任务，给出处理 ${name} 的下一步建议`, true)
+    pushFocusNextStepNudge(peopleId)
+    await scrollToBottom()
   }
 }
 
@@ -1447,6 +1807,16 @@ async function loadCapabilities() {
   }
 }
 
+/** 对话刚提到建档时，底部「建档」chip 轻脉冲，引导视线 */
+const pulseArchiveChip = computed(() => {
+  const recent = [...messages.value].slice(-4)
+  return recent.some(
+    (m) =>
+      m.role === 'assistant' &&
+      /建档|建档案|新建患者/.test(m.content || m.streamContent || ''),
+  )
+})
+
 /** 芯片展示：GENERAL_CHAT / 建档不要求先选患者；单据录入 / 完成待办为本地能力 */
 const capabilityChips = computed(() => {
   const chips = capabilities.value
@@ -1483,6 +1853,18 @@ const capabilityChips = computed(() => {
     const [arch] = chips.splice(archiveIdx, 1)
     chips.unshift(arch)
   }
+  // 首诊：工具入口——选中患者就常驻（未选人不显示）；点开直接进评估抽屉
+  if (focusPeopleId.value) {
+    const intakeChip = {
+      code: 'OPEN_INTAKE',
+      label: '首诊评估',
+      hint: '打开首诊评估表（可补录或继续未完成项）',
+      needsPatient: true,
+      enabled: true,
+    }
+    const afterArchive = chips.findIndex((c) => c.code === 'CREATE_ARCHIVE')
+    chips.splice(afterArchive >= 0 ? afterArchive + 1 : 0, 0, intakeChip)
+  }
   const reportIdx = chips.findIndex((c) => c.code === 'REPORT_SUMMARY')
   const ocrChip = {
     code: 'OCR_UPLOAD',
@@ -1517,6 +1899,22 @@ const capabilityChips = computed(() => {
 const stickyCapability = ref<string | null>(null)
 
 function quickCapability(code: string, label: string) {
+  if (code === 'OPEN_INTAKE') {
+    if (!focusPeopleId.value) {
+      ElMessage.info('请先从左侧选择一位患者')
+      return
+    }
+    const onboarding = todoTasks.value.find(
+      (t) =>
+        (t.taskType || '').toUpperCase() === 'FOLLOW_UP' &&
+        String(t.followupType || '').toUpperCase() === 'ONBOARDING',
+    )
+    void openIntakeSheet(focusPeopleId.value, {
+      followupRecordId: onboarding?.id || null,
+      purpose: onboarding ? 'ONBOARDING' : null,
+    })
+    return
+  }
   if (code === 'OCR_UPLOAD') {
     if (!focusPeopleId.value) {
       ElMessage.info('请先从左侧选择一位患者')
@@ -1679,14 +2077,31 @@ function actionChipLabel(label?: string | null) {
   else if (/^处理方案待办/.test(head) || head === '处理方案') head = '处理方案'
   else if (/^去评估建档/.test(head)) head = '去评估建档'
   // 首诊：历史气泡「确认办结「入组/首诊随访」」收成「确认办结」不对，统一「开始首诊」
-  else if (/首诊/.test(head) || /^开始首诊/.test(head)) head = '开始首诊'
+  else if (/^开始首诊/.test(head) || /^去做首诊/.test(head)) head = '开始首诊'
   else if (/^确认办结「([^」]+)」/.test(head)) {
     const t = RegExp.$1
     head = `办结${t.length > 8 ? `${t.slice(0, 7)}…` : t}`
   } else if (/^确认办结/.test(head)) head = '确认办结'
-  else head = head.replace(/「[^」]*」/g, '').replace(/\s+/g, ' ').trim() || head
+  // 入组/改挂：保留组名；勿剥「」否则「加入「A」」「加入「B」」都变成「加入」
+  else if (/^(加入|分配到|改挂到|改到|确认加入|确认改到)/.test(head)) {
+    head = head
+      .replace(/「([^」]*)」/g, '（$1）')
+      .replace(/\s+/g, ' ')
+      .trim()
+  } else if (/^为.+健管服务$/.test(head)) {
+    // 切入客户会话：保留全文（姓名一般很短）
+  } else if (/^查看(.+)档案$/.test(head)) {
+    head = `为${RegExp.$1}健管服务`
+  } else if (/^打开「([^」]+)」$/.test(head)) {
+    head = `为${RegExp.$1}健管服务`
+  } else if (/^(打开该患者|打开患者|查看档案)$/.test(head)) {
+    head = '为TA健管服务'
+  } else {
+    // 仅办结类长文案去书名号；其它按钮保留原文
+    head = head.replace(/\s+/g, ' ').trim()
+  }
   const withCount = `${head}${countSuffix}`
-  return withCount.length > 14 ? `${withCount.slice(0, 13)}…` : withCount
+  return withCount.length > 16 ? `${withCount.slice(0, 15)}…` : withCount
 }
 
 async function sendMessage(
@@ -1883,6 +2298,7 @@ async function sendMessage(
         }
         row.streamContent = ''
         row.rawStream = ''
+        row.intent = data.intent || row.intent
         row.actions =
           data.capability === 'CARE_PLAN'
             ? [
@@ -1899,14 +2315,20 @@ async function sendMessage(
               })
             : data.actions
         row.streaming = false
-        finishAllActivity(row.activity)
+        // 闲聊/能力介绍等短回：清掉轨迹，气泡更干净
+        if (isLightChatIntent(data.intent)) {
+          row.activity = []
+          row.elapsedMs = null
+        } else {
+          finishAllActivity(row.activity)
+        }
         if (stillBound() && data.capability === 'REPORT_SUMMARY' && data.extracted) {
           applyReportReview(row, data.extracted)
         }
         if (stillBound() && data.capability === 'CARE_PLAN' && data.extracted) {
           applyCarePlanPreview(row, data.extracted, data.intent === 'CARE_PLAN_REVISE')
         }
-        // 新建档成功才自动切焦点；已存在需人确认是否改挂，留在机构会话看提示与按钮
+        // 仅新建档成功才自动切焦点；已存在留在机构会话，等人点「先协同查看 / 为××健管服务」再跳
         if (stillBound() && data.capability === 'CREATE_ARCHIVE' && data.intent === 'CREATE_ARCHIVE_OK') {
           const focusAction = (data.actions || []).find(
             (a) => a.type === 'FOCUS_PATIENT' && a.peopleId,
@@ -1915,6 +2337,7 @@ async function sendMessage(
             (a) =>
               a.type === 'TRIGGER_CAPABILITY' ||
               a.type === 'OPEN_SHEET' ||
+              a.type === 'CALL_API' ||
               (a.type === 'NAVIGATE' && a.path === 'join-care-team'),
           )
           const needAssign = nextActions.some(
@@ -2127,7 +2550,12 @@ function runAction(action: AgentAction) {
     if (next === 'urgent' || next === 'watch' || next === 'mine') {
       tab.value = next
       sheetOpen.value = false
-      void refreshBriefing()
+      // 「查看我的患者」只切左栏，不要顺带刷新简报清掉当前对话
+      if (next === 'mine') {
+        void searchPatients()
+      } else {
+        void loadPriority()
+      }
     }
     return
   }
@@ -2779,10 +3207,19 @@ async function onIntakeSubmitted() {
   if (id) await refreshAfterTaskChange(id)
 }
 
+/**
+ * 顶栏圆形刷新：重拉今日简报。
+ * 机构会话会先归档并新开一轮，避免「界面清空了，后端仍带着建档撞档等旧对话」——
+ * 否则下一句随口输入（如 10264）仍会被模型当成建档续写并提起李敏。
+ */
 async function refreshBriefing() {
   if (briefingLoading.value) return
   briefingLoading.value = true
+  stickyCapability.value = null
+  composerNameHint.value = null
   revokeMessageBlobs()
+  sessionStatus.value = 'ACTIVE'
+  briefingCollapsed.value = false
   // 请求返回前先占位，避免会话区空白
   messages.value = [
     {
@@ -2792,14 +3229,49 @@ async function refreshBriefing() {
       at: nowClock(),
     },
   ]
-  orgSessionId.value = null
-  patientSessionId.value = null
-  orgSessionCache = null
-  writeOrgCacheToStorage(null)
-  sessionStatus.value = 'ACTIVE'
-  briefingCollapsed.value = false
   try {
+    if (focusPeopleId.value) {
+      // 患者会话：新开一轮即可（患者会话不挂机构简报）
+      const peopleId = focusPeopleId.value
+      const res = await api<{ data: SessionBundlePayload }>('/api/b/v1/agent/sessions/new', {
+        method: 'POST',
+        body: JSON.stringify({ peopleId }),
+      })
+      applySessionBundle(res.data, peopleId, { force: true })
+      messages.value = [
+        {
+          role: 'system',
+          content: '已刷新会话，可继续提问。',
+          at: nowClock(),
+        },
+      ]
+      cachePatientSession(peopleId)
+      return
+    }
+    // 机构会话：归档旧 ACTIVE，再写新简报进全新会话
+    const res = await api<{ data: SessionBundlePayload }>('/api/b/v1/agent/sessions/new', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    applySessionBundle(res.data, null, { force: true })
+    messages.value = [
+      {
+        role: 'system',
+        content: '',
+        streaming: true,
+        at: nowClock(),
+      },
+    ]
     await loadBriefing(true)
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '刷新失败')
+    if (!focusPeopleId.value) {
+      try {
+        await loadBriefing(true)
+      } catch {
+        /* ignore */
+      }
+    }
   } finally {
     briefingLoading.value = false
   }
@@ -3357,13 +3829,26 @@ onUnmounted(() => {
         </div>
 
         <div
-          v-if="summary.rewardWeekPoints != null"
-          class="reward-week"
-          title="本机构开启激励的患者本周汇总"
+          v-if="isColdStart"
+          class="reward-week onboarding"
+          title="建档并开始服务后，这里会显示激励与打卡数据"
         >
-          <span>🫘 本周 {{ summary.rewardWeekPoints }} 豆</span>
-          <span>🌟 全勤 {{ summary.rewardFullDayCount ?? 0 }} 人次</span>
-          <span>🔥 今日打卡 {{ summary.rewardActiveTodayCount ?? 0 }} 人</span>
+          <span>建好客户并开始服务后，这里会出现每日待办与激励数据</span>
+        </div>
+        <div
+          v-else-if="hasRewardStats"
+          class="reward-week"
+          title="本机构开启激励的患者本周汇总（健康豆为患者打卡积分）"
+        >
+          <span v-if="(summary.rewardWeekPoints ?? 0) > 0">
+            本周 {{ summary.rewardWeekPoints }} 健康豆
+          </span>
+          <span v-if="(summary.rewardFullDayCount ?? 0) > 0">
+            全勤 {{ summary.rewardFullDayCount }} 人次
+          </span>
+          <span v-if="(summary.rewardActiveTodayCount ?? 0) > 0">
+            今日打卡 {{ summary.rewardActiveTodayCount }} 人
+          </span>
         </div>
 
         <div v-if="tab === 'mine'" class="search-box">
@@ -3427,8 +3912,30 @@ onUnmounted(() => {
               <span class="pct">{{ rateText(c.planRate7d) }}</span>
             </div>
           </button>
+          <div
+            v-if="
+              isColdStart &&
+              !listCards.length &&
+              !(tab === 'mine' ? searchLoading : loading) &&
+              (tab !== 'mine' || searchTried) &&
+              !(tab === 'mine' && searchKeyword.trim())
+            "
+            class="onboarding-empty"
+          >
+            <p class="onboarding-title">欢迎使用智能工作台</p>
+            <p class="onboarding-desc">
+              {{
+                (summary.primaryCareTeamCount ?? 0) <= 0
+                  ? '先创建以你为主责的健管组，再建第一个客户档案；之后每日跟进待办会出现在这里。'
+                  : '建好第一个客户档案后，这里会自动生成你的每日跟进待办。'
+              }}
+            </p>
+            <button type="button" class="onboarding-cta" @click="runColdStartCta">
+              {{ coldStartCta.label }}
+            </button>
+          </div>
           <el-empty
-            v-if="tab === 'mine' && !searchLoading && searchTried && !listCards.length && !searchKeyword.trim()"
+            v-else-if="tab === 'mine' && !searchLoading && searchTried && !listCards.length && !searchKeyword.trim()"
             description="暂无你主责健管组下的患者"
             :image-size="52"
           />
@@ -3442,7 +3949,7 @@ onUnmounted(() => {
             :description="
               tab === 'watch'
                 ? '暂无重点关注患者，可在患者详情页添加'
-                : '暂无待办。服务从建档开始：可在对话点「建档」或说「建档 姓名 性别 生日 手机号」'
+                : '暂无待办。点对话里的「建档」，或选「我的患者」继续服务'
             "
             :image-size="52"
           />
@@ -3508,7 +4015,7 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="icon-btn"
-                title="刷新简报"
+                title="刷新简报（重新开启会话，不带入上一轮对话）"
                 :disabled="briefingLoading || sending"
                 @click="refreshBriefing"
               >
@@ -3579,11 +4086,11 @@ onUnmounted(() => {
               </div>
               <div v-else class="briefing-text md-body" v-html="messageHtml(briefingMsg)" />
               <div
-                v-if="briefingMsg.actions?.length"
+                v-if="briefingUiActions.length"
                 class="bubble-actions"
               >
                 <button
-                  v-for="(a, ai) in shownActions(briefingMsg.actions || [], 'briefing', 0)"
+                  v-for="(a, ai) in shownActions(briefingUiActions, 'briefing', 0)"
                   :key="ai"
                   type="button"
                   class="action-chip"
@@ -3601,17 +4108,17 @@ onUnmounted(() => {
                   </span>
                 </button>
                 <button
-                  v-if="hiddenActionCount(briefingMsg.actions || [], 'briefing', 0)"
+                  v-if="hiddenActionCount(briefingUiActions, 'briefing', 0)"
                   type="button"
                   class="action-chip more"
                   @click="toggleActionList('briefing', 0)"
                 >
-                  展开其余 {{ hiddenActionCount(briefingMsg.actions || [], 'briefing', 0) }} 项
+                  展开其余 {{ hiddenActionCount(briefingUiActions, 'briefing', 0) }} 项
                 </button>
                 <button
                   v-else-if="
                     isActionListExpanded('briefing', 0) &&
-                    displayActions(briefingMsg.actions || []).length > ACTION_CHIP_PREVIEW
+                    displayActions(briefingUiActions).length > ACTION_CHIP_PREVIEW
                   "
                   type="button"
                   class="action-chip more"
@@ -3646,7 +4153,9 @@ onUnmounted(() => {
                 <span /><span /><span />
               </div>
               <AgentActivityPanel
-                v-if="msg.activity?.length || msg.elapsedMs"
+                v-if="
+                  !isLightChatIntent(msg.intent) && (msg.activity?.length || msg.elapsedMs)
+                "
                 :items="msg.activity || []"
                 :streaming="msg.streaming"
                 :elapsed-ms="msg.elapsedMs"
@@ -3735,6 +4244,25 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          <div
+            v-if="showEmptyStarters"
+            class="empty-starters"
+            aria-label="试试这样开始"
+          >
+            <p class="empty-starters-title">不知道聊什么？点一条直接开始</p>
+            <div class="empty-starter-list">
+              <button
+                v-for="s in emptyStarters"
+                :key="s.label"
+                type="button"
+                class="empty-starter"
+                :disabled="sending || isArchivedSession"
+                @click="sendMessage(s.text, false, s.capability || null)"
+              >
+                {{ s.label }}
+              </button>
+            </div>
+          </div>
           <div ref="chatEndRef" class="chat-end" aria-hidden="true" />
         </div>
 
@@ -3748,10 +4276,14 @@ onUnmounted(() => {
         <div class="composer">
           <div v-if="capabilityChips.length" class="quick-rail" aria-label="快捷能力">
             <button
-              v-for="cap in capabilityChips"
+              v-for="(cap, ci) in capabilityChips"
               :key="cap.code"
               type="button"
               class="quick-chip"
+              :class="{
+                primary: ci === 0 || cap.code === 'CREATE_ARCHIVE',
+                pulse: cap.code === 'CREATE_ARCHIVE' && pulseArchiveChip,
+              }"
               :disabled="
                 sending ||
                 uploading ||
@@ -3764,6 +4296,26 @@ onUnmounted(() => {
               {{ cap.label }}
             </button>
           </div>
+          <div
+            v-if="composerNameHint"
+            class="composer-name-hint"
+            role="status"
+          >
+            <span>
+              您已有患者「{{ composerNameHint.displayName }}」<template
+                v-if="composerNameHint.age != null"
+              >（{{ composerNameHint.age }}岁）</template
+              >，需要直接继续服务吗？
+            </span>
+            <button
+              type="button"
+              class="composer-name-hint-btn"
+              :disabled="sending || isArchivedSession"
+              @click="continueHintPatient"
+            >
+              继续服务
+            </button>
+          </div>
           <div class="composer-box">
             <el-input
               v-model="input"
@@ -3771,7 +4323,7 @@ onUnmounted(() => {
               :autosize="{ minRows: 1, maxRows: 4 }"
               resize="none"
               :disabled="isArchivedSession"
-              placeholder="问问健管智能体，或让他帮你写方案、起话术…"
+              placeholder="输入患者信息或指令（如：建档、评估）"
               @keydown.enter.exact.prevent="onComposerEnter"
             />
             <div class="composer-bar">
@@ -3869,7 +4421,7 @@ onUnmounted(() => {
         <div class="col-head">
           <div>
             <h3>当前焦点</h3>
-            <p class="sub">{{ focus ? '点击左侧卡片切换' : '点左侧名单注入患者' }}</p>
+            <p class="sub">{{ focus ? '点击左侧卡片切换' : focusEmptyHint }}</p>
           </div>
           <div v-if="focus" class="col-actions">
             <button type="button" class="icon-btn" title="清除焦点" @click="clearFocus">
@@ -4446,6 +4998,132 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 600;
   color: #5b6b7a;
+}
+
+.reward-week.onboarding {
+  background: linear-gradient(90deg, #eef5ff, #f4fbf8);
+  font-weight: 500;
+  color: var(--ink-600);
+  line-height: 1.45;
+}
+
+.onboarding-empty {
+  margin: 16px 12px;
+  padding: 16px 14px;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #f5f9ff 0%, #fff 70%);
+  border: 1px solid var(--ink-100);
+  text-align: left;
+}
+
+.onboarding-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-900);
+}
+
+.onboarding-desc {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-600);
+}
+
+.onboarding-cta {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--brand-600, #2563eb);
+  cursor: pointer;
+}
+
+.onboarding-cta:hover {
+  filter: brightness(1.05);
+}
+
+.composer-name-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #eef6ff, #f4fbf8);
+  border: 1px solid #d7e6f8;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-700, #334155);
+}
+
+.composer-name-hint-btn {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--brand-600, #2563eb);
+  cursor: pointer;
+}
+
+.composer-name-hint-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.composer-name-hint-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.empty-starters {
+  margin: 8px 12px 16px;
+  padding: 14px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px dashed var(--ink-200);
+}
+
+.empty-starters-title {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-600);
+}
+
+.empty-starter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty-starter {
+  text-align: left;
+  border: 1px solid var(--ink-200);
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-800);
+  cursor: pointer;
+  transition: var(--admin-transition);
+}
+
+.empty-starter:hover:not(:disabled) {
+  border-color: var(--brand-300);
+  background: var(--brand-50);
+  color: var(--brand-700);
+}
+
+.empty-starter:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .search-box {
   padding: 8px 12px 0;
@@ -5659,7 +6337,7 @@ onUnmounted(() => {
   white-space: normal;
   word-break: break-word;
   font-size: 12.5px;
-  line-height: 1.55;
+  line-height: 1.65;
   color: var(--ink-700);
 }
 
@@ -5677,8 +6355,8 @@ onUnmounted(() => {
 
 .bubble.assistant .md-body :deep(.reply-sec + .reply-sec),
 .briefing-text.md-body :deep(.reply-sec + .reply-sec) {
-  margin-top: 11px;
-  padding-top: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid color-mix(in srgb, var(--ink-200) 88%, transparent);
   border-left-color: color-mix(in srgb, var(--brand-500, #0d9488) 28%, var(--ink-200));
 }
@@ -5992,27 +6670,53 @@ onUnmounted(() => {
 .quick-rail {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .quick-chip {
   border: 1px solid var(--ink-200);
-  background: var(--ink-50);
-  color: var(--ink-700);
+  background: #fff;
+  color: var(--ink-800);
   border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 500;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   transition: var(--admin-transition);
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.quick-chip.primary {
+  border-color: var(--brand-400, #60a5fa);
+  background: var(--brand-50, #eff6ff);
+  color: var(--brand-700, #1d4ed8);
+}
+
+.quick-chip.pulse {
+  animation: archive-chip-pulse 1.4s ease-in-out 2;
+}
+
+@keyframes archive-chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.28);
+    border-color: var(--brand-500, #2563eb);
+  }
 }
 
 .quick-chip:hover:not(:disabled) {
   border-color: var(--brand-300);
   background: var(--brand-50);
   color: var(--brand-700);
+}
+
+.quick-chip.primary:hover:not(:disabled) {
+  background: var(--brand-100, #dbeafe);
 }
 
 .quick-chip:disabled {
