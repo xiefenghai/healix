@@ -635,13 +635,6 @@ const isColdStart = computed(
 /** 尚未有主责健管组：建档入口应锁定，只引导先建组 */
 const needsPrimaryTeam = computed(() => (summary.value.primaryCareTeamCount ?? 0) <= 0)
 
-const coldStartCta = computed(() => {
-  if (needsPrimaryTeam.value) {
-    return { kind: 'create-team' as const, label: '先创建我的健管组' }
-  }
-  return { kind: 'archive' as const, label: '去建第一个档' }
-})
-
 const contextHint = computed(() => {
   if (focus.value) return `当前患者：${focus.value.displayName}`
   if (needsPrimaryTeam.value) return '机构级会话 · 请先按左侧步骤创建健管组'
