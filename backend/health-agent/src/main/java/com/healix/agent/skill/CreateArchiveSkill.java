@@ -61,8 +61,8 @@ public class CreateArchiveSkill implements AgentSkill {
             return needInfo(
                     ctx,
                     draft,
-                    "可以标「暂无本人号」，但还需要联系人手机号和归属（配偶/子女等）。"
-                            + "本版对话建档请先给本人手机号，例如：建档 张三 女 1990-05-01 13800138000");
+                    "可以先标「暂无本人手机号」，但本版对话建档仍需要一个本人手机号才能入库。"
+                            + "把手机号发给我即可，大白话也行。");
         }
         if (!draft.isComplete()) {
             return needInfo(ctx, draft, missingPrompt(draft));
@@ -70,7 +70,7 @@ public class CreateArchiveSkill implements AgentSkill {
 
         try {
             List<DuplicateCandidate> duplicates = orgWorkspaceService.findPossibleDuplicates(
-                    cmd.orgId(), draft.name(), draft.birthday(), draft.mobile());
+                    cmd.orgId(), draft.name(), draft.gender(), draft.birthday(), draft.mobile());
             DuplicateCandidate alreadyInOrg = duplicates.stream()
                     .filter(d -> d.inCurrentOrg() && !d.confirmRequired())
                     .findFirst()
@@ -90,7 +90,8 @@ public class CreateArchiveSkill implements AgentSkill {
                     .map(DuplicateCandidate::peopleId)
                     .findFirst()
                     .orElse(null);
-            return doCreate(ctx, draft, attachPeopleId);
+            // 四要素齐全：先给人核对卡片，点确认才写库（医疗数据忌静默落档）
+            return confirmReadyCreate(ctx, draft, attachPeopleId);
         } catch (BusinessException e) {
             return new AgentResponse(
                     ctx.sessionId(),
@@ -164,7 +165,7 @@ public class CreateArchiveSkill implements AgentSkill {
                 } else {
                     reply.append("尚未加入健管组。请先创建以你为主责的健管组，再把患者分配进来。");
                 }
-                actions.add(AgentAction.navigate("去创建/分配健管组", "join-care-team", peopleId));
+                actions.add(AgentAction.createCareTeam("去创建健管组", null));
                 actions.add(AgentAction.focusPatient("先协同查看", peopleId, false));
             } else if (candidates.size() == 1) {
                 CareTeam team = candidates.get(0);
@@ -271,30 +272,41 @@ public class CreateArchiveSkill implements AgentSkill {
         List<AgentAction> actions = new ArrayList<>();
         AgentAction servePatient = AgentAction.focusPatient("为" + name + "健管服务", peopleId, false);
         String reply;
-        // 新建档默认未入组：先分配健管组，再首诊（「我的患者」/待办归属都靠组）
+        // 标准路径：建档 → 分组 → 首诊评估 → 制定方案 …
         if (!StringUtils.hasText(item.getCareTeamId())) {
             List<CareTeam> candidates =
                     assignableTeams(careTeamMapper.listByPrimaryCareManager(cmd.orgId(), staffId), null);
             if (candidates.size() == 1) {
                 CareTeam team = candidates.get(0);
                 String teamLabel = nullToEmpty(team.getName());
-                reply = verb + "：「" + name + "」。可一键分配到你的健管组「" + teamLabel + "」，"
-                        + "再去做首诊评估与制定方案。";
-                actions.add(AgentAction.changeCareTeam("分配到" + teamLabel, peopleId, team.getId()));
+                try {
+                    orgWorkspaceService.changePatientCareTeam(
+                            cmd.orgId(), peopleId, team.getId(), accountId);
+                    reply = verb + "：「" + name + "」。已完成分组（「" + teamLabel + "」）。"
+                            + "下一步请做首诊评估，再制定方案。";
+                    actions.add(AgentAction.openSheet("开始首诊评估", "intake", peopleId));
+                    actions.add(AgentAction.navigate("修改分组", "join-care-team", peopleId));
+                } catch (BusinessException ex) {
+                    reply = verb + "：「" + name + "」。下一步是「分组」：可一键分配到「" + teamLabel
+                            + "」，完成后再做首诊评估。";
+                    actions.add(AgentAction.changeCareTeam("分配到" + teamLabel, peopleId, team.getId()));
+                    actions.add(AgentAction.openSheet("稍后再做首诊评估", "intake", peopleId));
+                }
             } else if (candidates.isEmpty()) {
-                reply = verb + "：「" + name + "」。你名下暂无主责健管组，请先创建后再分配，"
-                        + "再去做首诊评估与制定方案。";
-                actions.add(AgentAction.navigate("去创建/分配健管组", "join-care-team", peopleId));
+                reply = verb + "：「" + name + "」。下一步是「分组」：你名下暂无主责健管组，"
+                        + "请先创建后再把患者分进去，然后做首诊评估。";
+                actions.add(AgentAction.createCareTeam("去创建健管组", null));
+                actions.add(AgentAction.openSheet("稍后再做首诊评估", "intake", peopleId));
             } else {
-                reply = verb + "：「" + name + "」。下一步请点「分配健管组」选择目标组，"
-                        + "再去做首诊评估与制定方案。";
-                actions.add(AgentAction.navigate("分配健管组", "join-care-team", peopleId));
+                reply = verb + "：「" + name + "」。下一步是「分组」：请选择目标健管组，"
+                        + "完成后再做首诊评估、制定方案。";
+                actions.add(AgentAction.navigate("去分组", "join-care-team", peopleId));
+                actions.add(AgentAction.openSheet("稍后再做首诊评估", "intake", peopleId));
             }
             actions.add(servePatient);
-            actions.add(AgentAction.openSheet("稍后再做首诊", "intake", peopleId));
         } else {
-            reply = verb + "：「" + name + "」。建议下一步：完成首诊评估，再制定管理方案。";
-            actions.add(AgentAction.openSheet("开始首诊", "intake", peopleId));
+            reply = verb + "：「" + name + "」。分组已完成。下一步请做首诊评估，再制定方案。";
+            actions.add(AgentAction.openSheet("开始首诊评估", "intake", peopleId));
             actions.add(servePatient);
         }
         return new AgentResponse(
@@ -367,37 +379,116 @@ public class CreateArchiveSkill implements AgentSkill {
     }
 
     private AgentResponse needInfo(AgentSkillContext ctx, CreateArchiveDraft draft, String prompt) {
-        StringBuilder status = new StringBuilder();
-        status.append(draft.hasName() ? "姓名✓ " : "姓名✗ ");
-        status.append(draft.hasGender() ? "性别✓ " : "性别✗ ");
-        status.append(draft.hasBirthday() ? "生日✓ " : "生日✗ ");
-        status.append(draft.hasMobile() ? "电话✓" : "电话✗");
+        List<AgentAction> actions = new ArrayList<>();
+        actions.add(AgentAction.openCreateArchive("打开建档表单", draftFormPayload(draft)));
         return new AgentResponse(
                 ctx.sessionId(),
                 AgentCapability.CREATE_ARCHIVE.name(),
                 "CREATE_ARCHIVE_NEED_INFO",
-                prompt + "\n当前：" + status,
+                prompt + "\n\n" + progressChecklist(draft),
+                actions,
                 List.of(),
+                null);
+    }
+
+    /** 抽屉预填：只带已抽出的非空字段。 */
+    private static Map<String, Object> draftFormPayload(CreateArchiveDraft draft) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (draft == null) {
+            return payload;
+        }
+        if (draft.hasName()) {
+            payload.put("name", draft.name().trim());
+        }
+        if (draft.hasGender()) {
+            payload.put("gender", draft.gender());
+        }
+        if (draft.hasBirthday()) {
+            payload.put("birthday", draft.birthday().toString());
+        }
+        if (draft.hasMobile()) {
+            payload.put("mobile", draft.mobile());
+        }
+        if (draft.noMobile()) {
+            payload.put("noMobile", true);
+        }
+        return payload;
+    }
+
+    /** 四要素齐全后的人审确认（点 CALL_API 才建档）。 */
+    private AgentResponse confirmReadyCreate(
+            AgentSkillContext ctx, CreateArchiveDraft draft, String attachPeopleId) {
+        String name = draft.name().trim();
+        StringBuilder sb = new StringBuilder();
+        sb.append("已帮你整理好建档信息，请核对：\n");
+        sb.append("· 姓名：").append(name).append('\n');
+        sb.append("· 性别：").append(genderPlain(draft.gender())).append('\n');
+        sb.append("· 出生：").append(draft.birthday()).append('\n');
+        sb.append("· 手机：").append(draft.mobile()).append('\n');
+        if (StringUtils.hasText(attachPeopleId)) {
+            sb.append("\n系统里可能已有同号档案，确认后会挂接到本机构继续服务。");
+        }
+        sb.append("\n点「确认无误，立即建档」才会写入；有误请直接发正确信息，我会按你说的改。");
+        List<AgentAction> actions = new ArrayList<>();
+        actions.add(AgentAction.createArchive("确认无误，立即建档", archivePayload(draft, attachPeopleId)));
+        return new AgentResponse(
+                ctx.sessionId(),
+                AgentCapability.CREATE_ARCHIVE.name(),
+                "CREATE_ARCHIVE_READY",
+                sb.toString().trim(),
+                actions,
                 List.of(),
                 null);
     }
 
     private static String missingPrompt(CreateArchiveDraft draft) {
+        boolean noneYet =
+                !draft.hasName() && !draft.hasGender() && !draft.hasBirthday() && !draft.hasMobile();
+        if (noneYet) {
+            return "好的，开始建档。可点下方「打开建档表单」填写；"
+                    + "也可直接发姓名、性别、出生日期、手机号（大白话或按「姓名：…」格式粘贴都行）。";
+        }
         List<String> miss = new ArrayList<>();
         if (!draft.hasName()) {
             miss.add("姓名");
         }
         if (!draft.hasGender()) {
-            miss.add("性别（男/女）");
+            miss.add("性别");
         }
         if (!draft.hasBirthday()) {
-            miss.add("出生日期（如 1990-05-01）");
+            miss.add("出生日期（写到几月几日即可，如 1990年5月1日）");
         }
         if (!draft.hasMobile()) {
             miss.add("本人手机号");
         }
-        return "建档还需要：" + String.join("、", miss)
-                + "。可直接回复，例如：张三 女 1990-05-01 13800138000";
+        return "还差：" + String.join("、", miss)
+                + "。可点「打开建档表单」补全，或在对话里直接发这几项。";
+    }
+
+    /** 进度清单：已填写明文，未填写「待补充」，避免 ✗/x 被当成输入模板。 */
+    private static String progressChecklist(CreateArchiveDraft draft) {
+        StringBuilder sb = new StringBuilder("建档进度：\n");
+        sb.append(draft.hasName() ? "· 姓名：" + draft.name().trim() + "\n" : "· 姓名：待补充\n");
+        sb.append(
+                draft.hasGender()
+                        ? "· 性别：" + genderPlain(draft.gender()) + "\n"
+                        : "· 性别：待补充\n");
+        sb.append(
+                draft.hasBirthday()
+                        ? "· 出生：" + draft.birthday() + "\n"
+                        : "· 出生：待补充\n");
+        sb.append(draft.hasMobile() ? "· 手机：" + draft.mobile() : "· 手机：待补充");
+        return sb.toString();
+    }
+
+    private static String genderPlain(String gender) {
+        if ("MALE".equals(gender)) {
+            return "男";
+        }
+        if ("FEMALE".equals(gender)) {
+            return "女";
+        }
+        return "未知";
     }
 
     private static CreateArchiveDraft mergeFromHistory(List<ChatTurn> history, CreateArchiveDraft current) {

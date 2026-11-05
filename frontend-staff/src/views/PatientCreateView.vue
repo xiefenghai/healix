@@ -60,6 +60,7 @@ async function submit() {
   try {
     const q = new URLSearchParams({
       name: name.value.trim(),
+      gender: gender.value,
       birthday: birthday.value,
       mobile: mobile.value.trim(),
     })

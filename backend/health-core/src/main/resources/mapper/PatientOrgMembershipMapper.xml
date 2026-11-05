@@ -66,4 +66,14 @@
         SET status = 'LEFT', left_at = #{leftAt}, gmt_modified = #{leftAt}
         WHERE id = #{id} AND is_deleted = 0
     </update>
+
+    <update id="markActive">
+        UPDATE people_org_membership
+        SET status = 'ACTIVE',
+            left_at = NULL,
+            joined_at = #{joinedAt},
+            invited_by_staff_id = #{invitedByStaffId},
+            gmt_modified = #{joinedAt}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
 </mapper>

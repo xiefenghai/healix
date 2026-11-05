@@ -235,16 +235,27 @@ public class BWorkspaceController {
         return ApiResult.ok(orgWorkspaceService.orgPatientStats(SecurityUtils.requireCurrentOrgId()));
     }
 
-    /** 建档前查重：同名且同生日 / 同号码的已有档案。 */
+    /** 建档前查重：同本人号下，姓名+性别+出生日期全匹配可自动关联。 */
     @GetMapping("/patients/archives/duplicates")
     public ApiResult<List<OrgWorkspaceService.DuplicateCandidate>> archiveDuplicates(
             @RequestParam String name,
+            @RequestParam(required = false) String gender,
             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
                             iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
                     java.time.LocalDate birthday,
             @RequestParam(required = false) String mobile) {
         return ApiResult.ok(orgWorkspaceService.findPossibleDuplicates(
-                SecurityUtils.requireCurrentOrgId(), name, birthday, mobile));
+                SecurityUtils.requireCurrentOrgId(), name, gender, birthday, mobile));
+    }
+
+    /** 从当前机构移除患者：仅解除机构关系，档案保留；本机构列表不再可见。 */
+    @DeleteMapping("/org-patients/{peopleId}")
+    public ApiResult<Void> removeOrgPatient(@PathVariable String peopleId) {
+        orgWorkspaceService.removeOrgPatient(
+                SecurityUtils.requireCurrentOrgId(),
+                peopleId,
+                SecurityUtils.requireContext().getAccountId());
+        return ApiResult.ok(null);
     }
 
     /** 已建档患者补充证件。 */

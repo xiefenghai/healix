@@ -155,15 +155,18 @@ public class CockpitBriefingService {
                     1. 只能依据下方「摘要」与「优先名单」写，禁止编造名单外的患者、人数或分类标签。
                        理由优先引用名单里给出的具体读数、连续天数（如「今早血压 162/98」「服药连续 3 天未完成」），不得自行编造数值。
                     2. 优先名单为空时：用一两句说清「现在立刻该做什么」，不要背诵整段服务流程说明书。
-                       若摘要显示主责健管组数为 0：只建议先创建以自己为主责的健管组；
+                       若摘要显示主责健管组数为 0：只建议先创建以自己为主责的健管组（点下方按钮打开创建抽屉即可），
+                       严禁说「去系统管理」「没有权限」「联系管理员」；
                        已有主责组但无患者：只建议建档或把客户信息发给助手，禁止说「去左侧选患者」；
                        有患者则建议点下方卡片或从「我的患者」选人继续，勿暗示今日优先名单一定有人。
                     3. 若摘要中方案待确认或报告待审阅大于 0，用一句提醒健管师处理右栏草稿箱（勿虚构具体患者）。
-                    4. 禁止使用「红人」「红标」「依从红人」「红灯」等说法；也不要用同义改写暗示这类标签。
+                    4. 不要使用「红人」「红标」「依从红人」「红灯患者」等产品未展示的标签；优先用名单/摘要里的具体事实：连续未打卡、近7日依从偏低、超期待办、临床高/中风险、血压读数等。
                     5. 不做诊断、不开方；禁止 Markdown（不要 #、**、表格、列表符号），用纯中文短句。
-                    6. 不要缩短或改写服务流程环节名称。
-                    7. 若名单主因/待办含「首诊」「入组」「ONBOARDING」「分配健管组」：必须建议完成首诊评估或分配健管组，
-                       禁止说「开随访」「新建随访」——入组/首诊本身已是随访待办，再开随访会叠单。
+                    6. 标准服务路径固定为：建档→分组→首诊评估→制定方案→日常跟进→定期报告→阶段总结→结束；
+                       不要缩短、改写或调换这些环节名称；禁止跳步建议。
+                    7. 若名单主因/待办含「分组」「分配健管组」「TEAM_ASSIGN」：先建议完成分组；
+                       若含「首诊」「ONBOARDING」：建议完成首诊评估。
+                       禁止对首诊待办再说「开随访」「新建随访」——首诊本身已是待办，再开随访会叠单。
                     """;
             String user = buildUserPrompt(summary, top, facts);
             var llm = llmClient.chat("COCKPIT_BRIEFING", system, user, List.of());
@@ -306,19 +309,19 @@ public class CockpitBriefingService {
         CockpitBriefingDto.BriefingAction a = new CockpitBriefingDto.BriefingAction();
         a.setPeopleId(c.getPeopleId());
 
-        // 入组/首诊待办也是 FOLLOW_UP 类型，绝不能再「开随访」叠单
+        // 标准路径：分组优先于首诊评估；首诊待办也是 FOLLOW_UP，绝不能再「开随访」叠单
+        if (types.contains("TEAM_ASSIGN") || badges.contains("TEAM_ASSIGN")) {
+            a.setType("NAVIGATE");
+            a.setPath("join-care-team");
+            a.setLabel("给" + name + "分组");
+            return a;
+        }
         boolean onboarding = badges.contains("ONBOARDING")
                 || labels.stream().anyMatch(l -> l != null && (l.contains("首诊") || l.contains("入组")));
         if (onboarding) {
             a.setType("OPEN_SHEET");
             a.setPath("intake");
             a.setLabel("去做" + name + "的首诊评估");
-            return a;
-        }
-        if (types.contains("TEAM_ASSIGN") || badges.contains("TEAM_ASSIGN")) {
-            a.setType("NAVIGATE");
-            a.setPath("join-care-team");
-            a.setLabel("给" + name + "分配健管组");
             return a;
         }
         if (types.contains("PLAN_CREATE") || types.contains("PLAN_REVIEW")) {
@@ -360,7 +363,7 @@ public class CockpitBriefingService {
         return null;
     }
 
-    /** 简报/对话暂不使用「红人」口径：命中则丢弃 LLM 结果，走模板降级。 */
+    /** 简报仍拦截旧「红人」标签词：命中则丢弃 LLM 结果，走模板降级。 */
     private static boolean mentionsForbiddenRedLabel(String text) {
         if (!StringUtils.hasText(text)) {
             return false;

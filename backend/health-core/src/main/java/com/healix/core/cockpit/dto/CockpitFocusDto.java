@@ -19,7 +19,8 @@ public class CockpitFocusDto {
     /** 尚未加入健管组时为 true，驾驶舱引导先分配 */
     private Boolean needsCareTeamAssign;
     /**
-     * 标准服务环节当前位置（0-based）：建档→首诊→方案→随访→周报→阶段评估→结束。
+     * 标准服务路径当前位置（0-based）：
+     * 建档→分组→首诊评估→制定方案→日常跟进→定期报告→阶段总结→结束。
      */
     private Integer serviceStageIndex;
     private String serviceStageCode;

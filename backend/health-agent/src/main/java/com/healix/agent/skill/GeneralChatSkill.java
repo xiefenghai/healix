@@ -18,6 +18,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -51,13 +53,17 @@ public class GeneralChatSkill implements AgentSkill {
     public AgentResponse executeStream(AgentSkillContext ctx, Consumer<AgentStreamEvent> sink) {
         AgentChatCommand cmd = ctx.command();
         boolean orgSession = !StringUtils.hasText(cmd.peopleId());
+        OrgGuideIntent guide = classifyOrgGuideIntent(cmd.message());
+        // 创建健管组：机构/患者会话均可短路（打开现有抽屉，不走 LLM）
+        if (guide == OrgGuideIntent.CREATE_CARE_TEAM) {
+            return shortOrgGuideReply(ctx, guide, sink);
+        }
         // 机构会话：轻量意图不跑「产品说明书」长链路
         if (orgSession) {
             LightTone tone = classifyLightTone(cmd.message());
             if (tone != LightTone.NONE) {
                 return shortOrgLightReply(ctx, tone, sink);
             }
-            OrgGuideIntent guide = classifyOrgGuideIntent(cmd.message());
             if (guide != OrgGuideIntent.NONE) {
                 return shortOrgGuideReply(ctx, guide, sink);
             }
@@ -81,10 +87,32 @@ public class GeneralChatSkill implements AgentSkill {
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingStart("整理机构级会话目标…"));
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.thinkingDelta("依据今日优先名单回答，禁止编造名单外患者。\n"));
-            actions.addAll(orgBrief.actions());
+            // 非「选人/办待办」类问题不挂优先名单人名芯片（如创建健管组、婉拒安排）
+            actions.addAll(filterOrgBriefActions(orgBrief.actions(), cmd.message()));
+            String msgNorm = cmd.message() == null ? "" : cmd.message().trim().replaceAll("\\s+", "");
+            if (isCareTeamExplainQuestion(msgNorm)) {
+                boolean hasCreate =
+                        actions.stream()
+                                .anyMatch(
+                                        a -> a != null
+                                                && "NAVIGATE".equals(a.type())
+                                                && "create-care-team".equals(a.path()));
+                if (!hasCreate) {
+                    actions.add(0, AgentAction.createCareTeam("去创建健管组", null));
+                }
+            }
             boolean hasPatientButtons = actions.stream()
                     .anyMatch(a -> a != null && "FOCUS_PATIENT".equals(a.type()));
             systemPrompt = buildOrgSystemPrompt(orgBrief.text(), hasPatientButtons);
+            if (isCareTeamExplainQuestion(msgNorm)) {
+                systemPrompt +=
+                        """
+
+                        用户在问「为什么要创建健管组」这类价值/原因问题（不是立刻下指令创建）。
+                        请用两三句说明：健管组是「分组」前置，名下患者与待办按主责组归属；先有以自己为主责的组，才能把患者分进去并继续首诊。
+                        可提示点下方「去创建健管组」；严禁说「去系统管理」「没有权限」。
+                        """;
+            }
             if (StaffBizTools.wantsCompleteTask(cmd.message())) {
                 systemPrompt += hasPatientButtons
                         ? """
@@ -433,33 +461,6 @@ public class GeneralChatSkill implements AgentSkill {
         return a.equals(b);
     }
 
-    private static final String PLAIN_TEXT_RULE =
-            """
-            输出格式（必须遵守）：
-            1) 先写思考，再写回答，严格使用下面两个标记（各占一行）：
-            【思考】
-            （3～8 条短句：你如何理解问题、关注哪些信息、准备给出什么建议；不要写最终分节标题）
-            【回答】
-            （给健管师看的正式回复）
-            2) 【回答】部分使用纯中文分段，不要使用 Markdown。
-            3) 禁止：# 标题、**加粗**、表格（|）、代码块、任务勾选框（- [ ]）、水平线（---）。
-            4) 分层用「一、二、三」，每个分节标题单独占一行；标题下一行立刻写「1. 2. 3.」，中间不要空行。
-            5) 条目用「1. 2. 3.」或「·」，每个条目单独一行、条目之间不要空行；上一节最后一条与下一节标题之间空一行。
-            6) 指标对比直接写成「血压：180/99 mmHg，明显偏高」这类短句，不要画表。
-            7) 病种一律用中文（糖尿病、高血压等），禁止输出 diabetes / hypertension 等英文 code。
-            """;
-
-    /** 机构会话：默认短答；勿逼模型每次写「一、二、三」报告。 */
-    private static final String ORG_PLAIN_TEXT_RULE =
-            """
-            输出格式（必须遵守）：
-            1) 可选用【思考】【回答】标记；【回答】给健管师看。
-            2) 纯中文，不要 Markdown（禁止 #、**、表格、代码块）。
-            3) 默认一两句口语短回（约 30～60 字）；只有用户明确要求「安排今日工作 / 解释多条待办」时，才用「一、二、三」分节。
-            4) 禁止主动抛出「评估/用药不在协助范围」等免责句；仅当用户真的在问医学结论、用药建议或评估解读时再简要说明边界。
-            5) 病种用中文，禁止输出英文病种 code。
-            """;
-
     /**
      * 机构会话轻量意图：语气词 / 乱码不进 LLM、不查库。
      * 包内可见便于单测。
@@ -467,22 +468,37 @@ public class GeneralChatSkill implements AgentSkill {
     enum LightTone {
         NONE,
         ACK,
+        /** 「不要 / 算了」等婉拒，短回且不挂任何行动芯片 */
+        DECLINE,
         GIBBERISH
     }
 
-    /** 「你能干什么 / 我现在要干什么 / 任务类型」等场景问答。 */
+    /** 「你能干什么 / 我现在要干什么 / 任务类型 / 创建健管组」等场景问答。 */
     enum OrgGuideIntent {
         NONE,
         CAPABILITY,
         NEXT_STEP,
-        TASK_TYPES
+        TASK_TYPES,
+        CREATE_CARE_TEAM,
+        /** 体检/检验/单据/健康指标怎么录入——产品入口 FAQ，不依赖机构摘要 */
+        DATA_ENTRY
     }
+
+    private static final Pattern CARE_TEAM_NAME_EXPLICIT =
+            Pattern.compile("(?:名字|名称|名为|叫)[:：\\s]*([\\u4e00-\\u9fa5A-Za-z0-9_\\-]{1,40})");
+    private static final Pattern CARE_TEAM_NAME_TRAILING =
+            Pattern.compile(
+                    "(?:创建|新建)(?:一个|个|一下|再)?健管组[:：\\s]+([\\u4e00-\\u9fa5A-Za-z0-9_\\-]{1,40})\\s*$");
 
     static LightTone classifyLightTone(String message) {
         if (!StringUtils.hasText(message)) {
             return LightTone.GIBBERISH;
         }
         String t = message.trim();
+        if (t.matches(
+                "^(不要|不用了?|算了|先不了?|暂时不(用|要|了)?|先不定|不用安排|先不安排|不了)[.。!！?？…~～\\s]*$")) {
+            return LightTone.DECLINE;
+        }
         if (t.matches(
                 "^(嗯+|哦+|噢+|呃+|啊+|哎+|好的?|行|可以|收到|知道了|明白了|了解了?|嗯嗯+|ok|OK|Okay|okay|谢谢|感谢|哈哈+|呵呵+|嘻嘻+)[.。!！?？…~～\\s]*$")) {
             return LightTone.ACK;
@@ -509,6 +525,10 @@ public class GeneralChatSkill implements AgentSkill {
         }
         // 去掉空白，兼容「你能做点啥」「你 能 干 什么」
         String n = message.trim().replaceAll("\\s+", "");
+        // 创建健管组：动作/入口类短路；「为什么要创建」等解释问交给 LLM，勿复读开抽屉话术
+        if (isCreateCareTeamAction(n)) {
+            return OrgGuideIntent.CREATE_CARE_TEAM;
+        }
         // 「你能做点啥」：做与啥之间可夹字，避免旧正则只认「做啥」连写
         if (n.contains("能做点啥")
                 || n.contains("能干点啥")
@@ -533,6 +553,9 @@ public class GeneralChatSkill implements AgentSkill {
                 || n.contains("有哪些任务")) {
             return OrgGuideIntent.TASK_TYPES;
         }
+        if (isDataEntryHowTo(n)) {
+            return OrgGuideIntent.DATA_ENTRY;
+        }
         if (n.contains("先忙什么")
                 || n.contains("从哪开始")
                 || n.contains("怎么开始")
@@ -544,8 +567,120 @@ public class GeneralChatSkill implements AgentSkill {
         return OrgGuideIntent.NONE;
     }
 
+    /** 体检/检验/单据/指标录入的产品入口说明（不查机构摘要）。 */
+    static boolean isDataEntryHowTo(String normalizedNoSpace) {
+        if (!StringUtils.hasText(normalizedNoSpace)) {
+            return false;
+        }
+        String n = normalizedNoSpace;
+        boolean topic = n.contains("体检")
+                || n.contains("检验")
+                || n.contains("检查单")
+                || n.contains("化验")
+                || n.contains("单据")
+                || n.contains("ocr")
+                || n.contains("OCR")
+                || n.contains("健康数据")
+                || n.contains("血压")
+                || n.contains("血糖")
+                || n.contains("指标");
+        if (!topic) {
+            return false;
+        }
+        return n.contains("怎么录")
+                || n.contains("如何录")
+                || n.contains("怎样录")
+                || n.contains("录入")
+                || n.contains("上传")
+                || n.contains("入口")
+                || n.contains("在哪")
+                || n.contains("哪里")
+                || n.contains("怎么传")
+                || n.contains("怎么加");
+    }
+
+    /**
+     * 是否在「要去创建」而非「问为什么创建」。
+     * 「为什么要创建健管组」含创建健管组字样，但不能当创建动作短路。
+     */
+    static boolean isCreateCareTeamAction(String normalizedNoSpace) {
+        if (!StringUtils.hasText(normalizedNoSpace)) {
+            return false;
+        }
+        String n = normalizedNoSpace;
+        if (isCareTeamExplainQuestion(n)) {
+            return false;
+        }
+        if (n.contains("创建健管组")
+                || n.contains("新建健管组")
+                || n.contains("建个健管组")
+                || n.contains("建一个健管组")
+                || n.contains("开个健管组")
+                || n.matches(".*(创建|新建|开).{0,6}(一个|个|一下|再)?健管组.*")) {
+            return true;
+        }
+        return (n.equals("在哪里创建")
+                        || n.equals("在哪创建")
+                        || n.equals("怎么创建")
+                        || n.equals("去哪创建")
+                        || n.equals("去哪里创建")
+                        || n.matches(".*(在哪|哪里|怎么|如何).{0,4}(创建|新建)(健管组)?$"))
+                && !n.contains("患者")
+                && !n.contains("档案")
+                && !n.contains("建档");
+    }
+
+    /** 「为什么 / 有什么用」类：解释健管组价值，不是立刻打开创建抽屉。 */
+    static boolean isCareTeamExplainQuestion(String normalizedNoSpace) {
+        if (!StringUtils.hasText(normalizedNoSpace)) {
+            return false;
+        }
+        String n = normalizedNoSpace;
+        if (!(n.contains("健管组") || n.contains("创建"))) {
+            return false;
+        }
+        return n.contains("为什么")
+                || n.contains("为啥")
+                || n.contains("干嘛")
+                || n.contains("干什么用")
+                || n.contains("有什么用")
+                || n.contains("有必要")
+                || n.contains("是什么")
+                || n.contains("啥意思")
+                || n.contains("作用")
+                || n.contains("意义")
+                || n.contains("目的");
+    }
+
+    /** 从「创建健管组 名字 老板组」「创建健管组叫老板组」等话术解析预填组名。 */
+    static String parseCareTeamName(String message) {
+        if (!StringUtils.hasText(message)) {
+            return null;
+        }
+        String t = message.trim();
+        Matcher explicit = CARE_TEAM_NAME_EXPLICIT.matcher(t);
+        if (explicit.find()) {
+            String name = explicit.group(1).trim();
+            if (StringUtils.hasText(name) && !"健管组".equals(name)) {
+                return name;
+            }
+        }
+        Matcher trailing = CARE_TEAM_NAME_TRAILING.matcher(t);
+        if (trailing.find()) {
+            String name = trailing.group(1).trim();
+            if (StringUtils.hasText(name) && !"名字".equals(name) && !"名称".equals(name)) {
+                return name;
+            }
+        }
+        return null;
+    }
+
     private AgentResponse shortOrgLightReply(
             AgentSkillContext ctx, LightTone tone, Consumer<AgentStreamEvent> sink) {
+        if (tone == LightTone.DECLINE) {
+            return finishShortOrg(
+                    ctx, sink, "ORG_CHAT_DECLINE", "好的，那先不安排。有需要随时喊我。", List.of());
+        }
         String reply =
                 tone == LightTone.ACK
                         ? "收到。需要帮忙时随时叫我，或点下方按钮开始。"
@@ -553,17 +688,54 @@ public class GeneralChatSkill implements AgentSkill {
         return finishShortOrg(ctx, sink, "ORG_CHAT_LIGHT", reply, orgGuideActions());
     }
 
+    /** 机构摘要动作：仅在「选人/办待办」类问题上保留 FOCUS_PATIENT 人名芯片。 */
+    static List<AgentAction> filterOrgBriefActions(List<AgentAction> raw, String message) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        if (StaffBizTools.wantsPriorityPatientChips(message)) {
+            return raw;
+        }
+        List<AgentAction> out = new ArrayList<>();
+        for (AgentAction a : raw) {
+            if (a != null && !"FOCUS_PATIENT".equals(a.type())) {
+                out.add(a);
+            }
+        }
+        return out;
+    }
+
     private AgentResponse shortOrgGuideReply(
             AgentSkillContext ctx, OrgGuideIntent guide, Consumer<AgentStreamEvent> sink) {
         AgentChatCommand cmd = ctx.command();
+        if (guide == OrgGuideIntent.CREATE_CARE_TEAM) {
+            String suggested = parseCareTeamName(cmd.message());
+            String reply;
+            String label;
+            if (StringUtils.hasText(suggested)) {
+                reply = "好的，这就打开创建健管组，已帮你预填「" + suggested + "」。确认主责后点创建即可。";
+                label = "去创建「" + suggested + "」";
+            } else {
+                reply = "好的，点下方打开创建健管组抽屉，填组名并选主责健管师即可。";
+                label = "去创建健管组";
+            }
+            return finishShortOrg(
+                    ctx,
+                    sink,
+                    "ORG_CHAT_CREATE_CARE_TEAM",
+                    reply,
+                    List.of(AgentAction.createCareTeam(label, suggested)));
+        }
         if (guide == OrgGuideIntent.CAPABILITY) {
             // 纯场景话术：不查库、不推送活动轨迹事件
             String reply =
                     """
-                    我是您的贴身健管助理，最擅长帮您做这三件事：
-                    1. 快速建档：直接把信息发我（如：张三 女 45岁 13800000000），我帮您建档。
+                    我是您的贴身健管助理。标准服务路径是：
+                    建档 → 分组 → 首诊评估 → 制定方案 → 日常跟进 → 定期报告 → 阶段总结 → 结束。
+                    我最擅长帮您：
+                    1. 快速建档：直接把信息发我（如：张三 女 45岁 13800000000）。
                     2. 写方案与话术：例如「帮我写一份血糖控制方案」或「写段回访话术」。
-                    3. 盯重点：提醒今天该回访谁、谁指标异常，或帮您总结某位患者的画像要点。
+                    3. 盯日常跟进：提醒今天该回访谁、谁指标异常，或帮您总结画像要点。
                     点下方按钮开始，或直接把需求发给我试试。""";
             return finishShortOrg(ctx, sink, "ORG_CHAT_CAPABILITY", reply, orgGuideActions());
         }
@@ -591,6 +763,43 @@ public class GeneralChatSkill implements AgentSkill {
                 actions.add(AgentAction.setCockpitTab("查看我的患者", "mine"));
             }
             return finishShortOrg(ctx, sink, "ORG_CHAT_TASK_TYPES", reply, actions);
+        }
+
+        if (guide == OrgGuideIntent.DATA_ENTRY) {
+            StaffBizTools.MinePeek peek =
+                    staffBizTools.peekMineContext(cmd.tenantId(), cmd.orgId());
+            var first = peek.firstMine();
+            if (first != null && StringUtils.hasText(first.getPeopleId())) {
+                String peopleId = first.getPeopleId();
+                String name =
+                        StringUtils.hasText(first.getDisplayName())
+                                ? first.getDisplayName().trim()
+                                : "这位患者";
+                String reply =
+                        "「"
+                                + name
+                                + "」已经在您名下了。体检/检验可以这样录：\n"
+                                + "传照片：点「去单据录入」上传化验单，我帮您识别入库。\n"
+                                + "手敲指标：点「手动录入」打开右侧健康数据。\n"
+                                + "若要给别人录，也可以新建患者。";
+                List<AgentAction> actions = new ArrayList<>();
+                actions.add(AgentAction.ocrUpload("去单据录入", peopleId));
+                actions.add(AgentAction.openSheet("手动录入", "observations", peopleId));
+                actions.add(AgentAction.triggerCapability("新建患者", "CREATE_ARCHIVE", null));
+                return finishShortOrg(ctx, sink, "ORG_CHAT_DATA_ENTRY", reply, actions);
+            }
+            String reply =
+                    """
+                    没问题。体检数据要先挂在具体患者名下。
+                    传照片：建档并选中患者后，点对话下方「单据录入」上传化验单。
+                    手敲指标：患者会话右侧点「录入数据」。
+                    您名下还没有患者，先建档再录。""";
+            return finishShortOrg(
+                    ctx,
+                    sink,
+                    "ORG_CHAT_DATA_ENTRY",
+                    reply,
+                    List.of(AgentAction.triggerCapability("新建患者", "CREATE_ARCHIVE", null)));
         }
 
         // NEXT_STEP：静默扫一眼「我的患者」，有人就点名（不刷工具轨迹）
@@ -670,51 +879,26 @@ public class GeneralChatSkill implements AgentSkill {
                 ? "6. 今日待办/优先名单为空时：一两句说明暂无紧急事项即可，引导新建患者或查看我的患者；"
                         + "禁止每次复读「待办0、超期0」并展开一、二、三长报告。"
                 : "6. 有待办时再按摘要给办理顺序；不要堆砌与用户问题无关的状态复读。";
-        return """
-                你是 Healix 灵犀，健管师机构工作台（智能驾驶舱）的 AI 协作者。
-                当前处于机构级会话（未绑定具体患者）。
-                规则：
-                1. 只能依据下方「机构摘要」回答，禁止编造名单外的患者、人数或标签；摘要里有打卡排名、到期方案等统计时，直接引用其中的姓名、百分比和日期作答，摘要没有的统计如实说明暂不支持。
-                2. 协助安排今日优先、解释任务类型与处理建议；不做诊断或处方。摘要写「优先名单为空」时，不要编造具体患者姓名或待办。
-                %s
-                4. 回答简洁、口语化，使用中文；默认短回，不要写成工作报告。
-                5. 禁止使用「红人」「红标」「依从红人」「红灯患者」等说法，也不要用同义改写暗示这类标签。
-                %s
-                %s
-
-                机构摘要：
-                %s
-                """
-                .formatted(
-                        nextStepRule,
-                        idleRule,
-                        ORG_PLAIN_TEXT_RULE,
-                        StringUtils.hasText(orgBriefText) ? orgBriefText : "（暂无数据）");
+        String brief = StringUtils.hasText(orgBriefText) ? orgBriefText : "（暂无数据）";
+        String tpl =
+                SkillMarkdown.loadClasspath(
+                        "skills/general-chat/org-system.md",
+                        "你是 Healix 灵犀。\n{{NEXT_STEP_RULE}}\n{{IDLE_RULE}}\n机构摘要：\n{{ORG_BRIEF}}");
+        tpl = SkillMarkdown.apply(tpl, "NEXT_STEP_RULE", nextStepRule);
+        tpl = SkillMarkdown.apply(tpl, "IDLE_RULE", idleRule);
+        return SkillMarkdown.apply(tpl, "ORG_BRIEF", brief);
     }
 
     private static String buildSystemPrompt(
             String displayName, CarePlanContext patientCtx, String focusText) {
-        return """
-                你是 Healix 灵犀（CARE_COPILOT），健管师工作台的 AI 协作者，协助医护人员管理患者健康。
-                规则：
-                1. 仅提供健康管理建议，不做医学诊断或处方。
-                2. 优先结合「焦点快照」中的评估标签、档案完整度、依从性与开放任务给出下一步建议。
-                3. 可解读指标趋势、生活方式建议；涉及完整方案生成请提示使用「制定管理方案」。
-                4. 回答简洁、结构化，使用中文。
-                5. 「开放任务 / 超期任务」只能依据焦点快照里标注的开放任务列出；快照未出现的任务类型（如报告审阅、打卡跟进）不得臆造为待办或超期。已发布/已跳过的管理报告不等于待审阅；若用户问报告，说明可在报告页查看已发布记录，而不是催办已结案的审阅单。
-                %s
-
-                当前患者：%s
-                焦点快照：
-                %s
-                档案与观测摘要：
-                %s
-                """
-                .formatted(
-                        PLAIN_TEXT_RULE,
-                        displayName,
-                        StringUtils.hasText(focusText) ? focusText : "（暂无）",
-                        JsonUtils.toJson(patientCtx.snapshot()));
+        String tpl =
+                SkillMarkdown.loadClasspath(
+                        "skills/general-chat/patient-system.md",
+                        "你是 Healix 灵犀。\n当前患者：{{DISPLAY_NAME}}\n焦点快照：\n{{FOCUS_TEXT}}\n档案与观测摘要：\n{{PATIENT_SNAPSHOT}}");
+        tpl = SkillMarkdown.apply(tpl, "DISPLAY_NAME", displayName);
+        tpl = SkillMarkdown.apply(
+                tpl, "FOCUS_TEXT", StringUtils.hasText(focusText) ? focusText : "（暂无）");
+        return SkillMarkdown.apply(tpl, "PATIENT_SNAPSHOT", JsonUtils.toJson(patientCtx.snapshot()));
     }
 
     private static String fallbackReply(boolean orgSession) {

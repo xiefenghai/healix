@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
 import { MOBILE_OWNER_OPTIONS, formatMobileOwner } from '../../shared/mobile-owner'
@@ -490,7 +490,12 @@ async function submitArchive() {
     if (f.noMobile) {
       duplicates.value = []
     } else {
-      const q = new URLSearchParams({ name: f.name.trim(), birthday: f.birthday, mobile: f.mobile.trim() })
+      const q = new URLSearchParams({
+        name: f.name.trim(),
+        gender: f.gender,
+        birthday: f.birthday,
+        mobile: f.mobile.trim(),
+      })
       const res = await api<{ data: DuplicateCandidate[] }>(`/api/b/v1/patients/archives/duplicates?${q}`)
       duplicates.value = res.data ?? []
     }
@@ -573,6 +578,30 @@ function closeCareTeamDialog() {
 
 async function onCareTeamChanged() {
   await Promise.all([load(), loadBaseline()])
+}
+
+const removingPeopleId = ref<string | null>(null)
+
+async function removeOrgPatient(row: OrgPatientListItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${row.displayName}」从本机构移除？仅解除机构关系，患者档案保留；本机构列表将不再显示。`,
+      '移除患者',
+      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  removingPeopleId.value = row.peopleId
+  try {
+    await api(`/api/b/v1/org-patients/${encodeURIComponent(row.peopleId)}`, { method: 'DELETE' })
+    ElMessage.success('已从本机构移除')
+    await Promise.all([load(), loadBaseline()])
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '移除失败')
+  } finally {
+    removingPeopleId.value = null
+  }
 }
 
 onMounted(async () => {
@@ -767,7 +796,7 @@ onMounted(async () => {
         <el-table-column label="入机构时间" v-bind="TABLE_COL.datetime">
           <template #default="{ row }">{{ formatTime(row.joinedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" v-bind="TABLE_COL.actionsLg">
+        <el-table-column label="操作" width="280" align="right" fixed="right">
           <template #default="{ row }">
             <el-button
               link
@@ -778,6 +807,14 @@ onMounted(async () => {
             </el-button>
             <el-button link type="primary" @click="openCareTeamDialog(row)">
               {{ row.careTeamId ? '变更健管组' : '加入健管组' }}
+            </el-button>
+            <el-button
+              link
+              type="danger"
+              :loading="removingPeopleId === row.peopleId"
+              @click="removeOrgPatient(row)"
+            >
+              删除
             </el-button>
           </template>
         </el-table-column>

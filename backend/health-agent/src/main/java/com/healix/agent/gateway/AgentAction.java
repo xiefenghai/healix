@@ -29,6 +29,33 @@ public record AgentAction(
         return new AgentAction("NAVIGATE", label, path, peopleId, null);
     }
 
+    public static AgentAction navigate(String label, String path, Map<String, Object> payload) {
+        return new AgentAction("NAVIGATE", label, path, null, payload);
+    }
+
+    /** 打开驾驶舱「创建健管组」抽屉；suggestedName 非空时预填组名。 */
+    public static AgentAction createCareTeam(String label, String suggestedName) {
+        if (StringUtils.hasText(suggestedName)) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("name", suggestedName.trim());
+            return navigate(label, "create-care-team", payload);
+        }
+        return navigate(label, "create-care-team");
+    }
+
+    /** 打开驾驶舱「建档」抽屉；draft 非空字段会预填到表单。 */
+    public static AgentAction openCreateArchive(String label, Map<String, Object> draft) {
+        if (draft != null && !draft.isEmpty()) {
+            return navigate(label, "create-archive", draft);
+        }
+        return navigate(label, "create-archive");
+    }
+
+    /** 切入患者后打开「单据录入」上传（驾驶舱 NAVIGATE ocr-upload）。 */
+    public static AgentAction ocrUpload(String label, String peopleId) {
+        return navigate(label, "ocr-upload", peopleId);
+    }
+
     public static AgentAction focusPatient(String label, String peopleId) {
         return focusPatient(label, peopleId, true);
     }

@@ -10,7 +10,6 @@ import com.healix.core.observation.dto.LabOcrPrefillDto;
 import com.healix.core.storage.ImageFileService;
 import com.healix.core.storage.ObjectKeys;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
@@ -52,8 +51,8 @@ public class OcrLabSkill implements AgentSkill {
                     null);
         }
         try {
-            byte[] bytes = decodeImage(cmd.imageBase64());
-            String mime = StringUtils.hasText(cmd.imageMimeType()) ? cmd.imageMimeType() : "image/jpeg";
+            byte[] bytes = OcrSkillSupport.decodeImage(cmd.imageBase64());
+            String mime = OcrSkillSupport.mimeOrJpeg(cmd.imageMimeType());
             LabOcrPrefillDto prefill = labOcrRecognitionService.recognize(bytes, mime);
             if (StringUtils.hasText(cmd.tenantId()) && StringUtils.hasText(cmd.peopleId())) {
                 prefill = prefill.withImageKey(
@@ -93,7 +92,8 @@ public class OcrLabSkill implements AgentSkill {
             return false;
         }
         String msg = message.toLowerCase(Locale.ROOT);
-        return containsAny(msg, "检验单", "化验单", "检验报告", "化验报告", "lab report", "ocr-lab");
+        return OcrSkillSupport.containsAny(
+                msg, "检验单", "化验单", "检验报告", "化验报告", "lab report", "ocr-lab");
     }
 
     private static String buildReply(LabOcrPrefillDto prefill) {
@@ -104,28 +104,11 @@ public class OcrLabSkill implements AgentSkill {
         if (ignored > 0) {
             parts.add("忽略未收录 " + ignored + " 项");
         }
-        if (prefill.warnings() != null && !prefill.warnings().isEmpty()) {
-            parts.add("提示：" + String.join("；", prefill.warnings().subList(0, Math.min(3, prefill.warnings().size()))));
+        String hint = OcrSkillSupport.warningsHint(prefill.warnings());
+        if (hint != null) {
+            parts.add(hint);
         }
         parts.add("请在对话中核对后确认入库（不会自动落库）。");
         return String.join("。", parts);
-    }
-
-    private static byte[] decodeImage(String imageBase64) {
-        String raw = imageBase64.trim();
-        int comma = raw.indexOf(',');
-        if (raw.startsWith("data:") && comma > 0) {
-            raw = raw.substring(comma + 1);
-        }
-        return Base64.getDecoder().decode(raw);
-    }
-
-    private static boolean containsAny(String msg, String... keywords) {
-        for (String kw : keywords) {
-            if (msg.contains(kw.toLowerCase(Locale.ROOT))) {
-                return true;
-            }
-        }
-        return false;
     }
 }

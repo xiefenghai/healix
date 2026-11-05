@@ -12,6 +12,8 @@ interface OrgStaffItem {
 
 const props = defineProps<{
   modelValue: boolean
+  /** Agent 预填的健管组名称 */
+  presetName?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -44,7 +46,7 @@ function resetForm() {
   const selfId = getStaffId()
   const selfIsCm = !!selfId && careManagers.value.some((s) => s.staffId === selfId)
   form.value = {
-    name: '',
+    name: (props.presetName || '').trim(),
     primaryCareManagerStaffId: selfIsCm ? selfId : null,
     primaryDoctorStaffId: null,
   }

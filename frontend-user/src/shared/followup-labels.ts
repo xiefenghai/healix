@@ -5,7 +5,7 @@ const FOLLOWUP_TYPE_LABELS: Record<string, string> = {
   PLAN_ADHERENCE: '方案执行随访',
   MEDICATION: '用药随访',
   SYMPTOM_METRIC: '指标/症状随访',
-  ONBOARDING: '入组评估',
+  ONBOARDING: '首诊',
   OTHER: '其他随访',
 }
 

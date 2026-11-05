@@ -287,6 +287,40 @@ public class StaffBizTools {
         boolean wantAssess = containsAny(msg, "评估", "分标", "风险", "cdss", "糖标", "压标");
         boolean wantMed = containsAny(msg, "用药", "服药", "吃药", "药品", "漏服", "停药", "medication");
         boolean wantReport = containsAny(msg, "报告", "月报", "周报", "季报");
+        // 建档追问/开场：绝不能挂分组按钮（焦点患者未入组时曾误挂「去分组」「去创建健管组」）
+        boolean wantCreateArchive = containsAny(
+                msg,
+                "建档",
+                "新建患者",
+                "新建客户",
+                "新建档案",
+                "录入患者",
+                "登记患者",
+                "创建患者",
+                "建一个患者",
+                "建个患者",
+                "create archive");
+        boolean needTeam = needsCareTeamAssign(focus);
+        boolean wantTeam =
+                containsAny(msg, "分组", "分配健管组", "分配组", "入组", "改挂", "健管组", "team assign");
+        boolean competingIntent = wantComplete
+                || wantFollowup
+                || wantChat
+                || wantObs
+                || wantPlan
+                || wantArchive
+                || wantAssess
+                || wantMed
+                || wantReport
+                || wantCreateArchive;
+
+        // 仅明确说分组，或未入组且本轮没有其它业务意图时，才置顶分组入口
+        if (wantTeam || (needTeam && !competingIntent)) {
+            out.add(AgentAction.navigate("去分组", "join-care-team", peopleId));
+            if (needTeam) {
+                out.add(AgentAction.createCareTeam("去创建健管组", null));
+            }
+        }
 
         // 办结意图：挂齐当前患者可办结入口（人点才执行；同抽屉类合并，上限与前端芯片一致）
         if (wantComplete && focus != null && focus.getOpenTasks() != null) {
@@ -372,10 +406,18 @@ public class StaffBizTools {
                 }
             }
             if (focus.getOpenTasks() != null && !focus.getOpenTasks().isEmpty()) {
-                var top = focus.getOpenTasks().get(0);
+                // 未分组时优先扫 TEAM_ASSIGN，勿被首诊/随访待办抢走入口
+                CockpitFocusDto.OpenTaskBrief teamTask = null;
+                for (CockpitFocusDto.OpenTaskBrief t : focus.getOpenTasks()) {
+                    if (t != null && "TEAM_ASSIGN".equals(t.getTaskType())) {
+                        teamTask = t;
+                        break;
+                    }
+                }
+                var top = teamTask != null ? teamTask : focus.getOpenTasks().get(0);
                 appendTaskCloseActions(out, peopleId, top);
                 String type = top.getTaskType();
-                if ("FOLLOW_UP".equals(type) || "PLAN_NUDGE".equals(type)) {
+                if (!needTeam && ("FOLLOW_UP".equals(type) || "PLAN_NUDGE".equals(type))) {
                     out.add(AgentAction.createFollowupTask("一键创建随访待办", peopleId, "ROUTINE"));
                 } else if ("PLAN_CREATE".equals(type) || "PLAN_REVIEW".equals(type)) {
                     out.add(AgentAction.triggerCapability("一键生成方案草稿", "CARE_PLAN", peopleId));
@@ -390,7 +432,9 @@ public class StaffBizTools {
                             summary.contains("血压") ? "看血压趋势" : summary.contains("血糖") ? "看血糖趋势" : "看指标趋势",
                             peopleId));
                 } else if ("TEAM_ASSIGN".equals(type)) {
-                    out.add(AgentAction.navigate("去分配健管组", "join-care-team", peopleId));
+                    if (!hasNavigate(out, "join-care-team", peopleId)) {
+                        out.add(AgentAction.navigate("去分配健管组", "join-care-team", peopleId));
+                    }
                 } else if (!StringUtils.hasText(type)) {
                     out.add(AgentAction.openSheet("查看档案", "archive", peopleId));
                 }
@@ -403,6 +447,21 @@ public class StaffBizTools {
 
         // 办结意图最多挂 8 条；其它建议保持精简
         return limit(out, wantComplete ? 8 : 5);
+    }
+
+    /** 焦点处于「分组」环节或尚未入组。 */
+    static boolean needsCareTeamAssign(CockpitFocusDto focus) {
+        if (focus == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(focus.getNeedsCareTeamAssign())) {
+            return true;
+        }
+        if ("TEAM_ASSIGN".equalsIgnoreCase(focus.getServiceStageCode())) {
+            return true;
+        }
+        return !StringUtils.hasText(focus.getCareTeamId())
+                && focus.getNeedsCareTeamAssign() != Boolean.FALSE;
     }
 
     /**
@@ -627,6 +686,36 @@ public class StaffBizTools {
                 "待办办掉");
     }
 
+    /**
+     * 机构会话是否应在回复下挂优先名单「人名」芯片。
+     * 创建健管组、婉拒、纯闲聊等与选人无关的问题返回 false。
+     */
+    public static boolean wantsPriorityPatientChips(String message) {
+        if (!StringUtils.hasText(message)) {
+            return false;
+        }
+        if (wantsCompleteTask(message) || wantsAdherenceRank(message) || wantsPlanEnding(message)) {
+            return true;
+        }
+        String n = message.trim().replaceAll("\\s+", "");
+        return n.contains("优先")
+                || n.contains("待办")
+                || n.contains("跟进谁")
+                || n.contains("先忙")
+                || n.contains("先处理谁")
+                || n.contains("安排今天")
+                || n.contains("今天安排")
+                || n.contains("有谁要")
+                || n.contains("哪些人")
+                || n.contains("名单")
+                || n.contains("紧急")
+                || n.contains("无事可做")
+                || n.contains("从哪开始")
+                || n.equals("下一步")
+                || n.matches(".*(处理|跟进|打开|看).{0,8}(患者|客户|谁).*")
+                || n.matches(".*(我)?(现在|今天|接下来)?.{0,4}(要|该|应该)?(干|做)(什么|啥).*");
+    }
+
     public static boolean wantsFollowupDraft(String message) {
         return containsAny(
                 message == null ? "" : message.toLowerCase(Locale.ROOT),
@@ -685,6 +774,14 @@ public class StaffBizTools {
         }
         StringBuilder sb = new StringBuilder();
         sb.append("患者：").append(nullToDash(f.getDisplayName()));
+        if (StringUtils.hasText(f.getServiceStageLabel())) {
+            sb.append("；服务环节：").append(f.getServiceStageLabel());
+        }
+        if (Boolean.TRUE.equals(f.getNeedsCareTeamAssign()) || !StringUtils.hasText(f.getCareTeamId())) {
+            sb.append("；分组：未分配健管组");
+        } else if (StringUtils.hasText(f.getCareTeamName())) {
+            sb.append("；健管组：").append(f.getCareTeamName());
+        }
         if (f.getClientLinked() != null) {
             sb.append("；C端：").append(Boolean.TRUE.equals(f.getClientLinked()) ? "已激活" : "未激活");
         }

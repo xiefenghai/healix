@@ -25,7 +25,7 @@ export const FOLLOWUP_TYPE_OPTIONS = [
   { label: '方案执行随访', value: 'PLAN_ADHERENCE' },
   { label: '用药随访', value: 'MEDICATION' },
   { label: '指标/症状随访', value: 'SYMPTOM_METRIC' },
-  { label: '入组/首诊随访', value: 'ONBOARDING' },
+  { label: '首诊', value: 'ONBOARDING' },
   { label: '其他随访', value: 'OTHER' },
 ] as const
 

@@ -10,7 +10,7 @@ class WorkspaceTaskLabelsTest {
     @Test
     void followUpUsesFollowupTypeWhenPresent() {
         assertEquals(
-                "入组/首诊随访",
+                "首诊",
                 WorkspaceTaskLabels.of(WorkspaceTaskType.FOLLOW_UP, "{\"followupType\":\"ONBOARDING\"}"));
         assertEquals(
                 "常规健康回访",

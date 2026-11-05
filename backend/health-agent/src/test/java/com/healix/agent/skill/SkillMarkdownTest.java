@@ -36,4 +36,17 @@ class SkillMarkdownTest {
         String raw = "# Title\n\n---\n\nmore";
         assertThat(SkillMarkdown.forLlm(raw)).isEqualTo("# Title\n\n---\n\nmore");
     }
+
+    @Test
+    void loadsGeneralChatOrgTemplate() {
+        String body = SkillMarkdown.loadClasspath("skills/general-chat/org-system.md", "");
+        assertThat(body).contains("{{ORG_BRIEF}}");
+        assertThat(body).contains("去创建健管组");
+        assertThat(body).doesNotContain("name: general-chat-org");
+    }
+
+    @Test
+    void applyPlaceholder() {
+        assertThat(SkillMarkdown.apply("hi {{NAME}}", "NAME", "灵犀")).isEqualTo("hi 灵犀");
+    }
 }

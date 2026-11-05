@@ -882,6 +882,49 @@ public class OrgWorkspaceService {
         return item;
     }
 
+    /**
+     * 从当前机构移除患者：仅解除机构会员关系（档案本身保留），本机构列表不再可见。
+     *
+     * <p>若患者在本机构健管组中，一并移出并过期相关待办。
+     */
+    @Transactional
+    public void removeOrgPatient(String orgId, String peopleId, String actorAccountId) {
+        requireOrgWorkspaceAccess(orgId);
+        PeopleProfile profile = peopleProfileMapper.findById(peopleId);
+        if (profile == null || !requireTenantId().equals(profile.getTenantId())) {
+            throw new BusinessException(404, "患者不存在");
+        }
+        PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
+        if (membership == null || !MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
+            throw new BusinessException(404, "患者未在本机构有效入组");
+        }
+
+        CareTeamMember teamMember = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
+        if (teamMember != null) {
+            EntityMeta.onSoftDelete(teamMember);
+            careTeamMemberMapper.softDelete(
+                    teamMember.getId(), teamMember.getGmtDeleted(), teamMember.getGmtModified());
+            WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+            if (gen != null) {
+                gen.onPatientLeftTeam(orgId, peopleId);
+            }
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        membershipMapper.markLeft(membership.getId(), now);
+
+        auditService.record(
+                PortalEnum.B.code(),
+                actorAccountId,
+                "STAFF",
+                requireTenantId(),
+                AuditActionEnum.MEMBERSHIP_LEAVE.name(),
+                "people_org_membership",
+                String.valueOf(membership.getId()),
+                peopleId,
+                AuditDetails.of("orgId", orgId));
+    }
+
     private Set<String> currentWatchPeopleIds(String orgId) {
         RequestContext ctx = RequestContextHolder.get();
         if (ctx == null || ctx.getStaffId() == null) {
@@ -947,15 +990,13 @@ public class OrgWorkspaceService {
             }
             if (holders.size() == 1) {
                 PeopleProfile hit = holders.get(0);
-                boolean same = MobileNumbers.sameName(name, hit.getDisplayName())
-                        && birthday != null
-                        && birthday.equals(hit.getBirthday());
+                boolean same = isSameArchivePerson(name, gender, birthday, hit);
                 if (same || hit.getId().equals(attachPeopleId)) {
                     attachPeopleId = hit.getId();
                 } else {
                     throw new BusinessException(
                             409,
-                            "该本人手机号已有档案，且姓名/出生日期不一致。"
+                            "该本人手机号已有档案，且姓名/性别/出生日期不一致。"
                                     + "若为同一人请确认后关联已有档案；若不是同一人请换一个本人手机号再建档"
                                     + "（本人号在本租户只能绑定一份档案）");
                 }
@@ -1054,7 +1095,7 @@ public class OrgWorkspaceService {
     }
 
     /**
-     * 建档前查重：同名且同生日，或同名且同号码。只返回辨认所需的最少信息。
+     * 建档前查重：同本人号下，姓名+性别+出生日期全匹配可自动关联；否则需人工确认。
      *
      * @param inCurrentOrg 已在本机构入组，无需再建
      */
@@ -1070,7 +1111,7 @@ public class OrgWorkspaceService {
             boolean confirmRequired) {}
 
     public List<DuplicateCandidate> findPossibleDuplicates(
-            String orgId, String name, LocalDate birthday, String mobile) {
+            String orgId, String name, String gender, LocalDate birthday, String mobile) {
         requireOrgWorkspaceAccess(orgId);
         String tenantId = requireTenantId();
         String self = MobileNumbers.trySelf(mobile);
@@ -1080,9 +1121,7 @@ public class OrgWorkspaceService {
         List<DuplicateCandidate> out = new ArrayList<>();
         for (PeopleProfile p : peopleProfileMapper.listBySelfMobile(tenantId, self)) {
             PatientOrgMembership m = membershipMapper.findByOrgAndPeople(orgId, p.getId());
-            boolean same = MobileNumbers.sameName(name, p.getDisplayName())
-                    && birthday != null
-                    && birthday.equals(p.getBirthday());
+            boolean same = isSameArchivePerson(name, gender, birthday, p);
             out.add(new DuplicateCandidate(
                     p.getId(),
                     p.getDisplayName(),
@@ -1095,6 +1134,16 @@ public class OrgWorkspaceService {
                     !same));
         }
         return out;
+    }
+
+    /** 四要素一致：姓名 + 性别 + 出生日期（联系电话由调用方按本人号先筛）。 */
+    private static boolean isSameArchivePerson(
+            String name, String gender, LocalDate birthday, PeopleProfile existing) {
+        return MobileNumbers.sameName(name, existing.getDisplayName())
+                && birthday != null
+                && birthday.equals(existing.getBirthday())
+                && StringUtils.hasText(gender)
+                && gender.equalsIgnoreCase(existing.getGender());
     }
 
     /** 已建档患者补充证件；证件属于另一份档案时提示合并，不自动处理。 */
@@ -1504,7 +1553,17 @@ public class OrgWorkspaceService {
                 followups.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
             }
         } else if (!MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
-            throw new BusinessException(409, "该患者机构关系已退出，请联系管理员处理");
+            // 曾从本机构移除：建档四要素匹配后重新建立可见关系
+            LocalDateTime now = LocalDateTime.now();
+            membershipMapper.markActive(membership.getId(), now, staffId);
+            membership.setStatus(MembershipStatusEnum.ACTIVE.name());
+            membership.setLeftAt(null);
+            membership.setJoinedAt(now);
+            membership.setInvitedByStaffId(staffId);
+            FollowupScheduleService followups = followupScheduleService.getIfAvailable();
+            if (followups != null) {
+                followups.ensureOnboardingOnJoin(tenantId, orgId, peopleId);
+            }
         }
         return membership;
     }

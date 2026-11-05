@@ -21,4 +21,10 @@ public interface PatientOrgMembershipMapper {
     int insert(PatientOrgMembership membership);
 
     int markLeft(@Param("id") String id, @Param("leftAt") java.time.LocalDateTime leftAt);
+
+    /** 将已退出的机构关系重新激活（建档复用档案时） */
+    int markActive(
+            @Param("id") String id,
+            @Param("joinedAt") java.time.LocalDateTime joinedAt,
+            @Param("invitedByStaffId") String invitedByStaffId);
 }

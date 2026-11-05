@@ -1,5 +1,9 @@
 package com.healix.agent.skill;
 
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
 
 /**
@@ -8,7 +12,42 @@ import org.springframework.util.StringUtils;
  */
 public final class SkillMarkdown {
 
+    private static final ConcurrentHashMap<String, String> CACHE = new ConcurrentHashMap<>();
+
     private SkillMarkdown() {}
+
+    /**
+     * 从 classpath 加载 Skill 正文（剥 frontmatter）；结果按 path 缓存。
+     * 文件缺失时返回 {@code fallback}。
+     */
+    public static String loadClasspath(String classpathRelative, String fallback) {
+        if (!StringUtils.hasText(classpathRelative)) {
+            return fallback == null ? "" : fallback;
+        }
+        return CACHE.computeIfAbsent(
+                classpathRelative,
+                path -> {
+                    try {
+                        ClassPathResource res = new ClassPathResource(path);
+                        if (!res.exists()) {
+                            return fallback == null ? "" : fallback;
+                        }
+                        String raw = StreamUtils.copyToString(res.getInputStream(), StandardCharsets.UTF_8);
+                        String body = forLlm(raw);
+                        return StringUtils.hasText(body) ? body : (fallback == null ? "" : fallback);
+                    } catch (Exception e) {
+                        return fallback == null ? "" : fallback;
+                    }
+                });
+    }
+
+    /** 简单占位替换：{@code {{KEY}}} → value（value 为 null 时当空串）。 */
+    public static String apply(String template, String key, String value) {
+        if (!StringUtils.hasText(template) || !StringUtils.hasText(key)) {
+            return template == null ? "" : template;
+        }
+        return template.replace("{{" + key + "}}", value == null ? "" : value);
+    }
 
     /** 去掉开头 YAML frontmatter，保留正文。无 frontmatter 则原样返回。 */
     public static String forLlm(String markdown) {

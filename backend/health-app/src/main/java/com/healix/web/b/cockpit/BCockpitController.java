@@ -13,6 +13,7 @@ import com.healix.common.result.ApiResult;
 import com.healix.core.cockpit.dto.CockpitBriefingDto;
 import com.healix.core.cockpit.dto.CockpitDraftInboxItemDto;
 import com.healix.core.cockpit.dto.CockpitFocusDto;
+import com.healix.core.cockpit.dto.CockpitMineTeamGroupDto;
 import com.healix.core.cockpit.dto.CockpitPriorityCardDto;
 import com.healix.core.cockpit.dto.CockpitSummaryDto;
 import com.healix.core.cockpit.service.CockpitService;
@@ -72,6 +73,16 @@ public class BCockpitController {
     public ApiResult<List<CockpitPriorityCardDto>> myPatients(
             @RequestParam(required = false) String keyword) {
         return ApiResult.ok(cockpitService.myPatients(SecurityUtils.requireCurrentOrgId(), keyword));
+    }
+
+    /**
+     * 我的患者（按健管组）：含无患者的空组；keyword 有值时仅返回有命中患者的组。
+     */
+    @GetMapping("/my-patient-groups")
+    public ApiResult<List<CockpitMineTeamGroupDto>> myPatientGroups(
+            @RequestParam(required = false) String keyword) {
+        return ApiResult.ok(
+                cockpitService.myPatientGroups(SecurityUtils.requireCurrentOrgId(), keyword));
     }
 
     @GetMapping("/focus/{peopleId}")

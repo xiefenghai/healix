@@ -21,6 +21,7 @@ import CockpitPatientSheet, { type CockpitSheetMode } from '../../shared/Cockpit
 import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
 import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import CreateCareTeamDrawer from './CreateCareTeamDrawer.vue'
+import CreateArchiveDrawer, { type CreateArchivePreset } from './CreateArchiveDrawer.vue'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
 import { onAgentCarePlanUpdated } from '../../shared/agent-events'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
@@ -87,6 +88,15 @@ interface PriorityCard {
   openTaskCount?: number
   overdueTaskCount?: number
   maxTaskPriority?: string
+  careTeamId?: string | null
+  careTeamName?: string | null
+}
+
+/** 「我的患者」按健管组分组（接口 /my-patient-groups，含空组） */
+interface MinePatientGroup {
+  careTeamId: string
+  careTeamName: string
+  cards: PriorityCard[]
 }
 
 interface FocusTask {
@@ -208,6 +218,10 @@ interface ChatMessage {
   elapsedMs?: number | null
   /** 后端 intent；轻量闲聊意图用于隐藏活动轨迹 */
   intent?: string
+  /**
+   * system 细分：briefing=今日机构简报区；notice=切焦点/新会话等提示（进对话流，不进简报槽）。
+   */
+  kind?: 'briefing' | 'notice'
   reportReview?: ReportReviewPreview
   carePlanPreview?: CarePlanChatPreview
   chatExtract?: ChatExtractReview
@@ -277,7 +291,9 @@ const summary = ref<Summary>({
 const tab = ref<TabKey>('urgent')
 const cards = ref<PriorityCard[]>([])
 const searchKeyword = ref('')
-const searchResults = ref<PriorityCard[]>([])
+const minePatientGroups = ref<MinePatientGroup[]>([])
+/** 扁平患者卡（姓名提示等）；由 minePatientGroups 派生 */
+const searchResults = computed(() => minePatientGroups.value.flatMap((g) => g.cards))
 const searchLoading = ref(false)
 const searchTried = ref(false)
 const focusPeopleId = ref<string | null>(null)
@@ -327,6 +343,37 @@ const sheetIntakePurpose = ref<string | null>(null)
 const formTaskId = ref<string | null>(null)
 const joinPeopleId = ref<string | null>(null)
 const createCareTeamOpen = ref(false)
+/** Agent NAVIGATE create-care-team 时预填组名 */
+const createCareTeamPresetName = ref<string | null>(null)
+watch(createCareTeamOpen, (open) => {
+  if (!open) createCareTeamPresetName.value = null
+})
+const createArchiveOpen = ref(false)
+const createArchivePreset = ref<CreateArchivePreset | null>(null)
+watch(createArchiveOpen, (open) => {
+  if (!open) createArchivePreset.value = null
+})
+
+function openCreateArchiveDrawer(preset?: CreateArchivePreset | null) {
+  createArchivePreset.value = preset && Object.keys(preset).length ? { ...preset } : null
+  createArchiveOpen.value = true
+}
+
+function archivePresetFromPayload(payload?: Record<string, unknown> | null): CreateArchivePreset | null {
+  if (!payload || typeof payload !== 'object') return null
+  const out: CreateArchivePreset = {}
+  if (typeof payload.name === 'string' && payload.name.trim()) out.name = payload.name.trim()
+  if (typeof payload.gender === 'string' && payload.gender.trim()) out.gender = payload.gender.trim()
+  if (typeof payload.birthday === 'string' && payload.birthday.trim()) {
+    out.birthday = payload.birthday.trim().slice(0, 10)
+  }
+  if (typeof payload.mobile === 'string' && payload.mobile.trim()) out.mobile = payload.mobile.trim()
+  if (typeof payload.mobileOwner === 'string' && payload.mobileOwner.trim()) {
+    out.mobileOwner = payload.mobileOwner.trim()
+  }
+  if (payload.noMobile === true) out.noMobile = true
+  return Object.keys(out).length ? out : null
+}
 const joinPeopleName = ref<string | null>(null)
 const pendingCompleteAction = ref<AgentAction | null>(null)
 const pendingCompletePeopleId = ref<string | null>(null)
@@ -585,17 +632,86 @@ const isColdStart = computed(
     (summary.value.primaryCareTeamCount ?? 0) <= 0 || (summary.value.orgPatientCount ?? 0) <= 0,
 )
 
+/** 尚未有主责健管组：建档入口应锁定，只引导先建组 */
+const needsPrimaryTeam = computed(() => (summary.value.primaryCareTeamCount ?? 0) <= 0)
+
+const coldStartCta = computed(() => {
+  if (needsPrimaryTeam.value) {
+    return { kind: 'create-team' as const, label: '先创建我的健管组' }
+  }
+  return { kind: 'archive' as const, label: '去建第一个档' }
+})
+
 const contextHint = computed(() => {
   if (focus.value) return `当前患者：${focus.value.displayName}`
-  if (isColdStart.value) return '机构级会话 · 点下方卡片或直接说建档'
+  if (needsPrimaryTeam.value) return '机构级会话 · 请先按左侧步骤创建健管组'
+  if (isColdStart.value) return '机构级会话 · 可以建档或点下方卡片'
   return '机构级会话 · 点左侧名单或下方快捷开始'
 })
 
 /** 右栏无焦点时的副标题：0 患者勿再催「点左侧名单」 */
-const focusEmptyHint = computed(() =>
-  isColdStart.value
-    ? '暂无选中患者。请先建档或选择患者。'
-    : '点左侧名单或下方快捷开始',
+const focusEmptyHint = computed(() => {
+  if (needsPrimaryTeam.value) return '暂无选中患者。请先创建健管组。'
+  if (isColdStart.value) return '暂无选中患者。请先建档或选择患者。'
+  return '点左侧名单或下方快捷开始'
+})
+
+/**
+ * 左侧新手三步：必须串行。
+ * 第二步不能用「机构总患者数」打勾——机构里别人的患者会误亮；无主责组时第二步一律锁定。
+ */
+const onboardingHasMyPatient = computed(() => {
+  if (needsPrimaryTeam.value) return false
+  if (searchResults.value.length > 0) return true
+  if (focusPeopleId.value) return true
+  return false
+})
+
+const onboardingSteps = computed(() => {
+  const hasTeam = !needsPrimaryTeam.value
+  const hasPatient = onboardingHasMyPatient.value
+  return [
+    {
+      key: 'team' as const,
+      title: '创建健管组',
+      desc: hasTeam
+        ? '已创建，患者与待办会按主责组归属'
+        : '以你为主责，便于分配患者与待办',
+      status: hasTeam ? ('done' as const) : ('active' as const),
+      cta: hasTeam ? null : '先创建我的健管组',
+    },
+    {
+      key: 'archive' as const,
+      title: '录入第一位患者',
+      desc: !hasTeam
+        ? '请先完成上一步'
+        : hasPatient
+          ? '已有名下患者，可继续录入体检数据或去做首诊'
+          : '可打开表单或直接对话建档',
+      status: !hasTeam
+        ? ('locked' as const)
+        : hasPatient
+          ? ('done' as const)
+          : ('active' as const),
+      cta: !hasTeam ? null : hasPatient ? '去录入数据' : '去建第一个档',
+    },
+    {
+      key: 'intake' as const,
+      title: '完成首诊评估',
+      desc: hasPatient ? '切入患者后，在右侧打开首诊评估' : '建档入组后再推进',
+      status: hasPatient ? ('active' as const) : ('locked' as const),
+      cta: hasPatient ? '去做首诊' : null,
+    },
+  ]
+})
+
+/** 已建组的冷启动：拉「我的患者」，避免第二步状态滞后 */
+watch(
+  () => [isColdStart.value, needsPrimaryTeam.value] as const,
+  ([cold, needTeam]) => {
+    if (cold && !needTeam) void searchPatients()
+  },
+  { immediate: true },
 )
 
 /** 激励条：全 0 时隐藏，避免新人挫败；有数时用「健康豆」通俗说法 */
@@ -609,44 +725,82 @@ const hasRewardStats = computed(() => {
   )
 })
 
-const coldStartCta = computed(() => {
-  if ((summary.value.primaryCareTeamCount ?? 0) <= 0) {
-    return { kind: 'create-team' as const, label: '先创建我的健管组' }
-  }
-  return { kind: 'archive' as const, label: '去建第一个档' }
-})
-
-/** 空会话可点示例（机构会话、尚无对话时） */
+/** 空会话可点示例（机构会话、尚无对话时）；无主责组时建档卡锁定，避免与左侧重复抢焦点 */
 const emptyStarters = computed(() => {
-  if (focusPeopleId.value) return [] as Array<{ label: string; text: string; capability?: string }>
+  if (focusPeopleId.value) {
+    return [] as Array<{
+      label: string
+      text: string
+      capability?: string
+      locked?: boolean
+      lockHint?: string
+    }>
+  }
+  if (needsPrimaryTeam.value) {
+    return [
+      {
+        label: '我想了解怎么给患者分组',
+        text: '为什么要创建健管组？怎么给患者分组？',
+        capability: 'GENERAL_CHAT',
+      },
+      {
+        label: '怎么录入体检数据',
+        text: '建档后怎么录入体检和检验数据？',
+        capability: 'GENERAL_CHAT',
+      },
+      {
+        label: '新建患者档案',
+        text: '帮我建档',
+        capability: 'CREATE_ARCHIVE',
+        locked: true,
+        lockHint: '请先在左侧创建健管组',
+      },
+    ]
+  }
   return [
     {
       label: '新建患者档案',
-      text: '帮我建档，请告诉我需要哪些信息',
+      text: '帮我建档',
       capability: 'CREATE_ARCHIVE',
+    },
+    {
+      label: '建档需要哪些信息',
+      text: '对话建档需要准备哪些信息？用大白话说明即可',
+      capability: 'GENERAL_CHAT',
     },
     {
       label: '今天先忙什么？',
       text: isColdStart.value
-        ? '我是第一次用驾驶舱，请告诉我现在最该先做什么'
+        ? '我已经建好健管组了，接下来最该先做什么？'
         : '请根据今日优先名单，给出我现在可推进的工作建议',
-      capability: 'GENERAL_CHAT',
-    },
-    {
-      label: '回访话术怎么说',
-      text: '请给我一段通用的健管回访话术模板，语气亲切、可复制给客户',
       capability: 'GENERAL_CHAT',
     },
   ]
 })
 
+function runEmptyStarter(s: {
+  label: string
+  text: string
+  capability?: string
+  locked?: boolean
+  lockHint?: string
+}) {
+  if (s.locked) {
+    ElMessage.info(s.lockHint || '请先完成左侧当前步骤')
+    return
+  }
+  void sendMessage(s.text, false, s.capability || null)
+}
+
+/** 与后端 fillServiceStages 对齐的本地兜底路径 */
 const SERVICE_FLOW_FALLBACK = [
   { code: 'ARCHIVE', label: '建档' },
-  { code: 'INTAKE', label: '首诊' },
-  { code: 'CARE_PLAN', label: '方案' },
-  { code: 'FOLLOWUP', label: '随访' },
-  { code: 'WEEKLY_REPORT', label: '周报' },
-  { code: 'STAGE_REPORT', label: '阶段' },
+  { code: 'TEAM_ASSIGN', label: '分组' },
+  { code: 'INTAKE', label: '首诊评估' },
+  { code: 'CARE_PLAN', label: '制定方案' },
+  { code: 'FOLLOWUP', label: '日常跟进' },
+  { code: 'PERIODIC_REPORT', label: '定期报告' },
+  { code: 'STAGE_SUMMARY', label: '阶段总结' },
   { code: 'ENDED', label: '结束' },
 ] as const
 
@@ -655,15 +809,20 @@ const serviceFlowSteps = computed(() => {
   const f = focus.value
   if (!f) return []
   if (f.serviceStages?.length) return f.serviceStages
+  const needTeam = !f.careTeamId
   const hasOnboarding = (f.openTasks || []).some(
     (t) =>
       (t.taskType || '').toUpperCase() === 'FOLLOW_UP' &&
       String(t.followupType || '').toUpperCase() === 'ONBOARDING',
   )
   const hasPlanDraft = (f.pendingDrafts || []).some((d) => d.kind === 'CARE_PLAN')
+  const hasPlanTask = (f.openTasks || []).some((t) =>
+    ['PLAN_CREATE', 'PLAN_REVIEW'].includes((t.taskType || '').toUpperCase()),
+  )
+  // 0 建档(已完成) → 1 分组 → 2 首诊评估 → 3 制定方案 → …
   let current = 1
-  if (!hasOnboarding && (f.careTeamId || hasPlanDraft || (f.archiveCompletenessPercent || 0) > 0)) {
-    current = 2
+  if (!needTeam) {
+    current = hasOnboarding || (!hasPlanDraft && !hasPlanTask) ? 2 : 3
   }
   return SERVICE_FLOW_FALLBACK.map((s, i) => ({
     code: s.code,
@@ -679,12 +838,71 @@ const serviceFlowLabel = computed(
     '',
 )
 
+const currentServiceStage = computed(() =>
+  (focus.value?.serviceStageCode || serviceFlowSteps.value.find((s) => s.status === 'current')?.code || '')
+    .toUpperCase(),
+)
+
+type QuickActionItem = {
+  key: string
+  label: string
+  run: () => void
+  primary?: boolean
+}
+
 const needsCareTeamAssign = computed(
   () =>
     !!focus.value &&
     (focus.value.needsCareTeamAssign === true ||
       (!!focusPeopleId.value && !focus.value.careTeamId && focus.value.needsCareTeamAssign !== false)),
 )
+
+/** 右侧快捷办理：按当前 SOP 环节动态排序，始终保留通用入口 */
+const stageQuickActions = computed((): QuickActionItem[] => {
+  if (!focus.value) return []
+  const stage = currentServiceStage.value
+  const all: Record<string, QuickActionItem> = {
+    assign: { key: 'assign', label: '去分组', run: () => openAssignCareTeam(), primary: true },
+    intake: { key: 'intake', label: '开始首诊', run: () => goIntakeQuick(), primary: true },
+    archive: { key: 'archive', label: '查看档案', run: () => goArchive() },
+    observations: { key: 'observations', label: '录入数据', run: () => goObservations() },
+    followups: { key: 'followups', label: '创建随访', run: () => goFollowups(), primary: true },
+    carePlan: { key: 'carePlan', label: '编辑方案', run: () => goCarePlan(), primary: true },
+    reports: { key: 'reports', label: '查看报告', run: () => goReports(), primary: true },
+    medications: { key: 'medications', label: '用药管理', run: () => goMedications() },
+    assessments: { key: 'assessments', label: '疾病评估', run: () => goAssessments() },
+  }
+  let order: string[]
+  switch (stage) {
+    case 'TEAM_ASSIGN':
+      // 分组环节：去分组置顶，勿把首诊放前面造成跳步
+      order = ['assign', 'archive', 'observations']
+      break
+    case 'ARCHIVE':
+      order = needsCareTeamAssign.value
+        ? ['assign', 'archive', 'observations']
+        : ['archive', 'intake', 'observations']
+      break
+    case 'INTAKE':
+      order = ['intake', 'observations', 'archive', 'assessments']
+      break
+    case 'CARE_PLAN':
+      order = ['carePlan', 'archive', 'assessments', 'observations']
+      break
+    case 'PERIODIC_REPORT':
+    case 'STAGE_SUMMARY':
+      order = ['reports', 'archive', 'followups', 'carePlan']
+      break
+    case 'ENDED':
+      order = ['archive', 'reports', 'carePlan']
+      break
+    case 'FOLLOWUP':
+    default:
+      order = ['followups', 'medications', 'observations', 'archive', 'carePlan', 'reports']
+      break
+  }
+  return order.map((k) => all[k]).filter(Boolean)
+})
 
 const urgentShare = computed(() => {
   const total = summary.value.openTaskCount || 0
@@ -761,17 +979,32 @@ const archiveHint = computed(() => {
   return `已填 ${f.archiveFilledCount}/${f.archiveTotalCount}`
 })
 const assessmentTags = computed(() => focus.value?.assessmentTags || [])
+/** 档案几乎空白且无评估结果时，不展示「空标签」误导，明示待评估 */
+const assessmentPending = computed(() => {
+  if (assessmentTags.value.length) return false
+  const pct = focus.value?.archiveCompletenessPercent
+  return pct == null || pct <= 0
+})
 const assessmentAlert = computed(() => assessmentTags.value.some((t) => t.tone === 'danger'))
 
-/** 首条「今日简报」进固定区；其余进入对话流。
- * 只能认 system（落库 briefing）。机构建议回复也会带 REFRESH/FOCUS，
- * 若靠 REFRESH 识别，collapse 会把助手回答全折叠掉，对话流只剩用户气泡。 */
+/** 首条真「今日简报」进固定区；切焦点等 system notice 进对话流。 */
 function isBriefingLike(m: {
   role?: string
   content?: string
   actions?: AgentAction[]
+  kind?: string
+  streaming?: boolean
 }): boolean {
-  return (m.role || '').toLowerCase() === 'system'
+  if (m.kind === 'briefing') return true
+  if (m.kind === 'notice') return false
+  if ((m.role || '').toLowerCase() !== 'system') return false
+  const c = (m.content || '').trim()
+  // 切焦点 / 新会话提示绝不能进「今日机构简报」槽
+  if (/^已切换焦点/.test(c) || /^已开启新会话/.test(c) || /^已刷新会话/.test(c)) return false
+  if ((m.actions || []).some((a) => a && a.type === 'REFRESH')) return true
+  if (m.streaming && !c) return true
+  if (/今日简报/.test(c)) return true
+  return false
 }
 
 /** 多次刷新简报曾重复落库；恢复时只保留最新一条简报 */
@@ -836,10 +1069,13 @@ const showEmptyStarters = computed(
  */
 const briefingUiActions = computed(() => {
   const actions = briefingMsg.value?.actions || []
-  if (!showEmptyStarters.value) return actions
   return actions.filter((a) => {
-    if (a.type === 'TRIGGER_CAPABILITY' && (a.path || '') === 'CREATE_ARCHIVE') return false
-    if (/建档|开始建档/.test(a.label || '')) return false
+    // 空会话引导卡 / 左侧清单已承接建档与建组，简报不再重复挂同款 CTA
+    if (showEmptyStarters.value || isColdStart.value) {
+      if (a.type === 'TRIGGER_CAPABILITY' && (a.path || '') === 'CREATE_ARCHIVE') return false
+      if (a.type === 'NAVIGATE' && (a.path || '') === 'create-care-team') return false
+      if (/建档|开始建档|创建.*健管组/.test(a.label || '')) return false
+    }
     return true
   })
 })
@@ -998,22 +1234,42 @@ function genderLabel(gender?: string) {
   return ''
 }
 
+/**
+ * 左栏风险/状态角标。
+ * 临床风险只认 riskLevel；待办类型（首诊/随访等）不得冒充「中风险」。
+ */
 function riskBadge(card: PriorityCard) {
   const level = (card.riskLevel || '').toUpperCase()
   const badges = card.badges || []
   if (badges.includes('PLAN_CREATE') || badges.includes('PLAN_REVIEW') || badges.includes('REPORT_REVIEW')) {
     return { text: 'AI 草稿', tone: 'ai' }
   }
-  if (level === 'HIGH' || badges.includes('OVERDUE') || badges.includes('METRIC_ALERT') || badges.includes('EXERCISE_ALERT')) {
+  if (level === 'HIGH') {
     return { text: '高风险', tone: 'high' }
   }
-  if (level === 'MEDIUM' || badges.includes('PLAN_NUDGE') || badges.includes('FOLLOW_UP') || badges.includes('PATIENT_REQUEST')) {
+  if (level === 'MEDIUM') {
     return { text: '中风险', tone: 'mid' }
+  }
+  if (level === 'LOW') {
+    return { text: '低风险', tone: 'low' }
+  }
+  // 尚无临床风险结论：用任务态，避免「档案 0% 却中风险」
+  if (badges.includes('OVERDUE') || (card.overdueTaskCount && card.overdueTaskCount > 0)) {
+    return { text: '有超期', tone: 'high' }
+  }
+  if (badges.includes('METRIC_ALERT') || badges.includes('EXERCISE_ALERT')) {
+    return { text: '指标异常', tone: 'high' }
+  }
+  if (badges.includes('ONBOARDING') || badges.includes('TEAM_ASSIGN')) {
+    return { text: '待首诊', tone: 'mid' }
   }
   if (badges.includes('WATCHED') && !(card.openTaskCount && card.openTaskCount > 0)) {
     return { text: '关注', tone: 'mid' }
   }
-  return { text: '低风险', tone: 'low' }
+  if ((card.openTaskCount || 0) > 0) {
+    return { text: '有待办', tone: 'mid' }
+  }
+  return { text: '待评估', tone: 'low' }
 }
 
 function nameInitial(name?: string) {
@@ -1078,7 +1334,14 @@ function cardTags(card: PriorityCard) {
 }
 
 function footerNote(card: PriorityCard) {
-  if (card.topReason) return card.topReason
+  const reason = card.topReason?.trim()
+  // 「我的患者」已按健管组分组，不再重复「主责患者 / 组名」
+  if (tab.value === 'mine') {
+    if (!reason || reason === '主责患者' || reason === card.careTeamName) {
+      return ''
+    }
+  }
+  if (reason) return reason
   const b = card.badges || []
   if (b.includes('WATCHED')) return '重点关注'
   if (b.includes('MED_INCOMPLETE')) return '今日服药未确认'
@@ -1187,17 +1450,23 @@ function scheduleRefreshAfterTaskChange(peopleId?: string | null) {
   }, 280)
 }
 
-/** 我主责健管组下的患者（可关键字筛选；卡片结构与优先/关注一致） */
+/** 我主责健管组（含空组）+ 组内患者；可关键字筛选 */
 async function searchPatients() {
   searchLoading.value = true
   searchTried.value = true
   try {
     const q = searchKeyword.value.trim()
     const qs = q ? `?keyword=${encodeURIComponent(q)}` : ''
-    const res = await api<{ data: PriorityCard[] }>(`/api/b/v1/cockpit/my-patients${qs}`)
-    searchResults.value = res.data || []
+    const res = await api<{
+      data: Array<{ careTeamId: string; careTeamName: string; patients?: PriorityCard[] }>
+    }>(`/api/b/v1/cockpit/my-patient-groups${qs}`)
+    minePatientGroups.value = (res.data || []).map((g) => ({
+      careTeamId: g.careTeamId,
+      careTeamName: g.careTeamName?.trim() || '未命名组',
+      cards: g.patients || [],
+    }))
   } catch (e) {
-    searchResults.value = []
+    minePatientGroups.value = []
     ElMessage.error(e instanceof Error ? e.message : '加载我的患者失败')
   } finally {
     searchLoading.value = false
@@ -1213,6 +1482,22 @@ function onSearchInput() {
 
 /** 左栏当前 Tab 的患者卡列表 */
 const listCards = computed(() => (tab.value === 'mine' ? searchResults.value : cards.value))
+
+/** 折叠的健管组 id；默认全部展开 */
+const collapsedMineTeams = ref<Set<string>>(new Set())
+
+function isMineTeamCollapsed(careTeamId: string) {
+  // 搜索时强制展开，避免结果被折进折叠组里看不见
+  if (searchKeyword.value.trim()) return false
+  return collapsedMineTeams.value.has(careTeamId)
+}
+
+function toggleMineTeam(careTeamId: string) {
+  const next = new Set(collapsedMineTeams.value)
+  if (next.has(careTeamId)) next.delete(careTeamId)
+  else next.add(careTeamId)
+  collapsedMineTeams.value = next
+}
 
 async function loadBriefing(force = false) {
   if (!force) {
@@ -1245,6 +1530,7 @@ async function loadBriefing(force = false) {
       messages.value = [
         {
           role: 'system',
+          kind: 'briefing',
           content,
           at: nowClock(),
           actions,
@@ -1257,6 +1543,7 @@ async function loadBriefing(force = false) {
     messages.value = [
       {
         role: 'system',
+        kind: 'briefing',
         content: isColdStart.value
           ? '今日简报暂时不可用。请点下方卡片建档，或直接把客户信息发给我。'
           : '今日简报暂时不可用，请查看左侧优先名单。',
@@ -1306,13 +1593,18 @@ function applySessionBundle(
     const r = (m.role || '').toLowerCase()
     const role: ChatMessage['role'] =
       r === 'user' ? 'user' : r === 'system' ? 'system' : 'assistant'
-    return {
+    const row: ChatMessage = {
       role,
       content: m.content,
       at: m.createdAt ? String(m.createdAt).slice(11, 16) : nowClock(),
       actions: m.actions?.length ? m.actions : undefined,
       chatExtract: chatExtractFromActions(m.actions) || undefined,
     }
+    // 服务端未存 kind：用简报启发式回填，避免「已切换焦点」进简报槽
+    if (role === 'system') {
+      row.kind = isBriefingLike(row) ? 'briefing' : 'notice'
+    }
+    return row
   })
   const incoming = dropOrphanUserTurns(collapseDuplicateBriefings(mapped))
   const force = !!opts?.force
@@ -1451,6 +1743,7 @@ async function startNewChat() {
     } else {
       messages.value.push({
         role: 'system',
+        kind: 'notice',
         content: '已开启新会话，可继续提问。',
       })
     }
@@ -1505,7 +1798,7 @@ async function persistVisibleMessage(
   }
 }
 
-/** 驾驶舱暂不展示「红人」口径；旧缓存/模型偶发带出时降级文案 */
+/** 拦截旧「红人」标签词；应用具体依从/风险事实，不用该口径 */
 function sanitizeBriefingText(text?: string) {
   const raw = (text || '').trim()
   if (!raw) {
@@ -1541,87 +1834,95 @@ async function loadFocus(peopleId: string) {
   }
 }
 
-/** 根据焦点快照给出「立刻下一步」文案与按钮（本地规则，不靠 LLM 说明书） */
+/** 根据焦点快照给出「立刻下一步」文案与按钮（本地规则；以 serviceStageCode 为主） */
 function resolveFocusNextStep(f: Focus): { content: string; actions: AgentAction[] } {
   const name = f.displayName || '该患者'
   const pid = f.peopleId
   const tasks = f.openTasks || []
   const drafts = f.pendingDrafts || []
+  const stage = (f.serviceStageCode || '').toUpperCase()
   const needTeam =
-    f.needsCareTeamAssign === true || (!f.careTeamId && f.needsCareTeamAssign !== false)
-
-  if (needTeam) {
-    return {
-      content: `正在为「${name}」服务。他还未入组，分配健管组后才能跟进待办与首诊。`,
-      actions: [
-        { type: 'NAVIGATE', path: 'join-care-team', label: '分配健管组', peopleId: pid },
-        { type: 'OPEN_SHEET', path: 'intake', label: '先看首诊', peopleId: pid },
-      ],
-    }
-  }
+    stage === 'TEAM_ASSIGN' ||
+    f.needsCareTeamAssign === true ||
+    (!f.careTeamId && f.needsCareTeamAssign !== false)
 
   const onboarding = tasks.find(
     (t) =>
       (t.taskType || '').toUpperCase() === 'FOLLOW_UP' &&
       String(t.followupType || '').toUpperCase() === 'ONBOARDING',
   )
-  if (onboarding) {
+  const planDraft = drafts.find((d) => d.kind === 'CARE_PLAN')
+  const reportDraft = drafts.find((d) => d.kind === 'REPORT')
+  const hasPlanTask = tasks.some((t) =>
+    ['PLAN_CREATE', 'PLAN_REVIEW'].includes((t.taskType || '').toUpperCase()),
+  )
+  const hasReportTask = tasks.some((t) => (t.taskType || '').toUpperCase() === 'REPORT_REVIEW')
+
+  // 标准路径：建档 → 分组 → 首诊评估 → 制定方案 → 日常跟进 → 定期报告 → 阶段总结 → 结束
+  if (needTeam) {
     return {
-      content: `正在为「${name}」服务。当前卡在首诊评估，做完后就能制定管理方案。`,
+      content: `正在为「${name}」服务。当前环节「分组」：请先分配主责健管组，再做首诊评估。`,
+      actions: [
+        { type: 'NAVIGATE', path: 'join-care-team', label: '去分组', peopleId: pid },
+        { type: 'NAVIGATE', path: 'create-care-team', label: '去创建健管组' },
+      ],
+    }
+  }
+
+  if (stage === 'INTAKE' || onboarding) {
+    return {
+      content: `正在为「${name}」服务。当前环节「首诊评估」，完成后进入制定方案。`,
       actions: [
         {
           type: 'OPEN_SHEET',
           path: 'intake',
-          label: '开始首诊',
+          label: '开始首诊评估',
           peopleId: pid,
-          payload: { followupRecordId: onboarding.id },
+          payload: onboarding?.id ? { followupRecordId: onboarding.id } : undefined,
         },
       ],
     }
   }
 
-  const planDraft = drafts.find((d) => d.kind === 'CARE_PLAN')
-  if (planDraft) {
-    return {
-      content: `正在为「${name}」服务。有一份方案草稿待你确认。`,
-      actions: [
-        {
-          type: 'OPEN_SHEET',
-          path: planDraft.sheetMode || 'care-plan',
-          label: planDraft.actionLabel || '审阅方案',
-          peopleId: pid,
-        },
-      ],
+  if (stage === 'CARE_PLAN' || planDraft || hasPlanTask) {
+    if (planDraft) {
+      return {
+        content: `正在为「${name}」服务。当前环节「制定方案」：有一份方案草稿待你确认。`,
+        actions: [
+          {
+            type: 'OPEN_SHEET',
+            path: planDraft.sheetMode || 'care-plan',
+            label: planDraft.actionLabel || '审阅方案',
+            peopleId: pid,
+          },
+        ],
+      }
     }
-  }
-
-  if (tasks.some((t) => ['PLAN_CREATE', 'PLAN_REVIEW'].includes((t.taskType || '').toUpperCase()))) {
     return {
-      content: `正在为「${name}」服务。建议下一步生成管理方案草稿。`,
+      content: `正在为「${name}」服务。当前环节「制定方案」，建议生成管理方案草稿。`,
       actions: [
         { type: 'TRIGGER_CAPABILITY', path: 'CARE_PLAN', label: '生成方案草稿', peopleId: pid },
       ],
     }
   }
 
-  const reportDraft = drafts.find((d) => d.kind === 'REPORT')
-  if (reportDraft) {
-    return {
-      content: `正在为「${name}」服务。有报告草稿待审阅。`,
-      actions: [
-        {
-          type: 'OPEN_SHEET',
-          path: reportDraft.sheetMode || 'reports',
-          label: reportDraft.actionLabel || '审阅报告',
-          peopleId: pid,
-        },
-      ],
+  if (stage === 'PERIODIC_REPORT' || stage === 'STAGE_SUMMARY' || reportDraft || hasReportTask) {
+    const label = stage === 'STAGE_SUMMARY' ? '阶段总结' : '定期报告'
+    if (reportDraft) {
+      return {
+        content: `正在为「${name}」服务。当前环节「${label}」：有报告草稿待审阅。`,
+        actions: [
+          {
+            type: 'OPEN_SHEET',
+            path: reportDraft.sheetMode || 'reports',
+            label: reportDraft.actionLabel || '审阅报告',
+            peopleId: pid,
+          },
+        ],
+      }
     }
-  }
-
-  if (tasks.some((t) => (t.taskType || '').toUpperCase() === 'REPORT_REVIEW')) {
     return {
-      content: `正在为「${name}」服务。建议点评或生成管理报告。`,
+      content: `正在为「${name}」服务。当前环节「${label}」，可生成报告点评。`,
       actions: [
         {
           type: 'TRIGGER_CAPABILITY',
@@ -1633,33 +1934,44 @@ function resolveFocusNextStep(f: Focus): { content: string; actions: AgentAction
     }
   }
 
-  const topTask = tasks[0]
-  if (topTask) {
-    const label = topTask.taskTypeLabel || '待办'
+  if (stage === 'ENDED') {
     return {
-      content: `正在为「${name}」服务。当前有待办「${label}」${topTask.overdue ? '（已超期）' : ''}，可先处理。`,
+      content: `正在为「${name}」服务。当前环节「结束」：本周期服务已走完，可继续服务下一位患者。`,
       actions: [
-        {
-          type: 'OPEN_SHEET',
-          path: 'archive',
-          label: '打开档案',
-          peopleId: pid,
-        },
+        { type: 'NAVIGATE', path: 'clear-focus', label: '返回工作台', peopleId: pid },
+        { type: 'SET_COCKPIT_TAB', path: 'mine', label: '查看我的患者' },
       ],
     }
   }
 
-  const stage = f.serviceStageLabel || '跟进'
+  // FOLLOWUP / 默认：日常跟进
+  const topTask = tasks[0]
+  if (topTask) {
+    const label = topTask.taskTypeLabel || '待办'
+    return {
+      content: `正在为「${name}」服务。当前环节「日常跟进」，有待办「${label}」${topTask.overdue ? '（已超期）' : ''}，可先处理。`,
+      actions: [
+        {
+          type: 'TRIGGER_CAPABILITY',
+          path: 'GENERAL_CHAT',
+          label: `请根据「${label}」待办，写一段给「${name}」的随访话术`,
+          peopleId: pid,
+        },
+        { type: 'OPEN_SHEET', path: 'followups', label: '录入随访记录', peopleId: pid },
+      ],
+    }
+  }
+
   return {
-    content: `正在为「${name}」服务。当前环节：${stage}。可继续跟进，或让我帮你生成方案 / 写话术。`,
+    content: `正在为「${name}」服务。当前环节「${f.serviceStageLabel || '日常跟进'}」。可继续跟进，或让我帮你写回访话术。`,
     actions: [
-      { type: 'TRIGGER_CAPABILITY', path: 'CARE_PLAN', label: '生成方案', peopleId: pid },
       {
         type: 'TRIGGER_CAPABILITY',
         path: 'GENERAL_CHAT',
-        label: '请帮我写一段给客户的回访话术',
+        label: `请帮我写一段给「${name}」的回访话术`,
         peopleId: pid,
       },
+      { type: 'OPEN_SHEET', path: 'archive', label: '打开档案', peopleId: pid },
     ],
   }
 }
@@ -1680,10 +1992,142 @@ function pushFocusNextStepNudge(peopleId: string) {
 function runColdStartCta() {
   const cta = coldStartCta.value
   if (cta.kind === 'create-team') {
+    createCareTeamPresetName.value = null
     createCareTeamOpen.value = true
     return
   }
-  void sendMessage('帮我建档，请告诉我需要哪些信息', false, 'CREATE_ARCHIVE')
+  openCreateArchiveDrawer(null)
+}
+
+function firstMinePeopleId(): string | null {
+  const card = searchResults.value[0]
+  return card?.peopleId || focusPeopleId.value || null
+}
+
+function firstMineDisplayName(): string {
+  const card = searchResults.value[0]
+  return (card?.displayName || focus.value?.displayName || '这位患者').trim()
+}
+
+/** 左侧清单步骤 CTA：与中间 Agent 对齐，避免「左侧已完成、对话还在催建档」 */
+function runOnboardingStep(stepKey: 'team' | 'archive' | 'intake') {
+  if (stepKey === 'team') {
+    if (needsPrimaryTeam.value) {
+      createCareTeamPresetName.value = null
+      createCareTeamOpen.value = true
+      return
+    }
+    ElMessage.success('健管组已就绪，可以录入患者了')
+    return
+  }
+  if (stepKey === 'archive') {
+    if (needsPrimaryTeam.value) {
+      ElMessage.info('请先创建健管组')
+      return
+    }
+    if (onboardingHasMyPatient.value) {
+      const pid = firstMinePeopleId()
+      const name = firstMineDisplayName()
+      if (!pid) {
+        openCreateArchiveDrawer(null)
+        return
+      }
+      messages.value.push({
+        role: 'assistant',
+        content:
+          `「${name}」已在您名下。录入体检/检验：点「去单据录入」传化验单照片，或点「手动录入」在右侧填指标。`,
+        actions: [
+          { type: 'NAVIGATE', path: 'ocr-upload', label: '去单据录入', peopleId: pid },
+          { type: 'OPEN_SHEET', path: 'observations', label: '手动录入', peopleId: pid },
+          { type: 'TRIGGER_CAPABILITY', path: 'CREATE_ARCHIVE', label: '新建患者' },
+        ],
+        at: nowClock(),
+      })
+      void selectPatient(pid, { autoAsk: false })
+      cacheOrgSession()
+      void scrollToBottom()
+      return
+    }
+    messages.value.push({
+      role: 'assistant',
+      content:
+        '收到！我们来建第一个客户。请直接发姓名、性别、出生日期、手机号，或点下方打开建档表单。',
+      actions: [{ type: 'NAVIGATE', path: 'create-archive', label: '打开建档表单' }],
+      at: nowClock(),
+    })
+    openCreateArchiveDrawer(null)
+    cacheOrgSession()
+    void scrollToBottom()
+    return
+  }
+  if (stepKey === 'intake') {
+    if (!onboardingHasMyPatient.value) {
+      ElMessage.info('请先录入第一位患者')
+      return
+    }
+    const pid = firstMinePeopleId()
+    const name = firstMineDisplayName()
+    if (!pid) return
+    messages.value.push({
+      role: 'assistant',
+      content: `「${name}」可以做首诊评估了。点下方打开首诊，按问卷推进即可。`,
+      actions: [
+        { type: 'OPEN_SHEET', path: 'intake', label: '打开首诊评估', peopleId: pid },
+        { type: 'FOCUS_PATIENT', label: `切入「${name}」`, peopleId: pid, payload: { autoAsk: false } },
+      ],
+      at: nowClock(),
+    })
+    void selectPatient(pid, { autoAsk: false }).then(() => openIntakeSheet(pid))
+    cachePatientSession(pid)
+    void scrollToBottom()
+  }
+}
+
+/** 创建健管组成功：刷新左栏，保留当前会话（勿 refreshBriefing，否则会清空对话）。 */
+async function onCareTeamCreated(team: { id: string; name: string }) {
+  await loadSummary()
+  tab.value = 'mine'
+  await searchPatients()
+  if (focusPeopleId.value) return
+  const name = team?.name?.trim() || '新健管组'
+  messages.value.push({
+    role: 'assistant',
+    content:
+      `太好了！健管组「${name}」已创建。` +
+      '接下来可以录入第一位客户：点下方「打开建档表单」，或直接把姓名、性别、出生日期、手机号发给我。',
+    actions: [
+      { type: 'NAVIGATE', path: 'create-archive', label: '打开建档表单' },
+      { type: 'TRIGGER_CAPABILITY', path: 'CREATE_ARCHIVE', label: '对话建档' },
+    ],
+    at: nowClock(),
+  })
+  cacheOrgSession()
+  void scrollToBottom()
+}
+
+/** 抽屉建档成功：切焦点并引导分组（与对话建档 OK 对齐）。 */
+async function onArchiveCreatedFromDrawer(result: { peopleId: string; displayName: string }) {
+  stickyCapability.value = null
+  await loadSummary()
+  tab.value = 'mine'
+  await searchPatients()
+  const pid = result.peopleId
+  if (!pid) return
+  const display = result.displayName?.trim() || '患者'
+  messages.value.push({
+    role: 'assistant',
+    content: `已建档「${display}」。请先分配健管组，再继续首诊。`,
+    actions: [
+      { type: 'NAVIGATE', path: 'join-care-team', label: '去分组', peopleId: pid },
+      { type: 'NAVIGATE', path: 'create-care-team', label: '去创建健管组' },
+    ],
+    at: nowClock(),
+  })
+  await selectPatient(pid, { autoAsk: false, reason: '建档完成' })
+  joinPeopleId.value = pid
+  joinPeopleName.value = focus.value?.displayName || display
+  cachePatientSession(pid)
+  void scrollToBottom()
 }
 
 async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reason?: string }) {
@@ -1726,6 +2170,7 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
   } else if (opts?.autoAsk === false) {
     messages.value.push({
       role: 'system',
+      kind: 'notice',
       content: `已切换焦点：${name}${opts?.reason ? ` · ${opts.reason}` : ''}`,
     })
     cachePatientSession(peopleId)
@@ -1837,7 +2282,9 @@ const capabilityChips = computed(() => {
       return {
         ...c,
         label: '建档',
-        hint: '对话建档：姓名、性别、生日、本人手机号',
+        hint: needsPrimaryTeam.value
+          ? '请先在左侧创建健管组'
+          : '打开表单填写，或直接发姓名/性别/生日/手机号',
         needsPatient: false,
       }
     }
@@ -1847,23 +2294,11 @@ const capabilityChips = computed(() => {
       needsPatient: true,
     }
   })
-  // 建档放最前，机构会话一眼能点
+  // 底部只留全局/工具类：建档、方案、报告、单据、建议、待办；患者专属操作归右侧快捷办理
   const archiveIdx = chips.findIndex((c) => c.code === 'CREATE_ARCHIVE')
   if (archiveIdx > 0) {
     const [arch] = chips.splice(archiveIdx, 1)
     chips.unshift(arch)
-  }
-  // 首诊：工具入口——选中患者就常驻（未选人不显示）；点开直接进评估抽屉
-  if (focusPeopleId.value) {
-    const intakeChip = {
-      code: 'OPEN_INTAKE',
-      label: '首诊评估',
-      hint: '打开首诊评估表（可补录或继续未完成项）',
-      needsPatient: true,
-      enabled: true,
-    }
-    const afterArchive = chips.findIndex((c) => c.code === 'CREATE_ARCHIVE')
-    chips.splice(afterArchive >= 0 ? afterArchive + 1 : 0, 0, intakeChip)
   }
   const reportIdx = chips.findIndex((c) => c.code === 'REPORT_SUMMARY')
   const ocrChip = {
@@ -1899,20 +2334,8 @@ const capabilityChips = computed(() => {
 const stickyCapability = ref<string | null>(null)
 
 function quickCapability(code: string, label: string) {
-  if (code === 'OPEN_INTAKE') {
-    if (!focusPeopleId.value) {
-      ElMessage.info('请先从左侧选择一位患者')
-      return
-    }
-    const onboarding = todoTasks.value.find(
-      (t) =>
-        (t.taskType || '').toUpperCase() === 'FOLLOW_UP' &&
-        String(t.followupType || '').toUpperCase() === 'ONBOARDING',
-    )
-    void openIntakeSheet(focusPeopleId.value, {
-      followupRecordId: onboarding?.id || null,
-      purpose: onboarding ? 'ONBOARDING' : null,
-    })
+  if (code === 'CREATE_ARCHIVE' && needsPrimaryTeam.value) {
+    ElMessage.info('请先在左侧创建健管组')
     return
   }
   if (code === 'OCR_UPLOAD') {
@@ -1945,7 +2368,7 @@ function quickCapability(code: string, label: string) {
     return
   }
   const prompts: Record<string, string> = {
-    CREATE_ARCHIVE: '帮我建档，请告诉我需要哪些信息',
+    CREATE_ARCHIVE: '帮我建档',
     CARE_PLAN: '请为这位患者生成管理方案草稿',
     REPORT_SUMMARY: '请为这位患者生成或点评管理报告',
     GENERAL_CHAT: focusPeopleId.value
@@ -1957,6 +2380,7 @@ function quickCapability(code: string, label: string) {
 
 /** @param keepInput 自动追问时保留输入框内容 */
 function onComposerEnter() {
+  if (!input.value.trim()) return
   if (blockPlainEnter(input.value)) {
     ElMessage.info('请点「整理这段记录」。要提问请缩短文字后再发送')
     return
@@ -2328,6 +2752,13 @@ async function sendMessage(
         if (stillBound() && data.capability === 'CARE_PLAN' && data.extracted) {
           applyCarePlanPreview(row, data.extracted, data.intent === 'CARE_PLAN_REVISE')
         }
+        // 缺信息：自动打开建档抽屉（已抽到的字段预填；也可继续在对话里粘贴补全）
+        if (stillBound() && data.capability === 'CREATE_ARCHIVE' && data.intent === 'CREATE_ARCHIVE_NEED_INFO') {
+          const formAction = (data.actions || []).find(
+            (a) => a.type === 'NAVIGATE' && a.path === 'create-archive',
+          )
+          openCreateArchiveDrawer(archivePresetFromPayload(formAction?.payload))
+        }
         // 仅新建档成功才自动切焦点；已存在留在机构会话，等人点「先协同查看 / 为××健管服务」再跳
         if (stillBound() && data.capability === 'CREATE_ARCHIVE' && data.intent === 'CREATE_ARCHIVE_OK') {
           const focusAction = (data.actions || []).find(
@@ -2340,8 +2771,12 @@ async function sendMessage(
               a.type === 'CALL_API' ||
               (a.type === 'NAVIGATE' && a.path === 'join-care-team'),
           )
+          // 「修改分组」也是 join-care-team，但不自动弹抽屉；仅未入组的「分配」才弹
           const needAssign = nextActions.some(
-            (a) => a.type === 'NAVIGATE' && a.path === 'join-care-team',
+            (a) =>
+              a.type === 'NAVIGATE' &&
+              a.path === 'join-care-team' &&
+              /分配|创建/.test(a.label || ''),
           )
           if (focusAction?.peopleId && focusAction.peopleId !== focusPeopleId.value) {
             const replyText =
@@ -2518,8 +2953,33 @@ function runAction(action: AgentAction) {
     return
   }
   if (action.type === 'NAVIGATE' && action.path) {
+    if (action.path === 'clear-focus') {
+      void clearFocus()
+      return
+    }
     if (action.path === 'create-care-team') {
+      const raw = action.payload?.name
+      createCareTeamPresetName.value =
+        typeof raw === 'string' && raw.trim() ? raw.trim() : null
       createCareTeamOpen.value = true
+      return
+    }
+    if (action.path === 'create-archive') {
+      openCreateArchiveDrawer(archivePresetFromPayload(action.payload))
+      return
+    }
+    if (action.path === 'ocr-upload') {
+      const pid = action.peopleId || focusPeopleId.value
+      if (!pid) {
+        ElMessage.info('请先选择患者，再建档后可用单据录入')
+        return
+      }
+      const go = () => openReportUpload()
+      if (pid !== focusPeopleId.value) {
+        void selectPatient(pid, { autoAsk: false }).then(go)
+      } else {
+        go()
+      }
       return
     }
     if (action.path === 'join-care-team') {
@@ -2569,7 +3029,7 @@ function runAction(action: AgentAction) {
     }
     // 建档可在机构会话触发，不要求已有患者
     if (action.path === 'CREATE_ARCHIVE') {
-      void sendMessage('帮我建档，请告诉我需要哪些信息', false, 'CREATE_ARCHIVE')
+      void sendMessage('帮我建档', false, 'CREATE_ARCHIVE')
       return
     }
     const peopleId = action.peopleId || focusPeopleId.value
@@ -3224,6 +3684,7 @@ async function refreshBriefing() {
   messages.value = [
     {
       role: 'system',
+      kind: 'briefing',
       content: '',
       streaming: true,
       at: nowClock(),
@@ -3241,6 +3702,7 @@ async function refreshBriefing() {
       messages.value = [
         {
           role: 'system',
+          kind: 'notice',
           content: '已刷新会话，可继续提问。',
           at: nowClock(),
         },
@@ -3257,6 +3719,7 @@ async function refreshBriefing() {
     messages.value = [
       {
         role: 'system',
+        kind: 'briefing',
         content: '',
         streaming: true,
         at: nowClock(),
@@ -3295,6 +3758,23 @@ async function scrollToBottom() {
 
 function goArchive() {
   openSheet('archive')
+}
+/** 右侧快捷办理：当前患者首诊（与底部全局芯片分工） */
+function goIntakeQuick() {
+  const id = focusPeopleId.value
+  if (!id) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  const onboarding = todoTasks.value.find(
+    (t) =>
+      (t.taskType || '').toUpperCase() === 'FOLLOW_UP' &&
+      String(t.followupType || '').toUpperCase() === 'ONBOARDING',
+  )
+  void openIntakeSheet(id, {
+    followupRecordId: onboarding?.id || null,
+    purpose: onboarding ? 'ONBOARDING' : null,
+  })
 }
 function goCarePlan() {
   const id = focusPeopleId.value
@@ -3761,22 +4241,24 @@ onUnmounted(() => {
 <template>
   <div class="cockpit">
     <div class="board">
-      <!-- 左：今日优先 -->
+      <!-- 左：今日优先 / 冷启动步骤清单 -->
       <section class="col left">
         <div class="col-head">
           <div class="col-head-text">
-            <h3>今日优先</h3>
+            <h3>{{ isColdStart ? '新手起步' : '今日优先' }}</h3>
             <p class="sub">
               {{
-                tab === 'mine'
-                  ? '主责健管组 · 可搜索'
-                  : tab === 'watch'
-                    ? '个人重点关注患者'
-                    : `智能排序 · 占比 ${urgentShare}`
+                isColdStart
+                  ? '按步骤完成即可开始服务'
+                  : tab === 'mine'
+                    ? '主责健管组 · 可搜索'
+                    : tab === 'watch'
+                      ? '个人重点关注患者'
+                      : `智能排序 · 占比 ${urgentShare}`
               }}
             </p>
           </div>
-          <div class="col-actions">
+          <div v-if="!isColdStart" class="col-actions">
             <button
               type="button"
               class="icon-btn"
@@ -3792,180 +4274,281 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="priority-tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            :aria-selected="tab === 'urgent'"
-            :class="{ active: tab === 'urgent' }"
-            title="立即处理：有待办、需跟进的人"
-            @click="tab = 'urgent'"
-          >
-            <span class="tab-label">立即处理</span>
-            <span v-if="summary.urgentCount" class="count">{{ summary.urgentCount }}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            :aria-selected="tab === 'watch'"
-            :class="{ active: tab === 'watch' }"
-            title="我的关注"
-            @click="tab = 'watch'"
-          >
-            <span class="tab-label">我的关注</span>
-            <span v-if="summary.watchCount" class="count">{{ summary.watchCount }}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            :aria-selected="tab === 'mine'"
-            :class="{ active: tab === 'mine' }"
-            title="我的患者"
-            @click="tab = 'mine'"
-          >
-            <span class="tab-label">我的患者</span>
-            <span v-if="searchResults.length" class="count muted">{{ searchResults.length }}</span>
-          </button>
-        </div>
-
-        <div
-          v-if="isColdStart"
-          class="reward-week onboarding"
-          title="建档并开始服务后，这里会显示激励与打卡数据"
-        >
-          <span>建好客户并开始服务后，这里会出现每日待办与激励数据</span>
-        </div>
-        <div
-          v-else-if="hasRewardStats"
-          class="reward-week"
-          title="本机构开启激励的患者本周汇总（健康豆为患者打卡积分）"
-        >
-          <span v-if="(summary.rewardWeekPoints ?? 0) > 0">
-            本周 {{ summary.rewardWeekPoints }} 健康豆
-          </span>
-          <span v-if="(summary.rewardFullDayCount ?? 0) > 0">
-            全勤 {{ summary.rewardFullDayCount }} 人次
-          </span>
-          <span v-if="(summary.rewardActiveTodayCount ?? 0) > 0">
-            今日打卡 {{ summary.rewardActiveTodayCount }} 人
-          </span>
-        </div>
-
-        <div v-if="tab === 'mine'" class="search-box">
-          <input
-            v-model="searchKeyword"
-            type="search"
-            class="search-input"
-            placeholder="在我的患者中筛选姓名…"
-            autocomplete="off"
-            @input="onSearchInput"
-            @keydown.enter.prevent="searchPatients"
-          />
-        </div>
-
-        <div class="card-list" v-loading="tab === 'mine' ? searchLoading : loading">
-          <button
-            v-for="c in listCards"
-            :key="c.peopleId"
-            type="button"
-            class="person-card"
-            :class="{ active: focusPeopleId === c.peopleId }"
-            @click="
-              selectPatient(c.peopleId, {
-                autoAsk: true,
-                reason: tab === 'mine' ? c.topReason || '我的患者' : c.topReason,
-              })
-            "
-          >
-            <div class="card-top">
-              <span class="avatar" :style="{ background: avatarTone(c.peopleId || c.displayName) }">
-                {{ nameInitial(c.displayName) }}
+        <template v-if="isColdStart">
+          <div class="onboarding-checklist" aria-label="新手任务清单">
+            <div
+              v-for="(step, si) in onboardingSteps"
+              :key="step.key"
+              class="ob-step"
+              :class="step.status"
+            >
+              <span class="ob-mark" aria-hidden="true">
+                <template v-if="step.status === 'done'">✓</template>
+                <template v-else-if="step.status === 'locked'">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+                    <path d="M4.5 7V5.5a3.5 3.5 0 0 1 7 0V7h.75A1.75 1.75 0 0 1 14 8.75v4.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-4.5A1.75 1.75 0 0 1 3.75 7H4.5Zm1.5 0h4V5.5a2 2 0 1 0-4 0V7Z" />
+                  </svg>
+                </template>
+                <template v-else>{{ si + 1 }}</template>
               </span>
-              <strong class="name">{{ c.displayName || c.peopleId }}</strong>
-              <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
-              <span class="risk" :class="riskBadge(c).tone">
-                <i class="dot" />
-                {{ riskBadge(c).text }}
-              </span>
-            </div>
-            <div class="tag-row" v-if="cardTags(c).length">
-              <span v-for="t in cardTags(c)" :key="t" class="tag brand">{{ t }}</span>
-            </div>
-            <p class="note">{{ footerNote(c) }}</p>
-            <div class="task-meta" v-if="taskMeta(c)">
-              <span
-                class="pri"
-                :class="(c.maxTaskPriority || '').toLowerCase()"
-                v-if="priorityLabel(c.maxTaskPriority)"
-              >
-                {{ priorityLabel(c.maxTaskPriority) }}
-              </span>
-              <span>待办 {{ c.openTaskCount ?? 0 }}</span>
-              <span v-if="(c.overdueTaskCount ?? 0) > 0" class="overdue">
-                超期 {{ c.overdueTaskCount }}
-              </span>
-            </div>
-            <div class="progress">
-              <div class="bar">
-                <div class="fill" :style="{ width: `${ratePct(c.planRate7d)}%` }" />
+              <div class="ob-body">
+                <strong class="ob-title">
+                  {{ ['第一步', '第二步', '第三步'][si] }}：{{ step.title }}
+                </strong>
+                <p class="ob-desc">{{ step.desc }}</p>
+                <button
+                  v-if="step.cta"
+                  type="button"
+                  class="onboarding-cta"
+                  @click="runOnboardingStep(step.key)"
+                >
+                  {{ step.cta }}
+                </button>
               </div>
-              <span class="pct">{{ rateText(c.planRate7d) }}</span>
             </div>
-          </button>
-          <div
-            v-if="
-              isColdStart &&
-              !listCards.length &&
-              !(tab === 'mine' ? searchLoading : loading) &&
-              (tab !== 'mine' || searchTried) &&
-              !(tab === 'mine' && searchKeyword.trim())
-            "
-            class="onboarding-empty"
-          >
-            <p class="onboarding-title">欢迎使用智能工作台</p>
-            <p class="onboarding-desc">
-              {{
-                (summary.primaryCareTeamCount ?? 0) <= 0
-                  ? '先创建以你为主责的健管组，再建第一个客户档案；之后每日跟进待办会出现在这里。'
-                  : '建好第一个客户档案后，这里会自动生成你的每日跟进待办。'
-              }}
-            </p>
-            <button type="button" class="onboarding-cta" @click="runColdStartCta">
-              {{ coldStartCta.label }}
+          </div>
+        </template>
+        <template v-else>
+          <div class="priority-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="tab === 'urgent'"
+              :class="{ active: tab === 'urgent' }"
+              title="立即处理：有待办、需跟进的人"
+              @click="tab = 'urgent'"
+            >
+              <span class="tab-label">立即处理</span>
+              <span v-if="summary.urgentCount" class="count">{{ summary.urgentCount }}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="tab === 'watch'"
+              :class="{ active: tab === 'watch' }"
+              title="我的关注"
+              @click="tab = 'watch'"
+            >
+              <span class="tab-label">我的关注</span>
+              <span v-if="summary.watchCount" class="count">{{ summary.watchCount }}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="tab === 'mine'"
+              :class="{ active: tab === 'mine' }"
+              title="我的患者"
+              @click="tab = 'mine'"
+            >
+              <span class="tab-label">我的患者</span>
+              <span v-if="searchResults.length" class="count muted">{{ searchResults.length }}</span>
             </button>
           </div>
-          <el-empty
-            v-else-if="tab === 'mine' && !searchLoading && searchTried && !listCards.length && !searchKeyword.trim()"
-            description="暂无你主责健管组下的患者"
-            :image-size="52"
-          />
-          <el-empty
-            v-else-if="tab === 'mine' && !searchLoading && searchTried && !listCards.length && searchKeyword.trim()"
-            description="未找到匹配患者"
-            :image-size="52"
-          />
-          <el-empty
-            v-else-if="tab !== 'mine' && !loading && !listCards.length"
-            :description="
-              tab === 'watch'
-                ? '暂无重点关注患者，可在患者详情页添加'
-                : '暂无待办。点对话里的「建档」，或选「我的患者」继续服务'
-            "
-            :image-size="52"
-          />
-        </div>
 
-        <button v-if="tab === 'urgent'" type="button" class="view-all" @click="goTasks">
-          查看全部优先患者 →
-        </button>
-        <button
-          v-else-if="tab === 'watch'"
-          type="button"
-          class="view-all"
-          @click="router.push('/workspace/patients')"
-        >
-          去患者列表查看 →
-        </button>
+          <div
+            v-if="hasRewardStats"
+            class="reward-week"
+            title="本机构开启激励的患者本周汇总（健康豆为患者打卡积分）"
+          >
+            <span v-if="(summary.rewardWeekPoints ?? 0) > 0">
+              本周 {{ summary.rewardWeekPoints }} 健康豆
+            </span>
+            <span v-if="(summary.rewardFullDayCount ?? 0) > 0">
+              全勤 {{ summary.rewardFullDayCount }} 人次
+            </span>
+            <span v-if="(summary.rewardActiveTodayCount ?? 0) > 0">
+              今日打卡 {{ summary.rewardActiveTodayCount }} 人
+            </span>
+          </div>
+
+          <div v-if="tab === 'mine'" class="search-box">
+            <input
+              v-model="searchKeyword"
+              type="search"
+              class="search-input"
+              placeholder="在我的患者中筛选姓名…"
+              autocomplete="off"
+              @input="onSearchInput"
+              @keydown.enter.prevent="searchPatients"
+            />
+          </div>
+
+          <div class="card-list" v-loading="tab === 'mine' ? searchLoading : loading">
+            <template v-if="tab === 'mine'">
+              <section
+                v-for="g in minePatientGroups"
+                :key="g.careTeamId"
+                class="team-group"
+                :class="{ collapsed: isMineTeamCollapsed(g.careTeamId) }"
+              >
+                <button
+                  type="button"
+                  class="team-group-head"
+                  :aria-expanded="!isMineTeamCollapsed(g.careTeamId)"
+                  :title="isMineTeamCollapsed(g.careTeamId) ? '展开健管组' : '折叠健管组'"
+                  @click="toggleMineTeam(g.careTeamId)"
+                >
+                  <span class="team-group-caret" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </span>
+                  <span class="team-group-name">{{ g.careTeamName }}</span>
+                  <span class="team-group-count">{{ g.cards.length }}</span>
+                </button>
+                <button
+                  v-for="c in g.cards"
+                  v-show="!isMineTeamCollapsed(g.careTeamId)"
+                  :key="c.peopleId"
+                  type="button"
+                  class="person-card"
+                  :class="{ active: focusPeopleId === c.peopleId }"
+                  @click="
+                    selectPatient(c.peopleId, {
+                      autoAsk: true,
+                      reason: c.topReason || '我的患者',
+                    })
+                  "
+                >
+                  <div class="card-top">
+                    <span class="avatar" :style="{ background: avatarTone(c.peopleId || c.displayName) }">
+                      {{ nameInitial(c.displayName) }}
+                    </span>
+                    <strong class="name">{{ c.displayName || c.peopleId }}</strong>
+                    <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
+                    <span class="risk" :class="riskBadge(c).tone">
+                      <i class="dot" />
+                      {{ riskBadge(c).text }}
+                    </span>
+                  </div>
+                  <div class="tag-row" v-if="cardTags(c).length">
+                    <span v-for="t in cardTags(c)" :key="t" class="tag brand">{{ t }}</span>
+                  </div>
+                  <p v-if="footerNote(c)" class="note">{{ footerNote(c) }}</p>
+                  <div class="task-meta" v-if="taskMeta(c)">
+                    <span
+                      class="pri"
+                      :class="(c.maxTaskPriority || '').toLowerCase()"
+                      v-if="priorityLabel(c.maxTaskPriority)"
+                    >
+                      {{ priorityLabel(c.maxTaskPriority) }}
+                    </span>
+                    <span>待办 {{ c.openTaskCount ?? 0 }}</span>
+                    <span v-if="(c.overdueTaskCount ?? 0) > 0" class="overdue">
+                      超期 {{ c.overdueTaskCount }}
+                    </span>
+                  </div>
+                  <div class="progress">
+                    <div class="bar">
+                      <div class="fill" :style="{ width: `${ratePct(c.planRate7d)}%` }" />
+                    </div>
+                    <span class="pct">{{ rateText(c.planRate7d) }}</span>
+                  </div>
+                </button>
+                <p
+                  v-if="!g.cards.length"
+                  v-show="!isMineTeamCollapsed(g.careTeamId)"
+                  class="team-group-empty"
+                >
+                  本组暂无患者
+                </p>
+              </section>
+            </template>
+            <template v-else>
+              <button
+                v-for="c in listCards"
+                :key="c.peopleId"
+                type="button"
+                class="person-card"
+                :class="{ active: focusPeopleId === c.peopleId }"
+                @click="
+                  selectPatient(c.peopleId, {
+                    autoAsk: true,
+                    reason: c.topReason,
+                  })
+                "
+              >
+                <div class="card-top">
+                  <span class="avatar" :style="{ background: avatarTone(c.peopleId || c.displayName) }">
+                    {{ nameInitial(c.displayName) }}
+                  </span>
+                  <strong class="name">{{ c.displayName || c.peopleId }}</strong>
+                  <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
+                  <span class="risk" :class="riskBadge(c).tone">
+                    <i class="dot" />
+                    {{ riskBadge(c).text }}
+                  </span>
+                </div>
+                <div class="tag-row" v-if="cardTags(c).length">
+                  <span v-for="t in cardTags(c)" :key="t" class="tag brand">{{ t }}</span>
+                </div>
+                <p class="note">{{ footerNote(c) }}</p>
+                <div class="task-meta" v-if="taskMeta(c)">
+                  <span
+                    class="pri"
+                    :class="(c.maxTaskPriority || '').toLowerCase()"
+                    v-if="priorityLabel(c.maxTaskPriority)"
+                  >
+                    {{ priorityLabel(c.maxTaskPriority) }}
+                  </span>
+                  <span>待办 {{ c.openTaskCount ?? 0 }}</span>
+                  <span v-if="(c.overdueTaskCount ?? 0) > 0" class="overdue">
+                    超期 {{ c.overdueTaskCount }}
+                  </span>
+                </div>
+                <div class="progress">
+                  <div class="bar">
+                    <div class="fill" :style="{ width: `${ratePct(c.planRate7d)}%` }" />
+                  </div>
+                  <span class="pct">{{ rateText(c.planRate7d) }}</span>
+                </div>
+              </button>
+            </template>
+            <el-empty
+              v-if="
+                tab === 'mine' &&
+                !searchLoading &&
+                searchTried &&
+                !minePatientGroups.length &&
+                !searchKeyword.trim()
+              "
+              description="暂无你主责的健管组"
+              :image-size="52"
+            />
+            <el-empty
+              v-else-if="
+                tab === 'mine' &&
+                !searchLoading &&
+                searchTried &&
+                !minePatientGroups.length &&
+                searchKeyword.trim()
+              "
+              description="未找到匹配患者"
+              :image-size="52"
+            />
+            <el-empty
+              v-else-if="tab !== 'mine' && !loading && !listCards.length"
+              :description="
+                tab === 'watch'
+                  ? '暂无重点关注患者，可在患者详情页添加'
+                  : '暂无待办。点对话里的「建档」，或选「我的患者」继续服务'
+              "
+              :image-size="52"
+            />
+          </div>
+
+          <button v-if="tab === 'urgent'" type="button" class="view-all" @click="goTasks">
+            查看全部优先患者 →
+          </button>
+          <button
+            v-else-if="tab === 'watch'"
+            type="button"
+            class="view-all"
+            @click="router.push('/workspace/patients')"
+          >
+            去患者列表查看 →
+          </button>
+        </template>
       </section>
 
       <!-- 中：健管智能体 -->
@@ -4032,15 +4615,34 @@ onUnmounted(() => {
             :title="serviceFlowLabel ? `当前环节：${serviceFlowLabel}` : '标准服务流程'"
           >
             <span class="sf-caption">服务进度</span>
-            <div class="sf-track">
+            <div class="sf-track" role="list">
               <template v-for="(step, si) in serviceFlowSteps" :key="step.code">
-                <span class="sf-step" :class="step.status">{{ step.label }}</span>
+                <span
+                  class="sf-step"
+                  :class="step.status"
+                  role="listitem"
+                  :title="step.label"
+                >
+                  <i class="sf-mark" aria-hidden="true">
+                    <svg
+                      v-if="step.status === 'done'"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <span v-else class="sf-dot" />
+                  </i>
+                  <em class="sf-label">{{ step.label }}</em>
+                </span>
                 <span
                   v-if="si < serviceFlowSteps.length - 1"
                   class="sf-sep"
                   :class="step.status"
                   aria-hidden="true"
-                >→</span>
+                />
               </template>
             </div>
             <button
@@ -4049,13 +4651,18 @@ onUnmounted(() => {
               class="sf-assign"
               @click="openAssignCareTeam"
             >
-              待分配健管组
+              待分组
             </button>
           </div>
         </div>
 
         <div ref="chatBodyRef" class="chat-body">
-          <div v-if="briefingMsg" class="briefing" :class="{ collapsed: briefingCollapsed }">
+          <!-- 冷启动时左侧已有唯一 CTA，隐藏紫色简报避免「创建健管组」三处打架 -->
+          <div
+            v-if="briefingMsg && !isColdStart"
+            class="briefing"
+            :class="{ collapsed: briefingCollapsed }"
+          >
             <button
               type="button"
               class="briefing-toggle"
@@ -4104,7 +4711,9 @@ onUnmounted(() => {
                   @click="runAction(a)"
                 >
                   <span class="action-chip-text">
-                    {{ a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label) }}
+                    <template v-if="a.runState === 'done'">✓ </template>{{
+                      a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
+                    }}
                   </span>
                 </button>
                 <button
@@ -4219,7 +4828,9 @@ onUnmounted(() => {
                   @click="runAction(a)"
                 >
                   <span class="action-chip-text">
-                    {{ a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label) }}
+                    <template v-if="a.runState === 'done'">✓ </template>{{
+                      a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
+                    }}
                   </span>
                 </button>
                 <button
@@ -4256,9 +4867,18 @@ onUnmounted(() => {
                 :key="s.label"
                 type="button"
                 class="empty-starter"
-                :disabled="sending || isArchivedSession"
-                @click="sendMessage(s.text, false, s.capability || null)"
+                :class="{ locked: !!s.locked }"
+                :disabled="sending || isArchivedSession || !!s.locked"
+                :title="s.locked ? s.lockHint || '请先完成左侧当前步骤' : s.label"
+                @click="runEmptyStarter(s)"
               >
+                <span v-if="s.locked" class="empty-starter-lock" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                    <path
+                      d="M4.5 7V5.5a3.5 3.5 0 0 1 7 0V7h.75A1.75 1.75 0 0 1 14 8.75v4.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-4.5A1.75 1.75 0 0 1 3.75 7H4.5Zm1.5 0h4V5.5a2 2 0 1 0-4 0V7Z"
+                    />
+                  </svg>
+                </span>
                 {{ s.label }}
               </button>
             </div>
@@ -4288,7 +4908,8 @@ onUnmounted(() => {
                 sending ||
                 uploading ||
                 isArchivedSession ||
-                (cap.needsPatient && !focusPeopleId)
+                (cap.needsPatient && !focusPeopleId) ||
+                (cap.code === 'CREATE_ARCHIVE' && needsPrimaryTeam)
               "
               :title="cap.hint"
               @click="quickCapability(cap.code, cap.label)"
@@ -4323,16 +4944,21 @@ onUnmounted(() => {
               :autosize="{ minRows: 1, maxRows: 4 }"
               resize="none"
               :disabled="isArchivedSession"
-              placeholder="输入患者信息或指令（如：建档、评估）"
+              placeholder="输入患者信息，或说「帮我建档」…"
               @keydown.enter.exact.prevent="onComposerEnter"
             />
             <div class="composer-bar">
               <div class="composer-send">
-                <span class="hint">Enter 发送 · 长文字请点整理这段记录</span>
+                <span class="hint">Enter 发送 · 微信长文字点右侧「整理」自动提取</span>
                 <button
                   type="button"
                   class="send-btn ghost"
                   :disabled="sending || uploading || isArchivedSession || !input.trim()"
+                  :title="
+                    input.trim().length > 80
+                      ? '长文字建议点这里，自动整理成可核对的信息'
+                      : '粘贴微信聊天记录等长文字后点此整理'
+                  "
                   @click="organizeRecord"
                 >
                   整理这段记录
@@ -4475,7 +5101,7 @@ onUnmounted(() => {
                     :title="t.title || t.text"
                   >{{ t.text }}</span>
                 </div>
-                <p v-else class="eval-empty">暂无评估结果</p>
+                <p v-else class="eval-empty">{{ assessmentPending ? '待评估' : '暂无评估结果' }}</p>
               </div>
 
               <div class="focus-metrics">
@@ -4639,80 +5265,23 @@ onUnmounted(() => {
             </div>
 
             <div class="section quick-actions">
-              <div class="section-title">快捷办理</div>
+              <div class="section-title">
+                快捷办理
+                <span v-if="focus.displayName" class="section-sub">
+                  针对 {{ focus.displayName }}
+                  <template v-if="serviceFlowLabel"> · {{ serviceFlowLabel }}</template>
+                </span>
+              </div>
               <div class="quick-list">
-                <button type="button" class="quick-btn" @click="goArchive">
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                  </span>
-                  <span class="quick-label">查看档案</span>
-                  <span class="quick-arrow" aria-hidden="true">›</span>
-                </button>
-                <button type="button" class="quick-btn" @click="goObservations">
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                    </svg>
-                  </span>
-                  <span class="quick-label">录入数据</span>
-                  <span class="quick-arrow" aria-hidden="true">›</span>
-                </button>
-                <button type="button" class="quick-btn" @click="goFollowups">
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M9 11l3 3L22 4" />
-                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                    </svg>
-                  </span>
-                  <span class="quick-label">创建随访</span>
-                  <span class="quick-arrow" aria-hidden="true">›</span>
-                </button>
-                <button type="button" class="quick-btn" @click="goCarePlan">
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                    </svg>
-                  </span>
-                  <span class="quick-label">编辑方案</span>
-                  <span class="quick-arrow" aria-hidden="true">›</span>
-                </button>
-                <button type="button" class="quick-btn" @click="goReports">
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                      <line x1="16" y1="13" x2="8" y2="13" />
-                      <line x1="16" y1="17" x2="8" y2="17" />
-                      <polyline points="10 9 9 9 8 9" />
-                    </svg>
-                  </span>
-                  <span class="quick-label">查看报告</span>
-                  <span class="quick-arrow" aria-hidden="true">›</span>
-                </button>
-                <button type="button" class="quick-btn" @click="goMedications">
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="3" y="8" width="18" height="8" rx="4" />
-                      <path d="M7 8v8" />
-                      <path d="M12 8v8" />
-                    </svg>
-                  </span>
-                  <span class="quick-label">用药管理</span>
-                  <span class="quick-arrow" aria-hidden="true">›</span>
-                </button>
-                <button type="button" class="quick-btn" @click="goAssessments">
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M12 20V10" />
-                      <path d="M18 20V4" />
-                      <path d="M6 20v-4" />
-                    </svg>
-                  </span>
-                  <span class="quick-label">疾病评估</span>
+                <button
+                  v-for="qa in stageQuickActions"
+                  :key="qa.key"
+                  type="button"
+                  class="quick-btn"
+                  :class="{ primary: qa.primary }"
+                  @click="qa.run()"
+                >
+                  <span class="quick-label">{{ qa.label }}</span>
                   <span class="quick-arrow" aria-hidden="true">›</span>
                 </button>
               </div>
@@ -4817,15 +5386,14 @@ onUnmounted(() => {
 
     <CreateCareTeamDrawer
       v-model="createCareTeamOpen"
-      @created="
-        async () => {
-          // 左栏冷启动 CTA 依赖 summary.primaryCareTeamCount，须先重拉再换「去建第一个档」
-          await loadSummary()
-          if (tab === 'mine') await searchPatients()
-          else await loadPriority()
-          await refreshBriefing()
-        }
-      "
+      :preset-name="createCareTeamPresetName"
+      @created="onCareTeamCreated"
+    />
+
+    <CreateArchiveDrawer
+      v-model="createArchiveOpen"
+      :preset="createArchivePreset"
+      @created="onArchiveCreatedFromDrawer"
     />
 
     <el-image-viewer
@@ -5004,34 +5572,86 @@ onUnmounted(() => {
   color: #5b6b7a;
 }
 
-.reward-week.onboarding {
-  background: linear-gradient(90deg, #eef5ff, #f4fbf8);
-  font-weight: 500;
-  color: var(--ink-600);
-  line-height: 1.45;
+.onboarding-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px;
+  padding: 4px 0 12px;
 }
 
-.onboarding-empty {
-  margin: 16px 12px;
-  padding: 16px 14px;
+.ob-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 12px 14px;
   border-radius: 12px;
-  background: linear-gradient(160deg, #f5f9ff 0%, #fff 70%);
-  border: 1px solid var(--ink-100);
-  text-align: left;
+  border: 1px solid var(--ink-100, #e5e7eb);
+  background: #fff;
 }
 
-.onboarding-title {
-  margin: 0 0 6px;
-  font-size: 14px;
+.ob-step.active {
+  border-color: #bfdbfe;
+  background: linear-gradient(160deg, #f5f9ff 0%, #fff 72%);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.06);
+}
+
+.ob-step.done {
+  border-color: #d1fae5;
+  background: #f8fffb;
+}
+
+.ob-step.locked {
+  opacity: 0.72;
+  background: #f9fafb;
+}
+
+.ob-mark {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--ink-900);
+  color: #fff;
+  background: var(--brand-500, #3b82f6);
 }
 
-.onboarding-desc {
-  margin: 0 0 12px;
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--ink-600);
+.ob-step.done .ob-mark {
+  background: #10b981;
+}
+
+.ob-step.locked .ob-mark {
+  background: #d1d5db;
+  color: #6b7280;
+}
+
+.ob-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.ob-title {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink-900, #111827);
+  line-height: 1.35;
+}
+
+.ob-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-600, #4b5563);
+}
+
+.ob-step.active .ob-desc {
+  margin-bottom: 10px;
 }
 
 .onboarding-cta {
@@ -5047,6 +5667,21 @@ onUnmounted(() => {
 
 .onboarding-cta:hover {
   filter: brightness(1.05);
+}
+
+.empty-starter.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  color: var(--ink-400, #9ca3af);
+  background: #f3f4f6;
+  border-style: dashed;
+}
+
+.empty-starter-lock {
+  display: inline-flex;
+  margin-right: 4px;
+  vertical-align: -1px;
+  color: var(--ink-400, #9ca3af);
 }
 
 .composer-name-hint {
@@ -5196,6 +5831,84 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.team-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.team-group + .team-group {
+  margin-top: 6px;
+}
+
+.team-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: linear-gradient(180deg, #f7f8fa 70%, rgba(247, 248, 250, 0));
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  border-radius: 6px;
+}
+
+.team-group-head:hover {
+  background: #eef2f7;
+}
+
+.team-group-caret {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--ink-400, #94a3b8);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.team-group-caret svg {
+  width: 12px;
+  height: 12px;
+}
+
+.team-group.collapsed .team-group-caret {
+  transform: rotate(-90deg);
+}
+
+.team-group-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-600, #475569);
+  letter-spacing: 0.02em;
+}
+
+.team-group-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--ink-100, #e2e8f0);
+  color: var(--ink-500, #64748b);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.team-group-empty {
+  margin: 0;
+  padding: 8px 10px 10px 28px;
+  font-size: 12px;
+  color: var(--ink-400, #94a3b8);
 }
 
 .card-list::-webkit-scrollbar {
@@ -5492,26 +6205,70 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 2px 0;
+  gap: 4px 0;
   flex: 1;
   min-width: 0;
 }
 
 .sf-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
   color: var(--ink-400, #9ca3af);
+  font-style: normal;
+}
+
+.sf-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.sf-mark svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sf-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.sf-label {
+  font-style: normal;
+  font-weight: 500;
 }
 
 .sf-step.done {
   color: var(--ink-600, #4b5563);
 }
 
+.sf-step.done .sf-mark {
+  color: #059669;
+}
+
 .sf-step.current {
   color: #1d4ed8;
-  font-weight: 700;
   background: #dbeafe;
+  box-shadow: 0 0 0 1px #bfdbfe inset;
+}
+
+.sf-step.current .sf-label {
+  font-weight: 700;
+}
+
+.sf-step.current .sf-dot {
+  background: #2563eb;
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
 }
 
 .sf-step.todo {
@@ -5519,15 +6276,17 @@ onUnmounted(() => {
 }
 
 .sf-sep {
-  color: var(--ink-200, #e5e7eb);
-  font-size: 11px;
-  user-select: none;
-  padding: 0 1px;
+  width: 10px;
+  height: 1px;
+  margin: 0 1px;
+  background: var(--ink-200, #e5e7eb);
+  flex-shrink: 0;
+  align-self: center;
 }
 
 .sf-sep.done,
 .sf-sep.current {
-  color: var(--ink-300, #d1d5db);
+  background: var(--ink-300, #d1d5db);
 }
 
 .sf-assign {
@@ -6624,9 +7383,13 @@ onUnmounted(() => {
 
 .action-chip.done,
 .action-chip.done:hover {
-  background: #f1f5f9;
-  color: #64748b;
-  border-color: #e2e8f0;
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+  cursor: default;
+  font-weight: 500;
+  box-shadow: none;
+  transform: none;
 }
 
 .typing {
@@ -6791,8 +7554,16 @@ onUnmounted(() => {
 }
 
 .send-btn:disabled {
-  opacity: 0.55;
+  background: #e5e7eb;
+  color: #9ca3af;
+  opacity: 1;
   cursor: not-allowed;
+}
+
+.send-btn.ghost:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+  border-color: #e5e7eb;
 }
 
 .send-btn.ghost {
@@ -7125,6 +7896,16 @@ onUnmounted(() => {
 
 .section.quick-actions .section-title {
   margin-bottom: 8px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.section.quick-actions .section-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-400, #94a3b8);
 }
 
 .quick-list {
@@ -7152,6 +7933,12 @@ onUnmounted(() => {
   transition: var(--admin-transition);
   text-align: left;
   min-width: 0;
+}
+
+.quick-btn.primary {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
 }
 
 .quick-btn:hover {

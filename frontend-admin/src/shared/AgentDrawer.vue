@@ -433,7 +433,7 @@ function quickAction(code: string, label: string) {
     return
   }
   const prompts: Record<string, string> = {
-    CREATE_ARCHIVE: '帮我建档，请告诉我需要哪些信息',
+    CREATE_ARCHIVE: '帮我建档',
     CARE_PLAN: '请为这位患者生成管理方案草稿',
     REPORT_SUMMARY: '请为这位患者生成或点评管理报告',
     GENERAL_CHAT: '请根据患者档案给出健康管理建议',

@@ -414,7 +414,7 @@ public final class FollowupContentValidator {
                 case "CREATE_PLAN" -> "待制定方案";
                 case "RETEST" -> "安排复测";
                 case "NONE" -> "暂无后续动作";
-                default -> "入组/首诊";
+                default -> "首诊";
             };
             List<String> diseaseCodes = stringList(section.get("diseaseCodes"));
             String diseaseHint = diseaseCodes.isEmpty() ? "" : " · 病种" + diseaseCodes.size() + "项";

@@ -22,6 +22,8 @@ public enum AuditActionEnum {
     STAFF_ORG_BIND_REPLACE,
     /** 患者入组 */
     MEMBERSHIP_JOIN,
+    /** B 端解除患者与当前机构关系（患者档案保留） */
+    MEMBERSHIP_LEAVE,
     /** 创建健管组 */
     CARE_TEAM_CREATE,
     /** 更新健管组 */
