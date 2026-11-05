@@ -1982,16 +1982,6 @@ function pushFocusNextStepNudge(peopleId: string) {
   cachePatientSession(peopleId)
 }
 
-function runColdStartCta() {
-  const cta = coldStartCta.value
-  if (cta.kind === 'create-team') {
-    createCareTeamPresetName.value = null
-    createCareTeamOpen.value = true
-    return
-  }
-  openCreateArchiveDrawer(null)
-}
-
 function firstMinePeopleId(): string | null {
   const card = searchResults.value[0]
   return card?.peopleId || focusPeopleId.value || null
