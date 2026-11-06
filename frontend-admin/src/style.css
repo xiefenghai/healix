@@ -415,6 +415,18 @@ a:hover {
   color: var(--ink-400);
 }
 
+/* 数字框只保留键盘输入，去掉浏览器自带的上下微调箭头 */
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .panel {
   background: var(--admin-card);
   border: 1px solid var(--admin-border);

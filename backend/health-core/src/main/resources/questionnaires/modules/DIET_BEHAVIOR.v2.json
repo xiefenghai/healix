@@ -10,6 +10,18 @@
       "level": "FIRST_VISIT"
     },
     {
+      "field": "basic.diet.dinnerTime",
+      "label": "晚餐通常几点吃？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "in": ["AFTER_21"] },
+          "severity": "CAUTION",
+          "planEffect": "晚餐偏晚，不安排刚吃完就运动；可改成睡前轻度拉伸"
+        }
+      ]
+    },
+    {
       "field": "basic.diet.breakfast",
       "label": "早餐吃吗？",
       "level": "LATER"
@@ -38,20 +50,35 @@
     },
     {
       "field": "basic.diet.taste",
-      "label": "口味更偏哪种？（可多选）",
+      "label": "您的日常饮食更接近哪种？（可多选）",
       "level": "FIRST_VISIT",
       "highlights": [
         {
           "when": { "intersects": ["SALTY"] },
           "severity": "CAUTION",
-          "planEffect": "高血压管理重点限盐；减重也建议减腌制食品"
+          "planEffect": "口味偏咸：高血压重点限盐，减重也少吃腌制食品"
+        },
+        {
+          "when": { "intersects": ["OILY"] },
+          "severity": "CAUTION",
+          "planEffect": "偏油或爱吃油炸：给清淡少油、少炸的替换"
+        },
+        {
+          "when": { "intersects": ["REFINED"] },
+          "severity": "CAUTION",
+          "planEffect": "主食以精米白面为主：控糖方案里逐步换成粗细搭配"
+        },
+        {
+          "when": { "intersects": ["SWEET"] },
+          "severity": "CAUTION",
+          "planEffect": "常吃甜食或含糖饮料：控糖和减重优先减这一项"
         }
       ]
     },
     {
       "field": "basic.diet.staple",
-      "label": "主食一般吃什么？",
-      "level": "FIRST_VISIT"
+      "label": "主食一般吃什么？（面诊可再细问）",
+      "level": "STAFF"
     },
     {
       "field": "basic.diet.vegFruit",
@@ -60,8 +87,8 @@
     },
     {
       "field": "basic.diet.cooking",
-      "label": "家里做菜常用哪些方式？",
-      "level": "LATER",
+      "label": "家里做菜常用哪些方式？（面诊可再细问）",
+      "level": "STAFF",
       "showIf": {
         "field": "goal.careTracks",
         "intersects": ["HYPERTENSION", "WEIGHT_LOSS", "DIABETES"]

@@ -131,7 +131,14 @@ public final class CarePlanPromptContextSupport {
             "basic.jointIssues=有没有关节问题或运动损伤？",
             "basic.eatingDisorderHistory=以前有没有出现过暴食、催吐，或者长时间刻意不吃饭的情况？",
             "basic.sugaryDrinks=奶茶、可乐、果汁这类含糖饮料喝多少？",
-            "basic.taste=口味更偏哪种？（可多选）",
+            "basic.taste=日常饮食特点",
+            "basic.diet.taste=日常饮食更接近哪种",
+            "basic.diet.dinnerTime=晚餐通常几点吃",
+            "basic.schedule.offWork=平时大概几点下班",
+            "basic.schedule.offWorkNote=倒班或夜班的上班时段",
+            "basic.sleep.refreshed=早上起来觉得解乏吗",
+            "medication.mealRelation=吃药和吃饭怎么配合",
+            "goal.constraints=执行健康计划的最大阻力",
             "basic.triedBefore=以前减过重吗？",
             "disease.diabetes.type=糖尿病分型",
             "disease.diabetes.diagnosedYear=糖尿病患病年份",
@@ -178,6 +185,7 @@ public final class CarePlanPromptContextSupport {
         }
 
         copyEnrichedObject(o, content, "diet");
+        copyEnrichedObject(o, content, "schedule");
         copyEnrichedObject(o, content, "exercise");
         copyEnrichedObject(o, content, "lifestyle");
         copyEnrichedObject(o, content, "sleep");
@@ -871,7 +879,24 @@ public final class CarePlanPromptContextSupport {
         m.put("cooking", parsePairs("STEAM_BOIL=蒸煮", "STIR_FRY=炒", "DEEP_FRY=油炸", "BRAISE=红烧/卤"));
         m.put("eatingSpeed", parsePairs("FAST=10分钟以内", "NORMAL=10–20分钟", "SLOW=20分钟以上"));
         m.put("taste", parsePairs(
-                "LIGHT=清淡", "SALTY=偏咸/常吃咸菜腌制品", "SWEET=偏甜", "OILY=偏油", "SPICY=偏辣"));
+                "SALTY=偏咸、口味重", "OILY=偏油腻，或爱吃油炸",
+                "REFINED=主食主要是白米饭、白馒头、面条", "SWEET=常吃甜食或含糖饮料",
+                "NONE=以上都不大符合",
+                "LIGHT=清淡", "SPICY=偏辣"));
+        m.put("dinnerTime", parsePairs(
+                "BEFORE_18=下午6点前", "H18_19=下午6–7点", "H19_20=晚上7–8点",
+                "H20_21=晚上8–9点", "AFTER_21=晚上9点以后", "IRREGULAR=不固定"));
+        m.put("offWork", parsePairs(
+                "BEFORE_18=下午6点前", "H18_19=下午6–7点", "H19_20=晚上7–8点",
+                "H20_21=晚上8–9点", "AFTER_21=晚上9点以后", "IRREGULAR=不固定", "NOT_WORKING=不上班"));
+        m.put("refreshed", parsePairs(
+                "YES=完全解乏", "PARTIAL=有些疲惫", "NO=极度疲劳"));
+        m.put("mealRelation", parsePairs(
+                "BEFORE=饭前吃", "WITH_MEAL=跟第一口饭一起吃", "AFTER=饭后吃",
+                "BEDTIME=睡前吃", "IRREGULAR=没固定，想到才吃"));
+        m.put("constraints", parsePairs(
+                "SOCIAL=应酬多，推不掉", "TAKEOUT=经常要点外卖", "HUNGRY=总是觉得饿",
+                "FAMILY=家人不太支持", "NO_TIME=没时间运动", "NONE=暂时没什么特别的阻力"));
         m.put("trackedBefore", parsePairs("NEVER=没有", "TRIED=试过没坚持", "ONGOING=一直在记"));
         m.put("cook", parsePairs("SELF=自己做", "FAMILY=家人做", "CANTEEN=单位食堂", "EAT_OUT=外卖/外食为主"));
         m.put("livingAlone", parsePairs("YES=是", "NO=否"));

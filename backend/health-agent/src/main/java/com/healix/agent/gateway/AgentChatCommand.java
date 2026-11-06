@@ -1,5 +1,8 @@
 package com.healix.agent.gateway;
 
+import com.healix.agent.extract.IntakeExtractField;
+import java.util.List;
+
 public record AgentChatCommand(
         String tenantId,
         String orgId,
@@ -9,4 +12,5 @@ public record AgentChatCommand(
         String message,
         String capabilityHint,
         String imageBase64,
-        String imageMimeType) {}
+        String imageMimeType,
+        List<IntakeExtractField> intakeFields) {}

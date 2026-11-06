@@ -37,6 +37,19 @@ public class BChatExtractController {
         return ApiResult.ok(new ConfirmResult(status));
     }
 
+    @PostMapping("/reopen")
+    public ApiResult<ConfirmResult> reopen(@PathVariable String peopleId, @RequestBody @Valid ReopenRequest request) {
+        String status = chatExtractService.reopenDiscarded(
+                SecurityUtils.requireTenantId(),
+                SecurityUtils.requireCurrentOrgId(),
+                SecurityUtils.requireStaffId(),
+                peopleId,
+                request.messageId());
+        return ApiResult.ok(new ConfirmResult(status));
+    }
+
+    public record ReopenRequest(@NotBlank String messageId) {}
+
     public record ConfirmRequest(
             @NotBlank String messageId, List<Map<String, Object>> rows, List<String> discardIds) {}
 

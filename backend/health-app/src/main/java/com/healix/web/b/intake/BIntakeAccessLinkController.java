@@ -43,7 +43,10 @@ public class BIntakeAccessLinkController {
                 result.token(),
                 result.url(),
                 result.expireAt(),
-                result.copyText()));
+                result.copyText(),
+                result.orgName(),
+                result.patientLabel(),
+                result.staffDisplayName()));
     }
 
     @PostMapping("/{linkId}/revoke")
@@ -57,5 +60,13 @@ public class BIntakeAccessLinkController {
 
     public record IssueRequest(@Min(1) @Max(30) Integer validDays) {}
 
-    public record IssueView(String id, String token, String url, LocalDateTime expireAt, String copyText) {}
+    public record IssueView(
+            String id,
+            String token,
+            String url,
+            LocalDateTime expireAt,
+            String copyText,
+            String orgName,
+            String patientLabel,
+            String staffDisplayName) {}
 }

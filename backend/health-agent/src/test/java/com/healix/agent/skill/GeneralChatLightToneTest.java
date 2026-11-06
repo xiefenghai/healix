@@ -73,10 +73,37 @@ class GeneralChatLightToneTest {
                 OrgGuideIntent.CREATE_CARE_TEAM, GeneralChatSkill.classifyOrgGuideIntent("怎么创建健管组"));
         assertEquals(
                 OrgGuideIntent.CREATE_CARE_TEAM, GeneralChatSkill.classifyOrgGuideIntent("在哪里创建"));
-        // 解释「为什么」不能当创建动作短路
-        assertEquals(OrgGuideIntent.NONE, GeneralChatSkill.classifyOrgGuideIntent("为什么要创建健管组"));
-        assertEquals(OrgGuideIntent.NONE, GeneralChatSkill.classifyOrgGuideIntent("创建健管组有什么用"));
+        // 解释「为什么」走价值短答，不当创建动作
+        assertEquals(
+                OrgGuideIntent.CARE_TEAM_EXPLAIN,
+                GeneralChatSkill.classifyOrgGuideIntent("为什么要创建健管组"));
+        assertEquals(
+                OrgGuideIntent.CARE_TEAM_EXPLAIN,
+                GeneralChatSkill.classifyOrgGuideIntent("创建健管组有什么用"));
+        assertEquals(
+                OrgGuideIntent.CARE_TEAM_EXPLAIN,
+                GeneralChatSkill.classifyOrgGuideIntent("为什么要创建健管组？怎么给患者分组？"));
         assertEquals(true, GeneralChatSkill.isCareTeamExplainQuestion("为什么要创建健管组".replaceAll("\\s+", "")));
+    }
+
+    @Test
+    void batchAssignIntent() {
+        assertEquals(
+                OrgGuideIntent.BATCH_ASSIGN,
+                GeneralChatSkill.classifyOrgGuideIntent(
+                        "有一批患者还没分组，怎么批量分配到健管组？请用大白话说明操作路径。"));
+        assertEquals(
+                OrgGuideIntent.BATCH_ASSIGN, GeneralChatSkill.classifyOrgGuideIntent("如何批量分配健管组？"));
+        assertEquals(
+                OrgGuideIntent.BATCH_ASSIGN, GeneralChatSkill.classifyOrgGuideIntent("未分组患者怎么处理"));
+        assertEquals(
+                OrgGuideIntent.BATCH_ASSIGN, GeneralChatSkill.classifyOrgGuideIntent("怎么给患者分组"));
+        assertEquals(
+                OrgGuideIntent.BATCH_ASSIGN, GeneralChatSkill.classifyOrgGuideIntent("怎么批量分组"));
+        // 「为什么」仍走价值解释，不被批量意图抢走
+        assertEquals(
+                OrgGuideIntent.CARE_TEAM_EXPLAIN,
+                GeneralChatSkill.classifyOrgGuideIntent("健管组是干什么的？怎么分组？"));
     }
 
     @Test

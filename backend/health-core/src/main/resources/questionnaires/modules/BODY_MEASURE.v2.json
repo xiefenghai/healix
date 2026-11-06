@@ -95,7 +95,7 @@
     {
       "field": "measure.method",
       "label": "这些数据怎么来的？",
-      "level": "FIRST_VISIT"
+      "level": "REQUIRED"
     }
   ]
 }

@@ -308,10 +308,28 @@ public class PersonaDimensionAggregator {
             diet.add("口味偏咸");
         }
         if (multiHas(answers, "basic.diet.taste", "OILY")) {
-            diet.add("偏油");
+            diet.add("偏油腻或爱吃油炸");
         }
         if (multiHas(answers, "basic.diet.taste", "SWEET")) {
-            diet.add("偏甜");
+            diet.add("常吃甜食或含糖饮料");
+        }
+        if (multiHas(answers, "basic.diet.taste", "REFINED")) {
+            diet.add("主食以精米白面为主");
+        }
+        if ("AFTER_21".equals(textAns(answers, "basic.diet.dinnerTime"))) {
+            diet.add("晚餐晚于21点");
+        }
+        if (multiHas(answers, "goal.constraints", "SOCIAL")) {
+            diet.add("应酬多");
+        }
+        if (multiHas(answers, "goal.constraints", "TAKEOUT")) {
+            diet.add("经常外卖");
+        }
+        if (multiHas(answers, "goal.constraints", "HUNGRY")) {
+            diet.add("容易饿");
+        }
+        if (multiHas(answers, "medication.mealRelation", "WITH_MEAL")) {
+            diet.add("有药需跟第一口饭同服");
         }
         String snack = textAns(answers, "basic.diet.snackNight");
         if ("MOST_DAYS".equals(snack)) {
@@ -322,6 +340,22 @@ public class PersonaDimensionAggregator {
             diet.add("含糖饮料多");
         }
 
+        String offWork = textAns(answers, "basic.schedule.offWork");
+        if ("AFTER_21".equals(offWork) || "H20_21".equals(offWork)) {
+            exercise.add("下班晚");
+        }
+        if (StringUtils.hasText(textAns(answers, "basic.schedule.offWorkNote"))) {
+            exercise.add("倒班或夜班，上班时段不固定");
+        }
+        if (multiHas(answers, "goal.constraints", "NO_TIME")) {
+            exercise.add("没时间运动");
+        }
+        if ("NO".equals(textAns(answers, "basic.sleep.refreshed"))) {
+            psych.add("早上不解乏");
+        }
+        if (multiHas(answers, "goal.constraints", "FAMILY")) {
+            psych.add("家人不太支持");
+        }
         String freq = textAns(answers, "basic.exercise.frequency");
         if ("NONE".equals(freq) || "RARELY".equals(freq)) {
             exercise.add("几乎不运动");

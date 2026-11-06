@@ -50,6 +50,14 @@ const visibleItems = computed(() => {
   return cur ? [cur] : []
 })
 
+/**
+ * 纯文本短答（无工具、结束时不超过 2 步）不展示轨迹。
+ * 120ms / 2 步这种摘要会盖过正文，让人误以为还在跑。
+ */
+const hideTrivialTrace = computed(
+  () => !props.streaming && toolCount.value === 0 && stepCount.value <= 2,
+)
+
 const summaryTitle = computed(() => {
   if (props.streaming) {
     const running = currentStep.value
@@ -89,6 +97,21 @@ function thinkingPreview(body?: string) {
   return raw.length > 56 ? `${raw.slice(0, 56)}…` : raw
 }
 
+/** 轨迹详情里的能力码汉化，避免露出 GENERAL_CHAT 等底层名 */
+function humanizeDetail(detail?: string) {
+  if (!detail) return ''
+  return detail
+    .replace(/\bGENERAL_CHAT\b/g, '业务问答')
+    .replace(/\bCREATE_ARCHIVE\b/g, '患者建档')
+    .replace(/\bCARE_PLAN\b/g, '制定管理方案')
+    .replace(/\bREPORT_SUMMARY\b/g, '管理报告点评')
+    .replace(/\bOCR_LAB\b/g, '检验单识别')
+    .replace(/\bOCR_EXAM\b/g, '检查单识别')
+    .replace(/\bOCR_MED\b/g, '用药单识别')
+    .replace(/\bCHAT_EXTRACT\b/g, '整理这段记录')
+    .replace(/已选择能力\s*[·.]\s*/g, '已选择：')
+}
+
 function stepTitle(item: ActivityItem) {
   if (item.kind === 'tool') return `调用 ${item.title}`
   return item.title
@@ -97,9 +120,9 @@ function stepTitle(item: ActivityItem) {
 
 <template>
   <div
-    v-if="items.length || elapsedMs"
+    v-if="(items.length || elapsedMs) && !hideTrivialTrace"
     class="agent-activity"
-    :class="{ open: panelOpen, streaming }"
+    :class="{ open: panelOpen, streaming, quiet: !streaming }"
   >
     <button type="button" class="activity-summary" @click="panelOpen = !panelOpen">
       <span class="summary-dot" aria-hidden="true">{{ streaming ? '…' : '✓' }}</span>
@@ -142,7 +165,7 @@ function stepTitle(item: ActivityItem) {
               <span>{{ stepTitle(item) }}</span>
               <span v-if="item.status === 'running'" class="pulse">进行中</span>
             </div>
-            <div v-if="item.detail" class="activity-detail">{{ item.detail }}</div>
+            <div v-if="item.detail" class="activity-detail">{{ humanizeDetail(item.detail) }}</div>
           </template>
         </div>
       </div>
@@ -161,6 +184,34 @@ function stepTitle(item: ActivityItem) {
   background: rgba(15, 23, 42, 0.03);
   border: 1px solid var(--ink-100, #e8ecf2);
   overflow: hidden;
+}
+
+.agent-activity.quiet {
+  margin-bottom: 6px;
+  border: 0;
+  background: transparent;
+}
+
+.agent-activity.quiet .activity-summary {
+  padding: 0 0 2px;
+  gap: 6px;
+}
+
+.agent-activity.quiet .summary-dot {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  font-size: 9px;
+}
+
+.agent-activity.quiet .summary-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-400, #94a3b8);
+}
+
+.agent-activity.quiet .summary-hint {
+  display: none;
 }
 
 .agent-activity.streaming {

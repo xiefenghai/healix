@@ -10,7 +10,7 @@ import lombok.Setter;
 @Setter
 public class ChatExtractRow {
     private String id;
-    /** VITAL / ARCHIVE */
+    /** VITAL / ARCHIVE / INTAKE */
     private String target;
     private String code;
     private String label;
@@ -35,4 +35,9 @@ public class ChatExtractRow {
     private String status;
     private String statusText;
     private List<ChatExtractOption> options = new ArrayList<>();
+    /** 问卷题型：ENUM / MULTI / NUMBER / TEXT / DATE / TIME / YEAR */
+    private String intakeType;
+    private Double intakeMin;
+    private Double intakeMax;
+    private boolean multi;
 }

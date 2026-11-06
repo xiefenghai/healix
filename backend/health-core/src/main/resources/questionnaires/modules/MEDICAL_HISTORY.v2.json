@@ -74,6 +74,33 @@
       "sensitive": true
     },
     {
+      "field": "medication.mealRelation",
+      "label": "这些药一般和吃饭怎么配合？（可多选）",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "basic.medicationFlags",
+        "notIn": ["NONE"]
+      },
+      "highlights": [
+        {
+          "when": { "intersects": ["WITH_MEAL"] },
+          "severity": "CAUTION",
+          "planEffect": "有药物需与第一口饭同服，写进用餐提醒"
+        },
+        {
+          "when": { "intersects": ["BEFORE"] },
+          "severity": "CAUTION",
+          "planEffect": "有饭前服药，正餐时间不要随意推迟"
+        },
+        {
+          "when": { "intersects": ["IRREGULAR"] },
+          "severity": "CAUTION",
+          "planEffect": "服药时间不固定，方案写清饭前饭后并设提醒"
+        }
+      ],
+      "sensitive": true
+    },
+    {
       "field": "basic.supplements",
       "label": "有没有在用代餐、保健品或非处方调理产品？",
       "level": "LATER",

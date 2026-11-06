@@ -52,13 +52,13 @@
     },
     {
       "field": "basic.weightHistory.maxWeightKg",
-      "label": "成年后最重大概多少公斤？",
-      "level": "LATER"
+      "label": "成年后最重大概多少公斤？（想不起来可以不填）",
+      "level": "STAFF"
     },
     {
       "field": "basic.weightHistory.minAdultWeightKg",
-      "label": "成年后最轻大概多少公斤？",
-      "level": "LATER"
+      "label": "成年后最轻大概多少公斤？（想不起来可以不填）",
+      "level": "STAFF"
     },
     {
       "field": "basic.weightHistory.recentTrend",

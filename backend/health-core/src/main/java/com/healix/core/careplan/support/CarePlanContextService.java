@@ -373,7 +373,15 @@ public class CarePlanContextService {
                 }
             }
             if (StringUtils.hasText(goal.getPreferencesJson())) {
-                node.set("preferences", JsonUtils.readTree(goal.getPreferencesJson()));
+                JsonNode prefs = JsonUtils.readTree(goal.getPreferencesJson());
+                if (prefs instanceof ObjectNode obj) {
+                    String barriers = CarePlanPromptContextSupport.formatAnswerDisplay(
+                            "goal.constraints", obj.get("constraints"));
+                    if (StringUtils.hasText(barriers)) {
+                        obj.put("constraintsDisplay", barriers);
+                    }
+                }
+                node.set("preferences", prefs);
             }
             return node;
         } catch (RuntimeException e) {

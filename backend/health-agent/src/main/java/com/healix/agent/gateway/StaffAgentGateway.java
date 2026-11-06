@@ -132,7 +132,7 @@ public class StaffAgentGateway {
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("开始处理：单据识别"));
         } else {
             AgentStreamEvent.safeEmit(
-                    sink, AgentStreamEvent.skill(routed.label(), "已选择能力 · " + routed.name()));
+                    sink, AgentStreamEvent.skill(routed.label(), "已选择：" + routed.label()));
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("开始处理：" + routed.label()));
         }
 
@@ -265,7 +265,10 @@ public class StaffAgentGateway {
                 }
                 ChatExtractCard card = chatExtractService.extract(cmd.tenantId(), cmd.peopleId(), text);
                 card.setSourceText(text.trim());
-                String preview = "已整理一段记录，共 " + text.trim().length() + " 字";
+                int count = card.getItems() == null ? 0 : card.getItems().size();
+                String preview = count > 0
+                        ? "提取到 " + count + " 项，请在卡片里核对"
+                        : "这段话里没有对上可写入的内容";
                 return new AgentResponse(
                         ctx.sessionId(),
                         AgentCapability.CHAT_EXTRACT.name(),

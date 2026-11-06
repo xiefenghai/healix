@@ -7,6 +7,7 @@ import java.util.Set;
  *
  * <p>在 REQUIRED + FIRST_VISIT 基础上再收一刀，约 35–40 题量级（专线 showIf 命中时略增），
  * 把用药明细 / 家族史明细 / 大量 LATER 与次要 FIRST_VISIT 留给 B 端补录。
+ * 下班时间、晚餐时间、吃药和吃饭的配合、执行阻力、早上是否解乏保留在标准档，供方案落地。
  */
 public final class PatientCQuickFields {
 
@@ -41,6 +42,7 @@ public final class PatientCQuickFields {
             // 病史（不含用药明细 LIST）
             "basic.presentIllness",
             "basic.medicationFlags",
+            "medication.mealRelation",
             "basic.medical.mainDiscomfort",
             "basic.medical.exerciseRestriction",
             "basic.medical.jointIssues",
@@ -75,12 +77,16 @@ public final class PatientCQuickFields {
             "basic.diet.snackNight",
             "basic.diet.sugaryDrinks",
             "basic.diet.taste",
+            "basic.diet.dinnerTime",
             "basic.diet.cook",
             "basic.exercise.frequency",
             "basic.exercise.types",
+            "basic.schedule.offWork",
+            "basic.schedule.offWorkNote",
             "basic.exercise.availableSlots",
             "basic.lifestyle.activityLevel",
             "basic.sleep.hours",
+            "basic.sleep.refreshed",
             "basic.sleep.quality",
             "basic.psych.stressLevel",
             "basic.psych.stressEating",

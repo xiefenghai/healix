@@ -170,13 +170,13 @@ const capabilityChips = computed(() => {
               ? '生成方案'
               : c.code === 'REPORT_SUMMARY'
                 ? '报告点评'
-                : '健康咨询',
+                : '业务问答',
       }))
     : [
         { code: 'CREATE_ARCHIVE', label: '建档' },
         { code: 'CARE_PLAN', label: '生成方案' },
         { code: 'REPORT_SUMMARY', label: '报告点评' },
-        { code: 'GENERAL_CHAT', label: '健康咨询' },
+        { code: 'GENERAL_CHAT', label: '业务问答' },
       ]
   const reportIdx = chips.findIndex((c) => c.code === 'REPORT_SUMMARY')
   const ocrChip = { code: 'OCR_UPLOAD', label: '单据录入' }
@@ -193,7 +193,7 @@ async function loadCapabilities() {
     capabilities.value = [
       { code: 'CARE_PLAN', label: '制定管理方案' },
       { code: 'REPORT_SUMMARY', label: '管理报告点评' },
-      { code: 'GENERAL_CHAT', label: '健康咨询' },
+      { code: 'GENERAL_CHAT', label: '业务问答' },
       { code: 'OCR_LAB', label: '检验单识别' },
       { code: 'OCR_EXAM', label: '检查单识别' },
       { code: 'OCR_MED', label: '用药单识别' },

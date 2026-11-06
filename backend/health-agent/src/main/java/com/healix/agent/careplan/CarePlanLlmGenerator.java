@@ -341,6 +341,7 @@ public class CarePlanLlmGenerator {
                 无减重方向时不要写成减肥方案。
                 若有 patientContext.highlightGuidance，须把每条 mustApply 落实到运动/饮食/执行（clinicianNote 只吸收约束，勿照抄进患者正文）。
                 有食物过敏时 sampleDay 早午晚每餐须给安全 swapHint（过敏平替）；有 lifestyleProfile/cook/availableSlots/constraints/用药 timingNote 时须落实到 notes、timeSlot 与家属一句提示。
+                若有下班时间、倒班或夜班的上班时段、晚餐时间、吃药和吃饭的配合、执行阻力（应酬/外卖/易饿/家人不支持/没时间）、早上是否解乏：按这些安排餐次和运动时段。下班晚、晚餐晚，或写了倒班/夜班时段时，不要把运动写死在傍晚；药需跟第一口饭同服时写进用餐提醒；早上极度疲劳时在执行里提示睡眠呼吸监测。
                 仅输出 JSON，不要 markdown。
 
                 %s

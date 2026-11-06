@@ -15,6 +15,8 @@ import com.healix.core.govern.enums.FeatureFlagKeyEnum;
 import com.healix.core.govern.enums.QuotaKeyEnum;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
+import com.healix.core.questionnaire.QuestionnaireCatalog;
+import com.healix.core.questionnaire.QuestionnaireDef;
 import com.healix.core.questionnaire.dto.QuestionnaireResponseView;
 import com.healix.core.questionnaire.service.QuestionnaireResponseService;
 import java.util.Iterator;
@@ -31,6 +33,7 @@ public class IntakeAiSummaryService {
     public static final String FIELD_AI_SUMMARY = "staff.aiSummary";
 
     private final QuestionnaireResponseService responseService;
+    private final QuestionnaireCatalog questionnaireCatalog;
     private final FieldCatalog fieldCatalog;
     private final PeopleProfileMapper peopleProfileMapper;
     private final FollowupSummaryGenerator followupSummaryGenerator;
@@ -45,8 +48,29 @@ public class IntakeAiSummaryService {
         }
         JsonNode answers =
                 answersOverride != null && answersOverride.isObject() ? answersOverride : view.getAnswers();
-        ObjectNode facts = buildFacts(view.getPeopleId(), answers, view.getHighlights());
+        QuestionnaireDef q =
+                questionnaireCatalog.requireQuestionnaire(view.getQuestionnaireCode(), view.getQuestionnaireVersion());
+        ObjectNode visible = answers != null && answers.isObject()
+                ? (ObjectNode) answers.deepCopy()
+                : JsonUtils.emptyObject();
+        questionnaireCatalog.dropHiddenAnswers(q, visible);
+        ObjectNode facts = buildFacts(view.getPeopleId(), visible, visibleHighlights(q, view.getHighlights(), visible));
         return followupSummaryGenerator.generate("INTAKE", facts);
+    }
+
+    /** 高亮也按当前管理方向裁掉，避免总结仍引用已取消模块的阳性指标。 */
+    private JsonNode visibleHighlights(QuestionnaireDef q, JsonNode highlights, ObjectNode answers) {
+        if (highlights == null || !highlights.isArray()) {
+            return highlights;
+        }
+        ArrayNode out = JsonUtils.mapper().createArrayNode();
+        for (JsonNode hit : highlights) {
+            String field = hit.path("field").asText("");
+            if (!StringUtils.hasText(field) || questionnaireCatalog.fieldVisible(q, field, answers::get)) {
+                out.add(hit);
+            }
+        }
+        return out;
     }
 
     private ObjectNode buildFacts(String peopleId, JsonNode answers, JsonNode highlights) {
@@ -67,6 +91,13 @@ public class IntakeAiSummaryService {
         }
         if (!patient.isEmpty()) {
             facts.set("patient", patient);
+        }
+        boolean appealCollected = answers != null
+                && answers.has("goal.primaryAppeal")
+                && !ArchiveFields.isEmpty(answers.get("goal.primaryAppeal"));
+        facts.put("appealCollected", appealCollected);
+        if (!appealCollected) {
+            facts.put("appealNote", "患者主观诉求未采集全。管理方向若来自疾病或健管师勾选，不得写成核心诉求。");
         }
         ArrayNode answersArr = facts.putArray("answers");
         if (answers != null && answers.isObject()) {

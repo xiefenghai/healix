@@ -190,7 +190,32 @@ public class BAgentController {
                 request.message(),
                 request.capabilityHint(),
                 request.imageBase64(),
-                request.imageMimeType());
+                request.imageMimeType(),
+                toIntakeFields(request.intakeFields()));
+    }
+
+    private static List<com.healix.agent.extract.IntakeExtractField> toIntakeFields(List<IntakeFieldBody> fields) {
+        if (fields == null || fields.isEmpty()) {
+            return List.of();
+        }
+        List<com.healix.agent.extract.IntakeExtractField> out = new ArrayList<>();
+        for (IntakeFieldBody field : fields) {
+            if (field == null) {
+                continue;
+            }
+            List<com.healix.agent.extract.ChatExtractOption> options = new ArrayList<>();
+            if (field.options() != null) {
+                for (OptionBody option : field.options()) {
+                    if (option == null) {
+                        continue;
+                    }
+                    options.add(new com.healix.agent.extract.ChatExtractOption(option.code(), option.label()));
+                }
+            }
+            out.add(new com.healix.agent.extract.IntakeExtractField(
+                    field.code(), field.label(), field.type(), field.unit(), field.min(), field.max(), options));
+        }
+        return out;
     }
 
     private static SessionView toView(SessionBundle bundle) {
@@ -226,7 +251,19 @@ public class BAgentController {
             @NotBlank String message,
             String capabilityHint,
             String imageBase64,
-            String imageMimeType) {}
+            String imageMimeType,
+            List<IntakeFieldBody> intakeFields) {}
+
+    public record IntakeFieldBody(
+            String code,
+            String label,
+            String type,
+            String unit,
+            Double min,
+            Double max,
+            List<OptionBody> options) {}
+
+    public record OptionBody(String code, String label) {}
 
     public record AppendMessageRequest(
             String peopleId,

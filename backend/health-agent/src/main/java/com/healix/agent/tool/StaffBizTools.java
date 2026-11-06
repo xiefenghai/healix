@@ -46,8 +46,25 @@ public class StaffBizTools {
             CockpitSummaryDto summary, List<CockpitPriorityCardDto> top, String text, List<AgentAction> actions) {}
 
     /** 机构会话轻量感知：待办数 +「我的患者」首位（不跑完整优先名单格式化）。 */
-    public record MinePeek(
-            int openTaskCount, int overdueCount, int mineCount, CockpitPriorityCardDto firstMine) {}
+    /** 批量分组短路：主责组数 + 未分组人数。 */
+    public record UnassignedPeek(int primaryTeamCount, int unassignedCount) {}
+
+    public UnassignedPeek peekUnassigned(String tenantId, String orgId) {
+        try {
+            CockpitSummaryDto summary = cockpitService.summary(tenantId, orgId);
+            if (summary == null) {
+                return new UnassignedPeek(0, 0);
+            }
+            return new UnassignedPeek(
+                    Math.max(0, summary.getPrimaryCareTeamCount()),
+                    Math.max(0, summary.getUnassignedPatientCount()));
+        } catch (Exception e) {
+            log.debug("peekUnassigned failed org={}", orgId, e);
+            return new UnassignedPeek(0, 0);
+        }
+    }
+
+    public record MinePeek(            int openTaskCount, int overdueCount, int mineCount, CockpitPriorityCardDto firstMine) {}
 
     public MinePeek peekMineContext(String tenantId, String orgId) {
         try {

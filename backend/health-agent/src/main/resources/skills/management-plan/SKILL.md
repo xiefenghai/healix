@@ -201,9 +201,11 @@ display_name: 管理方案生成
 
 1. **运动任务**：从 `weeklyPlan` 提炼 1–2 条高频任务，`category=EXERCISE`。标题要点名动作（如「餐后步行 30 分钟」「靠墙静蹲与坐姿抬腿 20 分钟」），不要只写「抗阻训练」「有氧运动」「拉伸训练」这类患者不知道做什么的大类
     - 有 `basicArchive.exercise.availableSlots` / `availableSlotsLabels` 时：`timeSlot` **必须**对齐可运动时段（`MORNING`→`MORNING`，`EVENING`/`NIGHT`→`EVENING` 或 `AFTER_DINNER`，`WEEKEND`→标题写「周末」且 frequency 用 `QW`/`TIW` 而非默认每日）
-    - 有 `lifestyleProfile.workSchedule=SHIFT|NIGHT` 时，运动任务避开「刚下夜班」表述，优先白班清醒时段或周末
+    - 有 `basicArchive.schedule.offWork` / `offWorkLabel` 时：晚上 8 点及以后下班，不要把运动写在晚饭前
+    - 有 `basicArchive.schedule.offWorkNote`（倒班或夜班的上班时段，自由文本）或 `lifestyleProfile.workSchedule=SHIFT|NIGHT` 时：按客户写的班次排运动，不要写死傍晚，也避开「刚下夜班」
+    - 有 `basicArchive.diet.dinnerTime` / `dinnerTimeLabel` 为晚上 9 点以后时：不安排刚吃完晚饭就运动
 2. **饮食任务**：至少 1 条「记录三餐与加餐」等，`category=DIET`（**不要**再把饮水写进 DIET）
-    - 有 `goals.constraints` 或 `basicArchive.weightHistory.failReasons` 时：执行标题/总结点出对应阻力破解（如太饿→加优质蛋白加餐；没时间→外卖少油少糖话术；应酬多→点菜策略）
+    - 有 `goals.preferences.constraints` / `constraintsDisplay` 或 `basicArchive.weightHistory.failReasons` 时：执行标题/总结点出对应阻力破解（应酬多→少饮酒、低盐点餐；经常外卖→给能点到的替换；总是觉得饿→正餐留足蛋白质和蔬菜，不把热量压太低；家人不太支持→给家属一句可执行的话；没时间运动→把活动嵌进已有空档）
 3. **饮水任务**：无限水禁忌时编入 1 条 `code=WATER_LOG`，`category=WATER`，`frequency=QD`，`timeSlot=ALL`（全天少量多次），填写 `targetMl`（有体重用约 `kg×30` 并落在 1200–2000，否则 1600；标题可写「足量饮水，每日约 {targetMl} ml」）
 4. **限水**：上下文出现心衰、慢性肾病、医嘱限水等 → **不要生成** `WATER` 任务（由健管师决定是否手加）
 5. **糖尿病标签**：增加「按时监测血糖」`relatedRef=BLOOD_GLUCOSE`
@@ -270,10 +272,16 @@ display_name: 管理方案生成
   - 有 `HBA1C`/`FPG`/`BP_SYS`/`BP_DIA` 目标时，在 `goalSummary` 与监测任务中体现
   - 无减重方向时不要默认「每日称重 / 快速减脂」话术
 - `patientContext.diabetesClinical` / `hypertensionClinical`（首诊慢病专属要点：分型、低血糖、监测频率、用药规律、家庭自测、晨峰等）→ 运动强度、监测任务与饮食限盐/控糖
-- `patientContext.basicArchive` 生活方式摘要（饮食含口味/含糖饮料/`cook`、运动习惯与 `availableSlots`、睡眠烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史 `failReasons` 等，含 `*Label`）→ 个体化强度、示例餐与执行时段
-- `patientContext.lifestyleProfile`（`workSchedule` / `workScheduleLabel` / `scheduleHint`）→ 餐次、用药提醒与运动时段对齐班次
-- `patientContext.goals.preferences.constraints`（或同级 `constraints`）→ 经济/时间/家庭阻力，写入执行与总结的可执行破解，勿空喊「要坚持」
-- `patientContext.activeMedicationDetails`（药名 + `timingNote`）→ 药-餐配合进 `diet.notes`；兼容旧字段 `activeMedications` 字符串列表
+- `patientContext.basicArchive` 生活方式摘要（饮食含 `taste`/`dinnerTime`/`sugaryDrinks`/`cook`、`schedule.offWork`/`offWorkNote`、运动习惯与 `availableSlots`、睡眠含 `hours`/`refreshed`、烟酒、心理与改变意愿、孕哺、运动禁忌/关节问题、减重史 `failReasons` 等，含 `*Label`）→ 个体化强度、示例餐与执行时段
+  - `schedule.offWork` / `offWorkLabel`：规律白班或不固定时的下班时间。晚上 8 点及以后下班，运动改到睡前轻度活动，不要排晚饭前
+  - `schedule.offWorkNote`：倒班或夜班时客户自己写的上班时段（可多个）。运动和餐次按这段文字排，不要套用固定傍晚
+  - `diet.dinnerTime` / `dinnerTimeLabel`：晚餐时间。晚上 9 点以后吃晚饭时，不安排刚吃完就运动
+  - `diet.taste` / `tasteLabels`：日常饮食更接近哪种（偏咸、偏油或油炸、精米白面、甜食）。按命中项给替换，主食和烹饪细问只在健管师补了 `staple`/`cooking` 时才用
+  - `sleep.refreshed` / `refreshedLabel`：早上是否解乏。值为极度疲劳（`NO`）且同时有肥胖或高血压时，在执行里提示睡眠呼吸监测，不要写成已确诊
+- `patientContext.lifestyleProfile`（`workSchedule` / `workScheduleLabel` / `scheduleHint`）→ 餐次、用药提醒与运动时段对齐班次；与上面的下班时间、倒班时段一起看
+- `patientContext.goals.preferences.constraints` 与 `constraintsDisplay` → 执行阻力多选（应酬多、经常外卖、总是觉得饿、家人不太支持、没时间运动）。写入执行与总结的可执行破解，勿空喊「要坚持」
+- `patientContext.intakeBrief.keyAnswers` 里的 `medication.mealRelation`（`display` 为中文）→ 吃药和吃饭怎么配合。含「跟第一口饭一起吃」时写进用餐提醒。与 `activeMedicationDetails.timingNote` 一并使用
+- `patientContext.activeMedicationDetails`（药名 + `timingNote`）→ 单药备注进 `diet.notes`；兼容旧字段 `activeMedications` 字符串列表
 - `patientContext.intakeBrief`（最近首诊/待补）与高亮：
   - `keyAnswers`：核心诉求、管理方向、糖/压/体重目标与临床关键答（带 `label`/`display`），优先落实，**勿整段照抄**到患者正文
   - 有 `aiSummary` 时吸收要点、风险与下一步

@@ -182,6 +182,14 @@ public class AgentConversationService {
     }
 
     public ChatExtractCard requireOpenExtract(String messageId, String staffId) {
+        ChatExtractCard card = loadExtract(messageId, staffId);
+        if (!"OPEN".equals(card.getStatus())) {
+            throw new BusinessException(closedExtractMessage(card.getStatus()));
+        }
+        return card;
+    }
+
+    public ChatExtractCard loadExtract(String messageId, String staffId) {
         AgentMessageEntity row = messageMapper.findById(messageId);
         if (row == null) {
             throw new BusinessException("核对卡不存在");
@@ -193,9 +201,6 @@ public class AgentConversationService {
         ChatExtractCard card = extractCard(unpack(row.getContent()).actions());
         if (card == null) {
             throw new BusinessException("核对卡不存在");
-        }
-        if (!"OPEN".equals(card.getStatus())) {
-            throw new BusinessException(closedExtractMessage(card.getStatus()));
         }
         if (!StringUtils.hasText(card.getPeopleId())) {
             card.setPeopleId(session.getPeopleId());

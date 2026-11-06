@@ -9,8 +9,10 @@
       "label": "目前有没有在备孕、怀孕或者哺乳？",
       "level": "FIRST_VISIT",
       "showIf": {
-        "field": "profile.gender",
-        "eq": "FEMALE"
+        "all": [
+          { "field": "profile.gender", "eq": "FEMALE" },
+          { "ageGte": 18 }
+        ]
       },
       "highlights": [
         {
@@ -36,8 +38,10 @@
       "label": "月经情况",
       "level": "LATER",
       "showIf": {
-        "field": "profile.gender",
-        "eq": "FEMALE"
+        "all": [
+          { "field": "profile.gender", "eq": "FEMALE" },
+          { "ageGte": 18 }
+        ]
       },
       "highlights": [
         {
@@ -53,18 +57,22 @@
       "label": "是否在 50 岁之前绝经？",
       "level": "LATER",
       "showIf": {
-        "field": "basic.women.menstrualStatus",
-        "in": ["POSTMENOPAUSE", "MENOPAUSE"]
+        "all": [
+          { "field": "basic.women.menstrualStatus", "in": ["POSTMENOPAUSE", "MENOPAUSE"] },
+          { "ageGte": 18 }
+        ]
       },
       "sensitive": true
     },
     {
       "field": "basic.women.gdmHistory",
-      "label": "怀孕期间是否得过妊娠期糖尿病？",
+      "label": "怀孕的时候，医生有没有说过血糖偏高？",
       "level": "FIRST_VISIT",
       "showIf": {
-        "field": "profile.gender",
-        "eq": "FEMALE"
+        "all": [
+          { "field": "profile.gender", "eq": "FEMALE" },
+          { "ageGte": 18 }
+        ]
       },
       "sensitive": true,
       "highlights": [

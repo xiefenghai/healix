@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from './http'
 import {
   applyWeightUnit,
   canConfirm,
+  intakeExtractNotices,
   joinWhen,
   refreshAll,
   splitWhen,
@@ -25,10 +26,21 @@ const props = defineProps<{
   review: ChatExtractReview
   peopleId: string
   gender?: string
+  /** 问卷仍打开时，INTAKE 行才能确认写入 */
+  intakeOpen?: boolean
+  /** 这批题分布在哪些模块，例如「涉及体测 3、睡眠与烟酒 6」 */
+  spreadLine?: string
+}>()
+
+const emit = defineEmits<{
+  written: [rows: ChatExtractRow[]]
+  openReview: []
+  discarded: []
 }>()
 
 const busy = ref(false)
 const expanded = ref(false)
+const sourcesOpen = ref(false)
 const closed = computed(() =>
   ['CONFIRMED', 'SUPERSEDED', 'DISCARDED'].includes(props.review.status || ''),
 )
@@ -36,6 +48,10 @@ const ready = computed(() => canConfirm(props.review))
 const alive = computed(() => props.review.items.filter((row) => !row.removed && !row.outcome))
 const settled = computed(() => props.review.items.filter((row) => row.outcome))
 const hasVitals = computed(() => alive.value.some((row) => row.target === 'VITAL'))
+const compactIntake = computed(
+  () => alive.value.length > 3 && alive.value.every((row) => row.target === 'INTAKE'),
+)
+const extractNotices = computed(() => intakeExtractNotices(alive.value))
 
 const sceneOptions = [
   { value: 'FASTING', label: '空腹' },
@@ -115,7 +131,13 @@ async function submit(rows: ChatExtractRow[], discardIds: string[]) {
     const pending = props.review.items.some((row) => !row.removed && !row.outcome)
     props.review.status = res.data?.status || (pending ? 'OPEN' : rows.length ? 'CONFIRMED' : 'DISCARDED')
     expanded.value = false
-    ElMessage.success(rows.length ? '已写入' : '已丢弃')
+    const intake = rows.some((row) => row.target === 'INTAKE')
+    if (intake) emit('written', rows.filter((row) => row.target === 'INTAKE'))
+    const droppedIntake = discardIds.some((id) =>
+      props.review.items.some((item) => item.id === id && item.target === 'INTAKE'),
+    )
+    if (!rows.length && droppedIntake) emit('discarded')
+    ElMessage.success(rows.length ? (intake ? '已写入问卷' : '已写入') : '已丢弃')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '没有写入')
   } finally {
@@ -124,11 +146,71 @@ async function submit(rows: ChatExtractRow[], discardIds: string[]) {
 }
 
 function confirmRows(rows: ChatExtractRow[]) {
+  if (rows.some((row) => row.target === 'INTAKE') && !props.intakeOpen) {
+    ElMessage.info('问卷已关闭，请重新打开后再写入')
+    return
+  }
   submit(rows, [])
+}
+
+function multiCodes(row: ChatExtractRow) {
+  try {
+    const parsed = JSON.parse(row.archiveValue || '[]')
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+function toggleMulti(row: ChatExtractRow, code: string) {
+  const next = multiCodes(row)
+  const idx = next.indexOf(code)
+  if (idx >= 0) next.splice(idx, 1)
+  else next.push(code)
+  row.archiveValue = JSON.stringify(next)
+  touch()
 }
 
 function discardRows(rows: ChatExtractRow[]) {
   submit([], rows.map((row) => row.id))
+}
+
+async function undoDiscard() {
+  if (!props.review.messageId || busy.value || props.review.status !== 'DISCARDED') return
+  busy.value = true
+  try {
+    await api<{ data?: { status?: string } }>(
+      `/api/b/v1/cockpit/patients/${props.peopleId}/chat-extract/reopen`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ messageId: props.review.messageId }),
+      },
+    )
+    for (const row of props.review.items) {
+      if (row.outcome === 'DISCARDED') row.outcome = null
+    }
+    props.review.status = 'OPEN'
+    expanded.value = false
+    ElMessage.success('已恢复，可以重新核对')
+    emit('openReview')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '没有恢复')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function discardExtract() {
+  try {
+    await ElMessageBox.confirm(
+      `确认要放弃这 ${alive.value.length} 项提取的数据吗？右侧核对会收起，问卷里原有的答案不会改。`,
+      '放弃这次整理',
+      { confirmButtonText: '放弃', cancelButtonText: '继续核对', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  discardRows(alive.value)
 }
 
 function asNumber(value: unknown): number | null {
@@ -219,7 +301,11 @@ function rowSummary(row: ChatExtractRow) {
     const scene = optionLabel(bpOptions, row.bpContext)
     return `${row.systolic ?? '—'}/${row.diastolic ?? '—'} mmHg${scene ? ' · ' + scene : ''} · ${whenText(row.measuredAt)}`
   }
-  if (row.target === 'ARCHIVE') {
+  if (row.multi) {
+    const labels = multiCodes(row).map((code) => optionLabel(row.options || [], code) || code)
+    return labels.join('、') || '未填写'
+  }
+  if (row.target === 'ARCHIVE' || row.target === 'INTAKE') {
     const picked = row.options?.length ? optionLabel(row.options, row.archiveValue) : row.archiveValue
     return picked || '未填写'
   }
@@ -228,19 +314,29 @@ function rowSummary(row: ChatExtractRow) {
   return `${row.value ?? '—'}${unit}${scene ? ' · ' + scene : ''} · ${whenText(row.measuredAt)}`
 }
 
+function recallValue(row: ChatExtractRow) {
+  const summary = rowSummary(row)
+  if ((row.target === 'INTAKE' || row.target === 'ARCHIVE') && row.unit && summary && !summary.includes(row.unit)) {
+    return `${summary} ${row.unit}`
+  }
+  return summary
+}
+
 function lineText(row: ChatExtractRow) {
   const summary = rowSummary(row)
   if (row.sourceUnit === '斤' && row.sourceValue != null) return `${summary}（${row.sourceValue}斤）`
+  if (row.target === 'INTAKE') return summary
   if (row.target === 'ARCHIVE') return `${summary} · 现在${row.currentDisplay || '空'}`
   return summary
 }
 
-const ignoredText = computed(() =>
+const ignoredNotes = computed(() =>
   (props.review.ignored || [])
-    .map((item) => item.quote)
-    .filter(Boolean)
-    .join('；'),
+    .map((item) => [item.reason, item.quote].filter(Boolean).join('：'))
+    .filter(Boolean),
 )
+
+const ignoredText = computed(() => ignoredNotes.value.join('；'))
 
 function openFix(row: ChatExtractRow) {
   return row.status !== 'READY' || !!row.editing
@@ -254,34 +350,75 @@ const closedLabel = computed(() => {
 </script>
 
 <template>
-  <section class="extract-card" :class="{ done: closed }">
+  <section
+    class="extract-card"
+    :class="{ done: closed, discarded: review.status === 'DISCARDED', compact: compactIntake && !closed }"
+  >
     <header v-if="closed" class="head fold" @click="expanded = !expanded">
       <strong>从对话整理的记录</strong>
       <span class="pill" :class="{ ok: review.status === 'CONFIRMED' }">{{ closedLabel }}</span>
-      <span class="fold-entry">{{ expanded ? '收起' : '查看当时识别' }}</span>
+      <button
+        v-if="review.status === 'DISCARDED'"
+        type="button"
+        class="ghost undo"
+        :disabled="busy"
+        @click.stop="undoDiscard"
+      >
+        恢复并重新核对
+      </button>
+      <span class="fold-entry">{{ expanded ? '收起' : `展开 ${review.items.length} 项` }}</span>
     </header>
     <header v-else class="head">
       <strong>从对话整理的记录</strong>
       <span v-if="alive.length" class="pill">{{ alive.length }} 条</span>
     </header>
 
-    <div v-if="closed && expanded" class="snapshot">
+    <div v-if="closed && expanded" class="snapshot recall">
       <p v-if="!review.items.length" class="muted">当时的识别明细没有留下</p>
-      <article v-for="row in review.items" :key="row.id" class="snap">
-        <div class="snap-line">
-          <strong>{{ row.label }}</strong>
-          <span>{{ rowSummary(row) }}</span>
-          <em v-if="row.outcome === 'DISCARDED'" class="pill">已丢弃</em>
-        </div>
-        <p v-if="row.quote" class="quote">
-          <em class="quote-label">识别来源：</em>
-          <span :title="row.quote">{{ row.quote }}</span>
-        </p>
+      <article
+        v-for="row in review.items"
+        :key="row.id"
+        class="recall-row"
+        :title="row.quote || undefined"
+      >
+        <strong>{{ recallValue(row) }}</strong>
+        <span>{{ row.label }}</span>
       </article>
       <p v-if="ignoredText" class="muted ellipsis" :title="ignoredText">未写入：{{ ignoredText }}</p>
     </div>
 
-    <template v-if="!closed">
+    <template v-if="!closed && compactIntake">
+      <p class="summary">从这段话整理出 {{ alive.length }} 项，还没写入问卷。</p>
+      <p v-if="spreadLine" class="summary spread">{{ spreadLine }}</p>
+      <p v-if="extractNotices.length" class="warn">请留意：{{ extractNotices.join('；') }}。</p>
+      <p v-if="review.overflow" class="warn">这次最多核对 12 项，其余没有列入。</p>
+      <p v-if="!ready" class="warn">有几项还对不上，请在右侧改过再写入。</p>
+      <p v-if="ignoredNotes.length" class="warn">同一题有另一种说法：{{ ignoredNotes.join('；') }}</p>
+      <footer class="compact-actions">
+        <button type="button" class="yes open-review" :disabled="busy" @click="emit('openReview')">
+          打开右侧核对 {{ alive.length }} 项
+        </button>
+        <button type="button" class="ghost" :disabled="busy" @click="discardExtract">全部丢弃</button>
+      </footer>
+      <button type="button" class="text source-toggle" @click="sourcesOpen = !sourcesOpen">
+        {{ sourcesOpen ? '收起识别来源' : '查看识别来源' }}
+      </button>
+      <div v-if="sourcesOpen" class="snapshot">
+        <article v-for="row in alive" :key="row.id" class="snap">
+          <div class="snap-line">
+            <strong>{{ row.label }}</strong>
+            <span>{{ rowSummary(row) }}</span>
+          </div>
+          <p v-if="row.quote" class="quote">
+            <em class="quote-label">识别来源：</em>
+            <span :title="row.quote">{{ row.quote }}</span>
+          </p>
+        </article>
+      </div>
+    </template>
+
+    <template v-else-if="!closed">
+      <p v-if="review.intake" class="muted">将写入正在填写的问卷</p>
       <p v-if="review.labHint" class="warn">化验项目请改用拍照识别</p>
       <p v-if="review.overflow" class="warn">有几行超出当次整理范围，已忽略</p>
       <p v-if="!alive.length" class="muted">没有可写入的内容</p>
@@ -396,7 +533,18 @@ const closedLabel = computed(() => {
           <em v-if="row.target === 'VITAL' && row.status !== 'READY'" class="pill bad">{{ row.statusText || '待核对' }}</em>
         </p>
         <div v-if="row.target !== 'VITAL' && openFix(row)" class="grid">
-          <label v-if="row.options?.length" class="field">
+          <div v-if="row.multi" class="field">
+            <span>改为</span>
+            <label v-for="opt in row.options" :key="opt.value" class="multi-opt">
+              <input
+                type="checkbox"
+                :checked="multiCodes(row).includes(opt.value)"
+                @change="toggleMulti(row, opt.value)"
+              />
+              {{ opt.label }}
+            </label>
+          </div>
+          <label v-else-if="row.options?.length" class="field">
             <span>改为</span>
             <select v-model="row.archiveValue" @change="touch">
               <option value="">请选择</option>
@@ -405,7 +553,7 @@ const closedLabel = computed(() => {
           </label>
           <label v-else class="field">
             <span>改为</span>
-            <input v-model="row.archiveValue" type="text" maxlength="40" @change="touch" />
+            <input v-model="row.archiveValue" type="text" :maxlength="row.target === 'INTAKE' ? 200 : 40" @change="touch" />
           </label>
           <p v-if="row.derived" class="warn span-2">戒烟年份按这句话推算，可以改</p>
         </div>
@@ -436,6 +584,46 @@ const closedLabel = computed(() => {
 </template>
 
 <style scoped>
+.extract-card.compact {
+  width: min(420px, 100%);
+}
+.summary {
+  margin: 0 0 8px;
+  color: var(--ink-800, #1d2939);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.summary.spread {
+  margin-top: -4px;
+  color: var(--ink-500, #667085);
+  font-size: 13px;
+}
+.open-review {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  margin-top: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.compact-actions {
+  justify-content: flex-start;
+  border-top: 0;
+  padding-top: 0;
+}
+.source-toggle {
+  display: block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-500, #667085);
+  font-size: 12px;
+  cursor: pointer;
+}
 .extract-card {
   width: min(980px, 100%);
   margin-top: 8px;
@@ -443,6 +631,25 @@ const closedLabel = computed(() => {
   border: 1px solid var(--ink-200, #e4e7ec);
   border-radius: 10px;
   background: #fff;
+}
+.extract-card.discarded {
+  background: #f8fafc;
+  border-color: #d0d5dd;
+}
+.undo {
+  height: 26px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 1px solid var(--ink-200, #e4e7ec);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink-700, #344054);
+  font-size: 12px;
+  cursor: pointer;
+}
+.undo:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .head {
   display: flex;
@@ -482,6 +689,35 @@ const closedLabel = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.recall-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 0;
+  border-top: 1px solid var(--ink-100, #f2f4f7);
+}
+.recall-row strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ink-900, #101828);
+}
+.recall-row span {
+  flex: 0 1 46%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 12px;
+  color: var(--ink-400, #98a2b3);
 }
 .head strong {
   font-size: 13px;
@@ -653,6 +889,7 @@ footer button {
   cursor: pointer;
 }
 .ops .yes,
+.open-review,
 footer button:not(.ghost) {
   color: #fff;
   background: var(--brand-500, #2c7ef8);
@@ -719,6 +956,17 @@ footer button:disabled {
   min-width: 0;
   font-size: 12px;
   color: var(--ink-500, #667085);
+}
+.multi-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-800, #1d2939);
+}
+.field .multi-opt input {
+  width: auto;
+  height: auto;
+  padding: 0;
 }
 .field input,
 .field select {

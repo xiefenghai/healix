@@ -54,8 +54,10 @@ public class GeneralChatSkill implements AgentSkill {
         AgentChatCommand cmd = ctx.command();
         boolean orgSession = !StringUtils.hasText(cmd.peopleId());
         OrgGuideIntent guide = classifyOrgGuideIntent(cmd.message());
-        // 创建健管组：机构/患者会话均可短路（打开现有抽屉，不走 LLM）
-        if (guide == OrgGuideIntent.CREATE_CARE_TEAM) {
+        // 创建/解释健管组、批量分组：短路（打开现有抽屉 / 价值短答，不走 LLM 以免幻觉「没有批量功能」）
+        if (guide == OrgGuideIntent.CREATE_CARE_TEAM
+                || guide == OrgGuideIntent.CARE_TEAM_EXPLAIN
+                || guide == OrgGuideIntent.BATCH_ASSIGN) {
             return shortOrgGuideReply(ctx, guide, sink);
         }
         // 机构会话：轻量意图不跑「产品说明书」长链路
@@ -89,30 +91,9 @@ public class GeneralChatSkill implements AgentSkill {
                     sink, AgentStreamEvent.thinkingDelta("依据今日优先名单回答，禁止编造名单外患者。\n"));
             // 非「选人/办待办」类问题不挂优先名单人名芯片（如创建健管组、婉拒安排）
             actions.addAll(filterOrgBriefActions(orgBrief.actions(), cmd.message()));
-            String msgNorm = cmd.message() == null ? "" : cmd.message().trim().replaceAll("\\s+", "");
-            if (isCareTeamExplainQuestion(msgNorm)) {
-                boolean hasCreate =
-                        actions.stream()
-                                .anyMatch(
-                                        a -> a != null
-                                                && "NAVIGATE".equals(a.type())
-                                                && "create-care-team".equals(a.path()));
-                if (!hasCreate) {
-                    actions.add(0, AgentAction.createCareTeam("去创建健管组", null));
-                }
-            }
             boolean hasPatientButtons = actions.stream()
                     .anyMatch(a -> a != null && "FOCUS_PATIENT".equals(a.type()));
             systemPrompt = buildOrgSystemPrompt(orgBrief.text(), hasPatientButtons);
-            if (isCareTeamExplainQuestion(msgNorm)) {
-                systemPrompt +=
-                        """
-
-                        用户在问「为什么要创建健管组」这类价值/原因问题（不是立刻下指令创建）。
-                        请用两三句说明：健管组是「分组」前置，名下患者与待办按主责组归属；先有以自己为主责的组，才能把患者分进去并继续首诊。
-                        可提示点下方「去创建健管组」；严禁说「去系统管理」「没有权限」。
-                        """;
-            }
             if (StaffBizTools.wantsCompleteTask(cmd.message())) {
                 systemPrompt += hasPatientButtons
                         ? """
@@ -480,6 +461,10 @@ public class GeneralChatSkill implements AgentSkill {
         NEXT_STEP,
         TASK_TYPES,
         CREATE_CARE_TEAM,
+        /** 「为什么要创建健管组 / 有什么用」——业务价值短答，不走系统规则长文 */
+        CARE_TEAM_EXPLAIN,
+        /** 「怎么批量分配 / 未分组怎么处理」——打开批量分组面板，严禁走 LLM 胡说没功能 */
+        BATCH_ASSIGN,
         /** 体检/检验/单据/健康指标怎么录入——产品入口 FAQ，不依赖机构摘要 */
         DATA_ENTRY
     }
@@ -525,7 +510,15 @@ public class GeneralChatSkill implements AgentSkill {
         }
         // 去掉空白，兼容「你能做点啥」「你 能 干 什么」
         String n = message.trim().replaceAll("\\s+", "");
-        // 创建健管组：动作/入口类短路；「为什么要创建」等解释问交给 LLM，勿复读开抽屉话术
+        // 「为什么 / 有什么用」优先于创建动作（避免「为什么要创建」被当成开抽屉）
+        if (isCareTeamExplainQuestion(n)) {
+            return OrgGuideIntent.CARE_TEAM_EXPLAIN;
+        }
+        // 批量分组 / 未分组怎么分配：必须短路到面板，禁止 LLM 否认功能
+        if (isBatchAssignQuestion(n)) {
+            return OrgGuideIntent.BATCH_ASSIGN;
+        }
+        // 创建健管组：动作/入口类短路
         if (isCreateCareTeamAction(n)) {
             return OrgGuideIntent.CREATE_CARE_TEAM;
         }
@@ -630,7 +623,7 @@ public class GeneralChatSkill implements AgentSkill {
                 && !n.contains("建档");
     }
 
-    /** 「为什么 / 有什么用」类：解释健管组价值，不是立刻打开创建抽屉。 */
+    /** 「为什么 / 有什么用」类：解释健管组价值（「怎么分组」操作路径改走 BATCH_ASSIGN）。 */
     static boolean isCareTeamExplainQuestion(String normalizedNoSpace) {
         if (!StringUtils.hasText(normalizedNoSpace)) {
             return false;
@@ -643,13 +636,49 @@ public class GeneralChatSkill implements AgentSkill {
                 || n.contains("为啥")
                 || n.contains("干嘛")
                 || n.contains("干什么用")
+                || n.contains("干什么的")
                 || n.contains("有什么用")
                 || n.contains("有必要")
                 || n.contains("是什么")
                 || n.contains("啥意思")
                 || n.contains("作用")
                 || n.contains("意义")
-                || n.contains("目的");
+                || n.contains("目的")
+                || n.contains("了解");
+    }
+
+    /** 「怎么批量分配 / 未分组怎么处理 / 怎么给患者分组」——操作路径，打开批量面板。 */
+    static boolean isBatchAssignQuestion(String normalizedNoSpace) {
+        if (!StringUtils.hasText(normalizedNoSpace)) {
+            return false;
+        }
+        String n = normalizedNoSpace;
+        if (n.contains("批量分配")
+                || n.contains("批量分组")
+                || n.contains("一键分配")
+                || n.contains("一键分组")
+                || n.contains("批量拉进")
+                || n.contains("批量处理")) {
+            return true;
+        }
+        if (n.contains("未分组")
+                && (n.contains("怎么")
+                        || n.contains("如何")
+                        || n.contains("分配")
+                        || n.contains("分组")
+                        || n.contains("处理"))) {
+            return true;
+        }
+        return n.contains("怎么分组")
+                || n.contains("如何分组")
+                || n.contains("怎么给患者分组")
+                || n.contains("如何给患者分组")
+                || n.contains("怎么分配到健管组")
+                || n.contains("如何分配到健管组")
+                || n.contains("怎么分配健管组")
+                || n.contains("如何分配健管组")
+                || n.contains("怎么批量")
+                || n.contains("如何批量");
     }
 
     /** 从「创建健管组 名字 老板组」「创建健管组叫老板组」等话术解析预填组名。 */
@@ -726,6 +755,65 @@ public class GeneralChatSkill implements AgentSkill {
                     reply,
                     List.of(AgentAction.createCareTeam(label, suggested)));
         }
+        if (guide == OrgGuideIntent.CARE_TEAM_EXPLAIN) {
+            StaffBizTools.UnassignedPeek peek =
+                    staffBizTools.peekUnassigned(cmd.tenantId(), cmd.orgId());
+            boolean hasTeam = peek.primaryTeamCount() > 0;
+            int unassigned = peek.unassignedCount();
+            String reply =
+                    """
+                    健管组就像您的「专属服务小分队」，主要有两个作用：
+                    分组管客户：把患者按病种或服务周期归类，统一看待办。
+                    团队共协管：可邀请其他健管师或医生入组，一起服务客户。
+                    """
+                            + (hasTeam
+                                    ? (unassigned > 0
+                                            ? "您已经有健管组了。目前还有 "
+                                                    + unassigned
+                                                    + " 位待分组，点下方打开批量分组面板，勾选后一键分配即可。"
+                                            : "您已经有健管组了。之后有未分组患者时，点左侧橙色卡片或下方按钮就能批量分配。")
+                                    : "建议先建一个组打底。点下方创建即可；建好后可用批量分组面板把患者一键拉进组。");
+            List<AgentAction> actions = hasTeam
+                    ? (unassigned > 0
+                            ? List.of(AgentAction.openUnassignedWorkbench("打开批量分组面板"))
+                            : List.of(AgentAction.openCreateArchive("新建患者档案", null)))
+                    : List.of(AgentAction.createCareTeam("去创建健管组", null));
+            return finishShortOrg(ctx, sink, "ORG_CHAT_CARE_TEAM_EXPLAIN", reply, actions);
+        }
+        if (guide == OrgGuideIntent.BATCH_ASSIGN) {
+            StaffBizTools.UnassignedPeek peek =
+                    staffBizTools.peekUnassigned(cmd.tenantId(), cmd.orgId());
+            boolean hasTeam = peek.primaryTeamCount() > 0;
+            int unassigned = peek.unassignedCount();
+            if (!hasTeam) {
+                return finishShortOrg(
+                        ctx,
+                        sink,
+                        "ORG_CHAT_BATCH_ASSIGN",
+                        "批量分组前需要先有健管组。点下方先创建一个，建好后就能把未分组患者一键分配进去。",
+                        List.of(AgentAction.createCareTeam("去创建健管组", null)));
+            }
+            if (unassigned <= 0) {
+                return finishShortOrg(
+                        ctx,
+                        sink,
+                        "ORG_CHAT_BATCH_ASSIGN",
+                        "您已经建好组啦。当前没有待分组患者；建档时若没选组，会出现在左侧橙色「待分组」入口，点开就能批量分配。",
+                        List.of(AgentAction.openCreateArchive("新建患者档案", null)));
+            }
+            String reply =
+                    "您当前已经建好组啦！目前有 "
+                            + unassigned
+                            + " 位患者待分组。\n"
+                            + "您可以直接点击下方按钮打开批量处理面板，勾选患者后一键分配；"
+                            + "也可以点左侧橙色的「待分组」卡片进行处理。";
+            return finishShortOrg(
+                    ctx,
+                    sink,
+                    "ORG_CHAT_BATCH_ASSIGN",
+                    reply,
+                    List.of(AgentAction.openUnassignedWorkbench("打开批量分组面板")));
+        }
         if (guide == OrgGuideIntent.CAPABILITY) {
             // 纯场景话术：不查库、不推送活动轨迹事件
             String reply =
@@ -741,6 +829,18 @@ public class GeneralChatSkill implements AgentSkill {
         }
 
         if (guide == OrgGuideIntent.TASK_TYPES) {
+            StaffBizTools.UnassignedPeek gate =
+                    staffBizTools.peekUnassigned(cmd.tenantId(), cmd.orgId());
+            if (gate.primaryTeamCount() <= 0) {
+                return finishShortOrg(
+                        ctx,
+                        sink,
+                        "ORG_CHAT_TASK_TYPES",
+                        """
+                        好，常见任务类型大致这几类：随访跟进、方案到期、打卡提醒、资料完善。
+                        这些都要先有健管组和患者。请先在左侧完成第一步【创建专属健管组】。""",
+                        List.of(AgentAction.createCareTeam("去创建健管组", null)));
+            }
             StaffBizTools.MinePeek peek =
                     staffBizTools.peekMineContext(cmd.tenantId(), cmd.orgId());
             boolean idle = peek.openTaskCount() <= 0 && peek.overdueCount() <= 0;
@@ -766,10 +866,28 @@ public class GeneralChatSkill implements AgentSkill {
         }
 
         if (guide == OrgGuideIntent.DATA_ENTRY) {
+            StaffBizTools.UnassignedPeek gate =
+                    staffBizTools.peekUnassigned(cmd.tenantId(), cmd.orgId());
+            // 没有主责组时，不许点名任何患者，也不许挂单据/手动录入
+            if (gate.primaryTeamCount() <= 0) {
+                boolean noArchive = gate.unassignedCount() <= 0;
+                String reply =
+                        noArchive
+                                ? "您好，目前系统内还没有患者档案哦。请先在左侧完成第一步【创建专属健管组】，建档完成后即可录入数据。"
+                                : "您好，请先在左侧完成第一步【创建专属健管组】。建好组并完成建档后，才能录入体检和检验数据。";
+                return finishShortOrg(
+                        ctx,
+                        sink,
+                        "ORG_CHAT_DATA_ENTRY",
+                        reply,
+                        List.of(AgentAction.createCareTeam("去创建健管组", null)));
+            }
             StaffBizTools.MinePeek peek =
                     staffBizTools.peekMineContext(cmd.tenantId(), cmd.orgId());
             var first = peek.firstMine();
-            if (first != null && StringUtils.hasText(first.getPeopleId())) {
+            if (first != null
+                    && StringUtils.hasText(first.getPeopleId())
+                    && StringUtils.hasText(first.getCareTeamId())) {
                 String peopleId = first.getPeopleId();
                 String name =
                         StringUtils.hasText(first.getDisplayName())
@@ -803,6 +921,16 @@ public class GeneralChatSkill implements AgentSkill {
         }
 
         // NEXT_STEP：静默扫一眼「我的患者」，有人就点名（不刷工具轨迹）
+        StaffBizTools.UnassignedPeek nextGate =
+                staffBizTools.peekUnassigned(cmd.tenantId(), cmd.orgId());
+        if (nextGate.primaryTeamCount() <= 0) {
+            return finishShortOrg(
+                    ctx,
+                    sink,
+                    "ORG_CHAT_NEXT_STEP",
+                    "请先在左侧完成第一步：创建健管组。建好组之后才能建档、录入数据和制定方案。",
+                    List.of(AgentAction.createCareTeam("去创建健管组", null)));
+        }
         StaffBizTools.MinePeek peek =
                 staffBizTools.peekMineContext(cmd.tenantId(), cmd.orgId());
         String reply;
@@ -814,7 +942,9 @@ public class GeneralChatSkill implements AgentSkill {
                     + "。建议先点左侧「立即处理」，或点下方「查看我的患者」选人跟进；也可以新建一位患者。";
             actions.add(AgentAction.setCockpitTab("查看立即处理", "urgent"));
             actions.add(AgentAction.triggerCapability("新建患者", "CREATE_ARCHIVE", null));
-        } else if (first != null && StringUtils.hasText(first.getPeopleId())) {
+        } else if (first != null
+                && StringUtils.hasText(first.getPeopleId())
+                && StringUtils.hasText(first.getCareTeamId())) {
             String name =
                     StringUtils.hasText(first.getDisplayName()) ? first.getDisplayName() : "这位患者";
             reply = "今天暂时没有紧急待办。我看到您名下有「"

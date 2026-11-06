@@ -2,6 +2,8 @@ package com.healix.core.intake.service;
 
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
+import com.healix.core.identity.domain.StaffProfile;
+import com.healix.core.identity.mapper.StaffProfileMapper;
 import com.healix.core.intake.domain.IntakeAccessLink;
 import com.healix.core.intake.mapper.IntakeAccessLinkMapper;
 import com.healix.core.org.domain.Organization;
@@ -16,12 +18,11 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.Period;
-import java.time.ZoneId;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -45,11 +46,15 @@ public class IntakeAccessLinkService {
     private final PeopleProfileMapper peopleProfileMapper;
     private final OrganizationMapper organizationMapper;
     private final PatientOrgMembershipMapper membershipMapper;
+    private final StaffProfileMapper staffProfileMapper;
 
     @Value("${healix.public.user-base-url:http://localhost:5173}")
     private String userBaseUrl;
 
-    private static final ZoneId CN_ZONE = ZoneId.of("Asia/Shanghai");
+    /** 测试/业务假名关键词：命中则不用「姓+先生」以免「分先生」 */
+    private static final Pattern NON_PERSON_NAME_HINT = Pattern.compile(
+            "测试|评估|流程|分层|管理|系统|问卷|档案|样例|示例|未命名|mock|demo|test|patient",
+            Pattern.CASE_INSENSITIVE);
 
     /** 常见复姓（长的优先匹配） */
     private static final List<String> COMPOUND_SURNAMES = List.of(
@@ -89,8 +94,8 @@ public class IntakeAccessLinkService {
 
         String url = buildUrl(link.getToken());
         String display = politeAddress(people.getDisplayName(), people.getGender(), people.getBirthday());
-        String copyText =
-                "您好，" + display + "，请点击链接完成初步评估（约几分钟，" + days + "天内有效）：\n" + url;
+        String staffName = resolveStaffDisplayName(staffId);
+        String copyText = buildCopyText(org.getName(), staffName, display, url, days);
         return new IssueResult(
                 link.getId(),
                 link.getToken(),
@@ -98,7 +103,8 @@ public class IntakeAccessLinkService {
                 link.getExpireAt(),
                 copyText,
                 org.getName(),
-                display);
+                display,
+                staffName);
     }
 
     public PreviewResult preview(String token) {
@@ -251,15 +257,64 @@ public class IntakeAccessLinkService {
     }
 
     /**
-     * 分享/落地页称呼：贺先生、王阿姨、李叔叔。
-     * 女：&lt;50 女士，≥50 阿姨；男：&lt;45 先生，45–64 叔叔，≥65 伯伯；性别不明默认先生。
+     * 分享/落地页称呼。规则（防呆优先）：
+     * <ul>
+     *   <li>非人名（测试/评估等）→ 用全名，避免「分先生」</li>
+     *   <li>性别明确 → 姓 + 先生/女士（不用叔叔/阿姨，避免年龄误判尴尬）</li>
+     *   <li>性别不明 → 用全名</li>
+     * </ul>
      */
     static String politeAddress(String rawName, String gender, LocalDate birthday) {
-        String surname = extractSurname(rawName);
-        if (!StringUtils.hasText(surname)) {
-            return "患者";
+        String name = MobileNumbers.trimName(rawName);
+        if (!StringUtils.hasText(name)) {
+            return "朋友";
         }
-        return surname + pickHonorific(gender, ageYears(birthday));
+        if (!looksLikePersonName(name)) {
+            return name;
+        }
+        // birthday 保留入参兼容预览/旧调用；触达称呼不再按年龄用叔叔/阿姨
+        String honorific = pickHonorific(gender);
+        if (!StringUtils.hasText(honorific)) {
+            return name;
+        }
+        String surname = extractSurname(name);
+        if (!StringUtils.hasText(surname)) {
+            return name;
+        }
+        return surname + honorific;
+    }
+
+    /** 触达话术：机构抬头 + 健管师落款 + 利益点 + 有效期前置。 */
+    static String buildCopyText(
+            String orgName, String staffName, String address, String url, int days) {
+        StringBuilder sb = new StringBuilder();
+        if (StringUtils.hasText(orgName)) {
+            sb.append('【').append(orgName.trim()).append("】\n");
+        }
+        String who = StringUtils.hasText(address) ? address.trim() : "朋友";
+        sb.append(who).append("您好，");
+        if (StringUtils.hasText(staffName)) {
+            sb.append("我是您的专属健管师").append(staffName.trim()).append("。\n");
+        } else {
+            sb.append("我是您的专属健管师。\n");
+        }
+        sb.append("为了能给您制定更适合的健康管理方案，劳烦您花约 2 分钟填写基础健康问卷（")
+                .append(days)
+                .append("天内有效，信息严格保密）。\n");
+        sb.append("👉 点击填写：").append(url).append('\n');
+        sb.append("填写完成后，我会尽快为您出具健康管理建议。祝您生活愉快！");
+        return sb.toString();
+    }
+
+    static boolean looksLikePersonName(String name) {
+        if (!StringUtils.hasText(name)) {
+            return false;
+        }
+        if (NON_PERSON_NAME_HINT.matcher(name).find()) {
+            return false;
+        }
+        // 仅接受常见中文人名长度（含复姓），英文/数字/过长一律当全名称呼
+        return name.matches("^[\\u4e00-\\u9fff·]{2,4}$");
     }
 
     static String extractSurname(String raw) {
@@ -275,34 +330,29 @@ public class IntakeAccessLinkService {
         return name.substring(0, 1);
     }
 
-    static String pickHonorific(String gender, Integer age) {
+    /** 触达称呼只用先生/女士；性别不明返回空串（调用方改用全名）。 */
+    static String pickHonorific(String gender) {
         String g = gender == null ? "" : gender.trim().toUpperCase();
         boolean female = "FEMALE".equals(g) || "女".equals(gender);
         boolean male = "MALE".equals(g) || "男".equals(gender);
         if (female) {
-            return age != null && age >= 50 ? "阿姨" : "女士";
+            return "女士";
         }
         if (male) {
-            if (age != null && age >= 65) {
-                return "伯伯";
-            }
-            if (age != null && age >= 45) {
-                return "叔叔";
-            }
             return "先生";
         }
-        // 性别不明：偏年长用叔叔，其余先生
-        if (age != null && age >= 55) {
-            return "叔叔";
-        }
-        return "先生";
+        return "";
     }
 
-    static Integer ageYears(LocalDate birthday) {
-        if (birthday == null) {
-            return null;
+    private String resolveStaffDisplayName(String staffId) {
+        if (!StringUtils.hasText(staffId)) {
+            return "";
         }
-        return Period.between(birthday, LocalDate.now(CN_ZONE)).getYears();
+        StaffProfile staff = staffProfileMapper.findById(staffId);
+        if (staff == null || !StringUtils.hasText(staff.getDisplayName())) {
+            return "";
+        }
+        return staff.getDisplayName().trim();
     }
 
     private static String generateToken() {
@@ -327,7 +377,8 @@ public class IntakeAccessLinkService {
             LocalDateTime expireAt,
             String copyText,
             String orgName,
-            String patientLabel) {}
+            String patientLabel,
+            String staffDisplayName) {}
 
     public record PreviewResult(
             boolean usable,

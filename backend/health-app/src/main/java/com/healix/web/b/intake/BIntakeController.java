@@ -137,7 +137,8 @@ public class BIntakeController {
         if (body != null && body.conflictResolutions() != null) {
             body.conflictResolutions().fields().forEachRemaining(e -> resolutions.put(e.getKey(), e.getValue()));
         }
-        QuestionnaireResponseView submitted = responseService.submit(id, staffId, resolutions);
+        boolean forceIncomplete = body != null && Boolean.TRUE.equals(body.forceIncomplete());
+        QuestionnaireResponseView submitted = responseService.submit(id, staffId, resolutions, forceIncomplete);
         String orgId = SecurityUtils.requireCurrentOrgId();
         String tenantId = SecurityUtils.requireTenantId();
         String accountId = SecurityUtils.requireAccountId();
@@ -223,7 +224,7 @@ public class BIntakeController {
 
     public record SaveDraftRequest(JsonNode answers, String programCode, String channel) {}
 
-    public record SubmitRequest(JsonNode conflictResolutions) {}
+    public record SubmitRequest(JsonNode conflictResolutions, Boolean forceIncomplete) {}
 
     public record AiSummaryRequest(JsonNode answers) {}
 

@@ -29,18 +29,6 @@
       "sensitive": true
     },
     {
-      "field": "basic.psych.bodySatisfaction",
-      "label": "对自己现在的身材满意吗？",
-      "level": "LATER",
-      "sensitive": true
-    },
-    {
-      "field": "basic.psych.bodyAnxiety",
-      "label": "会不会经常因为身材焦虑，影响心情或生活？",
-      "level": "LATER",
-      "sensitive": true
-    },
-    {
       "field": "basic.weightHistory.expectedPace",
       "label": "希望多快看到减重效果？",
       "level": "FIRST_VISIT",

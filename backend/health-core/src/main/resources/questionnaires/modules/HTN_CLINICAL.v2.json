@@ -17,7 +17,7 @@
     },
     {
       "field": "disease.hypertension.latestSystolic",
-      "label": "近期收缩压大概多少？",
+      "label": "最近的高压大概多少？",
       "level": "FIRST_VISIT",
       "highlights": [
         {
@@ -29,7 +29,7 @@
     },
     {
       "field": "disease.hypertension.latestDiastolic",
-      "label": "近期舒张压大概多少？",
+      "label": "最近的低压大概多少？",
       "level": "FIRST_VISIT"
     },
     {
@@ -69,13 +69,13 @@
     },
     {
       "field": "disease.hypertension.highestSystolic",
-      "label": "以前测到过的最高收缩压？",
-      "level": "LATER"
+      "label": "以前测到过的最高高压？（想不起来可以不填）",
+      "level": "STAFF"
     },
     {
       "field": "disease.hypertension.highestDiastolic",
-      "label": "以前测到过的最高舒张压？",
-      "level": "LATER"
+      "label": "以前测到过的最高低压？（想不起来可以不填）",
+      "level": "STAFF"
     }
   ]
 }

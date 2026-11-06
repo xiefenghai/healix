@@ -10,7 +10,8 @@ public enum AgentCapability {
     OCR_MED("用药单识别", true),
     REPORT_SUMMARY("管理报告点评", true),
     CHAT_EXTRACT("整理这段记录", true),
-    GENERAL_CHAT("健康咨询", true);
+    /** 对健管师展示为业务问答，避免暴露 GENERAL_CHAT 代码名 */
+    GENERAL_CHAT("业务问答", true);
 
     private final String label;
     private final boolean enabled;

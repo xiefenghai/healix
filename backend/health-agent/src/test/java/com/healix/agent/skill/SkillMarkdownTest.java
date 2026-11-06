@@ -42,6 +42,7 @@ class SkillMarkdownTest {
         String body = SkillMarkdown.loadClasspath("skills/general-chat/org-system.md", "");
         assertThat(body).contains("{{ORG_BRIEF}}");
         assertThat(body).contains("去创建健管组");
+        assertThat(body).contains("批量分组面板");
         assertThat(body).doesNotContain("name: general-chat-org");
     }
 

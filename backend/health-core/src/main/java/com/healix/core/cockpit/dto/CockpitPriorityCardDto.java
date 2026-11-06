@@ -39,6 +39,8 @@ public class CockpitPriorityCardDto {
     private int openTaskCount;
     /** 超期 OPEN 任务数 */
     private int overdueTaskCount;
+    /** 最早一条已逾期的首诊任务到期时间，供左栏写「逾期 N 天」 */
+    private LocalDateTime earliestOverdueDueAt;
     /** 患者身上 OPEN 任务的最高优先级 HIGH/MEDIUM/LOW */
     private String maxTaskPriority;
     /** urgent | watch | mine —— 服务端分桶后再按 tab 过滤 */

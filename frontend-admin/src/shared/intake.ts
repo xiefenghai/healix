@@ -111,6 +111,8 @@ export interface IntakeShowIf {
   intersects?: string[]
   all?: IntakeShowIf[]
   any?: IntakeShowIf[]
+  /** 出生日期换算的周岁下限；生日未知时不因此隐藏 */
+  ageGte?: number
 }
 
 export interface IntakeHighlightWhen {
@@ -358,15 +360,43 @@ export async function saveIntakeDraft(id: string, body: SaveDraftBody) {
   return res.data
 }
 
-export async function submitIntake(id: string, conflictResolutions?: Record<string, unknown>) {
+export async function submitIntake(
+  id: string,
+  conflictResolutions?: Record<string, unknown>,
+  forceIncomplete = false,
+) {
+  const body: Record<string, unknown> = {}
+  if (conflictResolutions) body.conflictResolutions = conflictResolutions
+  if (forceIncomplete) body.forceIncomplete = true
   const res = await api<{ data: QuestionnaireResponseView }>(
     `/api/b/v1/questionnaire-responses/${id}/submit`,
     {
       method: 'POST',
-      body: JSON.stringify(conflictResolutions ? { conflictResolutions } : {}),
+      body: JSON.stringify(body),
     },
   )
   return res.data
+}
+
+/**
+ * 主观诉求没采到时，不把推导出的管理方向写成「核心诉求」。
+ * 只改展示/再生成前的条文，避免把血压、血糖误写成患者自己说的目标。
+ */
+export function clarifyUncollectedAppeal(raw: unknown, appealFilled: boolean): string {
+  const text = String(raw ?? '')
+  if (appealFilled || !text.trim() || !/核心诉求/.test(text)) return text
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!/核心诉求/.test(line)) return line
+      if (/主观诉求未采集/.test(line)) return line
+      const dir = line.match(/管理方向[：:]\s*([^；;。\n]+)/)
+      const direction = dir?.[1]?.replace(/（注：[^）]*）/g, '').trim()
+      const bullet = /^\s*[·•\-*]/.test(line) ? '· ' : ''
+      if (direction) return `${bullet}管理方向：${direction}（注：患者主观诉求未采集全）`
+      return line.replace(/[；;，,]?\s*核心诉求[：:][^；;。\n]*/g, '（注：患者主观诉求未采集全）')
+    })
+    .join('\n')
 }
 
 export interface IntakeAiSummaryResult {
@@ -571,6 +601,11 @@ export function matchShowIf(
   if (!showIf) return true
   if (showIf.all?.length) return showIf.all.every((s) => matchShowIf(s, answers))
   if (showIf.any?.length) return showIf.any.some((s) => matchShowIf(s, answers))
+  if (typeof showIf.ageGte === 'number') {
+    const age = ageYearsFromBirthday(answers['profile.birthday'])
+    if (age != null && age < showIf.ageGte) return false
+    if (!showIf.field) return true
+  }
   if (!showIf.field) return true
   const actual = flattenAnswer(answers[showIf.field])
   if (showIf.eq != null) {
@@ -607,7 +642,7 @@ function compareNum(num: number, op: string, thr: number): boolean {
   }
 }
 
-function ageYearsFromBirthday(raw: unknown): number | null {
+export function ageYearsFromBirthday(raw: unknown): number | null {
   if (raw == null || raw === '') return null
   const s = String(raw).trim().slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null

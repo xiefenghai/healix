@@ -21,6 +21,8 @@ public class ChatExtractCard {
     private String confirmHint = "内容来自健管师粘贴的文字，请对照原句后再写入";
     private boolean labHint;
     private boolean overflow;
+    /** 为 true 时确认写入打开的问卷，不写档案和体征。 */
+    private boolean intake;
     private List<ChatExtractRow> items = new ArrayList<>();
     private List<ChatExtractIgnored> ignored = new ArrayList<>();
     /** 图片里读出的原文。只用于落会话，不进核对卡。 */

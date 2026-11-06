@@ -51,6 +51,11 @@ public record AgentAction(
         return navigate(label, "create-archive");
     }
 
+    /** 打开驾驶舱「未分组批量处理台」抽屉（勾选 + AI 建议 + 一键分配）。 */
+    public static AgentAction openUnassignedWorkbench(String label) {
+        return navigate(label, "unassigned-workbench");
+    }
+
     /** 切入患者后打开「单据录入」上传（驾驶舱 NAVIGATE ocr-upload）。 */
     public static AgentAction ocrUpload(String label, String peopleId) {
         return navigate(label, "ocr-upload", peopleId);

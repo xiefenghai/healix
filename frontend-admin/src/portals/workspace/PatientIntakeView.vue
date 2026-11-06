@@ -9,10 +9,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { debounce } from '../../shared/debounce'
 import {
   calcBmi,
-  CARE_TRACK_OPTIONS,
+  ageYearsFromBirthday,
   FIELD_STAFF_AI_SUMMARY,
   formatAnswerBrief,
   mergeLiveHighlights,
+  clarifyUncollectedAppeal,
   formatIntakeAiSummaryText,
   formatPrefillSource,
   generateIntakeAiSummary,
@@ -58,6 +59,8 @@ const props = withDefaults(
     peopleId?: string
     followupRecordId?: string | null
     purpose?: string | null
+    /** 打开后优先展示的模块，如 BODY_MEASURE */
+    startModule?: string | null
     /** 嵌入抽屉：提交/关闭走 emit，不关窗、不跳路由 */
     embedded?: boolean
   }>(),
@@ -65,8 +68,22 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  submitted: []
+  submitted: [brief: {
+    name: string
+    pct: number
+    appeal: string
+    allergy: string
+    supplement: boolean
+  }]
   close: []
+  /** 代填过程中值得立刻告诉健管师的合规提醒 */
+  coach: [payload: { key: string; text: string }]
+  /** 右侧代填时，中间对话只留一句进度，不另起长文 */
+  checkpoint: [payload: { text: string }]
+  /** 右侧核对完本次整理后，交给驾驶舱确认写入 */
+  applyExtract: [rows: { id: string; code: string; archiveValue: string; discard: boolean }[]]
+  /** 打开问卷时，把光标放到左侧输入框，方便粘贴一段记录 */
+  focusPaste: []
 }>()
 
 const isEmbedded = computed(() => !!props.embedded)
@@ -100,6 +117,11 @@ const answers = reactive<Record<string, unknown>>({})
 const completeness = ref<IntakeCompleteness>({})
 const serverHighlights = ref<IntakeHighlightHit[]>([])
 const summaryOpen = ref(false)
+const riskListOpen = ref(false)
+const submitGuardOpen = ref(false)
+const riskGuardOpen = ref(false)
+/** 必填模块未齐时，仅在隐私授权已勾选后允许继续提交 */
+const allowIncompleteSubmit = ref(false)
 const riskAck = ref(false)
 const hydrated = ref(false)
 const aiSummaryGenerating = ref(false)
@@ -145,9 +167,87 @@ function levelAllowed(level: string) {
 
 function itemVisible(item: IntakeItemView) {
   if (!levelAllowed(item.level)) return false
+  if (item.field === 'profile.maritalStatus') {
+    const age = ageYearsFromBirthday(answers['profile.birthday'])
+    if (age != null && age < 18) return false
+  }
   // 待补模块/题目已由服务端按 showIf 裁剪，避免前端再用当前答案藏题导致与「N 项待补」不一致
   if (isSupplement.value) return true
   return matchShowIf(item.showIf, answers)
+}
+
+function itemRequired(it: { field: string; level: string }) {
+  return it.level === 'REQUIRED' || it.field === 'measure.method'
+}
+
+function asMetric(v: unknown): number | null {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/** 体测里目录下限放得太宽，这里只做当场提示，不改已填的值。 */
+function metricAnomaly(field: string): string {
+  const value = asMetric(answers[field])
+  if (value == null) return ''
+  if (field === 'metric.BLOOD_PRESSURE_SYS' || field === 'metric.BLOOD_PRESSURE_DIA') {
+    const sys = asMetric(answers['metric.BLOOD_PRESSURE_SYS'])
+    const dia = asMetric(answers['metric.BLOOD_PRESSURE_DIA'])
+    if (sys != null && dia != null && sys < dia) return '高压低于低压，请确认是否填反'
+    if (sys != null && dia != null && sys - dia < 20) return '高低压差过小，请确认是否输入错误'
+    if (field === 'metric.BLOOD_PRESSURE_SYS' && (value < 70 || value > 250)) {
+      return '数值异常，请确认是否输入错误'
+    }
+    if (field === 'metric.BLOOD_PRESSURE_DIA' && (value < 40 || value > 150)) {
+      return '数值异常，请确认是否输入错误'
+    }
+  }
+  if (field === 'metric.WAIST') {
+    if (value < 40 || value > 200) return '数值异常，请确认是否输入错误'
+    const height = asMetric(answers['metric.HEIGHT'])
+    const weight = asMetric(answers['metric.WEIGHT'])
+    if (height != null && height >= 140 && value < height * 0.35) {
+      return '与身高体重不匹配，请确认是否输入错误'
+    }
+    const bmiNow = calcBmi(height, weight)
+    if (bmiNow != null && bmiNow >= 28 && value < 70) return '与身高体重不匹配，请确认是否输入错误'
+    if (bmiNow != null && bmiNow >= 24 && value < 60) return '与身高体重不匹配，请确认是否输入错误'
+  }
+  return ''
+}
+
+const ADULT_JOBS = new Set([
+  'OFFICE',
+  'TECH',
+  'TEACHER',
+  'MEDICAL',
+  'SALES',
+  'SERVICE',
+  'WORKER',
+  'DRIVER',
+  'FARM',
+  'HOME',
+  'RETIRED',
+  'FREELANCE',
+])
+
+function fieldHint(field: string): string {
+  const metric = metricAnomaly(field)
+  if (metric) return metric
+  if (field !== 'profile.occupation') return ''
+  const age = ageYearsFromBirthday(answers['profile.birthday'])
+  const job = String(answers['profile.occupation'] ?? '').trim().toUpperCase()
+  if (age != null && age < 18 && ADULT_JOBS.has(job)) {
+    return '未满 18 岁，请确认职业是否填对'
+  }
+  return ''
+}
+
+function medListNeedsNames(v: unknown) {
+  if (!Array.isArray(v) || !v.length) return true
+  return !v.some(
+    (x) => x && typeof x === 'object' && String((x as { drugName?: string }).drugName || '').trim(),
+  )
 }
 
 function isFilled(field: string) {
@@ -206,29 +306,69 @@ const staffGapItems = computed(() => {
   return gaps
 })
 
+const GAP_SHORT_LABELS: Record<string, string> = {
+  'goal.targetHba1c': '糖化血红蛋白',
+  'goal.targetFpg': '空腹血糖',
+  'goal.targetBpSys': '收缩压',
+  'goal.targetBpDia': '舒张压',
+  'goal.targetWeightKg': '目标体重',
+  'goal.targetWaistCm': '腰围',
+  'goal.targetDate': '达成时间',
+}
+
+function shortGapName(field: string, label: string) {
+  if (GAP_SHORT_LABELS[field]) return GAP_SHORT_LABELS[field]
+  const stripped = (label || field)
+    .replace(/[（(][^）)]*[）)]/g, '')
+    .replace(/\s+/g, '')
+    .replace(/(目标|明细)$/g, '')
+  return stripped || label || field
+}
+
+const gapBrief = computed(() => {
+  const names = [...new Set(staffGapItems.value.map((g) => shortGapName(g.field, g.label)))]
+  if (!names.length) return ''
+  const head = names.slice(0, 4).join('、')
+  return names.length === 1 ? head : `${head}等 ${names.length} 项指标`
+})
+
+function goFirstGap() {
+  const open = staffGapItems.value.map((item) => item.field)
+  if (staffCursorEnded.value) {
+    staffCursorEnded.value = false
+    staffCursor.value = ''
+  }
+  const field = pickOpen(open, true, staffCursor)
+  if (!field) {
+    if (open.length) {
+      staffCursorEnded.value = true
+      ElMessage.info('已到底，暂无更多待补录项')
+    }
+    return
+  }
+  const item = staffGapItems.value.find((row) => row.field === field)
+  if (item?.moduleCode) activeModule.value = item.moduleCode
+  void focusQuestion(field)
+}
+
 const currentModule = computed(() => visibleModules.value.find((m) => m.code === activeModule.value) || null)
+
+const modulePrivacyNotice = computed(() => {
+  const items = currentModule.value?.items || []
+  return items.filter((it) => it.sensitive).length >= 3
+})
 
 type ModuleTone = 'red' | 'orange' | 'green' | 'gray'
 
 function moduleTone(mod: IntakeModuleView): ModuleTone {
   const items = mod.items.filter(itemVisible)
   if (!items.length) return 'gray'
-  const requiredMissing = items.some((it) => it.level === 'REQUIRED' && !isFilled(it.field))
-  if (requiredMissing) return 'red'
-  const riskUnasked = items.some(
-    (it) => (it.highlights?.length || 0) > 0 && !isFilled(it.field),
-  )
-  if (riskUnasked) return 'orange'
-  const anyFilled = items.some((it) => isFilled(it.field))
-  if (!anyFilled) return 'gray'
-  const allDone = items.every((it) => isFilled(it.field))
-  return allDone ? 'green' : 'gray'
-}
-
-function moduleFill(mod: IntakeModuleView) {
-  const items = mod.items.filter(itemVisible)
-  const done = items.filter((it) => isFilled(it.field)).length
-  return { done, total: items.length }
+  if (items.some((it) => itemRequired(it) && !isFilled(it.field))) return 'red'
+  // 首诊建议未填：黄点。必填未填优先保持红点。
+  if (items.some((it) => it.level === 'FIRST_VISIT' && !isFilled(it.field))) return 'orange'
+  if (items.some((it) => (it.highlights?.length || 0) > 0 && !isFilled(it.field))) return 'orange'
+  if (items.every((it) => isFilled(it.field))) return 'green'
+  return 'gray'
 }
 
 const currentModuleIndex = computed(() =>
@@ -240,11 +380,22 @@ function goPrevModule() {
   if (i > 0) activeModule.value = visibleModules.value[i - 1].code
 }
 
-function goNextModule() {
-  const i = currentModuleIndex.value
-  if (i >= 0 && i < visibleModules.value.length - 1) {
-    activeModule.value = visibleModules.value[i + 1].code
-  }
+/** 本模块高风险题已提示过一次，再次点「下一模块」才离开 */
+const riskLeavePassed = new Set<string>()
+const riskFlashFields = ref<string[]>([])
+const requiredHoldFields = ref<string[]>([])
+let riskFlashToken = 0
+
+function flashRiskFields(fields: string[]) {
+  const token = ++riskFlashToken
+  riskFlashFields.value = []
+  void nextTick(() => {
+    if (token !== riskFlashToken) return
+    riskFlashFields.value = fields
+  })
+  window.setTimeout(() => {
+    if (token === riskFlashToken) riskFlashFields.value = []
+  }, 2200)
 }
 
 function requiredStillMissing() {
@@ -255,7 +406,7 @@ async function runAiSummary(force = false) {
   if (!responseId.value || status.value !== 'DRAFT' || aiSummaryGenerating.value) return
   if (!force && !isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) return
   // 必收未齐：不调 AI（自动/手动都拦），避免空卷生成无意义总结
-  if (requiredStillMissing()) {
+  if (requiredStillMissing() && !allowIncompleteSubmit.value) {
     ElMessage.warning('请先完成必收项后再生成 AI 总结')
     return
   }
@@ -276,7 +427,117 @@ async function runAiSummary(force = false) {
   }
 }
 
+const intakeCoachSent = new Set<string>()
+
+function pushIntakeCoach(key: string, text: string) {
+  if (intakeCoachSent.has(key)) return
+  intakeCoachSent.add(key)
+  emit('coach', { key, text })
+}
+
+function coachFromAnswer(field: string, value: unknown) {
+  const blob = JSON.stringify(value ?? '')
+  if (field === 'allergy.status' && String(value) === 'HAS') {
+    pushIntakeCoach(
+      'allergy-has',
+      '已确认有过敏史。请点清具体食物；如果包含海鲜，后续方案会自动排除海鲜类食谱。',
+    )
+  }
+  if (field === 'allergy.foodTags' || field === 'allergy.food') {
+    if (/SEAFOOD|SHELLFISH|FISH|海鲜|虾|蟹|贝/.test(blob)) {
+      pushIntakeCoach(
+        'allergy-seafood',
+        '注意，患者对海鲜过敏。后续方案将自动排除海鲜类食谱。',
+      )
+    } else if (/MILK|LACTOSE|牛奶|乳糖/.test(blob)) {
+      pushIntakeCoach(
+        'allergy-dairy',
+        '已记下乳制品相关过敏或不耐受。后续方案会避开牛奶和乳制品。',
+      )
+    } else if (/PEANUT|TREE_NUT|花生|坚果/.test(blob)) {
+      pushIntakeCoach(
+        'allergy-nut',
+        '已记下坚果类过敏。后续方案会排除花生和坚果。',
+      )
+    }
+  }
+  if ((field === 'allergy.drugTags' || field === 'allergy.drug') && /PENICILLIN|青霉素/.test(blob)) {
+    pushIntakeCoach(
+      'allergy-penicillin',
+      '已记下青霉素类过敏。制定方案和用药建议时会避开这一类。',
+    )
+  }
+  if (field === 'basic.diet.restriction' && /NO_SEAFOOD|海鲜/.test(blob)) {
+    pushIntakeCoach(
+      'diet-seafood',
+      '已记下不吃海鲜。后续食谱会排除海鲜类。',
+    )
+  }
+  if (field === 'basic.psych.readiness' && String(value) === 'NOT_READY') {
+    pushIntakeCoach(
+      'readiness-not-ready',
+      '患者还没准备好改变生活习惯。建议首版方案只设 1–2 个小目标，并考虑家属一起参与。',
+    )
+  }
+  if (field === 'basic.psych.willingToRecord' && String(value) === 'NO') {
+    pushIntakeCoach(
+      'record-unwilling',
+      '患者不太愿意记录饮食、体重、血压或血糖。建议在方案中加入行为激励或家属监督，否则后续很难落地。',
+    )
+  }
+}
+
+function adherenceNote(field: string): string {
+  if (field === 'basic.psych.readiness' && String(answers[field] ?? '') === 'NOT_READY') {
+    return '患者依从意愿低，建议在方案中加入行为激励或家属监督机制。'
+  }
+  if (field === 'basic.psych.willingToRecord' && String(answers[field] ?? '') === 'NO') {
+    return '患者依从意愿低，建议在方案中加入行为激励或家属监督机制。'
+  }
+  return ''
+}
+
+function allergyBrief() {
+  const blob = `${JSON.stringify(answers['allergy.foodTags'] ?? '')} ${JSON.stringify(answers['allergy.food'] ?? '')} ${JSON.stringify(answers['basic.diet.restriction'] ?? '')}`
+  const bits: string[] = []
+  if (/SEAFOOD|SHELLFISH|FISH|海鲜|虾|蟹/.test(blob)) bits.push('海鲜')
+  if (/MILK|LACTOSE|牛奶|乳糖/.test(blob)) bits.push('乳制品')
+  if (/PEANUT|TREE_NUT|花生|坚果/.test(blob)) bits.push('坚果')
+  if (!bits.length && String(answers['allergy.status'] ?? '') === 'HAS') bits.push('有过敏史')
+  return bits.join('、')
+}
+
+function coachModule() {
+  const pending = visibleModules.value.find((m) => moduleTone(m) !== 'green')
+  if (currentModule.value && moduleTone(currentModule.value) !== 'green') return currentModule.value
+  return pending || currentModule.value
+}
+
+function checkpointText() {
+  const pct = overallPct.value
+  const pending = visibleModules.value.find((m) => moduleTone(m) !== 'green')
+  const mod = coachModule()
+  const title = mod?.title || '基础信息'
+  let next = `接下来重点填【${title}】，填好后点下一模块。`
+  if (!pending) {
+    next = '必填模块都齐了。可以点右上角提交。'
+  } else if (mod?.code === 'GOALS_PREFERENCE' && isAnswerEmpty(answers['goal.primaryAppeal'])) {
+    next = '接下来重点填【诉求与目标】，建议直接勾选「减脂减重」。'
+  } else if (mod?.code === 'BODY_MEASURE') {
+    next = '接下来填【体测】。身高体重齐了，我会帮你算热量。'
+  } else if (mod?.code === 'ALLERGY_DIET_RESTRICTION') {
+    next = '接下来填【过敏与忌口】。勾选海鲜后，方案会自动排除海鲜类食谱。'
+  }
+  return `✅ 已为您打开首诊问卷。档案完整度 ${pct}%。\n${next}`
+}
+
+function publishCheckpoint() {
+  if (!isEmbedded.value || !hydrated.value || isSupplement.value) return
+  emit('checkpoint', { text: checkpointText() })
+}
+
 watch(activeModule, (code) => {
+  publishCheckpoint()
   if (code !== 'INTAKE_AI_SUMMARY' || status.value !== 'DRAFT') return
   if (aiSummaryAutoTried) return
   if (!isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) return
@@ -315,7 +576,7 @@ const localCompleteness = computed(() => {
       allTotal++
       const filled = isFilled(it.field)
       if (filled) allDone++
-      if (it.level === 'REQUIRED') {
+      if (itemRequired(it)) {
         requiredTotal++
         if (filled) requiredDone++
         else requiredMissing.push(it.field)
@@ -344,14 +605,17 @@ const overallPct = computed(() => {
   return allT ? Math.round(((c.allDone || 0) / allT) * 100) : 0
 })
 
+watch(
+  () =>
+    `${overallPct.value}|${activeModule.value}|${coachModule()?.code || ''}|${String(answers['goal.primaryAppeal'] ?? '')}`,
+  () => publishCheckpoint(),
+)
+
 const saveStatusText = computed(() => {
   if (saving.value) return '保存中…'
-  if (saveError.value) return `保存失败 · 将重试`
+  if (saveError.value) return '保存失败 · 将重试'
   if (!lastSavedAt.value) return '未保存'
-  const sec = Math.round((Date.now() - lastSavedAt.value.getTime()) / 1000)
-  if (sec < 5) return '已保存 · 刚刚'
-  if (sec < 60) return `已保存 · ${sec} 秒前`
-  return `已保存 · ${Math.floor(sec / 60)} 分钟前`
+  return '已自动保存'
 })
 
 const bmi = computed(() => calcBmi(answers['metric.HEIGHT'], answers['metric.WEIGHT']))
@@ -392,18 +656,207 @@ const highlightHits = computed(() =>
   mergeLiveHighlights(modules.value, answers, serverHighlights.value),
 )
 
+const skippedRiskFields = ref<string[]>([])
+/** 两处「去补录」各自记住上次停住的题，再点时从后面接着找。 */
+const riskCursor = ref('')
+const staffCursor = ref('')
+const riskCursorEnded = ref(false)
+const staffCursorEnded = ref(false)
+
 const riskUnasked = computed(() => {
   const list: IntakeItemView[] = []
   for (const m of modules.value) {
     if (!matchShowIf(m.showIf, answers)) continue
     for (const it of m.items) {
       if (!itemVisible(it)) continue
+      if (skippedRiskFields.value.includes(it.field)) continue
       if ((it.highlights?.length || 0) === 0) continue
       if (!isFilled(it.field)) list.push(it)
     }
   }
   return list
 })
+
+function flatVisibleFields() {
+  const out: string[] = []
+  for (const mod of modules.value) {
+    if (!matchShowIf(mod.showIf, answers)) continue
+    for (const it of mod.items) {
+      if (!itemVisible(it)) continue
+      out.push(it.field)
+    }
+  }
+  return out
+}
+
+function pickOpen(open: string[], advance: boolean, cursor: { value: string }) {
+  if (!open.length) return ''
+  if (!advance || !cursor.value) {
+    cursor.value = open[0]
+    return open[0]
+  }
+  const order = flatVisibleFields()
+  const start = order.indexOf(cursor.value)
+  const pool = start < 0 ? order : order.slice(start + 1)
+  const next = pool.find((field) => open.includes(field)) || ''
+  if (next) cursor.value = next
+  return next
+}
+
+function questionLead(label?: string) {
+  const text = label || ''
+  return text.replace(/\s*[（(][^）)]*[）)]\s*$/, '').trim() || text
+}
+
+function questionHint(label?: string) {
+  const matched = (label || '').match(/[（(]([^）)]+)[）)]\s*$/)
+  return matched?.[1] || ''
+}
+
+function shortRiskName(label?: string) {
+  const s = (label || '')
+    .replace(/[？?].*$/, '')
+    .replace(/^平时/, '')
+    .replace(/是哪种$/, '')
+    .trim()
+  return s || label || '未命名'
+}
+
+const riskNameHead = computed(() => {
+  const names = [...new Set(riskUnasked.value.map((it) => shortRiskName(it.label)))]
+  return names.slice(0, 3).join('、')
+})
+
+const riskFieldSet = computed(() => new Set(riskUnasked.value.map((it) => it.field)))
+
+function isRiskGap(field: string) {
+  return riskFieldSet.value.has(field)
+}
+
+function moduleTitleOf(field: string) {
+  for (const m of visibleModules.value) {
+    if (m.items.some((it) => it.field === field)) return m.title
+  }
+  for (const m of modules.value) {
+    if (m.items.some((it) => it.field === field)) return m.title
+  }
+  return ''
+}
+
+/** 当前模块里还会影响方案的缺题排在前面 */
+const riskPanelItems = computed(() => {
+  const here = new Set(currentModule.value?.items.map((it) => it.field) || [])
+  return [...riskUnasked.value]
+    .sort((a, b) => Number(here.has(b.field)) - Number(here.has(a.field)))
+    .slice(0, 5)
+})
+
+function dismissPasteHint() {
+  showPasteHint.value = false
+  sessionStorage.setItem(PASTE_HINT_KEY, '1')
+}
+
+function goFirstRisk(advance = true) {
+  const open = riskUnasked.value.map((it) => it.field)
+  if (advance && riskCursorEnded.value) {
+    riskCursorEnded.value = false
+    riskCursor.value = ''
+  }
+  const field = pickOpen(open, advance, riskCursor)
+  if (!field) {
+    if (advance && open.length) {
+      riskCursorEnded.value = true
+      ElMessage.info('已到底，暂无更多待补录项')
+    }
+    return
+  }
+  jumpToField(field)
+}
+
+function skipRiskQuestion(field: string) {
+  if (!skippedRiskFields.value.includes(field)) {
+    skippedRiskFields.value = [...skippedRiskFields.value, field]
+  }
+  riskCursor.value = field
+  const open = riskUnasked.value.map((it) => it.field)
+  const next = pickOpen(open, true, riskCursor)
+  if (!next) {
+    riskCursorEnded.value = true
+    ElMessage.info('已到底，暂无更多待补录项')
+    return
+  }
+  jumpToField(next)
+}
+
+function goNextModule() {
+  const mod = currentModule.value
+  const missing = mod?.items.find((it) => itemVisible(it) && itemRequired(it) && !isFilled(it.field))
+  const riskHere = mod?.items.filter((it) => isRiskGap(it.field)).map((it) => it.field) || []
+  if (missing && status.value === 'DRAFT') {
+    requiredHoldFields.value = [missing.field]
+    ElMessage.warning('请先完成必填项后再进入下一模块')
+    flashRiskFields([missing.field, ...riskHere])
+    void focusQuestion(missing.field)
+    return
+  }
+  requiredHoldFields.value = []
+  if (mod && riskHere.length && status.value === 'DRAFT' && !riskLeavePassed.has(mod.code)) {
+    riskLeavePassed.add(mod.code)
+    ElMessage.warning('这几题会影响到方案，还没填。可以先跳过，再点一次就进入下一模块')
+    flashRiskFields(riskHere)
+    void focusQuestion(riskHere[0])
+    return
+  }
+  const i = currentModuleIndex.value
+  if (i >= 0 && i < visibleModules.value.length - 1) {
+    activeModule.value = visibleModules.value[i + 1].code
+  }
+}
+
+const RISK_BUCKET: Record<string, string> = {
+  BODY_MEASURE: '临床体征',
+  DM_CLINICAL: '临床体征',
+  HTN_CLINICAL: '临床体征',
+  GOALS_PREFERENCE: '临床体征',
+  WL_WEIGHT_HISTORY: '临床体征',
+  MEDICAL_HISTORY: '用药与病史',
+  ALLERGY_DIET_RESTRICTION: '用药与病史',
+  FAMILY_HISTORY: '用药与病史',
+  WOMEN_HEALTH: '用药与病史',
+  WL_RISK_SCREEN: '用药与病史',
+  BASIC_PROFILE: '生活方式',
+  DIET_BEHAVIOR: '生活方式',
+  EXERCISE_BEHAVIOR: '生活方式',
+  SLEEP_SUBSTANCE: '生活方式',
+  PSYCH_BASE: '生活方式',
+}
+
+const riskGroups = computed(() => {
+  const buckets = new Map<string, IntakeItemView[]>()
+  for (const it of riskUnasked.value) {
+    let code = ''
+    for (const mod of modules.value) {
+      if (mod.items.some((item) => item.field === it.field)) {
+        code = mod.code
+        break
+      }
+    }
+    const title = RISK_BUCKET[code] || '其他'
+    const list = buckets.get(title) || []
+    list.push(it)
+    buckets.set(title, list)
+  }
+  return ['临床体征', '用药与病史', '生活方式', '其他']
+    .filter((title) => buckets.has(title))
+    .map((title) => ({ title, items: buckets.get(title) || [] }))
+})
+
+function fillFirstRiskFromSummary() {
+  summaryOpen.value = false
+  riskCursor.value = ''
+  riskCursorEnded.value = false
+  goFirstRisk(false)
+}
 
 const changeRows = computed(() => {
   const rows: Array<{ field: string; label: string; from: unknown; to: unknown; source?: string }> = []
@@ -427,15 +880,31 @@ const changeRows = computed(() => {
 })
 
 const hasAiSummary = computed(() => !isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY]))
-const aiSummaryParsed = computed(() => parseIntakeAiSummaryText(answers[FIELD_STAFF_AI_SUMMARY]))
+const appealFilled = computed(() => !isAnswerEmpty(answers['goal.primaryAppeal']))
+const aiSummaryParsed = computed(() =>
+  parseIntakeAiSummaryText(clarifyUncollectedAppeal(answers[FIELD_STAFF_AI_SUMMARY], appealFilled.value)),
+)
+const consentReady = computed(
+  () => isFilled('consent.sensitiveHealth') && isFilled('consent.method'),
+)
+const incompleteRequiredModules = computed(() => {
+  const rows: { code: string; title: string }[] = []
+  for (const mod of visibleModules.value) {
+    if (mod.code === 'INTAKE_AI_SUMMARY') continue
+    const missing = mod.items.some((it) => itemVisible(it) && itemRequired(it) && !isFilled(it.field))
+    if (missing) rows.push({ code: mod.code, title: mod.title })
+  }
+  return rows
+})
 const showAiSummaryBlocks = computed(() => hasParsedIntakeAiSummary(aiSummaryParsed.value))
 
 /** 正式首诊须有总结正文；待补问卷仍可选 */
 const canSubmit = computed(
   () =>
     status.value === 'DRAFT' &&
-    (localCompleteness.value.requiredMissing?.length || 0) === 0 &&
-    (isSupplement.value || hasAiSummary.value),
+    (isSupplement.value || hasAiSummary.value) &&
+    ((localCompleteness.value.requiredMissing?.length || 0) === 0 ||
+      (allowIncompleteSubmit.value && consentReady.value)),
 )
 
 const openingSummary = ref(false)
@@ -469,11 +938,32 @@ function applyView(view: QuestionnaireResponseView, seedAnswers: boolean) {
     }
     // 正式首诊：不默认勾选减重；管理方向由健管师点选，或按诉求/病史提示后采纳
   }
+  dropImpossibleBirthday()
 
   syncProgramFromTracks()
-  if (!activeModule.value || !visibleModules.value.some((m) => m.code === activeModule.value)) {
+  const preferred = (props.startModule || '').trim()
+  if (!activeModule.value) {
+    if (preferred && visibleModules.value.some((m) => m.code === preferred)) {
+      activeModule.value = preferred
+    } else {
+      activeModule.value = visibleModules.value[0]?.code || modules.value[0]?.code || ''
+    }
+  } else if (!visibleModules.value.some((m) => m.code === activeModule.value)) {
     activeModule.value = visibleModules.value[0]?.code || modules.value[0]?.code || ''
   }
+}
+
+let scrubbedBirthday = false
+
+/** 1900 年以前的生日无法用于年龄判断，打开问卷时清掉，避免停在界面上。 */
+function dropImpossibleBirthday() {
+  const raw = String(answers['profile.birthday'] ?? '').trim()
+  if (raw && raw < '1900-01-01') {
+    answers['profile.birthday'] = ''
+    scrubbedBirthday = true
+  }
+  const cell = prefill.value['profile.birthday']
+  if (cell && String(cell.value ?? '').trim() < '1900-01-01') cell.value = ''
 }
 
 function syncProgramFromTracks() {
@@ -490,18 +980,6 @@ function setCareTracks(next: IntakeProgramCode[], persist = true) {
     scheduleSave.cancel()
     void persistDraft()
   }
-}
-
-function toggleCareTrack(code: Exclude<IntakeProgramCode, 'NONE'>) {
-  const cur = [...careTracks.value]
-  const idx = cur.indexOf(code)
-  if (idx >= 0) cur.splice(idx, 1)
-  else cur.push(code)
-  setCareTracks(cur)
-}
-
-function setNoProgram() {
-  setCareTracks([])
 }
 
 function adoptIllnessTrackHints() {
@@ -544,8 +1022,11 @@ async function bootstrap() {
     if (isSupplement.value) {
       quickMode.value = false
     }
+    scrubbedBirthday = false
     applyView(view, true)
     hydrated.value = true
+    if (scrubbedBirthday) void persistDraft()
+    publishCheckpoint()
   } catch (e) {
     ElMessage.error((e as Error).message || (isSupplement.value ? '打开待补问卷失败' : '打开首诊问卷失败'))
   } finally {
@@ -632,8 +1113,40 @@ watch(visibleModules, (mods) => {
   }
 })
 
+/** 按显示条件仍在的模块（不受快速/完整切换影响）。取消勾选只藏模块，答案留在草稿里。 */
+const shownModuleKey = computed(() =>
+  modules.value
+    .filter((m) => {
+      if (isSupplement.value) return m.items.length > 0
+      if (!matchShowIf(m.showIf, answers)) return false
+      return m.items.some((it) => matchShowIf(it.showIf, answers))
+    })
+    .map((m) => m.code)
+    .join('|'),
+)
+
+watch(shownModuleKey, (now, prev) => {
+  if (!hydrated.value || status.value !== 'DRAFT' || prev == null) return
+  const next = new Set(now.split('|').filter(Boolean))
+  const removed = prev.split('|').filter((code) => code && !next.has(code))
+  const titles: string[] = []
+  for (const code of removed) {
+    const mod = modules.value.find((m) => m.code === code)
+    if (!mod) continue
+    if (mod.items.some((it) => isFilled(it.field))) titles.push(mod.title)
+  }
+  if (!titles.length) return
+  ElMessage({
+    message: `已移除${titles.join('、')}模块，相关已填数据将被清空。`,
+    type: 'info',
+    duration: 3200,
+    grouping: true,
+  })
+})
+
 function setAnswer(field: string, value: unknown) {
   answers[field] = value
+  coachFromAnswer(field, value)
 }
 
 function restorePrefill(field: string) {
@@ -657,9 +1170,66 @@ function aiSummaryLooksIncomplete() {
   return /尚未完成首诊|入组当日尚未完成首诊|首诊未完成/.test(text)
 }
 
+function goGuardModule(code: string) {
+  submitGuardOpen.value = false
+  activeModule.value = code
+  void nextTick(() => {
+    const mod = visibleModules.value.find((m) => m.code === code)
+    const fields =
+      mod?.items
+        .filter((it) => isRiskGap(it.field) || (itemRequired(it) && !isFilled(it.field)))
+        .map((it) => it.field) || []
+    if (!fields.length) return
+    flashRiskFields(fields)
+    void focusQuestion(fields[0])
+  })
+}
+
 async function openSummary() {
   if (status.value !== 'DRAFT' || openingSummary.value) return
-  riskAck.value = riskUnasked.value.length === 0
+  if (!isSupplement.value && incompleteRequiredModules.value.length) {
+    allowIncompleteSubmit.value = false
+    submitGuardOpen.value = true
+    return
+  }
+  await proceedSummary()
+}
+
+async function forceSubmitDespiteGaps() {
+  if (!consentReady.value) {
+    goGuardModule('CONSENT')
+    return
+  }
+  allowIncompleteSubmit.value = true
+  submitGuardOpen.value = false
+  await proceedSummary()
+}
+
+async function proceedSummary() {
+  if (status.value !== 'DRAFT' || openingSummary.value) return
+  if (riskUnasked.value.length && !riskAck.value) {
+    riskGuardOpen.value = true
+    return
+  }
+  await openSummaryDialog()
+}
+
+function backToRisk() {
+  riskGuardOpen.value = false
+  riskCursor.value = ''
+  riskCursorEnded.value = false
+  goFirstRisk(false)
+}
+
+async function confirmRiskSubmit() {
+  if (!riskAck.value) return
+  riskGuardOpen.value = false
+  await openSummaryDialog()
+}
+
+async function openSummaryDialog() {
+  if (status.value !== 'DRAFT' || openingSummary.value) return
+  if (!riskUnasked.value.length) riskAck.value = true
   // 正式首诊：无总结，或总结仍写着「尚未完成首诊」→ 提交前按当前答卷重生成
   if (
     !isSupplement.value &&
@@ -693,6 +1263,7 @@ async function focusQuestion(field: string) {
   clearFocusTimer()
   focusedField.value = field
   await nextTick()
+  await nextTick()
   // 模块切换后 DOM 可能再刷一帧
   await new Promise((r) => requestAnimationFrame(() => r(undefined)))
   const el = document.querySelector(`[data-intake-field="${CSS.escape(field)}"]`) as HTMLElement | null
@@ -709,14 +1280,320 @@ async function focusQuestion(field: string) {
   }, 2600)
 }
 
+const INTAKE_EXTRACT_TYPES = new Set(['ENUM', 'MULTI', 'NUMBER', 'TEXT', 'DATE', 'TIME', 'YEAR'])
+
+function intakeExtractSchema() {
+  const out: {
+    code: string
+    label: string
+    type: string
+    unit?: string | null
+    min?: number | null
+    max?: number | null
+    options: { code: string; label: string }[]
+  }[] = []
+  if (!hydrated.value) return out
+  for (const mod of visibleModules.value) {
+    for (const it of mod.items) {
+      if (!itemVisible(it)) continue
+      const type = it.type || ''
+      if (!INTAKE_EXTRACT_TYPES.has(type)) continue
+      const options = (it.options ? optionMaps.value[it.options] || [] : []).slice(0, 40).map((opt) => ({
+        code: opt.code,
+        label: opt.label,
+      }))
+      if ((type === 'ENUM' || type === 'MULTI') && !options.length) continue
+      out.push({
+        code: it.field,
+        label: it.label,
+        type,
+        unit: it.unit || null,
+        min: it.min ?? null,
+        max: it.max ?? null,
+        options,
+      })
+      if (out.length >= 180) return out
+    }
+  }
+  return out
+}
+
+type ExtractReviewRow = {
+  id: string
+  code: string
+  label: string
+  quote: string
+  value: unknown
+  baseline: unknown
+  keptText: string
+}
+
+type ExtractConflict = {
+  quote: string
+  reason: string
+}
+
+const PASTE_HINT_KEY = 'healix.intakePasteHintDismissed'
+const showPasteHint = ref(sessionStorage.getItem(PASTE_HINT_KEY) !== '1')
+const extractReview = ref<ExtractReviewRow[] | null>(null)
+const extractConflicts = ref<ExtractConflict[]>([])
+const extractSourcesOpen = ref(false)
+const extractApplying = ref(false)
+
+const extractReviewGroups = computed(() => {
+  const rows = extractReview.value || []
+  const buckets = new Map<string, { title: string; order: number; rows: ExtractReviewRow[] }>()
+  for (const row of rows) {
+    const order = modules.value.findIndex((mod) => mod.items.some((it) => it.field === row.code))
+    const title = moduleTitleOf(row.code) || '其他'
+    const key = `${order}:${title}`
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      bucket = { title, order: order < 0 ? 999 : order, rows: [] }
+      buckets.set(key, bucket)
+    }
+    bucket.rows.push(row)
+  }
+  return [...buckets.values()]
+    .sort((a, b) => a.order - b.order)
+    .map((group) => {
+      const mod = modules.value[group.order]
+      return {
+        code: mod?.code || group.title,
+        title: group.title,
+        rows: [...group.rows].sort((a, b) => {
+          const ia = mod?.items.findIndex((it) => it.field === a.code) ?? 0
+          const ib = mod?.items.findIndex((it) => it.field === b.code) ?? 0
+          return ia - ib
+        }),
+      }
+    })
+})
+
+function extractSpreadLine(codes: string[]) {
+  const counts = new Map<string, { title: string; order: number; n: number }>()
+  for (const code of codes) {
+    const order = modules.value.findIndex((mod) => mod.items.some((it) => it.field === code))
+    if (order < 0) continue
+    const mod = modules.value[order]
+    if (!mod) continue
+    const current = counts.get(mod.code)
+    if (current) current.n += 1
+    else counts.set(mod.code, { title: mod.title, order, n: 1 })
+  }
+  const parts = [...counts.values()]
+    .sort((a, b) => a.order - b.order)
+    .map((item) => `${item.title} ${item.n}`)
+  return parts.length ? `涉及${parts.join('、')}` : ''
+}
+
+function extractValueOf(row: { code: string; archiveValue?: string | null; multi?: boolean }) {
+  const item = fieldItemMap.value.get(row.code)
+  if (!item) return row.archiveValue ?? ''
+  if (row.multi || item.type === 'MULTI') {
+    try {
+      const parsed = JSON.parse(String(row.archiveValue || '[]'))
+      return Array.isArray(parsed) ? parsed.map(String) : []
+    } catch {
+      return []
+    }
+  }
+  if (item.type === 'NUMBER' || item.type === 'YEAR') {
+    const n = Number(row.archiveValue)
+    return Number.isFinite(n) ? n : null
+  }
+  return row.archiveValue ?? ''
+}
+
+function serializeExtractValue(code: string, value: unknown) {
+  const item = fieldItemMap.value.get(code)
+  if (item?.type === 'MULTI') return JSON.stringify(Array.isArray(value) ? value.map(String) : [])
+  if (value == null) return ''
+  return String(value)
+}
+
+function plainExtractText(value: unknown) {
+  if (value == null || value === '') return ''
+  if (Array.isArray(value)) return value.map(String).join('、')
+  return String(value)
+}
+
+function openExtractReview(
+  rows: { id: string; code: string; label?: string; quote?: string; archiveValue?: string | null; multi?: boolean }[],
+  conflicts: ExtractConflict[] | string = [],
+) {
+  const drafts: ExtractReviewRow[] = []
+  let hidden = 0
+  for (const row of rows) {
+    const item = fieldItemMap.value.get(row.code)
+    if (!item) {
+      hidden += 1
+      continue
+    }
+    const value = extractValueOf(row)
+    drafts.push({
+      id: row.id,
+      code: row.code,
+      label: item.label || row.label || row.code,
+      quote: row.quote || '',
+      value,
+      baseline: answers[row.code],
+      keptText: plainExtractText(value),
+    })
+  }
+  if (!drafts.length) {
+    ElMessage.info('这些题当前问卷里不可见')
+    return
+  }
+  if (hidden) ElMessage.info(`${hidden} 项当前还没显示，没有放进核对清单`)
+  extractSourcesOpen.value = false
+  extractApplying.value = false
+  extractConflicts.value = Array.isArray(conflicts)
+    ? conflicts.filter((item) => item && (item.quote || item.reason))
+    : conflicts
+      ? [{ quote: '', reason: conflicts }]
+      : []
+  extractReview.value = drafts
+}
+
+function closeExtractReview() {
+  extractReview.value = null
+  extractConflicts.value = []
+  extractApplying.value = false
+}
+
+function settleExtractReview(ok: boolean) {
+  extractApplying.value = false
+  if (ok) {
+    extractReview.value = null
+    extractConflicts.value = []
+  }
+}
+
+function conflictFor(row: ExtractReviewRow) {
+  const rows = extractReview.value || []
+  return extractConflicts.value.filter((item) => {
+    const blob = `${item.reason || ''}${item.quote || ''}`
+    if (!row.label || !blob.includes(row.label)) return false
+    const owner = rows
+      .filter((candidate) => candidate.label && blob.includes(candidate.label))
+      .sort((a, b) => b.label.length - a.label.length)[0]
+    return owner?.code === row.code
+  })
+}
+
+function otherMention(row: ExtractReviewRow, hits: ExtractConflict[]) {
+  const blob = hits.map((item) => `${item.reason || ''} ${item.quote || ''}`).join(' ')
+  const kept = row.keptText
+  const nums = blob.match(/\d+(?:\.\d+)?/g) || []
+  return nums.find((num) => num !== kept && Number(num) !== Number(kept)) || ''
+}
+
+function conflictLine(row: ExtractReviewRow) {
+  const hits = conflictFor(row)
+  if (!hits.length) return ''
+  const other = otherMention(row, hits)
+  const name = row.label.length <= 8 ? row.label : '说法'
+  if (row.keptText && other) {
+    if (plainExtractText(row.value) === row.keptText) {
+      return `⚠️ 原文提及两个${name}（${row.keptText}/${other}），当前保留 ${row.keptText}`
+    }
+    return `⚠️ 原文还提到另一个${name}：${other}`
+  }
+  const quote = hits.map((item) => item.quote).find(Boolean)
+  if (quote) return `⚠️ 原文还有另一种说法：${quote}`
+  const reason = hits.map((item) => item.reason).find(Boolean)
+  return reason ? `⚠️ ${reason}` : ''
+}
+
+function restoreExtractRow(row: ExtractReviewRow) {
+  row.value = row.baseline
+}
+
+async function discardExtractReview() {
+  if (!extractReview.value?.length || extractApplying.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确认丢弃这 ${extractReview.value.length} 项提取数据吗？问卷里原有的答案不会改。`,
+      '全部丢弃',
+      { confirmButtonText: '丢弃', cancelButtonText: '继续核对', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  extractApplying.value = true
+  emit(
+    'applyExtract',
+    extractReview.value.map((row) => ({
+      id: row.id,
+      code: row.code,
+      archiveValue: serializeExtractValue(row.code, row.value),
+      discard: true,
+    })),
+  )
+}
+
+function confirmExtractReview() {
+  if (!extractReview.value || extractApplying.value) return
+  extractApplying.value = true
+  emit(
+    'applyExtract',
+    extractReview.value.map((row) => ({
+      id: row.id,
+      code: row.code,
+      archiveValue: serializeExtractValue(row.code, row.value),
+      discard: isAnswerEmpty(row.value),
+    })),
+  )
+}
+
+function applyChatExtract(rows: { code: string; archiveValue?: string | null; multi?: boolean }[]) {
+  const fields: string[] = []
+  for (const row of rows) {
+    const item = fieldItemMap.value.get(row.code)
+    if (!item) continue
+    let value: unknown = row.archiveValue ?? ''
+    if (row.multi || item.type === 'MULTI') {
+      try {
+        const parsed = JSON.parse(String(row.archiveValue || '[]'))
+        if (!Array.isArray(parsed)) continue
+        value = parsed.map(String)
+      } catch {
+        continue
+      }
+    } else if (item.type === 'NUMBER' || item.type === 'YEAR') {
+      const n = Number(row.archiveValue)
+      if (!Number.isFinite(n)) continue
+      value = n
+    }
+    setAnswer(row.code, value)
+    fields.push(row.code)
+  }
+  if (!fields.length) {
+    ElMessage.info('这些题当前问卷里不可见，没有写入')
+    return
+  }
+  const first = fields[0]!
+  for (const mod of modules.value) {
+    if (!mod.items.some((it) => it.field === first)) continue
+    const item = mod.items.find((it) => it.field === first)
+    if (item && !levelAllowed(item.level)) quickMode.value = false
+    activeModule.value = mod.code
+    break
+  }
+  void focusQuestion(first)
+}
+
 function jumpToField(field: string) {
   summaryOpen.value = false
+  riskGuardOpen.value = false
   for (const m of modules.value) {
     if (m.items.some((it) => it.field === field)) {
       // 若快速模式藏住了该题，切完整模式
       const item = m.items.find((it) => it.field === field)
       if (item && !levelAllowed(item.level)) quickMode.value = false
       activeModule.value = m.code
+      flashRiskFields([field])
       void focusQuestion(field)
       break
     }
@@ -750,7 +1627,7 @@ async function doSubmit(conflictResolutions?: Record<string, unknown>) {
   try {
     scheduleSave.cancel()
     await persistDraft()
-    const view = await submitIntake(responseId.value, conflictResolutions)
+    const view = await submitIntake(responseId.value, conflictResolutions, allowIncompleteSubmit.value)
     applyView(view, false)
     status.value = view.status || 'SUBMITTED'
     summaryOpen.value = false
@@ -761,7 +1638,16 @@ async function doSubmit(conflictResolutions?: Record<string, unknown>) {
       reason: isSupplement.value ? 'INTAKE_SUPPLEMENT' : 'INTAKE_SUBMITTED',
     })
     if (isEmbedded.value) {
-      emit('submitted')
+      const appeal = isAnswerEmpty(answers['goal.primaryAppeal'])
+        ? ''
+        : displayAnswer('goal.primaryAppeal', answers['goal.primaryAppeal'])
+      emit('submitted', {
+        name: patientName.value || '',
+        pct: overallPct.value,
+        appeal,
+        allergy: allergyBrief(),
+        supplement: isSupplement.value,
+      })
       return
     }
     // 同标签打开：提交后回患者档案
@@ -813,6 +1699,16 @@ watch(
   },
 )
 
+defineExpose({
+  intakeExtractSchema,
+  applyChatExtract,
+  openExtractReview,
+  closeExtractReview,
+  settleExtractReview,
+  extractSpreadLine,
+  dismissPasteHint,
+})
+
 onBeforeUnmount(() => {
   scheduleSave.cancel()
   clearFocusTimer()
@@ -827,13 +1723,12 @@ onBeforeUnmount(() => {
     <header class="top">
       <div class="top-left">
         <button
-          v-if="!isEmbedded"
           type="button"
           class="back"
           @click="backToPatient"
-          title="关闭本页"
+          :title="isEmbedded ? '返回当前焦点' : '关闭本页'"
         >
-          关闭
+          {{ isEmbedded ? '返回焦点' : '关闭' }}
         </button>
         <div class="who">
           <strong>{{ patientName || peopleId }}</strong>
@@ -842,99 +1737,29 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="top-mid">
-        <div v-if="!isSupplement" class="track-switch" role="group" aria-label="管理方向">
-          <span class="track-switch-label">管理方向</span>
-          <div class="track-btns">
-            <button
-              v-for="opt in CARE_TRACK_OPTIONS"
-              :key="opt.code"
-              type="button"
-              class="track-btn"
-              :class="{ on: careTracks.includes(opt.code) }"
-              :disabled="status !== 'DRAFT'"
-              @click="toggleCareTrack(opt.code)"
-            >
-              {{ opt.label }}
-            </button>
-            <button
-              type="button"
-              class="track-btn track-btn-none"
-              :class="{ on: careTracks.length === 0 }"
-              :disabled="status !== 'DRAFT'"
-              @click="setNoProgram"
-            >
-              暂不加入
-            </button>
-          </div>
-          <button
-            v-if="status === 'DRAFT' && illnessTrackHints.some((t) => !careTracks.includes(t))"
-            type="button"
-            class="track-hint"
-            @click="adoptIllnessTrackHints"
-          >
-            病史含糖/压，一并纳入
-          </button>
-        </div>
-        <div v-if="!isSupplement" class="mode-switch" role="group" aria-label="填写范围">
-          <span class="mode-switch-label">填写范围</span>
-          <el-radio-group v-model="quickMode" class="mode-switch-group">
-            <el-radio-button :value="true">
-              <span class="mode-btn-title">快速</span>
-              <span class="mode-btn-desc">必收 + 首诊建议</span>
-            </el-radio-button>
-            <el-radio-button :value="false">
-              <span class="mode-btn-title">完整</span>
-              <span class="mode-btn-desc">全部题目</span>
-            </el-radio-button>
-          </el-radio-group>
-        </div>
-        <div class="pills" aria-label="填写进度">
-          <template v-if="isSupplement">
-            <span
-              class="pill soft"
-              :class="{ warn: (localCompleteness.allDone || 0) < (localCompleteness.allTotal || 0) }"
-            >
-              待补 {{ localCompleteness.allDone || 0 }}/{{ localCompleteness.allTotal || 0 }}
-            </span>
-          </template>
-          <template v-else>
-            <span
-              class="pill"
-              :class="{ warn: (localCompleteness.requiredDone || 0) < (localCompleteness.requiredTotal || 0) }"
-            >
-              必收 {{ localCompleteness.requiredDone || 0 }}/{{ localCompleteness.requiredTotal || 0 }}
-            </span>
-            <span
-              class="pill"
-              :class="{ soft: (localCompleteness.firstVisitDone || 0) < (localCompleteness.firstVisitTotal || 0) }"
-            >
-              建议 {{ localCompleteness.firstVisitDone || 0 }}/{{ localCompleteness.firstVisitTotal || 0 }}
-            </span>
-            <button
-              v-if="staffGapItems.length"
-              type="button"
-              class="pill warn gap-pill"
-              :title="staffGapItems.map((g) => g.label).join('、')"
-              @click="focusQuestion(staffGapItems[0].field)"
-            >
-              建议补录 {{ staffGapItems.length }}
-            </button>
-          </template>
-          <span class="pill pct">
-            <i class="pct-bar" :style="{ width: `${overallPct}%` }" />
-            <em>{{ overallPct }}%</em>
+        <div class="archive-meter" :class="{ done: overallPct >= 100 }" aria-label="档案完整度">
+          <span class="archive-meter-label">档案完整度 {{ overallPct }}%</span>
+          <span class="archive-meter-track">
+            <i :style="{ width: `${overallPct}%` }" />
           </span>
         </div>
       </div>
 
       <div class="top-right">
-        <span class="save" :class="{ err: !!saveError, ok: !saveError && !!lastSavedAt }">{{ saveStatusText }}</span>
+        <div v-if="!isSupplement" class="mode-mini" role="group" aria-label="填写范围">
+          <button type="button" :class="{ on: quickMode }" @click="quickMode = true">快速</button>
+          <button type="button" :class="{ on: !quickMode }" @click="quickMode = false">完整</button>
+        </div>
+        <span class="save" :class="{ err: !!saveError, ok: !saving && !saveError && !!lastSavedAt }">
+          <i v-if="!saving && !saveError && lastSavedAt" class="save-check" aria-hidden="true">✓</i>
+          {{ saveStatusText }}
+        </span>
         <el-button
           v-if="!isSupplement"
           :loading="copyingLink"
           @click="copyPatientFillLink"
         >
-          复制患者填写链接
+          {{ isEmbedded ? '复制链接' : '复制患者填写链接' }}
         </el-button>
         <el-button
           type="primary"
@@ -947,50 +1772,133 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <div
-      v-if="!loading && status === 'DRAFT' && staffGapItems.length"
-      class="gap-banner"
-      role="status"
-    >
-      <div class="gap-banner-title">建议健管师补录（{{ staffGapItems.length }}）</div>
-      <div class="gap-banner-list">
-        <button
-          v-for="g in staffGapItems.slice(0, 8)"
-          :key="g.field"
-          type="button"
-          class="gap-chip"
-          @click="focusQuestion(g.field)"
-        >
-          <span>{{ g.label }}</span>
-          <em>{{ g.reason }}</em>
-        </button>
-        <span v-if="staffGapItems.length > 8" class="gap-more">+{{ staffGapItems.length - 8 }}</span>
-      </div>
+    <div v-if="!loading && status === 'DRAFT' && isEmbedded && showPasteHint && !extractReview" class="paste-hint">
+      <p>有面诊记录或聊天记录，贴到左侧输入框，再点「整理这段记录」。核对后才会写入。</p>
+      <button type="button" class="paste-go" @click="emit('focusPaste')">去粘贴</button>
+      <button type="button" class="paste-dismiss" @click="dismissPasteHint">知道了</button>
+    </div>
+    <div v-if="!loading && status === 'DRAFT' && riskUnasked.length" class="gap-line risk">
+      <p class="gap-line-text">
+        还有 {{ riskUnasked.length }} 题会影响到方案，还没填。可以先跳过。
+      </p>
+      <button type="button" class="gap-go" @click="goFirstRisk()">去补录</button>
+    </div>
+    <div v-else-if="!loading && status === 'DRAFT' && staffGapItems.length" class="gap-line soft">
+      <p class="gap-line-text">建议补录：{{ gapBrief }}</p>
+      <button type="button" class="gap-go" @click="goFirstGap">去补录</button>
     </div>
 
     <div v-if="!loading" class="body">
       <aside class="nav">
-        <div class="nav-head">模块</div>
+        <div class="nav-head">
+          <span>模块</span>
+          <span class="nav-legend">
+            <i class="nav-mark suggest" aria-hidden="true" />建议完善
+          </span>
+        </div>
         <button
-          v-for="(m, idx) in visibleModules"
+          v-for="m in visibleModules"
           :key="m.code"
           type="button"
           class="nav-item"
-          :class="{ on: m.code === activeModule, [moduleTone(m)]: true }"
+          :class="{
+            on: m.code === activeModule,
+            next: m.code === coachModule()?.code && m.code !== activeModule,
+          }"
           @click="goModule(m.code)"
         >
-          <span class="nav-idx">{{ idx + 1 }}</span>
-          <span class="nav-copy">
-            <span class="nav-title">{{ m.title }}</span>
-            <span class="nav-fill">{{ moduleFill(m).done }}/{{ moduleFill(m).total }}</span>
+          <span class="nav-title">{{ m.title }}</span>
+          <span class="nav-marks">
+            <span v-if="moduleTone(m) === 'green'" class="nav-mark ok" aria-label="已填完">✓</span>
+            <i
+              v-else-if="moduleTone(m) === 'red' || (m.code === coachModule()?.code && m.code !== activeModule)"
+              class="nav-mark miss"
+              :aria-label="moduleTone(m) === 'red' ? '必填未填' : '下一步要填'"
+            />
+            <i v-else-if="moduleTone(m) === 'orange'" class="nav-mark suggest" aria-label="建议未填" />
           </span>
-          <i class="dot" />
         </button>
         <p v-if="!visibleModules.length" class="empty-nav">当前模式无可见模块</p>
       </aside>
 
-      <main class="form">
-        <template v-if="currentModule">
+      <main class="form" :class="{ 'is-review': !!extractReview }">
+        <template v-if="extractReview">
+          <div class="form-head">
+            <div class="form-head-text">
+              <p class="mod-kicker">一次性核对</p>
+              <h2 class="mod-title">这次整理的 {{ extractReview.length }} 项</h2>
+            </div>
+            <div class="form-nav">
+              <el-button size="small" @click="extractSourcesOpen = !extractSourcesOpen">
+                {{ extractSourcesOpen ? '收起识别来源' : '显示识别来源' }}
+              </el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="extractApplying"
+                :disabled="status !== 'DRAFT'"
+                @click="confirmExtractReview"
+              >
+                全部采纳
+              </el-button>
+            </div>
+          </div>
+          <p class="script">
+            AI 已按模块为您整理好 {{ extractReview.length }} 项数据。核对无误请点击右下角「确认无误，写入问卷」；如果整批数据都不对，请点击左下角「全部丢弃」。
+          </p>
+          <section
+            v-for="group in extractReviewGroups"
+            :id="`extract-group-${group.code}`"
+            :key="group.code"
+            class="extract-group"
+          >
+            <h3 class="extract-group-title">{{ group.title }}（{{ group.rows.length }} 项）</h3>
+            <div v-for="row in group.rows" :key="row.id" class="q extract-row">
+              <div class="q-head">
+                <div class="q-main">
+                  <div class="q-label-row">
+                    <span class="q-label">{{ row.label }}</span>
+                    <span class="q-tags">
+                      <button type="button" class="text-btn" @click="restoreExtractRow(row)">恢复</button>
+                    </span>
+                  </div>
+                  <p v-if="conflictLine(row)" class="extract-conflict">{{ conflictLine(row) }}</p>
+                  <p v-if="extractSourcesOpen && row.quote" class="extract-quote">识别来源：{{ row.quote }}</p>
+                  <FieldInput
+                    v-if="fieldItemMap.get(row.code)"
+                    :field="row.code"
+                    :type="fieldItemMap.get(row.code)?.type"
+                    :unit="fieldItemMap.get(row.code)?.unit"
+                    :options="fieldItemMap.get(row.code)?.options"
+                    :min="fieldItemMap.get(row.code)?.min"
+                    :max="fieldItemMap.get(row.code)?.max"
+                    :exclusive="fieldItemMap.get(row.code)?.exclusive"
+                    :model-value="row.value"
+                    :disabled="status !== 'DRAFT' || extractApplying"
+                    @update:model-value="(v) => (row.value = v)"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+          <div class="extract-review-foot">
+            <button
+              type="button"
+              class="extract-discard"
+              :disabled="extractApplying || status !== 'DRAFT'"
+              @click="discardExtractReview"
+            >
+              全部丢弃
+            </button>
+            <span class="extract-review-foot-main">
+              <el-button :disabled="extractApplying" @click="closeExtractReview">取消</el-button>
+              <el-button type="primary" :loading="extractApplying" :disabled="status !== 'DRAFT'" @click="confirmExtractReview">
+                确认无误，写入问卷
+              </el-button>
+            </span>
+          </div>
+        </template>
+        <template v-else-if="currentModule">
           <div class="form-head">
             <div class="form-head-text">
               <p class="mod-kicker">
@@ -1021,6 +1929,7 @@ onBeforeUnmount(() => {
             </span>
             <p>{{ displayScript(currentModule.script) }}</p>
           </div>
+          <p v-if="modulePrivacyNotice" class="mod-privacy">🔒 本模块涉及患者隐私</p>
 
           <div v-if="currentModule.code === 'INTAKE_AI_SUMMARY'" class="ai-summary-bar">
             <div class="ai-summary-actions">
@@ -1046,10 +1955,14 @@ onBeforeUnmount(() => {
                       : '查看原文'
                 }}
               </el-button>
-              <span v-if="aiSummaryMeta" class="ai-meta">
+              <span
+                v-if="aiSummaryMeta"
+                class="ai-source"
+                :class="{ llm: aiSummaryMeta.fromLlm }"
+              >
                 {{ aiSummaryMeta.fromLlm ? '来源：AI' : '来源：模板' }}
-                <template v-if="aiSummaryMeta.note"> · {{ aiSummaryMeta.note }}</template>
               </span>
+              <span v-if="aiSummaryMeta?.note" class="ai-meta">{{ aiSummaryMeta.note }}</span>
             </div>
             <IntakeAiSummaryBlocks
               v-if="showAiSummaryBlocks"
@@ -1076,11 +1989,13 @@ onBeforeUnmount(() => {
             :data-intake-field="it.field"
             :class="{
               hit: highlightHits.some((h) => h.field === it.field),
-              req: it.level === 'REQUIRED',
+              req: itemRequired(it),
               filled: isFilled(it.field),
               prefill: isPrefillTone(it.field),
               dirty: isDirty(it.field),
               focus: focusedField === it.field,
+              'risk-gap': isRiskGap(it.field),
+              'risk-flash': riskFlashFields.includes(it.field),
             }"
           >
             <div class="q-head">
@@ -1088,12 +2003,26 @@ onBeforeUnmount(() => {
               <div class="q-main">
                 <div class="q-label-row">
                   <span class="q-label">
-                    <i v-if="it.level === 'REQUIRED'" class="star" aria-hidden="true">*</i>
-                    {{ it.field === FIELD_STAFF_AI_SUMMARY ? '总结原文（可编辑）' : it.label }}
+                    <i v-if="itemRequired(it)" class="star" aria-hidden="true">*</i>
+                    {{ it.field === FIELD_STAFF_AI_SUMMARY ? '总结原文（可编辑）' : questionLead(it.label) }}
+                    <span
+                      v-if="it.field !== FIELD_STAFF_AI_SUMMARY && questionHint(it.label)"
+                      class="q-hint"
+                    >（{{ questionHint(it.label) }}）</span>
                   </span>
                   <span class="q-tags">
-                    <span v-if="it.level === 'FIRST_VISIT'" class="tag tag-soft">首诊建议</span>
-                    <span v-if="it.sensitive" class="tag">敏感</span>
+                    <span v-if="isRiskGap(it.field)" class="tag tag-risk">影响方案</span>
+                    <button
+                      v-if="isRiskGap(it.field)"
+                      type="button"
+                      class="skip-q"
+                      @click="skipRiskQuestion(it.field)"
+                    >
+                      跳过此题
+                    </button>
+                    <span v-else-if="it.level === 'FIRST_VISIT' && !itemRequired(it)" class="tag tag-soft">首诊建议</span>
+                    <span v-else-if="it.level === 'LATER' && !itemRequired(it)" class="tag tag-later">可后补</span>
+                    <span v-if="it.sensitive && !modulePrivacyNotice" class="tag">敏感</span>
                   </span>
                 </div>
                 <div v-if="isPrefillTone(it.field)" class="prefill-note">
@@ -1116,6 +2045,20 @@ onBeforeUnmount(() => {
                 <p v-if="it.field === FIELD_STAFF_AI_SUMMARY" class="ai-edit-hint">
                   按【要点】【风险与禁忌】【建议下一步】分节书写时，上方会自动拆成要点展示。
                 </p>
+                <button
+                  v-if="it.field === 'goal.careTracks' && status === 'DRAFT' && illnessTrackHints.some((t) => !careTracks.includes(t))"
+                  type="button"
+                  class="track-hint inline"
+                  @click="adoptIllnessTrackHints"
+                >
+                  病史里有糖尿病或高血压，点此一并纳入
+                </button>
+                <p
+                  v-if="it.field === 'medication.current' && medListNeedsNames(answers[it.field])"
+                  class="med-nudge"
+                >
+                  请补充具体的药名与剂量，以便生成更精准的用药提醒
+                </p>
                 <FieldInput
                   :field="it.field"
                   :type="it.type"
@@ -1124,12 +2067,23 @@ onBeforeUnmount(() => {
                   :min="it.min"
                   :max="it.max"
                   :exclusive="it.exclusive"
+                  :placeholder="it.field === 'basic.medical.mainDiscomfort' ? '可以不填，例如最近头晕、没力气' : undefined"
                   :model-value="answers[it.field]"
                   :prefilled="isPrefillTone(it.field)"
                   :dirty="isDirty(it.field)"
                   :disabled="status !== 'DRAFT'"
+                  :anomaly="!!fieldHint(it.field)"
                   @update:model-value="(v) => setAnswer(it.field, v)"
                 />
+                <p v-if="requiredHoldFields.includes(it.field) && !isFilled(it.field)" class="metric-warn">
+                  这题是必填，填完才能进入下一模块
+                </p>
+                <p v-if="isRiskGap(it.field)" class="risk-gap-hint">不填也能继续。填了会按答案调整方案。</p>
+                <p v-if="adherenceNote(it.field)" class="adhere-hint">{{ adherenceNote(it.field) }}</p>
+                <p v-if="fieldHint(it.field)" class="metric-warn">{{ fieldHint(it.field) }}</p>
+                <p v-if="it.field === 'measure.method' && answers['measure.method'] === 'SELF_REPORT'" class="self-report-hint">
+                  自述数据可能存在误差，建议后续使用设备复测校准。
+                </p>
               </div>
             </div>
           </div>
@@ -1198,20 +2152,27 @@ onBeforeUnmount(() => {
 
         <!-- 高风险未问优先：勿被长「高亮追问」挤出视口 -->
         <section v-if="riskUnasked.length" class="panel risk-panel">
-          <h3>高风险未问 · {{ riskUnasked.length }}</h3>
+          <h3>还会影响方案 · {{ riskUnasked.length }}</h3>
+          <p class="risk-panel-tip">点击题目，定位到对应卡片</p>
           <div class="risk-list">
             <button
-              v-for="(it, idx) in riskUnasked.slice(0, 5)"
+              v-for="(it, idx) in riskPanelItems"
               :key="it.field"
               type="button"
               class="risk-item"
+              :class="{ 'is-here': currentModule?.items.some((item) => item.field === it.field) }"
               @click="jumpToField(it.field)"
             >
               <span class="risk-idx">{{ idx + 1 }}</span>
-              <span class="risk-label">{{ it.label }}</span>
+              <span class="risk-label">
+                {{ it.label }}
+                <small v-if="moduleTitleOf(it.field)" class="risk-mod">{{ moduleTitleOf(it.field) }}</small>
+              </span>
             </button>
           </div>
-          <p v-if="riskUnasked.length > 5" class="muted">还有 {{ riskUnasked.length - 5 }} 项…</p>
+          <p v-if="riskUnasked.length > riskPanelItems.length" class="muted">
+            还有 {{ riskUnasked.length - riskPanelItems.length }} 项
+          </p>
         </section>
 
         <section class="panel hits-panel">
@@ -1238,11 +2199,37 @@ onBeforeUnmount(() => {
       </aside>
     </div>
 
+    <el-dialog v-model="submitGuardOpen" title="还有必填项未完成" width="440px" align-center>
+      <p class="guard-copy">
+        当前还有 {{ incompleteRequiredModules.length }} 个必填模块未完成（{{
+          incompleteRequiredModules.map((m) => m.title).join('、')
+        }}），请补全后再提交。
+      </p>
+      <p v-if="!consentReady" class="guard-note">若仍要提交，请先在「隐私授权」中完成勾选。</p>
+      <template #footer>
+        <el-button @click="goGuardModule(incompleteRequiredModules[0]?.code || 'CONSENT')">去补全</el-button>
+        <el-button v-if="!consentReady" type="primary" @click="goGuardModule('CONSENT')">去勾选隐私授权</el-button>
+        <el-button v-else type="primary" @click="forceSubmitDespiteGaps">仍要提交</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="riskGuardOpen" title="还有会改方案的题没填" width="460px" align-center>
+      <p class="guard-copy">
+        还有 <strong>{{ riskUnasked.length }} 题</strong>没填（{{ riskNameHead }}等）。不填也能出方案，只是会按已经问到的信息来写。
+      </p>
+      <el-checkbox v-model="riskAck" class="guard-check">已知晓，仍要提交</el-checkbox>
+      <template #footer>
+        <el-button @click="backToRisk">返回填写</el-button>
+        <el-button type="primary" :disabled="!riskAck" @click="confirmRiskSubmit">仍要提交</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="summaryOpen" title="提交前确认" width="640px" align-center destroy-on-close>
       <div class="sum">
-        <section>
-          <h4>必收缺项</h4>
-          <div v-if="localCompleteness.requiredMissing?.length" class="sum-risk-list">
+        <p v-if="!(localCompleteness.requiredMissing?.length)" class="sum-ok-line">✅ 必收项已填齐</p>
+        <section v-else class="sum-miss">
+          <h4>必收缺项（{{ localCompleteness.requiredMissing.length }}）</h4>
+          <div class="sum-risk-list">
             <button
               v-for="(f, idx) in localCompleteness.requiredMissing"
               :key="f"
@@ -1254,52 +2241,43 @@ onBeforeUnmount(() => {
               <span class="risk-label">{{ labelOf(f) }}</span>
             </button>
           </div>
-          <p v-else class="ok">已齐全</p>
         </section>
 
-        <section>
-          <h4>高风险未问</h4>
-          <div v-if="riskUnasked.length" class="sum-risk-list">
+        <section v-if="riskUnasked.length" class="sum-warn-box">
+          <button type="button" class="sum-warn-head" @click="riskListOpen = !riskListOpen">
+            <span>还会影响方案（共 {{ riskUnasked.length }} 题）</span>
+            <span>{{ riskListOpen ? '收起' : '展开查看' }}</span>
+          </button>
+          <div v-if="riskListOpen" class="sum-scroll">
+            <div v-for="g in riskGroups" :key="g.title" class="sum-group">
+              <h5>{{ g.title }}（{{ g.items.length }}项）</h5>
+              <div class="sum-risk-list">
+                <button
+                  v-for="it in g.items"
+                  :key="it.field"
+                  type="button"
+                  class="sum-risk-item"
+                  @click="jumpToField(it.field)"
+                >
+                  <span class="risk-label">{{ it.label }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="sum-ai">
+          <div class="sum-ai-head">
+            <span class="sum-ai-tag">✨ AI 智能生成</span>
             <button
-              v-for="(it, idx) in riskUnasked"
-              :key="it.field"
+              v-if="riskUnasked.length"
               type="button"
-              class="sum-risk-item"
-              @click="jumpToField(it.field)"
+              class="link"
+              @click="fillFirstRiskFromSummary"
             >
-              <span class="risk-idx">{{ idx + 1 }}</span>
-              <span class="risk-label">{{ it.label }}</span>
+              一键去补录
             </button>
           </div>
-          <p v-else class="ok">无</p>
-          <el-checkbox v-if="riskUnasked.length" v-model="riskAck">已知晓未问高风险题，仍要提交</el-checkbox>
-        </section>
-
-        <section>
-          <h4>变更对照</h4>
-          <ul v-if="changeRows.length" class="changes">
-            <li v-for="row in changeRows" :key="row.field">
-              <b>{{ row.label }}</b>
-              <span class="muted">（{{ row.source }}）</span>
-              ：{{ displayAnswer(row.field, row.from) }} → {{ displayAnswer(row.field, row.to) }}
-            </li>
-          </ul>
-          <p v-else class="ok">无相对预填的修改</p>
-        </section>
-
-        <section>
-          <h4>高亮汇总</h4>
-          <ul v-if="highlightHits.length">
-            <li v-for="(h, i) in highlightHits" :key="`s-${h.field}-${i}`">
-              {{ labelOf(h.field, h.label) }} · {{ severityLabel(h.severity) }}
-              <span v-if="h.planEffect"> — {{ h.planEffect }}</span>
-            </li>
-          </ul>
-          <p v-else class="ok">无</p>
-        </section>
-
-        <section>
-          <h4>AI 总结{{ isSupplement ? '' : '（必填）' }}</h4>
           <IntakeAiSummaryBlocks
             v-if="hasAiSummary"
             class="ai-preview-blocks"
@@ -1314,17 +2292,51 @@ onBeforeUnmount(() => {
             <button type="button" class="link" @click="jumpToAiSummary">去 AI 总结模块</button>
           </template>
         </section>
+
+        <section v-if="changeRows.length" class="sum-aux">
+          <h4>变更对照</h4>
+          <ul class="changes">
+            <li v-for="row in changeRows" :key="row.field">
+              <b>{{ row.label }}</b>
+              <span class="muted">（{{ row.source }}）</span>
+              ：{{ displayAnswer(row.field, row.from) }} → {{ displayAnswer(row.field, row.to) }}
+            </li>
+          </ul>
+        </section>
+
+        <section v-if="highlightHits.length" class="sum-aux">
+          <h4>高亮汇总</h4>
+          <ul>
+            <li v-for="(h, i) in highlightHits" :key="`s-${h.field}-${i}`">
+              {{ labelOf(h.field, h.label) }} · {{ severityLabel(h.severity) }}
+              <span v-if="h.planEffect"> — {{ h.planEffect }}</span>
+            </li>
+          </ul>
+        </section>
       </div>
       <template #footer>
-        <el-button @click="summaryOpen = false">返回修改</el-button>
-        <el-button
-          type="primary"
-          :loading="submitting"
-          :disabled="!canSubmit || (riskUnasked.length > 0 && !riskAck)"
-          @click="doSubmit()"
-        >
-          {{ isSupplement ? '提交待补' : '提交并完成首诊' }}
-        </el-button>
+        <div class="sum-foot">
+          <el-checkbox v-if="riskUnasked.length" v-model="riskAck">
+            这几题还没问，仍要提交
+          </el-checkbox>
+          <div class="sum-foot-actions">
+            <el-button @click="summaryOpen = false">返回修改</el-button>
+            <el-button
+              type="primary"
+              :loading="submitting"
+              :disabled="!canSubmit || (riskUnasked.length > 0 && !riskAck)"
+              @click="doSubmit()"
+            >
+              {{
+                isSupplement
+                  ? '提交待补'
+                  : riskUnasked.length
+                    ? '仍要提交'
+                    : '提交并完成首诊'
+              }}
+            </el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
   </div>
@@ -1341,6 +2353,15 @@ onBeforeUnmount(() => {
 
 .intake--embedded {
   background: transparent;
+  height: 100%;
+}
+
+.intake--embedded .body {
+  grid-template-columns: 168px minmax(0, 1fr);
+}
+
+.intake--embedded .side {
+  display: none;
 }
 
 .top {
@@ -1397,8 +2418,208 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   flex: 1;
-  flex-wrap: wrap;
+  min-width: 120px;
+}
+
+.archive-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  flex: 1;
+}
+
+.archive-meter-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-600);
+  white-space: nowrap;
+}
+
+.archive-meter-track {
+  position: relative;
+  flex: 1;
+  max-width: 160px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.archive-meter-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #ef4444;
+}
+
+.archive-meter.done .archive-meter-track i {
+  background: #10b981;
+}
+
+.mode-mini {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--ink-100, #f1f5f9);
+  border: 1px solid var(--ink-200);
+}
+
+.mode-mini button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-500);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.mode-mini button.on {
+  background: #fff;
+  color: var(--ink-800);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.paste-hint {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+}
+
+.paste-hint p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #115e59;
+}
+
+.paste-go,
+.paste-dismiss {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.paste-go {
+  border: 0;
+  background: #0f766e;
+  color: #fff;
+}
+
+.paste-dismiss {
+  border: 1px solid #99f6e4;
+  background: #fff;
+  color: #115e59;
+}
+
+.gap-line {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.gap-line.soft {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.gap-line.soft .gap-line-text,
+.gap-line.soft .gap-go {
+  color: #475569;
+  border-color: #e2e8f0;
+}
+
+.gap-line-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #8a5a00;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gap-line-text strong {
+  font-weight: 700;
+}
+
+.gap-go {
+  flex-shrink: 0;
+  border: 1px solid #f5d78e;
+  background: #fff;
+  color: #8a5a00;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.guard-copy {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-800);
+}
+
+.guard-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #b45309;
+}
+
+.guard-check {
+  margin-top: 12px;
+  align-items: flex-start;
+  white-space: normal;
+}
+
+.ai-source {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.ai-source.llm {
+  color: #6d28d9;
+  background: #ede9fe;
+}
+
+.track-hint.inline {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 0;
 }
 
 .track-switch {
@@ -1647,13 +2868,32 @@ onBeforeUnmount(() => {
 }
 
 .save {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--ink-400);
   white-space: nowrap;
 }
 
 .save.ok {
   color: #059669;
+}
+
+.save-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #059669;
+  color: #fff;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .save.err {
@@ -1675,12 +2915,33 @@ onBeforeUnmount(() => {
 }
 
 .nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-400);
   padding: 4px 10px 10px;
+}
+
+.nav-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-400);
+  white-space: nowrap;
+}
+
+.nav-legend .nav-mark.suggest {
+  margin-left: 6px;
 }
 
 .nav-item {
@@ -1703,10 +2964,74 @@ onBeforeUnmount(() => {
   background: var(--ink-50);
 }
 
-.nav-item.on {
-  background: var(--brand-50);
-  color: var(--brand-700);
+.nav-item.on,
+.nav-item.on:hover {
+  background: #e8f1fe;
+  color: #1e40af;
+  font-weight: 500;
+  box-shadow: none;
+  outline: none;
+}
+
+.nav-item.next {
+  background: #fff7ed;
+  color: #9a3412;
   font-weight: 600;
+}
+
+.nav-mark {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.nav-mark.ok {
+  color: #059669;
+  font-weight: 700;
+}
+
+.nav-mark.miss,
+.nav-mark.suggest {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+.nav-mark.suggest {
+  background: #f59e0b;
+}
+
+.nav-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.self-report-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.med-nudge {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.metric-warn {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #dc2626;
 }
 
 .nav-idx {
@@ -1737,6 +3062,8 @@ onBeforeUnmount(() => {
 }
 
 .nav-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1896,6 +3223,12 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
+.mod-privacy {
+  margin: -6px 0 12px;
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
 .q {
   background: #fff;
   border: 1px solid var(--ink-200);
@@ -1916,14 +3249,111 @@ onBeforeUnmount(() => {
   border-color: #fde68a;
 }
 
+.form.is-review {
+  padding-bottom: 0;
+}
+
+.extract-group {
+  margin-bottom: 18px;
+  scroll-margin-top: 8px;
+}
+
+.extract-group-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-700, #344054);
+}
+
+.q.extract-row {
+  background: #fff;
+  border-left: 3px solid #e8b931;
+}
+
+.extract-review-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin: 0 -24px;
+  padding: 12px 24px 10px;
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid var(--ink-200);
+}
+
+.extract-discard {
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.extract-discard:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.extract-discard:disabled {
+  color: #d0d5dd;
+  cursor: not-allowed;
+}
+
+.extract-conflict {
+  margin: 0 0 8px;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.extract-review-foot-main {
+  display: flex;
+  gap: 10px;
+}
+
+.extract-quote {
+  margin: 0 0 8px;
+  color: var(--ink-500, #667085);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tag-mod {
+  color: var(--ink-500, #667085);
+  font-style: normal;
+  font-size: 12px;
+}
+
+.text-btn {
+  border: 0;
+  background: transparent;
+  color: #0f766e;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .q.hit {
-  border-color: #f59e0b;
-  box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 35%, transparent);
+  background: #f8fafc;
+  border-color: var(--ink-200);
+  box-shadow: none;
 }
 
 .q.req.hit {
-  border-color: #ef4444;
-  box-shadow: 0 0 0 1px color-mix(in srgb, #ef4444 30%, transparent);
+  background: #f8fafc;
+  border-color: var(--ink-200);
+  box-shadow: none;
+}
+
+.q.risk-gap,
+.q.risk-gap.focus {
+  border-color: #fde68a;
+  background: #fff;
+  box-shadow: inset 3px 0 0 #f59e0b;
 }
 
 .q.focus {
@@ -1932,6 +3362,29 @@ onBeforeUnmount(() => {
     0 0 0 2px color-mix(in srgb, #0d9488 45%, transparent),
     0 0 0 6px color-mix(in srgb, #0d9488 16%, transparent);
   animation: q-focus-pulse 1.2s ease-out 1;
+}
+
+.q.risk-flash,
+.q.focus.risk-flash {
+  border-color: #ef4444;
+  background: #fef2f2;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, #ef4444 45%, transparent),
+    0 0 0 6px color-mix(in srgb, #ef4444 16%, transparent);
+  animation: q-risk-pulse 0.9s ease-out 2;
+}
+
+@keyframes q-risk-pulse {
+  0% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, #ef4444 55%, transparent),
+      0 0 0 10px color-mix(in srgb, #ef4444 22%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, #ef4444 35%, transparent),
+      0 0 0 6px color-mix(in srgb, #ef4444 12%, transparent);
+  }
 }
 
 @keyframes q-focus-pulse {
@@ -1995,6 +3448,29 @@ onBeforeUnmount(() => {
   line-height: 1.4;
 }
 
+.q-hint {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-500);
+}
+
+.skip-q {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.skip-q:hover {
+  color: #92400e;
+}
+
 .star {
   color: #ef4444;
   font-style: normal;
@@ -2020,6 +3496,31 @@ onBeforeUnmount(() => {
 .tag-soft {
   color: #b45309;
   background: #fffbeb;
+}
+
+.tag-later {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.tag-risk {
+  color: #b45309;
+  background: #fffbeb;
+  font-weight: 650;
+}
+
+.risk-gap-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #92400e;
+}
+
+.adhere-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #b45309;
 }
 
 .prefill-note {
@@ -2279,6 +3780,12 @@ onBeforeUnmount(() => {
   background: #fffbeb;
 }
 
+.risk-panel-tip {
+  margin: -2px 0 8px;
+  font-size: 12px;
+  color: #92400e;
+}
+
 .risk-list,
 .sum-risk-list {
   margin: 0;
@@ -2311,6 +3818,11 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
+.risk-item.is-here {
+  border-color: #fecaca;
+  background: #fff;
+}
+
 .risk-idx {
   flex: 0 0 auto;
   min-width: 18px;
@@ -2331,6 +3843,14 @@ onBeforeUnmount(() => {
   color: var(--brand-700, #0f766e);
 }
 
+.risk-mod {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-400);
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .sum-risk-item {
   background: var(--ink-50, #f8fafc);
 }
@@ -2346,8 +3866,126 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
+.sum {
+  max-height: min(58vh, 520px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
 .sum section {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.sum-ok-line {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #059669;
+}
+
+.sum-miss h4,
+.sum-warn-box {
+  margin-bottom: 12px;
+}
+
+.sum-warn-box {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.sum-warn-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sum-warn-head span:last-child {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b45309;
+}
+
+.sum-scroll {
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 8px;
+}
+
+.sum-group + .sum-group {
+  margin-top: 8px;
+}
+
+.sum-group h5 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.sum-ai {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+}
+
+.sum-ai-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sum-ai-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sum-aux {
+  margin-bottom: 10px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.sum-aux h4,
+.sum-aux ul,
+.sum-aux li {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sum-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.sum-foot-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .sum h4 {

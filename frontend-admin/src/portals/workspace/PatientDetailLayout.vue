@@ -1337,6 +1337,12 @@ onBeforeUnmount(() => {
       :current-care-team-id="patient?.careTeamId"
       @closed="careTeamDialogOpen = false"
       @changed="onCareTeamChanged"
+      @create="
+        () => {
+          careTeamDialogOpen = false
+          void router.push('/workspace/care-teams?create=1')
+        }
+      "
     />
   </div>
 </template>

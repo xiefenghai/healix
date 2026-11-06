@@ -90,7 +90,7 @@ export const C_LABEL_OVERRIDES: Record<string, string> = {
   'goal.appealText': '用一句话说说你的期望（选填）',
   'goal.mode': '这次你最看重哪一类目标？',
   'goal.doctorAdvised': '是医生建议你来做这次管理的吗？',
-  'goal.constraints': '目前最大的阻力或限制是什么？（选填）',
+  'goal.constraints': '执行健康计划时，最大的阻力是什么？（可多选）',
   'basic.exercise.availableSlots': '一般什么时候方便运动？（可多选）',
   'allergy.foodTags': '对哪些食物过敏或不耐受？（可多选）',
   'allergy.drugTags': '对哪些药物过敏？（可多选）',
@@ -125,6 +125,7 @@ export const C_QUICK_FIELDS = new Set<string>([
   'measure.method',
   'basic.presentIllness',
   'basic.medicationFlags',
+  'medication.mealRelation',
   'basic.medical.mainDiscomfort',
   'basic.medical.exerciseRestriction',
   'basic.medical.jointIssues',
@@ -152,12 +153,16 @@ export const C_QUICK_FIELDS = new Set<string>([
   'basic.diet.snackNight',
   'basic.diet.sugaryDrinks',
   'basic.diet.taste',
+  'basic.diet.dinnerTime',
   'basic.diet.cook',
   'basic.exercise.frequency',
   'basic.exercise.types',
+  'basic.schedule.offWork',
+  'basic.schedule.offWorkNote',
   'basic.exercise.availableSlots',
   'basic.lifestyle.activityLevel',
   'basic.sleep.hours',
+  'basic.sleep.refreshed',
   'basic.sleep.quality',
   'basic.psych.stressLevel',
   'basic.psych.stressEating',
@@ -235,12 +240,30 @@ function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
+function ageYears(raw: unknown): number | null {
+  if (raw == null || raw === '') return null
+  const s = String(raw).trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null
+  const b = new Date(`${s}T00:00:00`)
+  if (Number.isNaN(b.getTime())) return null
+  const now = new Date()
+  let age = now.getFullYear() - b.getFullYear()
+  const md = now.getMonth() - b.getMonth()
+  if (md < 0 || (md === 0 && now.getDate() < b.getDate())) age -= 1
+  return age >= 0 && age < 150 ? age : null
+}
+
 export function matchShowIf(showIf: unknown, get: (field: string) => unknown): boolean {
   if (showIf == null || typeof showIf !== 'object') return true
   const s = showIf as Record<string, unknown>
   if (Array.isArray(s.all)) return s.all.every((c) => matchShowIf(c, get))
   if (Array.isArray(s.any)) return s.any.some((c) => matchShowIf(c, get))
   const field = typeof s.field === 'string' ? s.field : ''
+  if (typeof s.ageGte === 'number') {
+    const age = ageYears(get('profile.birthday'))
+    if (age != null && age < s.ageGte) return false
+    if (!field) return true
+  }
   if (!field) return true
   const cur = get(field)
   if (s.eq !== undefined) {

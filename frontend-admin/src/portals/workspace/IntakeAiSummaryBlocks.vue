@@ -20,40 +20,75 @@ const props = withDefaults(
 
 const view = computed(() => props.parsed ?? parseIntakeAiSummaryText(props.text))
 const show = computed(() => hasParsedIntakeAiSummary(view.value))
+
+function anomalyParts(text: string) {
+  const re =
+    /（[^）]{0,48}(?:异常|疑似录入错误|需核对)[^）]{0,24}）|\([^)]{0,48}(?:异常|疑似录入错误|需核对)[^)]{0,24}\)/g
+  const parts: { t: string; hot: boolean }[] = []
+  let last = 0
+  for (const m of text.matchAll(re)) {
+    const i = m.index ?? 0
+    if (i > last) parts.push({ t: text.slice(last, i), hot: false })
+    parts.push({ t: m[0], hot: true })
+    last = i + m[0].length
+  }
+  if (last < text.length) parts.push({ t: text.slice(last), hot: false })
+  return parts.length ? parts : [{ t: text, hot: false }]
+}
 </script>
 
 <template>
   <div v-if="show" class="ai-blocks" :class="{ compact }">
     <section v-if="view.overview" class="ai-sec overview">
       <h3 class="ai-sec-title">概况</h3>
-      <p class="ai-sec-body">{{ view.overview }}</p>
+      <p class="ai-sec-body">
+        <template v-for="(p, i) in anomalyParts(view.overview)" :key="`ov-${i}`">
+          <span :class="{ anomaly: p.hot }">{{ p.t }}</span>
+        </template>
+      </p>
     </section>
 
     <section v-for="sec in view.otherSections" :key="sec.title" class="ai-sec">
       <h3 class="ai-sec-title">{{ sec.title }}</h3>
       <ul v-if="sec.items.length" class="ai-sec-list">
-        <li v-for="(it, i) in sec.items" :key="`${sec.title}-${i}`">{{ it }}</li>
+        <li v-for="(it, i) in sec.items" :key="`${sec.title}-${i}`">
+          <template v-for="(p, j) in anomalyParts(it)" :key="`${sec.title}-${i}-${j}`">
+            <span :class="{ anomaly: p.hot }">{{ p.t }}</span>
+          </template>
+        </li>
       </ul>
     </section>
 
     <section v-if="view.keyPoints.length" class="ai-sec points">
       <h3 class="ai-sec-title">要点</h3>
       <ol class="ai-sec-list numbered">
-        <li v-for="(it, i) in view.keyPoints" :key="`kp-${i}`">{{ it }}</li>
+        <li v-for="(it, i) in view.keyPoints" :key="`kp-${i}`">
+          <template v-for="(p, j) in anomalyParts(it)" :key="`kp-${i}-${j}`">
+            <span :class="{ anomaly: p.hot }">{{ p.t }}</span>
+          </template>
+        </li>
       </ol>
     </section>
 
     <section v-if="view.risks.length" class="ai-sec risks">
       <h3 class="ai-sec-title">风险与禁忌</h3>
       <ul class="ai-sec-list">
-        <li v-for="(it, i) in view.risks" :key="`risk-${i}`">{{ it }}</li>
+        <li v-for="(it, i) in view.risks" :key="`risk-${i}`">
+          <template v-for="(p, j) in anomalyParts(it)" :key="`risk-${i}-${j}`">
+            <span :class="{ anomaly: p.hot }">{{ p.t }}</span>
+          </template>
+        </li>
       </ul>
     </section>
 
     <section v-if="view.nextActions.length" class="ai-sec next">
       <h3 class="ai-sec-title">建议下一步</h3>
       <ol class="ai-sec-list numbered">
-        <li v-for="(it, i) in view.nextActions" :key="`act-${i}`">{{ it }}</li>
+        <li v-for="(it, i) in view.nextActions" :key="`act-${i}`">
+          <template v-for="(p, j) in anomalyParts(it)" :key="`act-${i}-${j}`">
+            <span :class="{ anomaly: p.hot }">{{ p.t }}</span>
+          </template>
+        </li>
       </ol>
     </section>
   </div>
@@ -72,6 +107,25 @@ const show = computed(() => hasParsedIntakeAiSummary(view.value))
 
 .ai-sec {
   margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+}
+
+.ai-sec.risks {
+  background: #fff7ed;
+  border-color: #ffedd5;
+}
+
+.ai-sec.next {
+  background: #f0fdf4;
+  border-color: #dcfce7;
+}
+
+.anomaly {
+  color: #b91c1c;
+  font-weight: 600;
 }
 
 .ai-sec-title {

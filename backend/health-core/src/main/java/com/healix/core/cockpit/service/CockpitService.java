@@ -166,6 +166,9 @@ public class CockpitService {
         dto.setMineCount(mine);
         // 待入组 Tab 已下线；字段保留兼容旧前端，恒为 0
         dto.setIntakeCount(0);
+        List<OrgPatientListItem> unassigned =
+                orgWorkspaceService.listOrgPatients(orgId, null, null, true);
+        dto.setUnassignedPatientCount(unassigned == null ? 0 : unassigned.size());
         dto.setOrgPatientCount(membershipMapper.countActiveByOrg(orgId));
         List<CareTeam> myPrimaryTeams = careTeamMapper.listByPrimaryCareManager(orgId, staffId);
         dto.setPrimaryCareTeamCount(myPrimaryTeams == null ? 0 : myPrimaryTeams.size());
@@ -215,15 +218,54 @@ public class CockpitService {
 
     /**
      * 「我的患者」按主责健管组分组；无患者的组也返回（搜索关键字时仅保留有命中的组）。
+     * 顶部固定前置「未分组患者」虚拟组（机构内尚未入组的档案），避免建档后「凭空消失」。
      */
     public List<CockpitMineTeamGroupDto> myPatientGroups(String orgId, String keyword) {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
         String staffId = requireStaffId();
         List<CareTeam> teams = careTeamMapper.listByPrimaryCareManager(orgId, staffId);
-        if (teams.isEmpty()) {
-            return List.of();
+        if (teams == null) {
+            teams = List.of();
         }
         boolean filtering = StringUtils.hasText(keyword);
+
+        List<CockpitMineTeamGroupDto> out = new ArrayList<>();
+
+        // 未入组档案：始终置于列表顶部（有命中才展示；搜索无命中则跳过）
+        List<OrgPatientListItem> unassignedRows =
+                orgWorkspaceService.listOrgPatients(orgId, keyword, null, true);
+        List<CockpitPriorityCardDto> unassignedCards =
+                buildPatientRosterCards(
+                        orgId,
+                        staffId,
+                        unassignedRows == null ? List.of() : unassignedRows,
+                        "mine",
+                        "待分配健管组",
+                        "TEAM_ASSIGN");
+        if (!unassignedCards.isEmpty()) {
+            for (CockpitPriorityCardDto card : unassignedCards) {
+                if (card == null) {
+                    continue;
+                }
+                card.setCareTeamId(null);
+                card.setCareTeamName(null);
+                if (!StringUtils.hasText(card.getTopReason())
+                        || "主责患者".equals(card.getTopReason())
+                        || "今日关注".equals(card.getTopReason())) {
+                    card.setTopReason("待分配健管组");
+                }
+            }
+            CockpitMineTeamGroupDto ua = new CockpitMineTeamGroupDto();
+            ua.setCareTeamId(CockpitMineTeamGroupDto.UNASSIGNED_GROUP_ID);
+            ua.setCareTeamName("未分组患者");
+            ua.setPatients(new ArrayList<>(unassignedCards));
+            out.add(ua);
+        }
+
+        if (teams.isEmpty()) {
+            return out;
+        }
+
         Map<String, OrgPatientListItem> byPeople = new java.util.LinkedHashMap<>();
         for (CareTeam team : teams) {
             List<OrgPatientListItem> rows =
@@ -250,7 +292,6 @@ public class CockpitService {
                     .computeIfAbsent(card.getCareTeamId(), k -> new ArrayList<>())
                     .add(card);
         }
-        List<CockpitMineTeamGroupDto> out = new ArrayList<>();
         for (CareTeam team : teams) {
             if (team == null || !StringUtils.hasText(team.getId())) {
                 continue;
@@ -397,6 +438,13 @@ public class CockpitService {
             if (isOverdue(task)) {
                 addBadge(card, "OVERDUE");
                 card.setOverdueTaskCount(card.getOverdueTaskCount() + 1);
+                if (WorkspaceTaskLabels.isOnboardingFollowUp(type, task.getPayloadJson())
+                        && task.getDueAt() != null) {
+                    LocalDateTime due = task.getDueAt();
+                    if (card.getEarliestOverdueDueAt() == null || due.isBefore(card.getEarliestOverdueDueAt())) {
+                        card.setEarliestOverdueDueAt(due);
+                    }
+                }
             }
             if ("PATIENT_REQUEST".equals(task.getSource())) {
                 addBadge(card, "PATIENT_REQUEST");

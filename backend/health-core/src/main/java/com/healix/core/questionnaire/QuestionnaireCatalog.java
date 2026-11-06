@@ -1,6 +1,7 @@
 package com.healix.core.questionnaire;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.field.FieldCatalog;
 import com.healix.core.field.FieldDef;
@@ -109,6 +110,48 @@ public class QuestionnaireCatalog {
             out.addAll(m.items());
         }
         return out;
+    }
+
+    /**
+     * 字段在当前答案下是否可见。
+     * 只出现在未命中 showIf 的模块 / 题目里时为 false；问卷外的键保持 true，避免误删非题目字段。
+     */
+    public boolean fieldVisible(
+            QuestionnaireDef q, String field, java.util.function.Function<String, JsonNode> lookup) {
+        boolean seen = false;
+        boolean visible = false;
+        for (QuestionnaireDef.ModuleRef ref : q.modules()) {
+            boolean moduleHidden = ref.showIf() != null && !ref.showIf().matches(lookup);
+            ModuleDef m = requireModule(ref.code(), ref.version());
+            for (ModuleItem item : m.items()) {
+                if (!field.equals(item.field())) {
+                    continue;
+                }
+                seen = true;
+                if (moduleHidden) {
+                    continue;
+                }
+                if (item.showIf() == null || item.showIf().matches(lookup)) {
+                    visible = true;
+                }
+            }
+        }
+        return !seen || visible;
+    }
+
+    /** 去掉当前 showIf 未命中的题目答案。草稿不调用，只在提交 / 给 AI 的事实里清洗。 */
+    public void dropHiddenAnswers(QuestionnaireDef q, ObjectNode answers) {
+        if (answers == null) {
+            return;
+        }
+        java.util.function.Function<String, JsonNode> lookup = answers::get;
+        List<String> drop = new ArrayList<>();
+        answers.fieldNames().forEachRemaining(code -> {
+            if (!fieldVisible(q, code, lookup)) {
+                drop.add(code);
+            }
+        });
+        drop.forEach(answers::remove);
     }
 
     private void validate(FieldCatalog fields) {

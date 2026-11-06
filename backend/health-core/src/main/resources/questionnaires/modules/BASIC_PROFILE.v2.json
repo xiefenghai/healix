@@ -44,19 +44,8 @@
     {
       "field": "profile.maritalStatus",
       "label": "婚姻状况",
-      "level": "LATER"
-    },
-    {
-      "field": "profile.workSchedule",
-      "label": "平时作息是哪种？",
-      "level": "FIRST_VISIT",
-      "highlights": [
-        {
-          "when": { "in": ["SHIFT", "NIGHT"] },
-          "severity": "CAUTION",
-          "planEffect": "餐次、用药提醒与运动时段按班次安排"
-        }
-      ]
+      "level": "LATER",
+      "showIf": { "ageGte": 18 }
     }
   ]
 }

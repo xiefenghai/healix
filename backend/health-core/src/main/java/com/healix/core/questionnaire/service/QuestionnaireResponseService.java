@@ -292,6 +292,7 @@ public class QuestionnaireResponseService {
         ObjectNode answers = asObject(row.getAnswersJson());
         ensureCareTracksFromAppeal(answers);
         ensurePatientConsentMethod(answers);
+        catalog.dropHiddenAnswers(q, answers);
         row.setAnswersJson(JsonUtils.toJson(answers));
         Function<String, JsonNode> lookup = answersLookup(answers);
         List<String> missing = depthMissingFields(q, lookup, d);
@@ -618,12 +619,19 @@ public class QuestionnaireResponseService {
 
     @Transactional
     public QuestionnaireResponseView submit(String id, String staffId, Map<String, JsonNode> conflictResolutions) {
+        return submit(id, staffId, conflictResolutions, false);
+    }
+
+    @Transactional
+    public QuestionnaireResponseView submit(
+            String id, String staffId, Map<String, JsonNode> conflictResolutions, boolean forceIncomplete) {
         QuestionnaireResponse row = require(id);
         if (!STATUS_DRAFT.equals(row.getStatus())) {
             throw new BusinessException("作答已提交");
         }
         QuestionnaireDef q = catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
         ObjectNode answers = asObject(row.getAnswersJson());
+        catalog.dropHiddenAnswers(q, answers);
         Function<String, JsonNode> lookup = answersLookup(answers);
         Set<String> filter = supplementFieldFilter(row);
         ObjectNode complete = completeness(q, answers, lookup, filter);
@@ -633,7 +641,12 @@ public class QuestionnaireResponseService {
             complete.set("supplementFields", supplementFields);
         }
         if (complete.path("requiredMissing").isArray() && complete.get("requiredMissing").size() > 0) {
-            throw new BusinessException(400, "必收项未填全");
+            if (!consentGranted(answers)) {
+                throw new BusinessException(400, "请先完成隐私授权");
+            }
+            if (!forceIncomplete) {
+                throw new BusinessException(400, "必收项未填全");
+            }
         }
         // 正式首诊须有案头总结正文（可 AI 生成或手填）；待补问卷不强制
         if (PURPOSE_INTAKE.equals(row.getPurpose())) {
@@ -765,18 +778,7 @@ public class QuestionnaireResponseService {
 
     private boolean isVisible(QuestionnaireResponse row, String field, Function<String, JsonNode> lookup) {
         QuestionnaireDef q = catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
-        for (QuestionnaireDef.ModuleRef ref : q.modules()) {
-            if (ref.showIf() != null && !ref.showIf().matches(lookup)) {
-                continue;
-            }
-            ModuleDef m = catalog.requireModule(ref.code(), ref.version());
-            for (ModuleItem item : m.items()) {
-                if (item.field().equals(field)) {
-                    return item.showIf() == null || item.showIf().matches(lookup);
-                }
-            }
-        }
-        return true;
+        return catalog.fieldVisible(q, field, lookup);
     }
 
     private void writeProfile(String peopleId, Map<String, JsonNode> values) {
@@ -1978,6 +1980,15 @@ public class QuestionnaireResponseService {
      * 过敏选 HAS 后食物/药物两类都会展示：一类已有明细（LIST 或 Tag）时，另一类空视为「该类无」，
      * 避免档案里只有食物过敏时药物过敏一直挂「1 项待补」。
      */
+    /** 强行提交的唯一豁免：隐私授权两项都已勾选。其它必收项仍默认拦截。 */
+    private boolean consentGranted(ObjectNode answers) {
+        if (answers == null) {
+            return false;
+        }
+        return !ArchiveFields.isEmpty(answers.get("consent.sensitiveHealth"))
+                && !ArchiveFields.isEmpty(answers.get("consent.method"));
+    }
+
     private boolean isIntakeFieldFilled(String field, Function<String, JsonNode> lookup) {
         if (!ArchiveFields.isEmpty(lookup.apply(field))) {
             return true;
@@ -2363,6 +2374,9 @@ public class QuestionnaireResponseService {
         }
         if (s.intersects() != null) {
             m.put("intersects", s.intersects());
+        }
+        if (s.ageGte() != null) {
+            m.put("ageGte", s.ageGte());
         }
         return m;
     }

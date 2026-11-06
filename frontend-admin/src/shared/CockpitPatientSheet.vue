@@ -36,6 +36,8 @@ const props = defineProps<{
   /** 首诊问卷：关联随访 / 待补 */
   intakeFollowupRecordId?: string | null
   intakePurpose?: string | null
+  /** 打开后优先落到的模块编码，如 BODY_MEASURE */
+  intakeStartModule?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -46,7 +48,13 @@ const emit = defineEmits<{
   /** 随访抽屉内要求打开首诊问卷 */
   'open-intake': [opts: IntakeSheetOpts]
   /** 首诊问卷提交成功 */
-  'intake-submitted': []
+  'intake-submitted': [brief?: {
+    name?: string
+    pct?: number
+    appeal?: string
+    allergy?: string
+    supplement?: boolean
+  }]
 }>()
 
 const visible = computed({
@@ -128,7 +136,8 @@ const title = computed(() => {
         :people-id="peopleId"
         :followup-record-id="intakeFollowupRecordId"
         :purpose="intakePurpose"
-        @submitted="emit('intake-submitted')"
+        :start-module="intakeStartModule"
+        @submitted="(brief) => emit('intake-submitted', brief)"
         @close="visible = false"
       />
     </div>

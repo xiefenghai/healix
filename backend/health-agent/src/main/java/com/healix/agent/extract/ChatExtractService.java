@@ -90,6 +90,34 @@ public class ChatExtractService {
         return card;
     }
 
+    /** 问卷打开时：按题目清单让模型抽取，确认后由前端写入问卷草稿。 */
+    public ChatExtractCard extractIntake(String peopleId, String text, List<IntakeExtractField> fields) {
+        String body = text == null ? "" : text.trim();
+        if (body.length() > MAX_CHARS) {
+            throw new BusinessException("请拆短后再贴");
+        }
+        List<IntakeExtractField> schema = sanitizeIntakeFields(fields);
+        if (schema.isEmpty()) {
+            throw new BusinessException("问卷题目还没准备好");
+        }
+        LlmResponse response = llmClient.chat("chat-extract-intake", intakePrompt(schema), body, List.of());
+        if (response == null || !response.fromLlm() || !StringUtils.hasText(response.content())) {
+            throw new BusinessException("这次没整理成功");
+        }
+        ChatExtractCard card = ChatExtractIntakeNormalizer.normalize(body, readJson(response.content()), schema);
+        card.setPeopleId(peopleId);
+        card.setIntake(true);
+        card.setBanner("这些内容将写入正在填写的问卷，请对照原句确认");
+        card.setConfirmHint("确认后写入当前问卷草稿");
+        log.info(
+                "chat extract intake peopleId={} chars={} fields={} rows={}",
+                peopleId,
+                body.length(),
+                schema.size(),
+                card.getItems().size());
+        return card;
+    }
+
     @Transactional
     public String confirmSaved(
             String tenantId,
@@ -150,11 +178,39 @@ public class ChatExtractService {
         return card.getStatus();
     }
 
+    /** 整张卡都丢弃、且没有任何一行写入时，可以重新打开核对。 */
+    @Transactional
+    public String reopenDiscarded(String tenantId, String orgId, String staffId, String peopleId, String messageId) {
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        ChatExtractCard card = conversationService.loadExtract(messageId, staffId);
+        if (!peopleId.equals(card.getPeopleId())) {
+            throw new BusinessException("核对卡与当前患者不一致");
+        }
+        if (!"DISCARDED".equals(card.getStatus())) {
+            throw new BusinessException("这张核对卡还没丢弃");
+        }
+        List<ChatExtractRow> items = card.getItems() == null ? List.of() : card.getItems();
+        boolean written = card.getWrittenCount() > 0
+                || items.stream().anyMatch(item -> "WRITTEN".equals(item.getOutcome()));
+        if (written) {
+            throw new BusinessException("已经写入的内容不能撤销");
+        }
+        for (ChatExtractRow item : items) {
+            if ("DISCARDED".equals(item.getOutcome())) {
+                item.setOutcome(null);
+            }
+        }
+        card.setStatus("OPEN");
+        conversationService.saveChatExtract(messageId, card);
+        return card.getStatus();
+    }
+
     private static void assertNoArchiveLeftBehind(ChatExtractCard card, Set<String> writeIds, Set<String> dropIds) {
         Set<String> writing = new LinkedHashSet<>();
         Set<String> staying = new LinkedHashSet<>();
         for (ChatExtractRow item : card.getItems()) {
-            if (!"ARCHIVE".equals(item.getTarget()) || StringUtils.hasText(item.getOutcome())) {
+            if ((!"ARCHIVE".equals(item.getTarget()) && !"INTAKE".equals(item.getTarget()))
+                    || StringUtils.hasText(item.getOutcome())) {
                 continue;
             }
             if (writeIds.contains(item.getId())) {
@@ -209,7 +265,7 @@ public class ChatExtractService {
             if (problem != null) {
                 throw new BusinessException(problem);
             }
-            if ("ARCHIVE".equals(row.getTarget())) {
+            if ("ARCHIVE".equals(row.getTarget()) || "INTAKE".equals(row.getTarget())) {
                 archiveCounts.merge(row.getCode(), 1, Integer::sum);
             }
             accepted.add(row);
@@ -349,6 +405,9 @@ public class ChatExtractService {
             }
             return null;
         }
+        if ("INTAKE".equals(row.getTarget())) {
+            return validateIntake(row);
+        }
         ChatExtractCatalog.ArchiveField field = ChatExtractCatalog.ARCHIVE.get(row.getCode());
         if (field == null) {
             return "这个档案字段不能写入";
@@ -400,6 +459,14 @@ public class ChatExtractService {
             if ("WEIGHT".equals(row.getCode()) && "斤".equals(str(raw.get("sourceUnit"))) && row.getValue() != null) {
                 row.setUnit("kg");
             }
+        } else if ("INTAKE".equals(origin.getTarget())) {
+            row.setArchiveValue(str(raw.get("archiveValue")));
+            row.setIntakeType(origin.getIntakeType());
+            row.setMulti(origin.isMulti());
+            row.setIntakeMin(origin.getIntakeMin());
+            row.setIntakeMax(origin.getIntakeMax());
+            row.setUnit(origin.getUnit());
+            row.setOptions(origin.getOptions() == null ? List.of() : new ArrayList<>(origin.getOptions()));
         } else {
             row.setArchiveValue(str(raw.get("archiveValue")));
         }
@@ -536,6 +603,168 @@ public class ChatExtractService {
 
     private static String emptyToNull(String value) {
         return StringUtils.hasText(value) ? value : null;
+    }
+
+    private static String validateIntake(ChatExtractRow row) {
+        if (!StringUtils.hasText(row.getArchiveValue())) {
+            return "请填写" + row.getLabel();
+        }
+        String type = row.getIntakeType() == null ? "" : row.getIntakeType();
+        return switch (type) {
+            case "ENUM" -> optionOk(row, row.getArchiveValue()) ? null : "请选择已有选项";
+            case "MULTI" -> multiOk(row) ? null : "请选择已有选项";
+            case "NUMBER", "YEAR" -> numberOk(row) ? null : row.getLabel() + "超出合理范围";
+            case "TEXT" -> row.getArchiveValue().length() > 200 ? row.getLabel() + "过长" : null;
+            case "DATE" -> row.getArchiveValue().matches("\\d{4}-\\d{2}-\\d{2}") ? null : "请填写日期";
+            case "TIME" -> row.getArchiveValue().matches("\\d{2}:\\d{2}") ? null : "请填写时间";
+            default -> "这个题目不能写入";
+        };
+    }
+
+    private static boolean optionOk(ChatExtractRow row, String value) {
+        if (row.getOptions() == null) {
+            return false;
+        }
+        return row.getOptions().stream().anyMatch(option -> option != null && value.equals(option.getValue()));
+    }
+
+    private static boolean multiOk(ChatExtractRow row) {
+        JsonNode node;
+        try {
+            node = JsonUtils.readTree(row.getArchiveValue());
+        } catch (RuntimeException ex) {
+            return false;
+        }
+        if (node == null || !node.isArray() || node.isEmpty()) {
+            return false;
+        }
+        for (JsonNode item : node) {
+            if (!item.isTextual() || !optionOk(row, item.asText())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean numberOk(ChatExtractRow row) {
+        double number;
+        try {
+            number = Double.parseDouble(row.getArchiveValue());
+        } catch (NumberFormatException ex) {
+            return false;
+        }
+        if (row.getIntakeMin() != null && number < row.getIntakeMin()) {
+            return false;
+        }
+        return row.getIntakeMax() == null || number <= row.getIntakeMax();
+    }
+
+    private static List<IntakeExtractField> sanitizeIntakeFields(List<IntakeExtractField> fields) {
+        List<IntakeExtractField> out = new ArrayList<>();
+        if (fields == null) {
+            return out;
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (IntakeExtractField field : fields) {
+            if (out.size() >= 180 || field == null || !StringUtils.hasText(field.code())) {
+                continue;
+            }
+            String code = field.code().trim();
+            if (!code.matches("[A-Za-z0-9._]+") || !seen.add(code)) {
+                continue;
+            }
+            String type = field.type() == null ? "" : field.type().trim().toUpperCase();
+            if (!Set.of("ENUM", "MULTI", "NUMBER", "TEXT", "DATE", "TIME", "YEAR").contains(type)) {
+                continue;
+            }
+            List<ChatExtractOption> options = new ArrayList<>();
+            if (field.options() != null) {
+                for (ChatExtractOption option : field.options()) {
+                    if (options.size() >= 40 || option == null || !StringUtils.hasText(option.getValue())) {
+                        continue;
+                    }
+                    String label = option.getLabel() == null ? option.getValue() : option.getLabel().trim();
+                    options.add(new ChatExtractOption(option.getValue().trim(), clipLabel(label)));
+                }
+            }
+            if (("ENUM".equals(type) || "MULTI".equals(type)) && options.isEmpty()) {
+                continue;
+            }
+            out.add(new IntakeExtractField(
+                    code,
+                    clipLabel(field.label()),
+                    type,
+                    field.unit() == null ? null : clipLabel(field.unit()),
+                    field.min(),
+                    field.max(),
+                    options));
+        }
+        return out;
+    }
+
+    private static String intakePrompt(List<IntakeExtractField> fields) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("""
+                你是健康问卷整理员。只输出一个 JSON 对象，不要散文，不要 markdown。
+                JSON 形如 {"items":[{"field":"题目code","value":"选项code或数字或文字","quote":"原文片段"}],"ignored":[]}。
+                field 必须是下面清单里的 code。原文没提到的题不要输出。不要推测，不要补默认值。
+                ENUM 的 value 用选项 code。MULTI 的 value 用选项 code 数组。NUMBER 和 YEAR 用数字。
+                DATE 用 YYYY-MM-DD，TIME 用 HH:mm。TEXT 只摘原文里的短句。
+                quote 必须是用户原文中的连续片段，不要改写。一次最多 12 题。
+                同一题如果原文里有两个不同的说法，items 只保留先出现的那一个，另一个放进 ignored，reason 写明另一个值。
+                可填写的题目：
+                """);
+        for (IntakeExtractField field : fields) {
+            prompt.append("- ")
+                    .append(field.code())
+                    .append(" | ")
+                    .append(field.label() == null ? "" : field.label().replace('|', '／'))
+                    .append(" | ")
+                    .append(field.type());
+            if (field.min() != null || field.max() != null) {
+                prompt.append(" | ").append(field.min() == null ? "" : field.min()).append("-").append(field.max() == null ? "" : field.max());
+            }
+            if (StringUtils.hasText(field.unit())) {
+                prompt.append(" | ").append(field.unit());
+            }
+            if (field.options() != null) {
+                for (ChatExtractOption option : field.options()) {
+                    prompt.append(" | ").append(option.getValue()).append("=").append(option.getLabel());
+                }
+            }
+            prompt.append('\n');
+        }
+        return prompt.toString();
+    }
+
+    private static String clipLabel(String label) {
+        if (!StringUtils.hasText(label)) {
+            return "";
+        }
+        String text = label.trim().replace('\n', ' ');
+        return text.length() > 80 ? text.substring(0, 80) : text;
+    }
+
+    private static JsonNode readJson(String content) {
+        String json = content.trim();
+        int fence = json.indexOf("```");
+        if (fence >= 0) {
+            int start = json.indexOf('\n', fence);
+            int end = json.lastIndexOf("```");
+            if (start >= 0 && end > start) {
+                json = json.substring(start, end).trim();
+            }
+        }
+        int left = json.indexOf('{');
+        int right = json.lastIndexOf('}');
+        if (left < 0 || right <= left) {
+            throw new BusinessException("这次没整理成功");
+        }
+        try {
+            return JsonUtils.readTree(json.substring(left, right + 1));
+        } catch (RuntimeException ex) {
+            throw new BusinessException("这次没整理成功");
+        }
     }
 
     /** 避免确认路径直接抛出生硬的范围异常文案。 */

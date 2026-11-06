@@ -380,12 +380,13 @@ public class CreateArchiveSkill implements AgentSkill {
 
     private AgentResponse needInfo(AgentSkillContext ctx, CreateArchiveDraft draft, String prompt) {
         List<AgentAction> actions = new ArrayList<>();
+        // 前端会自动拉开建档抽屉；按钮保留给「抽屉已关」时再打开，文案不再挂进度清单抢视线
         actions.add(AgentAction.openCreateArchive("打开建档表单", draftFormPayload(draft)));
         return new AgentResponse(
                 ctx.sessionId(),
                 AgentCapability.CREATE_ARCHIVE.name(),
                 "CREATE_ARCHIVE_NEED_INFO",
-                prompt + "\n\n" + progressChecklist(draft),
+                prompt,
                 actions,
                 List.of(),
                 null);
@@ -445,8 +446,8 @@ public class CreateArchiveSkill implements AgentSkill {
         boolean noneYet =
                 !draft.hasName() && !draft.hasGender() && !draft.hasBirthday() && !draft.hasMobile();
         if (noneYet) {
-            return "好的，开始建档。可点下方「打开建档表单」填写；"
-                    + "也可直接发姓名、性别、出生日期、手机号（大白话或按「姓名：…」格式粘贴都行）。";
+            // 前端会自动打开右侧表单：话术只引导填表，避免再教「粘贴格式」抢焦点
+            return "好的，建档表单已为您打开。请直接在右侧填写，完成后点击右下角「确认创建」即可。";
         }
         List<String> miss = new ArrayList<>();
         if (!draft.hasName()) {
@@ -456,29 +457,12 @@ public class CreateArchiveSkill implements AgentSkill {
             miss.add("性别");
         }
         if (!draft.hasBirthday()) {
-            miss.add("出生日期（写到几月几日即可，如 1990年5月1日）");
+            miss.add("出生日期");
         }
         if (!draft.hasMobile()) {
             miss.add("本人手机号");
         }
-        return "还差：" + String.join("、", miss)
-                + "。可点「打开建档表单」补全，或在对话里直接发这几项。";
-    }
-
-    /** 进度清单：已填写明文，未填写「待补充」，避免 ✗/x 被当成输入模板。 */
-    private static String progressChecklist(CreateArchiveDraft draft) {
-        StringBuilder sb = new StringBuilder("建档进度：\n");
-        sb.append(draft.hasName() ? "· 姓名：" + draft.name().trim() + "\n" : "· 姓名：待补充\n");
-        sb.append(
-                draft.hasGender()
-                        ? "· 性别：" + genderPlain(draft.gender()) + "\n"
-                        : "· 性别：待补充\n");
-        sb.append(
-                draft.hasBirthday()
-                        ? "· 出生：" + draft.birthday() + "\n"
-                        : "· 出生：待补充\n");
-        sb.append(draft.hasMobile() ? "· 手机：" + draft.mobile() : "· 手机：待补充");
-        return sb.toString();
+        return "还差：" + String.join("、", miss) + "。请在右侧表单补全后点「确认创建」。";
     }
 
     private static String genderPlain(String gender) {

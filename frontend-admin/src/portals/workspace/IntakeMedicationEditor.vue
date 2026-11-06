@@ -48,6 +48,23 @@ const SLOT_OPTIONS = [
   { value: 'BEDTIME', label: '睡前' },
 ] as const
 
+const QUICK_FREQ = [
+  { code: 'QD', label: '每天1次' },
+  { code: 'BID', label: '每天2次' },
+  { code: 'TID', label: '每天3次' },
+  { code: 'PRN', label: '按需' },
+] as const
+
+const SLOTS_BY_FREQ: Record<string, string[]> = {
+  QD: ['MORNING'],
+  BID: ['MORNING', 'EVENING'],
+  TID: ['MORNING', 'NOON', 'EVENING'],
+  QID: ['MORNING', 'NOON', 'EVENING', 'BEDTIME'],
+  QN: ['BEDTIME'],
+  QOD: ['MORNING'],
+  PRN: [],
+}
+
 const props = defineProps<{
   modelValue: unknown
   disabled?: boolean
@@ -63,12 +80,16 @@ const frequencyOptions = ref<DictItem[]>([])
 const legacyHint = ref('')
 /** 当前展开编辑的行下标；null = 全部折叠成一行摘要 */
 const expandedIdx = ref<number | null>(null)
+/** 展开行是否打开「详细用法」 */
+const showAdvanced = ref(false)
+/** 展开行是否走自定义频率下拉 */
+const customFreq = ref(false)
 
 function emptyItem(): IntakeMedItem {
   return {
     drugName: '',
     usageMethod: 'ORAL',
-    frequency: 'QD',
+    frequency: '',
     doseAmount: '',
     doseUnit: 'MG',
     timingNote: '',
@@ -89,14 +110,12 @@ function dictLabel(options: DictItem[], code?: string | null) {
 
 function frequencyLabel(code?: string | null) {
   if (!code) return ''
+  const quick = QUICK_FREQ.find((q) => q.code === code)
+  if (quick) return quick.label
   const known: Record<string, string> = {
-    QD: '每日1次',
-    BID: '每日2次',
-    TID: '每日3次',
-    QID: '每日4次',
+    QID: '每天4次',
     QN: '每晚1次',
     QOD: '隔日1次',
-    PRN: '必要时',
     OTHER: '其他',
   }
   if (known[code]) return known[code]
@@ -108,26 +127,41 @@ function doseLabel(row: IntakeMedItem) {
   if (!row.doseAmount && !row.doseUnit) return ''
   const unit = dictLabel(doseUnitOptions.value, row.doseUnit) || row.doseUnit || ''
   const amount = row.doseAmount?.trim() ?? ''
-  const tight = ['g', 'mg', 'ml', 'G', 'MG', 'ML'].includes(unit)
-  return tight ? `${amount}${unit}` : `${amount}${amount && unit ? ' ' : ''}${unit}`.trim()
+  if (!amount) return unit
+  return `${amount} ${unit}`.trim()
 }
 
-function rowSummary(row: IntakeMedItem) {
-  const parts: string[] = []
-  const name = row.drugName.trim()
-  if (name) parts.push(name)
-  else parts.push('未命名药品')
-  const dose = doseLabel(row)
-  if (dose) parts.push(dose)
-  const usage = dictLabel(usageOptions.value, row.usageMethod)
-  if (usage) parts.push(usage)
+function slotPhrase(slots?: string[]) {
+  const order = ['MORNING', 'NOON', 'EVENING', 'BEDTIME']
+  const label: Record<string, string> = { MORNING: '早', NOON: '午', EVENING: '晚', BEDTIME: '睡前' }
+  return order.filter((s) => slots?.includes(s)).map((s) => label[s]).join('')
+}
+
+function rowBrief(row: IntakeMedItem) {
+  const bits: string[] = []
   const freq = frequencyLabel(row.frequency)
-  if (freq) parts.push(freq)
-  if (row.courseMode === 'days' && row.courseDays) parts.push(`×${row.courseDays}天`)
-  else if (row.courseMode !== 'days') parts.push('长期')
-  let line = parts.join(' · ')
-  if (row.timingNote?.trim()) line += `（${row.timingNote.trim()}）`
-  return line
+  if (freq) bits.push(freq)
+  const dose = doseLabel(row)
+  if (dose) bits.push(dose)
+  let line = bits.join('，')
+  const when = `${slotPhrase(row.slots)}${row.timingNote?.trim() || ''}`
+  if (when) line += `（${when}）`
+  if (row.courseMode === 'days' && row.courseDays) line += ` · ${row.courseDays}天`
+  return line || '待补充用法'
+}
+
+function rowHasAdvanced(row: IntakeMedItem) {
+  return !!(
+    row.timingNote?.trim() ||
+    row.startDate ||
+    row.courseMode === 'days' ||
+    row.hasAdverseReaction ||
+    row.remark?.trim()
+  )
+}
+
+function isQuickFreq(code?: string) {
+  return QUICK_FREQ.some((q) => q.code === code)
 }
 
 function normalizeItem(raw: unknown): IntakeMedItem | null {
@@ -151,7 +185,7 @@ function normalizeItem(raw: unknown): IntakeMedItem | null {
     drugName: String(o.drugName ?? o.name ?? ''),
     drugCode: o.drugCode ? String(o.drugCode) : '',
     usageMethod: String(o.usageMethod || 'ORAL'),
-    frequency: o.frequency ? String(o.frequency) : 'QD',
+    frequency: o.frequency ? String(o.frequency) : '',
     doseAmount: o.doseAmount != null ? String(o.doseAmount) : '',
     doseUnit: o.doseUnit ? String(o.doseUnit) : 'MG',
     timingNote: o.timingNote ? String(o.timingNote) : '',
@@ -255,7 +289,7 @@ function emitList() {
 function addItem() {
   if (props.disabled) return
   items.push(emptyItem())
-  expandedIdx.value = items.length - 1
+  openRow(items.length - 1)
   emitList()
 }
 
@@ -272,23 +306,77 @@ function removeItem(idx: number) {
   emitList()
 }
 
-function toggleExpand(idx: number) {
-  expandedIdx.value = expandedIdx.value === idx ? null : idx
+function openRow(idx: number) {
+  expandedIdx.value = idx
+  const row = items[idx]
+  showAdvanced.value = row ? rowHasAdvanced(row) : false
+  customFreq.value = !!row?.frequency && !isQuickFreq(row.frequency)
 }
+
+function applyFrequency(row: IntakeMedItem, code: string) {
+  if (props.disabled) return
+  row.frequency = code
+  if (code in SLOTS_BY_FREQ) row.slots = [...SLOTS_BY_FREQ[code]]
+  customFreq.value = !isQuickFreq(code)
+  emitList()
+}
+
+function pickQuick(row: IntakeMedItem, code: string) {
+  customFreq.value = false
+  applyFrequency(row, code)
+}
+
+function pickCustom(row: IntakeMedItem) {
+  customFreq.value = true
+  if (!row.frequency || isQuickFreq(row.frequency)) {
+    row.frequency = ''
+    row.slots = []
+    emitList()
+  }
+}
+
+function pickUsage(row: IntakeMedItem, code: string) {
+  if (props.disabled) return
+  row.usageMethod = code
+  emitList()
+}
+
+function rowReady(row?: IntakeMedItem) {
+  if (!row) return false
+  return !!row.drugName.trim() && !!row.frequency && !!row.doseAmount?.trim()
+}
+
+const usageChips = computed(() =>
+  usageOptions.value.length
+    ? usageOptions.value
+    : [
+        { dictCode: 'ORAL', dictCodeDesc: '口服' },
+        { dictCode: 'INJECTION', dictCodeDesc: '注射' },
+        { dictCode: 'INHALATION', dictCodeDesc: '吸入' },
+      ],
+)
 
 function collapseRow() {
   expandedIdx.value = null
 }
 
-/** 确定：校验药名后折叠成摘要行 */
+/** 药名、频率、剂量都手填后才允许保存，并收成一行摘要 */
 function confirmRow(idx: number) {
   const row = items[idx]
   if (!row?.drugName.trim()) {
     ElMessage.warning('请先填写药品名称')
     return
   }
-  emitList()
+  if (!row.frequency) {
+    ElMessage.warning('请选择用药频率')
+    return
+  }
+  if (!row.doseAmount?.trim()) {
+    ElMessage.warning('请填写单次剂量')
+    return
+  }
   expandedIdx.value = null
+  emitList()
 }
 
 function onFieldChange() {
@@ -323,11 +411,8 @@ function applyDrugCatalog(row: IntakeMedItem, raw: DrugCatalogItem | Record<stri
   if (!name) return
   row.drugCode = item.code || ''
   row.drugName = name
-  if (item.defaultDoseAmount) row.doseAmount = item.defaultDoseAmount
   if (item.defaultDoseUnit) row.doseUnit = item.defaultDoseUnit
   if (item.defaultUsageMethod) row.usageMethod = item.defaultUsageMethod
-  if (item.defaultFrequency) row.frequency = item.defaultFrequency
-  // 选中后保持展开，等用户点「确定」再折叠
   emitList()
 }
 
@@ -372,148 +457,187 @@ onMounted(() => {
       class="med-card"
       :class="{ collapsed: expandedIdx !== idx }"
     >
-      <!-- 折叠：一行摘要 -->
-      <button
-        v-if="expandedIdx !== idx"
-        type="button"
-        class="med-summary"
-        @click="toggleExpand(idx)"
-      >
-        <span class="med-summary-idx">{{ idx + 1 }}</span>
-        <span class="med-summary-text" :class="{ placeholder: !row.drugName.trim() }">
-          {{ rowSummary(row) }}
+      <div v-if="expandedIdx !== idx" class="med-line">
+        <span class="med-pill" aria-hidden="true">💊</span>
+        <span class="med-line-name" :class="{ placeholder: !row.drugName.trim() }">
+          {{ row.drugName.trim() || '未命名药品' }}
         </span>
-        <span class="med-summary-hint">展开</span>
-        <el-button
-          link
-          type="danger"
-          size="small"
+        <span class="med-line-meta">{{ rowBrief(row) }}</span>
+        <button type="button" class="med-edit" :disabled="disabled" @click="openRow(idx)">编辑</button>
+        <button
+          type="button"
+          class="med-trash"
           :disabled="disabled"
-          @click.stop="removeItem(idx)"
+          aria-label="删除"
+          title="删除"
+          @click="removeItem(idx)"
         >
-          删除
-        </el-button>
-      </button>
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"
+            />
+          </svg>
+        </button>
+      </div>
 
-      <!-- 展开：完整表单 -->
       <template v-else>
         <div class="med-head">
           <strong>药品 {{ idx + 1 }}</strong>
-          <div class="med-head-actions">
-            <el-button
-              link
-              type="danger"
-              size="small"
+          <button
+            type="button"
+            class="med-trash"
+            :disabled="disabled"
+            aria-label="删除"
+            title="删除"
+            @click="removeItem(idx)"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div class="quick">
+          <label class="quick-label">药品名称</label>
+          <el-autocomplete
+            v-model="row.drugName"
+            :fetch-suggestions="searchDrugCatalog"
+            :trigger-on-focus="false"
+            :disabled="disabled"
+            clearable
+            maxlength="128"
+            placeholder="输入药品名称 / 搜药库"
+            style="width: 100%"
+            value-key="displayName"
+            @select="(item: DrugCatalogItem) => applyDrugCatalog(row, item)"
+            @change="onFieldChange"
+          >
+            <template #default="{ item }">
+              <div class="drug-option" @mousedown.prevent>
+                <div class="drug-option-main">
+                  <span class="drug-option-name">{{ item.displayName }}</span>
+                  <span
+                    v-if="item.genericName && item.genericName !== item.displayName"
+                    class="drug-option-generic"
+                  >
+                    {{ item.genericName }}
+                  </span>
+                </div>
+                <span v-if="item.spec" class="drug-option-spec">{{ item.spec }}</span>
+              </div>
+            </template>
+          </el-autocomplete>
+
+          <label class="quick-label">快速频率</label>
+          <div class="chip-row">
+            <button
+              v-for="q in QUICK_FREQ"
+              :key="q.code"
+              type="button"
+              class="chip"
+              :class="{ on: !customFreq && row.frequency === q.code }"
               :disabled="disabled"
-              @click="removeItem(idx)"
+              @click="pickQuick(row, q.code)"
             >
-              删除
-            </el-button>
+              {{ q.label }}
+            </button>
+            <button
+              type="button"
+              class="chip"
+              :class="{ on: customFreq }"
+              :disabled="disabled"
+              @click="pickCustom(row)"
+            >
+              自定义
+            </button>
+          </div>
+          <el-select
+            v-if="customFreq"
+            :model-value="row.frequency"
+            :disabled="disabled"
+            placeholder="选择频率"
+            style="width: 100%"
+            @update:model-value="(v: string) => applyFrequency(row, v)"
+          >
+            <el-option
+              v-for="o in frequencyOptions"
+              :key="o.dictCode"
+              :label="o.dictCodeDesc"
+              :value="o.dictCode"
+            />
+          </el-select>
+
+          <label class="quick-label">单次剂量</label>
+          <div class="dose-row">
+            <el-input
+              v-model="row.doseAmount"
+              class="dose-input"
+              :disabled="disabled"
+              placeholder="1"
+              @change="onFieldChange"
+            />
+            <el-select
+              v-model="row.doseUnit"
+              :disabled="disabled"
+              placeholder="片/粒"
+              style="width: 108px"
+              @change="onFieldChange"
+            >
+              <el-option
+                v-for="o in doseUnitOptions"
+                :key="o.dictCode"
+                :label="o.dictCodeDesc"
+                :value="o.dictCode"
+              />
+            </el-select>
+          </div>
+
+          <label class="quick-label">用法</label>
+          <div class="chip-row">
+            <button
+              v-for="o in usageChips"
+              :key="o.dictCode"
+              type="button"
+              class="chip"
+              :class="{ on: row.usageMethod === o.dictCode }"
+              :disabled="disabled"
+              @click="pickUsage(row, o.dictCode)"
+            >
+              {{ o.dictCodeDesc }}
+            </button>
           </div>
         </div>
 
-        <el-form label-width="88px" class="med-form" @submit.prevent>
-          <el-form-item label="药品名称" required>
-            <el-autocomplete
-              v-model="row.drugName"
-              :fetch-suggestions="searchDrugCatalog"
-              :trigger-on-focus="false"
-              :disabled="disabled"
-              clearable
-              maxlength="128"
-              placeholder="搜索药品库，或手动输入"
-              style="width: 100%"
-              value-key="displayName"
-              @select="(item: DrugCatalogItem) => applyDrugCatalog(row, item)"
-              @change="onFieldChange"
-            >
-              <template #default="{ item }">
-                <!-- mousedown.prevent：避免失焦先关下拉导致点了却选不上 -->
-                <div class="drug-option" @mousedown.prevent>
-                  <div class="drug-option-main">
-                    <span class="drug-option-name">{{ item.displayName }}</span>
-                    <span
-                      v-if="item.genericName && item.genericName !== item.displayName"
-                      class="drug-option-generic"
-                    >
-                      {{ item.genericName }}
-                    </span>
-                  </div>
-                  <span v-if="item.spec" class="drug-option-spec">{{ item.spec }}</span>
-                </div>
-              </template>
-            </el-autocomplete>
-          </el-form-item>
+        <button
+          type="button"
+          class="adv-toggle"
+          :disabled="disabled"
+          @click="showAdvanced = !showAdvanced"
+        >
+          {{ showAdvanced ? '收起详细用法' : '+ 添加详细用法用量' }}
+        </button>
 
-          <el-form-item label="单次剂量">
-            <div class="dose-row">
-              <el-input
-                v-model="row.doseAmount"
-                :disabled="disabled"
-                placeholder="如：0.5 / 5"
-                @change="onFieldChange"
-              />
-              <el-select
-                v-model="row.doseUnit"
-                clearable
-                :disabled="disabled"
-                placeholder="单位"
-                style="width: 120px"
-                @change="onFieldChange"
-              >
-                <el-option
-                  v-for="o in doseUnitOptions"
-                  :key="o.dictCode"
-                  :label="o.dictCodeDesc"
-                  :value="o.dictCode"
-                />
-              </el-select>
-            </div>
-          </el-form-item>
-
-          <el-form-item label="用法" required>
-            <el-select
-              v-model="row.usageMethod"
-              :disabled="disabled"
-              placeholder="请选择"
-              style="width: 100%"
-              @change="onFieldChange"
-            >
-              <el-option
-                v-for="o in usageOptions"
-                :key="o.dictCode"
-                :label="o.dictCodeDesc"
-                :value="o.dictCode"
-              />
-            </el-select>
-          </el-form-item>
-
-          <el-form-item label="频率">
-            <el-select
-              v-model="row.frequency"
-              clearable
-              :disabled="disabled"
-              placeholder="如：qd / bid / tid"
-              style="width: 100%"
-              @change="onFieldChange"
-            >
-              <el-option
-                v-for="o in frequencyOptions"
-                :key="o.dictCode"
-                :label="o.dictCodeDesc"
-                :value="o.dictCode"
-              />
-            </el-select>
-          </el-form-item>
-
-          <el-form-item v-if="row.frequency !== 'PRN'" label="服药时段">
+        <el-form v-if="showAdvanced" label-width="88px" class="med-form" @submit.prevent>
+          <el-form-item v-if="row.frequency && row.frequency !== 'PRN'" label="服药时段">
             <div class="timing-block">
               <el-checkbox-group v-model="row.slots" :disabled="disabled" @change="onFieldChange">
                 <el-checkbox v-for="o in SLOT_OPTIONS" :key="o.value" :value="o.value">
                   {{ o.label }}
                 </el-checkbox>
               </el-checkbox-group>
-              <div class="slot-hint">可不选，提交后按频次自动安排</div>
+              <div class="slot-hint">改频率会重排时段，之后仍可手改</div>
             </div>
           </el-form-item>
 
@@ -523,7 +647,7 @@ onMounted(() => {
                 v-model="row.timingNote"
                 :disabled="disabled"
                 maxlength="64"
-                placeholder="如：晨起、饭后、痛时服"
+                placeholder="饭前 / 饭后"
                 @change="onFieldChange"
               />
               <div class="timing-presets">
@@ -558,7 +682,7 @@ onMounted(() => {
                 :disabled="disabled"
                 :min="1"
                 :max="3650"
-                controls-position="right"
+                :controls="false"
                 @change="onFieldChange"
               />
               <span v-if="row.courseMode === 'days'" class="course-unit">天</span>
@@ -608,24 +732,24 @@ onMounted(() => {
               maxlength="150"
               show-word-limit
               :disabled="disabled"
-              placeholder="如：24h≤4粒"
+              placeholder="特殊说明（选填）"
               @change="onFieldChange"
             />
           </el-form-item>
-
-          <div class="confirm-row">
-            <el-button type="primary" size="small" :disabled="disabled" @click="confirmRow(idx)">
-              确定
-            </el-button>
-            <el-button size="small" :disabled="disabled" @click="collapseRow">收起</el-button>
-          </div>
         </el-form>
+
+        <div class="confirm-row">
+          <el-button type="primary" size="small" :disabled="disabled || !rowReady(row)" @click="confirmRow(idx)">
+            保存
+          </el-button>
+          <el-button size="small" :disabled="disabled" @click="collapseRow">收起</el-button>
+        </div>
       </template>
     </div>
 
     <div v-if="items.length" class="foot">
       <el-button type="primary" plain size="small" :disabled="disabled" @click="addItem">
-        再加一种药
+        + 再加一种药
       </el-button>
       <span class="meta">已填 {{ filledCount }} 种</span>
     </div>
@@ -681,58 +805,123 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.med-summary {
+.med-line {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  margin: 0;
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  color: inherit;
+  gap: 8px;
+  padding: 8px 10px;
+  min-height: 40px;
 }
 
-.med-summary:hover {
-  background: #f8fafc;
-}
-
-.med-summary-idx {
+.med-pill {
   flex: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--ink-100, #f1f5f9);
-  color: var(--ink-600);
-  font-size: 12px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
 }
 
-.med-summary-text {
-  flex: 1;
-  min-width: 0;
+.med-line-name {
+  flex: none;
+  max-width: 42%;
   font-size: 13px;
+  font-weight: 600;
   color: var(--ink-800);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.med-summary-text.placeholder {
-  color: var(--ink-400);
+.med-line-name.placeholder {
   font-weight: 400;
+  color: var(--ink-400);
 }
 
-.med-summary-hint {
-  flex: none;
+.med-line-meta {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
-  color: var(--ink-400);
+  color: var(--ink-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.med-edit {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--brand-600, #2563eb);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.med-edit:disabled,
+.med-trash:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.med-trash {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #dc2626;
+  cursor: pointer;
+}
+
+.med-trash:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.quick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0 8px;
+}
+
+.quick-label {
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  border: 1px solid var(--ink-200);
+  background: #fff;
+  color: var(--ink-700);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip.on {
+  border-color: var(--brand-500, #2563eb);
+  background: var(--brand-50, #eff6ff);
+  color: var(--brand-700, #1d4ed8);
+  font-weight: 600;
+}
+
+.adv-toggle {
+  border: none;
+  background: transparent;
+  color: var(--brand-600, #2563eb);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 0 8px;
+  text-align: left;
 }
 
 .med-head {
@@ -769,6 +958,10 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   width: 100%;
+}
+
+.dose-input :deep(.el-input__inner::placeholder) {
+  color: #cbd5e1;
 }
 
 .timing-block {

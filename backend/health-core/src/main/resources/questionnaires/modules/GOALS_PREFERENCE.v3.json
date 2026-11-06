@@ -148,8 +148,35 @@
     },
     {
       "field": "goal.constraints",
-      "label": "目前最大的阻力或限制是什么？（经济、时间、家人等）",
-      "level": "FIRST_VISIT"
+      "label": "执行健康计划时，您觉得最大的阻力是什么？（可多选）",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": { "intersects": ["SOCIAL"] },
+          "severity": "CAUTION",
+          "planEffect": "应酬多：方案加入应酬少饮酒和低盐点餐"
+        },
+        {
+          "when": { "intersects": ["TAKEOUT"] },
+          "severity": "CAUTION",
+          "planEffect": "经常外卖：给能点到的替换，不按自己做饭来写"
+        },
+        {
+          "when": { "intersects": ["HUNGRY"] },
+          "severity": "CAUTION",
+          "planEffect": "容易饿：避免热量压得过低，正餐留足蛋白质和蔬菜"
+        },
+        {
+          "when": { "intersects": ["FAMILY"] },
+          "severity": "CAUTION",
+          "planEffect": "家人不太支持：方案给一句家属能配合的做法"
+        },
+        {
+          "when": { "intersects": ["NO_TIME"] },
+          "severity": "CAUTION",
+          "planEffect": "没时间运动：用碎片活动替代整段锻炼"
+        }
+      ]
     }
   ]
 }

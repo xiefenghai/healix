@@ -17,6 +17,8 @@ public class CockpitSummaryDto {
     private int mineCount;
     /** 左栏「待入组」人数（公海首诊 + 待分配健管组） */
     private int intakeCount;
+    /** 本机构尚未分配健管组的在管患者数（游离档）；驾驶舱「未分组」与简报感知用 */
+    private int unassignedPatientCount;
     /** 本机构在管患者数（ACTIVE membership），供空简报冷启动判断 */
     private int orgPatientCount;
     /** 当前员工作为主责健管师的健管组数量；0 时冷启动应先建组 */

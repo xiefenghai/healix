@@ -5,7 +5,7 @@ export interface ChatExtractOption {
 
 export interface ChatExtractRow {
   id: string
-  target: 'VITAL' | 'ARCHIVE' | string
+  target: 'VITAL' | 'ARCHIVE' | 'INTAKE' | string
   code: string
   label: string
   value?: number | null
@@ -29,6 +29,10 @@ export interface ChatExtractRow {
   statusText?: string
   options?: ChatExtractOption[]
   removed?: boolean
+  intakeType?: string | null
+  intakeMin?: number | null
+  intakeMax?: number | null
+  multi?: boolean
 }
 
 export interface ChatExtractIgnored {
@@ -45,6 +49,7 @@ export interface ChatExtractReview {
   confirmHint?: string
   labHint?: boolean
   overflow?: boolean
+  intake?: boolean
   restoreInput?: boolean
   items: ChatExtractRow[]
   ignored?: ChatExtractIgnored[]
@@ -94,11 +99,27 @@ export function refreshRow(row: ChatExtractRow, rows: ChatExtractRow[]) {
   if (row.removed) return
   const problem = problemOf(row, rows)
   row.status = problem ? problem.code : 'READY'
-  row.statusText = problem ? problem.text : '可入库'
+  row.statusText = problem ? problem.text : row.target === 'INTAKE' ? '可写入问卷' : '可入库'
 }
 
 export function refreshAll(rows: ChatExtractRow[]) {
   for (const row of rows) refreshRow(row, rows)
+}
+
+/** 长段落核对时，只点出已经对上选项、且问卷里标过风险的几项。 */
+export function intakeExtractNotices(rows: ChatExtractRow[]): string[] {
+  const alive = rows.filter((row) => row.target === 'INTAKE' && !row.removed && !row.outcome)
+  const valueOf = (code: string) => alive.find((row) => row.code === code)?.archiveValue
+  const notes: string[] = []
+  if (valueOf('basic.psych.stressLevel') === 'HIGH') notes.push('最近压力很大')
+  const refreshed = valueOf('basic.sleep.refreshed')
+  if (refreshed === 'NO') notes.push('早上起来极度疲劳')
+  else if (refreshed === 'PARTIAL') notes.push('早上起来仍觉得疲惫')
+  const hours = Number(valueOf('basic.sleep.hours'))
+  if (Number.isFinite(hours) && hours < 6) notes.push('睡眠不足 6 小时')
+  if (valueOf('basic.psych.readiness') === 'NOT_READY') notes.push('还没准备好改变生活习惯')
+  if (valueOf('basic.psych.willingToRecord') === 'NO') notes.push('不太愿意做记录')
+  return notes
 }
 
 export function canConfirm(review: ChatExtractReview) {
@@ -119,11 +140,23 @@ export function canConfirm(review: ChatExtractReview) {
 
 function problemOf(row: ChatExtractRow, rows: ChatExtractRow[]): { code: string; text: string } | null {
   if (row.outcome) return null
-  if (row.target === 'ARCHIVE') {
-    const same = rows.filter((item) => !item.removed && !item.outcome && item.target === 'ARCHIVE' && item.code === row.code)
+  if (row.target === 'ARCHIVE' || row.target === 'INTAKE') {
+    const same = rows.filter(
+      (item) => !item.removed && !item.outcome && item.target === row.target && item.code === row.code,
+    )
     if (same.length > 1) return { code: 'ARCHIVE_DUP', text: '同一字段有多行，请只留一行' }
-    if (!String(row.archiveValue ?? '').trim()) return { code: 'MISSING_SCENE', text: '请填写这一项' }
-    if (row.textField && String(row.archiveValue).trim().length > 40) {
+    const text = String(row.archiveValue ?? '').trim()
+    if (!text || text === '[]') return { code: 'MISSING_SCENE', text: '请填写这一项' }
+    if (row.target === 'INTAKE' && row.intakeType === 'TEXT' && text.length > 200) {
+      return { code: 'TOO_LONG', text: '不超过 200 字' }
+    }
+    if (row.target === 'INTAKE' && (row.intakeType === 'NUMBER' || row.intakeType === 'YEAR')) {
+      const n = Number(text)
+      if (!Number.isFinite(n)) return { code: 'OUT_OF_RANGE', text: '请填写数字' }
+      if (row.intakeMin != null && n < row.intakeMin) return { code: 'OUT_OF_RANGE', text: '超出合理范围' }
+      if (row.intakeMax != null && n > row.intakeMax) return { code: 'OUT_OF_RANGE', text: '超出合理范围' }
+    }
+    if (row.target === 'ARCHIVE' && row.textField && text.length > 40) {
       return { code: 'TOO_LONG', text: '不超过 40 字' }
     }
     return null

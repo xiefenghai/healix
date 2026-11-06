@@ -3,7 +3,7 @@
  * 首诊问卷字段输入：ENUM/MULTI 按钮组，NUMBER 带单位，TEXT/DATE/TIME 普通输入。
  * LIST/OBJECT 中用药、过敏、家族史走专用编辑器，其余仍用文本兜底。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   loadDictOptions,
   toggleExclusiveMulti,
@@ -32,7 +32,10 @@ const props = withDefaults(
     prefilled?: boolean
     /** 相对预填已改黄底 */
     dirty?: boolean
+    /** 数值超出合理范围时标红 */
+    anomaly?: boolean
     disabled?: boolean
+    placeholder?: string
   }>(),
   { min: undefined, max: undefined, exclusive: undefined },
 )
@@ -43,6 +46,40 @@ const emit = defineEmits<{
 
 const dictOptions = ref<DictOption[]>([])
 const loadingOpts = ref(false)
+const choiceRow = ref<HTMLElement | null>(null)
+const choiceCompact = ref(false)
+let choiceObserver: ResizeObserver | null = null
+let choiceFittedWidth = 0
+
+function choiceOrphan(el: HTMLElement) {
+  const kids = [...el.querySelectorAll(':scope > .opt-btn')] as HTMLElement[]
+  if (kids.length < 2) return false
+  const lastTop = kids[kids.length - 1].offsetTop
+  if (lastTop === kids[0].offsetTop) return false
+  return kids.filter((kid) => kid.offsetTop === lastTop).length === 1
+}
+
+async function fitChoices() {
+  const el = choiceRow.value
+  if (!el) return
+  const width = el.clientWidth
+  if (choiceCompact.value && width <= choiceFittedWidth + 24) return
+  if (!choiceCompact.value && choiceOrphan(el)) {
+    choiceCompact.value = true
+    choiceFittedWidth = width
+    return
+  }
+  if (choiceCompact.value && width > choiceFittedWidth + 24) {
+    choiceCompact.value = false
+    choiceFittedWidth = 0
+    await nextTick()
+    const again = choiceRow.value
+    if (again && choiceOrphan(again)) {
+      choiceCompact.value = true
+      choiceFittedWidth = again.clientWidth
+    }
+  }
+}
 
 function asFamilyEntries(v: unknown): FamilyHistoryEntry[] {
   if (v == null || v === '') return []
@@ -88,6 +125,15 @@ async function loadOpts() {
 
 onMounted(() => {
   void loadOpts()
+  if (typeof ResizeObserver !== 'undefined') {
+    choiceObserver = new ResizeObserver(() => {
+      void fitChoices()
+    })
+    if (choiceRow.value) choiceObserver.observe(choiceRow.value)
+  }
+})
+onBeforeUnmount(() => {
+  choiceObserver?.disconnect()
 })
 watch(
   () => [props.options, props.type] as const,
@@ -95,6 +141,13 @@ watch(
     void loadOpts()
   },
 )
+watch(choiceRow, (el, prev) => {
+  if (prev) choiceObserver?.unobserve(prev)
+  if (el) {
+    choiceObserver?.observe(el)
+    void nextTick(() => fitChoices())
+  }
+})
 
 const choiceOptions = computed(() => {
   if (dictOptions.value.length) return dictOptions.value
@@ -109,10 +162,22 @@ const choiceOptions = computed(() => {
   return []
 })
 
+watch(choiceOptions, () => {
+  choiceCompact.value = false
+  choiceFittedWidth = 0
+  void nextTick(() => fitChoices())
+})
+
 const toneClass = computed(() => ({
   'is-prefill': !!props.prefilled && !props.dirty,
   'is-dirty': !!props.dirty,
+  'is-anomaly': !!props.anomaly,
 }))
+
+const numberFilled = computed(() => {
+  const v = props.modelValue
+  return v != null && v !== '' && Number.isFinite(Number(v))
+})
 
 function setEnum(code: string) {
   if (props.disabled) return
@@ -178,12 +243,19 @@ const isBirthdayField = computed(() => {
   return f === 'birthday' || f === 'profile.birthday' || f.endsWith('.birthday')
 })
 
-/** 出生日期不可选今天之后 */
+const birthdayDisplay = computed(() => {
+  const raw = String(props.modelValue ?? '')
+  if (isBirthdayField.value && raw && raw < '1900-01-01') return ''
+  return raw
+})
+
+/** 出生日期：不早于 1900-01-01，也不晚于今天。 */
 function disabledBirthdayDate(d: Date) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  const min = new Date(1900, 0, 1)
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  return x.getTime() > today.getTime()
+  return x.getTime() > today.getTime() || x.getTime() < min.getTime()
 }
 
 function onDateChange(v: string | null) {
@@ -191,7 +263,7 @@ function onDateChange(v: string | null) {
     emit('update:modelValue', '')
     return
   }
-  if (isBirthdayField.value && disabledBirthdayDate(new Date(v))) {
+  if (isBirthdayField.value && (v < '1900-01-01' || disabledBirthdayDate(new Date(v)))) {
     emit('update:modelValue', '')
     return
   }
@@ -234,7 +306,7 @@ function onYearChange(v: string | null) {
 <template>
   <div class="field-input" :class="toneClass">
     <template v-if="type === 'ENUM'">
-      <div class="btn-group" :aria-busy="loadingOpts">
+      <div ref="choiceRow" class="btn-group" :class="{ 'is-compact': choiceCompact }" :aria-busy="loadingOpts">
         <button
           v-for="o in choiceOptions"
           :key="o.code"
@@ -242,6 +314,7 @@ function onYearChange(v: string | null) {
           class="opt-btn"
           :class="{ on: modelValue === o.code }"
           :disabled="disabled"
+          :title="modelValue === o.code ? '再次点击取消' : undefined"
           @click="setEnum(o.code)"
         >
           {{ o.label }}
@@ -251,7 +324,7 @@ function onYearChange(v: string | null) {
     </template>
 
     <template v-else-if="type === 'MULTI'">
-      <div class="btn-group" :aria-busy="loadingOpts">
+      <div ref="choiceRow" class="btn-group" :class="{ 'is-compact': choiceCompact }" :aria-busy="loadingOpts">
         <button
           v-for="o in choiceOptions"
           :key="o.code"
@@ -272,20 +345,30 @@ function onYearChange(v: string | null) {
         <el-input-number
           :model-value="modelValue === '' || modelValue == null ? undefined : Number(modelValue)"
           :disabled="disabled"
-          controls-position="right"
+          :controls="false"
           :min="numberMin"
           :max="numberMax"
           :precision="numberPrecision"
           :step="numberPrecision === 0 ? 1 : 0.1"
           @update:model-value="onNumber"
         />
+        <button
+          v-if="numberFilled && !disabled"
+          type="button"
+          class="num-clear"
+          aria-label="清空"
+          title="清空"
+          @click="emit('update:modelValue', '')"
+        >
+          ×
+        </button>
         <span v-if="unit" class="unit">{{ unit }}</span>
       </div>
     </template>
 
     <template v-else-if="type === 'DATE'">
       <el-date-picker
-        :model-value="(modelValue as string) || ''"
+        :model-value="birthdayDisplay"
         type="date"
         value-format="YYYY-MM-DD"
         placeholder="选择日期"
@@ -383,6 +466,7 @@ function onYearChange(v: string | null) {
       <el-input
         :model-value="modelValue == null ? '' : String(modelValue)"
         :disabled="disabled"
+        :placeholder="placeholder"
         clearable
         @update:model-value="onText"
       />
@@ -408,10 +492,19 @@ function onYearChange(v: string | null) {
 .btn-group {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  justify-content: flex-start;
+  width: 100%;
   gap: 8px;
 }
 
+.btn-group.is-compact {
+  gap: 6px;
+}
+
 .opt-btn {
+  margin: 0;
   border: 1px solid var(--ink-200);
   background: #fff;
   color: var(--ink-700);
@@ -420,6 +513,12 @@ function onYearChange(v: string | null) {
   font-size: 13px;
   cursor: pointer;
   line-height: 1.3;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.btn-group.is-compact .opt-btn {
+  padding: 6px 8px;
 }
 
 .opt-btn:hover:not(:disabled) {
@@ -443,6 +542,30 @@ function onYearChange(v: string | null) {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+}
+
+.num-row :deep(.el-input-number) {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.field-input.is-anomaly :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #dc2626 inset;
+}
+
+.num-clear {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.num-clear:hover {
+  color: #64748b;
 }
 
 .unit {

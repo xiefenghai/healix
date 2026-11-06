@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, nextTick, ref, watch } from 'vue'
+import { ElMessage, type FormInstance, type InputInstance } from 'element-plus'
 import { api, getStaffId } from '../../shared/http'
 import { StaffRole } from '../../shared/enums'
 
@@ -26,6 +26,8 @@ const visible = computed({
   set: (v: boolean) => emit('update:modelValue', v),
 })
 
+const formRef = ref<FormInstance>()
+const nameInputRef = ref<InputInstance>()
 const staffList = ref<OrgStaffItem[]>([])
 const loadingStaff = ref(false)
 const creating = ref(false)
@@ -35,12 +37,36 @@ const form = ref({
   primaryDoctorStaffId: null as string | null,
 })
 
+const rules = {
+  name: [
+    {
+      required: true,
+      whitespace: true,
+      message: '请输入健管组名称',
+      trigger: 'blur',
+    },
+  ],
+  primaryCareManagerStaffId: [
+    {
+      required: true,
+      message: '请选择主责健管师',
+      trigger: 'change',
+    },
+  ],
+}
+
 const careManagers = computed(() =>
   staffList.value.filter(
     (s) => s.roles?.includes(StaffRole.CARE_MANAGER) || s.roles?.includes(StaffRole.TENANT_ADMIN),
   ),
 )
 const doctors = computed(() => staffList.value.filter((s) => s.roles?.includes(StaffRole.DOCTOR)))
+
+/** 主责已预填为当前登录账号时展示说明 */
+const isPrimaryDefaultSelf = computed(() => {
+  const selfId = getStaffId()
+  return !!selfId && form.value.primaryCareManagerStaffId === selfId
+})
 
 function resetForm() {
   const selfId = getStaffId()
@@ -50,6 +76,7 @@ function resetForm() {
     primaryCareManagerStaffId: selfIsCm ? selfId : null,
     primaryDoctorStaffId: null,
   }
+  nextTick(() => formRef.value?.clearValidate())
 }
 
 async function loadStaff() {
@@ -74,13 +101,23 @@ watch(
   },
 )
 
+watch(
+  () => form.value.name,
+  () => {
+    if (form.value.name.trim()) formRef.value?.clearValidate('name')
+  },
+)
+
+async function focusNameInput() {
+  await nextTick()
+  nameInputRef.value?.focus()
+}
+
 async function submit() {
-  if (!form.value.name.trim()) {
-    ElMessage.warning('请填写健管组名称')
-    return
-  }
-  if (!form.value.primaryCareManagerStaffId) {
-    ElMessage.warning('请选择主责健管师')
+  try {
+    await formRef.value?.validate()
+  } catch {
+    if (!form.value.name.trim()) void focusNameInput()
     return
   }
   creating.value = true
@@ -111,21 +148,33 @@ async function submit() {
     size="420px"
     destroy-on-close
     append-to-body
+    class="create-care-team-drawer"
   >
-    <p class="hint">
-      「我的患者」与待办归属按主责健管组划分。建议选自己为主责，建组后再建档入组。
-    </p>
-    <el-form v-loading="loadingStaff" label-position="top" class="form">
-      <el-form-item label="健管组名称" required>
+    <p class="hint">为团队建立服务分组。建组后，您可以随时邀请医生和健管师加入。</p>
+    <el-form
+      ref="formRef"
+      :model="form"
+      :rules="rules"
+      v-loading="loadingStaff"
+      label-position="top"
+      class="form"
+      @submit.prevent
+    >
+      <el-form-item label="健管组名称" prop="name" required>
         <el-input
+          ref="nameInputRef"
           v-model="form.name"
           maxlength="40"
           show-word-limit
-          placeholder="例如：漠雪一组"
+          placeholder="例如：减重管理一组"
           @keyup.enter="submit"
         />
       </el-form-item>
-      <el-form-item label="主责健管师" required>
+      <el-form-item prop="primaryCareManagerStaffId" required>
+        <template #label>
+          <span>主责健管师</span>
+          <span v-if="isPrimaryDefaultSelf" class="label-hint">（默认：当前登录账号）</span>
+        </template>
         <el-select
           v-model="form.primaryCareManagerStaffId"
           filterable
@@ -159,8 +208,10 @@ async function submit() {
     </el-form>
     <template #footer>
       <div class="footer">
-        <el-button @click="visible = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="submit">创建并继续</el-button>
+        <el-button :disabled="creating" @click="visible = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="submit">
+          {{ creating ? '创建中...' : '确定创建' }}
+        </el-button>
       </div>
     </template>
   </el-drawer>
@@ -176,9 +227,32 @@ async function submit() {
 .form {
   padding-right: 4px;
 }
+.label-hint {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-400, #9ca3af);
+}
 .footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  width: 100%;
+}
+</style>
+
+<style>
+/* append-to-body 后需非 scoped，保证底栏固定可见 */
+.create-care-team-drawer.el-drawer .el-drawer__body {
+  padding-bottom: 8px;
+  overflow-y: auto;
+}
+.create-care-team-drawer.el-drawer .el-drawer__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  border-top: 1px solid var(--ink-100, #e5e7eb);
+  background: #fff;
+  padding: 12px 16px;
 }
 </style>

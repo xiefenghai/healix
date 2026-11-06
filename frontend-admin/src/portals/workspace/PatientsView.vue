@@ -4,10 +4,10 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
-import { MOBILE_OWNER_OPTIONS, formatMobileOwner } from '../../shared/mobile-owner'
 import { TABLE_COL } from '../../shared/table-columns'
 import { checkinStatus } from '../../shared/rewards'
 import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
+import CreateArchiveDrawer from './CreateArchiveDrawer.vue'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -39,14 +39,6 @@ interface CareTeamListItem {
   id: string
   name: string
 }
-
-const IDENTITY_OPTIONS = [
-  { label: '身份证', value: 'ID_CARD' },
-  { label: '军官证', value: 'MILITARY_ID' },
-  { label: '港澳通行证', value: 'HK_MACAU_PASS' },
-  { label: '台胞证', value: 'TAIWAN_PASS' },
-  { label: '其他', value: 'OTHER' },
-]
 
 const AVATAR_COLORS = [
   'linear-gradient(135deg,#3B82F6,#1D4ED8)',
@@ -82,35 +74,6 @@ const adherenceFilter = ref<'' | 'PLAN_INCOMPLETE' | 'MED_INCOMPLETE' | 'STREAK_
 const adherenceMode = computed(() => !!adherenceFilter.value)
 
 const archiveVisible = ref(false)
-const archiving = ref(false)
-function emptyArchiveForm() {
-  return {
-    name: '',
-    gender: '',
-    birthday: '' as string,
-    mobile: '',
-    mobileOwner: 'SELF',
-    noMobile: false,
-    identityType: 'ID_CARD',
-    identityValue: '',
-  }
-}
-const archiveForm = ref(emptyArchiveForm())
-const showIdentity = ref(false)
-
-interface DuplicateCandidate {
-  peopleId: string
-  displayName: string
-  gender?: string
-  birthday?: string
-  mobileMasked?: string | null
-  mobileOwner?: string | null
-  hasIdentity: boolean
-  inCurrentOrg: boolean
-  confirmRequired?: boolean
-}
-const duplicates = ref<DuplicateCandidate[]>([])
-const duplicateVisible = ref(false)
 
 const teamDialogPeopleId = ref<string | null>(null)
 const teamDialogPeopleName = ref<string | null>(null)
@@ -193,49 +156,6 @@ const summaryCards = computed(() => [
     danger: false,
   },
 ])
-
-/** 填了有效身份证时，性别和出生日期以证件为准 */
-const archiveParsed = computed(() => {
-  if (archiveForm.value.identityType !== 'ID_CARD') return null
-  return parseIdCard(archiveForm.value.identityValue)
-})
-
-watch(archiveParsed, (v) => {
-  if (!v) return
-  archiveForm.value.gender = v.gender
-  archiveForm.value.birthday = v.birthday
-})
-
-function parseIdCard(raw: string) {
-  const id = (raw || '').trim().toUpperCase()
-  if (!/^\d{17}[\dX]$/.test(id)) return null
-  const y = id.slice(6, 10)
-  const m = id.slice(10, 12)
-  const d = id.slice(12, 14)
-  const birth = new Date(Number(y), Number(m) - 1, Number(d))
-  if (
-    birth.getFullYear() !== Number(y) ||
-    birth.getMonth() !== Number(m) - 1 ||
-    birth.getDate() !== Number(d)
-  ) {
-    return null
-  }
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  birth.setHours(0, 0, 0, 0)
-  if (birth.getTime() > today.getTime()) return null
-  const birthday = `${y}-${m}-${d}`
-  const genderCode = Number(id.charAt(16))
-  const gender = Number.isNaN(genderCode) ? 'UNKNOWN' : genderCode % 2 === 1 ? 'MALE' : 'FEMALE'
-  return { birthday, gender }
-}
-
-function disabledBirthdayDate(d: Date) {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  return x.getTime() > today.getTime()
-}
 
 function formatTime(iso?: string) {
   if (!iso) return '-'
@@ -443,125 +363,16 @@ watch(adherenceFilter, (v) => {
 })
 
 function openArchive() {
-  archiveForm.value = emptyArchiveForm()
-  showIdentity.value = false
   archiveVisible.value = true
 }
 
-function validateArchive(): boolean {
-  const f = archiveForm.value
-  if (!f.name.trim()) {
-    ElMessage.warning('请填写姓名')
-    return false
+async function onArchiveCreated(result: { peopleId: string; displayName: string }) {
+  await Promise.all([load(), loadBaseline()])
+  if (result.peopleId) {
+    teamDialogPeopleId.value = result.peopleId
+    teamDialogPeopleName.value = result.displayName
+    teamDialogCurrentTeamId.value = null
   }
-  const idValue = f.identityValue.trim()
-  if (idValue && f.identityType === 'ID_CARD' && !parseIdCard(idValue)) {
-    ElMessage.warning('身份证号格式不正确')
-    return false
-  }
-  if (!f.gender || !f.birthday) {
-    ElMessage.warning('请填写性别和出生日期')
-    return false
-  }
-  if (disabledBirthdayDate(new Date(f.birthday))) {
-    ElMessage.warning('出生日期不能晚于今天')
-    return false
-  }
-  if (!f.noMobile && !f.mobile.trim()) {
-    ElMessage.warning('请填写本人手机号')
-    return false
-  }
-  if (f.noMobile && (!f.mobile.trim() || f.mobileOwner === 'SELF')) {
-    ElMessage.warning('无本人号时请填写联系人电话，并选择配偶、子女等归属')
-    return false
-  }
-  if (!f.noMobile && f.mobileOwner !== 'SELF') {
-    ElMessage.warning('建档请选择本人手机号')
-    return false
-  }
-  return true
-}
-
-async function submitArchive() {
-  if (!validateArchive()) return
-  const f = archiveForm.value
-  archiving.value = true
-  try {
-    if (f.noMobile) {
-      duplicates.value = []
-    } else {
-      const q = new URLSearchParams({
-        name: f.name.trim(),
-        gender: f.gender,
-        birthday: f.birthday,
-        mobile: f.mobile.trim(),
-      })
-      const res = await api<{ data: DuplicateCandidate[] }>(`/api/b/v1/patients/archives/duplicates?${q}`)
-      duplicates.value = res.data ?? []
-    }
-  } catch {
-    duplicates.value = []
-  } finally {
-    archiving.value = false
-  }
-  const needConfirm = duplicates.value.filter((d) => d.confirmRequired)
-  if (needConfirm.length) {
-    duplicateVisible.value = true
-    return
-  }
-  const auto = duplicates.value.find((d) => !d.confirmRequired)
-  if (auto?.inCurrentOrg) {
-    ElMessage.warning('该患者已在本机构')
-    return
-  }
-  await createArchive(auto?.peopleId ?? null)
-}
-
-/** attachPeopleId：查重确认「就是此人」，复用已有档案入组本机构 */
-async function createArchive(attachPeopleId: string | null) {
-  const f = archiveForm.value
-  const idValue = f.identityValue.trim()
-  archiving.value = true
-  try {
-    await api('/api/b/v1/patients/archives', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: f.name.trim(),
-        attachPeopleId: attachPeopleId || undefined,
-        gender: f.gender,
-        birthday: f.birthday,
-        mobile: f.noMobile ? undefined : f.mobile.trim(),
-        mobileOwner: f.noMobile ? undefined : f.mobileOwner,
-        noMobile: f.noMobile,
-        identityType: idValue ? f.identityType : undefined,
-        identityValue: idValue ? idValue.toUpperCase() : undefined,
-      }),
-    })
-    ElMessage.success(attachPeopleId ? '已关联已有档案' : '建档成功')
-    duplicateVisible.value = false
-    archiveVisible.value = false
-    await Promise.all([load(), loadBaseline()])
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '建档失败')
-  } finally {
-    archiving.value = false
-  }
-}
-
-function duplicateLabel(d: DuplicateCandidate) {
-  const parts = [formatGender(d.gender), d.birthday ? String(d.birthday).slice(0, 10) : '']
-  if (d.mobileMasked) {
-    const owner = d.mobileOwner && d.mobileOwner !== 'SELF' ? `（${formatMobileOwner(d.mobileOwner)}）` : ''
-    parts.push(d.mobileMasked + owner)
-  }
-  if (d.hasIdentity) parts.push('已登记证件')
-  return parts.filter(Boolean).join(' · ')
-}
-
-function openExisting(d: DuplicateCandidate) {
-  duplicateVisible.value = false
-  archiveVisible.value = false
-  router.push({ path: `/workspace/patients/${d.peopleId}/persona`, query: { name: d.displayName } })
 }
 
 function openCareTeamDialog(row: OrgPatientListItem) {
@@ -837,92 +648,7 @@ onMounted(async () => {
       </div>
     </el-card>
 
-    <el-dialog v-model="archiveVisible" title="患者建档" width="560px">
-      <el-form label-width="96px">
-        <el-form-item label="姓名" required>
-          <el-input v-model="archiveForm.name" maxlength="64" />
-        </el-form-item>
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="性别" required>
-              <el-select v-model="archiveForm.gender" :disabled="!!archiveParsed" style="width: 100%">
-                <el-option label="男" value="MALE" />
-                <el-option label="女" value="FEMALE" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="出生日期" required label-width="80px">
-              <el-date-picker
-                v-model="archiveForm.birthday"
-                type="date"
-                value-format="YYYY-MM-DD"
-                :disabled="!!archiveParsed"
-                :disabled-date="disabledBirthdayDate"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="联系电话" required>
-          <div class="mobile-row">
-            <el-input
-              v-model="archiveForm.mobile"
-              maxlength="20"
-              placeholder="本人手机号"
-            class="mobile-input"
-          />
-          <el-select
-            v-model="archiveForm.mobileOwner"
-            class="owner-select"
-            title="这个号码是谁的"
-          >
-            <el-option v-for="o in MOBILE_OWNER_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
-          </el-select>
-          <el-checkbox v-model="archiveForm.noMobile">无本人号</el-checkbox>
-        </div>
-        <div class="form-tip">本人手机号用来和 C 端就诊人对上同一个人。没有本人号时填写联系人电话，患者再用激活码关联。</div>
-        </el-form-item>
-
-        <el-button v-if="!showIdentity" link type="primary" class="id-toggle" @click="showIdentity = true">
-          + 补充证件信息（选填）
-        </el-button>
-        <template v-else>
-          <el-form-item label="证件类型">
-            <el-select v-model="archiveForm.identityType" style="width: 100%">
-              <el-option v-for="opt in IDENTITY_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="证件号码">
-            <el-input v-model="archiveForm.identityValue" placeholder="选填，可以后再补" />
-            <div class="form-tip">加密保存、仅显示脱敏号码；填写身份证会自动带出性别和出生日期</div>
-          </el-form-item>
-        </template>
-      </el-form>
-      <template #footer>
-        <el-button @click="archiveVisible = false">取消</el-button>
-        <el-button type="primary" :loading="archiving" @click="submitArchive">建档</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="duplicateVisible" title="可能是同一人" width="520px" append-to-body>
-      <p class="dup-tip">
-        这个本人手机号已有档案，但姓名或出生日期不一致。确认是同一人后再关联，不能用这个号码新建第二份。
-      </p>
-      <div v-for="d in duplicates" :key="d.peopleId" class="dup-item">
-        <div class="dup-main">
-          <strong>{{ d.displayName }}</strong>
-          <span class="dup-meta">{{ duplicateLabel(d) }}</span>
-        </div>
-        <el-button v-if="d.inCurrentOrg" size="small" @click="openExisting(d)">已在本机构，查看</el-button>
-        <el-button v-else size="small" type="primary" :loading="archiving" @click="createArchive(d.peopleId)">
-          关联此人
-        </el-button>
-      </div>
-      <template #footer>
-        <el-button @click="duplicateVisible = false">返回修改</el-button>
-      </template>
-    </el-dialog>
+    <CreateArchiveDrawer v-model="archiveVisible" @created="onArchiveCreated" />
 
     <ChangeCareTeamDialog
       :people-id="teamDialogPeopleId"
@@ -930,55 +656,17 @@ onMounted(async () => {
       :current-care-team-id="teamDialogCurrentTeamId"
       @closed="closeCareTeamDialog"
       @changed="onCareTeamChanged"
+      @create="
+        () => {
+          closeCareTeamDialog()
+          void router.push('/workspace/care-teams?create=1')
+        }
+      "
     />
   </div>
 </template>
 
 <style scoped>
-.mobile-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-}
-.mobile-input {
-  flex: 1;
-}
-.owner-select {
-  width: 110px;
-}
-.form-tip {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--el-text-color-secondary);
-}
-.id-toggle {
-  margin: 0 0 12px 96px;
-}
-.dup-tip {
-  margin: 0 0 12px;
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-}
-.dup-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  margin-bottom: 8px;
-}
-.dup-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.dup-meta {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
 .em {
   color: var(--ink-800);
   font-weight: 600;
