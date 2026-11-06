@@ -128,6 +128,7 @@ interface Focus {
   peopleId: string
   displayName: string
   gender?: string
+  age?: number | null
   birthday?: string
   careTeamId?: string | null
   careTeamName?: string | null

@@ -368,7 +368,7 @@ const beforeClose: DrawerProps['beforeClose'] = (done) => {
 }
 
 function requestClose() {
-  beforeClose(() => {
+  beforeClose?.(() => {
     visible.value = false
   })
 }
