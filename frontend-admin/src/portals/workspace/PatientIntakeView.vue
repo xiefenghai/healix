@@ -1506,11 +1506,6 @@ function severityClass(sev?: string) {
   return 'sev-info'
 }
 
-function aiSummaryLooksIncomplete() {
-  const text = String(answers[FIELD_STAFF_AI_SUMMARY] ?? '')
-  return /尚未完成首诊|入组当日尚未完成首诊|首诊未完成/.test(text)
-}
-
 function goGuardModule(code: string) {
   submitGuardOpen.value = false
   activeModule.value = code

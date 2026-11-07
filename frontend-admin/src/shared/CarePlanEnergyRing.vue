@@ -52,7 +52,13 @@ function render() {
         if (!p?.name || p.name === '目标' || p.name === '余量') return ''
         return `${p.name} ${p.value}g（${Math.round(p.percent || 0)}%）`
       },
-      position: (point, _params, _dom, _rect, size) => {
+      position: (
+        point: number | number[],
+        _params: unknown,
+        _dom: unknown,
+        _rect: unknown,
+        size: { contentSize: number[]; viewSize: number[] },
+      ) => {
         const [x, y] = point as number[]
         const viewW = size.viewSize[0]
         const boxW = size.contentSize[0]

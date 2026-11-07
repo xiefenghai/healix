@@ -1056,6 +1056,8 @@ const serviceFlowSteps = computed(() => {
     code: s.code,
     label: s.label,
     status: i < current ? 'done' : i === current ? 'current' : 'todo',
+    completedAt: null as string | null,
+    hint: null as string | null,
   }))
 })
 

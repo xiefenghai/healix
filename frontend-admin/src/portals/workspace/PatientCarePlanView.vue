@@ -2390,69 +2390,6 @@ async function onBriefingSubmit(payload: CarePlanBriefingSubmitPayload) {
   }
 }
 
-async function recordCommunication(result: 'ACCEPTED' | 'NEED_MODIFY' | 'NEED_REGENERATE') {
-  let changePoints: string | undefined
-  let customerFeedback: string | undefined
-  if (result !== 'ACCEPTED') {
-    try {
-      const { value } = await ElMessageBox.prompt(
-        result === 'NEED_REGENERATE' ? '请填写重做要点（将带入下次生成说明）' : '请填写修改要点',
-        result === 'NEED_REGENERATE' ? '需重做' : '需修改',
-        { inputPattern: /\S+/, inputErrorMessage: '请填写要点' },
-      )
-      changePoints = value
-    } catch {
-      return
-    }
-  } else {
-    try {
-      const { value } = await ElMessageBox.prompt('客户反馈（可选）', '沟通·已接受', {
-        inputPlaceholder: '客户说了什么',
-        confirmButtonText: '确认并发布',
-      })
-      customerFeedback = value || undefined
-    } catch {
-      return
-    }
-  }
-  const ack = result === 'ACCEPTED' ? await collectAckWarnCodes() : []
-  if (result === 'ACCEPTED' && ack == null) return
-  saving.value = true
-  try {
-    const res = await api<{ data: CarePlanBundle }>(
-      `/api/b/v1/patients/${peopleId.value}/care-plan/communication`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          result,
-          customerFeedback,
-          changePoints,
-          faceToFace: false,
-          ackWarnCodes: ack || [],
-          title: editForm.title || undefined,
-        }),
-      },
-    )
-    bundle.value = res.data
-    syncFormFromBundle()
-    if (result === 'ACCEPTED') {
-      ElMessage.success('客户已接受，方案已发布')
-      emitAgentCarePlanUpdated(peopleId.value)
-      emit('published')
-    } else if (result === 'NEED_REGENERATE') {
-      ElMessage.success('已记为需重做，请按反馈重新生成')
-      openGenerateDialog({ seedFromComm: true })
-    } else {
-      ElMessage.success('已记为需修改；可直接改草稿，或按反馈 AI 修订')
-    }
-    refreshAfterMutation()
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '记录沟通失败')
-  } finally {
-    saving.value = false
-  }
-}
-
 async function faceToFaceAccept() {
   const ver =
     briefingVersionLabel.value ||
