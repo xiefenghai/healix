@@ -17,6 +17,13 @@ public interface CareTeamMemberMapper {
 
     CareTeamMember findPeopleInOrg(@Param("orgId") String orgId, @Param("peopleId") String peopleId);
 
+    /**
+     * 含已软删记录：取该患者在机构内最近一次入组记录（按 joined_at）。
+     * 用于服务进度「分组」节点完成时间，以及移出后的 broken 判定。
+     */
+    CareTeamMember findLatestPeopleInOrgIncludingDeleted(
+            @Param("orgId") String orgId, @Param("peopleId") String peopleId);
+
     List<CareTeamMember> listPatientsByOrg(@Param("orgId") String orgId);
 
     int countActiveByTeam(@Param("teamId") String teamId);

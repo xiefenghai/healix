@@ -9,11 +9,14 @@ import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
 import com.healix.core.careplan.guideline.GuidelineCheck;
 import com.healix.core.careplan.guideline.GuidelineMatch;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
+import com.healix.core.careplan.support.CarePlanDiabetesDietGuard;
+import com.healix.core.careplan.support.CarePlanDietNotesGuard;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.support.CarePlanContextService.MetricBrief;
 import com.healix.core.careplan.support.CarePlanDiseaseTags;
 import com.healix.core.careplan.support.CarePlanDiseaseTags.Flags;
 import com.healix.core.careplan.support.CarePlanRationaleSupport;
+import com.healix.core.careplan.support.CarePlanExecutionTaskNormalizer;
 import com.healix.core.careplan.support.CarePlanWeighTaskNormalizer;
 import com.healix.core.careplan.support.MetricTaskRules;
 import com.healix.core.water.support.WaterIntakeRules;
@@ -250,11 +253,16 @@ public class CarePlanTemplateRegistry {
         }
         ObjectNode sample = diet.putObject("sampleDay");
         ObjectNode breakfast = sample.putObject("breakfast");
-        breakfast.put("text", "燕麦粥 + " + pick(strict, "鸡蛋", "无糖豆浆", "瘦肉末") + " + 蔬菜");
+        // 糖尿病禁粥：用固态/稠燕麦或杂粮饭，避免稀流质升糖
+        String breakfastStaple =
+                flags.diabetes() || key == CarePlanTemplateKeyEnum.DIABETES
+                        ? "杂粮饭小半碗"
+                        : "原味燕麦片（少水冲稠）";
+        breakfast.put("text", breakfastStaple + " + " + pick(strict, "鸡蛋", "无糖豆浆", "瘦肉末") + " + 蔬菜");
         if (CarePlanAllergenGuard.firstHit("鸡蛋", strict).isEmpty()) {
             breakfast.put("swapHint", "鸡蛋可换成豆腐或无糖豆浆");
         }
-        breakfast.put("rationale", "燕麦替代精制主食，搭配优质蛋白与蔬菜");
+        breakfast.put("rationale", "粗粮主食替代精制主食，搭配优质蛋白与蔬菜");
         ObjectNode lunch = sample.putObject("lunch");
         lunch.put("text", "杂粮饭 + 瘦肉 + 大量蔬菜");
         lunch.put(
@@ -275,17 +283,20 @@ public class CarePlanTemplateRegistry {
             noteParts.add("在用药物：" + String.join("、", meds.stream().limit(8).toList()) + "；请按药盒时机（饭前/饭后）配合进餐，勿自行停药。");
         }
         if (!strict.isEmpty()) {
-            noteParts.add("食物过敏：" + String.join("、", strict.stream().map(FoodAllergen::name).toList())
-                    + "，示例餐已给平替；外出就餐注意询问菜品成分。");
+            noteParts.add("外食技巧：外出就餐时主动询问菜品成分，避开已知过敏原。");
         }
         List<String> intolerances = all.stream().filter(FoodAllergen::intolerance).map(FoodAllergen::name).toList();
         if (!intolerances.isEmpty()) {
-            noteParts.add("不耐受：" + String.join("、", intolerances) + "，注意食用量。");
+            noteParts.add("不耐受食物（"
+                    + String.join("、", intolerances)
+                    + "）可少量尝试，不宜作为日常主推。");
         }
         appendLifestyleDietNotes(noteParts, ctx);
-        diet.put("notes", String.join("", noteParts));
+        diet.put("notes", String.join("；", noteParts));
         CarePlanAllergenGuard.enforce(diet, all);
         CarePlanAllergenGuard.sanitize(diet, all);
+        CarePlanDiabetesDietGuard.sanitize(diet, key);
+        CarePlanDietNotesGuard.sanitize(diet);
         return diet;
     }
 
@@ -366,7 +377,8 @@ public class CarePlanTemplateRegistry {
         tasks.add(task("DIET_LOG", "记录三餐与加餐", "DIET", "QD", "EVENING", null, "便于回顾饮食并对照示例日"));
         if (!WaterIntakeRules.fluidRestricted(
                 ctx == null ? List.of() : ctx.diseaseCodes(), ctx == null ? null : ctx.snapshot())) {
-            int targetMl = WaterIntakeRules.suggestTargetMl(weightKg(ctx));
+            Double kg = weightKg(ctx);
+            int targetMl = WaterIntakeRules.suggestTargetMl(kg);
             ObjectNode water = task(
                     WaterIntakeRules.TASK_CODE,
                     "足量饮水，每日约 " + targetMl + " ml",
@@ -374,12 +386,14 @@ public class CarePlanTemplateRegistry {
                     "QD",
                     "ALL",
                     null,
-                    "按体重估算饮水目标，无限水禁忌");
+                    CarePlanExecutionTaskNormalizer.waterRationale(kg, targetMl));
             water.put("targetMl", targetMl);
             ObjectNode waterPayload = water.putObject("payload");
             waterPayload.put("targetMl", targetMl);
             tasks.add(water);
         }
+        // 随餐药 → 独立用药提醒，勿塞进饮食记录标题
+        appendMealMedicationReminder(tasks, ctx);
         tasks.add(task(
                 com.healix.core.sleep.support.SleepLogRules.TASK_CODE,
                 "记录昨夜睡眠",
@@ -467,6 +481,16 @@ public class CarePlanTemplateRegistry {
             case "WEEKEND" -> "AFTERNOON";
             default -> fallback;
         };
+    }
+
+    /** 对已写入的 tasks 跑一遍执行清单硬约束（饮水文案 / 随餐药拆分等）。 */
+    private static void appendMealMedicationReminder(ArrayNode tasks, CarePlanContext ctx) {
+        if (ctx == null || tasks == null) {
+            return;
+        }
+        ObjectNode exec = JsonUtils.emptyObject();
+        exec.set("tasks", tasks);
+        CarePlanExecutionTaskNormalizer.normalize(exec, ctx.snapshot());
     }
 
     private static Double weightKg(CarePlanContext ctx) {

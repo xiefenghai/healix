@@ -92,6 +92,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     KEY idx_agent_confirm_card_people (people_id, status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """);
+
         ensureColumn(
                 "field_revision_item",
                 "quote",

@@ -14,6 +14,7 @@ import {
   type ActivityItem,
 } from './agent-activity'
 import AgentActivityPanel from './AgentActivityPanel.vue'
+import CarePlanThinkStream from './CarePlanThinkStream.vue'
 import AgentCarePlanCard from './AgentCarePlanCard.vue'
 import AgentOcrReviewCard from './AgentOcrReviewCard.vue'
 import ChatExtractReviewCard from './ChatExtractReviewCard.vue'
@@ -330,6 +331,34 @@ async function sendMessage(
   })
   await scrollToBottom()
 
+  let streamBuf = ''
+  let streamPaintRaf = 0
+  let streamScrollAt = 0
+  const STREAM_SCROLL_MIN_MS = 120
+  const paintStream = () => {
+    const row = messages.value[assistantIdx]
+    if (!row) return
+    row.streamContent = streamBuf
+  }
+  const scheduleStreamUi = (paint?: () => void, forceScroll = false) => {
+    if (streamPaintRaf) cancelAnimationFrame(streamPaintRaf)
+    streamPaintRaf = requestAnimationFrame(() => {
+      streamPaintRaf = 0
+      paint?.()
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+      if (forceScroll || now - streamScrollAt >= STREAM_SCROLL_MIN_MS) {
+        streamScrollAt = now
+        void scrollToBottom()
+      }
+    })
+  }
+  const flushStreamUi = () => {
+    if (streamPaintRaf) {
+      cancelAnimationFrame(streamPaintRaf)
+      streamPaintRaf = 0
+    }
+  }
+
   try {
     await postSse(
       '/api/b/v1/agent/chat/stream',
@@ -347,36 +376,37 @@ async function sendMessage(
           if (!row) return
           if (!row.activity) row.activity = []
           appendProgress(row.activity, msg)
-          void scrollToBottom()
+          scheduleStreamUi()
         },
         onTool: (event) => {
           const row = messages.value[assistantIdx]
           if (!row) return
           if (!row.activity) row.activity = []
           appendTool(row.activity, event)
-          void scrollToBottom()
+          scheduleStreamUi()
         },
         onSkill: (event) => {
           const row = messages.value[assistantIdx]
           if (!row) return
           if (!row.activity) row.activity = []
           appendSkill(row.activity, event)
-          void scrollToBottom()
+          scheduleStreamUi()
         },
         onThinking: (event) => {
           const row = messages.value[assistantIdx]
           if (!row) return
           if (!row.activity) row.activity = []
           appendThinking(row.activity, event)
-          void scrollToBottom()
+          scheduleStreamUi()
         },
         onToken: (token) => {
-          const row = messages.value[assistantIdx]
-          if (!row) return
-          row.streamContent = (row.streamContent || '') + token
-          void scrollToBottom()
+          if (!messages.value[assistantIdx]) return
+          streamBuf += token
+          scheduleStreamUi(paintStream)
         },
         onResult: (payload) => {
+          flushStreamUi()
+          paintStream()
           const data = payload as { capability?: string; reply?: string; extracted?: { restoreInput?: boolean } }
           if (extractMode && data.extracted?.restoreInput) {
             messages.value.splice(Math.max(0, assistantIdx - 1), 2)
@@ -389,13 +419,17 @@ async function sendMessage(
           void scrollToBottom()
         },
         onDone: (meta) => {
+          flushStreamUi()
+          paintStream()
           const row = messages.value[assistantIdx]
           if (!row) return
           row.streaming = false
           finishAllActivity(row.activity)
           if (meta?.elapsedMs != null) row.elapsedMs = meta.elapsedMs
+          void scrollToBottom()
         },
         onError: (msg) => {
+          flushStreamUi()
           if (extractMode) {
             messages.value.splice(Math.max(0, assistantIdx - 1), 2)
             input.value = userText
@@ -407,10 +441,12 @@ async function sendMessage(
       },
     )
   } catch (e) {
+    flushStreamUi()
     if (extractMode) input.value = userText
     messages.value.splice(assistantIdx, 1)
     ElMessage.error(e instanceof Error ? e.message : '发送失败')
   } finally {
+    flushStreamUi()
     sending.value = false
     uploading.value = false
     const row = messages.value[assistantIdx]
@@ -731,6 +767,14 @@ function sheetModeToPath(peopleId: string, mode: string): string {
   }
 }
 
+function openCarePlanEditor() {
+  const peopleId = props.peopleId
+  if (!peopleId) return
+  setAgentDraft({ peopleId, mode: 'care-plan', openCompose: true })
+  drawerVisible.value = false
+  router.push(`/workspace/patients/${peopleId}/care-plan/compose`)
+}
+
 async function openCarePlanPreview() {
   try {
     const res = await api<{ data: Record<string, unknown> }>(`/api/b/v1/patients/${props.peopleId}/care-plan`)
@@ -805,7 +849,30 @@ function organizeRecord() {
 }
 
 function visibleActions(msg: ChatMessage) {
-  return (msg.actions || []).filter((action) => action.type !== 'chat_extract')
+  return (msg.actions || []).filter((action) => {
+    if (action.type === 'chat_extract') return false
+    if (!msg.carePlanPreview) return true
+    // 卡片已有主 CTA：气泡只留弱化「继续对话」
+    if (action.type === 'PREVIEW') return false
+    if (action.type === 'OPEN_SHEET' && action.path === 'care-plan') return false
+    if (action.path === 'PUBLISH_CARE_PLAN') return false
+    return true
+  })
+}
+
+function actionChipLabel(label?: string | null) {
+  const raw = String(label || '').trim()
+  if (raw === '继续闲聊' || raw === '关闭预览，继续对话') return '关闭预览，继续对话'
+  return raw
+}
+
+/** 流式阶段轻量转义，避免每帧跑完整分节排版 */
+function escapeStreamHtml(text: string) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
 }
 
 async function scrollToBottom() {
@@ -1044,17 +1111,39 @@ watch(
               <span>{{ AGENT_NAME }}</span>
             </div>
 
+            <CarePlanThinkStream
+              v-if="
+                msg.streaming &&
+                msg.isCarePlan &&
+                !msg.carePlanPreview &&
+                !msg.streamContent
+              "
+              :items="msg.activity || []"
+              :streaming="true"
+            />
             <AgentActivityPanel
-              v-if="msg.activity?.length || msg.elapsedMs"
+              v-else-if="
+                !(msg.streaming && msg.isCarePlan) &&
+                (msg.activity?.length || msg.elapsedMs)
+              "
               :items="msg.activity || []"
               :streaming="msg.streaming"
               :elapsed-ms="msg.elapsedMs"
               @toggle="(id) => toggleActivity(msg, id)"
             />
 
-            <div v-if="msg.streamContent" class="bubble-text stream-output">
-              <div v-if="msg.isCarePlan" class="stream-label">AI 生成中</div>
-              <div class="plain-body" v-html="formatAssistantPlainHtml(msg.streamContent)" />
+            <div
+              v-if="msg.streamContent"
+              class="bubble-text stream-output"
+            >
+              <div
+                class="plain-body"
+                v-html="
+                  msg.streaming
+                    ? escapeStreamHtml(msg.streamContent)
+                    : formatAssistantPlainHtml(msg.streamContent)
+                "
+              />
             </div>
             <div
               v-else-if="
@@ -1084,7 +1173,11 @@ watch(
             </div>
 
             <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
-            <AgentCarePlanCard v-if="msg.carePlanPreview" :preview="msg.carePlanPreview" />
+            <AgentCarePlanCard
+              v-if="msg.carePlanPreview"
+              :preview="msg.carePlanPreview"
+              @open="openCarePlanEditor"
+            />
 
             <button
               v-if="msg.imageUrl"
@@ -1116,14 +1209,31 @@ watch(
                 type="button"
                 class="action-chip"
                 :class="{
-                  primary: i === 0 || act.type === 'CALL_API' || act.type === 'TRIGGER_CAPABILITY',
-                  do: act.type === 'CALL_API' || act.type === 'TRIGGER_CAPABILITY',
+                  quiet:
+                    !!msg.carePlanPreview &&
+                    act.type === 'TRIGGER_CAPABILITY' &&
+                    act.path === 'GENERAL_CHAT',
+                  primary:
+                    !(
+                      msg.carePlanPreview &&
+                      act.type === 'TRIGGER_CAPABILITY' &&
+                      act.path === 'GENERAL_CHAT'
+                    ) &&
+                    (i === 0 || act.type === 'CALL_API' || act.type === 'TRIGGER_CAPABILITY'),
+                  do:
+                    !(
+                      msg.carePlanPreview &&
+                      act.type === 'TRIGGER_CAPABILITY' &&
+                      act.path === 'GENERAL_CHAT'
+                    ) && (act.type === 'CALL_API' || act.type === 'TRIGGER_CAPABILITY'),
                   done: act.runState === 'done',
                 }"
                 :disabled="act.runState === 'busy' || act.runState === 'done'"
                 @click="runAction(act)"
               >
-                {{ act.runState === 'busy' ? '处理中…' : act.label }}
+                {{
+                  act.runState === 'busy' ? '处理中…' : actionChipLabel(act.label)
+                }}
               </button>
             </div>
           </div>
@@ -1677,6 +1787,21 @@ watch(
   border-color: #93c5fd;
   color: #1d4ed8;
   background: #eff6ff;
+}
+
+.action-chip.quiet,
+.action-chip.quiet:hover {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  padding: 2px 0;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.action-chip.quiet:hover {
+  color: #64748b;
+  text-decoration: underline;
 }
 
 .action-chip:disabled {

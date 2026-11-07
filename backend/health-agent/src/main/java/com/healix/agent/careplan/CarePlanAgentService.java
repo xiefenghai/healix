@@ -148,7 +148,7 @@ public class CarePlanAgentService {
             Consumer<AgentStreamEvent> sink,
             boolean requireLlm,
             List<ChatTurn> history) {
-        CarePlanStreamSink.progress(sink, "开始制定管理方案…");
+        CarePlanStreamSink.progress(sink, "开始为患者定制管理方案…");
         CarePlanBundleDto bundle = self.generateAndPersist(
                 tenantId,
                 orgId,
@@ -161,7 +161,7 @@ public class CarePlanAgentService {
                 sink,
                 requireLlm,
                 history);
-        CarePlanStreamSink.progress(sink, "方案草稿已保存，可前往审阅");
+        CarePlanStreamSink.progress(sink, "方案草稿已就绪，可打开编辑器精修");
         return bundle;
     }
 
@@ -186,16 +186,16 @@ public class CarePlanAgentService {
             String instruction,
             Consumer<AgentStreamEvent> sink,
             List<ChatTurn> history) {
-        CarePlanStreamSink.progress(sink, "开始按你的要求修订方案草稿…");
+        CarePlanStreamSink.progress(sink, "开始按你的意见修订方案草稿…");
         CarePlanBundleDto current = carePlanService.getBundle(tenantId, orgId, peopleId);
         if (current == null || current.getDraft() == null) {
-            CarePlanStreamSink.progress(sink, "当前无草稿，改为生成新方案…");
+            CarePlanStreamSink.progress(sink, "当前没有草稿，改为重新生成方案…");
             return generateStream(
                     tenantId, orgId, peopleId, staffId, instruction, null, null, true, sink, true, history);
         }
         CarePlanBundleDto bundle =
                 self.reviseAndPersist(tenantId, orgId, peopleId, staffId, instruction, sink, history);
-        CarePlanStreamSink.progress(sink, "方案草稿已更新，可前往审阅");
+        CarePlanStreamSink.progress(sink, "方案草稿已更新，可打开编辑器精修");
         return bundle;
     }
 
@@ -215,7 +215,7 @@ public class CarePlanAgentService {
         var draft = current.getDraft();
         int expectedVersion = draft.getVersion() == null ? 1 : draft.getVersion();
 
-        CarePlanStreamSink.progress(sink, "正在加载患者档案与观测数据…");
+        CarePlanStreamSink.progress(sink, "正在读取患者档案与化验指标…");
         CarePlanContext ctx = contextTools.loadCarePlanContext(
                 tenantId,
                 peopleId,
@@ -265,8 +265,8 @@ public class CarePlanAgentService {
         EntityMeta.onCreate(logEntity);
         interactionLogMapper.insert(logEntity);
 
-        CarePlanStreamSink.progress(sink, "正在保存修订后的草稿…");
-        CarePlanStreamSink.tool(sink, "updateDraft", "running", "写入方案草稿");
+        CarePlanStreamSink.progress(sink, "正在写入修订后的方案草稿…");
+        CarePlanStreamSink.tool(sink, "保存草稿", "running", "写入方案草稿");
         CarePlanBundleDto bundle = carePlanService.updateDraft(
                 tenantId,
                 orgId,
@@ -279,7 +279,7 @@ public class CarePlanAgentService {
                 null,
                 r.goalSummary(),
                 r.summary());
-        CarePlanStreamSink.tool(sink, "updateDraft", "done", "草稿已更新");
+        CarePlanStreamSink.tool(sink, "保存草稿", "done", "草稿已更新");
         return bundle;
     }
 
@@ -347,7 +347,7 @@ public class CarePlanAgentService {
             Consumer<AgentStreamEvent> sink,
             boolean requireLlm,
             List<ChatTurn> history) {
-        CarePlanStreamSink.progress(sink, "正在加载患者档案与观测数据…");
+        CarePlanStreamSink.progress(sink, "正在读取患者档案与化验指标…");
         CarePlanContext ctx = contextTools.loadCarePlanContext(
                 tenantId,
                 peopleId,
@@ -375,12 +375,12 @@ public class CarePlanAgentService {
         String goalSummary = null;
         LlmResponse llmMeta = null;
 
-        CarePlanStreamSink.progress(sink, "正在解析病种与模板键…");
+        CarePlanStreamSink.progress(sink, "正在匹配适宜的管理方向…");
         CarePlanStreamSink.tool(
                 sink,
-                "resolveTemplateKey",
+                "匹配管理方向",
                 "done",
-                "模板键: " + key.name() + (diseaseCodes.isEmpty() ? "" : "，病种: " + String.join(", ", diseaseCodes)));
+                diseaseCodes.isEmpty() ? "已选定综合管理路径" : "已结合病种匹配管理路径");
 
         if (agentLlmEnabled && llmClient.isEnabled()) {
             log.info(
@@ -403,7 +403,7 @@ public class CarePlanAgentService {
                         key,
                         llmMeta.promptTokens(),
                         llmMeta.completionTokens());
-                CarePlanStreamSink.progress(sink, "AI 已生成运动、饮食与执行计划");
+                CarePlanStreamSink.progress(sink, "运动、饮食与执行计划草案已形成");
             } else if (requireLlm) {
                 throw new BusinessException(
                         "AI 生成失败：请检查 DeepSeek API Key 与网络，查看后端日志 [LLM] / [CarePlan]");
@@ -412,10 +412,10 @@ public class CarePlanAgentService {
                         "[CarePlan] generation result=TEMPLATE_FALLBACK peopleId={} templateKey={} reason=llm_empty_or_parse_failed",
                         peopleId,
                         key);
-                CarePlanStreamSink.progress(sink, "AI 生成未成功，切换为模板方案…");
-                CarePlanStreamSink.tool(sink, "CarePlanTemplateRegistry", "running", "按模板生成方案");
+                CarePlanStreamSink.progress(sink, "智能起草未完成，改用标准模板方案…");
+                CarePlanStreamSink.tool(sink, "标准模板方案", "running", "按模板生成方案");
                 generated = templateRegistry.generate(key, ctx, instruction, diseaseCodes);
-                CarePlanStreamSink.tool(sink, "CarePlanTemplateRegistry", "done", "模板方案已生成");
+                CarePlanStreamSink.tool(sink, "标准模板方案", "done", "模板方案已生成");
                 logEntity.setDraftReply("TEMPLATE_FALLBACK");
             }
         } else if (requireLlm) {
@@ -428,16 +428,16 @@ public class CarePlanAgentService {
                     key,
                     agentLlmEnabled,
                     llmClient.isEnabled());
-            CarePlanStreamSink.progress(sink, "正在使用模板生成方案…");
-            CarePlanStreamSink.tool(sink, "CarePlanTemplateRegistry", "running", "按模板生成运动/饮食/执行计划");
+            CarePlanStreamSink.progress(sink, "正在按标准模板生成方案…");
+            CarePlanStreamSink.tool(sink, "标准模板方案", "running", "按模板生成运动、饮食与执行计划");
             generated = templateRegistry.generate(key, ctx, instruction, diseaseCodes);
-            CarePlanStreamSink.tool(sink, "CarePlanTemplateRegistry", "done", "模板方案已生成");
+            CarePlanStreamSink.tool(sink, "标准模板方案", "done", "模板方案已生成");
             logEntity.setDraftReply("TEMPLATE");
         }
 
-        CarePlanStreamSink.progress(sink, "正在进行安全校验…");
+        CarePlanStreamSink.progress(sink, "正在做发布前安全校验…");
         guardAllergens(ctx, generated.diet(), sink);
-        CarePlanStreamSink.tool(sink, "safetyCheck", "done", "方案结构校验通过");
+        CarePlanStreamSink.tool(sink, "安全校验", "done", "方案结构与过敏规避已核对");
 
         if (llmMeta != null) {
             logEntity.setPromptTokens(llmMeta.promptTokens());
@@ -447,8 +447,8 @@ public class CarePlanAgentService {
         EntityMeta.onCreate(logEntity);
         interactionLogMapper.insert(logEntity);
 
-        CarePlanStreamSink.progress(sink, "正在保存方案草稿…");
-        CarePlanStreamSink.tool(sink, "persistGenerated", "running", "写入方案草稿");
+        CarePlanStreamSink.progress(sink, "正在写入方案草稿…");
+        CarePlanStreamSink.tool(sink, "保存草稿", "running", "写入方案草稿");
         CarePlanBundleDto bundle = carePlanService.persistGenerated(
                 tenantId,
                 orgId,
@@ -459,7 +459,7 @@ public class CarePlanAgentService {
                 goalSummary,
                 replaceDraft,
                 logEntity.getId());
-        CarePlanStreamSink.tool(sink, "persistGenerated", "done", "草稿已保存");
+        CarePlanStreamSink.tool(sink, "保存草稿", "done", "草稿已保存");
         return bundle;
     }
 
@@ -482,13 +482,13 @@ public class CarePlanAgentService {
         CarePlanAllergenGuard.enforce(diet, allergens);
         List<String> removed = CarePlanAllergenGuard.sanitize(diet, allergens);
         if (allergens.isEmpty()) {
-            CarePlanStreamSink.tool(sink, "allergenGuard", "done", "无食物过敏史");
+            CarePlanStreamSink.tool(sink, "过敏规避核对", "done", "暂无食物过敏史记录");
         } else if (removed.isEmpty()) {
-            CarePlanStreamSink.tool(sink, "allergenGuard", "done", "饮食与过敏史无冲突");
+            CarePlanStreamSink.tool(sink, "过敏规避核对", "done", "饮食建议与过敏史无冲突");
         } else {
             log.info("[CarePlan] AI diet allergen conflicts removed: {}", removed);
             CarePlanStreamSink.tool(
-                    sink, "allergenGuard", "done", "已移除与过敏史冲突的内容：" + String.join("、", removed));
+                    sink, "过敏规避核对", "done", "已剔除与过敏史冲突的推荐：" + String.join("、", removed));
         }
     }
 
@@ -532,7 +532,7 @@ public class CarePlanAgentService {
 
     private String loadSkillMarkdown(Consumer<AgentStreamEvent> sink) {
         String path = "classpath:skills/management-plan/SKILL.md";
-        CarePlanStreamSink.progress(sink, "正在加载方案生成指引…");
+        CarePlanStreamSink.progress(sink, "正在翻阅方案生成指引与临床共识…");
         try {
             Resource res = new ClassPathResource("skills/management-plan/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {

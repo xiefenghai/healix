@@ -54,6 +54,8 @@ export interface CarePlanChatPreview {
   statusLabel: string
   sourceLabel: string
   goalSummary?: string
+  /** 目标首句短标签（聊天摘要卡指标格） */
+  goalHighlight?: string
   /** 整份生成依据（B 端审阅） */
   rationaleOverview?: string
   /** 三块方案引用的指南条目（去重） */
@@ -80,6 +82,68 @@ function textOf(v: unknown): string {
   if (typeof v === 'string') return v.trim()
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
   return ''
+}
+
+/** 从目标摘要取首句，供聊天卡「核心目标」格展示 */
+export function goalHighlightOf(summary?: string | null, maxLen = 28): string {
+  const raw = (summary || '').trim()
+  if (!raw) return ''
+  const first = raw.split(/[。；;\n]/)[0]?.trim() || raw
+  const clause = first.split(/[，,]/)[0]?.trim() || first
+  const pick = clause.length >= 6 && clause.length <= maxLen ? clause : first
+  if (pick.length <= maxLen) return pick
+  return `${pick.slice(0, maxLen - 1)}…`
+}
+
+const EXERCISE_GOAL_RE =
+  /运动|步数|有氧|力量|拉伸|柔韧|中等强度|体力活动|身体活动/
+
+function isExerciseGoalClause(clause: string): boolean {
+  const t = clause.trim()
+  if (!t) return false
+  if (!EXERCISE_GOAL_RE.test(t)) return false
+  // 含体重/血压/血糖等结局指标时仍算结局句
+  if (/体重|血压|血糖|腰围|糖化|BMI|体脂|血脂|尿酸/.test(t) && !/^每周|^每日|^每天/.test(t)) {
+    return false
+  }
+  return true
+}
+
+function shortenExerciseGoalClause(clause: string): string {
+  let t = clause.trim().replace(/[。．.]+$/, '')
+  t = t
+    .replace(/^每周中等强度运动累计/, '每周运动目标：')
+    .replace(/^每周运动累计/, '每周运动目标：')
+    .replace(/^每周中等强度运动/, '每周运动目标：')
+    .replace(/累计(\d+)\s*分钟以上?/, '$1分钟中等强度')
+    .replace(/(\d+)\s*分钟以上?/, '$1分钟中等强度')
+  if (!t.includes('运动目标') && !t.startsWith('每周')) {
+    t = `每周运动目标：${t}`
+  }
+  return t
+}
+
+/**
+ * 聊天摘要卡展示用：结局指标平铺，运动量级目标收到句末括号，避免与血压/血糖抢戏。
+ */
+export function formatGoalSummaryForChat(summary?: string | null): string {
+  const raw = (summary || '').trim().replace(/[。．.]+$/, '')
+  if (!raw) return ''
+  const parts = raw
+    .split(/[，,；;]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (parts.length <= 1) return summary?.trim() || raw
+  const clinical: string[] = []
+  const exercise: string[] = []
+  for (const p of parts) {
+    if (isExerciseGoalClause(p)) exercise.push(p)
+    else clinical.push(p)
+  }
+  if (!exercise.length || !clinical.length) return summary?.trim() || `${raw}。`
+  const head = clinical.join('，')
+  const tip = exercise.map(shortenExerciseGoalClause).join('；')
+  return `${head}（${tip}）。`
 }
 
 function exerciseTypeLabel(type?: string): string {
@@ -254,6 +318,10 @@ export function buildCarePlanChatPreview(extracted: unknown): CarePlanChatPrevie
     textOf(asRecord(root.activeVersion)?.title) ||
     '健康管理方案'
 
+  const goalSummaryRaw = textOf(plan?.goalSummary) || textOf(exercise?.goal) || undefined
+  const goalSummary = goalSummaryRaw ? formatGoalSummaryForChat(goalSummaryRaw) : undefined
+  const goalHighlight = goalHighlightOf(goalSummaryRaw) || undefined
+
   return {
     title,
     status,
@@ -266,7 +334,8 @@ export function buildCarePlanChatPreview(extracted: unknown): CarePlanChatPrevie
           : source === 'MANUAL'
             ? '人工'
             : source || 'AI',
-    goalSummary: textOf(plan?.goalSummary) || textOf(exercise?.goal) || undefined,
+    goalSummary,
+    goalHighlight,
     rationaleOverview,
     refs: [...new Set([exercise, diet, execution].flatMap((b) => refsOf(b)))],
     schemaVersion: draft?.schemaVersion == null ? null : Number(draft.schemaVersion),

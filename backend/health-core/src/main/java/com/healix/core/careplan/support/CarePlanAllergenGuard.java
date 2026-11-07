@@ -257,17 +257,23 @@ public final class CarePlanAllergenGuard {
                 continue;
             }
             if (v instanceof ObjectNode mealObj) {
+                String mealText = "";
                 if (mealObj.has("text") && mealObj.get("text").isTextual()) {
                     String text = mealObj.get("text").asText();
                     String cleaned = stripSegments(text, strict, meal, removed);
                     if (!cleaned.equals(text)) {
                         mealObj.put("text", cleaned);
                     }
+                    mealText = mealObj.path("text").asText("");
                 }
                 if (mealObj.has("swapHint") && mealObj.get("swapHint").isTextual()) {
                     String hint = mealObj.get("swapHint").asText();
                     String cleaned = stripSegments(hint, strict, meal + "·替换", removed);
-                    if (!StringUtils.hasText(cleaned) || EMPTY_MEAL_HINT.equals(cleaned)) {
+                    // 正文已无过敏原时，丢掉「鸡蛋过敏：不选蒸蛋」这类说教平替，避免每餐刷屏
+                    if (isRedundantAllergyAdvisory(cleaned, mealText, strict)) {
+                        mealObj.putNull("swapHint");
+                        removed.add(meal + "·冗余过敏平替提示");
+                    } else if (!StringUtils.hasText(cleaned) || EMPTY_MEAL_HINT.equals(cleaned)) {
                         mealObj.putNull("swapHint");
                     } else if (!cleaned.equals(hint)) {
                         mealObj.put("swapHint", cleaned);
@@ -275,6 +281,32 @@ public final class CarePlanAllergenGuard {
                 }
             }
         }
+    }
+
+    /**
+     * 餐文已干净，但 hint 仍在叮嘱「某某过敏 / 不选某某」→ 冗余，应清空。
+     * 真正的菜品轮换（如「清蒸鱼可换成豆腐」）保留。
+     */
+    static boolean isRedundantAllergyAdvisory(String hint, String mealText, List<FoodAllergen> allergens) {
+        if (!StringUtils.hasText(hint) || allergens == null || allergens.isEmpty()) {
+            return false;
+        }
+        // 正文仍命中过敏 → 不是冗余（本不该发生，留给其它清洗）
+        if (firstHit(mealText, allergens).isPresent()) {
+            return false;
+        }
+        String h = hint.trim();
+        boolean namesAllergy = allergens.stream()
+                .anyMatch(a -> StringUtils.hasText(a.name()) && h.contains(a.name()));
+        if (!namesAllergy) {
+            return false;
+        }
+        // 「过敏 / 不选 / 勿选 / 避开」等说教口吻（菜品轮换不含过敏原名，不会进这里）
+        return h.contains("过敏")
+                || h.contains("不选")
+                || h.contains("勿选")
+                || h.contains("避开")
+                || h.contains("不要选");
     }
 
     /** 给模型的硬约束：过敏原名称 + 需要回避的关键词。 */

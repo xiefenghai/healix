@@ -172,6 +172,10 @@ a {
   color: var(--hx-mood);
   background: var(--hx-mood-soft);
 }
+.hx-cat.med {
+  color: #9a3412;
+  background: #ffedd5;
+}
 .hx-cat.other {
   color: var(--hx-n-700);
   background: var(--hx-n-100);

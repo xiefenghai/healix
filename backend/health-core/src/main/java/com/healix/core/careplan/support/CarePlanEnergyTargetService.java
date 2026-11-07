@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
+import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
 import com.healix.core.diet.domain.DietGoal;
 import com.healix.core.diet.dto.DietGoalDto;
 import com.healix.core.diet.enums.DietGoalTypeEnum;
@@ -24,10 +25,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 /**
- * 方案饮食块的热量目标 {@code diet.energyTarget}：以饮食记录的热量目标为唯一来源，方案只引用不另算。
+ * 方案饮食块的热量目标 {@code diet.energyTarget}。
  *
- * <p>来源：PATIENT_GOAL / STAFF_GOAL 取自当前饮食目标；ESTIMATED 为尚无目标时按维持体重估算；
- * PLAN_EDIT 为健管师在方案里手改的热量，发布时可同步为医护设定的饮食目标。
+ * <p>制定方案时即可落热量：已有饮食目标则引用；尚无目标时按档案自动估算（肥胖/超重偏减重）。
+ * 健管师可在方案内调整（{@code PLAN_EDIT}）；发布时默认同步为医护设定的饮食目标，不必先去饮食记录页设定。
  */
 @Slf4j
 @Service
@@ -41,6 +42,9 @@ public class CarePlanEnergyTargetService {
     public static final String SOURCE_PLAN_EDIT = "PLAN_EDIT";
 
     private static final String TEMPLATE_HINT = "按身高体重与活动量个体化，避免极端节食";
+    private static final double DEFAULT_LOSE_RATE = 0.5;
+    /** 中国成人超重 BMI 阈值，达到则估算默认偏减重 */
+    private static final double OVERWEIGHT_BMI = 24.0;
     private static final Pattern KCAL_IN_TEXT = Pattern.compile("(\\d{3,4})\\s*(千卡|大卡|kcal)", Pattern.CASE_INSENSITIVE);
     private static final Map<String, String> MISSING_LABELS =
             Map.of("GENDER", "性别", "BIRTHDAY", "出生日期", "HEIGHT", "身高", "WEIGHT", "体重");
@@ -48,7 +52,7 @@ public class CarePlanEnergyTargetService {
     private final DietGoalService goalService;
     private final DietContextLoader dietContextLoader;
 
-    /** 当前热量目标；无目标时按维持体重估算；档案不全无法计算时返回 null。 */
+    /** 当前热量目标；无饮食目标时按档案自动估算；档案不全无法计算时返回 null。 */
     public ObjectNode current(String tenantId, String peopleId) {
         DietGoal goal = goalService.current(tenantId, peopleId);
         if (goal != null && goal.getEnergyKcal() != null) {
@@ -56,12 +60,42 @@ public class CarePlanEnergyTargetService {
             return node(goal.getEnergyKcal(), goal.getCarbG(), goal.getProteinG(), goal.getFatG(),
                     goal.getGoalType(), goal.getRateKgPerWeek(), source);
         }
+        return estimateForPlan(tenantId, peopleId);
+    }
+
+    /**
+     * 尚无饮食目标时，按病种/BMI 推断减重或维持，用公式估算写入方案（source=ESTIMATED）。
+     */
+    private ObjectNode estimateForPlan(String tenantId, String peopleId) {
         try {
+            var status = goalService.status(tenantId, peopleId, false);
+            DietGoalTypeEnum type = DietGoalTypeEnum.MAINTAIN;
+            Double rate = null;
+            CarePlanTemplateKeyEnum disease = dietContextLoader.load(tenantId, peopleId).diseaseKey();
+            boolean obesityDisease = disease != null && disease.canonical() == CarePlanTemplateKeyEnum.OBESITY;
+            Double bmi = null;
+            if (status.heightCm() != null && status.weightKg() != null && status.heightCm() > 0) {
+                double m = status.heightCm() / 100.0;
+                bmi = status.weightKg() / (m * m);
+            }
+            if (obesityDisease || (bmi != null && bmi >= OVERWEIGHT_BMI)) {
+                type = DietGoalTypeEnum.LOSE;
+                rate = DEFAULT_LOSE_RATE;
+            }
             DietGoalDto est = goalService.preview(
-                    tenantId, peopleId, new GoalRequest(null, null, null, null, null, null, null), false);
+                    tenantId,
+                    peopleId,
+                    new GoalRequest(type.name(), rate, null, null, null, null, null),
+                    false);
             if (est != null && est.getEnergyKcal() != null) {
-                return node(est.getEnergyKcal(), est.getCarbG(), est.getProteinG(), est.getFatG(),
-                        est.getGoalType(), est.getRateKgPerWeek(), SOURCE_ESTIMATED);
+                return node(
+                        est.getEnergyKcal(),
+                        est.getCarbG(),
+                        est.getProteinG(),
+                        est.getFatG(),
+                        est.getGoalType(),
+                        est.getRateKgPerWeek(),
+                        SOURCE_ESTIMATED);
             }
         } catch (BusinessException e) {
             log.debug("[CarePlan] energy target not computable peopleId={} reason={}", peopleId, e.getMessage());
@@ -89,7 +123,7 @@ public class CarePlanEnergyTargetService {
         }
     }
 
-    /** 新生成的方案：丢弃模型自带的热量目标，按饮食目标重写。 */
+    /** 新生成的方案：丢弃模型自带的热量目标，按饮食目标或档案估算写入。 */
     public void applyFresh(String tenantId, String peopleId, ObjectNode diet) {
         if (diet == null) {
             return;
@@ -98,7 +132,7 @@ public class CarePlanEnergyTargetService {
         apply(tenantId, peopleId, diet);
     }
 
-    /** 编辑 / 修订后：保留健管师手改的热量（重算三大营养素），其余来源刷新为最新的饮食目标。 */
+    /** 编辑 / 修订后：保留健管师手改的热量（重算三大营养素），其余来源刷新为最新饮食目标或估算。 */
     public void apply(String tenantId, String peopleId, ObjectNode diet) {
         if (diet == null) {
             return;
@@ -119,9 +153,9 @@ public class CarePlanEnergyTargetService {
     }
 
     /**
-     * 发布：手改的热量默认同步为医护设定的饮食目标；估算值仅在显式勾选时同步。
+     * 发布：方案内手改或自动估算的热量，默认同步为医护设定的饮食目标（可勾选取消）。
      *
-     * @param sync null 表示前端未传，按默认处理
+     * @param sync null 表示前端未传，按默认处理（默认同步）
      */
     public void onPublish(String tenantId, String peopleId, String staffId, ObjectNode diet, Boolean sync) {
         apply(tenantId, peopleId, diet);
@@ -130,16 +164,17 @@ public class CarePlanEnergyTargetService {
             return;
         }
         String source = target.path("source").asText();
-        boolean doSync = SOURCE_PLAN_EDIT.equals(source)
-                ? !Boolean.FALSE.equals(sync)
-                : SOURCE_ESTIMATED.equals(source) && Boolean.TRUE.equals(sync);
+        boolean fromPlan = SOURCE_PLAN_EDIT.equals(source) || SOURCE_ESTIMATED.equals(source);
+        boolean doSync = fromPlan && !Boolean.FALSE.equals(sync);
         if (!doSync) {
             return;
         }
         DietGoal goal = goalService.current(tenantId, peopleId);
+        String goalType = target.path("goalType").asText(null);
+        Double rate = target.hasNonNull("rateKgPerWeek") ? target.get("rateKgPerWeek").asDouble() : null;
         DietGoalDto saved = goalService.saveByStaff(tenantId, peopleId, staffId, new GoalRequest(
-                goal == null ? null : goal.getGoalType(),
-                goal == null ? null : goal.getRateKgPerWeek(),
+                StringUtils.hasText(goalType) ? goalType : (goal == null ? null : goal.getGoalType()),
+                rate != null ? rate : (goal == null ? null : goal.getRateKgPerWeek()),
                 goal == null ? null : goal.getActivityLevel(),
                 null,
                 null,
@@ -209,7 +244,7 @@ public class CarePlanEnergyTargetService {
             sb.append("，以维持体重为目标");
         }
         if (SOURCE_ESTIMATED.equals(t.path("source").asText())) {
-            sb.append("（按身高体重估算）");
+            sb.append("（制定方案时按档案自动估算）");
         }
         return sb.append("；避免极端节食").toString();
     }

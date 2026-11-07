@@ -1024,7 +1024,26 @@ public class AdherenceQueryService {
         if (dueSum == 0) {
             return null;
         }
+        // 窗口内尚无任何打卡/跳过记录：不算「0% 不听话」，留给前端展示「待首次打卡」
+        if (doneSum == 0 && !hasCheckinActivity(checkinsByDay, day, RATE_WINDOW_DAYS)) {
+            return null;
+        }
         return round2((double) doneSum / (double) dueSum);
+    }
+
+    /** 近 N 日是否出现过任意打卡状态（完成/跳过等都算已开始执行）。 */
+    private static boolean hasCheckinActivity(
+            Map<LocalDate, Map<String, String>> checkinsByDay, LocalDate day, int windowDays) {
+        if (checkinsByDay == null || checkinsByDay.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < windowDays; i++) {
+            Map<String, String> dayMap = checkinsByDay.get(day.minusDays(i));
+            if (dayMap != null && !dayMap.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private record PlanWindow(LocalDate planStart, int horizonDays) {}

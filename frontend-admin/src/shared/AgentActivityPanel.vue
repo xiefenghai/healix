@@ -62,15 +62,15 @@ const summaryTitle = computed(() => {
   if (props.streaming) {
     const running = currentStep.value
     if (running?.kind === 'thinking') return '正在思考…'
-    if (running?.kind === 'tool') return `正在调用 ${running.title}…`
-    if (running?.kind === 'skill') return `能力：${running.title}`
-    if (running?.kind === 'progress') return running.title
+    if (running?.kind === 'tool') return humanizeToolTitle(running.title)
+    if (running?.kind === 'skill') return humanizeDetail(running.title) || '处理中…'
+    if (running?.kind === 'progress') return humanizeDetail(running.title) || '处理中…'
     return '处理中…'
   }
   const parts: string[] = []
   if (hasThinking.value) parts.push('思考')
-  if (toolCount.value > 0) parts.push(`${toolCount.value} 个工具`)
-  if (stepCount.value > 0) parts.push(`${stepCount.value} 步`)
+  if (toolCount.value > 0) parts.push(`${toolCount.value} 步推理`)
+  if (stepCount.value > 0 && toolCount.value === 0) parts.push(`${stepCount.value} 步`)
   if (props.elapsedMs != null) parts.push(formatDuration(props.elapsedMs))
   return parts.length ? `活动轨迹 · ${parts.join(' · ')}` : '活动轨迹'
 })
@@ -78,16 +78,16 @@ const summaryTitle = computed(() => {
 const summaryHint = computed(() => {
   if (props.streaming) {
     const cur = currentStep.value
-    if (cur?.kind === 'tool' && cur.detail) return cur.detail
+    if (cur?.kind === 'tool' && cur.detail) return humanizeDetail(cur.detail)
     if (cur?.kind === 'thinking') return '思考过程已折叠，结束后可查看'
-    if (cur?.detail) return cur.detail
+    if (cur?.detail) return humanizeDetail(cur.detail)
     return '进行中'
   }
   const thinking = [...props.items].reverse().find((i) => i.kind === 'thinking')
   const preview = thinkingPreview(thinking?.body)
   if (preview && preview !== '暂无思考内容') return preview
   const lastTool = [...props.items].reverse().find((i) => i.kind === 'tool')
-  if (lastTool) return lastTool.detail || `调用 ${lastTool.title}`
+  if (lastTool) return humanizeDetail(lastTool.detail) || humanizeToolTitle(lastTool.title)
   return '点击展开查看工具与思考过程'
 })
 
@@ -97,10 +97,11 @@ function thinkingPreview(body?: string) {
   return raw.length > 56 ? `${raw.slice(0, 56)}…` : raw
 }
 
-/** 轨迹详情里的能力码汉化，避免露出 GENERAL_CHAT 等底层名 */
+/** 轨迹详情里的能力码 / 模型名汉化，避免露出底层黑话 */
 function humanizeDetail(detail?: string) {
   if (!detail) return ''
   return detail
+    .replace(/\b(DeepSeek|OpenAI|GPT-?4|Claude|Qwen|通义|文心|Moonshot|Kimi)\b/gi, '智能推理')
     .replace(/\bGENERAL_CHAT\b/g, '业务问答')
     .replace(/\bCREATE_ARCHIVE\b/g, '患者建档')
     .replace(/\bCARE_PLAN\b/g, '制定管理方案')
@@ -110,11 +111,22 @@ function humanizeDetail(detail?: string) {
     .replace(/\bOCR_MED\b/g, '用药单识别')
     .replace(/\bCHAT_EXTRACT\b/g, '整理这段记录')
     .replace(/已选择能力\s*[·.]\s*/g, '已选择：')
+    .replace(/正在调用\s*/g, '')
+}
+
+function humanizeToolTitle(title?: string) {
+  const raw = String(title || '').trim()
+  if (!raw) return '正在处理…'
+  if (/^(DeepSeek|OpenAI|GPT-?4|Claude|Qwen)$/i.test(raw) || raw === '临床方案推理') {
+    return '正在综合患者数据与指南起草…'
+  }
+  const cleaned = humanizeDetail(raw)
+  return cleaned ? `正在处理：${cleaned}` : '正在处理…'
 }
 
 function stepTitle(item: ActivityItem) {
-  if (item.kind === 'tool') return `调用 ${item.title}`
-  return item.title
+  if (item.kind === 'tool') return humanizeToolTitle(item.title)
+  return humanizeDetail(item.title) || item.title
 }
 </script>
 

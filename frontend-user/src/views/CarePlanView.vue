@@ -25,6 +25,7 @@ import {
 } from '../shared/care-plan-labels'
 import { exerciseHowTo } from '../shared/exercise'
 import { printCarePlan } from '../shared/care-plan-print'
+import { patientDietNoteLines } from '../shared/care-plan-diet-notes'
 import ScienceSheet from '../shared/ScienceSheet.vue'
 import { claimScienceOffer, type ScienceToday } from '../shared/science'
 
@@ -74,7 +75,7 @@ const exerciseContraindications = computed(() => asStringList(exercise.value.con
 const dietPrinciples = computed(() => asStringList(diet.value.principles))
 const dietRecommended = computed(() => asFoodList(diet.value.recommended))
 const dietLimited = computed(() => asFoodList(diet.value.limited))
-const dietNotes = computed(() => String(diet.value.notes || '').trim())
+const dietNoteLines = computed(() => patientDietNoteLines(String(diet.value.notes || '')))
 const dietCalorieHint = computed(() => String(diet.value.calorieHint || '').trim())
 /** 方案引用的饮食热量目标，与饮食日记的热量预算同源 */
 const dietEnergy = computed(() => {
@@ -842,7 +843,7 @@ async function checkin(taskId: string, status: string) {
                 dietPrinciples.length ||
                 dietEnergy ||
                 dietCalorieHint ||
-                dietNotes ||
+                dietNoteLines.length ||
                 dietRecommended.length ||
                 dietLimited.length ||
                 sampleDay.length ||
@@ -856,7 +857,7 @@ async function checkin(taskId: string, status: string) {
                 </ol>
               </div>
 
-              <div v-if="dietEnergy || dietCalorieHint || dietNotes" class="plan-block plan-kv">
+              <div v-if="dietEnergy || dietCalorieHint" class="plan-block plan-kv">
                 <p v-if="dietEnergy">
                   <em>每日热量</em>
                   <span>
@@ -869,10 +870,13 @@ async function checkin(taskId: string, status: string) {
                   <em>能量建议</em>
                   <span>{{ dietCalorieHint }}</span>
                 </p>
-                <p v-if="dietNotes">
-                  <em>备注</em>
-                  <span>{{ dietNotes }}</span>
-                </p>
+              </div>
+
+              <div v-if="dietNoteLines.length" class="plan-block">
+                <div class="plan-label">执行提醒</div>
+                <ul class="plan-ol">
+                  <li v-for="(n, i) in dietNoteLines" :key="'dn-' + i">{{ n }}</li>
+                </ul>
               </div>
 
               <div v-if="dietRecommended.length || dietLimited.length" class="plan-block">

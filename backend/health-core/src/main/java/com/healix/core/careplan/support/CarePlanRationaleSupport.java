@@ -6,14 +6,29 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.util.StringUtils;
 
-/** 生成理由：缺失检测、C 端剥离、编辑后清空。 */
+/** 生成理由：缺失检测、C 端剥离、编辑后清空、编码 scrub。 */
 public final class CarePlanRationaleSupport {
 
     public static final String WARN_MISSING = "MISSING_RATIONALE";
+
+    /**
+     * 指南条目编码，如 {@code WL.ENERGY_DEFICIT}、{@code DM.DIET.CARB}、{@code HTN.DIET.SALT}。
+     * 应只出现在 {@code refs}，不应写进 rationale 正文。
+     */
+    private static final Pattern GUIDELINE_CODE =
+            Pattern.compile("\\b[A-Z]{2,12}(?:\\.[A-Z][A-Z0-9_]{0,32}){1,6}\\b");
+
+    /** 「按 CODE 与 CODE」整段前缀， scrub 成「按指南」 */
+    private static final Pattern GUIDELINE_CODE_PHRASE = Pattern.compile(
+            "按\\s*" + GUIDELINE_CODE.pattern() + "(?:\\s*[与和及、,/]\\s*" + GUIDELINE_CODE.pattern() + ")*");
 
     private CarePlanRationaleSupport() {}
 
@@ -130,4 +145,77 @@ public final class CarePlanRationaleSupport {
         }
         return base;
     }
+
+    /**
+     * 清洗生成依据：正文去掉条目编码（并入 {@code refs}），overview 同步处理。
+     * 便于健管师阅读；编码仍可通过「依据了 N 部权威指南」查看。
+     */
+    public static void scrubGuidelineCodesInPlan(ObjectNode exercise, ObjectNode diet, ObjectNode execution, ObjectNode snapshot) {
+        scrubBlock(exercise);
+        scrubBlock(diet);
+        scrubBlock(execution);
+        if (execution != null && execution.path("tasks").isArray()) {
+            for (JsonNode t : execution.get("tasks")) {
+                if (t instanceof ObjectNode task) {
+                    scrubBlock(task);
+                }
+            }
+        }
+        if (snapshot != null && snapshot.path("rationale").isObject()) {
+            ObjectNode r = (ObjectNode) snapshot.get("rationale");
+            String overview = r.path("overview").asText(null);
+            if (StringUtils.hasText(overview)) {
+                ScrubResult sr = scrubText(overview);
+                r.put("overview", sr.text());
+            }
+        }
+    }
+
+    private static void scrubBlock(ObjectNode block) {
+        if (block == null) {
+            return;
+        }
+        String rationale = block.path("rationale").asText(null);
+        if (!StringUtils.hasText(rationale)) {
+            return;
+        }
+        ScrubResult sr = scrubText(rationale);
+        block.put("rationale", sr.text());
+        if (sr.codes().isEmpty()) {
+            return;
+        }
+        ArrayNode refs = block.withArray("refs");
+        Set<String> existing = new LinkedHashSet<>();
+        for (JsonNode n : refs) {
+            if (n != null && n.isTextual() && StringUtils.hasText(n.asText())) {
+                existing.add(n.asText().trim());
+            }
+        }
+        for (String code : sr.codes()) {
+            if (existing.add(code)) {
+                refs.add(code);
+            }
+        }
+    }
+
+    /** 测试与内部复用：去掉「按 CODE」短语与裸编码，返回清洗文案与抽出的 code。 */
+    static ScrubResult scrubText(String raw) {
+        Set<String> codes = new LinkedHashSet<>();
+        Matcher collect = GUIDELINE_CODE.matcher(raw);
+        while (collect.find()) {
+            codes.add(collect.group());
+        }
+        String text = GUIDELINE_CODE_PHRASE.matcher(raw).replaceAll("按指南");
+        text = GUIDELINE_CODE.matcher(text).replaceAll("");
+        text = text.replaceAll("按指南(?:\\s*按指南)+", "按指南");
+        text = text.replaceAll("[与和及、,/]{2,}", "、");
+        text = text.replaceAll("\\s{2,}", " ");
+        text = text.replaceAll("([，,；;、])\\1+", "$1");
+        text = text.replaceAll("([。；;])\\s*([。；;])+", "$1");
+        text = text.replaceAll("(?<=[，,；;、])\\s+", "");
+        text = text.trim().replaceAll("^[与和及、,/]+|[与和及、,/]+$", "");
+        return new ScrubResult(text, codes);
+    }
+
+    record ScrubResult(String text, Set<String> codes) {}
 }

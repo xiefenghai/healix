@@ -108,12 +108,12 @@ public class ReportSummaryGenerator {
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在按你的要求修订点评草稿…"));
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingStart("对照现有寄语落实修订意见…"));
         } else {
-            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在调用 AI 生成健管师寄语…"));
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在结合依从与指标撰写健管师寄语…"));
             AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingStart("梳理依从与指标，组织对患者的寄语…"));
         }
 
         long started = System.currentTimeMillis();
-        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.tool("DeepSeek", "running", "正在生成点评…"));
+        AgentStreamEvent.safeEmit(sink, AgentStreamEvent.tool("报告点评推理", "running", "正在撰写健管师寄语…"));
         ReportReadableStreamer readable = new ReportReadableStreamer(sink);
         LlmResponse llm = sink != null
                 ? llmClient.streamChat(scene, system, userMessage, List.of(), readable::onToken)
@@ -122,8 +122,8 @@ public class ReportSummaryGenerator {
 
         if (!llm.fromLlm() || !StringUtils.hasText(llm.content())) {
             AgentStreamEvent.safeEmit(
-                    sink, AgentStreamEvent.tool("DeepSeek", "done", "未返回有效内容 · " + ms + "ms"));
-            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingDone("模型未返回有效内容", ms));
+                    sink, AgentStreamEvent.tool("报告点评推理", "done", "暂未形成可用寄语"));
+            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.thinkingDone("暂未形成可用寄语", ms));
             ReportSummaryDraft fb = fallback(content, quarter, "AI 未返回内容，已回退模板草稿");
             emitFallbackStream(sink, fb);
             return fb;
@@ -132,7 +132,7 @@ public class ReportSummaryGenerator {
             JsonNode parsed = JsonUtils.readTree(stripCodeFence(llm.content()));
             if (parsed == null || !parsed.isObject()) {
                 AgentStreamEvent.safeEmit(
-                        sink, AgentStreamEvent.tool("DeepSeek", "done", "格式异常 · " + ms + "ms"));
+                        sink, AgentStreamEvent.tool("报告点评推理", "done", "寄语结构校验未通过"));
                 ReportSummaryDraft fb = fallback(content, quarter, "AI 返回格式异常，已回退模板草稿");
                 emitFallbackStream(sink, fb);
                 return fb;
@@ -148,9 +148,9 @@ public class ReportSummaryGenerator {
             AgentStreamEvent.safeEmit(
                     sink,
                     AgentStreamEvent.tool(
-                            "DeepSeek",
+                            "报告点评推理",
                             "done",
-                            (revise != null ? "修订完成 · " : "点评已生成 · ") + ms + "ms"));
+                            revise != null ? "修订寄语已整理完成" : "健管师寄语已整理完成"));
             AgentStreamEvent.safeEmit(
                     sink,
                     AgentStreamEvent.thinkingDone(

@@ -90,6 +90,86 @@ export function primaryProgramFromTracks(
   return normalized[0]
 }
 
+export type CareTrackSource = 'appeal' | 'illness' | 'manual'
+
+const APPEAL_SHORT_LABEL: Record<string, string> = {
+  GLUCOSE: '控糖',
+  BP: '控压',
+  LIPID: '控血脂',
+  FAT_LOSS: '减脂减重',
+  BODY_SHAPE: '塑形增肌',
+  METABOLIC: '三高 / 代谢综合',
+}
+
+/** 某个管理方向当前由什么建议支撑（诉求优先于病史） */
+export function careTrackSource(
+  track: Exclude<IntakeProgramCode, 'NONE'>,
+  appeal: unknown,
+  presentIllness?: unknown,
+): CareTrackSource {
+  const fromAppeal = suggestedCareTracksFromAppeal(appeal)
+  if (fromAppeal.includes(track)) return 'appeal'
+  const fromIllness = suggestedCareTracksFromIllness(presentIllness)
+  if (fromIllness.includes(track)) return 'illness'
+  return 'manual'
+}
+
+/** 已勾选方向的来源小标签文案；未勾选不返回 */
+export function careTrackOptionBadges(
+  selected: unknown,
+  appeal: unknown,
+  presentIllness?: unknown,
+): Record<string, string> {
+  const tracks = normalizeCareTracks(selected)
+  const out: Record<string, string> = {}
+  for (const t of tracks) {
+    const src = careTrackSource(t, appeal, presentIllness)
+    if (src === 'appeal') out[t] = '由诉求关联'
+    else if (src === 'illness') out[t] = '病史推荐'
+  }
+  return out
+}
+
+/** 指向某管理方向的诉求短名（用于取消确认） */
+export function appealShortLabelsForTrack(track: Exclude<IntakeProgramCode, 'NONE'>, appeal: unknown): string[] {
+  const codes = (Array.isArray(appeal) ? appeal : appeal != null && appeal !== '' ? [appeal] : []).map((x) =>
+    String(x).toUpperCase(),
+  )
+  const out: string[] = []
+  for (const code of codes) {
+    let hit = false
+    if (track === 'WEIGHT_LOSS' && (code === 'FAT_LOSS' || code === 'BODY_SHAPE' || code === 'LIPID' || code === 'METABOLIC')) {
+      hit = true
+    } else if (track === 'DIABETES' && (code === 'GLUCOSE' || code === 'METABOLIC')) {
+      hit = true
+    } else if (track === 'HYPERTENSION' && (code === 'BP' || code === 'METABOLIC')) {
+      hit = true
+    }
+    if (hit) {
+      const label = APPEAL_SHORT_LABEL[code]
+      if (label && !out.includes(label)) out.push(label)
+    }
+  }
+  return out
+}
+
+export function careTrackLabel(track: Exclude<IntakeProgramCode, 'NONE'>): string {
+  return CARE_TRACK_OPTIONS.find((o) => o.code === track)?.label || track
+}
+
+/** 取消「由诉求关联」方向时的确认文案 */
+export function careTrackDeselectConfirmMessage(
+  track: Exclude<IntakeProgramCode, 'NONE'>,
+  appeal: unknown,
+): string {
+  const appeals = appealShortLabelsForTrack(track, appeal)
+  const trackName = careTrackLabel(track)
+  if (appeals.length) {
+    return `患者有「${appeals.join('、')}」诉求，建议纳入「${trackName}」。确认不纳入吗？`
+  }
+  return `该方向由诉求自动关联，确认不纳入「${trackName}」吗？`
+}
+
 export type IntakeFieldType =
   | 'TEXT'
   | 'NUMBER'

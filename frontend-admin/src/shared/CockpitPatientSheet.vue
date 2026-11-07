@@ -38,6 +38,8 @@ const props = defineProps<{
   intakePurpose?: string | null
   /** 打开后优先落到的模块编码，如 BODY_MEASURE */
   intakeStartModule?: string | null
+  /** 管理方案抽屉是否显示「首诊问卷」入口 */
+  showIntakeDetailEntry?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -55,6 +57,8 @@ const emit = defineEmits<{
     allergy?: string
     supplement?: boolean
   }]
+  /** 查看已提交首诊答卷只读详情 */
+  'open-intake-detail': []
 }>()
 
 const visible = computed({
@@ -94,13 +98,25 @@ const title = computed(() => {
 <template>
   <el-drawer
     v-model="visible"
-    :title="title"
     direction="rtl"
     :size="drawerSize"
     append-to-body
     destroy-on-close
     class="cockpit-patient-sheet"
   >
+    <template #header>
+      <div class="sheet-header">
+        <span class="sheet-title">{{ title }}</span>
+        <button
+          v-if="mode === 'care-plan' && showIntakeDetailEntry"
+          type="button"
+          class="sheet-intake-link"
+          @click.stop="emit('open-intake-detail')"
+        >
+          查看首诊问卷
+        </button>
+      </div>
+    </template>
     <div
       v-if="peopleId && visible"
       class="sheet-body"
@@ -116,6 +132,7 @@ const title = computed(() => {
         v-else-if="mode === 'care-plan'"
         :people-id="peopleId"
         @published="emit('care-plan-published')"
+        @open-intake-detail="emit('open-intake-detail')"
       />
       <PatientHealthReportView
         v-else-if="mode === 'reports'"
@@ -145,6 +162,43 @@ const title = computed(() => {
 </template>
 
 <style scoped>
+.sheet-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-intake-link {
+  flex-shrink: 0;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.6;
+}
+
+.sheet-intake-link:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
 .sheet-body {
   height: calc(100vh - 120px);
   overflow: auto;
@@ -159,5 +213,17 @@ const title = computed(() => {
 .sheet-body.intake {
   padding: 0;
   overflow: hidden;
+}
+</style>
+
+<!-- append-to-body 抽屉壳层需非 scoped -->
+<style>
+.cockpit-patient-sheet.el-drawer .el-drawer__header {
+  margin-bottom: 8px;
+  padding-bottom: 0;
+}
+
+.cockpit-patient-sheet.el-drawer .el-drawer__body {
+  padding-top: 0;
 }
 </style>

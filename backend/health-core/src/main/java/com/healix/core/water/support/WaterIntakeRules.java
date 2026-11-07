@@ -12,7 +12,10 @@ public final class WaterIntakeRules {
     public static final String CATEGORY = "WATER";
     public static final int DEFAULT_TARGET_ML = 1600;
     public static final int MIN_TARGET_ML = 1200;
-    public static final int MAX_TARGET_ML = 2000;
+    /** 旧版硬顶，易与 kg×30 冲突（如 82kg→2460 被压成 2000）。 */
+    public static final int LEGACY_MAX_TARGET_ML = 2000;
+    /** 一般生活方式建议上限；极端肥胖仍封顶，避免无限制冲高。 */
+    public static final int MAX_TARGET_ML = 3000;
     public static final int ML_PER_KG = 30;
     public static final int CUP_SMALL_ML = 200;
     public static final int CUP_LARGE_ML = 300;
@@ -38,7 +41,8 @@ public final class WaterIntakeRules {
         if (weightKg == null || weightKg < 30 || weightKg > 250) {
             return DEFAULT_TARGET_ML;
         }
-        int raw = (int) Math.round(weightKg * ML_PER_KG);
+        // 按百毫升取整，便于患者理解与打卡（82×30=2460 → 2500）
+        int raw = (int) Math.round(weightKg * ML_PER_KG / 100.0) * 100;
         return Math.max(MIN_TARGET_ML, Math.min(MAX_TARGET_ML, raw));
     }
 

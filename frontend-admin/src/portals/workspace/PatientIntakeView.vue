@@ -23,6 +23,9 @@ import {
   loadIntakeOptionMaps,
   matchShowIf,
   mergePrefillIntoAnswers,
+  careTrackDeselectConfirmMessage,
+  careTrackOptionBadges,
+  careTrackSource,
   careTracksAnswerValue,
   normalizeCareTracks,
   openIntake,
@@ -84,6 +87,8 @@ const emit = defineEmits<{
   applyExtract: [rows: { id: string; code: string; archiveValue: string; discard: boolean }[]]
   /** 打开问卷时，把光标放到左侧输入框，方便粘贴一段记录 */
   focusPaste: []
+  /** 草稿里的档案字段变更，供驾驶舱左侧焦点卡即时刷新年龄/姓名 */
+  profileDraft: [payload: { displayName?: string; gender?: string; birthday?: string }]
 }>()
 
 const isEmbedded = computed(() => !!props.embedded)
@@ -203,15 +208,31 @@ function metricAnomaly(field: string): string {
     }
   }
   if (field === 'metric.WAIST') {
-    if (value < 40 || value > 200) return '数值异常，请确认是否输入错误'
+    if (value < 50 || value > 180) return '数值异常，请确认是否输入错误'
     const height = asMetric(answers['metric.HEIGHT'])
     const weight = asMetric(answers['metric.WEIGHT'])
     if (height != null && height >= 140 && value < height * 0.35) {
-      return '与身高体重不匹配，请确认是否输入错误'
+      return '与身高不匹配，疑似录入错误'
     }
     const bmiNow = calcBmi(height, weight)
-    if (bmiNow != null && bmiNow >= 28 && value < 70) return '与身高体重不匹配，请确认是否输入错误'
-    if (bmiNow != null && bmiNow >= 24 && value < 60) return '与身高体重不匹配，请确认是否输入错误'
+    if (height != null && height >= 140 && bmiNow != null && bmiNow >= 24 && value < height * 0.4) {
+      return '与体重/BMI 不匹配，疑似录入错误'
+    }
+    if (bmiNow != null && bmiNow >= 25 && value < 75) return '与体重/BMI 不匹配，疑似录入错误'
+    if (bmiNow != null && bmiNow >= 28 && value < 80) return '与体重/BMI 不匹配，疑似录入错误'
+  }
+  // 下限对齐字段目录 min，避免「能填进框却一直红字」；上限抓离谱目标（如糖化 12%）
+  if (field === 'goal.targetBpDia') {
+    if (value < 40 || value > 110) return '目标值不合理，疑似录入错误'
+  }
+  if (field === 'goal.targetBpSys') {
+    if (value < 80 || value > 180) return '目标值不合理，疑似录入错误'
+  }
+  if (field === 'goal.targetHba1c') {
+    if (value < 4 || value > 8) return '目标值不合理，疑似录入错误'
+  }
+  if (field === 'goal.targetFpg') {
+    if (value < 3 || value > 10) return '目标值不合理，疑似录入错误'
   }
   return ''
 }
@@ -282,6 +303,17 @@ const visibleModules = computed(() =>
 const careTracks = computed(() => normalizeCareTracks(answers['goal.careTracks']))
 
 const illnessTrackHints = computed(() => suggestedCareTracksFromIllness(answers['basic.presentIllness']))
+
+/** 管理方向选项旁：由诉求关联 / 病史推荐 */
+const careTrackBadges = computed(() =>
+  careTrackOptionBadges(answers['goal.careTracks'], answers['goal.primaryAppeal'], answers['basic.presentIllness']),
+)
+
+function questionLabelFor(it: IntakeItemView): string {
+  if (it.field === FIELD_STAFF_AI_SUMMARY) return '总结原文（可编辑）'
+  if (it.field === 'goal.careTracks') return '系统已按诉求匹配以下管理方向（可调整）'
+  return questionLead(it.label)
+}
 
 /**
  * 健管师补录缺口：C 端跳过的 LIST / 外置题 + 未填 STAFF 题（在当前可见模块内）。
@@ -528,7 +560,7 @@ function checkpointText() {
   } else if (mod?.code === 'ALLERGY_DIET_RESTRICTION') {
     next = '接下来填【过敏与忌口】。勾选海鲜后，方案会自动排除海鲜类食谱。'
   }
-  return `✅ 已为您打开首诊问卷。档案完整度 ${pct}%。\n${next}`
+  return `✅ 已为您打开首诊问卷。首诊评估问卷完整度 ${pct}%。\n${next}`
 }
 
 function publishCheckpoint() {
@@ -651,10 +683,164 @@ const targetBmiBand = computed(() => {
   return { label: '目标仍肥胖', tone: 'warn' as const }
 })
 
-const highlightHits = computed(() =>
+const SUSPECT_METRIC_FIELDS = [
+  'metric.WAIST',
+  'metric.BLOOD_PRESSURE_SYS',
+  'metric.BLOOD_PRESSURE_DIA',
+  'goal.targetBpDia',
+  'goal.targetBpSys',
+  'goal.targetHba1c',
+  'goal.targetFpg',
+] as const
+
+const highlightHits = computed(() => {
   // 本地可判定的题跟 answers 即时联动；computed 类规则仍保留服务端结果
-  mergeLiveHighlights(modules.value, answers, serverHighlights.value),
-)
+  const base = mergeLiveHighlights(modules.value, answers, serverHighlights.value)
+  const extra: IntakeHighlightHit[] = []
+  for (const field of SUSPECT_METRIC_FIELDS) {
+    const reason = metricAnomaly(field)
+    if (!reason) continue
+    if (base.some((h) => h.field === field)) continue
+    extra.push({
+      field,
+      label: shortFieldTitle(field),
+      severity: 'CAUTION',
+      planEffect: reason,
+    })
+  }
+  return extra.length ? [...extra, ...base] : base
+})
+
+/** 砍掉括号说明，得到健管师可读的短题名 */
+function shortFieldTitle(field: string, hitLabel?: string | null) {
+  return labelOf(field, hitLabel)
+    .replace(/（[^）]*）/g, '')
+    .replace(/\([^)]*\)/g, '')
+    .trim()
+}
+
+type CheckAction = {
+  key: string
+  field: string
+  title: string
+  detail: string
+  cta: string
+  tone: 'danger' | 'warn' | 'info'
+}
+
+/** 提交确认：把高亮翻译成「待办卡片」，避免数据库报错体 */
+const checkActions = computed((): CheckAction[] => {
+  const seen = new Set<string>()
+  const out: CheckAction[] = []
+  for (const h of highlightHits.value) {
+    if (!h.field || seen.has(h.field)) continue
+    seen.add(h.field)
+    out.push(toCheckAction(h))
+  }
+  return out
+})
+
+function toCheckAction(h: IntakeHighlightHit): CheckAction {
+  const field = h.field
+  const short = shortFieldTitle(field, h.label)
+  const raw = String(h.planEffect || h.followUp || '').trim()
+  const value = answers[field]
+  const num = asMetric(value)
+  const sev = String(h.severity || '').toUpperCase()
+  const tone: CheckAction['tone'] =
+    sev === 'BLOCK' || sev === 'REFER' ? 'danger' : sev === 'CAUTION' ? 'warn' : 'info'
+
+  if (field === 'metric.WAIST') {
+    return {
+      key: field,
+      field,
+      title: '腰围数据异常',
+      detail:
+        num != null
+          ? `${num}cm 与体重/BMI 不匹配，请重新测量`
+          : raw || '与体重/BMI 不匹配，请重新测量',
+      cta: '去修改',
+      tone: 'danger',
+    }
+  }
+  if (field === 'goal.targetBpDia') {
+    return {
+      key: field,
+      field,
+      title: '舒张压目标不合理',
+      detail: num != null ? `当前目标 ${num}mmHg 过低，请修正` : raw || '目标值不合理，请修正',
+      cta: '去修改',
+      tone: 'danger',
+    }
+  }
+  if (field === 'goal.targetBpSys') {
+    return {
+      key: field,
+      field,
+      title: '收缩压目标不合理',
+      detail: num != null ? `当前目标 ${num}mmHg 异常，请修正` : raw || '目标值不合理，请修正',
+      cta: '去修改',
+      tone: 'danger',
+    }
+  }
+  if (field === 'goal.targetHba1c') {
+    return {
+      key: field,
+      field,
+      title: '糖化目标值不合理',
+      detail: num != null ? `当前设定 ${num}% 存在风险，请复核` : raw || '目标值不合理，请复核',
+      cta: '去修改',
+      tone: 'danger',
+    }
+  }
+  if (field === 'goal.targetFpg') {
+    return {
+      key: field,
+      field,
+      title: '空腹血糖目标不合理',
+      detail: num != null ? `当前目标 ${num}mmol/L 异常，请修正` : raw || '目标值不合理，请修正',
+      cta: '去修改',
+      tone: 'danger',
+    }
+  }
+  if (field.startsWith('basic.') || field.startsWith('medication.') || field.startsWith('disease.')) {
+    const detail = stripEchoLabel(raw, short) || '请确认用药与监测习惯，防低血糖'
+    return {
+      key: field,
+      field,
+      title: short || '疾病与用药',
+      detail,
+      cta: '去核对',
+      tone: tone === 'danger' ? 'danger' : 'info',
+    }
+  }
+  return {
+    key: field,
+    field,
+    title: short.endsWith('异常') || short.endsWith('不合理') ? short : `${short}需核对`,
+    detail: stripEchoLabel(raw, short) || '请核对后继续',
+    cta: '去修改',
+    tone,
+  }
+}
+
+/** 去掉「字段名数据异常：」这类重复前缀 */
+function stripEchoLabel(text: string, label: string) {
+  if (!text) return ''
+  let t = text
+  if (label) {
+    t = t.replace(new RegExp(`^${escapeReg(label)}(数据异常)?[：:]\\s*`), '')
+    t = t.replace(new RegExp(escapeReg(label), 'g'), '').replace(/\s{2,}/g, ' ')
+  }
+  return t
+    .replace(/^数据异常[：:]\s*/, '')
+    .replace(/请修正后再生成方案[。.]?$/, '')
+    .trim()
+}
+
+function escapeReg(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 const skippedRiskFields = ref<string[]>([])
 /** 两处「去补录」各自记住上次停住的题，再点时从后面接着找。 */
@@ -802,7 +988,7 @@ function goNextModule() {
   requiredHoldFields.value = []
   if (mod && riskHere.length && status.value === 'DRAFT' && !riskLeavePassed.has(mod.code)) {
     riskLeavePassed.add(mod.code)
-    ElMessage.warning('这几题会影响到方案，还没填。可以先跳过，再点一次就进入下一模块')
+    ElMessage.warning('这几题会影响到方案，还没填。如果暂时不清楚也可以先跳过，再点一次就进入下一模块')
     flashRiskFields(riskHere)
     void focusQuestion(riskHere[0])
     return
@@ -851,30 +1037,123 @@ const riskGroups = computed(() => {
     .map((title) => ({ title, items: buckets.get(title) || [] }))
 })
 
-function fillFirstRiskFromSummary() {
+async function fillFirstRiskFromSummary() {
   summaryOpen.value = false
+  if (hydrated.value && status.value === 'DRAFT' && responseId.value) {
+    scheduleSave.cancel()
+    await persistDraft()
+  }
   riskCursor.value = ''
   riskCursorEnded.value = false
   goFirstRisk(false)
 }
 
-const changeRows = computed(() => {
-  const rows: Array<{ field: string; label: string; from: unknown; to: unknown; source?: string }> = []
-  for (const [field, cell] of Object.entries(prefill.value)) {
-    if (isAnswerEmpty(cell?.value) && isAnswerEmpty(answers[field])) continue
-    if (valuesEqual(cell?.value, answers[field])) continue
-    if (isAnswerEmpty(answers[field])) continue
-    const fromText = displayAnswer(field, cell?.value)
-    const toText = displayAnswer(field, answers[field])
-    // 结构不同但案头文案相同（过敏/用药常见）→ 不算变更
-    if (fromText === toText) continue
+/** 底部勾选旁：展开并滚到「还会影响方案」列表，让人知道「这几题」指什么 */
+async function revealUnaskedRisks() {
+  riskListOpen.value = true
+  await nextTick()
+  const el = document.getElementById('intake-sum-risks')
+  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+/** 档案脏生日（如 1875）不直接展示，避免确认页「时间倒流」 */
+function isAbsurdBirthdayValue(raw: unknown): boolean {
+  const iso = String(raw ?? '').trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false
+  if (iso < '1900-01-01') return true
+  const age = ageYearsFromBirthday(iso)
+  return age == null || age > 120
+}
+
+function pushChangeRow(
+  rows: Array<{
+    field: string
+    label: string
+    from: unknown
+    to: unknown
+    fromText: string
+    toText: string
+    fromAbsurd: boolean
+    source?: string
+  }>,
+  field: string,
+  fromVal: unknown,
+  toVal: unknown,
+  source?: string,
+) {
+  if (isAnswerEmpty(fromVal) && isAnswerEmpty(toVal)) return
+  if (valuesEqual(fromVal, toVal)) return
+  if (isAnswerEmpty(toVal)) return
+  const absurd = field === 'profile.birthday' && isAbsurdBirthdayValue(fromVal)
+  const fromText = absurd
+    ? ''
+    : isAnswerEmpty(fromVal)
+      ? ''
+      : displayAnswer(field, fromVal)
+  const toText = displayAnswer(field, toVal)
+  if (!absurd && fromText === toText) return
+  if (!absurd && (fromText === '—' || fromText === '-')) {
     rows.push({
       field,
-      label: labelOf(field),
-      from: cell?.value,
-      to: answers[field],
-      source: formatPrefillSource(cell?.sourceBizCode),
+      label: shortFieldTitle(field),
+      from: fromVal,
+      to: toVal,
+      fromText: '',
+      toText,
+      fromAbsurd: false,
+      source,
     })
+    return
+  }
+  rows.push({
+    field,
+    label: shortFieldTitle(field),
+    from: fromVal,
+    to: toVal,
+    fromText,
+    toText,
+    fromAbsurd: absurd,
+    source,
+  })
+}
+
+const changeRows = computed(() => {
+  const rows: Array<{
+    field: string
+    label: string
+    from: unknown
+    to: unknown
+    fromText: string
+    toText: string
+    fromAbsurd: boolean
+    source?: string
+  }> = []
+  for (const [field, cell] of Object.entries(prefill.value)) {
+    let fromVal = cell?.value
+    // 脏生日被清掉后，用 scrubbed 值做对照（展示时再脱敏为「原始档案异常」）
+    if (
+      field === 'profile.birthday' &&
+      isAnswerEmpty(fromVal) &&
+      scrubbedBirthdayFrom.value &&
+      !isAnswerEmpty(answers[field])
+    ) {
+      fromVal = scrubbedBirthdayFrom.value
+    }
+    pushChangeRow(rows, field, fromVal, answers[field], formatPrefillSource(cell?.sourceBizCode))
+  }
+  // 预填里没有生日、但清掉了脏生日又填了新值
+  if (
+    !rows.some((r) => r.field === 'profile.birthday') &&
+    scrubbedBirthdayFrom.value &&
+    !isAnswerEmpty(answers['profile.birthday'])
+  ) {
+    pushChangeRow(
+      rows,
+      'profile.birthday',
+      scrubbedBirthdayFrom.value,
+      answers['profile.birthday'],
+      '档案资料',
+    )
   }
   return rows
 })
@@ -954,16 +1233,23 @@ function applyView(view: QuestionnaireResponseView, seedAnswers: boolean) {
 }
 
 let scrubbedBirthday = false
+/** 被清掉的档案脏生日，变更对照里用来显示「旧 → 新」 */
+const scrubbedBirthdayFrom = ref('')
 
 /** 1900 年以前的生日无法用于年龄判断，打开问卷时清掉，避免停在界面上。 */
 function dropImpossibleBirthday() {
   const raw = String(answers['profile.birthday'] ?? '').trim()
   if (raw && raw < '1900-01-01') {
+    scrubbedBirthdayFrom.value = raw.slice(0, 10)
     answers['profile.birthday'] = ''
     scrubbedBirthday = true
   }
   const cell = prefill.value['profile.birthday']
-  if (cell && String(cell.value ?? '').trim() < '1900-01-01') cell.value = ''
+  const pref = cell ? String(cell.value ?? '').trim() : ''
+  if (pref && pref < '1900-01-01') {
+    if (!scrubbedBirthdayFrom.value) scrubbedBirthdayFrom.value = pref.slice(0, 10)
+    cell.value = ''
+  }
 }
 
 function syncProgramFromTracks() {
@@ -1023,10 +1309,12 @@ async function bootstrap() {
       quickMode.value = false
     }
     scrubbedBirthday = false
+    scrubbedBirthdayFrom.value = ''
     applyView(view, true)
     hydrated.value = true
     if (scrubbedBirthday) void persistDraft()
     publishCheckpoint()
+    publishProfileDraft()
   } catch (e) {
     ElMessage.error((e as Error).message || (isSupplement.value ? '打开待补问卷失败' : '打开首诊问卷失败'))
   } finally {
@@ -1145,8 +1433,61 @@ watch(shownModuleKey, (now, prev) => {
 })
 
 function setAnswer(field: string, value: unknown) {
+  if (field === 'goal.careTracks') {
+    void setCareTracksAnswer(value)
+    return
+  }
   answers[field] = value
   coachFromAnswer(field, value)
+  if (
+    field === 'profile.birthday' ||
+    field === 'profile.displayName' ||
+    field === 'profile.gender'
+  ) {
+    publishProfileDraft()
+  }
+}
+
+function publishProfileDraft() {
+  const birthday = String(answers['profile.birthday'] ?? '').trim().slice(0, 10)
+  const displayName = String(answers['profile.displayName'] ?? '').trim()
+  const gender = String(answers['profile.gender'] ?? '').trim()
+  emit('profileDraft', {
+    displayName: displayName || undefined,
+    gender: gender || undefined,
+    birthday: birthday && birthday >= '1900-01-01' ? birthday : birthday || undefined,
+  })
+}
+
+/** 取消「由诉求关联」的管理方向时二次确认，避免用户以为系统瞎填后误点掉 */
+async function setCareTracksAnswer(value: unknown) {
+  if (status.value !== 'DRAFT') {
+    answers['goal.careTracks'] = value
+    return
+  }
+  const prev = careTracks.value
+  const next = normalizeCareTracks(value)
+  const removed = prev.filter((t) => !next.includes(t))
+  const appealLinked = removed.filter(
+    (t) => careTrackSource(t, answers['goal.primaryAppeal'], answers['basic.presentIllness']) === 'appeal',
+  )
+  if (appealLinked.length) {
+    const message =
+      appealLinked.length === 1
+        ? careTrackDeselectConfirmMessage(appealLinked[0], answers['goal.primaryAppeal'])
+        : appealLinked.map((t) => careTrackDeselectConfirmMessage(t, answers['goal.primaryAppeal'])).join('\n')
+    try {
+      await ElMessageBox.confirm(message, '确认调整管理方向', {
+        type: 'warning',
+        confirmButtonText: '仍不纳入',
+        cancelButtonText: '保留',
+      })
+    } catch {
+      return
+    }
+  }
+  answers['goal.careTracks'] = careTracksAnswerValue(next)
+  coachFromAnswer('goal.careTracks', answers['goal.careTracks'])
 }
 
 function restorePrefill(field: string) {
@@ -1192,7 +1533,13 @@ async function openSummary() {
     submitGuardOpen.value = true
     return
   }
-  await proceedSummary()
+  // 提前亮起「AI 正在总结…」，避免等弹窗逻辑跑完才有反馈
+  if (!isSupplement.value) openingSummary.value = true
+  try {
+    await proceedSummary()
+  } finally {
+    openingSummary.value = false
+  }
 }
 
 async function forceSubmitDespiteGaps() {
@@ -1202,15 +1549,17 @@ async function forceSubmitDespiteGaps() {
   }
   allowIncompleteSubmit.value = true
   submitGuardOpen.value = false
-  await proceedSummary()
+  if (!isSupplement.value) openingSummary.value = true
+  try {
+    await proceedSummary()
+  } finally {
+    openingSummary.value = false
+  }
 }
 
 async function proceedSummary() {
-  if (status.value !== 'DRAFT' || openingSummary.value) return
-  if (riskUnasked.value.length && !riskAck.value) {
-    riskGuardOpen.value = true
-    return
-  }
+  if (status.value !== 'DRAFT') return
+  // 未填风险题的确认放在「提交前确认」弹窗里勾选，不再单独弹一层
   await openSummaryDialog()
 }
 
@@ -1222,25 +1571,25 @@ function backToRisk() {
 }
 
 async function confirmRiskSubmit() {
-  if (!riskAck.value) return
+  if (!riskAck.value || openingSummary.value) return
   riskGuardOpen.value = false
-  await openSummaryDialog()
+  if (!isSupplement.value) openingSummary.value = true
+  try {
+    await openSummaryDialog()
+  } finally {
+    openingSummary.value = false
+  }
 }
 
 async function openSummaryDialog() {
-  if (status.value !== 'DRAFT' || openingSummary.value) return
-  if (!riskUnasked.value.length) riskAck.value = true
-  // 正式首诊：无总结，或总结仍写着「尚未完成首诊」→ 提交前按当前答卷重生成
-  if (
-    !isSupplement.value &&
-    (!hasAiSummary.value || (aiSummaryLooksIncomplete() && !requiredStillMissing()))
-  ) {
+  if (status.value !== 'DRAFT') return
+  endCheckTour()
+  // 有未填风险题时必须在本弹窗重新勾选，按钮才可点
+  riskAck.value = !riskUnasked.value.length
+  // 正式首诊：提交前按当前答卷重生成，避免 AI 总结与变更对照/表单数据打架
+  if (!isSupplement.value && (!requiredStillMissing() || allowIncompleteSubmit.value)) {
     openingSummary.value = true
-    try {
-      await runAiSummary(true)
-    } finally {
-      openingSummary.value = false
-    }
+    await runAiSummary(true)
   }
   summaryOpen.value = true
 }
@@ -1584,20 +1933,109 @@ function applyChatExtract(rows: { code: string; archiveValue?: string | null; mu
   void focusQuestion(first)
 }
 
-function jumpToField(field: string) {
+/** 关确认弹窗 → 切模块 → 滚到题目并高亮（等遮罩收起再定位，避免「去修改」点了没反应） */
+async function jumpToField(field: string, opts?: { waitDialog?: boolean; flashAll?: string[] }) {
+  if (!field) return
+  const needWait = opts?.waitDialog !== false && (summaryOpen.value || riskGuardOpen.value || submitGuardOpen.value)
   summaryOpen.value = false
   riskGuardOpen.value = false
+  submitGuardOpen.value = false
+  if (needWait) {
+    await nextTick()
+    // Element Plus dialog 离开动画约 300ms，遮罩在时 scrollIntoView 常无效
+    await new Promise((r) => setTimeout(r, 320))
+  }
+  let found = false
   for (const m of modules.value) {
     if (m.items.some((it) => it.field === field)) {
-      // 若快速模式藏住了该题，切完整模式
       const item = m.items.find((it) => it.field === field)
       if (item && !levelAllowed(item.level)) quickMode.value = false
       activeModule.value = m.code
-      flashRiskFields([field])
-      void focusQuestion(field)
+      found = true
       break
     }
   }
+  if (!found) {
+    ElMessage.warning('未找到对应题目，请在左侧模块中查找')
+    return
+  }
+  flashRiskFields(opts?.flashAll?.length ? opts.flashAll : [field])
+  await focusQuestion(field)
+}
+
+/** 数据核对多题：关掉弹窗后开巡检条，可上下项切换，避免只定位一题不好找 */
+const checkTour = ref<{ fields: string[]; index: number } | null>(null)
+
+const checkTourTitle = computed(() => {
+  const t = checkTour.value
+  if (!t) return ''
+  const field = t.fields[t.index]
+  const hit = checkActions.value.find((a) => a.field === field)
+  return hit?.title || shortFieldTitle(field || '')
+})
+
+/** 只高亮仍需核对的题；改合理后立刻从红框里拿掉 */
+const checkTourPending = computed(() => {
+  const t = checkTour.value
+  if (!t?.fields.length) return new Set<string>()
+  const live = new Set([
+    ...checkActions.value.map((a) => a.field),
+    ...SUSPECT_METRIC_FIELDS.filter((f) => !!fieldHint(f)),
+  ])
+  return new Set(t.fields.filter((f) => live.has(f)))
+})
+
+/** 改完异常值后同步裁掉巡检清单，避免红字没了框还在 */
+watch(
+  () =>
+    [
+      ...checkActions.value.map((a) => a.field),
+      ...SUSPECT_METRIC_FIELDS.filter((f) => !!fieldHint(f)),
+    ]
+      .sort()
+      .join('\0'),
+  () => {
+    const t = checkTour.value
+    if (!t?.fields.length) return
+    const live = new Set([
+      ...checkActions.value.map((a) => a.field),
+      ...SUSPECT_METRIC_FIELDS.filter((f) => !!fieldHint(f)),
+    ])
+    const remaining = t.fields.filter((f) => live.has(f))
+    if (!remaining.length) {
+      checkTour.value = null
+      return
+    }
+    if (remaining.length === t.fields.length && remaining.every((f, i) => f === t.fields[i])) return
+    const cur = t.fields[t.index]
+    let index = cur ? remaining.indexOf(cur) : -1
+    if (index < 0) index = Math.min(t.index, remaining.length - 1)
+    checkTour.value = { fields: remaining, index }
+  },
+)
+
+async function startCheckTour(field: string) {
+  const fields = [...new Set(checkActions.value.map((a) => a.field).filter(Boolean))]
+  if (!fields.length) {
+    await jumpToField(field)
+    return
+  }
+  const index = Math.max(0, fields.indexOf(field))
+  checkTour.value = { fields, index: index >= 0 ? index : 0 }
+  await jumpToField(fields[checkTour.value.index]!, { flashAll: fields })
+}
+
+async function checkTourStep(delta: number) {
+  const t = checkTour.value
+  if (!t?.fields.length) return
+  const next = Math.min(t.fields.length - 1, Math.max(0, t.index + delta))
+  if (next === t.index) return
+  checkTour.value = { fields: t.fields, index: next }
+  await jumpToField(t.fields[next]!, { waitDialog: false, flashAll: t.fields })
+}
+
+function endCheckTour() {
+  checkTour.value = null
 }
 
 async function copyPatientFillLink() {
@@ -1623,6 +2061,10 @@ async function copyPatientFillLink() {
 
 async function doSubmit(conflictResolutions?: Record<string, unknown>) {
   if (!responseId.value) return
+  if (riskUnasked.value.length && !riskAck.value) {
+    ElMessage.warning('请先勾选「这几题还没问，仍要提交」')
+    return
+  }
   submitting.value = true
   try {
     scheduleSave.cancel()
@@ -1737,8 +2179,8 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="top-mid">
-        <div class="archive-meter" :class="{ done: overallPct >= 100 }" aria-label="档案完整度">
-          <span class="archive-meter-label">档案完整度 {{ overallPct }}%</span>
+        <div class="archive-meter" :class="{ done: overallPct >= 100 }" aria-label="首诊评估问卷完整度">
+          <span class="archive-meter-label">首诊问卷完整度 {{ overallPct }}%</span>
           <span class="archive-meter-track">
             <i :style="{ width: `${overallPct}%` }" />
           </span>
@@ -1763,11 +2205,11 @@ onBeforeUnmount(() => {
         </el-button>
         <el-button
           type="primary"
-          :disabled="status !== 'DRAFT'"
+          :disabled="status !== 'DRAFT' || openingSummary"
           :loading="submitting || openingSummary"
           @click="openSummary"
         >
-          提交
+          {{ openingSummary ? 'AI 正在总结…' : submitting ? '提交中…' : '提交' }}
         </el-button>
       </div>
     </header>
@@ -1779,13 +2221,37 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="!loading && status === 'DRAFT' && riskUnasked.length" class="gap-line risk">
       <p class="gap-line-text">
-        还有 {{ riskUnasked.length }} 题会影响到方案，还没填。可以先跳过。
+        还有 {{ riskUnasked.length }} 题会影响到方案，还没填。如果暂时不清楚也可以先跳过。
       </p>
       <button type="button" class="gap-go" @click="goFirstRisk()">去补录</button>
     </div>
     <div v-else-if="!loading && status === 'DRAFT' && staffGapItems.length" class="gap-line soft">
       <p class="gap-line-text">建议补录：{{ gapBrief }}</p>
       <button type="button" class="gap-go" @click="goFirstGap">去补录</button>
+    </div>
+    <div v-if="!loading && status === 'DRAFT' && checkTour" class="gap-line check-tour">
+      <p class="gap-line-text">
+        数据核对
+        <strong>{{ checkTour.index + 1 }}/{{ checkTour.fields.length }}</strong>
+        · {{ checkTourTitle }}
+      </p>
+      <button
+        type="button"
+        class="gap-go"
+        :disabled="checkTour.index <= 0"
+        @click="checkTourStep(-1)"
+      >
+        上一项
+      </button>
+      <button
+        type="button"
+        class="gap-go"
+        :disabled="checkTour.index >= checkTour.fields.length - 1"
+        @click="checkTourStep(1)"
+      >
+        下一项
+      </button>
+      <button type="button" class="gap-go gap-go-done" @click="endCheckTour">完成</button>
     </div>
 
     <div v-if="!loading" class="body">
@@ -1996,6 +2462,11 @@ onBeforeUnmount(() => {
               focus: focusedField === it.field,
               'risk-gap': isRiskGap(it.field),
               'risk-flash': riskFlashFields.includes(it.field),
+              'check-pending': checkTourPending.has(it.field),
+              'check-current':
+                !!checkTour &&
+                checkTourPending.has(it.field) &&
+                checkTour.fields[checkTour.index] === it.field,
             }"
           >
             <div class="q-head">
@@ -2004,9 +2475,9 @@ onBeforeUnmount(() => {
                 <div class="q-label-row">
                   <span class="q-label">
                     <i v-if="itemRequired(it)" class="star" aria-hidden="true">*</i>
-                    {{ it.field === FIELD_STAFF_AI_SUMMARY ? '总结原文（可编辑）' : questionLead(it.label) }}
+                    {{ questionLabelFor(it) }}
                     <span
-                      v-if="it.field !== FIELD_STAFF_AI_SUMMARY && questionHint(it.label)"
+                      v-if="it.field !== FIELD_STAFF_AI_SUMMARY && it.field !== 'goal.careTracks' && questionHint(it.label)"
                       class="q-hint"
                     >（{{ questionHint(it.label) }}）</span>
                   </span>
@@ -2068,6 +2539,7 @@ onBeforeUnmount(() => {
                   :max="it.max"
                   :exclusive="it.exclusive"
                   :placeholder="it.field === 'basic.medical.mainDiscomfort' ? '可以不填，例如最近头晕、没力气' : undefined"
+                  :option-badges="it.field === 'goal.careTracks' ? careTrackBadges : undefined"
                   :model-value="answers[it.field]"
                   :prefilled="isPrefillTone(it.field)"
                   :dirty="isDirty(it.field)"
@@ -2101,11 +2573,11 @@ onBeforeUnmount(() => {
             <el-button
               v-else
               type="primary"
-              :disabled="status !== 'DRAFT'"
+              :disabled="status !== 'DRAFT' || openingSummary"
               :loading="submitting || openingSummary"
               @click="openSummary"
             >
-              去提交
+              {{ openingSummary ? 'AI 正在总结…' : submitting ? '提交中…' : '去提交' }}
             </el-button>
           </div>
         </template>
@@ -2224,7 +2696,14 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="summaryOpen" title="提交前确认" width="640px" align-center destroy-on-close>
+    <el-dialog
+      v-model="summaryOpen"
+      class="intake-summary-dialog"
+      title="提交前确认"
+      width="640px"
+      align-center
+      destroy-on-close
+    >
       <div class="sum">
         <p v-if="!(localCompleteness.requiredMissing?.length)" class="sum-ok-line">✅ 必收项已填齐</p>
         <section v-else class="sum-miss">
@@ -2243,7 +2722,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="riskUnasked.length" class="sum-warn-box">
+        <section v-if="riskUnasked.length" id="intake-sum-risks" class="sum-warn-box">
           <button type="button" class="sum-warn-head" @click="riskListOpen = !riskListOpen">
             <span>还会影响方案（共 {{ riskUnasked.length }} 题）</span>
             <span>{{ riskListOpen ? '收起' : '展开查看' }}</span>
@@ -2275,7 +2754,7 @@ onBeforeUnmount(() => {
               class="link"
               @click="fillFirstRiskFromSummary"
             >
-              一键去补录
+              去补录（暂时保存草稿）
             </button>
           </div>
           <IntakeAiSummaryBlocks
@@ -2293,32 +2772,59 @@ onBeforeUnmount(() => {
           </template>
         </section>
 
-        <section v-if="changeRows.length" class="sum-aux">
+        <section v-if="changeRows.length" class="sum-changes">
           <h4>变更对照</h4>
-          <ul class="changes">
-            <li v-for="row in changeRows" :key="row.field">
-              <b>{{ row.label }}</b>
-              <span class="muted">（{{ row.source }}）</span>
-              ：{{ displayAnswer(row.field, row.from) }} → {{ displayAnswer(row.field, row.to) }}
+          <ul class="change-list">
+            <li v-for="row in changeRows" :key="row.field" class="change-row">
+              <span class="change-label">{{ row.label }}</span>
+              <span class="change-diff">
+                <template v-if="row.fromAbsurd">
+                  <span class="change-from-hint">原始档案缺失/异常</span>
+                  <span class="change-arrow">→</span>
+                  <b class="change-to">已更新为 {{ row.toText }}</b>
+                </template>
+                <template v-else-if="row.fromText">
+                  <s class="change-from">{{ row.fromText }}</s>
+                  <span class="change-arrow">→</span>
+                  <b class="change-to">{{ row.toText }}</b>
+                </template>
+                <template v-else>
+                  <span class="change-new-tag">新填</span>
+                  <b class="change-to">{{ row.toText }}</b>
+                </template>
+              </span>
             </li>
           </ul>
         </section>
 
-        <section v-if="highlightHits.length" class="sum-aux">
-          <h4>高亮汇总</h4>
-          <ul>
-            <li v-for="(h, i) in highlightHits" :key="`s-${h.field}-${i}`">
-              {{ labelOf(h.field, h.label) }} · {{ severityLabel(h.severity) }}
-              <span v-if="h.planEffect"> — {{ h.planEffect }}</span>
+        <section v-if="checkActions.length" class="sum-checks">
+          <h4>数据核对提醒（{{ checkActions.length }}项）</h4>
+          <ul class="check-list">
+            <li
+              v-for="item in checkActions"
+              :key="item.key"
+              class="check-item"
+              :class="`tone-${item.tone}`"
+            >
+              <div class="check-body">
+                <strong class="check-title">{{ item.title }}</strong>
+                <p class="check-detail">{{ item.detail }}</p>
+              </div>
+              <button type="button" class="check-cta" @click="startCheckTour(item.field)">
+                {{ item.cta }}
+              </button>
             </li>
           </ul>
         </section>
       </div>
       <template #footer>
         <div class="sum-foot">
-          <el-checkbox v-if="riskUnasked.length" v-model="riskAck">
-            这几题还没问，仍要提交
-          </el-checkbox>
+          <div v-if="riskUnasked.length" class="sum-foot-ack">
+            <el-checkbox v-model="riskAck">这几题还没问，仍要提交</el-checkbox>
+            <button type="button" class="sum-foot-link" @click="revealUnaskedRisks">
+              查看未问的 {{ riskUnasked.length }} 题
+            </button>
+          </div>
           <div class="sum-foot-actions">
             <el-button @click="summaryOpen = false">返回修改</el-button>
             <el-button
@@ -2578,6 +3084,39 @@ onBeforeUnmount(() => {
   padding: 5px 10px;
   border-radius: 999px;
   cursor: pointer;
+}
+
+.gap-go:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gap-line.check-tour {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.gap-line.check-tour .gap-line-text {
+  color: #9f1239;
+  white-space: normal;
+}
+
+.gap-line.check-tour .gap-go {
+  border-color: #fca5a5;
+  color: #b91c1c;
+  background: #fff;
+}
+
+.gap-line.check-tour .gap-go-done {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: #fff;
+}
+
+.gap-line.check-tour .gap-go-done:hover {
+  background: #991b1b;
+  border-color: #991b1b;
+  color: #fff;
 }
 
 .guard-copy {
@@ -3214,9 +3753,14 @@ onBeforeUnmount(() => {
 }
 
 .ai-preview-blocks {
-  max-height: 280px;
-  overflow: auto;
   padding: 4px 2px 0;
+}
+
+/* 子组件根节点也禁止内嵌滚动，高度随内容撑开 */
+:deep(.ai-preview-blocks),
+:deep(.ai-blocks) {
+  max-height: none !important;
+  overflow: visible !important;
 }
 
 .script p {
@@ -3372,6 +3916,18 @@ onBeforeUnmount(() => {
     0 0 0 2px color-mix(in srgb, #ef4444 45%, transparent),
     0 0 0 6px color-mix(in srgb, #ef4444 16%, transparent);
   animation: q-risk-pulse 0.9s ease-out 2;
+}
+
+.q.check-pending {
+  border-color: #fca5a5;
+  background: #fff7f7;
+}
+
+.q.check-current {
+  border-color: #ef4444;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, #ef4444 40%, transparent),
+    0 0 0 6px color-mix(in srgb, #ef4444 14%, transparent);
 }
 
 @keyframes q-risk-pulse {
@@ -3866,10 +4422,11 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
+/* 内容区不自限高；滚动交给弹窗 body（见下方 unscoped .intake-summary-dialog） */
 .sum {
-  max-height: min(58vh, 520px);
-  overflow: auto;
-  padding-right: 2px;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .sum section {
@@ -3917,8 +4474,9 @@ onBeforeUnmount(() => {
 }
 
 .sum-scroll {
-  max-height: 220px;
-  overflow: auto;
+  /* 展开风险题也不再内嵌滚动，避免「生活方式」等分组被裁切 */
+  max-height: none;
+  overflow: visible;
   margin-top: 8px;
 }
 
@@ -3961,18 +4519,168 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.sum-aux {
-  margin-bottom: 10px;
-  color: #94a3b8;
-  font-size: 12px;
+.sum-changes,
+.sum-checks {
+  margin-bottom: 12px;
 }
 
-.sum-aux h4,
-.sum-aux ul,
-.sum-aux li {
+.sum-changes h4,
+.sum-checks h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-700, #334155);
+}
+
+.change-list,
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.change-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 13px;
+  color: var(--ink-700, #334155);
+}
+
+.change-label {
+  font-weight: 600;
+  min-width: 4.5em;
+}
+
+.change-diff {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.change-from {
   color: #94a3b8;
+  text-decoration-thickness: 1px;
+}
+
+.change-from-hint {
   font-size: 12px;
-  font-weight: 500;
+  color: #94a3b8;
+}
+
+.change-arrow {
+  color: #94a3b8;
+}
+
+.change-new-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #0369a1;
+  background: #e0f2fe;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.change-to {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+}
+
+.check-item.tone-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.check-item.tone-info {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.check-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.check-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: #92400e;
+  line-height: 1.35;
+}
+
+.check-item.tone-danger .check-title {
+  color: #b91c1c;
+}
+
+.check-item.tone-info .check-title {
+  color: #1d4ed8;
+}
+
+.check-detail {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #78716c;
+}
+
+.check-item.tone-danger .check-detail {
+  color: #9f1239;
+}
+
+.check-cta {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #f59e0b;
+  background: #fff;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.check-item.tone-danger .check-cta {
+  border-color: #f87171;
+  color: #b91c1c;
+}
+
+.check-item.tone-info .check-cta {
+  border-color: #60a5fa;
+  color: #1d4ed8;
+}
+
+.check-cta:hover {
+  background: #fff7ed;
+}
+
+.check-item.tone-danger .check-cta:hover {
+  background: #fef2f2;
+}
+
+.check-item.tone-info .check-cta:hover {
+  background: #eff6ff;
 }
 
 .sum-foot {
@@ -3980,6 +4688,30 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 10px;
   width: 100%;
+}
+
+.sum-foot-ack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.sum-foot-link {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sum-foot-link:hover {
+  color: #1d4ed8;
 }
 
 .sum-foot-actions {
@@ -4051,5 +4783,27 @@ onBeforeUnmount(() => {
     height: auto;
     min-height: 100%;
   }
+}
+</style>
+
+<!-- dialog teleport 到 body，须非 scoped 才能命中弹窗外壳 -->
+<style>
+.intake-summary-dialog.el-dialog {
+  margin-top: 8vh !important;
+  margin-bottom: 4vh;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.intake-summary-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.intake-summary-dialog .el-dialog__footer {
+  flex-shrink: 0;
 }
 </style>

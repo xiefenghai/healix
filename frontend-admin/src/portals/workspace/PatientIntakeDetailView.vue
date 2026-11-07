@@ -2,7 +2,7 @@
 /**
  * 已提交首诊问卷只读详情：直接展示当时填写内容（快照优先）、高亮与 AI 总结。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -24,6 +24,16 @@ import { loadAllergyCatalog } from '../../shared/allergy'
 import { api } from '../../shared/http'
 import IntakeAiSummaryBlocks from './IntakeAiSummaryBlocks.vue'
 
+const props = withDefaults(
+  defineProps<{
+    /** 抽屉嵌入时传入；缺省走路由 params */
+    responseId?: string
+    /** 嵌入抽屉：隐藏返回患者 / 再次首诊 */
+    embedded?: boolean
+  }>(),
+  { responseId: '', embedded: false },
+)
+
 const route = useRoute()
 const router = useRouter()
 
@@ -32,7 +42,7 @@ const view = ref<QuestionnaireResponseView | null>(null)
 const patientName = ref('')
 const optionMaps = ref<IntakeOptionMaps>({})
 
-const responseId = computed(() => String(route.params.responseId || ''))
+const responseId = computed(() => String(props.responseId || route.params.responseId || ''))
 
 /** 只读详情优先用提交快照，保证展示「当时填写」 */
 const answers = computed(() => {
@@ -147,13 +157,17 @@ function openFillAgain() {
 onMounted(() => {
   void load()
 })
+
+watch(responseId, (id, prev) => {
+  if (id && id !== prev) void load()
+})
 </script>
 
 <template>
-  <div class="intake-detail" v-loading="loading">
+  <div class="intake-detail" :class="{ embedded }" v-loading="loading">
     <header class="top">
       <div class="top-left">
-        <el-button text @click="goPatient">← 返回患者</el-button>
+        <el-button v-if="!embedded" text @click="goPatient">← 返回患者</el-button>
         <div class="titles">
           <h1>{{ patientName || '患者' }}</h1>
           <span class="sub">首诊问卷详情（只读）</span>
@@ -162,7 +176,7 @@ onMounted(() => {
       <div class="top-right">
         <el-tag v-if="view?.status" size="small" effect="plain">{{ responseStatusLabel(view.status) }}</el-tag>
         <span class="meta">提交于 {{ formatTime(view?.submittedAt) }}</span>
-        <el-button type="primary" plain @click="openFillAgain">再次首诊</el-button>
+        <el-button v-if="!embedded" type="primary" plain @click="openFillAgain">再次首诊</el-button>
       </div>
     </header>
 
@@ -234,14 +248,22 @@ onMounted(() => {
   background: var(--ink-50);
 }
 
+.intake-detail.embedded {
+  min-height: calc(100vh - 120px);
+}
+
 .top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 20px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--ink-200);
   background: #fff;
+}
+
+.intake-detail.embedded .top {
+  padding: 6px 12px;
 }
 
 .top-left {
@@ -332,6 +354,14 @@ onMounted(() => {
   padding: 16px 20px 40px;
 }
 
+.intake-detail.embedded .main {
+  padding: 10px 16px 28px;
+}
+
+.intake-detail.embedded .nav {
+  padding: 8px;
+}
+
 .card {
   background: #fff;
   border: 1px solid var(--ink-200);
@@ -396,5 +426,17 @@ onMounted(() => {
   .nav {
     display: none;
   }
+}
+</style>
+
+<!-- append-to-body 抽屉壳层 -->
+<style>
+.intake-detail-drawer.el-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.intake-detail-drawer.el-drawer .el-drawer__body {
+  padding-top: 0;
 }
 </style>

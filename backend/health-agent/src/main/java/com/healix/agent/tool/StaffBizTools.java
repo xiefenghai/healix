@@ -816,6 +816,15 @@ public class StaffBizTools {
         }
         if (f.getPlanRate7d() != null) {
             sb.append("；近7日依从：").append(Math.round(f.getPlanRate7d() * 100)).append("%");
+        } else if (StringUtils.hasText(f.getServiceStageCode())
+                && List.of("FOLLOWUP", "PERIODIC_REPORT", "STAGE_SUMMARY", "ENDED")
+                        .contains(f.getServiceStageCode().toUpperCase(Locale.ROOT))) {
+            sb.append("；近7日依从：待首次打卡");
+        }
+        if (f.getWaterTargetMl() != null && f.getWaterTargetMl() > 0) {
+            sb.append("；现行方案饮水目标：")
+                    .append(f.getWaterTargetMl())
+                    .append(" ml（饮食/饮水建议必须与此毫升数一致，禁止另编 1500–1700 等其它区间）");
         }
         if (f.getMedRate7d() != null) {
             sb.append("；近7日服药：").append(Math.round(f.getMedRate7d() * 100)).append("%");

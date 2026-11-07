@@ -73,4 +73,15 @@
               #{pid}
           </foreach>
     </select>
+
+    <select id="listByTenantAndPeopleIds" resultType="com.healix.core.careplan.domain.CarePlan">
+        SELECT <include refid="cols"/>
+        FROM care_plan
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND people_id IN
+          <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+              #{pid}
+          </foreach>
+    </select>
 </mapper>

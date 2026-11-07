@@ -188,6 +188,10 @@ async function submit() {
     ElMessage.warning('请选择或填写过敏原')
     return
   }
+  if (!form.reactions.length && !form.reactionNote.trim()) {
+    ElMessage.warning('请勾选至少一项反应表现，或填写反应补充')
+    return
+  }
   saving.value = true
   try {
     const body = JSON.stringify(formToPayload(form))
@@ -270,7 +274,11 @@ function reactionText(item: AllergyItem): string {
   const parts: string[] = []
   if (item.reactionLabels.length) parts.push(item.reactionLabels.join('、'))
   if (item.reactionNote) parts.push(item.reactionNote)
-  return parts.join('；') || '—'
+  return parts.join('；') || ''
+}
+
+function hasReaction(item: AllergyItem): boolean {
+  return !!(item.reactionLabels.length || item.reactionNote)
 }
 
 function statusText(item: AllergyItem): string {
@@ -313,20 +321,22 @@ onMounted(() => void load())
         {{ summary.pendingCount }} 条患者自述待确认
       </el-tag>
     </div>
+    <p v-if="summary?.status === 'UNKNOWN' && !forceHas" class="ag-status-hint">
+      尚未采集。多数患者无过敏，可先选「无已知过敏」；若确认有过敏再选「有过敏」并逐项添加。
+    </p>
 
     <div v-if="showBody" class="ag-body">
       <section v-for="sec in categorySections" :key="sec.code" class="ag-section">
         <div class="ag-section-head">
           <h4 class="ag-section-title">{{ sec.label }}</h4>
-          <el-button size="small" type="primary" link @click="openCreate(sec.code)">添加</el-button>
         </div>
         <el-table
+          v-if="sec.rows.length"
           :data="sec.rows"
           size="small"
           stripe
           class="ag-table"
           :row-class-name="tableRowClass"
-          empty-text="暂无"
         >
           <el-table-column label="过敏原" min-width="120">
             <template #default="{ row }">
@@ -342,7 +352,17 @@ onMounted(() => void load())
             </template>
           </el-table-column>
           <el-table-column label="反应表现" min-width="160" show-overflow-tooltip>
-            <template #default="{ row }">{{ reactionText(row) }}</template>
+            <template #default="{ row }">
+              <span v-if="hasReaction(row)">{{ reactionText(row) }}</span>
+              <button
+                v-else
+                type="button"
+                class="ag-reaction-missing"
+                @click="openEdit(row)"
+              >
+                待补充反应
+              </button>
+            </template>
           </el-table-column>
           <el-table-column label="程度" width="88">
             <template #default="{ row }">
@@ -374,6 +394,13 @@ onMounted(() => void load())
             </template>
           </el-table-column>
         </el-table>
+        <button
+          type="button"
+          class="ag-add-dash"
+          @click="openCreate(sec.code)"
+        >
+          + 添加{{ sec.label }}过敏项
+        </button>
       </section>
     </div>
 
@@ -415,7 +442,7 @@ onMounted(() => void load())
           </el-radio-group>
           <span class="ag-hint">不耐受（如乳糖不耐受）只做提醒，不按过敏拦截</span>
         </el-form-item>
-        <el-form-item label="反应表现">
+        <el-form-item label="反应表现" required>
           <el-checkbox-group v-model="form.reactions" class="ag-reactions">
             <el-checkbox
               v-for="r in catalog?.reactions ?? []"
@@ -426,9 +453,14 @@ onMounted(() => void load())
               {{ r.label }}
             </el-checkbox>
           </el-checkbox-group>
+          <p class="ag-field-hint">请至少勾选一项（如皮疹、腹痛腹泻、呼吸困难）；不清楚可勾「其他」并在下方补充。</p>
         </el-form-item>
         <el-form-item label="反应补充">
-          <el-input v-model="form.reactionNote" maxlength="128" placeholder="如：用药后 10 分钟全身红疹" />
+          <el-input
+            v-model="form.reactionNote"
+            maxlength="128"
+            placeholder="可选：补充发作经过，如用药后 10 分钟全身红疹"
+          />
         </el-form-item>
         <el-form-item label="严重程度">
           <el-radio-group v-model="form.severity">
@@ -501,20 +533,26 @@ onMounted(() => void load())
   align-items: center;
 }
 
+.ag-status-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--admin-muted, #64748b);
+}
+
 .ag-body {
   min-height: 40px;
   margin-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .ag-section-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .ag-section-title {
@@ -526,7 +564,50 @@ onMounted(() => void load())
 
 .ag-table {
   width: 100%;
+  margin-bottom: 8px;
   --el-table-header-bg-color: #f8fafc;
+}
+
+.ag-add-dash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.ag-add-dash:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.ag-reaction-missing {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ag-field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--admin-muted, #64748b);
 }
 
 .ag-table :deep(.ag-row-risk) {

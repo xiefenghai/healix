@@ -25,7 +25,7 @@ display_name: 管理方案生成
 - 高 / 很高：干预更积极（监测频次、复评周期更短；若同时有减重方向再加强体重目标），`execution` 中安排对应监测任务
 - `keyFactors` 中可干预的因素（吸烟、久坐、高盐、腰围超标等）应在运动 / 饮食 / 执行中逐一落实
 - **方案正文是给患者看的**：`exercise` / `diet` / `execution` / `summary` / `goalSummary` 中**不得**出现「高风险」「很高危」「分层」「中危」等等级用语，也不得复述评分；用「需要重点控制血压」「建议规律监测血糖」「稳步管理体重」这类**与本次管理方向一致**的行动化表述
-- **生成理由 `rationale` 仅给健管师审阅**：可以点明评估等级（如很高危），须引用档案/评估/过敏等事实，禁止编造数值
+- **生成理由 `rationale` 仅给健管师审阅**：可以点明评估等级（如很高危），须引用档案/评估/过敏等事实，禁止编造数值；用通顺中文短句，便于健管师扫读
 
 ### 指南条目（`guidelineRecs`）
 
@@ -35,8 +35,8 @@ display_name: 管理方案生成
 - **`kind=SAFETY` 的 `constraint` 是硬约束**，必须满足（如单次运动时长、强度上限）；违反会被服务端拦截、无法发布
 - **`kind=TARGET` 的 `constraint` 默认满足**（如每周中等强度分钟数、监测任务）；确需个体化偏离时，在该块 `rationale` 写明原因
 - 建议内容以 `recommendation` 为准，不自行编造指南结论；面向患者的正文参考 `patientHint` 写成行动化表述，**不写指南名称与条目编码**
-- `rationale` 可点明依据要点（如「按高血压限盐与家庭血压监测建议」），不转抄指南原文
-- 未出现在 `guidelineRecs` 的建议可以写，但不得声称有指南依据
+- **`rationale` / `rationale.overview` 禁止出现条目编码**（如 `WL.ENERGY_DEFICIT`、`DM.DIET.CARB`、`HTN.DIET.SALT`）；编码**只放**对应块的 `refs`。依据用中文要点，例：「按减重热量与每周约 0.5kg 速度控制在约 1600 千卡；控精制糖与精白米面、主食粗细搭配；糖尿病示例餐不用粥类；限盐&lt;6g；落实少油少糖与足量蔬果。鸡蛋中度过敏，示例餐与推荐均避开并给平替；降压药与第一口饭同服已写入执行提醒。」
+- 未出现在 `guidelineRecs` 的建议可以写，但不得声称有指南依据；**勿编造**档案未写明的糖尿病分型（如擅自写「T1」）
 
 无 `guidelineRecs` 时不输出 `refs`，按下文原则生成。
 
@@ -84,7 +84,7 @@ display_name: 管理方案生成
     "tasks": [{ "code": "…", "title": "…", "rationale": "该任务依据…", "refs": ["HTN.MON.HBPM"] }]
   },
   "summary": "200字以内方案总结：阶段目标、核心干预、随访要点（勿写等级用语）",
-  "goalSummary": "一句话目标，用于方案头",
+  "goalSummary": "具体目标句：须含周期与可核对数字（如 12 周减重约 5kg、血压&lt;130/80、空腹血糖约 6mmol/L）；勿与标题同义复读",
   "rationale": {
     "templateKey": "COMPREHENSIVE",
     "overview": "为何选此类型、依据哪些档案/评估事实",
@@ -135,32 +135,52 @@ display_name: 管理方案生成
 | `intolerances` | `{code, label}` 数组，`foodAllergyGuard` 中 type=INTOLERANCE 的不耐受食物 |
 | `sampleDay` | `{breakfast, lunch, dinner, snacks}` 示例日；每餐可为字符串，或 `{text, swapHint?}`（**每餐至多 1 条** `swapHint` 可替换提示） |
 | `sampleWeek` | **必填**。`{MON,TUE,WED,THU,FRI,SAT,SUN}` 每天同 `sampleDay` 结构，作为一周饮食示例。七天都要写，早餐、午餐、晚餐都要有具体菜品，加餐可空。七天不要复制同一套，主食、蛋白质和蔬菜轮换；周一可与 `sampleDay` 一致 |
-| `notes` | 与用药、口味相关的补充说明 |
+| `notes` | 患者可见的**执行提醒**（健康建议短句，用中文分号分隔）。禁止写「医嘱」；禁止把「过敏史未采集」等内部质检话术写入 notes |
 
-**热量**（以饮食记录的热量目标为准，方案不另算）：
+**热量**（制定方案时由服务端按档案/饮食目标自动写入 `energyTarget`，健管师可随后调整；模型只写文案）：
 
-- `patientContext.energyTarget.available=true`：`calorieHint` 必须使用其中的 `energyKcal` 与碳水 / 蛋白质 / 脂肪克数，可补充目标类型（减重速度）与执行要点，例：「每日约 1650 千卡（碳水 206g / 蛋白质 74g / 脂肪 50g），按每周减重 0.5 kg；三餐定时定量，避免极端节食」
+- `patientContext.energyTarget.available=true`：`calorieHint` 必须使用其中的 `energyKcal` 与碳水 / 蛋白质 / 脂肪克数，可补充目标类型（减重速度）与执行要点，例：「每日约 1650 千卡（碳水 206g / 蛋白质 74g / 脂肪 50g），按每周减重 0.5 kg；三餐定时定量，避免极端节食」。`source=ESTIMATED` 表示尚无饮食目标、按档案估算，文案可写「按身高体重估算」
 - `available=false`：**不写任何热量数值**，`calorieHint` 提示完善 `missing` 中的档案项后可计算热量目标
-- 不要输出 `energyTarget` 字段，由服务端按饮食目标写入；与目标不符的热量数字会被服务端改写
-- `sampleDay` 与 `sampleWeek` 的份量与热量目标大致匹配，不写具体千卡数
+- **不要输出 `energyTarget` 字段**（数字由服务端写入，模型自填会被丢弃或改写）
+- `sampleDay` 与 `sampleWeek` 的份量与热量目标大致匹配，**餐文不写千卡数字**，但**主食/加餐须写可执行份量**（见下方「份量」）
 - `swapHint` 写具体可执行替换（如「米饭可换成杂粮饭」），不要写成空泛「清淡为主」；无合适替换则省略或 `null`
-- **有食物过敏时（`foodAllergyGuard` type=ALLERGY 非空）**：`sampleDay` 的早/午/晚 **每餐必须** 给 1 条安全 `swapHint`（点名过敏原 → 可吃平替，如「鸡蛋过敏：蒸蛋换成无糖豆浆或豆腐」）；`sampleWeek` 至少周一三餐带平替；服务端会删掉仍含过敏关键词的 hint
+- **有食物过敏时（`foodAllergyGuard` type=ALLERGY 非空）**：示例餐正文**必须直接避开**过敏原（硬约束，见下条），**不要**再写「鸡蛋过敏：不选蒸蛋…」这类占位平替条——餐已干净就不必每餐挂提示。`swapHint` 仅用于同餐可换的**安全菜品轮换**（如「清蒸鱼可换成豆腐」），且 hint 本身也不得含过敏关键词；服务端会删掉仍含过敏词或「本餐已无过敏却写回避说教」的 hint
 - `sampleWeek` 必须输出完整七天。每天至少含早、午、晚；过敏约束同 `sampleDay`；菜品按天轮换，不要七天完全相同
+- **份量（食物交换份，硬约束）**：
+  - 禁止仅用模糊量词收尾（如单独写「1碗」「半碗」「2块」「一小把」而不给参照）
+  - 主食优先写熟重克数或「约一手掌/拳头」参照，例：`杂粮饭约150g（熟重）`、`荞麦面约120g（熟重）`、`全麦馒头约70g（1个）`、`玉米约180g（中等1根）`、`芋头约100g`
+  - 蛋白写可执行份量：`水煮蛋1个`、`清蒸鱼约80g`、`豆腐约100g`
+  - 加餐写清楚：`无糖酸奶约100g（小盒）`、`柚子约80g（2～3瓣）`、`草莓约100g`
+- **鸡蛋频次（硬约束）**：
+  - `sampleWeek` 早餐中鸡蛋类（水煮蛋/煎蛋/蒸蛋/蛋羹等）**合计不超过 3 天**
+  - 其余早餐用无糖豆浆、无糖酸奶、豆腐/豆干、瘦肉末等轮换；全周鸡蛋总出现也宜 ≤3～4 次
+  - 有血脂/超重/肥胖叙事时更应控制鸡蛋频次，优先豆制品与鱼虾
 
 **饮食规则**：
 
 - `recommended` 与 `allergensAvoid` 的 `code` 集合**不得相交**（服务端 ERROR）
 - `foodAllergyGuard[].keywords`（type=ALLERGY）中的任一词**不得出现**在 `recommended`、`sampleDay` 与 `sampleWeek` 的正文及 `swapHint`（如鸡蛋过敏时不写「鸡蛋」「蒸蛋」，改用瘦肉/豆浆等替代）；服务端会按关键词全文检查并自动删除命中内容
-- 有食物过敏时，`notes` 中提醒患者「外出就餐注意询问菜品成分」；不耐受写入 `intolerances` 并在 `notes` 提示注意食用量，可少量但不作为主推
+- **过敏史未采集**（`foodAllergyGuard` 空且上下文提示未采集）：`recommended` **不要默认**写虾蟹贝类、花生、坚果等常见高致敏蛋白；优先瘦肉/禽肉/豆腐/鱼（淡水鱼相对稳妥）；示例餐同理少写「虾等水产」作主推
+- 有食物过敏时，`notes` 可写「外食技巧：外出就餐主动询问菜品成分」；不耐受写入 `intolerances`，`notes` 提示注意食用量、可少量但不作为主推
+- **`notes` 合规（硬约束）**：
+  - 面向患者的生活方式提醒，短句分条（中文分号分隔），例如「进餐顺序：…」「服药配合：…」「外食技巧：…」
+  - **禁止**「医嘱 / 处方 / 诊断」等诊疗用语；服药相关用「若您正在使用需随餐服用的药物，请记得与第一口饭同服」「请按医生建议按时服用」
+  - **禁止**把「过敏史未采集 / 过敏忌口尚未采集 / 请尽快补全」等**健管师内部质检**写入 `notes`（过敏风险由服务端警告栏处理）
 - 有 `guidelineRecs` 时饮食原则以 `block=diet` 的条目为准；无条目时：
   - 糖尿病：控精制糖、规律三餐、增加膳食纤维
   - 高血压：低盐、限制腌制食品
+- **糖尿病主食禁/慎粥（硬约束）**：
+  - 管理方向含 `DIABETES`，或 `diabetesClinical` 提示 T1/T2/用胰岛素/降糖药时：`sampleDay` / `sampleWeek` **禁止**以粥类作主食（小米粥、杂粮粥、白米粥、南瓜粥、燕麦粥等稀流质）
+  - 尤其晚餐与睡前加餐：**不得**写粥；改用「杂粮饭约150g（熟重）」「荞麦面约120g（熟重）」「全麦馒头约70g」「芋头约100g」等相对低 GI、形态偏固态的主食
+  - `limited` **必须**含粥类限制项，文案须区分形态，例：`{code:"PORRIDGE", label:"熬煮软烂的粥类（相对杂粮饭升糖更快：小米粥/杂粮粥/白米粥等）"}`——**固态杂粮饭可推荐，软烂粥需限制**，勿让健管师误以为「凡杂粮都限」
+  - `principles` 或 `notes` 点明「少选软烂粥、主食写清克数」
+  - 理由：粥煮得越烂 GI 越高，青年超重 T1 + 胰岛素场景晚餐喝粥风险极高
 - 合并症：取保守合并原则
 - **作息与做饭人**（见 `lifestyleProfile` / `basicArchive.diet`）：
   - `lifestyleProfile.workSchedule`：`SHIFT`/`NIGHT` → `notes` 写错峰餐次与用药提醒；示例餐用「班前/班后」而非固定 7/12/18 点；`IRREGULAR` → 给时间窗
   - `basicArchive.diet.cook=FAMILY` → `notes` **必须**加一句家属提示（如「请家人少放油盐，主食换成杂粮」）
   - `cook=EAT_OUT`/`CANTEEN` → 示例餐与 `swapHint` 偏外卖/食堂可执行（少油少糖点餐话术），不要默认「自己蒸煮」
-- **药-餐配合**：优先读 `activeMedicationDetails[]`（`name`/`timingNote`/`frequency`）；`diet.notes` 写清饭前/饭后/与餐同服等（有 timingNote 则照写，无则按常见降糖/降压谨慎提示）；勿编造未在清单中的药名
+- **药-餐配合**：优先读 `activeMedicationDetails[]`（`name`/`timingNote`/`frequency`）；`diet.notes` 用温和「服药配合」短句写饭前/饭后/与餐同服（有 timingNote 则改写为患者可执行提醒，勿写成替医生下指令）；勿编造未在清单中的药名
 
 ---
 
@@ -169,7 +189,14 @@ display_name: 管理方案生成
 | 字段 | 说明 |
 |------|------|
 | `summary` | 面向健管师的阶段总结：控制目标导向、运动饮食要点、执行重点、2 周复评建议；**不含监测设备操作细节** |
-| `goalSummary` | 一句话写入方案头 `goal_summary` |
+| `goalSummary` | 写入方案头的**具体目标句**（1～2 句，约 40～80 字） |
+
+**标题 vs 目标摘要（禁止重复）**：
+
+- 方案 **标题**由系统按类型生成短名（如「综合管理方案」「糖尿病管理方案」），模型**不必**、也**不要**输出与标题同义的长句。
+- `goalSummary` **必须比标题更具体**：优先写入周期与数字目标（体重 kg、血压 mmHg、空腹血糖 mmol/L、糖化 %、腰围 cm 等，来自 `patientContext.goals.items` / 档案实测）；没有明确数字时写「约 X 周把…稳住在合理区间」并点出监测频率，**禁止**只复读「稳步减重、控好血糖与血压」这类口号。
+- **结局指标为主、运动量级为辅**：体重/血压/血糖/腰围等平铺；每周运动分钟、步数等写入 `exercise`，勿与结局句并列抢戏。若必须带一句运动，用括号附在句末，如「…靠近（每周运动目标：150分钟中等强度）」。
+- **禁止**把 `goalSummary` 整段复制成「某某方案 · {goalSummary}」式标题文案；标题短、摘要详，各司其职。
 
 总结须与三块内容一致，不引入未在 exercise/diet/execution 中出现的任务。
 
@@ -188,14 +215,15 @@ display_name: 管理方案生成
 
 | 字段 | 说明 |
 |------|------|
-| `code` | 稳定编码，如 `EX_WALK_30`、`DIET_LOG`、`MED_REMINDER` |
+| `code` | 稳定编码，如 `EX_WALK_30`、`DIET_LOG`、`MED_REMINDER`、`WATER_LOG` |
 | `title` | 展示标题 |
-| `category` | `EXERCISE` / `DIET` / `WATER` / `SLEEP` / `MOOD` / `OTHER` |
-| `frequency` | `QD`（每日）/ `BID` / `TIW`（每周三次）等 |
+| `category` | `EXERCISE` / `DIET` / `WATER` / `MEDICATION` / `SLEEP` / `MOOD` / `OTHER` |
+| `frequency` | `QD`（每日1次）/ `BID` / `TID` / `TIW` / `QW` / `PRN` / **`HABIT`（全天微习惯，当日勾选一次即可）** |
 | `timeSlot` | `MORNING` / `AFTERNOON` / `EVENING` / `AFTER_DINNER` / `BEDTIME` / `ALL` |
-| `relatedRef` | 可选，关联运动类型或指标，如 `WALKING`、`BLOOD_GLUCOSE` |
+| `relatedRef` | 可选，关联运动类型或指标，如 `WALKING`、`BLOOD_GLUCOSE`、`SEDENTARY_BREAK` |
 | `targetMl` | **仅 `WATER`**：每日饮水目标毫升（整数） |
-| `enabled` | 是否启用 |
+| `enabled` | 是否启用；关掉后患者端不展示 |
+| `rationale` | 可选，灰色「临床依据」短句（患者/健管师可见） |
 
 **编制原则**：
 
@@ -204,9 +232,20 @@ display_name: 管理方案生成
     - 有 `basicArchive.schedule.offWork` / `offWorkLabel` 时：晚上 8 点及以后下班，不要把运动写在晚饭前
     - 有 `basicArchive.schedule.offWorkNote`（倒班或夜班的上班时段，自由文本）或 `lifestyleProfile.workSchedule=SHIFT|NIGHT` 时：按客户写的班次排运动，不要写死傍晚，也避开「刚下夜班」
     - 有 `basicArchive.diet.dinnerTime` / `dinnerTimeLabel` 为晚上 9 点以后时：不安排刚吃完晚饭就运动
-2. **饮食任务**：至少 1 条「记录三餐与加餐」等，`category=DIET`（**不要**再把饮水写进 DIET）
+2. **饮食任务**：至少 1 条「记录三餐与加餐」，`code=DIET_LOG`，`category=DIET`（**不要**再把饮水写进 DIET）
+    - **禁止**把服药写进饮食任务标题（错误例：「记录三餐与加餐，服药与第一口饭同服」）。饮食打卡只记吃了什么；服药另开任务
     - 有 `goals.preferences.constraints` / `constraintsDisplay` 或 `basicArchive.weightHistory.failReasons` 时：执行标题/总结点出对应阻力破解（应酬多→少饮酒、低盐点餐；经常外卖→给能点到的替换；总是觉得饿→正餐留足蛋白质和蔬菜，不把热量压太低；家人不太支持→给家属一句可执行的话；没时间运动→把活动嵌进已有空档）
-3. **饮水任务**：无限水禁忌时编入 1 条 `code=WATER_LOG`，`category=WATER`，`frequency=QD`，`timeSlot=ALL`（全天少量多次），填写 `targetMl`（有体重用约 `kg×30` 并落在 1200–2000，否则 1600；标题可写「足量饮水，每日约 {targetMl} ml」）
+2b. **用药提醒（硬拆分）**：`activeMedicationDetails` 或问卷 `medication.mealRelation` 含随餐/第一口饭同服时，**必须**另编 1 条：
+    - `code=MED_REMINDER`，`category=MEDICATION`
+    - 标题例：`服药提醒：阿卡波糖与第一口饭同服`（有药名写药名；无药名写「随餐药物与第一口饭同服」）
+    - 随三餐药：`frequency=TID`，`timeSlot=ALL`；一日一次药：`QD` + 对应时段
+    - `rationale` 写清：具体服药在患者端「用药」页按时段打卡；本条是方案级提醒，勿与饮食记录混写
+    - 药-餐配合短句仍可写在 `diet.notes`，但**不要**塞进 `DIET_LOG` 标题
+3. **饮水任务**：无限水禁忌时编入 1 条 `code=WATER_LOG`，`category=WATER`，`frequency=QD`，`timeSlot=ALL`，填写 `targetMl`
+    - 有体重：`targetMl ≈ round(kg×30 / 100)×100`，夹在 **1200–3000**（例：82kg→2500）；无体重默认 1600
+    - 标题：「足量饮水，每日约 {targetMl} ml」
+    - `rationale` 用大白话，例：「根据您的体重约 82 kg 计算，建议每天喝 2500 毫升水。少量多次，不要等渴了再喝。」**禁止**写「落在 1200-2000ml 上限」这类不通顺/与数字打架的话
+3b. **久坐起身**：标题含「久坐 / 每小时起身」时，`frequency` **必须**用 `HABIT`（全天微习惯），`timeSlot=ALL`，`relatedRef=SEDENTARY_BREAK`；**禁止** `QD`（每日1次会让患者以为动一次就够、系统也不再提醒）
 4. **限水**：上下文出现心衰、慢性肾病、医嘱限水等 → **不要生成** `WATER` 任务（由健管师决定是否手加）
 5. **糖尿病标签**：增加「按时监测血糖」`relatedRef=BLOOD_GLUCOSE`
 6. **高血压标签**：增加「家庭血压测量」`relatedRef=BLOOD_PRESSURE`
@@ -249,6 +288,16 @@ display_name: 管理方案生成
       "frequency": "QD",
       "timeSlot": "ALL",
       "targetMl": 1600,
+      "rationale": "建议每天喝 1600 毫升水。少量多次，不要等渴了再喝。",
+      "enabled": true
+    },
+    {
+      "code": "MED_REMINDER",
+      "title": "服药提醒：阿卡波糖与第一口饭同服",
+      "category": "MEDICATION",
+      "frequency": "TID",
+      "timeSlot": "ALL",
+      "rationale": "具体服药请在「用药」页按时段打卡；本条为方案级提醒",
       "enabled": true
     }
   ]
@@ -277,7 +326,7 @@ display_name: 管理方案生成
   - `schedule.offWorkNote`：倒班或夜班时客户自己写的上班时段（可多个）。运动和餐次按这段文字排，不要套用固定傍晚
   - `diet.dinnerTime` / `dinnerTimeLabel`：晚餐时间。晚上 9 点以后吃晚饭时，不安排刚吃完就运动
   - `diet.taste` / `tasteLabels`：日常饮食更接近哪种（偏咸、偏油或油炸、精米白面、甜食）。按命中项给替换，主食和烹饪细问只在健管师补了 `staple`/`cooking` 时才用
-  - `sleep.refreshed` / `refreshedLabel`：早上是否解乏。值为极度疲劳（`NO`）且同时有肥胖或高血压时，在执行里提示睡眠呼吸监测，不要写成已确诊
+  - `sleep.refreshed` / `refreshedLabel`：早上是否解乏。**打鼾（`disorder=SNORING`）+ 晨起疲惫（`PARTIAL`/`NO`）+ 超重/肥胖或糖/压慢病** 时，属阻塞性睡眠呼吸暂停（OSA）高危信号：`diet.notes` **必须**写强提醒「建议尽快前往呼吸内科/耳鼻喉科做睡眠呼吸监测（多导睡眠图）；打鼾严重会影响血压和血糖控制」——禁止只写「关注睡眠呼吸情况」；**不要写成已确诊 OSA**
 - `patientContext.lifestyleProfile`（`workSchedule` / `workScheduleLabel` / `scheduleHint`）→ 餐次、用药提醒与运动时段对齐班次；与上面的下班时间、倒班时段一起看
 - `patientContext.goals.preferences.constraints` 与 `constraintsDisplay` → 执行阻力多选（应酬多、经常外卖、总是觉得饿、家人不太支持、没时间运动）。写入执行与总结的可执行破解，勿空喊「要坚持」
 - `patientContext.intakeBrief.keyAnswers` 里的 `medication.mealRelation`（`display` 为中文）→ 吃药和吃饭怎么配合。含「跟第一口饭一起吃」时写进用餐提醒。与 `activeMedicationDetails.timingNote` 一并使用
@@ -307,5 +356,5 @@ display_name: 管理方案生成
 4. 过敏食物出现在推荐列表或示例食谱
 5. 卧床/骨折场景推荐剧烈运动；多轮修订时因饮食意见而丢掉既有骨折/制动限制
 6. 在总结中承诺疗效或替代就医
-6b. 引用 `guidelineRecs` 以外的条目编码，或在患者可见正文中写指南名称、条目编码、「专家认证」「医生制定」等表述
+6b. 引用 `guidelineRecs` 以外的条目编码；在患者可见正文或 **`rationale` 文案**中写指南名称、条目编码（如 `HTN.DIET.SALT`）、「专家认证」「医生制定」等表述——编码只属于 `refs`
 7. 面向患者的文案（标题、总结、建议、任务名）出现「处方」「诊断」「确诊」「医嘱」「治疗方案」等医疗用语：用「运动计划」「按时服药」「按时监测」「已患」等健康管理表述

@@ -21,6 +21,10 @@ public class IntakeStatusView {
     /** C 端最近提交档位：MINIMAL / QUICK / FULL；B 端代填可为空 */
     private String submittedDepth;
     private String submittedDepthLabel;
+    /** 问卷填写完整度（allDone/allTotal），与健康档案完整度分开 */
+    private Integer completenessPercent;
+    private Integer filledCount;
+    private Integer totalCount;
 
     @Getter
     @Setter

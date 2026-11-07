@@ -39,8 +39,12 @@ import com.healix.core.careplan.mapper.CarePlanMapper;
 import com.healix.core.careplan.mapper.CarePlanTaskMapper;
 import com.healix.core.careplan.mapper.CarePlanVersionMapper;
 import com.healix.core.careplan.support.CarePlanAllergenGuard;
+import com.healix.core.careplan.support.CarePlanDiabetesDietGuard;
+import com.healix.core.careplan.support.CarePlanDietNotesGuard;
+import com.healix.core.careplan.support.CarePlanOsaHintSupport;
 import com.healix.core.careplan.support.CarePlanContextService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
+import com.healix.core.careplan.support.CarePlanExecutionTaskNormalizer;
 import com.healix.core.careplan.support.CarePlanWeighTaskNormalizer;
 import com.healix.core.followup.catalog.FollowupType;
 import com.healix.core.followup.domain.FollowupRecord;
@@ -299,8 +303,27 @@ public class CarePlanService {
             removed.forEach(generated.contextSnapshot().putArray("allergenRemoved")::add);
             log.info("[CarePlan] removed allergen conflicts peopleId={} items={}", peopleId, removed);
         }
+        CarePlanTemplateKeyEnum generatedTemplateKey =
+                CarePlanTemplateKeyEnum.parseOrNull(
+                        generated.contextSnapshot() != null
+                                ? generated.contextSnapshot().path("templateKey").asText(null)
+                                : null);
+        List<String> porridgeFixed = CarePlanDiabetesDietGuard.sanitize(
+                generated.diet(),
+                generated.contextSnapshot(),
+                generatedTemplateKey,
+                generated.diseaseTags());
+        if (!porridgeFixed.isEmpty()) {
+            log.info("[CarePlan] diabetes porridge sanitized peopleId={} items={}", peopleId, porridgeFixed);
+        }
+        CarePlanDietNotesGuard.sanitize(generated.diet());
+        CarePlanOsaHintSupport.apply(
+                generated.diet(), asObjectNode(generated.exercise()), generated.contextSnapshot());
         energyTargetService.applyFresh(tenantId, peopleId, generated.diet());
+        CarePlanRationaleSupport.scrubGuidelineCodesInPlan(
+                generated.exercise(), generated.diet(), generated.execution(), generated.contextSnapshot());
         CarePlanWeighTaskNormalizer.normalize(generated.execution(), generated.contextSnapshot());
+        CarePlanExecutionTaskNormalizer.normalize(generated.execution(), generated.contextSnapshot());
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 generated.exercise(),
                 generated.diet(),
@@ -441,6 +464,12 @@ public class CarePlanService {
                 JsonUtils.readTree(draft.getDietJson()), diet == null ? JsonUtils.emptyObject() : diet);
         if (dietNorm != null) {
             CarePlanAllergenGuard.enforce(dietNorm, ctx.foodAllergens());
+            ObjectNode snapForDiet = asObjectNode(JsonUtils.readTree(
+                    draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
+            CarePlanTemplateKeyEnum dietTemplateKey =
+                    CarePlanTemplateKeyEnum.parseOrNull(snapForDiet.path("templateKey").asText(null));
+            CarePlanDiabetesDietGuard.sanitize(dietNorm, snapForDiet, dietTemplateKey, ctx.diseaseCodes());
+            CarePlanDietNotesGuard.sanitize(dietNorm);
             energyTargetService.apply(tenantId, peopleId, dietNorm);
         }
         ObjectNode executionNorm = CarePlanRationaleSupport.clearIfContentChanged(
@@ -452,9 +481,12 @@ public class CarePlanService {
         }
         ObjectNode snapshotNode = asObjectNode(JsonUtils.readTree(
                 draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
+        CarePlanRationaleSupport.scrubGuidelineCodesInPlan(exerciseNorm, dietNorm, executionNorm, snapshotNode);
         // 用最新首诊高亮（含答卷摘要）覆盖快照，避免旧草稿缺 answerDisplay
         mergeLiveHighlights(snapshotNode, ctx);
+        CarePlanOsaHintSupport.apply(dietNorm, exerciseNorm, snapshotNode);
         CarePlanWeighTaskNormalizer.normalize(executionNorm, snapshotNode);
+        CarePlanExecutionTaskNormalizer.normalize(executionNorm, snapshotNode);
         CarePlanTemplateKeyEnum templateKey =
                 CarePlanTemplateKeyEnum.parseOrNull(snapshotNode.path("templateKey").asText(null));
         boolean specialtyMismatch = CarePlanDiseaseTags.specialtyMismatch(templateKey, ctx.diseaseCodes());
@@ -828,22 +860,31 @@ public class CarePlanService {
         if (draft == null) {
             throw new BusinessException("无草稿可发布");
         }
-        JsonNode exercise = JsonUtils.readTree(draft.getExerciseJson());
-        JsonNode diet = JsonUtils.readTree(draft.getDietJson());
+        ObjectNode exercise = asObjectNode(JsonUtils.readTree(draft.getExerciseJson()));
+        ObjectNode diet = asObjectNode(JsonUtils.readTree(draft.getDietJson()));
         ObjectNode execution =
                 com.healix.core.water.support.WaterTaskMigration.normalizeExecution(
                         JsonUtils.readTree(draft.getExecutionJson()));
         draft.setExecutionJson(JsonUtils.toJson(execution));
         CarePlanContext ctx = contextService.load(tenantId, peopleId);
-        if (diet instanceof ObjectNode dietObj) {
-            CarePlanAllergenGuard.enforce(dietObj, ctx.foodAllergens());
-            energyTargetService.onPublish(tenantId, peopleId, staffId, dietObj, syncDietGoal);
-            draft.setDietJson(JsonUtils.toJson(dietObj));
+        if (diet != null) {
+            CarePlanAllergenGuard.enforce(diet, ctx.foodAllergens());
+            CarePlanDietNotesGuard.sanitize(diet);
+            energyTargetService.onPublish(tenantId, peopleId, staffId, diet, syncDietGoal);
+            draft.setDietJson(JsonUtils.toJson(diet));
         }
         ObjectNode publishSnapshot = asObjectNode(JsonUtils.readTree(
                 draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
         mergeLiveHighlights(publishSnapshot, ctx);
+        CarePlanOsaHintSupport.apply(diet, exercise, publishSnapshot);
+        if (diet != null) {
+            draft.setDietJson(JsonUtils.toJson(diet));
+        }
+        if (exercise != null) {
+            draft.setExerciseJson(JsonUtils.toJson(exercise));
+        }
         CarePlanWeighTaskNormalizer.normalize(execution, publishSnapshot);
+        CarePlanExecutionTaskNormalizer.normalize(execution, publishSnapshot);
         draft.setExecutionJson(JsonUtils.toJson(execution));
         CarePlanTemplateKeyEnum publishKey =
                 CarePlanTemplateKeyEnum.parseOrNull(publishSnapshot.path("templateKey").asText(null));
@@ -1479,7 +1520,7 @@ public class CarePlanService {
         dto.setId(plan.getId());
         dto.setPeopleId(plan.getPeopleId());
         dto.setStatus(plan.getStatus());
-        dto.setTitle(plan.getTitle());
+        dto.setTitle(sanitizePlanTitle(plan.getTitle(), plan.getGoalSummary()));
         dto.setGoalSummary(plan.getGoalSummary());
         dto.setDiseaseTags(JsonUtils.readTree(plan.getDiseaseTagsJson() == null ? "[]" : plan.getDiseaseTagsJson()));
         dto.setCurrentVersionId(plan.getCurrentVersionId());
@@ -1660,7 +1701,7 @@ public class CarePlanService {
     }
 
     /**
-     * 标题与摘要分离：历史数据曾把运动目标截断写入 title，展示时回退为默认标题。
+     * 标题与摘要分离：短标题留类型名；若历史把摘要拼进标题则裁回短标题。
      */
     private static String sanitizePlanTitle(String title, String goalSummary) {
         if (!StringUtils.hasText(title)) {
@@ -1674,6 +1715,16 @@ public class CarePlanService {
         if (t.equals(g)) {
             return "健康管理方案";
         }
+        int sep = t.indexOf(" · ");
+        if (sep > 0) {
+            String head = t.substring(0, sep).trim();
+            String tail = t.substring(sep + 3).trim();
+            String gHead = g.length() > 16 ? g.substring(0, 16) : g;
+            if (tail.equals(g)
+                    || (gHead.length() >= 8 && (tail.startsWith(gHead) || g.startsWith(tail.replace("…", "").replace("...", ""))))) {
+                return StringUtils.hasText(head) ? head : "健康管理方案";
+            }
+        }
         if (g.length() > 40) {
             String truncatedCn = g.substring(0, 40) + "…";
             String truncatedDots = g.substring(0, 40) + "...";
@@ -1684,16 +1735,9 @@ public class CarePlanService {
         return t;
     }
 
+    /** 默认短标题：只保留方案类型，不把 goalSummary 拼进标题。 */
     static String buildDefaultTitle(CarePlanTemplateKeyEnum key, String goalSummary) {
-        String prefix = key == null ? "健康管理方案" : key.canonical().titlePrefix();
-        if (!StringUtils.hasText(goalSummary)) {
-            return prefix;
-        }
-        String g = goalSummary.trim();
-        if (g.length() > 40) {
-            g = g.substring(0, 40) + "…";
-        }
-        return prefix + " · " + g;
+        return key == null ? "健康管理方案" : key.canonical().titlePrefix();
     }
 
     private static String resolveSourceMode(String source) {

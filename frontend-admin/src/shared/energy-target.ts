@@ -1,4 +1,4 @@
-/** 方案饮食块的热量目标（diet.energyTarget），由服务端按饮食记录的热量目标写入 */
+/** 方案饮食块的热量目标（diet.energyTarget）：生成时写入，健管师可调，发布可同步到饮食目标 */
 export interface EnergyTarget {
   energyKcal: number
   carbG?: number
@@ -12,9 +12,15 @@ export interface EnergyTarget {
 export const ENERGY_SOURCE_LABELS: Record<EnergyTarget['source'], string> = {
   PATIENT_GOAL: '取自患者饮食目标',
   STAFF_GOAL: '取自医护设定的饮食目标',
-  ESTIMATED: '按身高体重估算（患者尚未设置饮食目标）',
+  ESTIMATED: '制定方案时按档案自动估算',
   PLAN_EDIT: '方案内调整',
 }
+
+export const ENERGY_GOAL_TYPE_OPTIONS: Array<{ value: NonNullable<EnergyTarget['goalType']>; label: string }> = [
+  { value: 'LOSE', label: '减重' },
+  { value: 'MAINTAIN', label: '维持体重' },
+  { value: 'GAIN', label: '增重' },
+]
 
 export function asEnergyTarget(raw: unknown): EnergyTarget | null {
   const t = raw as EnergyTarget | null | undefined

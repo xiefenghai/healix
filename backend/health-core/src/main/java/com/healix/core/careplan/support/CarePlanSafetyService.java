@@ -13,6 +13,7 @@ import com.healix.core.field.FieldCatalog;
 import com.healix.core.field.FieldDef;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -35,7 +36,12 @@ public class CarePlanSafetyService {
     public static final String WARN_HYPO = "HYPOGLYCEMIA_RISK";
     public static final String WARN_INTOLERANCE = "DIET_INTOLERANCE";
     public static final String WARN_ALLERGY_UNKNOWN = "ALLERGY_UNKNOWN";
+    /** 过敏史未采时，推荐/示例含虾蟹花生等常见高致敏物 */
+    public static final String WARN_HIGH_ALLERGEN_FOOD = "HIGH_ALLERGEN_FOOD_UNCHECKED";
     public static final String WARN_HIGHLIGHT = "HIGHLIGHT_CAUTION";
+
+    private static final java.util.regex.Pattern HIGH_ALLERGEN_FOOD =
+            java.util.regex.Pattern.compile("虾|蟹|贝|海鲜|花生|腰果|杏仁|坚果|芒果|芝麻");
 
     /** 仅首诊高亮相关 flag（打开方案页刷新提示文案用）。 */
     public List<SafetyFlagDto> highlightFlags(JsonNode contextSnapshot) {
@@ -136,6 +142,15 @@ public class CarePlanSafetyService {
                     CarePlanSafetyLevelEnum.WARN.name(),
                     WARN_ALLERGY_UNKNOWN,
                     "患者过敏史未采集，饮食建议无法排除过敏风险，建议先在档案中确认"));
+            List<String> risky = highAllergenMentions(diet);
+            if (!risky.isEmpty()) {
+                flags.add(new SafetyFlagDto(
+                        CarePlanSafetyLevelEnum.WARN.name(),
+                        WARN_HIGH_ALLERGEN_FOOD,
+                        "过敏史未采集，推荐/示例含常见高致敏食物（"
+                                + String.join("、", risky)
+                                + "），请先确认过敏史或改为禽肉/豆制品"));
+            }
         }
         if (contextIncomplete) {
             flags.add(new SafetyFlagDto(
@@ -279,6 +294,68 @@ public class CarePlanSafetyService {
         if (!unackedWarns.isEmpty()) {
             throw new com.healix.common.exception.BusinessException(
                     "请确认警告后发布：" + String.join(", ", unackedWarns));
+        }
+    }
+
+    /** 从推荐与示例餐中抽出常见高致敏物展示名（去重保序）。 */
+    static List<String> highAllergenMentions(JsonNode diet) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (diet == null || diet.isNull()) {
+            return List.of();
+        }
+        collectHighAllergenLabels(diet.get("recommended"), out);
+        collectHighAllergenFromMeals(diet.get("sampleDay"), out);
+        JsonNode week = diet.get("sampleWeek");
+        if (week != null && week.isObject()) {
+            week.fields().forEachRemaining(e -> collectHighAllergenFromMeals(e.getValue(), out));
+        }
+        return new ArrayList<>(out);
+    }
+
+    private static void collectHighAllergenLabels(JsonNode arr, Set<String> out) {
+        if (arr == null || !arr.isArray()) {
+            return;
+        }
+        for (JsonNode n : arr) {
+            String label = n == null || n.isNull()
+                    ? ""
+                    : (n.isTextual() ? n.asText() : n.path("label").asText(n.path("code").asText("")));
+            addHighAllergenLabels(label, out);
+        }
+    }
+
+    private static void collectHighAllergenFromMeals(JsonNode sample, Set<String> out) {
+        if (sample == null || !sample.isObject()) {
+            return;
+        }
+        sample.fields().forEachRemaining(e -> {
+            JsonNode v = e.getValue();
+            if (v == null || v.isNull()) {
+                return;
+            }
+            String text = v.isTextual() ? v.asText() : v.path("text").asText("");
+            addHighAllergenLabels(text, out);
+        });
+    }
+
+    private static void addHighAllergenLabels(String text, Set<String> out) {
+        if (!StringUtils.hasText(text) || !HIGH_ALLERGEN_FOOD.matcher(text).find()) {
+            return;
+        }
+        if (text.contains("虾") || text.contains("蟹") || text.contains("贝") || text.contains("海鲜")) {
+            out.add("虾蟹/海鲜");
+        }
+        if (text.contains("花生")) {
+            out.add("花生");
+        }
+        if (text.contains("坚果") || text.contains("腰果") || text.contains("杏仁")) {
+            out.add("坚果");
+        }
+        if (text.contains("芒果")) {
+            out.add("芒果");
+        }
+        if (text.contains("芝麻")) {
+            out.add("芝麻");
         }
     }
 

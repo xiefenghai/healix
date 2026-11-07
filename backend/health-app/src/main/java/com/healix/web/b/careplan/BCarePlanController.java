@@ -124,6 +124,42 @@ public class BCarePlanController {
         return emitter;
     }
 
+    /** 在当前草稿上按指令修订（如只换示例周食谱）；无草稿时回退为重新生成。 */
+    @PostMapping(value = "/patients/{peopleId}/care-plan/revise/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter reviseStream(
+            @PathVariable String peopleId,
+            @RequestBody(required = false) ReviseRequest request,
+            HttpServletResponse response) {
+        ReviseRequest req = request == null ? new ReviseRequest(null) : request;
+        String tenantId = SecurityUtils.requireTenantId();
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        String staffId = SecurityUtils.requireStaffId();
+        AgentSseSupport.prepareSseResponse(response);
+        SseEmitter emitter = AgentSseSupport.createEmitter(SSE_TIMEOUT_MS);
+        AgentSseSupport.openStream(emitter, response);
+        CompletableFuture.runAsync(JwtAuthenticationFilter.wrapAsync(() -> {
+            try {
+                var sink = AgentSseSupport.sseSink(emitter, response);
+                CarePlanBundleDto bundle = carePlanAgentService.reviseStream(
+                        tenantId, orgId, peopleId, staffId, req.instruction(), sink);
+                sink.accept(AgentStreamEvent.result(bundle));
+                sink.accept(AgentStreamEvent.done());
+                emitter.complete();
+            } catch (Exception ex) {
+                try {
+                    emitter.send(SseEmitter.event()
+                            .data(AgentStreamEvent.error(
+                                            ex.getMessage() == null ? "revise failed" : ex.getMessage())
+                                    .toJsonLine()));
+                } catch (Exception ignored) {
+                    // ignore
+                }
+                emitter.completeWithError(ex);
+            }
+        }));
+        return emitter;
+    }
+
     @PutMapping("/patients/{peopleId}/care-plan/draft")
     public ApiResult<CarePlanBundleDto> updateDraft(
             @PathVariable String peopleId, @RequestBody @Validated UpdateDraftRequest request) {
@@ -328,6 +364,8 @@ public class BCarePlanController {
 
     public record GenerateRequest(
             String instruction, String templateKey, List<String> diseaseCodes, Boolean replaceDraft) {}
+
+    public record ReviseRequest(String instruction) {}
 
     public record UpdateDraftRequest(
             @NotNull Integer version,

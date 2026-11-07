@@ -58,13 +58,13 @@ public class CarePlanLlmGenerator {
                 instruction == null ? 0 : instruction.length(),
                 turns.size(),
                 ctx != null && ctx.contextIncomplete());
-        CarePlanStreamSink.progress(sink, "正在加载方案生成指引…");
+        CarePlanStreamSink.progress(sink, "正在翻阅方案生成指引与临床共识…");
         String skill = loadSkillMarkdown();
         String userMessage = buildUserMessage(templateKey, ctx, instruction, diseaseCodes);
-        CarePlanStreamSink.progress(sink, "正在调用 AI 生成运动、饮食与执行计划…");
+        CarePlanStreamSink.progress(sink, "正在结合指南起草运动、饮食与执行计划…");
         long thinkStarted = System.currentTimeMillis();
         CarePlanStreamSink.thinkingStart(sink, "规划运动、饮食与执行结构…");
-        CarePlanStreamSink.tool(sink, "DeepSeek", "running", "正在生成管理方案…");
+        CarePlanStreamSink.tool(sink, "临床方案推理", "running", "正在综合患者数据与指南起草方案…");
         CarePlanReadableStreamer readable = new CarePlanReadableStreamer(sink);
         LlmResponse llm = llmClient.streamChat(
                 "CARE_PLAN_GENERATE",
@@ -99,7 +99,7 @@ public class CarePlanLlmGenerator {
                 templateKey,
                 instruction == null ? 0 : instruction.length(),
                 turns.size());
-        CarePlanStreamSink.progress(sink, "正在加载方案修订指引…");
+        CarePlanStreamSink.progress(sink, "正在翻阅方案修订指引…");
         String skill = loadSkillMarkdown() + "\n\n## 修订模式补充（硬性）\n"
                 + "1. 在 currentDraft 上按 revisionInstruction 局部调整；未提及部分保持原意与结构。\n"
                 + "2. mustPreserveConstraints / 草稿中的骨折·卧床·制动·禁止负重等安全限制必须保留，"
@@ -108,7 +108,9 @@ public class CarePlanLlmGenerator {
                 + "4. 执行任务过多/过少类意见优先改 execution.tasks（删减或合并），勿无故整包重写运动饮食。\n"
                 + "5. goalSummary 须同时保留仍有效的安全限制与本次新增关注。\n"
                 + "6. 仍输出完整 exercise/diet/execution/summary/goalSummary JSON。\n"
-                + "7. 若有会话历史，结合上文理解「改哪里」，不要忽略健管师刚说过的约束。\n";
+                + "7. 若有会话历史，结合上文理解「改哪里」，不要忽略健管师刚说过的约束。\n"
+                + "8. 糖尿病相关方案示例餐禁止粥类主食（小米粥/杂粮粥等），尤其晚餐；改用杂粮饭/荞麦面/全麦馒头。\n"
+                + "9. 示例餐主食写克数或标准参照；sampleWeek 早餐鸡蛋类不超过 3 天，与豆浆/豆制品轮换。\n";
         String userMessage = buildReviseUserMessage(
                 templateKey,
                 ctx,
@@ -118,10 +120,10 @@ public class CarePlanLlmGenerator {
                 currentDiet,
                 currentExecution,
                 currentGoalSummary);
-        CarePlanStreamSink.progress(sink, "正在按你的要求修订方案草稿…");
+        CarePlanStreamSink.progress(sink, "正在按你的意见修订方案草稿…");
         long thinkStarted = System.currentTimeMillis();
         CarePlanStreamSink.thinkingStart(sink, "对照草稿落实修订意见…");
-        CarePlanStreamSink.tool(sink, "DeepSeek", "running", "正在修订管理方案…");
+        CarePlanStreamSink.tool(sink, "临床方案推理", "running", "正在按意见调整运动、饮食与执行计划…");
         CarePlanReadableStreamer readable = new CarePlanReadableStreamer(sink);
         LlmResponse llm = llmClient.streamChat(
                 "CARE_PLAN_REVISE",
@@ -146,18 +148,18 @@ public class CarePlanLlmGenerator {
                     "[CarePlan] LLM empty response, {} templateKey={}",
                     revise ? "revise failed" : "fallback to template",
                     templateKey);
-            CarePlanStreamSink.tool(sink, "DeepSeek", "done", "未返回有效内容 · " + thinkMs + "ms");
-            CarePlanStreamSink.thinkingDone(sink, "模型未返回有效内容", thinkMs);
+            CarePlanStreamSink.tool(sink, "临床方案推理", "done", "未能完成草案，请稍后重试");
+            CarePlanStreamSink.thinkingDone(sink, "暂未形成可用草案", thinkMs);
             return Optional.empty();
         }
         CarePlanStreamSink.tool(
                 sink,
-                "DeepSeek",
+                "临床方案推理",
                 "done",
-                (revise ? "修订草案已生成 · " : "方案草案已生成 · ") + thinkMs + "ms");
+                revise ? "修订草案已整理完成" : "运动、饮食与执行草案已整理完成");
         CarePlanStreamSink.thinkingDone(
                 sink, revise ? "已按意见整理方案" : "已整理运动、饮食与执行计划", thinkMs);
-        CarePlanStreamSink.progress(sink, "正在校验方案结构…");
+        CarePlanStreamSink.progress(sink, "正在核对方案结构与关键指标…");
         try {
             LlmPlanResult result = parseLlmOutput(llm, templateKey, ctx, diseaseCodes);
             log.info(
@@ -337,11 +339,16 @@ public class CarePlanLlmGenerator {
         return """
                 请根据以下输入生成完整管理方案 JSON。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
+                goalSummary 须写具体目标（周期+数字：体重/血压/血糖/腰围等），禁止与「综合管理方案」类短标题同义复读口号。
                 叙事与监测须对齐 patientContext.goals.careTracks（及 diabetesClinical / hypertensionClinical）；
                 无减重方向时不要写成减肥方案。
                 若有 patientContext.highlightGuidance，须把每条 mustApply 落实到运动/饮食/执行（clinicianNote 只吸收约束，勿照抄进患者正文）。
                 有食物过敏时 sampleDay 早午晚每餐须给安全 swapHint（过敏平替）；有 lifestyleProfile/cook/availableSlots/constraints/用药 timingNote 时须落实到 notes、timeSlot 与家属一句提示。
-                若有下班时间、倒班或夜班的上班时段、晚餐时间、吃药和吃饭的配合、执行阻力（应酬/外卖/易饿/家人不支持/没时间）、早上是否解乏：按这些安排餐次和运动时段。下班晚、晚餐晚，或写了倒班/夜班时段时，不要把运动写死在傍晚；药需跟第一口饭同服时写进用餐提醒；早上极度疲劳时在执行里提示睡眠呼吸监测。
+                糖尿病（含 T1/T2、胰岛素或降糖药）：示例餐禁止粥类主食（小米粥/杂粮粥/白米粥等），尤其晚餐；改用杂粮饭、荞麦面、全麦馒头；limited 须含「熬煮软烂的粥类（相对杂粮饭升糖更快…）」并温和提示少选软烂粥——固态杂粮饭可推荐，勿与粥类限制混淆。
+                过敏史未采集时：recommended/示例餐不要默认推虾蟹贝、花生、坚果等高致敏物；优先瘦肉/禽肉/豆腐/淡水鱼。
+                diet.notes 是患者可见「执行提醒」：短句分号分隔，禁止写医嘱/处方，禁止写过敏史未采集等内部质检话术。
+                示例餐主食/加餐须写克数或标准参照（如杂粮饭约150g熟重），禁止只写「1碗/2块」；sampleWeek 早餐鸡蛋类不超过3天，与豆浆/豆制品轮换。
+                若有下班时间、倒班或夜班的上班时段、晚餐时间、吃药和吃饭的配合、执行阻力（应酬/外卖/易饿/家人不支持/没时间）、早上是否解乏：按这些安排餐次和运动时段。下班晚、晚餐晚，或写了倒班/夜班时段时，不要把运动写死在傍晚；药需跟第一口饭同服时：diet.notes 写服药配合短句，并单独编 MED_REMINDER（category=MEDICATION），禁止塞进 DIET_LOG 标题；久坐/每小时起身任务 frequency 用 HABIT 而非 QD；饮水 targetMl 按 kg×30（百毫升取整，1200–3000），rationale 用大白话说明建议毫升；打鼾+晨起疲惫+超重/肥胖或糖压慢病时：diet.notes 必须写强提醒「尽快去呼吸内科/耳鼻喉科做睡眠呼吸监测（多导睡眠图）」，禁止只写「关注睡眠呼吸情况」，勿写成已确诊。
                 仅输出 JSON，不要 markdown。
 
                 %s

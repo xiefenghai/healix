@@ -37,6 +37,17 @@
         LIMIT 1
     </select>
 
+    <select id="findLatestPeopleInOrgIncludingDeleted"
+            resultType="com.healix.core.care.domain.CareTeamMember">
+        SELECT <include refid="cols"/>
+        FROM care_team_member
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND member_type = 'PATIENT'
+        ORDER BY COALESCE(joined_at, gmt_created) DESC, pk_id DESC
+        LIMIT 1
+    </select>
+
     <select id="listPatientsByOrg" resultType="com.healix.core.care.domain.CareTeamMember">
         SELECT <include refid="cols"/>
         FROM care_team_member

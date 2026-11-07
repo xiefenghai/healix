@@ -38,9 +38,16 @@ import com.healix.core.vitals.enums.MetricTypeEnum;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.mapper.StaffPatientWatchMapper;
 import com.healix.core.workspace.service.OrgWorkspaceService;
+import com.healix.core.careplan.domain.CarePlan;
+import com.healix.core.careplan.domain.CarePlanTask;
 import com.healix.core.careplan.dto.CarePlanBundleDto;
+import com.healix.core.careplan.enums.CarePlanCommResultEnum;
 import com.healix.core.careplan.enums.CarePlanStatusEnum;
+import com.healix.core.careplan.mapper.CarePlanMapper;
+import com.healix.core.careplan.mapper.CarePlanTaskMapper;
 import com.healix.core.careplan.service.CarePlanService;
+import com.healix.core.water.support.WaterIntakeRules;
+import com.healix.core.water.support.WaterTaskTargetResolver;
 import com.healix.core.questionnaire.dto.IntakeStatusView;
 import com.healix.core.questionnaire.service.QuestionnaireResponseService;
 import com.healix.core.report.catalog.HealthReportPeriodType;
@@ -101,6 +108,8 @@ public class CockpitService {
     private final AssessmentTagAssembler assessmentTagAssembler;
     private final MetricService metricService;
     private final CarePlanService carePlanService;
+    private final CarePlanMapper carePlanMapper;
+    private final CarePlanTaskMapper carePlanTaskMapper;
     private final HealthReportService healthReportService;
     private final QuestionnaireResponseService questionnaireResponseService;
     private final StaffPatientWatchMapper staffPatientWatchMapper;
@@ -379,6 +388,7 @@ public class CockpitService {
             }
             out.add(card);
         }
+        enrichRosterPlanHints(requireTenantId(), orgId, out);
         // 「我的患者」按健管组聚拢，组内再按紧急度；其它名单仍全局按紧急度
         if ("mine".equals(bucket)) {
             out.sort(Comparator.comparing(
@@ -406,6 +416,102 @@ public class CockpitService {
             throw new BusinessException(401, "缺少租户上下文");
         }
         return ctx.getTenantId();
+    }
+
+    /**
+     * 左栏花名册叠方案阶段线索。
+     *
+     * <p>不能只靠依从性宇宙（仅 ACTIVE 且窗口内才入列），否则「有草稿 / 审核中 / 沟通中 /
+     * 客户退回」的患者会掉进前端兜底「待评估 / 未评估」。
+     */
+    private void enrichRosterPlanHints(String tenantId, String orgId, List<CockpitPriorityCardDto> cards) {
+        if (cards == null || cards.isEmpty()) {
+            return;
+        }
+        List<String> peopleIds = new ArrayList<>();
+        for (CockpitPriorityCardDto card : cards) {
+            if (card != null && StringUtils.hasText(card.getPeopleId())) {
+                peopleIds.add(card.getPeopleId());
+            }
+        }
+        if (peopleIds.isEmpty()) {
+            return;
+        }
+
+        Map<String, AdherencePatientItemDto> adherenceByPeople = new HashMap<>();
+        try {
+            for (AdherencePatientItemDto item :
+                    adherenceQueryService.listUniverse(
+                            tenantId, orgId, LocalDate.now(JobCronSupport.ZONE))) {
+                if (item != null && StringUtils.hasText(item.getPeopleId())) {
+                    adherenceByPeople.put(item.getPeopleId(), item);
+                }
+            }
+        } catch (Exception ignored) {
+            // 依从率可缺，不影响方案阶段角标
+        }
+
+        Map<String, CarePlan> planByPeople = new HashMap<>();
+        try {
+            for (CarePlan plan : carePlanMapper.listByTenantAndPeopleIds(tenantId, peopleIds)) {
+                if (plan != null && StringUtils.hasText(plan.getPeopleId())) {
+                    planByPeople.put(plan.getPeopleId(), plan);
+                }
+            }
+        } catch (Exception ignored) {
+            // 方案态 enrichment 失败不影响左栏主流程
+            return;
+        }
+
+        for (CockpitPriorityCardDto card : cards) {
+            if (card == null || !StringUtils.hasText(card.getPeopleId())) {
+                continue;
+            }
+            AdherencePatientItemDto item = adherenceByPeople.get(card.getPeopleId());
+            if (item != null) {
+                if (!StringUtils.hasText(card.getRiskLevel()) && StringUtils.hasText(item.getRiskLevel())) {
+                    card.setRiskLevel(item.getRiskLevel());
+                }
+                if (item.getPlan() != null && card.getPlanRate7d() == null) {
+                    card.setPlanRate7d(item.getPlan().getRate7d());
+                }
+            }
+
+            CarePlan plan = planByPeople.get(card.getPeopleId());
+            if (plan == null || !StringUtils.hasText(plan.getStatus())) {
+                continue;
+            }
+            String st = plan.getStatus().trim().toUpperCase(Locale.ROOT);
+            String reasonHint = null;
+            if (CarePlanStatusEnum.ACTIVE.name().equals(st)) {
+                addBadge(card, "PLAN_ACTIVE");
+                reasonHint = "日常跟进";
+            } else if (CarePlanStatusEnum.REVIEWED.name().equals(st)
+                    || CarePlanStatusEnum.COMMUNICATING.name().equals(st)) {
+                addBadge(card, "PLAN_IN_PROGRESS");
+                reasonHint = CarePlanStatusEnum.COMMUNICATING.name().equals(st) ? "方案沟通中" : "方案待确认";
+            } else if (CarePlanStatusEnum.DRAFT.name().equals(st)) {
+                addBadge(card, "PLAN_DRAFT");
+                String last = plan.getLastCommResult() == null ? "" : plan.getLastCommResult().trim().toUpperCase(Locale.ROOT);
+                if (CarePlanCommResultEnum.NEED_REGENERATE.name().equals(last)) {
+                    reasonHint = "客户退回·需重做";
+                } else if (CarePlanCommResultEnum.NEED_MODIFY.name().equals(last)) {
+                    reasonHint = "客户退回·需微调";
+                } else {
+                    reasonHint = "方案草稿";
+                }
+            } else {
+                continue;
+            }
+            if (StringUtils.hasText(reasonHint)
+                    && (!StringUtils.hasText(card.getTopReason())
+                            || "主责患者".equals(card.getTopReason())
+                            || "今日关注".equals(card.getTopReason())
+                            || (card.getCareTeamName() != null
+                                    && card.getCareTeamName().equals(card.getTopReason())))) {
+                card.setTopReason(reasonHint);
+            }
+        }
     }
 
     /** 构建全量优先卡（未按 tab 过滤），供 summary / priority / topUrgent 共用。 */
@@ -544,15 +650,71 @@ public class CockpitService {
         }
         fillPendingDrafts(dto, tenantId, orgId, peopleId);
         fillServiceStages(dto, tenantId, orgId, peopleId);
+        fillWaterTargetMl(dto, tenantId, peopleId);
         return dto;
+    }
+
+    /** 从现行生效方案任务读取饮水目标，供助手/右栏与 PDF 方案对齐。 */
+    private void fillWaterTargetMl(CockpitFocusDto dto, String tenantId, String peopleId) {
+        try {
+            List<CarePlanTask> tasks = carePlanTaskMapper.listActiveByPeople(tenantId, peopleId);
+            if (tasks == null || tasks.isEmpty()) {
+                return;
+            }
+            for (CarePlanTask task : tasks) {
+                if (task == null) {
+                    continue;
+                }
+                if (!WaterIntakeRules.looksLikeWaterTask(task.getCategory(), task.getTitle(), task.getTaskCode())) {
+                    continue;
+                }
+                Integer ml = WaterTaskTargetResolver.targetMlOf(task);
+                if (ml != null && ml > 0) {
+                    dto.setWaterTargetMl(ml);
+                    return;
+                }
+            }
+        } catch (Exception ignored) {
+            // 焦点快照不因饮水目标失败中断
+        }
     }
 
     /**
      * 标准服务路径：建档→分组→首诊评估→制定方案→日常跟进→定期报告→阶段总结→结束。
      * current = 第一个未完成环节；出过定期报告才把「日常跟进」视为告一段落。
+     * 已服务后被移出健管组：分组节点标 broken，并带回历史完成时间。
      */
     private void fillServiceStages(CockpitFocusDto dto, String tenantId, String orgId, String peopleId) {
         boolean teamDone = StringUtils.hasText(dto.getCareTeamId());
+        LocalDateTime[] completedAt = new LocalDateTime[SERVICE_STAGE_CODES.length];
+
+        // 建档：机构入组成员时间
+        try {
+            var membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
+            if (membership != null) {
+                completedAt[0] = membership.getJoinedAt() != null
+                        ? membership.getJoinedAt()
+                        : membership.getGmtCreated();
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        if (completedAt[0] == null) {
+            completedAt[0] = LocalDateTime.now(JobCronSupport.ZONE);
+        }
+
+        // 分组：最近一次入组（含已软删，用于移出后仍能展示完成时间）
+        CareTeamMember latestTeamMember = null;
+        try {
+            latestTeamMember = careTeamMemberMapper.findLatestPeopleInOrgIncludingDeleted(orgId, peopleId);
+            if (latestTeamMember != null) {
+                completedAt[1] = latestTeamMember.getJoinedAt() != null
+                        ? latestTeamMember.getJoinedAt()
+                        : latestTeamMember.getGmtCreated();
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
 
         boolean openOnboarding = false;
         for (CockpitFocusDto.OpenTaskBrief t : dto.getOpenTasks()) {
@@ -568,9 +730,17 @@ public class CockpitService {
         }
 
         boolean intakeDone = false;
+        LocalDateTime intakeAt = null;
         try {
             IntakeStatusView intake = questionnaireResponseService.intakeStatus(tenantId, peopleId);
             intakeDone = intake != null && intake.isHasSubmitted();
+            if (intake != null) {
+                dto.setIntakeSubmitted(intake.isHasSubmitted());
+                dto.setIntakeCompletenessPercent(intake.getCompletenessPercent());
+                dto.setIntakeFilledCount(intake.getFilledCount());
+                dto.setIntakeTotalCount(intake.getTotalCount());
+                intakeAt = parseFlexibleDateTime(intake.getSubmittedAt());
+            }
         } catch (Exception ignored) {
             // 焦点快照不因首诊状态失败中断
         }
@@ -578,27 +748,41 @@ public class CockpitService {
         boolean hasCarePlanDraft = dto.getPendingDrafts().stream()
                 .anyMatch(d -> d != null && "CARE_PLAN".equals(d.getKind()));
 
-        boolean planActive = false;
+        /** 仅已发布生效才算「制定方案」完成；审核中/沟通中/草稿仍停在制定方案 */
+        boolean planPublished = false;
+        boolean planInPipeline = hasCarePlanDraft;
+        LocalDateTime planPublishedAt = null;
         try {
             CarePlanBundleDto bundle = carePlanService.getBundle(tenantId, orgId, peopleId);
             if (bundle != null && bundle.getPlan() != null) {
                 String st = bundle.getPlan().getStatus();
-                planActive = CarePlanStatusEnum.ACTIVE.name().equals(st)
+                planPublished = CarePlanStatusEnum.ACTIVE.name().equals(st);
+                planInPipeline = planPublished
                         || CarePlanStatusEnum.REVIEWED.name().equals(st)
-                        || CarePlanStatusEnum.COMMUNICATING.name().equals(st);
+                        || CarePlanStatusEnum.COMMUNICATING.name().equals(st)
+                        || CarePlanStatusEnum.DRAFT.name().equals(st)
+                        || hasCarePlanDraft;
+                if (bundle.getActiveVersion() != null) {
+                    planPublishedAt = bundle.getActiveVersion().getPublishedAt();
+                }
             }
         } catch (Exception ignored) {
             // ignore
         }
 
         // 有方案/方案草稿可视为首诊已过；仅「已分组」不能跳过首诊评估
-        if (!intakeDone && !openOnboarding && (planActive || hasCarePlanDraft)) {
+        if (!intakeDone && !openOnboarding && planInPipeline) {
             intakeDone = true;
         }
         if (openOnboarding) {
             intakeDone = false;
         }
+        if (intakeDone) {
+            completedAt[2] = intakeAt;
+        }
 
+        LocalDateTime periodicAt = null;
+        LocalDateTime stageSummaryAt = null;
         boolean periodicDone = false;
         boolean stageDone = false;
         try {
@@ -606,16 +790,35 @@ public class CockpitService {
                 if (r == null || !HealthReportStatus.PUBLISHED.matches(r.getStatus())) {
                     continue;
                 }
+                LocalDateTime at = r.getPublishedAt() != null ? r.getPublishedAt() : r.getGmtCreated();
                 if (HealthReportPeriodType.WEEK.matches(r.getPeriodType())
                         || HealthReportPeriodType.MONTH.matches(r.getPeriodType())) {
                     periodicDone = true;
+                    if (at != null && (periodicAt == null || at.isAfter(periodicAt))) {
+                        periodicAt = at;
+                    }
                 }
                 if (HealthReportPeriodType.QUARTER.matches(r.getPeriodType())) {
                     stageDone = true;
+                    if (at != null && (stageSummaryAt == null || at.isAfter(stageSummaryAt))) {
+                        stageSummaryAt = at;
+                    }
                 }
             }
         } catch (Exception ignored) {
             // ignore
+        }
+
+        if (planPublished) {
+            completedAt[3] = planPublishedAt;
+            // 进入日常跟进的时间点 = 方案生效时间
+            completedAt[4] = planPublishedAt;
+        }
+        if (periodicDone) {
+            completedAt[5] = periodicAt;
+        }
+        if (stageDone) {
+            completedAt[6] = stageSummaryAt;
         }
 
         boolean archiveDone = true;
@@ -623,8 +826,16 @@ public class CockpitService {
         boolean followupDone = periodicDone;
         boolean ended = false;
         boolean[] done = {
-            archiveDone, teamDone, intakeDone, planActive, followupDone, periodicDone, stageDone, ended
+            archiveDone, teamDone, intakeDone, planPublished, followupDone, periodicDone, stageDone, ended
         };
+
+        // 曾入组/已有下游服务，但当前不在组：分组节点 broken（打叉），并作为当前卡点
+        boolean teamBroken = !teamDone
+                && (latestTeamMember != null || intakeDone || planInPipeline || planPublished);
+        if (teamBroken) {
+            done[1] = false;
+        }
+
         int current = SERVICE_STAGE_CODES.length - 1;
         for (int i = 0; i < done.length; i++) {
             if (!done[i]) {
@@ -633,8 +844,11 @@ public class CockpitService {
             }
         }
         // 方案已生效、定期报告未出：明确停在「日常跟进」
-        if (teamDone && intakeDone && planActive && !periodicDone) {
+        if (teamDone && intakeDone && planPublished && !periodicDone) {
             current = 4;
+        }
+        if (teamBroken) {
+            current = 1;
         }
 
         List<CockpitFocusDto.ServiceStageStep> steps = new ArrayList<>();
@@ -642,7 +856,11 @@ public class CockpitService {
             CockpitFocusDto.ServiceStageStep step = new CockpitFocusDto.ServiceStageStep();
             step.setCode(SERVICE_STAGE_CODES[i]);
             step.setLabel(SERVICE_STAGE_LABELS[i]);
-            if (i < current) {
+            step.setCompletedAt(completedAt[i]);
+            if (i == 1 && teamBroken) {
+                step.setStatus("broken");
+                step.setHint("患者已移出健管组，需重新分组后才能继续服务");
+            } else if (done[i]) {
                 step.setStatus("done");
             } else if (i == current) {
                 step.setStatus("current");
@@ -655,6 +873,29 @@ public class CockpitService {
         dto.setServiceStageIndex(current);
         dto.setServiceStageCode(SERVICE_STAGE_CODES[current]);
         dto.setServiceStageLabel(SERVICE_STAGE_LABELS[current]);
+        if (teamBroken) {
+            dto.setNeedsCareTeamAssign(true);
+        }
+    }
+
+    private static LocalDateTime parseFlexibleDateTime(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String s = raw.trim();
+        try {
+            return LocalDateTime.parse(s);
+        } catch (Exception ignored) {
+            // fall through
+        }
+        try {
+            if (s.length() >= 19) {
+                return LocalDateTime.parse(s.substring(0, 19).replace(' ', 'T'));
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        return null;
     }
 
     private void fillPendingDrafts(CockpitFocusDto dto, String tenantId, String orgId, String peopleId) {

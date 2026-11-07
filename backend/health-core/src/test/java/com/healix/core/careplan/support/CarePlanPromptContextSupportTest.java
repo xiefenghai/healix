@@ -73,6 +73,13 @@ class CarePlanPromptContextSupportTest {
                 .isFalse();
         assertThat(CarePlanPromptContextSupport.isMetricUsefulForPrompt("WAIST", new BigDecimal("86")))
                 .isTrue();
+        // 绝对区间内但与 BMI 矛盾 → 仍剔除
+        assertThat(CarePlanPromptContextSupport.isMetricUsefulForPrompt(
+                        "WAIST",
+                        new BigDecimal("66"),
+                        new BigDecimal("172"),
+                        new BigDecimal("82")))
+                .isFalse();
         assertThat(CarePlanPromptContextSupport.formatMetricValue(new BigDecimal("60.0000")))
                 .isEqualTo("60");
         assertThat(CarePlanPromptContextSupport.suspectMetricNote("WAIST", new BigDecimal("40"), "cm"))

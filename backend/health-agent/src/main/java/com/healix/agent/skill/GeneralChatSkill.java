@@ -123,6 +123,13 @@ public class GeneralChatSkill implements AgentSkill {
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.tool("loadPatientContext", "running", "读取档案与观测摘要"));
             CarePlanContext patientCtx = contextService.load(cmd.tenantId(), cmd.peopleId());
+            // 把现行方案饮水目标写入快照，避免助手另编与 PDF 冲突的毫升区间
+            if (focus != null
+                    && focus.getWaterTargetMl() != null
+                    && focus.getWaterTargetMl() > 0
+                    && patientCtx.snapshot() != null) {
+                patientCtx.snapshot().put("activeCarePlanWaterTargetMl", focus.getWaterTargetMl());
+            }
             AgentStreamEvent.safeEmit(
                     sink, AgentStreamEvent.tool("loadPatientContext", "done", "已加载患者上下文"));
             AgentStreamEvent.safeEmit(

@@ -7,6 +7,7 @@ export const CARE_PLAN_FREQUENCY_LABELS: Record<string, string> = {
   TIW: '每周3次',
   QOD: '隔日1次',
   QW: '每周1次',
+  HABIT: '全天微习惯',
   PRN: '必要时',
   /** 模板 / LLM 偶发英文码 */
   DAILY: '每日1次',
@@ -45,6 +46,7 @@ export const CARE_PLAN_TASK_CATEGORY_LABELS: Record<string, string> = {
   EXERCISE: '运动',
   DIET: '饮食',
   WATER: '饮水',
+  MEDICATION: '用药',
   SLEEP: '睡眠',
   MOOD: '心情',
   OTHER: '其他',
@@ -59,6 +61,7 @@ export function carePlanCategoryTone(category?: string | null, taskCode?: string
   if (c === 'MOOD' || code === 'MOOD_LOG') return 'mood'
   if (c === 'DIET' || code === 'DIET_LOG') return 'diet'
   if (c === 'EXERCISE') return 'exercise'
+  if (c === 'MEDICATION' || code === 'MED_REMINDER') return 'med'
   return 'other'
 }
 
@@ -76,6 +79,7 @@ export function carePlanTaskRecordPath(task: RecordableTask): string | null {
   if (task.taskCode === 'WATER_LOG' || task.category === 'WATER') return '/water'
   if (task.taskCode === 'SLEEP_LOG' || task.category === 'SLEEP') return '/sleep'
   if (task.taskCode === 'MOOD_LOG' || task.category === 'MOOD') return '/mood'
+  if (task.taskCode === 'MED_REMINDER' || task.category === 'MEDICATION') return '/medications'
   if (task.category === 'EXERCISE') return '/exercise'
   return null
 }
@@ -248,5 +252,63 @@ export function formatWeeklyPlanDay(day?: string | null): string {
     DAILY: '每天',
   }
   return map[day] || day
+}
+
+/** 周计划条目归类：力量 / 拉伸放松 / 有氧（其余）——与 B 端打印汇总一致 */
+export type CarePlanExerciseKind = 'aerobic' | 'strength' | 'stretch'
+
+const STRENGTH_TYPES = new Set([
+  'STRENGTH',
+  'SEATED_STRENGTH',
+  'RESISTANCE',
+  'BODYWEIGHT',
+  'MACHINE_STRENGTH',
+  'ELASTIC_BAND',
+  'PLANK',
+])
+const STRETCH_TYPES = new Set([
+  'STRETCHING',
+  'STRETCH',
+  'YOGA',
+  'PILATES',
+  'BALANCE',
+  'BALANCE_TRAINING',
+  'TAICHI',
+  'TAI_CHI',
+  'BADUANJIN',
+  'WUQINXI',
+  'BREATHING',
+  'BREATHING_TRAINING',
+  'PASSIVE_ROM',
+  'ANKLE_PUMP',
+  'BEDSIDE_ANKLE_PUMP',
+  'UPPER_LIMB_ROM',
+  'BEDSIDE_UPPER_LIMB',
+  'POSITION_CHANGE',
+])
+
+export function carePlanExerciseKind(type?: string | null): CarePlanExerciseKind {
+  const t = String(type || '')
+    .trim()
+    .toUpperCase()
+  if (!t) return 'aerobic'
+  if (STRENGTH_TYPES.has(t) || /STRENGTH|RESIST|力量|抗阻/.test(t)) return 'strength'
+  if (STRETCH_TYPES.has(t) || /STRETCH|YOGA|拉伸|柔韧|太极|八段锦/.test(t)) return 'stretch'
+  return 'aerobic'
+}
+
+/** 指南口径：中等强度计全长，高强度 ×2，低强度不计 */
+export function carePlanModerateEquivMin(
+  item: { type?: string | null; intensity?: string | null; durationMin?: number | null },
+): number {
+  if (carePlanExerciseKind(item.type) !== 'aerobic') return 0
+  const min = Number(item.durationMin) || 0
+  if (min <= 0) return 0
+  const level = String(item.intensity || '')
+    .trim()
+    .toUpperCase()
+  if (level === 'MODERATE' || level === '中') return min
+  if (level === 'VIGOROUS' || level === 'HIGH' || level === '高') return min * 2
+  return 0
 }
 

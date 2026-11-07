@@ -31,6 +31,10 @@ public class CockpitFocusDto {
     private String riskLevel;
     private Integer streakDays;
     private Double planRate7d;
+    /**
+     * 现行生效方案中的饮水目标（ml）。供助手与右栏对齐方案口径，避免另编 1500–1700 等旧区间。
+     */
+    private Integer waterTargetMl;
     private boolean planIncomplete;
     private boolean medIncomplete;
     private int medDueDoseCount;
@@ -57,10 +61,16 @@ public class CockpitFocusDto {
     private String allergyText;
     /** 近 7 天饮食 / 运动记录摘要（助手上下文用） */
     private String lifestyleSummary;
-    /** 档案完整度 0–100 */
+    /** 健康档案完整度 0–100（档案字段，非首诊问卷） */
     private Integer archiveCompletenessPercent;
     private Integer archiveFilledCount;
     private Integer archiveTotalCount;
+    /** 首诊评估问卷填写完整度 0–100（allDone/allTotal） */
+    private Integer intakeCompletenessPercent;
+    private Integer intakeFilledCount;
+    private Integer intakeTotalCount;
+    /** 是否已提交过首诊/补填 */
+    private Boolean intakeSubmitted;
     /** 评估标签（血糖分标 / 发病风险等） */
     private List<AssessmentTag> assessmentTags = new ArrayList<>();
     private List<OpenTaskBrief> openTasks = new ArrayList<>();
@@ -102,8 +112,15 @@ public class CockpitFocusDto {
     public static class ServiceStageStep {
         private String code;
         private String label;
-        /** done / current / todo */
+        /**
+         * done=已完成 / current=当前环节 / todo=未开始 /
+         * broken=曾完成但被回退（如移出健管组）
+         */
         private String status;
+        /** 该节点最近一次完成时间；broken 时为历史上完成该节点的时间 */
+        private LocalDateTime completedAt;
+        /** 补充说明，如「已移出健管组，需重新分组」 */
+        private String hint;
     }
 
     /** 右栏「待你确认」草稿项 */

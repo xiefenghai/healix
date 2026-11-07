@@ -715,22 +715,46 @@ public class CarePlanContextService {
     private List<MetricBrief> loadLatestMetrics(String tenantId, String peopleId, ObjectNode snapshot) {
         List<VitalRecord> recent = vitalRecordMapper.listRecentForLatest(tenantId, peopleId, 120);
         Map<String, MetricBrief> slots = new LinkedHashMap<>();
-        Set<String> seenTypes = new LinkedHashSet<>();
         ArrayNode arr = snapshot.putArray("latestMetrics");
         ArrayNode skipped = snapshot.putArray("skippedMetrics");
         if (recent == null) {
             return List.of();
         }
+        // 先取各类型最新值，再带身高/体重上下文做腰围一致性剔除
+        Map<String, VitalRecord> latestByType = new LinkedHashMap<>();
         for (VitalRecord row : recent) {
             String type = row.getMetricType();
-            if (!StringUtils.hasText(type) || !seenTypes.add(type)) {
+            if (!StringUtils.hasText(type) || latestByType.containsKey(type)) {
                 continue;
             }
+            latestByType.put(type, row);
+        }
+        BigDecimal height = latestByType.containsKey("HEIGHT") ? latestByType.get("HEIGHT").getValue() : null;
+        BigDecimal weight = latestByType.containsKey("WEIGHT") ? latestByType.get("WEIGHT").getValue() : null;
+        for (VitalRecord row : latestByType.values()) {
+            String type = row.getMetricType();
             BigDecimal raw = row.getValue();
-            if (!CarePlanPromptContextSupport.isMetricUsefulForPrompt(type, raw)) {
+            if (!CarePlanPromptContextSupport.isMetricUsefulForPrompt(type, raw, height, weight)) {
                 if (raw != null) {
-                    skipped.add(CarePlanPromptContextSupport.suspectMetricNote(type, raw, row.getUnit()));
+                    String note = CarePlanPromptContextSupport.suspectMetricNote(type, raw, row.getUnit());
+                    if ("WAIST".equals(type)) {
+                        String mismatch =
+                                com.healix.core.vitals.support.MetricPlausibility.waistConsistent(raw, height, weight);
+                        if (mismatch != null) {
+                            note = CarePlanPromptContextSupport.metricTypeLabel(type)
+                                    + " "
+                                    + CarePlanPromptContextSupport.formatMetricValue(raw)
+                                    + (StringUtils.hasText(row.getUnit()) ? row.getUnit() : "")
+                                    + " "
+                                    + mismatch
+                                    + "，已忽略";
+                        }
+                    }
+                    skipped.add(note);
                 }
+                continue;
+            }
+            if (slots.size() >= 12) {
                 continue;
             }
             String value = CarePlanPromptContextSupport.formatMetricValue(raw);
@@ -741,9 +765,6 @@ public class CarePlanContextService {
             n.put("metricLabel", CarePlanPromptContextSupport.metricTypeLabel(type));
             n.put("value", value);
             n.put("unit", row.getUnit());
-            if (slots.size() >= 12) {
-                break;
-            }
         }
         if (skipped.isEmpty()) {
             snapshot.remove("skippedMetrics");

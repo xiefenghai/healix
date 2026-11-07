@@ -101,6 +101,7 @@ export const CARE_PLAN_FREQUENCY_OPTIONS = [
   { value: 'TIW', label: '每周3次' },
   { value: 'QOD', label: '隔日1次' },
   { value: 'QW', label: '每周1次' },
+  { value: 'HABIT', label: '全天微习惯' },
   { value: 'PRN', label: '必要时' },
 ]
 
@@ -118,6 +119,7 @@ export const CARE_PLAN_TASK_CATEGORY_OPTIONS = [
   { value: 'EXERCISE', label: '运动' },
   { value: 'DIET', label: '饮食' },
   { value: 'WATER', label: '饮水' },
+  { value: 'MEDICATION', label: '用药' },
   { value: 'SLEEP', label: '睡眠' },
   { value: 'MOOD', label: '心情' },
   { value: 'OTHER', label: '其他' },
@@ -182,6 +184,64 @@ export function formatCarePlanIntensity(code?: string | null): string {
     Object.fromEntries(CARE_PLAN_INTENSITY_OPTIONS.map((o) => [o.value, o.label])),
     code,
   )
+}
+
+/** 周计划条目归类：力量 / 拉伸放松 / 有氧（其余） */
+export type CarePlanExerciseKind = 'aerobic' | 'strength' | 'stretch'
+
+const STRENGTH_TYPES = new Set([
+  'STRENGTH',
+  'SEATED_STRENGTH',
+  'RESISTANCE',
+  'BODYWEIGHT',
+  'MACHINE_STRENGTH',
+  'ELASTIC_BAND',
+  'PLANK',
+])
+const STRETCH_TYPES = new Set([
+  'STRETCHING',
+  'STRETCH',
+  'YOGA',
+  'PILATES',
+  'BALANCE',
+  'BALANCE_TRAINING',
+  'TAICHI',
+  'TAI_CHI',
+  'BADUANJIN',
+  'WUQINXI',
+  'BREATHING',
+  'BREATHING_TRAINING',
+  'PASSIVE_ROM',
+  'ANKLE_PUMP',
+  'BEDSIDE_ANKLE_PUMP',
+  'UPPER_LIMB_ROM',
+  'BEDSIDE_UPPER_LIMB',
+  'POSITION_CHANGE',
+])
+
+export function carePlanExerciseKind(type?: string | null): CarePlanExerciseKind {
+  const t = String(type || '')
+    .trim()
+    .toUpperCase()
+  if (!t) return 'aerobic'
+  if (STRENGTH_TYPES.has(t) || /STRENGTH|RESIST|力量|抗阻/.test(t)) return 'strength'
+  if (STRETCH_TYPES.has(t) || /STRETCH|YOGA|拉伸|柔韧|太极|八段锦/.test(t)) return 'stretch'
+  return 'aerobic'
+}
+
+/** 指南口径：中等强度计全长，高强度 ×2，低强度不计；力量/拉伸单独统计不进有氧折算 */
+export function carePlanModerateEquivMin(
+  item: { type?: string | null; intensity?: string | null; durationMin?: number | null },
+): number {
+  if (carePlanExerciseKind(item.type) !== 'aerobic') return 0
+  const min = Number(item.durationMin) || 0
+  if (min <= 0) return 0
+  const level = String(item.intensity || '')
+    .trim()
+    .toUpperCase()
+  if (level === 'MODERATE' || level === '中') return min
+  if (level === 'VIGOROUS' || level === 'HIGH' || level === '高') return min * 2
+  return 0
 }
 
 /** 解析 sampleDay 餐次：字符串或 { text, swapHint } */

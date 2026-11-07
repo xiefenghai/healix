@@ -92,7 +92,7 @@ class CarePlanAllergenGuardTest {
         ObjectNode diet = registry.generate(CarePlanTemplateKeyEnum.DIABETES, ctx, null, null).diet();
         assertTrue(CarePlanAllergenGuard.conflicts(diet, allergens).stream()
                 .noneMatch(h -> !h.allergen().intolerance()));
-        assertEquals("燕麦粥 + 瘦肉末 + 蔬菜", diet.at("/sampleDay/breakfast/text").asText());
+        assertEquals("杂粮饭小半碗 + 瘦肉末 + 蔬菜", diet.at("/sampleDay/breakfast/text").asText());
         assertEquals("清淡主食 + 去皮禽肉 + 蔬菜", diet.at("/sampleDay/dinner/text").asText());
         assertEquals("瘦肉/禽肉", diet.at("/recommended/2/label").asText());
         assertEquals(4, diet.get("allergensAvoid").size());
@@ -107,5 +107,19 @@ class CarePlanAllergenGuardTest {
                 """);
         CarePlanAllergenGuard.sanitize(d, List.of(pineapple));
         assertEquals("无糖酸奶", d.at("/sampleDay/snacks").asText());
+    }
+
+    @Test
+    void sanitizeDropsRedundantAllergySwapHintsWhenMealAlreadyClean() {
+        ObjectNode d = diet("""
+                {"recommended":[],"sampleDay":{
+                  "breakfast":{"text":"全麦馒头约70g、无糖豆浆约250ml","swapHint":"鸡蛋过敏：不选蒸蛋，蛋白改无糖豆浆或豆腐约100g"},
+                  "lunch":{"text":"杂粮饭约150g、清蒸鱼约80g","swapHint":"清蒸鱼可换成豆腐约100g"}
+                }}
+                """);
+        CarePlanAllergenGuard.sanitize(d, List.of(EGG));
+        assertTrue(d.at("/sampleDay/breakfast/swapHint").isNull());
+        // 不含过敏原名的菜品轮换保留
+        assertEquals("清蒸鱼可换成豆腐约100g", d.at("/sampleDay/lunch/swapHint").asText());
     }
 }

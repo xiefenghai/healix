@@ -135,6 +135,14 @@ public class QuestionnaireResponseService {
             IntakeDepth depth = IntakeDepth.fromCompletenessJson(submitted.getCompletenessJson());
             view.setSubmittedDepth(depth.name());
             view.setSubmittedDepthLabel(depth.label());
+            fillIntakeCompletenessCounts(view, submitted.getCompletenessJson());
+        } else {
+            // 未提交：用进行中草稿的完整度，避免驾驶舱空白
+            QuestionnaireResponse draft =
+                    responseMapper.findDraft(tenantId, peopleId, PURPOSE_INTAKE, null, null);
+            if (draft != null) {
+                fillIntakeCompletenessCounts(view, draft.getCompletenessJson());
+            }
         }
         if (submitted == null) {
             return view;
@@ -143,6 +151,29 @@ public class QuestionnaireResponseService {
         view.setPendingFields(pending);
         view.setPendingCount(pending.size());
         return view;
+    }
+
+    /** 从 completenessJson 抽出 allDone/allTotal，供驾驶舱「首诊评估完成度」展示。 */
+    private static void fillIntakeCompletenessCounts(IntakeStatusView view, String completenessJson) {
+        if (view == null || completenessJson == null || completenessJson.isBlank()) {
+            return;
+        }
+        try {
+            JsonNode n = JsonUtils.readTree(completenessJson);
+            if (n == null || !n.isObject()) {
+                return;
+            }
+            int done = n.path("allDone").asInt(-1);
+            int total = n.path("allTotal").asInt(-1);
+            if (done < 0 || total <= 0) {
+                return;
+            }
+            view.setFilledCount(done);
+            view.setTotalCount(total);
+            view.setCompletenessPercent((int) Math.round(100.0d * done / total));
+        } catch (Exception ignored) {
+            // 焦点面板不因完整度解析失败中断
+        }
     }
 
     /**

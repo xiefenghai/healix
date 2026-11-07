@@ -68,7 +68,7 @@ public class CarePlanSkill implements AgentSkill {
                 List.of(
                         AgentAction.openSheet("编辑方案草稿", "care-plan", cmd.peopleId()),
                         AgentAction.publishCarePlan("确认发布方案", cmd.peopleId()),
-                        AgentAction.triggerCapability("继续闲聊", "GENERAL_CHAT", cmd.peopleId())),
+                        AgentAction.triggerCapability("关闭预览，继续对话", "GENERAL_CHAT", cmd.peopleId())),
                 List.of(),
                 bundle);
     }

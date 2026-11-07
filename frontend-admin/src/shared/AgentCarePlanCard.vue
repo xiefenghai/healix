@@ -1,102 +1,169 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import type { CarePlanChatPreview } from './agent-care-plan'
 import GuidelineRefTags from './GuidelineRefTags.vue'
 
-defineProps<{
+const props = defineProps<{
   preview: CarePlanChatPreview
 }>()
+
+const emit = defineEmits<{
+  open: []
+}>()
+
+const expanded = ref(false)
+
+const openLabel = computed(() =>
+  props.preview.status === 'ACTIVE' ? '查看管理方案' : '打开编辑器精修',
+)
+
+const bannerLabel = computed(() =>
+  props.preview.status === 'ACTIVE' ? '管理方案已发布' : 'AI 已生成初步方案',
+)
+
+const hasDetail = computed(() => {
+  const p = props.preview
+  return !!(
+    p.rationaleOverview ||
+    p.weeklyDays.length ||
+    p.sampleMeals.length ||
+    p.tasks.length ||
+    p.checks.length
+  )
+})
+
+const metrics = computed(() => {
+  const p = props.preview
+  const rows: { key: string; label: string; value: string }[] = []
+  if (p.horizonDays) {
+    rows.push({ key: 'horizon', label: '干预周期', value: `${p.horizonDays} 天` })
+  }
+  if (p.energyKcal) {
+    rows.push({ key: 'energy', label: '能量目标', value: `约 ${p.energyKcal} kcal/日` })
+  }
+  if (p.goalHighlight) {
+    rows.push({ key: 'goal', label: '核心目标', value: p.goalHighlight })
+  }
+  return rows
+})
 </script>
 
 <template>
   <div class="plan-card">
+    <div class="plan-banner" :class="{ ok: preview.status === 'ACTIVE' }">
+      {{ bannerLabel }}
+    </div>
+
     <div class="plan-head">
       <div class="plan-title-row">
         <strong>{{ preview.title }}</strong>
         <span class="status" :class="{ ok: preview.status === 'ACTIVE' }">{{ preview.statusLabel }}</span>
         <span class="chip">{{ preview.sourceLabel }}</span>
       </div>
-      <div class="plan-meta">
-        <span v-if="preview.horizonDays">{{ preview.horizonDays }} 天</span>
-        <span v-if="preview.schemaVersion">V{{ preview.schemaVersion }}</span>
-        <span v-if="preview.energyKcal">约 {{ preview.energyKcal }} kcal/日</span>
+
+      <div v-if="metrics.length" class="metric-grid" :class="{ trio: metrics.length >= 3 }">
+        <div v-for="m in metrics" :key="m.key" class="metric">
+          <span class="metric-label">{{ m.label }}</span>
+          <span class="metric-value">{{ m.value }}</span>
+        </div>
       </div>
+
       <p v-if="preview.goalSummary" class="goal">{{ preview.goalSummary }}</p>
+      <GuidelineRefTags :refs="preview.refs" />
+    </div>
+
+    <button
+      v-if="hasDetail"
+      type="button"
+      class="plan-toggle"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
+    >
+      {{ expanded ? '收起预览' : '展开预览运动/饮食' }}
+    </button>
+
+    <template v-if="expanded">
       <div v-if="preview.rationaleOverview" class="rationale">
         <span class="rationale-label">生成依据</span>
         <p>{{ preview.rationaleOverview }}</p>
       </div>
-      <GuidelineRefTags :refs="preview.refs" />
-    </div>
 
-    <section v-if="preview.weeklyDays.length" class="block">
-      <div class="block-head">
-        <span>本周运动</span>
-        <small>轻中强度可执行</small>
-      </div>
-      <div class="cal">
-        <div
-          v-for="d in preview.weeklyDays"
-          :key="d.day"
-          class="cal-day"
-          :class="d.tone"
-        >
-          <b>{{ d.label }}</b>
-          <small>{{ d.text }}</small>
+      <section v-if="preview.weeklyDays.length" class="block">
+        <div class="block-head">
+          <span>本周运动</span>
+          <small>轻中强度可执行</small>
         </div>
-      </div>
-    </section>
-
-    <section v-if="preview.sampleMeals.length" class="block">
-      <div class="block-head">
-        <span>今日参考</span>
-        <small v-if="preview.energyKcal">约 {{ preview.energyKcal }} kcal</small>
-      </div>
-      <div class="meals">
-        <div v-for="(m, i) in preview.sampleMeals" :key="i" class="meal">
-          <b>{{ m.label }}</b>
-          <div>
-            <p>{{ m.text }}</p>
-            <p v-if="m.swapHint" class="swap">可替换：{{ m.swapHint }}</p>
+        <div class="cal">
+          <div
+            v-for="d in preview.weeklyDays"
+            :key="d.day"
+            class="cal-day"
+            :class="d.tone"
+          >
+            <b>{{ d.label }}</b>
+            <small>{{ d.text }}</small>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section v-if="preview.tasks.length" class="block">
-      <div class="block-head">
-        <span>执行待办</span>
-        <small>客户打开就能打卡</small>
-      </div>
-      <div class="tasks">
-        <div
-          v-for="(t, i) in preview.tasks"
-          :key="i"
-          class="task"
-          :class="t.tone"
-        >
-          <em>{{ t.categoryLabel }}</em>
-          <span>{{ t.title }}</span>
-          <small v-if="t.targetMl">{{ t.targetMl }} ml</small>
+      <section v-if="preview.sampleMeals.length" class="block">
+        <div class="block-head">
+          <span>今日参考</span>
+          <small v-if="preview.energyKcal">约 {{ preview.energyKcal }} kcal</small>
         </div>
-      </div>
-    </section>
+        <div class="meals">
+          <div v-for="(m, i) in preview.sampleMeals" :key="i" class="meal">
+            <b>{{ m.label }}</b>
+            <div>
+              <p>{{ m.text }}</p>
+              <p v-if="m.swapHint" class="swap">可替换：{{ m.swapHint }}</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
-    <section v-if="preview.checks.length" class="block">
-      <div class="block-head">
-        <span>发布前检查</span>
-      </div>
-      <div class="checks">
-        <div
-          v-for="(c, i) in preview.checks"
-          :key="i"
-          class="check"
-          :class="c.level"
-        >
-          <i>{{ c.label }}</i>
-          <span>{{ c.text }}</span>
+      <section v-if="preview.tasks.length" class="block">
+        <div class="block-head">
+          <span>执行待办</span>
+          <small>客户打开就能打卡</small>
         </div>
-      </div>
-    </section>
+        <div class="tasks">
+          <div
+            v-for="(t, i) in preview.tasks"
+            :key="i"
+            class="task"
+            :class="t.tone"
+          >
+            <em>{{ t.categoryLabel }}</em>
+            <span>{{ t.title }}</span>
+            <small v-if="t.targetMl">{{ t.targetMl }} ml</small>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="preview.checks.length" class="block">
+        <div class="block-head">
+          <span>发布前检查</span>
+        </div>
+        <div class="checks">
+          <div
+            v-for="(c, i) in preview.checks"
+            :key="i"
+            class="check"
+            :class="c.level"
+          >
+            <i>{{ c.label }}</i>
+            <span>{{ c.text }}</span>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <div class="plan-foot">
+      <button type="button" class="plan-open" @click="emit('open')">
+        {{ openLabel }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -109,7 +176,23 @@ defineProps<{
   background: #fff;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+.plan-banner {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.plan-banner.ok {
+  background: #e3f6ef;
+  color: #0b7a66;
 }
 
 .plan-title-row {
@@ -147,25 +230,72 @@ defineProps<{
   font-weight: 700;
 }
 
-.plan-meta {
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.metric-grid.trio {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--ink-500);
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e8edf4;
+}
+
+.metric-label {
+  font-size: 11px;
   font-weight: 600;
+  color: var(--ink-500);
+}
+
+.metric-value {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink-900);
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .goal {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink-700);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.plan-toggle {
+  align-self: flex-start;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.plan-toggle:hover {
+  text-decoration: underline;
 }
 
 .rationale {
-  margin: 10px 0 0;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid #e8edf4;
@@ -404,7 +534,32 @@ defineProps<{
   background: #e0435a;
 }
 
+.plan-foot {
+  padding-top: 2px;
+  border-top: 1px solid var(--ink-100);
+}
+
+.plan-open {
+  width: 100%;
+  border: 1px solid #2563eb;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--admin-transition, filter 0.15s ease);
+}
+
+.plan-open:hover {
+  filter: brightness(1.05);
+}
+
 @media (max-width: 720px) {
+  .metric-grid.trio {
+    grid-template-columns: 1fr;
+  }
   .tasks {
     grid-template-columns: 1fr;
   }

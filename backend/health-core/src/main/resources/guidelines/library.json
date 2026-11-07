@@ -63,9 +63,9 @@
       "code": "GEN.WATER", "rev": 1, "sourceCode": "CN_DIET", "section": "准则六 规律进餐，足量饮水",
       "kind": "TARGET", "block": "LIFESTYLE",
       "appliesWhen": {}, "contraindicatedWhen": { "fluidRestricted": true },
-      "staffText": "足量饮水、少量多次；系统按体重估算饮水目标并限定在 1200–2000 ml",
+      "staffText": "足量饮水、少量多次（参考《中国居民膳食指南》）；可按体重约 30 ml/kg 个体化，并在合理范围内调整",
       "patientHint": "少量多次喝白开水，不要等口渴再喝",
-      "quant": { "metric": "WATER_ML_RANGE", "min": 1200, "max": 2000, "unit": "ml/day" },
+      "quant": { "metric": "WATER_ML_RANGE", "min": 1200, "max": 3000, "unit": "ml/day" },
       "priority": 20, "status": "DRAFT"
     },
     {

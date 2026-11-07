@@ -14,7 +14,10 @@ class WaterIntakeRulesTest {
         assertEquals(1600, WaterIntakeRules.suggestTargetMl(null));
         assertEquals(1800, WaterIntakeRules.suggestTargetMl(60.0));
         assertEquals(1200, WaterIntakeRules.suggestTargetMl(30.0));
-        assertEquals(2000, WaterIntakeRules.suggestTargetMl(100.0));
+        // 82×30=2460 → 百毫升取整 2500；不再被旧顶 2000 压扁
+        assertEquals(2500, WaterIntakeRules.suggestTargetMl(82.0));
+        assertEquals(3000, WaterIntakeRules.suggestTargetMl(100.0));
+        assertEquals(3000, WaterIntakeRules.suggestTargetMl(120.0));
     }
 
     @Test

@@ -3,6 +3,24 @@
  *
  * 页边距为 0，避免浏览器把当前页面地址印在页脚。文件名用文档标题，并去掉路径非法字符。
  */
+/** C 端无指南库：患者导出不解析 staff 参考条目 */
+async function loadGuidelineLibrary(): Promise<null> {
+  return null
+}
+function guidelineIndex(_lib: unknown): Map<string, { sourceLabel: string; staffText: string }> {
+  return new Map()
+}
+import { patientDietNoteLines } from './care-plan-diet-notes'
+import { carePlanExerciseKind, carePlanModerateEquivMin } from './care-plan-labels'
+import {
+  classifyFoodLabel,
+  FOOD_LABEL_GROUP_META,
+  matchHighRiskAllergens,
+  matchKnownAllergen,
+  MEAL_PART_LABELS,
+  parseMealStructure,
+  type MealPart,
+} from './care-plan-meal-format'
 
 export interface PrintableCarePlanTask {
   title?: string
@@ -12,6 +30,7 @@ export interface PrintableCarePlanTask {
   enabled?: boolean
   targetMl?: number | null
   rationale?: string
+  refs?: string[]
 }
 
 export interface PrintableCarePlanCheckin {
@@ -37,6 +56,7 @@ export interface PrintableCarePlan {
   exercise?: {
     goal?: string
     rationale?: string
+    refs?: string[]
     precautions?: string[]
     contraindications?: string[]
     reviewHint?: string
@@ -45,6 +65,7 @@ export interface PrintableCarePlan {
   diet?: {
     principles?: string[] | string
     rationale?: string
+    refs?: string[]
     calorieHint?: string
     energyTarget?: {
       energyKcal?: number
@@ -65,6 +86,7 @@ export interface PrintableCarePlan {
   execution?: {
     horizonDays?: number
     rationale?: string
+    refs?: string[]
     tasks?: PrintableCarePlanTask[]
   }
   checkins?: PrintableCarePlanCheckin[]
@@ -75,6 +97,8 @@ export interface PrintableCarePlan {
   }
   /** 患者导出不包含健管师审阅用的生成依据 */
   audience?: 'staff' | 'patient'
+  /** 方案引用的指南条目（打印前由 printCarePlan 解析；仅 B 端导出附录） */
+  guidelineRefs?: Array<{ code: string; source: string; text: string }>
 }
 
 const FOOD_LABELS: Record<string, string> = {
@@ -101,13 +125,8 @@ const FREQUENCY_LABELS: Record<string, string> = {
   TIW: '每周3次',
   QOD: '隔日1次',
   QW: '每周1次',
+  HABIT: '全天微习惯',
   PRN: '必要时',
-  DAILY: '每日1次',
-  WEEKLY: '每周1次',
-  EVERY_WEEK: '每周1次',
-  BIWEEKLY: '每两周1次',
-  EVERY_2_WEEKS: '每两周1次',
-  MONTHLY: '每月1次',
 }
 
 const TIME_SLOT_LABELS: Record<string, string> = {
@@ -124,6 +143,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   EXERCISE: '运动',
   DIET: '饮食',
   WATER: '饮水',
+  MEDICATION: '用药',
   SLEEP: '睡眠',
   MOOD: '心情',
   OTHER: '其他',
@@ -236,13 +256,25 @@ function esc(value: unknown): string {
     .replace(/"/g, '&quot;')
 }
 
+/** 去掉误入正文的 HTML / Markdown，防止打印成「&lt;table&gt;主食…」或「# 周五」 */
+function plainText(value: unknown): string {
+  return String(value ?? '')
+    .replace(/<\s*\/?\s*[a-zA-Z][^>]*>/g, ' ')
+    .replace(/&lt;\s*\/?\s*[a-zA-Z][^&]*&gt;/g, ' ')
+    .replace(/^\s*#+\s*/gm, '')
+    .replace(/#+\s*(?=周[一二三四五六日天]|早餐|午餐|晚餐|加餐)/g, '')
+    .replace(/(?:^|[\s、，,])table(?=[\s主食蛋白蔬果]|$)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function foodLabel(item?: { label?: string; code?: string } | string | null): string {
   if (item == null) return ''
-  if (typeof item === 'string') return FOOD_LABELS[item] || item
+  if (typeof item === 'string') return plainText(FOOD_LABELS[item] || item)
   const code = (item.code || '').trim()
-  const label = (item.label || '').trim()
+  const label = plainText(item.label || '')
   if (label && label !== code && !/^[A-Z][A-Z0-9_]*$/.test(label)) return label
-  return FOOD_LABELS[code] || label || code
+  return plainText(FOOD_LABELS[code] || label || code)
 }
 
 function splitSentences(list: string[] | string | undefined, sep: RegExp): string[] {
@@ -251,6 +283,30 @@ function splitSentences(list: string[] | string | undefined, sep: RegExp): strin
     .flatMap((s) => String(s).split(sep))
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+/** 禁忌/注意事项：兼容数组、整段粘连、Markdown 列表、无分隔符粘句 */
+function normalizeBulletItems(list: string[] | string | undefined): string[] {
+  const arr = Array.isArray(list) ? list : list ? [list] : []
+  const out: string[] = []
+  for (const raw of arr) {
+    let text = plainText(raw).replace(/\r\n/g, '\n')
+    if (!text) continue
+    text = text.replace(/^[-*•·]\s*/gm, '')
+    // 「休息运动时」「憋气久坐」这类无标点粘连：在旧句尾与新提示词之间切开
+    text = text.replace(
+      /(休息|分钟|憋气|补水|监测|头晕|坐下|缓慢|循序渐进)(?=(?:运动时|久坐|服用|注意|避免|热身|不要|请勿|出现))/g,
+      '$1\n',
+    )
+    text = text.replace(/，(?=(?:运动时|久坐|服用|热身|避免|不要|请))/g, '\n')
+    const chunks = text
+      .split(/\n+|(?=[-*•·]\s)|[；;]+|[。！？]+/)
+      .map((s) => s.replace(/^[-*•·]\s*/, '').trim())
+      .filter(Boolean)
+    if (chunks.length) out.push(...chunks)
+    else out.push(text)
+  }
+  return [...new Set(out)]
 }
 
 function parseMeal(raw: unknown): { text: string; swapHint: string } {
@@ -341,10 +397,16 @@ function printFileName(plan: PrintableCarePlan): string {
   return titled || '健康管理方案'
 }
 
+/** 用段落+显式项目符，避免 ul 跨页时打印引擎丢掉圆点 */
 function listHtml(items: string[], ordered = false): string {
   if (!items.length) return ''
-  const tag = ordered ? 'ol' : 'ul'
-  return `<${tag}>${items.map((item) => `<li>${esc(item)}</li>`).join('')}</${tag}>`
+  const rows = items
+    .map((item, i) => {
+      const mark = ordered ? `${i + 1}.` : '•'
+      return `<p class="bullet"><span class="bullet-mark">${mark}</span><span class="bullet-text">${esc(item)}</span></p>`
+    })
+    .join('')
+  return `<div class="bullets">${rows}</div>`
 }
 
 function tagsHtml(label: string, tone: string, items: Array<{ label?: string; code?: string } | string> | undefined): string {
@@ -355,15 +417,156 @@ function tagsHtml(label: string, tone: string, items: Array<{ label?: string; co
     .join('')}</div>`
 }
 
-function mealLines(rows: Array<{ label: string; text: string; swapHint: string }>): string {
+function allergenKeywordsOf(plan: PrintableCarePlan): string[] {
+  const words = new Set<string>()
+  for (const a of plan.allergyAlert?.avoid || []) {
+    const n = (a.name || '').trim()
+    if (n) words.add(n)
+  }
+  for (const item of plan.diet?.allergensAvoid || []) {
+    const n = foodLabel(item).trim()
+    if (n && n !== '无已知过敏') words.add(n)
+  }
+  return [...words]
+}
+
+function allergyUnknownOf(plan: PrintableCarePlan): boolean {
+  // 患者 PDF 只标真实过敏冲突，避免「无过敏记录」时把虾蟹标成高危吓人
+  if (plan.audience === 'patient') return false
+  return allergenKeywordsOf(plan).length === 0 && !(plan.allergyAlert?.intolerances || []).length
+}
+
+function splitFoodChips(label: string): string[] {
+  return String(label || '')
+    .split(/[、，,；;]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** 推荐食物：纯文本分行，零 flex/table/胶囊，杜绝打印引擎泄露标签名 */
+function recommendedGroupedHtml(plan: PrintableCarePlan): string {
+  const items = plan.diet?.recommended || []
+  if (!items.length) return ''
+  const keys = allergenKeywordsOf(plan)
+  const unknown = allergyUnknownOf(plan)
+  const groups = FOOD_LABEL_GROUP_META.map((g) => ({ ...g, chips: [] as string[] }))
+  for (const item of items) {
+    const full = foodLabel(item)
+    if (!full) continue
+    for (const chip of splitFoodChips(full)) {
+      const clean = plainText(chip)
+      if (!clean || /^table$/i.test(clean)) continue
+      const kind = classifyFoodLabel(clean)
+      const g = groups.find((x) => x.key === kind) || groups[groups.length - 1]!
+      g.chips.push(clean)
+    }
+  }
+  const rows = groups
+    .filter((g) => g.chips.length)
+    .map((g) => {
+      const body = g.chips
+        .map((chip) => {
+          const hit = matchKnownAllergen(chip, keys)
+          const high = !hit && unknown ? matchHighRiskAllergens(chip)[0] : null
+          if (hit) return `${chip}（忌口）`
+          if (high) return `${chip}（高敏）`
+          return chip
+        })
+        .join('、')
+      return `<p class="food-line"><b>${esc(g.label)}</b>：${esc(body)}</p>`
+    })
+    .join('')
+  return rows ? `<div class="food-groups"><p class="block-title">推荐食物</p>${rows}</div>` : ''
+}
+
+function mealPartsHtml(text: string, plan: PrintableCarePlan): string {
+  const clean = plainText(text)
+  const parts = parseMealStructure(clean, {
+    allergenKeywords: allergenKeywordsOf(plan),
+    allergyUnknown: allergyUnknownOf(plan),
+  }).parts
+  if (!parts.length) return esc(clean)
+  return parts
+    .map((p: MealPart) => {
+      const lab = MEAL_PART_LABELS[p.kind] || '其他'
+      const body = plainText(p.text)
+      let flag = ''
+      if (p.allergenHit) flag = `<span class="meal-flag meal-flag--bad" title="命中过敏：${esc(p.allergenHit)}">×</span>`
+      else if (p.highRisk) flag = `<span class="meal-flag meal-flag--warn" title="高致敏，请确认过敏史">!</span>`
+      const tone = p.allergenHit ? 'hit' : p.highRisk ? 'warn' : p.kind
+      return `<span class="meal-part meal-part--${tone}"><em>${esc(lab)}</em>${esc(body)}${flag}</span>`
+    })
+    .join('')
+}
+
+function mealLines(rows: Array<{ label: string; text: string; swapHint: string }>, plan: PrintableCarePlan): string {
   return rows
     .map(
       (row) =>
-        `<li><strong>${esc(row.label)}</strong>：${esc(row.text)}${
+        `<li><strong>${esc(row.label)}</strong><div class="meal-parts">${mealPartsHtml(row.text, plan)}</div>${
           row.swapHint ? `<span class="swap">可替换：${esc(row.swapHint)}</span>` : ''
         }</li>`,
     )
     .join('')
+}
+
+function exerciseGlanceHtml(weeklyPlan: Array<{ day?: string; items?: unknown[] }> | undefined): string {
+  const aerobicType = new Map<string, { count: number; minutes: number }>()
+  let strengthCount = 0
+  let stretchCount = 0
+  let aerobicRaw = 0
+  let moderateEquiv = 0
+  let any = 0
+  for (const day of weeklyPlan || []) {
+    for (const raw of day.items || []) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as { type?: string; title?: string; intensity?: string; durationMin?: number }
+      const m = Number(item.durationMin) || 0
+      if (m <= 0) continue
+      any += 1
+      const kind = carePlanExerciseKind(item.type)
+      if (kind === 'strength') {
+        strengthCount += 1
+      } else if (kind === 'stretch') {
+        stretchCount += 1
+      } else {
+        aerobicRaw += m
+        moderateEquiv += carePlanModerateEquivMin(item)
+        const label =
+          lookup(EXERCISE_TYPE_LABELS, item.type != null ? String(item.type) : '') ||
+          (item.title != null ? String(item.title).trim() : '') ||
+          '有氧'
+        const cur = aerobicType.get(label) || { count: 0, minutes: 0 }
+        cur.count += 1
+        cur.minutes += m
+        aerobicType.set(label, cur)
+      }
+    }
+  }
+  if (!any) return ''
+  const aerobicBits = [...aerobicType.entries()]
+    .map(([label, v]) => `${v.count} 次${label}`)
+    .join('、')
+  const extras = [
+    strengthCount ? `${strengthCount} 次力量训练` : '',
+    stretchCount ? `${stretchCount} 次拉伸` : '',
+  ]
+    .filter(Boolean)
+    .join('和')
+  // 与一周安排逐项对齐：用实际有氧分钟与类型次数，避免「课次」口径混淆
+  const lead =
+    aerobicRaw > 0
+      ? `本周累计有氧 ${aerobicRaw} 分钟${aerobicBits ? `（含 ${aerobicBits}）` : ''}${
+          extras ? `，此外包含 ${extras}` : ''
+        }。`
+      : `本周安排${extras || '运动练习'}。`
+  const note =
+    moderateEquiv > 0 && moderateEquiv !== aerobicRaw
+      ? `<p class="glance-note">指南折算中等强度有氧约 ${moderateEquiv} 分钟（高强度按 2 倍计入；力量/拉伸不计入有氧达标）</p>`
+      : moderateEquiv > 0
+        ? `<p class="glance-note">上述有氧均按中等强度计；力量/拉伸不计入有氧达标</p>`
+        : ''
+  return `<div class="glance glance--plain"><p class="glance-lead">${esc(lead)}</p>${note}</div>`
 }
 
 function rationaleHtml(text: string | undefined, patient: boolean, label = '依据'): string {
@@ -375,8 +578,8 @@ function rationaleHtml(text: string | undefined, patient: boolean, label = '依�
 function buildExercise(plan: PrintableCarePlan, patient: boolean): string {
   const ex = plan.exercise
   if (!ex) return ''
-  const contra = (ex.contraindications || []).map((s) => s.trim()).filter(Boolean)
-  const precautions = (ex.precautions || []).map((s) => s.trim()).filter(Boolean)
+  const contra = normalizeBulletItems(ex.contraindications)
+  const precautions = normalizeBulletItems(ex.precautions)
   const days = (ex.weeklyPlan || [])
     .map((day) => {
       const items = Array.isArray(day.items) ? day.items : []
@@ -403,22 +606,34 @@ function buildExercise(plan: PrintableCarePlan, patient: boolean): string {
     })
     .filter(Boolean)
   const goal = (ex.goal || '').trim()
-  if (!goal && !contra.length && !precautions.length && !ex.reviewHint && !days.length && !(ex.rationale || '').trim()) {
+  const glance = exerciseGlanceHtml(ex.weeklyPlan)
+  if (
+    !goal &&
+    !contra.length &&
+    !precautions.length &&
+    !ex.reviewHint &&
+    !days.length &&
+    !glance &&
+    !(ex.rationale || '').trim()
+  ) {
     return ''
   }
-  return card(
+  // 概述与一周安排拆卡，避免长卡跨页把注意事项列表截断成无项目符粘句
+  const overview = card(
     '运动方案',
     'exercise',
-    `${goal ? `<p class="lead">${esc(goal)}</p>` : ''}${rationaleHtml(ex.rationale, patient)}${
-      contra.length ? `<div class="block block--warn"><div class="block-title">禁忌</div>${listHtml(contra)}</div>` : ''
+    `${goal ? `<p class="lead">${esc(goal)}</p>` : ''}${rationaleHtml(ex.rationale, patient)}${glance}${
+      contra.length ? `<div class="block block--warn"><p class="block-title">禁忌</p>${listHtml(contra)}</div>` : ''
     }${
       precautions.length
-        ? `<div class="block"><div class="block-title">注意事项</div>${listHtml(precautions)}</div>`
+        ? `<div class="block block--warn"><p class="block-title">注意事项</p>${listHtml(precautions)}</div>`
         : ''
-    }${ex.reviewHint ? `<p class="hint">${esc(ex.reviewHint)}</p>` : ''}${
-      days.length ? `<div class="block"><div class="block-title">一周安排</div>${days.join('')}</div>` : ''
-    }`,
+    }${ex.reviewHint ? `<p class="hint">${esc(ex.reviewHint)}</p>` : ''}`,
   )
+  const weekCard = days.length
+    ? card('运动 · 一周安排', 'exercise', `<div class="week-days">${days.join('')}</div>`)
+    : ''
+  return [overview, weekCard].filter(Boolean).join('')
 }
 
 function energyHtml(plan: PrintableCarePlan): { card: string; tips: string } {
@@ -440,8 +655,11 @@ function energyHtml(plan: PrintableCarePlan): { card: string; tips: string } {
     { key: 'fat', label: '脂肪', grams: kcal.fatG, pct: pct(kcal.fatG ?? 0, 9) },
   ]
   let goal = '维持体重'
-  if (kcal.goalType === 'LOSE' && kcal.rateKgPerWeek) goal = `每周减重 ${kcal.rateKgPerWeek} kg`
-  if (kcal.goalType === 'GAIN' && kcal.rateKgPerWeek) goal = `每周增重 ${kcal.rateKgPerWeek} kg`
+  if (kcal.goalType === 'LOSE') {
+    goal = kcal.rateKgPerWeek ? `减重 · 每周约 ${kcal.rateKgPerWeek} kg` : '减重'
+  } else if (kcal.goalType === 'GAIN') {
+    goal = kcal.rateKgPerWeek ? `增重 · 每周约 ${kcal.rateKgPerWeek} kg` : '增重'
+  }
   const cardHtml = `<div class="energy">
     <div class="energy-main"><strong>${esc(kcal.energyKcal)}</strong><span>千卡 / 日</span><em>${esc(goal)}</em></div>
     <div class="macros">${macros
@@ -458,10 +676,27 @@ function energyHtml(plan: PrintableCarePlan): { card: string; tips: string } {
   return { card: cardHtml, tips: '' }
 }
 
+const OSA_PRINT_HINT =
+  '睡眠呼吸：建议尽快前往呼吸内科或耳鼻喉科进行睡眠呼吸监测（多导睡眠图）。打鼾严重会明显影响血压和血糖控制，请勿忽视。'
+
+/** 已生成方案未重跑后端时，从总结/依据文案识别 OSA 高危并补强执行提醒 */
+function ensureOsaNoteLines(plan: PrintableCarePlan, notes: string[]): string[] {
+  const hasStrong = notes.some((n) => n.includes('睡眠呼吸监测') || n.includes('多导睡眠'))
+  if (hasStrong) return notes.filter((n) => !/关注睡眠呼吸|留意睡眠呼吸|注意睡眠呼吸/.test(n))
+  const blob = [plan.summary, plan.rationaleOverview, plan.goalSummary, plan.diet?.notes]
+    .map((s) => String(s || ''))
+    .join(' ')
+  const snore = /打鼾|打呼噜|SNORING/.test(blob)
+  const fatigue = /疲惫|疲劳|不解乏|未解乏/.test(blob)
+  const risk = /肥胖|超重|BMI|糖尿病|高血压|糖压/.test(blob)
+  if (!(snore && fatigue && risk)) return notes
+  return [...notes.filter((n) => !/关注睡眠呼吸|留意睡眠呼吸|注意睡眠呼吸/.test(n)), OSA_PRINT_HINT]
+}
+
 function buildDiet(plan: PrintableCarePlan, patient: boolean): string {
   const diet = plan.diet
   const principles = splitSentences(diet?.principles, /[；;]/)
-  const notes = splitSentences(diet?.notes, /(?<=[。；;])/)
+  const notes = ensureOsaNoteLines(plan, patientDietNoteLines(diet?.notes || ''))
   const energy = energyHtml(plan)
   const sampleDay = mealsFromSample(diet?.sampleDay)
   const sampleWeek = Object.entries(DAY_LABELS)
@@ -475,7 +710,7 @@ function buildDiet(plan: PrintableCarePlan, patient: boolean): string {
   const alertHtml = alert
     ? `${
         avoid.length || (alert.intolerances || []).length
-          ? `<div class="block block--warn"><div class="block-title">过敏提醒</div>${
+          ? `<div class="block block--warn"><p class="block-title">过敏提醒</p>${
               avoid.length
                 ? `<p>请避免食用：${alert.avoid!
                     .filter((a) => (a.name || '').trim())
@@ -494,76 +729,87 @@ function buildDiet(plan: PrintableCarePlan, patient: boolean): string {
           : ''
       }`
     : ''
-  const body = [
+  // 拆成多张卡，避免超长单卡跨页时打印引擎截断 DOM（表现为后半周碎裂、标签变纯文本、甚至重复）
+  const overview = [
     rationaleHtml(diet?.rationale, patient),
     energy.card,
     !energy.card && energy.tips ? `<p class="hint">${esc(energy.tips)}</p>` : '',
-    principles.length ? `<div class="block block--diet"><div class="block-title">饮食原则</div>${listHtml(principles, true)}</div>` : '',
-    notes.length ? `<div class="block block--warn"><div class="block-title">用药与就餐提醒</div>${listHtml(notes)}</div>` : '',
-    tagsHtml('推荐', 'ok', diet?.recommended),
-    tagsHtml('限制', 'warn', diet?.limited),
+    principles.length ? `<div class="block block--diet"><p class="block-title">饮食原则</p>${listHtml(principles, true)}</div>` : '',
+    notes.length ? `<div class="block block--warn"><p class="block-title">执行提醒</p>${listHtml(notes)}</div>` : '',
+    recommendedGroupedHtml(plan),
+    tagsHtml('限制食物', 'warn', diet?.limited),
     alert ? '' : tagsHtml('过敏回避', 'danger', diet?.allergensAvoid),
     alert ? '' : tagsHtml('不耐受', 'warn', diet?.intolerances),
     alertHtml,
-    sampleDay.length
-      ? `<div class="block block--diet"><div class="block-title">示例日</div><ul>${mealLines(sampleDay)}</ul></div>`
-      : '',
-    sampleWeek.length
-      ? `<div class="block block--diet"><div class="block-title">一周饮食示例</div><table><thead><tr><th>星期</th><th>早餐</th><th>午餐</th><th>晚餐</th><th>加餐</th></tr></thead><tbody>${sampleWeek
-          .map((day) => {
-            const cell = (name: string) => {
-              const meal = day.meals.find((item) => item.label === name)
-              if (!meal) return '—'
-              return `${esc(meal.text)}${meal.swapHint ? `<span class="swap">可替换：${esc(meal.swapHint)}</span>` : ''}`
-            }
-            return `<tr><td>${esc(day.label)}</td><td>${cell('早餐')}</td><td>${cell('午餐')}</td><td>${cell('晚餐')}</td><td>${cell('加餐')}</td></tr>`
-          })
-          .join('')}</tbody></table></div>`
-      : '',
   ]
     .filter(Boolean)
     .join('')
-  if (!body) return ''
-  return card('饮食方案', 'diet', body)
+  const sampleDayCard = sampleDay.length
+    ? card('示例日', 'diet', `<ul class="meal-list">${mealLines(sampleDay, plan)}</ul>`)
+    : ''
+  // 每天一张独立卡片 + 纯文本餐次：彻底避开跨页截断 DOM / Markdown 标题泄露
+  const weekDayCards = sampleWeek
+    .map((day, idx) => {
+      const meals = ['早餐', '午餐', '晚餐', '加餐']
+        .map((name) => {
+          const meal = day.meals.find((item) => item.label === name)
+          if (!meal) return ''
+          const text = plainText(meal.text)
+          if (!text) return ''
+          const swap = meal.swapHint ? `<span class="swap">可替换：${esc(plainText(meal.swapHint))}</span>` : ''
+          return `<p class="diet-meal"><b>${esc(name)}</b>：${esc(text)}${swap}</p>`
+        })
+        .filter(Boolean)
+        .join('')
+      if (!meals) return ''
+      return card(`${day.label}饮食`, 'diet', meals, { pageBreak: idx === 3 })
+    })
+    .filter(Boolean)
+    .join('')
+  const overviewCard = overview ? card('饮食方案', 'diet', overview) : ''
+  return [overviewCard, sampleDayCard, weekDayCards].filter(Boolean).join('')
 }
 
 function buildExecution(plan: PrintableCarePlan, patient: boolean): string {
   const execution = plan.execution
-  const tasks = (execution?.tasks || []).filter((task) => (task.title || '').trim())
+  // 患者导出只保留启用任务（与患者端今日待办一致）；B 端仍展示未启用并标注
+  const tasks = (execution?.tasks || []).filter((task) => {
+    if (!(task.title || '').trim()) return false
+    if (patient && task.enabled === false) return false
+    return true
+  })
   const rationale = rationaleHtml(execution?.rationale, patient)
   if (!tasks.length && !rationale) return ''
-  const rows = tasks
+  // 单列卡片流：避免宽表在 A4 上右侧被裁切
+  const cards = tasks
     .map((task) => {
-      const meta = [
+      const pills = [
         lookup(CATEGORY_LABELS, task.category),
         lookup(FREQUENCY_LABELS, task.frequency),
         lookup(TIME_SLOT_LABELS, task.timeSlot),
         task.targetMl ? `${task.targetMl} ml` : '',
-        task.enabled === false ? '未启用' : '',
-      ]
-        .filter(Boolean)
-        .join(' · ')
-      const why = !patient && (task.rationale || '').trim() ? `<div class="why">${esc(task.rationale)}</div>` : ''
-      return `<tr><td><strong>${esc(task.title)}</strong>${why}</td><td>${esc(meta || '—')}</td></tr>`
+        !patient && task.enabled === false ? '未启用' : '',
+      ].filter(Boolean)
+      const why = (task.rationale || '').trim() ? `<div class="why">${esc(task.rationale)}</div>` : ''
+      const meta = pills.length
+        ? `<div class="exec-meta">${pills.map((p) => `<span class="exec-pill">${esc(p)}</span>`).join('')}</div>`
+        : ''
+      return `<div class="exec-card${task.enabled === false ? ' exec-card--off' : ''}"><div class="exec-title">${esc(
+        task.title,
+      )}</div>${why}${meta}</div>`
     })
     .join('')
   const badge = execution?.horizonDays ? `<span class="badge">${execution.horizonDays} 天</span>` : ''
   return card(
     `执行计划${badge}`,
     'execution',
-    `${rationale}${
-      rows
-        ? `<table><thead><tr><th>任务</th><th>安排</th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<p class="muted">暂无任务</p>'
-    }`,
+    `${rationale}${cards ? `<div class="exec-cards">${cards}</div>` : '<p class="muted">暂无任务</p>'}`,
   )
 }
 
 function buildCheckins(plan: PrintableCarePlan, patient: boolean): string {
-  if (!plan.checkins) return ''
-  if (!plan.checkins.length) {
-    return card('打卡记录', 'checkins', '<p class="muted">该版本暂无打卡记录</p>')
-  }
+  // 患者成品 / 无记录：不输出该模块，避免「暂无打卡记录」占页
+  if (patient || !plan.checkins?.length) return ''
   const rows = plan.checkins
     .map(
       (row) =>
@@ -581,8 +827,73 @@ function buildCheckins(plan: PrintableCarePlan, patient: boolean): string {
   )
 }
 
-function card(title: string, tone: string, body: string): string {
-  return `<section class="card card--${tone}"><h2>${title}</h2>${body}</section>`
+/** 患者可见参考依据：去掉系统算法兜底话术，只保留指南表述 */
+function patientFacingRefText(text: string): string {
+  let t = plainText(text)
+  t = t.replace(/[；;,]?\s*系统按体重估算饮水目标并限定在\s*1200\s*[–—\-至~～]\s*2000\s*ml/gi, '')
+  t = t.replace(/并限定在\s*1200\s*[–—\-至~～]\s*2000\s*ml/gi, '')
+  t = t.replace(/系统按体重估算[^。；;]*/g, '')
+  t = t.replace(/^[；;，,\s]+|[；;，,\s]+$/g, '').trim()
+  if (/足量饮水|少量多次/.test(t) && t.length < 8) {
+    return '足量饮水、少量多次（参考《中国居民膳食指南》）'
+  }
+  if (!t && /饮水|WATER/i.test(text)) {
+    return '足量饮水、少量多次（参考《中国居民膳食指南》）'
+  }
+  return t || plainText(text)
+}
+
+function buildReferences(plan: PrintableCarePlan, patient: boolean): string {
+  const refs = plan.guidelineRefs ?? []
+  if (patient || !refs.length) return ''
+  const items = refs
+    .map((r) => {
+      const text = patientFacingRefText(r.text || '')
+      if (!text) return ''
+      return `<li>${esc(text)}<div class="src">${esc(r.source)}</div></li>`
+    })
+    .filter(Boolean)
+    .join('')
+  if (!items) return ''
+  return card(
+    '参考依据',
+    'refs',
+    `<ul class="refs">${items}</ul><p class="why">条目为对公开指南推荐意见的转述，仅供健康管理参考，以指南原文为准。</p>`,
+  )
+}
+
+/** 三块及任务上引用的条目编码，按出现顺序去重。 */
+export function carePlanRefCodes(plan: PrintableCarePlan): string[] {
+  const codes = [
+    ...(plan.exercise?.refs ?? []),
+    ...(plan.diet?.refs ?? []),
+    ...(plan.execution?.refs ?? []),
+    ...(plan.execution?.tasks ?? []).flatMap((t) => t.refs ?? []),
+  ]
+  return [...new Set(codes.filter((c) => typeof c === 'string' && c))]
+}
+
+async function resolveGuidelineRefs(plan: PrintableCarePlan): Promise<PrintableCarePlan> {
+  if (plan.audience === 'patient' || plan.guidelineRefs) return plan
+  const codes = carePlanRefCodes(plan)
+  if (!codes.length) return plan
+  const lib = await loadGuidelineLibrary().catch(() => null)
+  const index = guidelineIndex(lib)
+  const guidelineRefs = codes.flatMap((code) => {
+    const rec = index.get(code)
+    return rec ? [{ code, source: rec.sourceLabel, text: rec.staffText }] : []
+  })
+  return { ...plan, guidelineRefs }
+}
+
+function card(
+  title: string,
+  tone: string,
+  body: string,
+  opts?: { pageBreak?: boolean },
+): string {
+  const page = opts?.pageBreak ? ' card--page' : ''
+  return `<section class="card card--${tone}${page}"><h2>${title}</h2>${body}</section>`
 }
 
 const PRINT_CSS = `
@@ -604,7 +915,8 @@ const PRINT_CSS = `
     border-radius: 14px;
   }
   .hero { padding: 16px 18px; margin-bottom: 12px; }
-  .pills { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .pills { margin-bottom: 8px; line-height: 1.8; }
+  .pills .pill { margin-right: 6px; }
   .pill {
     display: inline-block;
     padding: 2px 10px;
@@ -629,7 +941,7 @@ const PRINT_CSS = `
     color: #64748b;
     font-size: 12px;
   }
-  .rationale span, .block-title {
+  .rationale span {
     display: inline-block;
     margin-right: 6px;
     padding: 0 6px;
@@ -638,6 +950,42 @@ const PRINT_CSS = `
     color: #475569;
     font-size: 11px;
     font-weight: 700;
+  }
+  .block-title {
+    display: block;
+    margin: 0 0 8px;
+    padding: 0;
+    background: transparent;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 800;
+  }
+  .bullets { margin: 0; }
+  .bullet {
+    display: block;
+    margin: 4px 0;
+    padding: 0;
+    line-height: 1.55;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .bullet-mark {
+    display: inline-block;
+    min-width: 1.1em;
+    margin-right: 4px;
+    font-weight: 800;
+    color: #0f172a;
+  }
+  .bullet-text { color: #13222e; }
+  .diet-meal {
+    margin: 6px 0;
+    line-height: 1.6;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .card--page {
+    break-before: page;
+    page-break-before: always;
   }
   .ai { margin-bottom: 12px; padding: 12px 14px; border-color: #bfdbfe; background: #f3f8ff; }
   .ai strong { display: block; margin-bottom: 4px; color: #1e63d9; }
@@ -650,6 +998,9 @@ const PRINT_CSS = `
   .card--diet h2 { color: #15803d; }
   .card--execution h2, .card--summary h2 { color: #6d28d9; }
   .card--checkins h2 { color: #0f766e; }
+  .card--refs h2 { color: #475569; }
+  .refs li { margin-bottom: 4px; }
+  .refs .src { color: #64748b; font-size: 11px; }
   .badge {
     margin-left: 8px;
     padding: 1px 8px;
@@ -665,11 +1016,59 @@ const PRINT_CSS = `
   .block { margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: #f8fafc; }
   .block--warn { background: #fff7ed; }
   .block--diet { background: #f0fdf4; }
-  .block-title { margin-bottom: 6px; }
-  ul, ol { margin: 6px 0 0; padding-left: 18px; }
-  li { margin: 3px 0; }
-  .swap { display: block; color: #5b6a77; font-size: 11px; }
+  ul, ol { margin: 6px 0 0; padding-left: 18px; list-style: disc; }
+  li { margin: 3px 0; break-inside: avoid; page-break-inside: avoid; }
+  .swap {
+    display: block;
+    margin-top: 4px;
+    padding: 4px 8px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 6px;
+    color: #64748b;
+    font-size: 11px;
+    background: #f8fafc;
+  }
+  .week-days .week-day {
+    margin-top: 8px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .exec-cards { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .exec-card {
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .exec-card--off { opacity: 0.65; background: #f8fafc; }
+  .exec-title { font-size: 13px; font-weight: 800; color: #0f172a; word-break: break-word; }
+  .exec-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .exec-pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 700;
+  }
   .week-name { margin-top: 8px; font-weight: 800; }
+  .glance {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #f0f9ff;
+    border: 1px solid #dbeafe;
+  }
+  .glance-lead { margin: 0; font-size: 13px; color: #0f172a; line-height: 1.5; }
+  .glance-note {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: #64748b;
+    text-align: left;
+  }
   .energy { margin-top: 8px; padding: 12px; }
   .energy-main strong { font-size: 26px; }
   .energy-main span, .energy-main em { margin-left: 6px; color: #5b6a77; font-style: normal; }
@@ -682,17 +1081,62 @@ const PRINT_CSS = `
   .macro--protein .macro-bar i { background: #5b8def; }
   .macro--fat .macro-bar i { background: #e5a100; }
   .energy-tips { margin: 8px 0 0; color: #5b6a77; }
-  .tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
-  .tags-label { font-size: 11px; font-weight: 700; color: #5b6a77; }
+  .food-groups { margin-top: 10px; }
+  .food-line { margin: 6px 0 0; line-height: 1.7; color: #13222e; }
+  .food-line b { color: #334155; }
+  .tags { margin-top: 10px; line-height: 1.9; }
+  .tags .tag { display: inline-block; margin: 0 6px 4px 0; }
+  .tags-label { font-size: 11px; font-weight: 700; color: #5b6a77; margin-right: 6px; }
   .tag { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
   .tag--ok { background: #e3f6ef; color: #0b7a66; }
   .tag--warn { background: #fff3da; color: #8a5c00; }
-  .tag--danger { background: #fde7ea; color: #a8243a; }
+  .tag--danger { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .tag--risk { background: #fffbeb; color: #b45309; border: 1px solid #fcd34d; }
+  .meal-list li { margin: 8px 0; }
+  /* 不用 flex：部分打印引擎跨页时会把 flex 误序列化成 table 并泄露标签名 */
+  .meal-parts { margin-top: 4px; line-height: 1.9; }
+  .meal-part {
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0 4px 4px 0;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    font-size: 11px;
+  }
+  .meal-part em { font-style: normal; font-weight: 800; color: #64748b; font-size: 10px; }
+  .meal-part--staple { background: #fff7ed; border-color: #fed7aa; }
+  .meal-part--protein, .meal-part--dairy { background: #eff6ff; border-color: #bfdbfe; }
+  .meal-part--veg { background: #f0fdf4; border-color: #bbf7d0; }
+  .meal-part--fruit { background: #fdf4ff; border-color: #f5d0fe; }
+  .meal-part--hit { background: #fef2f2; border-color: #fecaca; color: #b91c1c; font-weight: 700; }
+  .meal-part--warn { background: #fffbeb; border-color: #fcd34d; }
+  .meal-flag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    font-size: 9px;
+    font-weight: 900;
+    color: #fff;
+  }
+  .meal-flag--bad { background: #ef4444; }
+  .meal-flag--warn { background: #f59e0b; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { padding: 6px 8px; border-bottom: 1px solid #e6eef2; text-align: left; vertical-align: top; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #e6eef2; text-align: left; vertical-align: top; word-break: break-word; }
   th { font-size: 11px; color: #5b6a77; }
-  .why { margin-top: 2px; color: #64748b; font-size: 11px; font-weight: 500; }
-  footer { margin-top: 8px; font-size: 11px; color: #8b98a5; }
+  .why { margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 500; line-height: 1.45; }
+  .footer {
+    margin-top: 10px;
+    padding-top: 6px;
+    font-size: 11px;
+    color: #8b98a5;
+    break-before: avoid-page;
+    page-break-before: avoid;
+  }
 `
 
 export function buildCarePlanPrintHtml(plan: PrintableCarePlan): string {
@@ -734,14 +1178,16 @@ export function buildCarePlanPrintHtml(plan: PrintableCarePlan): string {
   ${buildDiet(plan, patient)}
   ${buildExecution(plan, patient)}
   ${buildCheckins(plan, patient)}
-  <footer>本方案仅用于健康管理参考，不作为诊断依据；如有不适请及时就医。</footer>
+  ${buildReferences(plan, patient)}
+  <p class="footer">本方案仅用于健康管理参考，不作为诊断依据；如有不适请及时就医。</p>
   </div>
 </body>
 </html>`
 }
 
 /** 在隐藏 iframe 中打印，避免弹窗拦截与当前页面样式污染。 */
-export function printCarePlan(plan: PrintableCarePlan): Promise<boolean> {
+export async function printCarePlan(input: PrintableCarePlan): Promise<boolean> {
+  const plan = await resolveGuidelineRefs(input)
   return new Promise((resolve) => {
     const iframe = document.createElement('iframe')
     iframe.setAttribute('aria-hidden', 'true')

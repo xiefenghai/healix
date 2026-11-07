@@ -36,8 +36,10 @@ const props = withDefaults(
     anomaly?: boolean
     disabled?: boolean
     placeholder?: string
+    /** 多选选项旁小标签（option code → 文案），如「由诉求关联」 */
+    optionBadges?: Record<string, string> | null
   }>(),
-  { min: undefined, max: undefined, exclusive: undefined },
+  { min: undefined, max: undefined, exclusive: undefined, optionBadges: undefined },
 )
 
 const emit = defineEmits<{
@@ -330,11 +332,15 @@ function onYearChange(v: string | null) {
           :key="o.code"
           type="button"
           class="opt-btn"
-          :class="{ on: Array.isArray(modelValue) && (modelValue as string[]).includes(o.code) }"
+          :class="{
+            on: Array.isArray(modelValue) && (modelValue as string[]).includes(o.code),
+            'has-badge': !!(optionBadges && optionBadges[o.code]),
+          }"
           :disabled="disabled"
           @click="toggleMulti(o.code)"
         >
-          {{ o.label }}
+          <span class="opt-label">{{ o.label }}</span>
+          <span v-if="optionBadges && optionBadges[o.code]" class="opt-badge">{{ optionBadges[o.code] }}</span>
         </button>
         <span v-if="!choiceOptions.length && !loadingOpts" class="hint">暂无选项（{{ options || '—' }}）</span>
       </div>
@@ -504,6 +510,9 @@ function onYearChange(v: string | null) {
 }
 
 .opt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
   border: 1px solid var(--ink-200);
   background: #fff;
@@ -515,6 +524,28 @@ function onYearChange(v: string | null) {
   line-height: 1.3;
   white-space: nowrap;
   flex: 0 0 auto;
+}
+
+.opt-btn.has-badge {
+  white-space: normal;
+}
+
+.opt-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+}
+
+.opt-btn.on .opt-badge {
+  color: #78350f;
+  background: #fde68a;
+  border-color: #fbbf24;
 }
 
 .btn-group.is-compact .opt-btn {
@@ -569,8 +600,10 @@ function onYearChange(v: string | null) {
 }
 
 .unit {
+  flex: 0 0 auto;
   font-size: 13px;
   color: var(--ink-500);
+  white-space: nowrap;
 }
 
 .hint {

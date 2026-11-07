@@ -164,13 +164,17 @@ const recentMetrics = ref<MetricRow[]>([])
 
 const patientAge = computed(() => {
   const birthday = patient.value?.birthday
+  const raw = birthday != null ? String(Array.isArray(birthday) ? '' : birthday).trim().slice(0, 10) : ''
+  // 档案脏生日（1900 前）不展示离谱岁数；首诊草稿修正后由提交回写档案
+  if (raw && raw < '1900-01-01') return '需核对'
   const birth = parseBirthdayDate(birthday)
   if (!birth) return '-'
   const today = new Date()
   let age = today.getFullYear() - birth.getFullYear()
   const monthDiff = today.getMonth() - birth.getMonth()
   if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age -= 1
-  return age >= 0 ? `${age} 岁` : '-'
+  if (age < 0 || age > 120) return '需核对'
+  return `${age} 岁`
 })
 
 const nameInitial = computed(() => {

@@ -746,18 +746,14 @@ public final class CarePlanPromptContextSupport {
     }
 
     public static boolean isMetricUsefulForPrompt(String metricType, BigDecimal value) {
-        if (value == null || !StringUtils.hasText(metricType)) {
-            return false;
-        }
-        double[] range = PROMPT_METRIC_RANGE.get(metricType.trim());
-        if (range == null) {
-            return true;
-        }
-        double v = value.doubleValue();
-        if (Double.isNaN(v) || Double.isInfinite(v)) {
-            return false;
-        }
-        return v >= range[0] && v <= range[1];
+        return com.healix.core.vitals.support.MetricPlausibility.isUsefulForPrompt(metricType, value);
+    }
+
+    /** 带身高体重上下文；腰围与 BMI 不一致时不可喂给方案模型。 */
+    public static boolean isMetricUsefulForPrompt(
+            String metricType, BigDecimal value, BigDecimal heightCm, BigDecimal weightKg) {
+        return com.healix.core.vitals.support.MetricPlausibility.isUsefulForPrompt(
+                metricType, value, heightCm, weightKg);
     }
 
     public static String metricTypeLabel(String metricType) {

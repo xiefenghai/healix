@@ -19,7 +19,12 @@ import com.healix.core.questionnaire.QuestionnaireCatalog;
 import com.healix.core.questionnaire.QuestionnaireDef;
 import com.healix.core.questionnaire.dto.QuestionnaireResponseView;
 import com.healix.core.questionnaire.service.QuestionnaireResponseService;
+import com.healix.core.vitals.support.MetricPlausibility;
+import java.time.LocalDate;
+import java.time.Period;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -76,6 +81,7 @@ public class IntakeAiSummaryService {
     private ObjectNode buildFacts(String peopleId, JsonNode answers, JsonNode highlights) {
         ObjectNode facts = JsonUtils.emptyObject();
         facts.put("purpose", "INTAKE");
+        // 档案作兜底；问卷 answers 里的姓名/性别/生日优先，避免总结与变更对照各说各话
         ObjectNode patient = JsonUtils.emptyObject();
         PeopleProfile profile = peopleProfileMapper.findById(peopleId);
         if (profile != null) {
@@ -89,6 +95,7 @@ public class IntakeAiSummaryService {
                 patient.put("birthday", profile.getBirthday().toString());
             }
         }
+        overlayPatientFromAnswers(patient, answers);
         if (!patient.isEmpty()) {
             facts.set("patient", patient);
         }
@@ -99,6 +106,21 @@ public class IntakeAiSummaryService {
         if (!appealCollected) {
             facts.put("appealNote", "患者主观诉求未采集全。管理方向若来自疾病或健管师勾选，不得写成核心诉求。");
         }
+        List<MetricPlausibility.Hit> suspects = MetricPlausibility.assessIntakeAnswers(answers);
+        Map<String, MetricPlausibility.Hit> suspectByField = new HashMap<>();
+        ArrayNode suspectArr = facts.putArray("suspectMetrics");
+        for (MetricPlausibility.Hit hit : suspects) {
+            suspectByField.put(hit.field(), hit);
+            ObjectNode s = suspectArr.addObject();
+            s.put("field", hit.field());
+            s.put("metricType", hit.metricType());
+            s.put("label", hit.label());
+            s.put("reason", hit.reason());
+        }
+        if (suspectArr.isEmpty()) {
+            facts.remove("suspectMetrics");
+        }
+
         ArrayNode answersArr = facts.putArray("answers");
         if (answers != null && answers.isObject()) {
             Iterator<Map.Entry<String, JsonNode>> it = answers.fields();
@@ -117,11 +139,126 @@ public class IntakeAiSummaryService {
                 FieldDef def = fieldCatalog.find(code).orElse(null);
                 row.put("label", def != null && StringUtils.hasText(def.label()) ? def.label() : code);
                 row.set("value", value);
+                MetricPlausibility.Hit hit = suspectByField.get(code);
+                if (hit != null) {
+                    row.put("suspect", true);
+                    row.put("suspectReason", hit.reason());
+                }
             }
         }
+        putClinicalAlerts(facts, patient, answers);
         if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
             facts.set("highlights", highlights);
         }
         return facts;
+    }
+
+    /** 青少年/青年合并 T1+慢病等 → 结构化极高危，供模型拉满预警级别。 */
+    private static void putClinicalAlerts(ObjectNode facts, ObjectNode patient, JsonNode answers) {
+        if (facts == null) {
+            return;
+        }
+        ArrayNode alerts = facts.putArray("clinicalAlerts");
+        Integer age = ageYears(patient != null ? patient.path("birthday").asText(null) : null);
+        boolean young = age != null && age < 35;
+        boolean t1 = textContains(answers, "disease.diabetes.type", "T1")
+                || textContains(answers, "disease.diabetes.type", "1型");
+        boolean htn = codeIntersects(answers, "basic.presentIllness", "HYPERTENSION")
+                || codeIntersects(answers, "goal.careTracks", "HYPERTENSION");
+        boolean onInsulin = codeIntersects(answers, "basic.medicationFlags", "INSULIN")
+                || codeIntersects(answers, "basic.medicationFlags", "HYPOGLYCEMIC")
+                || textContains(answers, "medication.current", "胰岛素");
+        if (young && t1 && htn) {
+            ObjectNode a = alerts.addObject();
+            a.put("level", "EXTREME");
+            a.put(
+                    "message",
+                    "极高危提示：患者为 "
+                            + age
+                            + " 岁青年，确诊 T1 糖尿病且合并高血压"
+                            + (onInsulin ? "，且在用胰岛素/降糖药" : "")
+                            + "。存在极高心血管及低血糖风险，方案须极度保守并严密监测。");
+        } else if (young && t1) {
+            ObjectNode a = alerts.addObject();
+            a.put("level", "HIGH");
+            a.put(
+                    "message",
+                    "高危提示："
+                            + age
+                            + " 岁青年确诊 T1 糖尿病"
+                            + (onInsulin ? "且使用胰岛素" : "")
+                            + "，运动/饮食方案须防低血糖，强度取保守。");
+        }
+        if (alerts.isEmpty()) {
+            facts.remove("clinicalAlerts");
+        }
+    }
+
+    private static Integer ageYears(String birthday) {
+        if (!StringUtils.hasText(birthday) || birthday.length() < 10) {
+            return null;
+        }
+        try {
+            LocalDate birth = LocalDate.parse(birthday.substring(0, 10));
+            if (birth.getYear() < 1900) {
+                return null;
+            }
+            int age = Period.between(birth, LocalDate.now()).getYears();
+            return age >= 0 && age <= 120 ? age : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static boolean codeIntersects(JsonNode answers, String field, String code) {
+        if (answers == null || !answers.isObject() || !StringUtils.hasText(code)) {
+            return false;
+        }
+        JsonNode n = answers.get(field);
+        if (n == null || n.isNull()) {
+            return false;
+        }
+        String want = code.trim().toUpperCase();
+        if (n.isArray()) {
+            for (JsonNode x : n) {
+                if (x != null && want.equalsIgnoreCase(x.asText("").trim())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        String raw = n.asText("").trim().toUpperCase();
+        return raw.equals(want) || raw.contains("\"" + want + "\"") || raw.contains(want);
+    }
+
+    private static boolean textContains(JsonNode answers, String field, String needle) {
+        if (answers == null || !answers.isObject() || !StringUtils.hasText(needle)) {
+            return false;
+        }
+        JsonNode n = answers.get(field);
+        if (n == null || n.isNull()) {
+            return false;
+        }
+        return n.toString().toUpperCase().contains(needle.trim().toUpperCase());
+    }
+
+    /** 问卷草稿优先于档案，保证提交前确认里的 AI 总结与当前答案一致。 */
+    private static void overlayPatientFromAnswers(ObjectNode patient, JsonNode answers) {
+        if (patient == null || answers == null || !answers.isObject()) {
+            return;
+        }
+        putAnswerText(patient, "displayName", answers.get("profile.displayName"));
+        putAnswerText(patient, "gender", answers.get("profile.gender"));
+        putAnswerText(patient, "birthday", answers.get("profile.birthday"));
+    }
+
+    private static void putAnswerText(ObjectNode patient, String key, JsonNode node) {
+        if (node == null || node.isNull() || ArchiveFields.isEmpty(node)) {
+            return;
+        }
+        String text = node.isValueNode() ? node.asText("").trim() : node.asText("").trim();
+        if (StringUtils.hasText(text)) {
+            patient.put(key, text);
+        }
     }
 }

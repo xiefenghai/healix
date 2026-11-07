@@ -55,6 +55,7 @@ const WARN_CODE_LABELS: Record<string, string> = {
   HYPOGLYCEMIA_RISK: '低血糖风险',
   DIET_INTOLERANCE: '饮食不耐受',
   ALLERGY_UNKNOWN: '过敏史',
+  HIGH_ALLERGEN_FOOD_UNCHECKED: '高致敏食物',
 }
 
 const SEV_TAG_TYPE: Record<string, 'danger' | 'warning' | 'info'> = {
@@ -157,6 +158,56 @@ export function groupHighlightItemsByDomain(
     }
   }
   return out
+}
+
+/** 显式块名 / 量化文案（优先于宽泛关键词，避免「膳食指南」出处把运动违规判成饮食） */
+const EXPLICIT_BLOCK: Array<{ domain: CarePlanWarnDomain; re: RegExp }> = [
+  { domain: 'exercise', re: /运动方案|（运动）/ },
+  { domain: 'diet', re: /饮食方案|（饮食）/ },
+  { domain: 'execution', re: /执行计划|（执行）/ },
+]
+const EXERCISE_QUANT =
+  /每周[^；]{0,12}运动|中等强度|运动强度|单次运动|高强度按|有氧|骑行|步行|快走|力量训练|低冲击/
+const DIET_QUANT = /千卡|kcal|热量|膳食|能量缺口|缺口\s*\d|减重速度|控糖限盐|蛋白质\s*\d|脂肪\s*\d/
+
+function countHintHits(text: string, re: RegExp): number {
+  const flags = re.flags.includes('g') ? re.flags : `${re.flags}g`
+  const global = new RegExp(re.source, flags)
+  return (text.match(global) || []).length
+}
+
+/** 顶部警告条右侧「去核对」落点；过敏史单独走补采，不跳 Tab */
+export function primaryDomainForWarnSection(sec: CarePlanWarnSection): CarePlanWarnDomain | null {
+  if (sec.code === 'ALLERGY_UNKNOWN') return null
+  const blob = [sec.title, ...sec.items.map((it) => it.action)].filter(Boolean).join(' ')
+
+  {
+    const mentions: Array<{ domain: CarePlanWarnDomain; index: number }> = []
+    for (const row of EXPLICIT_BLOCK) {
+      const m = blob.match(row.re)
+      if (m && typeof m.index === 'number') mentions.push({ domain: row.domain, index: m.index })
+    }
+    mentions.sort((a, b) => a.index - b.index)
+    if (mentions[0]) return mentions[0].domain
+  }
+  if (EXERCISE_QUANT.test(blob)) return 'exercise'
+  if (DIET_QUANT.test(blob)) return 'diet'
+
+  const fake: CarePlanWarnItem = { action: blob }
+  const domains = classifyHighlightDomains(fake)
+  if (domains.length === 1) return domains[0]!
+
+  // 多域命中：按关键词命中数；并列时运动 > 饮食 > 执行（避免出处名里的「膳食/营养」抢跑）
+  const scores: Record<CarePlanWarnDomain, number> = {
+    exercise: countHintHits(blob, EXERCISE_HINT),
+    diet: countHintHits(blob, DIET_HINT),
+    execution: countHintHits(blob, EXECUTION_HINT),
+  }
+  const priority: CarePlanWarnDomain[] = ['exercise', 'diet', 'execution']
+  const ranked = priority.slice().sort(
+    (a, b) => scores[b] - scores[a] || priority.indexOf(a) - priority.indexOf(b),
+  )
+  return ranked[0] || domains[0] || 'execution'
 }
 
 export function parseCarePlanWarnSections(flags: CarePlanWarnFlag[]): CarePlanWarnSection[] {

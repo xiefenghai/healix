@@ -19,6 +19,8 @@ import {
 import AgentActivityPanel from '../../shared/AgentActivityPanel.vue'
 import CockpitPatientSheet, { type CockpitSheetMode } from '../../shared/CockpitPatientSheet.vue'
 import PatientIntakeView from './PatientIntakeView.vue'
+import PatientIntakeDetailView from './PatientIntakeDetailView.vue'
+import { getIntakeStatus } from '../../shared/intake'
 import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
 import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
 import CreateCareTeamDrawer from './CreateCareTeamDrawer.vue'
@@ -35,6 +37,7 @@ import {
 import { formatAssistantPlainHtml, visibleAnswerFromRawStream } from '../../shared/agent-plain-text'
 import { AGENT_LOGO, AGENT_NAME } from '../../shared/agent-brand'
 import { debounce } from '../../shared/debounce'
+import CarePlanThinkStream from '../../shared/CarePlanThinkStream.vue'
 import AgentCarePlanCard from '../../shared/AgentCarePlanCard.vue'
 import AgentOcrReviewCard from '../../shared/AgentOcrReviewCard.vue'
 import ChatExtractReviewCard from '../../shared/ChatExtractReviewCard.vue'
@@ -139,11 +142,15 @@ interface Focus {
   serviceStages?: Array<{
     code: string
     label: string
-    status: 'done' | 'current' | 'todo' | string
+    status: 'done' | 'current' | 'todo' | 'broken' | string
+    completedAt?: string | null
+    hint?: string | null
   }>
   clientLinked?: boolean
   riskLevel?: string
   planRate7d?: number | null
+  /** 现行方案饮水目标 ml；助手须与此对齐 */
+  waterTargetMl?: number | null
   diseaseLabels?: string[]
   bloodPressure?: string | null
   bloodPressureAt?: string | null
@@ -156,6 +163,11 @@ interface Focus {
   archiveCompletenessPercent?: number | null
   archiveFilledCount?: number | null
   archiveTotalCount?: number | null
+  /** 首诊问卷填写完整度（与健康档案完整度分开） */
+  intakeCompletenessPercent?: number | null
+  intakeFilledCount?: number | null
+  intakeTotalCount?: number | null
+  intakeSubmitted?: boolean | null
   assessmentTags?: Array<{
     engineCode: string
     text: string
@@ -240,6 +252,8 @@ interface ChatMessage {
   reportReview?: ReportReviewPreview
   carePlanPreview?: CarePlanChatPreview
   chatExtract?: ChatExtractReview
+  /** 方案生成中：用拟人化思考流，不用技术活动灰框 */
+  planGenerating?: boolean
 }
 
 /** 轻量短答：不展示活动轨迹（避免 GENERAL_CHAT 等底层码吓人） */
@@ -355,6 +369,7 @@ const uploading = ref(false)
 let chatAbort: AbortController | null = null
 
 function abortActiveChat(reason = 'focus-switch') {
+  flushStreamUi()
   if (chatAbort) {
     try {
       chatAbort.abort(reason)
@@ -446,6 +461,30 @@ const chatEndRef = ref<HTMLElement | null>(null)
 /** 同一患者 5 分钟内不重复自动追问 */
 const lastAutoAskAt = ref<Record<string, number>>({})
 let scrollRaf = 0
+/** 流式 token / 活动事件：合并到下一帧再刷 DOM，并节流滚底，避免一卡一卡 */
+let streamPaintRaf = 0
+let streamScrollAt = 0
+const STREAM_SCROLL_MIN_MS = 160
+
+function scheduleStreamUi(paint?: () => void, opts?: { forceScroll?: boolean }) {
+  if (streamPaintRaf) cancelAnimationFrame(streamPaintRaf)
+  streamPaintRaf = requestAnimationFrame(() => {
+    streamPaintRaf = 0
+    paint?.()
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    if (opts?.forceScroll || now - streamScrollAt >= STREAM_SCROLL_MIN_MS) {
+      streamScrollAt = now
+      void scrollToBottom()
+    }
+  })
+}
+
+function flushStreamUi() {
+  if (streamPaintRaf) {
+    cancelAnimationFrame(streamPaintRaf)
+    streamPaintRaf = 0
+  }
+}
 
 interface SessionSummaryRow {
   sessionId: string
@@ -1032,11 +1071,61 @@ const currentServiceStage = computed(() =>
     .toUpperCase(),
 )
 
+function formatServiceStageTime(iso?: string | null) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) {
+    const s = String(iso).replace('T', ' ')
+    return s.length >= 16 ? s.slice(0, 16) : s
+  }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function serviceStageStatusLabel(status?: string) {
+  switch (String(status || '').toLowerCase()) {
+    case 'done':
+      return '已完成'
+    case 'current':
+      return '进行中'
+    case 'broken':
+      return '已回退'
+    case 'todo':
+      return '未开始'
+    default:
+      return status || '—'
+  }
+}
+
+function onServiceStageClick(step: {
+  label: string
+  status: string
+  completedAt?: string | null
+  hint?: string | null
+}) {
+  const statusBit = serviceStageStatusLabel(step.status)
+  const timeBit = step.completedAt
+    ? `最近完成 ${formatServiceStageTime(step.completedAt)}`
+    : step.status === 'todo'
+      ? '尚未完成该环节'
+      : '暂无完成时间记录'
+  const hintBit = step.hint ? ` · ${step.hint}` : ''
+  ElMessage({
+    type: step.status === 'broken' ? 'warning' : 'info',
+    duration: 4200,
+    showClose: true,
+    message: `「${step.label}」· ${statusBit} · ${timeBit}${hintBit}`,
+  })
+}
+
 type QuickActionItem = {
   key: string
   label: string
   run: () => void
   primary?: boolean
+  /** 九宫格短标签；缺省截取 label */
+  shortLabel?: string
+  icon?: 'followup' | 'med' | 'obs' | 'intake' | 'archive' | 'plan' | 'report' | 'assess' | 'assign'
 }
 
 const needsCareTeamAssign = computed(
@@ -1052,16 +1141,83 @@ const stageQuickActions = computed((): QuickActionItem[] => {
   const stage = currentServiceStage.value
   const all: Record<string, QuickActionItem> = {
     // 分组主 CTA 交给中间 AI「立即分配健管组」，右侧降为次要入口避免双按钮打架
-    assign: { key: 'assign', label: '去分组', run: () => openAssignCareTeam(), primary: false },
-    intake: { key: 'intake', label: '开始首诊', run: () => goIntakeQuick(), primary: true },
-    archive: { key: 'archive', label: '查看档案', run: () => goArchive() },
-    observations: { key: 'observations', label: '录入数据', run: () => goObservations() },
-    followups: { key: 'followups', label: '创建随访', run: () => goFollowups(), primary: true },
-    carePlan: { key: 'carePlan', label: '编辑方案', run: () => goCarePlan(), primary: true },
-    reports: { key: 'reports', label: '查看报告', run: () => goReports(), primary: true },
-    medications: { key: 'medications', label: '用药管理', run: () => goMedications() },
-    assessments: { key: 'assessments', label: '疾病评估', run: () => goAssessments() },
+    assign: {
+      key: 'assign',
+      label: '去分组',
+      shortLabel: '分组',
+      icon: 'assign',
+      run: () => openAssignCareTeam(),
+      primary: false,
+    },
+    intake: {
+      key: 'intake',
+      label: '开始首诊',
+      shortLabel: '首诊',
+      icon: 'intake',
+      run: () => goIntakeQuick(),
+      primary: true,
+    },
+    intakeDetail: {
+      key: 'intakeDetail',
+      label: '查看首诊问卷',
+      shortLabel: '问卷',
+      icon: 'intake',
+      run: () => void openIntakeDetail(),
+    },
+    archive: {
+      key: 'archive',
+      label: '查看档案',
+      shortLabel: '档案',
+      icon: 'archive',
+      run: () => goArchive(),
+    },
+    observations: {
+      key: 'observations',
+      label: '录入数据',
+      shortLabel: '录入',
+      icon: 'obs',
+      run: () => goObservations(),
+    },
+    followups: {
+      key: 'followups',
+      label: '创建随访',
+      shortLabel: '随访',
+      icon: 'followup',
+      run: () => goFollowups(),
+      primary: true,
+    },
+    carePlan: {
+      key: 'carePlan',
+      label: '编辑方案',
+      shortLabel: '方案',
+      icon: 'plan',
+      run: () => goCarePlan(),
+      primary: true,
+    },
+    reports: {
+      key: 'reports',
+      label: '查看报告',
+      shortLabel: '报告',
+      icon: 'report',
+      run: () => goReports(),
+      primary: true,
+    },
+    medications: {
+      key: 'medications',
+      label: '用药管理',
+      shortLabel: '用药',
+      icon: 'med',
+      run: () => goMedications(),
+    },
+    assessments: {
+      key: 'assessments',
+      label: '疾病评估',
+      shortLabel: '评估',
+      icon: 'assess',
+      run: () => goAssessments(),
+    },
   }
+  const hasSubmittedIntake = focus.value?.intakeSubmitted === true
   let order: string[]
   switch (stage) {
     case 'TEAM_ASSIGN':
@@ -1080,31 +1236,73 @@ const stageQuickActions = computed((): QuickActionItem[] => {
       order = hasOpenIntakeTodo.value
         ? ['observations', 'archive', 'assessments']
         : ['intake', 'observations', 'archive', 'assessments']
+      if (hasSubmittedIntake) {
+        const i = order.indexOf('archive')
+        order.splice(i >= 0 ? i : order.length, 0, 'intakeDetail')
+      }
       break
     case 'CARE_PLAN':
-      order = ['carePlan', 'archive', 'assessments', 'observations']
+      order = hasSubmittedIntake
+        ? ['carePlan', 'intakeDetail', 'archive', 'assessments', 'observations']
+        : ['carePlan', 'archive', 'assessments', 'observations']
       break
     case 'PERIODIC_REPORT':
     case 'STAGE_SUMMARY':
-      order = ['reports', 'archive', 'followups', 'carePlan']
+      order = hasSubmittedIntake
+        ? ['reports', 'intakeDetail', 'archive', 'followups', 'carePlan']
+        : ['reports', 'archive', 'followups', 'carePlan']
       break
     case 'ENDED':
-      order = ['archive', 'reports', 'carePlan']
+      order = hasSubmittedIntake
+        ? ['archive', 'intakeDetail', 'reports', 'carePlan']
+        : ['archive', 'reports', 'carePlan']
       break
     case 'FOLLOWUP':
     default:
-      order = ['followups', 'medications', 'observations', 'archive', 'carePlan', 'reports']
+      order = hasSubmittedIntake
+        ? ['followups', 'medications', 'observations', 'intakeDetail', 'archive', 'carePlan', 'reports']
+        : ['followups', 'medications', 'observations', 'archive', 'carePlan', 'reports']
       break
   }
-  return order.map((k) => {
-    const item = all[k]
-    if (!item) return null
-    if (k === 'observations' && stage === 'INTAKE' && hasOpenIntakeTodo.value) {
-      return { ...item, label: '录入体检数据' }
-    }
-    return item
-  }).filter((item): item is QuickActionItem => !!item)
+  return order
+    .map((k) => {
+      const item = all[k]
+      if (!item) return null
+      if (k === 'observations' && stage === 'INTAKE' && hasOpenIntakeTodo.value) {
+        return { ...item, label: '录入体检数据', shortLabel: '体检' }
+      }
+      if (k === 'followups' && stage === 'FOLLOWUP') {
+        return { ...item, label: '立即创建首次随访', shortLabel: '随访' }
+      }
+      return item
+    })
+    .filter((item): item is QuickActionItem => !!item)
 })
+
+function quickActionIconPath(icon?: QuickActionItem['icon']): string {
+  switch (icon) {
+    case 'followup':
+      return 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
+    case 'med':
+      return 'M9 3h6v4H9zM10 7h4v14h-4zM7 11h10'
+    case 'obs':
+      return 'M12 20V10M18 20V4M6 20v-4'
+    case 'intake':
+      return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8'
+    case 'archive':
+      return 'M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'
+    case 'plan':
+      return 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 12h6M9 16h6'
+    case 'report':
+      return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5'
+    case 'assess':
+      return 'M22 12h-4l-3 9L9 3l-3 9H2'
+    case 'assign':
+      return 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'
+    default:
+      return 'M12 5v14M5 12h14'
+  }
+}
 
 const hasOpenIntakeTodo = computed(() =>
   (focus.value?.openTasks || []).some(
@@ -1173,7 +1371,18 @@ watch(
     todoTasksExpanded.value = false
   },
 )
-const planRateLabel = computed(() => rateText(focus.value?.planRate7d))
+const planRatePendingFirst = computed(() => {
+  if (focus.value?.planRate7d != null) return false
+  const stage = currentServiceStage.value
+  return ['FOLLOWUP', 'PERIODIC_REPORT', 'STAGE_SUMMARY', 'ENDED'].includes(stage)
+})
+
+const planRateLabel = computed(() => {
+  const r = focus.value?.planRate7d
+  if (r != null) return rateText(r)
+  if (planRatePendingFirst.value) return '待首次打卡'
+  return '—'
+})
 /** 右栏「近 7 天」：服药 57% · 饮食 5/7 · 运动 2/7 */
 const executionText = computed(() => {
   const f = focus.value
@@ -1205,26 +1414,53 @@ function shortWhen(iso?: string | null) {
   return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`
 }
 
-/** 工作台待办标题：去重「首诊 首诊·…」 */
-function todoTaskTitle(t: { taskTypeLabel?: string | null; summary?: string | null }) {
-  const type = (t.taskTypeLabel || '').trim()
-  if (/首诊|ONBOARDING/i.test(type) || /首诊/.test(t.summary || '')) {
-    return '首诊评估'
+/** 入组首诊随访待办（勿用 summary 含「首诊」误伤制定方案任务） */
+function isOnboardingTodo(t: {
+  taskType?: string | null
+  taskTypeLabel?: string | null
+  summary?: string | null
+  followupType?: string | null
+}) {
+  const typeCode = (t.taskType || '').toUpperCase()
+  if (DRAFT_TASK_TYPES.has(typeCode)) return false
+  if (typeCode === 'FOLLOW_UP') {
+    return (
+      String(t.followupType || '').toUpperCase() === 'ONBOARDING' ||
+      /首诊/.test(t.taskTypeLabel || '') ||
+      /首诊/.test(t.summary || '')
+    )
   }
-  return type || '待办'
+  return /首诊|ONBOARDING/i.test(t.taskTypeLabel || '')
+}
+
+/** 工作台待办标题：按任务类型展示，避免 PLAN_CREATE summary「首诊已完成…」被收成首诊评估 */
+function todoTaskTitle(t: {
+  taskType?: string | null
+  taskTypeLabel?: string | null
+  summary?: string | null
+  followupType?: string | null
+}) {
+  if (isOnboardingTodo(t)) return '首诊评估'
+  const typeCode = (t.taskType || '').toUpperCase()
+  if (typeCode === 'PLAN_CREATE') return '管理方案'
+  if (typeCode === 'PLAN_REVIEW') return '审阅方案'
+  return (t.taskTypeLabel || '').trim() || '待办'
 }
 
 function todoTaskMeta(t: {
+  taskType?: string | null
   taskTypeLabel?: string | null
   summary?: string | null
   overdue?: boolean
   dueAt?: string | null
+  followupType?: string | null
 }) {
   if (t.overdue) return '已超期'
   const due = shortWhen(t.dueAt)
   const type = (t.taskTypeLabel || '').trim()
   const summary = (t.summary || '').trim()
-  if (/首诊|ONBOARDING/i.test(type) || /首诊/.test(summary)) {
+  const typeCode = (t.taskType || '').toUpperCase()
+  if (isOnboardingTodo(t) || DRAFT_TASK_TYPES.has(typeCode)) {
     if (due.includes('天后')) {
       const n = due.replace(/\s*天后$/, '').trim()
       return n ? `剩余 ${n} 天` : due
@@ -1249,8 +1485,53 @@ const archivePercentLabel = computed(() =>
 )
 const archiveHint = computed(() => {
   const f = focus.value
-  if (!f || f.archiveFilledCount == null || f.archiveTotalCount == null) return '档案字段'
-  return `已填 ${f.archiveFilledCount}/${f.archiveTotalCount}`
+  if (!f || f.archiveFilledCount == null || f.archiveTotalCount == null) return '健康档案字段'
+  return `健康档案已填 ${f.archiveFilledCount}/${f.archiveTotalCount}`
+})
+
+/** 首诊阶段是否已走完（与顶栏 SOP 打勾对齐） */
+function isIntakeStageDone(f: Focus) {
+  if (f.intakeSubmitted) return true
+  const stages = f.serviceStages || []
+  const intake = stages.find((s) => (s.code || '').toUpperCase() === 'INTAKE')
+  if (intake && (intake.status || '').toLowerCase() === 'done') return true
+  const intakeIdx = stages.findIndex((s) => (s.code || '').toUpperCase() === 'INTAKE')
+  return intakeIdx >= 0 && f.serviceStageIndex != null && f.serviceStageIndex > intakeIdx
+}
+
+/**
+ * 首诊评估完成度：阶段已结束 → 显示 100%（与 SOP 一致）；
+ * 问卷实填不足时用小字说明「快速版已完成，深度档案待补充」。
+ */
+const intakeCompleteness = computed(() => {
+  const f = focus.value
+  if (!f) return { tone: '', label: '—', bar: 0, hint: '首诊评估问卷', note: '' }
+  const pct = f.intakeCompletenessPercent
+  const filled = f.intakeFilledCount
+  const total = f.intakeTotalCount
+  const stageDone = isIntakeStageDone(f)
+  if (stageDone) {
+    const thin = pct != null && pct < 100
+    return {
+      tone: 'good',
+      label: '100%',
+      bar: 100,
+      hint:
+        filled != null && total != null
+          ? `首诊问卷已填 ${filled}/${total} · 已办结`
+          : '首诊评估已办结',
+      note: thin ? '首诊快速版已完成，深度档案待补充' : '',
+    }
+  }
+  if (pct == null || total == null || total <= 0) {
+    return { tone: '', label: '—', bar: 0, hint: '暂无首诊问卷进度', note: '' }
+  }
+  const tone = pct >= 80 ? 'good' : pct >= 50 ? 'fair' : 'poor'
+  const hint =
+    filled != null
+      ? `首诊问卷已填 ${filled}/${total}${f.intakeSubmitted ? ' · 已提交' : ' · 草稿'}`
+      : '首诊评估问卷填写完整度'
+  return { tone, label: `${pct}%`, bar: pct, hint, note: '' }
 })
 const assessmentTags = computed(() => focus.value?.assessmentTags || [])
 /** 档案几乎空白且无评估结果时，不展示「空标签」误导，明示待评估 */
@@ -1522,12 +1803,16 @@ function hasPlanRate(card: Pick<PriorityCard, 'planRate7d' | 'careTeamId' | 'bad
 
 function ageFromBirthday(birthday?: string) {
   if (!birthday) return null
-  const b = new Date(birthday)
+  const iso = String(birthday).trim().slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso < '1900-01-01') return null
+  const b = new Date(`${iso}T00:00:00`)
   if (Number.isNaN(b.getTime())) return null
   const now = new Date()
   let age = now.getFullYear() - b.getFullYear()
   const md = now.getMonth() - b.getMonth()
   if (md < 0 || (md === 0 && now.getDate() < b.getDate())) age -= 1
+  // 档案脏生日（如 1875）不再显示成 151 岁
+  if (age < 0 || age > 120) return null
   return age
 }
 
@@ -1548,11 +1833,80 @@ function isUnassignedCard(card: Pick<PriorityCard, 'careTeamId' | 'badges'>) {
  * 临床风险只认 riskLevel；待办类型（首诊/随访等）不得冒充「中风险」。
  * 未分组时一律「待分组」，禁止与「待首诊」并存误导。
  */
+function cardHasTask(card: PriorityCard, code: string, label?: string) {
+  const want = code.toUpperCase()
+  if ((card.taskTypes || []).some((t) => String(t || '').toUpperCase() === want)) return true
+  if ((card.badges || []).some((b) => String(b || '').toUpperCase() === want)) return true
+  if (label && (card.taskTypeLabels || []).includes(label)) return true
+  return false
+}
+
+type CardNodeAction = 'assess' | 'plan' | 'plan-review' | 'report' | 'intake'
+
+/**
+ * 左栏节点角标：可点击的下一步，优先于笼统「AI 草稿 / 待办 N」。
+ */
+function cardNodeBadge(
+  card: PriorityCard,
+): { text: string; tone: string; action?: CardNodeAction } | null {
+  if (isUnassignedCard(card)) return null
+  if (cardHasTask(card, 'ASSESSMENT_ESCALATION', '评估升级') || cardHasTask(card, 'ASSESSMENT_SUSPECTED')) {
+    return { text: '点击确认风险', tone: 'cta-danger', action: 'assess' }
+  }
+  if (cardHasTask(card, 'PLAN_CREATE', '制定方案')) {
+    return { text: '点击生成方案', tone: 'cta', action: 'plan' }
+  }
+  if (cardHasTask(card, 'PLAN_REVIEW')) {
+    return { text: '点击审阅方案', tone: 'cta', action: 'plan-review' }
+  }
+  if (cardHasTask(card, 'REPORT_REVIEW')) {
+    return { text: '点击审阅报告', tone: 'cta', action: 'report' }
+  }
+  // 无待办任务时，用方案阶段角标引导，避免掉进「待评估」
+  if ((card.badges || []).includes('PLAN_IN_PROGRESS')) {
+    return { text: '点击确认方案', tone: 'cta', action: 'plan-review' }
+  }
+  if ((card.badges || []).includes('PLAN_DRAFT')) {
+    return { text: '点击完善方案', tone: 'cta', action: 'plan' }
+  }
+  if (cardHasTask(card, 'ONBOARDING', '首诊') || (card.badges || []).includes('ONBOARDING')) {
+    return { text: '点击开始首诊', tone: 'cta-mid', action: 'intake' }
+  }
+  return null
+}
+
+async function onCardNodeAction(ev: Event, card: PriorityCard) {
+  ev.stopPropagation()
+  ev.preventDefault()
+  const node = cardNodeBadge(card)
+  if (!node?.action) return
+  await selectPatient(card.peopleId, {
+    autoAsk: false,
+    reason: card.topReason || node.text,
+  })
+  if (node.action === 'plan' || node.action === 'plan-review') {
+    goCarePlan()
+    return
+  }
+  if (node.action === 'assess') {
+    goAssessments()
+    return
+  }
+  if (node.action === 'report') {
+    goReports()
+    return
+  }
+  if (node.action === 'intake') {
+    beginIntake(card.peopleId)
+  }
+}
+
 function riskBadge(card: PriorityCard) {
   const level = (card.riskLevel || '').toUpperCase()
   const badges = card.badges || []
-  if (badges.includes('PLAN_CREATE') || badges.includes('PLAN_REVIEW') || badges.includes('REPORT_REVIEW')) {
-    return { text: 'AI 草稿', tone: 'ai' }
+  const node = cardNodeBadge(card)
+  if (node) {
+    return { text: node.text, tone: node.tone }
   }
   if (level === 'HIGH') {
     return { text: '高风险', tone: 'high' }
@@ -1583,6 +1937,16 @@ function riskBadge(card: PriorityCard) {
   if ((card.openTaskCount || 0) > 0) {
     return { text: '待跟进', tone: 'muted' }
   }
+  // 方案阶段：有方案/草稿时绝不能再兜底「待评估」
+  if (badges.includes('PLAN_ACTIVE')) {
+    return { text: '日常跟进', tone: 'muted' }
+  }
+  if (badges.includes('PLAN_IN_PROGRESS')) {
+    return { text: '方案确认中', tone: 'mid' }
+  }
+  if (badges.includes('PLAN_DRAFT')) {
+    return { text: '方案草稿', tone: 'mid' }
+  }
   return { text: '待评估', tone: 'low' }
 }
 
@@ -1607,7 +1971,8 @@ const draftTaskCount = computed(() => todoTasks.value.filter(isDraftTask).length
 /** 优先展示中文任务标签，否则回退类型码 / 相关 badge */
 function cardMeta(card: PriorityCard) {
   const parts: string[] = []
-  if (card.age != null) parts.push(`${card.age}岁`)
+  // 与 ageFromBirthday 一致：离谱年龄不展示，避免 151 岁吓人
+  if (card.age != null && card.age >= 0 && card.age <= 120) parts.push(`${card.age}岁`)
   if (card.diseaseLabels?.length) parts.push(card.diseaseLabels.slice(0, 2).join('/'))
   return parts.join(' · ')
 }
@@ -1615,6 +1980,8 @@ function cardMeta(card: PriorityCard) {
 function cardTags(card: PriorityCard) {
   // 未分组：右上角角标已是「待分组」，不再叠一层同义标签 / 待首诊
   if (isUnassignedCard(card)) return []
+  // 已有节点角标（风险待确认 / 方案待生成）时，底下不再堆「评估升级、制定方案」
+  if (cardNodeBadge(card)) return []
 
   const labels = card.taskTypeLabels || []
   if (labels.length) return labels.slice(0, 4)
@@ -1647,15 +2014,23 @@ function cardTags(card: PriorityCard) {
   if ((card.badges || []).includes('WATCHED') && !tags.includes('重点关注')) {
     tags.unshift('重点关注')
   }
-  // 新档尚无任务标签时，补一条弱提示，避免卡片信息空白
+  // 新档尚无任务标签时：有任何方案阶段角标不再写「未评估」；真正空白才提示
   if (!tags.length) {
+    const b = card.badges || []
+    if (b.includes('PLAN_ACTIVE') || b.includes('PLAN_IN_PROGRESS') || b.includes('PLAN_DRAFT')) {
+      return []
+    }
     return ['未评估']
   }
-  // 右上角状态已表达跟进/首诊，底下不再重复「首诊」
+  // 右上角状态已表达跟进/首诊/方案阶段，底下不再重复「首诊」
   const status = riskBadge(card).text
   const deduped =
-    status === '待跟进' || status === '待首诊'
-      ? tags.filter((t) => t !== '首诊' && t !== '待首诊' && t !== 'ONBOARDING')
+    status === '待跟进' ||
+    status === '待首诊' ||
+    status === '日常跟进' ||
+    status === '方案确认中' ||
+    status === '方案草稿'
+      ? tags.filter((t) => t !== '首诊' && t !== '待首诊' && t !== 'ONBOARDING' && t !== '日常跟进')
       : tags
   return deduped.slice(0, 3)
 }
@@ -1723,15 +2098,30 @@ function footerNote(card: PriorityCard) {
     return ''
   }
   const reason = card.topReason?.trim()
+  // 节点角标已点明卡点，底下不再重复「制定方案 / 评估升级」
+  if (cardNodeBadge(card)) {
+    if (
+      !reason ||
+      reason === '制定方案' ||
+      reason === '待制定方案' ||
+      reason === '评估升级' ||
+      reason === '首诊' ||
+      reason === '待首诊' ||
+      reason === '主责患者' ||
+      reason === card.careTeamName
+    ) {
+      return ''
+    }
+  }
   // 「我的患者」已按健管组分组，不再重复「主责患者 / 组名」
   if (tab.value === 'mine') {
     if (!reason || reason === '主责患者' || reason === card.careTeamName || reason === '待分配健管组') {
       return ''
     }
   }
-  if (reason === '首诊' || reason === '待首诊') {
+  if (reason === '首诊' || reason === '待首诊' || reason === '日常跟进') {
     const status = riskBadge(card).text
-    if (status === '待跟进' || status === '待首诊') return ''
+    if (status === '待跟进' || status === '待首诊' || status === '日常跟进') return ''
   }
   if (reason) return reason
   const b = card.badges || []
@@ -1741,10 +2131,11 @@ function footerNote(card: PriorityCard) {
   return '需关注'
 }
 
-/** 流程态角标（待分组/待首诊）不再内嵌圆点，避免与文字挤成「● 待分组」两处观感 */
+/** 流程态角标（待分组/待首诊）不再内嵌圆点；可点 CTA 也不带圆点 */
 function riskBadgeShowDot(card: PriorityCard) {
+  if (cardNodeBadge(card)?.action) return false
   const t = riskBadge(card).text
-  return t !== '待分组' && t !== '待首诊' && t !== '待评估' && t !== '待跟进'
+  return t !== '待分组' && t !== '待首诊' && t !== '待评估' && t !== '待跟进' && t !== '日常跟进'
 }
 
 function priorityLabel(p?: string) {
@@ -1755,6 +2146,11 @@ function priorityLabel(p?: string) {
 }
 
 function taskMeta(card: PriorityCard) {
+  // 已有清晰节点角标时，不再叠「中优 · 待办 2」
+  if (cardNodeBadge(card)) {
+    const overdue = card.overdueTaskCount ?? 0
+    return overdue > 0 ? `超期 ${overdue}` : ''
+  }
   const open = card.openTaskCount ?? 0
   const overdue = card.overdueTaskCount ?? 0
   const pri = priorityLabel(card.maxTaskPriority)
@@ -2697,27 +3093,27 @@ function resolveFocusNextStep(f: Focus): { content: string; actions: AgentAction
     return {
       content: `正在为「${name}」服务。当前环节「日常跟进」，有待办「${label}」${topTask.overdue ? '（已超期）' : ''}，可先处理。`,
       actions: [
+        { type: 'OPEN_SHEET', path: 'followups', label: '立即创建首次随访', peopleId: pid },
         {
           type: 'TRIGGER_CAPABILITY',
           path: 'GENERAL_CHAT',
           label: `请根据「${label}」待办，写一段给「${name}」的随访话术`,
           peopleId: pid,
         },
-        { type: 'OPEN_SHEET', path: 'followups', label: '录入随访记录', peopleId: pid },
       ],
     }
   }
 
   return {
-    content: `正在为「${name}」服务。当前环节「${f.serviceStageLabel || '日常跟进'}」。可继续跟进，或让我帮你写回访话术。`,
+    content: `正在为「${name}」服务。当前环节「${f.serviceStageLabel || '日常跟进'}」。建议先创建首次随访，把方案落地动作对齐。`,
     actions: [
+      { type: 'OPEN_SHEET', path: 'followups', label: '立即创建首次随访', peopleId: pid },
       {
         type: 'TRIGGER_CAPABILITY',
         path: 'GENERAL_CHAT',
         label: `请帮我写一段给「${name}」的回访话术`,
         peopleId: pid,
       },
-      { type: 'OPEN_SHEET', path: 'archive', label: '打开档案', peopleId: pid },
     ],
   }
 }
@@ -3758,7 +4154,9 @@ function actionChipLabel(label?: string | null) {
     .replace(/[（(]\d+[）)]\s*$/, '')
     .split('·')[0]
     .trim()
-  if (/^审阅管理报告/.test(head) || head === '打开报告审阅' || head === '审阅报告') {
+  if (head === '继续闲聊' || head === '关闭预览，继续对话') {
+    head = '关闭预览，继续对话'
+  } else if (/^审阅管理报告/.test(head) || head === '打开报告审阅' || head === '审阅报告') {
     head = '审阅报告'
   } else if (head === '使用点评草稿审阅') head = '使用点评审阅'
   else if (/^处理方案待办/.test(head) || head === '处理方案') head = '处理方案'
@@ -3776,20 +4174,102 @@ function actionChipLabel(label?: string | null) {
       .replace(/「([^」]*)」/g, '（$1）')
       .replace(/\s+/g, ' ')
       .trim()
+  } else if (/^立即创建首次随访/.test(head)) {
+    head = '立即创建首次随访'
   } else if (/^为.+健管服务$/.test(head)) {
     // 切入客户会话：保留全文（姓名一般很短）
-  } else if (/^查看(.+)档案$/.test(head)) {
-    head = `为${RegExp.$1}健管服务`
+  } else if (/^查看(.+)档案$/.test(head) || /^(打开该患者|打开患者|查看档案|打开档案)$/.test(head)) {
+    // 档案入口保持原意，避免误写成含糊的「为TA健管服务」
+    head = '打开档案'
   } else if (/^打开「([^」]+)」$/.test(head)) {
-    head = `为${RegExp.$1}健管服务`
-  } else if (/^(打开该患者|打开患者|查看档案)$/.test(head)) {
-    head = '为TA健管服务'
+    head = `打开${RegExp.$1}`
   } else {
     // 仅办结类长文案去书名号；其它按钮保留原文
     head = head.replace(/\s+/g, ' ').trim()
   }
   const withCount = `${head}${countSuffix}`
   return withCount.length > 16 ? `${withCount.slice(0, 15)}…` : withCount
+}
+
+type StepCta = {
+  action: AgentAction
+  primary: boolean
+  title: string
+  hint?: string
+}
+
+function isAssessEscalationAction(a: AgentAction) {
+  const label = String(a.label || '')
+  if ((a.path === 'ACK_TASK' || a.path === 'COMPLETE_TASK') && /评估升级|高危/.test(label)) return true
+  if (a.type === 'OPEN_SHEET' && a.path === 'assessments' && /评估/.test(label)) return true
+  return false
+}
+
+function isPlanCreateAction(a: AgentAction) {
+  if (a.type === 'OPEN_SHEET' && a.path === 'care-plan') return true
+  return /处理方案/.test(String(a.label || ''))
+}
+
+/** 仅「评估升级 + 制定方案」双步用大按钮；单独制定方案走胶囊芯片，风格与其它气泡动作一致 */
+function heroActions(actions: AgentAction[]): StepCta[] | null {
+  const list = displayActions(actions)
+  const assessAck = list.find(
+    (a) =>
+      (a.path === 'ACK_TASK' || a.path === 'COMPLETE_TASK') &&
+      /评估升级|高危|确认办结「评估/.test(String(a.label || '')),
+  )
+  const assessView = list.find((a) => a.type === 'OPEN_SHEET' && a.path === 'assessments')
+  const plan = list.find((a) => isPlanCreateAction(a))
+  const step1 = assessAck || assessView
+  if (step1 && plan) {
+    return [
+      {
+        action: step1,
+        primary: true,
+        title: '第一步：去完成高危评估',
+      },
+      {
+        action: plan,
+        primary: false,
+        title: '第二步：去制定方案',
+        hint: '需先完成评估',
+      },
+    ]
+  }
+  return null
+}
+
+function isHeroActions(actions: AgentAction[]) {
+  return !!heroActions(actions)
+}
+
+function restAfterHero(actions: AgentAction[]) {
+  const steps = heroActions(actions)
+  if (!steps) return displayActions(actions)
+  const used = new Set(steps.map((s) => s.action))
+  return displayActions(actions).filter((a) => {
+    if (used.has(a)) return false
+    if (isAssessEscalationAction(a) || isPlanCreateAction(a)) return false
+    return true
+  })
+}
+
+function visibleHeroActions(actions: AgentAction[]) {
+  return heroActions(actions) || []
+}
+
+/** 已有方案卡片时，编辑入口留给卡片主按钮，气泡不再重复「制定/编辑方案」 */
+function bubbleActions(msg: ChatMessage) {
+  const acts = visibleActions(msg)
+  if (!msg.carePlanPreview) return acts
+  return acts.filter((a) => !isCarePlanChatAction(a))
+}
+
+function bubbleHasVisibleActions(msg: ChatMessage) {
+  const acts = bubbleActions(msg)
+  if (!acts.length) return false
+  if (!isHeroActions(acts)) return true
+  return visibleHeroActions(acts).length + restAfterHero(acts).length > 0
 }
 
 async function sendMessage(
@@ -3867,6 +4347,8 @@ async function sendMessage(
   const ac = new AbortController()
   chatAbort = ac
   sending.value = true
+  const startAsCarePlan =
+    effectiveHint === 'CARE_PLAN' || stickyCapability.value === 'CARE_PLAN'
   messages.value.push({
     role: 'assistant',
     content: '',
@@ -3876,6 +4358,7 @@ async function sendMessage(
     at: nowClock(),
     activity: [],
     elapsedMs: null,
+    planGenerating: startAsCarePlan,
   })
   /** 必须取 push 后的响应式代理；改原始对象会导致流式 UI 不刷新 */
   const assistantRow = messages.value[messages.value.length - 1]!
@@ -3900,6 +4383,20 @@ async function sendMessage(
     messages.value.includes(assistantRow) &&
     (boundPeopleId ? focusPeopleId.value === boundPeopleId : !focusPeopleId.value)
 
+  /** 流式缓冲：勿每个 token 写 reactive，否则长文一卡一卡 */
+  let rawBuf = ''
+  const markPlanGenerating = () => {
+    const row = rowAt()
+    row.planGenerating = true
+  }
+  const paintStreamText = () => {
+    if (!stillBound()) return
+    const row = rowAt()
+    row.rawStream = rawBuf
+    // 方案生成也刷模型流，避免只剩步骤清单时看起来像卡住
+    row.streamContent = visibleAnswerFromRawStream(rawBuf)
+  }
+
   try {
     await postSse('/api/b/v1/agent/chat/stream', body, {
       signal: ac.signal,
@@ -3908,43 +4405,47 @@ async function sendMessage(
         const row = rowAt()
         if (!row.activity) row.activity = []
         appendProgress(row.activity, msg)
-        void scrollToBottom()
+        scheduleStreamUi()
       },
       onTool: (event) => {
         if (!stillBound()) return
         const row = rowAt()
         if (!row.activity) row.activity = []
         appendTool(row.activity, event)
-        void scrollToBottom()
+        scheduleStreamUi()
       },
       onSkill: (event) => {
         if (!stillBound()) return
         const row = rowAt()
         if (!row.activity) row.activity = []
         appendSkill(row.activity, event)
-        void scrollToBottom()
+        if (
+          /方案|CARE_PLAN|care.?plan|管理方案/i.test(`${event.name || ''} ${event.detail || ''}`)
+        ) {
+          markPlanGenerating()
+        }
+        scheduleStreamUi()
       },
       onThinking: (event) => {
         if (!stillBound()) return
         const row = rowAt()
         if (!row.activity) row.activity = []
         appendThinking(row.activity, event)
-        void scrollToBottom()
+        scheduleStreamUi()
       },
       onToken: (token) => {
         if (!stillBound()) return
-        const row = rowAt()
-        const raw = (row.rawStream || '') + token
-        // 方案 JSON 原始流不进气泡
-        if (!row.streamContent && /^\s*\{/.test(raw) && /"summary"\s*:/.test(raw)) {
-          row.rawStream = raw
-          return
+        rawBuf += token
+        if (
+          (/^\s*\{/.test(rawBuf) && /"summary"\s*:/.test(rawBuf)) ||
+          /(?:^|\n)(运动方案|饮食方案|执行计划|方案总结|阶段目标)\n/.test(rawBuf)
+        ) {
+          markPlanGenerating()
         }
-        row.rawStream = raw
-        row.streamContent = visibleAnswerFromRawStream(raw)
-        void scrollToBottom()
+        scheduleStreamUi(paintStreamText)
       },
       onResult: (payload) => {
+        flushStreamUi()
         const data = payload as {
           sessionId?: string
           reply?: string
@@ -3954,7 +4455,12 @@ async function sendMessage(
           extracted?: unknown
         }
         const row = rowAt()
-        const streamed = (row.streamContent || '').trim()
+        // 用缓冲取最终可见文，避免先 paint 再清空造成中间文闪现
+        const streamed = (
+          visibleAnswerFromRawStream(rawBuf) ||
+          row.streamContent ||
+          ''
+        ).trim()
         if (
           data.capability === 'CARE_PLAN' ||
           data.capability === 'REPORT_SUMMARY' ||
@@ -3988,6 +4494,7 @@ async function sendMessage(
         }
         row.streamContent = ''
         row.rawStream = ''
+        rawBuf = ''
         row.intent = data.intent || row.intent
         row.actions =
           data.capability === 'CARE_PLAN'
@@ -4017,6 +4524,9 @@ async function sendMessage(
         }
         if (stillBound() && data.capability === 'CARE_PLAN' && data.extracted) {
           applyCarePlanPreview(row, data.extracted, data.intent === 'CARE_PLAN_REVISE')
+          row.planGenerating = false
+        } else if (data.capability === 'CARE_PLAN') {
+          row.planGenerating = false
         }
         // 缺信息：自动打开建档抽屉；按钮保持可点，关掉抽屉后还能再打开
         if (stillBound() && data.capability === 'CREATE_ARCHIVE' && data.intent === 'CREATE_ARCHIVE_NEED_INFO') {
@@ -4127,6 +4637,7 @@ async function sendMessage(
         }
       },
       onDone: (meta) => {
+        flushStreamUi()
         if (!stillBound()) {
           if (!boundPeopleId) mergeAssistantIntoOrgCache(assistantRow)
           return
@@ -4135,16 +4646,29 @@ async function sendMessage(
         row.streaming = false
         finishAllActivity(row.activity)
         if (meta?.elapsedMs != null) row.elapsedMs = meta.elapsedMs
-        // 只有进度没有正文时给兜底，避免留下空白助手气泡
-        if (!(row.content || '').trim() && !(row.streamContent || '').trim()) {
-          row.content = '暂时没有生成有效回复，请再试一次。'
-        } else if (!(row.content || '').trim() && (row.streamContent || '').trim()) {
+        // 方案/报告卡已落地：勿再把 rawBuf 刷回 streamContent，否则会盖住状态行
+        if (row.carePlanPreview || row.reportReview) {
+          row.streamContent = ''
+          row.rawStream = ''
+          rawBuf = ''
+        } else if (!(row.content || '').trim() && !(row.streamContent || '').trim()) {
+          // 只有进度没有正文时给兜底，避免留下空白助手气泡
+          if (rawBuf.trim()) {
+            paintStreamText()
+          }
+          if (!(row.content || '').trim() && !(row.streamContent || '').trim()) {
+            row.content = '暂时没有生成有效回复，请再试一次。'
+          }
+        }
+        if (!(row.content || '').trim() && (row.streamContent || '').trim()) {
           row.content = row.streamContent || ''
           row.streamContent = ''
         }
         cacheActiveSession()
+        scheduleStreamUi(undefined, { forceScroll: true })
       },
       onError: (msg) => {
+        flushStreamUi()
         if (!stillBound()) return
         if (effectiveHint === 'CHAT_EXTRACT') {
           removeMessagePair(userRow, rowAt())
@@ -4161,6 +4685,8 @@ async function sendMessage(
       },
     })
   } catch (e) {
+    flushStreamUi()
+    paintStreamText()
     if (isAbortError(e)) {
       assistantRow.streaming = false
       finishAllActivity(assistantRow.activity)
@@ -4180,6 +4706,7 @@ async function sendMessage(
       ElMessage.error(e instanceof Error ? e.message : '发送失败')
     }
   } finally {
+    flushStreamUi()
     const superseded = chatAbort !== ac
     if (!superseded) chatAbort = null
     if (!superseded) {
@@ -5176,7 +5703,7 @@ function pushIntakeDone(brief: {
   const peopleId = focusPeopleId.value || undefined
   messages.value.push({
     role: 'assistant',
-    content: `太棒了！${name}的首诊已提交，档案完整度 ${pct}%。\n${because}可以现在生成一份${pitch}。要生成吗？`,
+    content: `太棒了！${name}的首诊已提交，首诊评估问卷完整度 ${pct}%。\n${because}可以现在生成一份${pitch}。要生成吗？`,
     intent: 'INTAKE_DONE',
     at: nowClock(),
     actions: [
@@ -5280,6 +5807,35 @@ async function scrollToBottom() {
 function goArchive() {
   openSheet('archive')
 }
+
+const intakeDetailOpen = ref(false)
+const intakeDetailResponseId = ref('')
+const intakeDetailLoading = ref(false)
+
+/** 只读查看已提交首诊答卷（叠层抽屉，不打断方案编辑） */
+async function openIntakeDetail() {
+  const id = focusPeopleId.value || sheetPeopleId.value
+  if (!id) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  intakeDetailLoading.value = true
+  try {
+    const st = await getIntakeStatus(id)
+    const rid = st.latestSubmittedId
+    if (!rid) {
+      ElMessage.info('暂无已提交的首诊答卷')
+      return
+    }
+    intakeDetailResponseId.value = rid
+    intakeDetailOpen.value = true
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '无法打开首诊问卷')
+  } finally {
+    intakeDetailLoading.value = false
+  }
+}
+
 /** 右侧快捷办理：当前患者首诊。直接拉开问卷，不经过随访类型下拉。 */
 function goIntakeQuick() {
   const id = focusPeopleId.value
@@ -5459,6 +6015,36 @@ function onIntakeCheckpoint(payload: { text: string }) {
   if (!text) return
   liveIntakeCheckpoint.value = text
   upsertIntakeCheckin(text)
+}
+
+/** 首诊草稿改了生日/姓名时，左侧焦点卡立刻跟草稿走，避免仍显示档案脏年龄 */
+function onIntakeProfileDraft(payload: { displayName?: string; gender?: string; birthday?: string }) {
+  const f = focus.value
+  if (!f) return
+  const next = { ...f }
+  if (payload.displayName) next.displayName = payload.displayName
+  if (payload.gender) next.gender = payload.gender
+  if (payload.birthday && payload.birthday >= '1900-01-01') {
+    next.birthday = payload.birthday
+    const age = ageFromBirthday(payload.birthday)
+    if (age != null) next.age = age
+  } else if (payload.birthday === '' || (payload.birthday && payload.birthday < '1900-01-01')) {
+    next.birthday = undefined
+    next.age = undefined
+  }
+  focus.value = next
+  const pid = (sheetPeopleId.value || focusPeopleId.value || '').trim()
+  if (!pid) return
+  const patchCard = (card: PriorityCard) => {
+    if (card.peopleId !== pid) return
+    if (payload.displayName) card.displayName = payload.displayName
+    if (next.age != null) card.age = next.age
+    else if (payload.birthday !== undefined) card.age = undefined
+  }
+  for (const card of cards.value) patchCard(card)
+  for (const g of minePatientGroups.value) {
+    for (const card of g.cards) patchCard(card)
+  }
 }
 
 /** 会话记录拉回来时，用问卷上正在显示的完整度盖掉历史气泡里的旧百分比。 */
@@ -5649,6 +6235,8 @@ function applyReportReview(msg: ChatMessage, extracted: unknown) {
   if (!preview) return
   msg.reportReview = preview
   msg.content = reportStatusLine(preview)
+  msg.streamContent = ''
+  msg.rawStream = ''
 }
 
 function applyCarePlanPreview(msg: ChatMessage, extracted: unknown, revised = false) {
@@ -5656,6 +6244,8 @@ function applyCarePlanPreview(msg: ChatMessage, extracted: unknown, revised = fa
   if (!preview) return
   msg.carePlanPreview = preview
   msg.content = carePlanStatusLine(preview, revised)
+  msg.streamContent = ''
+  msg.rawStream = ''
 }
 
 function applyOcrExtracted(
@@ -5808,10 +6398,15 @@ function messageHtml(msg: {
   role: ChatMessage['role']
   content?: string
   streamContent?: string
+  streaming?: boolean
 }) {
   const raw = msg.streamContent || msg.content || ''
   // 用户/系统气泡不做分节排版，避免深色正文样式盖掉白字
   if (msg.role === 'user' || msg.role === 'system') {
+    return escapePlainHtml(raw)
+  }
+  // 流式中只用轻量转义：避免每帧跑完整分节 HTML 造成卡顿
+  if (msg.streaming && msg.streamContent) {
     return escapePlainHtml(raw)
   }
   return formatAssistantPlainHtml(raw)
@@ -6262,8 +6857,11 @@ onUnmounted(() => {
                   </button>
                 </div>
                 <div
-                  v-for="c in g.cards"
                   v-show="!isMineTeamCollapsed(g.careTeamId)"
+                  class="team-group-body"
+                >
+                <div
+                  v-for="c in g.cards"
                   :key="c.peopleId"
                   class="person-card"
                   :class="{ active: focusPeopleId === c.peopleId }"
@@ -6294,7 +6892,19 @@ onUnmounted(() => {
                     >{{ priorityLabel(c.maxTaskPriority) }}</span>
                     <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
                     <span
-                      v-if="!overdueIntakeHeadline(c)"
+                      v-if="!overdueIntakeHeadline(c) && cardNodeBadge(c)?.action"
+                      role="button"
+                      tabindex="0"
+                      class="risk risk-cta"
+                      :class="cardNodeBadge(c)!.tone"
+                      :title="cardNodeBadge(c)!.text"
+                      @click="onCardNodeAction($event, c)"
+                      @keydown.enter.prevent="onCardNodeAction($event, c)"
+                    >
+                      {{ cardNodeBadge(c)!.text }}
+                    </span>
+                    <span
+                      v-else-if="!overdueIntakeHeadline(c)"
                       class="risk"
                       :class="[riskBadge(c).tone, { plain: !riskBadgeShowDot(c) }]"
                     >
@@ -6374,7 +6984,6 @@ onUnmounted(() => {
                 </div>
                 <div
                   v-if="!g.cards.length && !isUnassignedMineGroup(g)"
-                  v-show="!isMineTeamCollapsed(g.careTeamId)"
                   class="team-group-empty"
                 >
                   <span>本组暂无患者</span>
@@ -6392,6 +7001,7 @@ onUnmounted(() => {
                     + 添加
                   </button>
                   <span v-else class="team-group-empty-hint">请在右侧表单填写</span>
+                </div>
                 </div>
               </section>
             </template>
@@ -6421,7 +7031,19 @@ onUnmounted(() => {
                   >{{ priorityLabel(c.maxTaskPriority) }}</span>
                   <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
                   <span
-                    v-if="!overdueIntakeHeadline(c)"
+                    v-if="!overdueIntakeHeadline(c) && cardNodeBadge(c)?.action"
+                    role="button"
+                    tabindex="0"
+                    class="risk risk-cta"
+                    :class="cardNodeBadge(c)!.tone"
+                    :title="cardNodeBadge(c)!.text"
+                    @click="onCardNodeAction($event, c)"
+                    @keydown.enter.prevent="onCardNodeAction($event, c)"
+                  >
+                    {{ cardNodeBadge(c)!.text }}
+                  </span>
+                  <span
+                    v-else-if="!overdueIntakeHeadline(c)"
                     class="risk"
                     :class="[riskBadge(c).tone, { plain: !riskBadgeShowDot(c) }]"
                   >
@@ -6572,11 +7194,17 @@ onUnmounted(() => {
             <span class="sf-caption">服务进度</span>
             <div class="sf-track" role="list">
               <template v-for="(step, si) in serviceFlowSteps" :key="step.code">
-                <span
+                <button
+                  type="button"
                   class="sf-step"
                   :class="step.status"
                   role="listitem"
-                  :title="step.label"
+                  :title="
+                    step.completedAt
+                      ? `${step.label} · ${formatServiceStageTime(step.completedAt)}`
+                      : step.label
+                  "
+                  @click="onServiceStageClick(step)"
                 >
                   <i class="sf-mark" aria-hidden="true">
                     <svg
@@ -6588,10 +7216,19 @@ onUnmounted(() => {
                     >
                       <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
+                    <svg
+                      v-else-if="step.status === 'broken'"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M4 4 12 12M12 4 4 12" stroke-linecap="round" />
+                    </svg>
                     <span v-else class="sf-dot" />
                   </i>
                   <em class="sf-label">{{ step.label }}</em>
-                </span>
+                </button>
                 <span
                   v-if="si < serviceFlowSteps.length - 1"
                   class="sf-sep"
@@ -6716,9 +7353,22 @@ onUnmounted(() => {
               >
                 <span /><span /><span />
               </div>
-              <AgentActivityPanel
+              <CarePlanThinkStream
                 v-if="
-                  !isLightChatIntent(msg.intent) && (msg.activity?.length || msg.elapsedMs)
+                  msg.streaming &&
+                  msg.planGenerating &&
+                  !msg.carePlanPreview &&
+                  !(msg.streamContent || msg.content)
+                "
+                :items="msg.activity || []"
+                :streaming="true"
+                :patient-name="focus?.displayName"
+              />
+              <AgentActivityPanel
+                v-else-if="
+                  !isLightChatIntent(msg.intent) &&
+                  !(msg.streaming && msg.planGenerating) &&
+                  (msg.activity?.length || msg.elapsedMs)
                 "
                 :items="msg.activity || []"
                 :streaming="msg.streaming"
@@ -6727,8 +7377,9 @@ onUnmounted(() => {
               />
               <div
                 v-if="
-                  msg.streamContent ||
-                  (msg.content && !msg.reportReview && !msg.carePlanPreview)
+                  !msg.reportReview &&
+                  !msg.carePlanPreview &&
+                  (msg.streamContent || msg.content)
                 "
                 class="bubble-text md-body"
                 :class="{ 'stream-live': !!(msg.streamContent && msg.streaming) }"
@@ -6741,7 +7392,11 @@ onUnmounted(() => {
                 {{ msg.content }}
               </div>
               <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
-              <AgentCarePlanCard v-if="msg.carePlanPreview" :preview="msg.carePlanPreview" />
+              <AgentCarePlanCard
+                v-if="msg.carePlanPreview"
+                :preview="msg.carePlanPreview"
+                @open="goCarePlan"
+              />
               <button
                 v-if="msg.imageUrl"
                 type="button"
@@ -6770,48 +7425,111 @@ onUnmounted(() => {
                 @discarded="onExtractDiscarded"
               />
               <div
-                v-if="visibleActions(msg).length"
+                v-if="bubbleHasVisibleActions(msg)"
                 class="bubble-actions"
+                :class="{ stepped: visibleHeroActions(bubbleActions(msg)).length > 0 }"
               >
-                <button
-                  v-for="(a, ai) in shownActions(visibleActions(msg), 'thread', idx)"
-                  :key="ai"
-                  type="button"
-                  class="action-chip"
-                  :class="{
-                    primary: ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
-                    do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
-                    done: a.runState === 'done',
-                  }"
-                  :title="a.label"
-                  :disabled="a.runState === 'busy' || a.runState === 'done'"
-                  @click="runAction(a)"
-                >
-                  <span class="action-chip-text">
-                    <template v-if="a.runState === 'done'">✓ </template>{{
-                      a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
-                    }}
-                  </span>
-                </button>
-                <button
-                  v-if="hiddenActionCount(visibleActions(msg), 'thread', idx)"
-                  type="button"
-                  class="action-chip more"
-                  @click="toggleActionList('thread', idx)"
-                >
-                  展开其余 {{ hiddenActionCount(visibleActions(msg), 'thread', idx) }} 项
-                </button>
-                <button
-                  v-else-if="
-                    isActionListExpanded('thread', idx) &&
-                    displayActions(visibleActions(msg)).length > ACTION_CHIP_PREVIEW
-                  "
-                  type="button"
-                  class="action-chip more"
-                  @click="toggleActionList('thread', idx)"
-                >
-                  收起
-                </button>
+                <template v-if="isHeroActions(bubbleActions(msg))">
+                  <button
+                    v-for="(step, si) in visibleHeroActions(bubbleActions(msg))"
+                    :key="`step-${si}`"
+                    type="button"
+                    class="action-step"
+                    :class="{
+                      primary: step.primary,
+                      secondary: !step.primary,
+                      done: step.action.runState === 'done',
+                    }"
+                    :title="step.action.label"
+                    :disabled="step.action.runState === 'busy' || step.action.runState === 'done'"
+                    @click="runAction(step.action)"
+                  >
+                    <span class="action-step-title">
+                      <template v-if="step.action.runState === 'done'">✓ </template>
+                      {{
+                        step.action.runState === 'busy' ? '处理中…' : step.title
+                      }}
+                    </span>
+                    <span v-if="step.hint && step.action.runState !== 'done'" class="action-step-hint">{{
+                      step.hint
+                    }}</span>
+                  </button>
+                  <button
+                    v-for="(a, ai) in restAfterHero(bubbleActions(msg))"
+                    :key="`rest-${ai}`"
+                    type="button"
+                    class="action-chip"
+                    :class="{
+                      do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
+                      done: a.runState === 'done',
+                    }"
+                    :title="a.label"
+                    :disabled="a.runState === 'busy' || a.runState === 'done'"
+                    @click="runAction(a)"
+                  >
+                    <span class="action-chip-text">
+                      <template v-if="a.runState === 'done'">✓ </template>{{
+                        a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
+                      }}
+                    </span>
+                  </button>
+                </template>
+                <template v-else>
+                  <button
+                    v-for="(a, ai) in shownActions(bubbleActions(msg), 'thread', idx)"
+                    :key="ai"
+                    type="button"
+                    class="action-chip"
+                    :class="{
+                      quiet:
+                        !!msg.carePlanPreview &&
+                        a.type === 'TRIGGER_CAPABILITY' &&
+                        a.path === 'GENERAL_CHAT',
+                      primary:
+                        !(
+                          msg.carePlanPreview &&
+                          a.type === 'TRIGGER_CAPABILITY' &&
+                          a.path === 'GENERAL_CHAT'
+                        ) &&
+                        (ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'),
+                      do:
+                        !(
+                          msg.carePlanPreview &&
+                          a.type === 'TRIGGER_CAPABILITY' &&
+                          a.path === 'GENERAL_CHAT'
+                        ) && (a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'),
+                      done: a.runState === 'done',
+                    }"
+                    :title="a.label"
+                    :disabled="a.runState === 'busy' || a.runState === 'done'"
+                    @click="runAction(a)"
+                  >
+                    <span class="action-chip-text">
+                      <template v-if="a.runState === 'done'">✓ </template>{{
+                        a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
+                      }}
+                    </span>
+                  </button>
+                  <button
+                    v-if="hiddenActionCount(bubbleActions(msg), 'thread', idx)"
+                    type="button"
+                    class="action-chip more"
+                    @click="toggleActionList('thread', idx)"
+                  >
+                    展开其余 {{ hiddenActionCount(bubbleActions(msg), 'thread', idx) }} 项
+                  </button>
+                  <button
+                    v-else-if="
+                      isActionListExpanded('thread', idx) &&
+                      displayActions(bubbleActions(msg)).length > ACTION_CHIP_PREVIEW
+                    "
+                    type="button"
+                    class="action-chip more"
+                    @click="toggleActionList('thread', idx)"
+                  >
+                    收起
+                  </button>
+                </template>
               </div>
             </div>
           </div>
@@ -7024,6 +7742,7 @@ onUnmounted(() => {
           :start-module="sheetIntakeStartModule"
           @coach="onIntakeCoach"
           @checkpoint="onIntakeCheckpoint"
+          @profile-draft="onIntakeProfileDraft"
           @submitted="onIntakeSubmitted"
           @close="sheetOpen = false"
           @apply-extract="onApplyExtractFromForm"
@@ -7095,6 +7814,27 @@ onUnmounted(() => {
               <div class="focus-metrics">
                 <div
                   class="metric"
+                  :class="intakeCompleteness.tone"
+                  :title="intakeCompleteness.hint"
+                >
+                  <div class="metric-label">首诊评估完成度</div>
+                  <div class="metric-val">{{ intakeCompleteness.label }}</div>
+                  <div class="metric-bar" aria-hidden="true">
+                    <i :style="{ width: `${intakeCompleteness.bar}%` }" />
+                  </div>
+                  <p v-if="intakeCompleteness.note" class="metric-note">{{ intakeCompleteness.note }}</p>
+                  <button
+                    v-if="focus.intakeSubmitted"
+                    type="button"
+                    class="metric-link"
+                    :disabled="intakeDetailLoading"
+                    @click="openIntakeDetail"
+                  >
+                    查看首诊问卷
+                  </button>
+                </div>
+                <div
+                  class="metric"
                   :class="
                     archivePercent == null
                       ? ''
@@ -7106,7 +7846,7 @@ onUnmounted(() => {
                   "
                   :title="archiveHint"
                 >
-                  <div class="metric-label">档案完整度</div>
+                  <div class="metric-label">健康档案完整度</div>
                   <div class="metric-val">{{ archivePercentLabel }}</div>
                   <div class="metric-bar" aria-hidden="true">
                     <i :style="{ width: `${archivePercent ?? 0}%` }" />
@@ -7115,19 +7855,24 @@ onUnmounted(() => {
                 <div
                   class="metric"
                   :class="{
+                    pending: planRatePendingFirst,
                     poor: focus.planRate7d != null && focus.planRate7d < 0.7,
                     good: focus.planRate7d != null && focus.planRate7d >= 0.85,
                   }"
+                  :title="planRatePendingFirst ? '方案已生效，尚无打卡记录' : undefined"
                 >
                   <div class="metric-label">依从性</div>
                   <div
                     class="metric-val"
-                    :class="{ bad: focus.planRate7d != null && focus.planRate7d < 0.7 }"
+                    :class="{
+                      muted: planRatePendingFirst,
+                      bad: focus.planRate7d != null && focus.planRate7d < 0.7,
+                    }"
                   >
                     {{ planRateLabel }}
                   </div>
                   <div class="metric-bar" aria-hidden="true">
-                    <i :style="{ width: `${ratePct(focus.planRate7d)}%` }" />
+                    <i :style="{ width: planRatePendingFirst ? '0%' : `${ratePct(focus.planRate7d)}%` }" />
                   </div>
                 </div>
               </div>
@@ -7154,12 +7899,12 @@ onUnmounted(() => {
             </div>
 
             <div class="focus-mid">
-              <div class="section compact">
+              <div v-if="visiblePendingDrafts.length" class="section compact">
                 <div class="section-title">
                   待你确认
                   <span class="count">{{ pendingDraftCount }} 项</span>
                 </div>
-                <div v-if="visiblePendingDrafts.length" class="draft-list">
+                <div class="draft-list">
                   <button
                     v-for="d in visiblePendingDrafts"
                     :key="`${d.kind}-${d.id || d.title}`"
@@ -7199,15 +7944,14 @@ onUnmounted(() => {
                     <template v-else>···</template>
                   </button>
                 </div>
-                <p v-else class="empty-hint">暂无方案/报告待确认草稿</p>
               </div>
 
-              <div class="section compact">
+              <div v-if="visibleTodoTasks.length" class="section compact">
                 <div class="section-title">
                   工作台待办
                   <span class="count">{{ draftTaskCount || todoTasks.length }} 项</span>
                 </div>
-                <div v-if="visibleTodoTasks.length" class="draft-list">
+                <div class="draft-list">
                   <button
                     v-for="t in visibleTodoTasks"
                     :key="t.id"
@@ -7249,7 +7993,6 @@ onUnmounted(() => {
                     <template v-else>···</template>
                   </button>
                 </div>
-                <p v-else class="empty-hint">暂无待办任务</p>
               </div>
             </div>
 
@@ -7261,17 +8004,22 @@ onUnmounted(() => {
                   <template v-if="serviceFlowLabel"> · {{ serviceFlowLabel }}</template>
                 </span>
               </div>
-              <div class="quick-list">
+              <div class="quick-grid">
                 <button
                   v-for="qa in stageQuickActions"
                   :key="qa.key"
                   type="button"
-                  class="quick-btn"
+                  class="quick-tile"
                   :class="{ primary: qa.primary }"
+                  :title="qa.label"
                   @click="qa.run()"
                 >
-                  <span class="quick-label">{{ qa.label }}</span>
-                  <span class="quick-arrow" aria-hidden="true">›</span>
+                  <span class="quick-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path :d="quickActionIconPath(qa.icon)" />
+                    </svg>
+                  </span>
+                  <span class="quick-tile-label">{{ qa.shortLabel || qa.label }}</span>
                 </button>
               </div>
             </div>
@@ -7363,11 +8111,29 @@ onUnmounted(() => {
       :intake-purpose="sheetIntakePurpose"
       :intake-start-module="sheetIntakeStartModule"
       :patient-name="focus?.displayName"
+      :show-intake-detail-entry="focus?.intakeSubmitted === true"
       @published="onReportPublished"
       @care-plan-published="onCarePlanPublishedFromSheet"
       @open-intake="onSheetOpenIntake"
       @intake-submitted="onIntakeSubmitted"
+      @open-intake-detail="openIntakeDetail"
     />
+
+    <el-drawer
+      v-model="intakeDetailOpen"
+      title="首诊问卷详情"
+      direction="rtl"
+      size="72%"
+      append-to-body
+      destroy-on-close
+      class="intake-detail-drawer"
+    >
+      <PatientIntakeDetailView
+        v-if="intakeDetailOpen && intakeDetailResponseId"
+        embedded
+        :response-id="intakeDetailResponseId"
+      />
+    </el-drawer>
 
     <WorkspaceTaskFormDialog
       :task-id="formTaskId"
@@ -7959,7 +8725,8 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   flex-shrink: 0;
-  margin: 8px 12px 0;
+  /* 与下方 card-list 贴紧，避免「待分组横幅」和组头之间再空一截 */
+  margin: 8px 12px 6px;
   padding: 11px 14px;
   border: 1px solid #fdba74;
   border-radius: 10px;
@@ -8035,10 +8802,11 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 10px 12px 14px;
+  /* 顶距交给 sticky 组头自己的 padding，避免 top:0 吸顶后上方留缝、卡片从缝里钻出来 */
+  padding: 0 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   /* 隐藏细长滚动条，避免贴在组头旁显得杂乱；触控板/滚轮仍可滚 */
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -8047,11 +8815,14 @@ onUnmounted(() => {
 .team-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
+  /* 组内独立层叠，避免人员卡盖过本组吸顶头 */
+  isolation: isolate;
 }
 
 .team-group + .team-group {
-  margin-top: 6px;
+  /* 组间距放在下一组 sticky 头的 padding-top 里，滚动时不会空出一条「透视缝」 */
+  margin-top: 0;
 }
 
 .team-group-head-row {
@@ -8060,9 +8831,25 @@ onUnmounted(() => {
   gap: 4px;
   position: sticky;
   top: 0;
-  z-index: 1;
-  background: linear-gradient(180deg, #f7f8fa 70%, rgba(247, 248, 250, 0));
-  border-radius: 6px;
+  z-index: 3;
+  /* 左右拉满滚动区，盖住卡片边框；背景必须实心 */
+  margin: 0 -12px;
+  padding: 10px 12px 8px;
+  background: var(--admin-card, #fff);
+  border-radius: 0;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06);
+}
+
+.team-group + .team-group > .team-group-head-row {
+  padding-top: 14px;
+}
+
+.team-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 0;
 }
 
 .team-group-head {
@@ -8196,6 +8983,7 @@ onUnmounted(() => {
 
 .person-card {
   position: relative;
+  z-index: 0;
   flex-shrink: 0;
   text-align: left;
   border: 1px solid var(--ink-200);
@@ -8203,16 +8991,17 @@ onUnmounted(() => {
   border-radius: var(--admin-radius, 12px);
   padding: 12px;
   cursor: pointer;
-  transition: var(--admin-transition);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .person-card:hover {
   border-color: var(--brand-300);
   box-shadow: var(--admin-shadow);
-  transform: translateY(-1px);
+  /* 不用 transform：会新建层叠上下文，滚动时盖住 sticky 组头 */
 }
 
 .person-card.active {
+  z-index: 0;
   border-color: var(--brand-500);
   background: var(--brand-50);
 }
@@ -8373,6 +9162,60 @@ onUnmounted(() => {
 .risk.ai {
   background: linear-gradient(90deg, var(--violet-50), var(--brand-50));
   color: var(--violet-500);
+}
+
+.risk-cta {
+  border: 1px solid transparent;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.2;
+  transition: var(--admin-transition);
+  user-select: none;
+}
+
+.risk.cta {
+  background: #eff6ff;
+  color: #2563eb;
+  border-color: #bfdbfe;
+  box-shadow: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.risk.cta:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.risk.cta-danger {
+  background: #fff1f2;
+  color: #e11d48;
+  border-color: #fecdd3;
+  box-shadow: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.risk.cta-danger:hover {
+  background: #ffe4e6;
+  border-color: #fda4af;
+}
+
+.risk.cta-mid {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+  box-shadow: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.risk.cta-mid:hover {
+  background: #ffedd5;
 }
 
 .tag-row {
@@ -8615,8 +9458,16 @@ onUnmounted(() => {
   white-space: nowrap;
   padding: 2px 6px;
   border-radius: 999px;
+  border: none;
+  background: transparent;
   color: var(--ink-400, #9ca3af);
+  font: inherit;
   font-style: normal;
+  cursor: pointer;
+}
+
+.sf-step:hover {
+  filter: brightness(0.96);
 }
 
 .sf-mark {
@@ -8653,6 +9504,20 @@ onUnmounted(() => {
   color: #059669;
 }
 
+.sf-step.broken {
+  color: #b91c1c;
+  background: #fee2e2;
+  box-shadow: 0 0 0 1px #fecaca inset;
+}
+
+.sf-step.broken .sf-mark {
+  color: #dc2626;
+}
+
+.sf-step.broken .sf-label {
+  font-weight: 700;
+}
+
 .sf-step.current {
   color: #1d4ed8;
   background: #dbeafe;
@@ -8680,6 +9545,10 @@ onUnmounted(() => {
   background: var(--ink-200, #e5e7eb);
   flex-shrink: 0;
   align-self: center;
+}
+
+.sf-sep.broken {
+  background: #fca5a5;
 }
 
 .sf-sep.done,
@@ -9718,6 +10587,99 @@ onUnmounted(() => {
   gap: 6px;
 }
 
+.bubble-actions.stepped {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.action-step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  border-radius: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--admin-transition);
+  border: 1px solid transparent;
+  line-height: 1.35;
+}
+
+.action-step-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.action-step-hint {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.action-step.primary {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-color: #2563eb;
+  color: #fff;
+  box-shadow:
+    0 0 0 1px rgba(59, 130, 246, 0.18),
+    0 8px 22px -6px rgba(37, 99, 235, 0.65);
+  animation: cta-glow 2.4s ease-in-out infinite;
+}
+
+.action-step.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border-color: #1d4ed8;
+  box-shadow:
+    0 0 0 1px rgba(37, 99, 235, 0.25),
+    0 10px 26px -6px rgba(29, 78, 216, 0.7);
+}
+
+@keyframes cta-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(59, 130, 246, 0.18),
+      0 8px 22px -6px rgba(37, 99, 235, 0.55);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(59, 130, 246, 0.28),
+      0 10px 28px -4px rgba(37, 99, 235, 0.75);
+  }
+}
+
+.action-step.secondary {
+  background: #fff;
+  border-color: var(--brand-200, #bfdbfe);
+  color: var(--brand-700, #1d4ed8);
+}
+
+.action-step.secondary:hover:not(:disabled) {
+  background: var(--brand-50, #eff6ff);
+  border-color: var(--brand-400, #60a5fa);
+}
+
+.action-step.done,
+.action-step.done:hover {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+  box-shadow: none;
+  cursor: default;
+}
+
+.action-step:disabled:not(.done) {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.bubble-actions.stepped .action-chip {
+  align-self: flex-start;
+}
+
 .action-chip {
   border: 1px solid var(--ink-200);
   background: #fff;
@@ -9762,6 +10724,23 @@ onUnmounted(() => {
   border-color: var(--brand-300, #93c5fd);
   color: var(--brand-600);
   background: var(--brand-50);
+}
+
+.action-chip.quiet,
+.action-chip.quiet:hover {
+  border: none;
+  background: transparent;
+  color: var(--ink-400);
+  max-width: none;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.action-chip.quiet:hover {
+  color: var(--ink-600);
+  text-decoration: underline;
 }
 
 .action-chip.more {
@@ -10198,6 +11177,10 @@ onUnmounted(() => {
   gap: 6px;
 }
 
+.focus-metrics .metric:first-child {
+  grid-column: 1 / -1;
+}
+
 .focus-facts {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -10239,10 +11222,42 @@ onUnmounted(() => {
 }
 
 .metric-val {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--ink-900);
-  line-height: 1.2;
+  line-height: 1.25;
+  word-break: break-all;
+}
+
+.metric-note {
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  line-height: 1.35;
+  font-weight: 500;
+  color: var(--ink-500, #64748b);
+}
+
+.metric-link {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.metric-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.metric-link:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 
 .metric-val.bad {
@@ -10295,8 +11310,23 @@ onUnmounted(() => {
   background: #ffedd5;
 }
 
+.metric.pending .metric-val.muted {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.metric.pending .metric-bar {
+  background: #f1f5f9;
+}
+
+.metric.pending .metric-bar i {
+  width: 0 !important;
+  background: transparent;
+}
+
 .focus-mid {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
@@ -10312,6 +11342,7 @@ onUnmounted(() => {
 }
 
 .section.quick-actions {
+  flex: 1 1 auto;
   flex-shrink: 0;
   margin: 0;
   padding: 10px 12px 12px;
@@ -10334,59 +11365,51 @@ onUnmounted(() => {
   color: var(--ink-400, #94a3b8);
 }
 
-.quick-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
-.quick-btn {
+.quick-tile {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
+  justify-content: center;
+  gap: 6px;
+  min-height: 72px;
+  padding: 10px 6px;
   margin: 0;
   background: var(--ink-50, #f8fafc);
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 12px;
   font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
   color: var(--ink-800);
   cursor: pointer;
   transition: var(--admin-transition);
-  text-align: left;
-  min-width: 0;
 }
 
-.quick-btn.primary {
+.quick-tile.primary {
   background: #eff6ff;
   border-color: #bfdbfe;
   color: #1d4ed8;
 }
 
-.quick-btn:hover {
+.quick-tile:hover {
   background: var(--brand-50, #eff6ff);
   border-color: var(--brand-200, #bfdbfe);
   color: var(--brand-700, #1d4ed8);
 }
 
-.quick-btn:hover .quick-ico {
+.quick-tile:hover .quick-ico {
   background: #fff;
   color: var(--brand-600, #2563eb);
 }
 
-.quick-btn:hover .quick-arrow {
-  color: var(--brand-500, #3b82f6);
-  transform: translateX(2px);
-}
-
 .quick-ico {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
   background: #fff;
@@ -10401,19 +11424,11 @@ onUnmounted(() => {
   height: 14px;
 }
 
-.quick-label {
-  flex: 1;
-  min-width: 0;
+.quick-tile-label {
+  font-size: 12px;
+  font-weight: 700;
   line-height: 1.2;
-}
-
-.quick-arrow {
-  flex-shrink: 0;
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 1;
-  color: var(--ink-300);
-  transition: var(--admin-transition);
+  text-align: center;
 }
 
 .section:last-child {

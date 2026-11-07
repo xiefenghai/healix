@@ -16,6 +16,7 @@ import {
   parseSampleMeal,
 } from './care-plan-labels'
 import { asEnergyTarget, energyGoalText, type EnergyTarget } from './energy-target'
+import { patientDietNoteLines } from './care-plan-diet-notes'
 
 export interface CarePlanPreviewCheckin {
   id?: string
@@ -140,7 +141,7 @@ function splitSentences(list: string[] | string | undefined, sep: RegExp): strin
 }
 
 const dietPrinciples = computed(() => splitSentences(props.data?.diet?.principles, /[；;]/))
-const dietNotes = computed(() => splitSentences(props.data?.diet?.notes, /(?<=[。；;])/))
+const dietNotes = computed(() => patientDietNoteLines(props.data?.diet?.notes || ''))
 
 const SAMPLE_MEAL_LABELS: Array<{ key: string; label: string }> = [
   { key: 'breakfast', label: '早餐' },
@@ -460,7 +461,7 @@ function formatDateTime(iso?: string) {
             <p v-else-if="!previewEnergy" class="section-lead muted">（未填写）</p>
 
             <div v-if="dietNotes.length" class="info-block info-block--warn">
-              <div class="info-block-title">用药与就餐提醒</div>
+              <div class="info-block-title">执行提醒</div>
               <ul class="info-list">
                 <li v-for="(n, i) in dietNotes" :key="'n-' + i">{{ n }}</li>
               </ul>
