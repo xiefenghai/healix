@@ -175,7 +175,7 @@ public class IntakeAiSummaryService {
                     "message",
                     "极高危提示：患者为 "
                             + age
-                            + " 岁青年，确诊 T1 糖尿病且合并高血压"
+                            + " 岁青年，已患 T1 糖尿病且合并高血压"
                             + (onInsulin ? "，且在用胰岛素/降糖药" : "")
                             + "。存在极高心血管及低血糖风险，方案须极度保守并严密监测。");
         } else if (young && t1) {
@@ -185,7 +185,7 @@ public class IntakeAiSummaryService {
                     "message",
                     "高危提示："
                             + age
-                            + " 岁青年确诊 T1 糖尿病"
+                            + " 岁青年已患 T1 糖尿病"
                             + (onInsulin ? "且使用胰岛素" : "")
                             + "，运动/饮食方案须防低血糖，强度取保守。");
         }

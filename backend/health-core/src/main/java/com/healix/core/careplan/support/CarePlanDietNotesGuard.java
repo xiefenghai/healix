@@ -69,9 +69,9 @@ public final class CarePlanDietNotesGuard {
             // 过弱表述留给 OsaHintSupport 按档案决定是否升格；此处先丢掉以免双写
             return "";
         }
-        t = t.replace("遵医嘱", "按医生建议")
-                .replace("按医嘱", "按医生建议")
-                .replace("医嘱", "医生建议")
+        t = t.replace("遵医嘱", "按医生建议") // sensitive-ok: 清洗输入侧旧表述
+                .replace("按医嘱", "按医生建议") // sensitive-ok
+                .replace("医嘱", "医生建议") // sensitive-ok
                 .replace("需随第一口饭同服", "请记得与第一口饭同服")
                 .replace("不要空腹服药", "尽量避免空腹服药");
         t = ComplianceText.filter(t);

@@ -43,9 +43,9 @@ export function normalizeDietNoteText(raw: string): string {
   }
 
   t = t
-    .replace(/遵医嘱/g, '按医生建议')
-    .replace(/按医嘱/g, '按医生建议')
-    .replace(/医嘱/g, '医生建议')
+    .replace(/遵医嘱/g, '按医生建议') // sensitive-ok: 清洗输入侧旧表述
+    .replace(/按医嘱/g, '按医生建议') // sensitive-ok
+    .replace(/医嘱/g, '医生建议') // sensitive-ok
     .replace(/需随第一口饭同服/g, '请记得与第一口饭同服')
     .replace(/不要空腹服药/g, '尽量避免空腹服药')
   return t.replace(/^[；;，,。]+|[；;，,。]+$/g, '').trim()
