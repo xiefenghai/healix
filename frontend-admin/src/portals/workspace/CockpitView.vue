@@ -20,6 +20,7 @@ import AgentActivityPanel from '../../shared/AgentActivityPanel.vue'
 import CockpitPatientSheet, { type CockpitSheetMode } from '../../shared/CockpitPatientSheet.vue'
 import PatientIntakeView from './PatientIntakeView.vue'
 import PatientIntakeDetailView from './PatientIntakeDetailView.vue'
+import PatientDetailLayout from './PatientDetailLayout.vue'
 import { getIntakeStatus } from '../../shared/intake'
 import WorkspaceTaskFormDialog from './WorkspaceTaskFormDialog.vue'
 import JoinCareTeamDialog from './JoinCareTeamDialog.vue'
@@ -396,6 +397,8 @@ function closeImagePreview() {
 const sheetOpen = ref(false)
 const sheetMode = ref<CockpitSheetMode>('archive')
 const sheetPeopleId = ref('')
+/** 右侧焦点 → 患者详情抽屉 */
+const patientDetailOpen = ref(false)
 /** 健康数据抽屉打开时的子页（如 trends） */
 const sheetObservationsSub = ref<string | undefined>(undefined)
 /** 首诊抽屉：关联随访 / 待补用途 */
@@ -2290,12 +2293,6 @@ function onSearchInput() {
 /** 左栏当前 Tab 的患者卡列表 */
 const listCards = computed(() => (tab.value === 'mine' ? searchResults.value : cards.value))
 
-/**
- * 未分组超过这个人数、且当天已有更急的逾期任务时，默认收起，
- * 避免把逾期卡片顶出视口。未分组本身就是核心待办时保持展开。
- */
-const UNASSIGNED_FOLD_ABOVE = 8
-
 /** 折叠的健管组 id。用户点过标题后以手动状态为准。 */
 const collapsedMineTeams = ref<Set<string>>(new Set())
 const mineTeamCollapseTouched = ref<Set<string>>(new Set())
@@ -2306,11 +2303,10 @@ const hasOverdueMineTask = computed(() =>
   ),
 )
 
+/** 日常进舱：未分组默认收起，把已入组患者露出来；顶部橙条仍可一键去处理。 */
 function shouldAutoCollapseMineTeam(careTeamId: string) {
   const g = minePatientGroups.value.find((x) => x.careTeamId === careTeamId)
-  if (!g || !isUnassignedMineGroup(g)) return false
-  if (!hasOverdueMineTask.value) return false
-  return g.cards.length > UNASSIGNED_FOLD_ABOVE
+  return !!(g && isUnassignedMineGroup(g))
 }
 
 function isMineTeamCollapsed(careTeamId: string) {
@@ -6112,6 +6108,14 @@ function goAssessments() {
 function goContactPatient() {
   openSheet('care-chat')
 }
+
+function openPatientDetail() {
+  if (!focusPeopleId.value) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  patientDetailOpen.value = true
+}
 function openReportUpload() {
   if (!focusPeopleId.value) {
     ElMessage.info('请先从左侧选择一位患者')
@@ -7784,9 +7788,14 @@ onUnmounted(() => {
                       {{ focus.displayName }}
                       <i class="live" :class="{ on: focus.clientLinked }" />
                     </div>
-                    <button type="button" class="focus-contact-link" @click="goContactPatient">
-                      联系
-                    </button>
+                    <div class="focus-name-actions">
+                      <button type="button" class="focus-contact-link" @click="openPatientDetail">
+                        详情
+                      </button>
+                      <button type="button" class="focus-contact-link" @click="goContactPatient">
+                        联系
+                      </button>
+                    </div>
                   </div>
                   <div class="focus-meta">
                     <span v-if="focusAge != null">{{ focusAge }} 岁</span>
@@ -8134,6 +8143,22 @@ onUnmounted(() => {
         v-if="intakeDetailOpen && intakeDetailResponseId"
         embedded
         :response-id="intakeDetailResponseId"
+      />
+    </el-drawer>
+
+    <el-drawer
+      v-model="patientDetailOpen"
+      :title="focus?.displayName ? `患者详情 · ${focus.displayName}` : '患者详情'"
+      direction="rtl"
+      size="90%"
+      append-to-body
+      destroy-on-close
+      class="patient-detail-drawer"
+    >
+      <PatientDetailLayout
+        v-if="patientDetailOpen && focusPeopleId"
+        embedded
+        :people-id="focusPeopleId"
       />
     </el-drawer>
 
@@ -11075,6 +11100,13 @@ onUnmounted(() => {
   gap: 6px;
   font-size: 11px;
   color: var(--ink-500);
+}
+
+.focus-name-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .focus-contact-link {

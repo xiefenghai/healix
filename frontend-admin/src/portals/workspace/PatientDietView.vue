@@ -135,8 +135,9 @@ interface ItemDraft {
   oilLevel: string | null
 }
 
+const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 const base = computed(() => `/api/b/v1/patients/${peopleId.value}/diet`)
 
 const status = ref<GoalStatus | null>(null)

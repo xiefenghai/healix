@@ -40,10 +40,23 @@ const teams = ref<CareTeamListItem[]>([])
 const teamId = ref<string | null>(null)
 const loadingTeams = ref(false)
 const submitting = ref(false)
+const keyword = ref('')
 
-const allIds = computed(() => props.patients.map((p) => p.peopleId).filter(Boolean))
+const filteredPatients = computed(() => {
+  const q = keyword.value.trim().toLowerCase()
+  if (!q) return props.patients
+  return props.patients.filter((p) => {
+    const name = (p.displayName || '').toLowerCase()
+    if (name.includes(q)) return true
+    return (p.diseaseLabels || []).some((t) => (t || '').toLowerCase().includes(q))
+  })
+})
+
+/** 全选/反选作用在当前可见列表（有搜索时只勾可见项） */
+const visibleIds = computed(() => filteredPatients.value.map((p) => p.peopleId).filter(Boolean))
 const allSelected = computed(
-  () => allIds.value.length > 0 && selectedIds.value.length === allIds.value.length,
+  () =>
+    visibleIds.value.length > 0 && visibleIds.value.every((id) => selectedIds.value.includes(id)),
 )
 const selectedCount = computed(() => selectedIds.value.length)
 const selectedTeamName = computed(
@@ -113,6 +126,7 @@ watch(
     if (!open) return
     selectedIds.value = []
     teamId.value = null
+    keyword.value = ''
     void loadTeams()
   },
 )
@@ -128,8 +142,14 @@ watch(
 async function loadTeams() {
   loadingTeams.value = true
   try {
-    const res = await api<{ data: CareTeamListItem[] }>('/api/b/v1/care-teams')
+    const res = await api<{ data: CareTeamListItem[] }>(
+      '/api/b/v1/care-teams?assignableOnly=true',
+    )
     teams.value = res.data || []
+    // 普通健管师通常只有一个主责组：默认选中，减少一步操作
+    if (teams.value.length === 1 && teams.value[0]?.id) {
+      teamId.value = teams.value[0].id
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载健管组失败')
     teams.value = []
@@ -139,16 +159,27 @@ async function loadTeams() {
 }
 
 function toggleAll(checked: boolean | string | number) {
-  selectedIds.value = checked ? [...allIds.value] : []
+  if (checked) {
+    const set = new Set(selectedIds.value)
+    for (const id of visibleIds.value) set.add(id)
+    selectedIds.value = [...set]
+    return
+  }
+  const drop = new Set(visibleIds.value)
+  selectedIds.value = selectedIds.value.filter((id) => !drop.has(id))
 }
 
 function selectAll() {
-  selectedIds.value = [...allIds.value]
+  toggleAll(true)
 }
 
 function invertSelect() {
   const set = new Set(selectedIds.value)
-  selectedIds.value = allIds.value.filter((id) => !set.has(id))
+  for (const id of visibleIds.value) {
+    if (set.has(id)) set.delete(id)
+    else set.add(id)
+  }
+  selectedIds.value = [...set]
 }
 
 function toggleOne(peopleId: string, checked: boolean | string | number) {
@@ -260,23 +291,31 @@ function goCreateTeam() {
       <el-button size="small" type="primary" plain @click="applyAiTeam">一键选中该组</el-button>
     </div>
 
+    <el-input
+      v-if="patients.length"
+      v-model="keyword"
+      clearable
+      class="search"
+      placeholder="搜索姓名或病种…"
+    />
+
     <div class="toolbar">
       <el-checkbox
         :model-value="allSelected"
-        :indeterminate="selectedCount > 0 && !allSelected"
-        :disabled="!patients.length"
+        :indeterminate="visibleIds.some((id) => selectedIds.includes(id)) && !allSelected"
+        :disabled="!visibleIds.length"
         @change="toggleAll"
       >
         全选（已选 {{ selectedCount }}）
       </el-checkbox>
       <div class="toolbar-actions">
-        <button type="button" class="link-btn" :disabled="!patients.length" @click="selectAll">
+        <button type="button" class="link-btn" :disabled="!visibleIds.length" @click="selectAll">
           全选
         </button>
         <button
           type="button"
           class="link-btn"
-          :disabled="!patients.length"
+          :disabled="!visibleIds.length"
           @click="invertSelect"
         >
           反选
@@ -284,9 +323,9 @@ function goCreateTeam() {
       </div>
     </div>
 
-    <div v-if="patients.length" class="list">
+    <div v-if="filteredPatients.length" class="list">
       <label
-        v-for="p in patients"
+        v-for="p in filteredPatients"
         :key="p.peopleId"
         class="row"
         :class="{ checked: selectedIds.includes(p.peopleId) }"
@@ -302,7 +341,11 @@ function goCreateTeam() {
         </span>
       </label>
     </div>
-    <el-empty v-else description="暂无待分组患者" :image-size="64" />
+    <el-empty
+      v-else
+      :description="patients.length ? '没有匹配的患者' : '暂无待分组患者'"
+      :image-size="64"
+    />
 
     <template #footer>
       <div class="footer" v-loading="loadingTeams">
@@ -328,7 +371,7 @@ function goCreateTeam() {
               <span>{{ t.name }}</span>
               <span class="opt-meta">
                 {{ (t.primaryCareManagerName || '').trim() || '未指定主责' }} ·
-                {{ t.memberCount ?? 0 }} 人
+                {{ t.memberCount ?? 0 }} 位患者
               </span>
             </el-option>
           </el-select>
@@ -379,6 +422,9 @@ function goCreateTeam() {
   font-size: 12.5px;
   line-height: 1.5;
   color: #1e40af;
+}
+.search {
+  margin: 0 0 10px;
 }
 .toolbar {
   display: flex;

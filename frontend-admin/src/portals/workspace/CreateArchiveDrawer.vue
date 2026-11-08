@@ -440,7 +440,9 @@ async function submit() {
 async function loadTeamsForAssign() {
   loadingTeams.value = true
   try {
-    const res = await api<{ data: CareTeamListItem[] }>('/api/b/v1/care-teams')
+    const res = await api<{ data: CareTeamListItem[] }>(
+      '/api/b/v1/care-teams?assignableOnly=true',
+    )
     teams.value = res.data || []
     filteredTeams.value = teams.value.slice()
   } catch (e) {
@@ -454,7 +456,9 @@ async function loadTeamsForAssign() {
 
 async function tryAutoJoinSingleTeam(peopleId: string): Promise<string | null> {
   try {
-    const res = await api<{ data: CareTeamListItem[] }>('/api/b/v1/care-teams')
+    const res = await api<{ data: CareTeamListItem[] }>(
+      '/api/b/v1/care-teams?assignableOnly=true',
+    )
     const list = res.data || []
     if (list.length !== 1 || !list[0]?.id) return null
     await api(`/api/b/v1/patients/${peopleId}/care-team`, {
@@ -795,7 +799,7 @@ function duplicateLabel(d: DuplicateCandidate) {
                   <template v-if="(t.primaryDoctorName || '').trim()">
                     · 医生 {{ t.primaryDoctorName }}
                   </template>
-                  · {{ t.memberCount ?? 0 }} 人
+                  · {{ t.memberCount ?? 0 }} 位患者
                 </span>
               </div>
             </el-option>

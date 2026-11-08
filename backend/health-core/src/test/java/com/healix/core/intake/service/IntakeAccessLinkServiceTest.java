@@ -59,9 +59,9 @@ class IntakeAccessLinkServiceTest {
     @Test
     void buildCopyText_includesStaffOrgBenefitAndValidity() {
         String text = IntakeAccessLinkService.buildCopyText(
-                "XX健康中心", "孙悦", "周先生", "https://healix.example/i/abc", 7);
-        assertTrue(text.startsWith("【XX健康中心】"));
-        assertTrue(text.contains("周先生您好，我是您的专属健管师孙悦。"));
+                "孙悦", "周先生", "https://healix.example/i/abc", 7);
+        assertFalse(text.contains("【"));
+        assertTrue(text.startsWith("周先生您好，我是您的专属健管师孙悦。"));
         assertTrue(text.contains("健康管理方案"));
         assertTrue(text.contains("7天内有效"));
         assertTrue(text.contains("👉 点击填写：https://healix.example/i/abc"));

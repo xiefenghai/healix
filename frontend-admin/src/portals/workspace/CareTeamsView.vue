@@ -243,7 +243,7 @@ watch(keyword, () => {
         <h1>健管组</h1>
         <p>
           共 <strong class="em">{{ list.length }}</strong> 个健管组
-          · 在管 <strong class="em">{{ totalMembers }}</strong> 位成员
+          · 在管 <strong class="em">{{ totalMembers }}</strong> 位患者
           <template v-if="unboundDoctorCount">
             · <strong class="em warn">{{ unboundDoctorCount }}</strong> 组未绑主责医生
           </template>
@@ -267,7 +267,7 @@ watch(keyword, () => {
       <div class="stat-card">
         <div class="stat-icon tone-teal">员</div>
         <div>
-          <div class="stat-label">在管成员</div>
+          <div class="stat-label">在管患者</div>
           <div class="stat-val">{{ totalMembers }}</div>
         </div>
       </div>
@@ -375,7 +375,7 @@ watch(keyword, () => {
         </div>
 
         <div class="team-tags">
-          <span class="tag">{{ row.memberCount ?? 0 }} 位成员</span>
+          <span class="tag">{{ row.memberCount ?? 0 }} 位患者</span>
         </div>
 
         <div class="team-foot">

@@ -81,8 +81,9 @@ const MOOD_LABELS: Record<number, string> = { 1: '很低落', 2: '偏低', 3: '�
 const MOOD_TAGS = ['平静', '焦虑', '疲惫', '愉悦', '压力大', '有动力']
 const STAFF_BACKFILL_DAYS = 7
 
+const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 const selectedDate = ref(ymd(new Date()))
 const loading = ref(false)
 const water = ref<WaterDay | null>(null)

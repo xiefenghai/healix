@@ -136,9 +136,14 @@ function onSelectKeydown(e: KeyboardEvent) {
 async function loadTeams() {
   loadingTeams.value = true
   try {
-    const res = await api<{ data: CareTeamListItem[] }>('/api/b/v1/care-teams')
+    const res = await api<{ data: CareTeamListItem[] }>(
+      '/api/b/v1/care-teams?assignableOnly=true',
+    )
     teams.value = res.data || []
     filteredTeams.value = teams.value.slice()
+    if (!form.value.teamId && teams.value.length === 1 && teams.value[0]?.id) {
+      form.value.teamId = teams.value[0].id
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载健管组失败')
     teams.value = []
@@ -265,7 +270,7 @@ function goCreate() {
                       ((t.primaryDoctorName || '').trim()
                         ? ` · 医生 ${t.primaryDoctorName}`
                         : '') +
-                      ` · ${t.memberCount ?? 0} 人` +
+                      ` · ${t.memberCount ?? 0} 位患者` +
                       (t.id === currentCareTeamId ? ' · 当前' : ''),
                   )
                 "

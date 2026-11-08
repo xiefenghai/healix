@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
@@ -17,6 +17,46 @@ import type { AssessmentSnapshot } from '../../shared/assessment'
 import { allergyTick } from '../../shared/allergy'
 import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
+import PatientPersonaPanel from './PatientPersonaPanel.vue'
+import PatientArchiveView from './PatientArchiveView.vue'
+import PatientObservationLayout from './PatientObservationLayout.vue'
+import PatientAssessmentsView from './PatientAssessmentsView.vue'
+import PatientCarePlanView from './PatientCarePlanView.vue'
+import PatientMedicationView from './PatientMedicationView.vue'
+import PatientDietView from './PatientDietView.vue'
+import PatientExerciseView from './PatientExerciseView.vue'
+import PatientLifestyleView from './PatientLifestyleView.vue'
+import PatientAdherenceView from './PatientAdherenceView.vue'
+import PatientFollowupView from './PatientFollowupView.vue'
+import PatientHealthReportView from './PatientHealthReportView.vue'
+import PatientRevisionView from './PatientRevisionView.vue'
+import PatientChatView from './PatientChatView.vue'
+
+const props = withDefaults(
+  defineProps<{
+    /** 驾驶舱等抽屉嵌入：不改路由，本地切换分段 */
+    embedded?: boolean
+    peopleId?: string
+  }>(),
+  { embedded: false },
+)
+
+const EMBEDDED_VIEWS: Record<string, Component> = {
+  persona: PatientPersonaPanel,
+  archive: PatientArchiveView,
+  observations: PatientObservationLayout,
+  assessments: PatientAssessmentsView,
+  'care-plan': PatientCarePlanView,
+  medications: PatientMedicationView,
+  diet: PatientDietView,
+  exercise: PatientExerciseView,
+  lifestyle: PatientLifestyleView,
+  adherence: PatientAdherenceView,
+  followups: PatientFollowupView,
+  'health-reports': PatientHealthReportView,
+  revisions: PatientRevisionView,
+  chat: PatientChatView,
+}
 
 interface OrgPatientListItem {
   peopleId: string
@@ -83,7 +123,7 @@ interface AssessmentOverview {
 
 const route = useRoute()
 const router = useRouter()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 const patient = ref<OrgPatientListItem | null>(null)
 const latestInvite = ref<InviteView | null>(null)
 const completeness = ref<ArchiveCompleteness | null>(null)
@@ -111,8 +151,10 @@ const NAV_ITEMS = [
 ] as const
 
 type NavName = (typeof NAV_ITEMS)[number]['name'] | 'chat'
+const embeddedTab = ref<NavName>('persona')
 
 const activeTab = computed<NavName>(() => {
+  if (props.embedded) return embeddedTab.value
   const path = route.path
   if (path.includes('/medications')) return 'medications'
   if (path.includes('/diet')) return 'diet'
@@ -129,6 +171,8 @@ const activeTab = computed<NavName>(() => {
   if (path.includes('/chat')) return 'chat'
   return 'archive'
 })
+
+const embeddedView = computed(() => EMBEDDED_VIEWS[activeTab.value] || PatientPersonaPanel)
 
 interface LatestSlot {
   slotKey: string
@@ -828,6 +872,11 @@ async function onNavClick(name: Exclude<NavName, 'chat'> | 'chat') {
 }
 
 function switchTab(name: string | number) {
+  const tab = String(name) as NavName
+  if (props.embedded) {
+    embeddedTab.value = tab === 'chat' ? 'chat' : tab
+    return
+  }
   const base = `/workspace/patients/${peopleId.value}`
   const query = route.query
   if (name === 'medications') {
@@ -871,7 +920,9 @@ watch(allergyTick, () => {
 
 watch(
   peopleId,
-  async () => {
+  async (id) => {
+    if (props.embedded) embeddedTab.value = 'persona'
+    if (!id) return
     await loadPatient()
     await loadInvites()
     await Promise.all([
@@ -947,9 +998,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="patient-detail">
+  <div class="patient-detail" :class="{ embedded }">
     <div class="patient-detail-chrome">
-    <nav class="crumbs">
+    <nav v-if="!embedded" class="crumbs">
       <button type="button" class="crumb-link" @click="router.push('/workspace/patients')">
         患者管理
       </button>
@@ -1302,7 +1353,13 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="patient-detail-body">
-      <router-view />
+      <component
+        :is="embeddedView"
+        v-if="embedded && peopleId"
+        :key="`${peopleId}-${activeTab}`"
+        :people-id="peopleId"
+      />
+      <router-view v-else />
     </div>
 
     <el-dialog
@@ -1359,6 +1416,11 @@ onBeforeUnmount(() => {
   /* topbar 56 + content padding 20+36 */
   height: calc(100vh - 112px);
   min-height: 0;
+}
+
+.patient-detail.embedded {
+  height: calc(100dvh - 72px);
+  max-height: calc(100vh - 72px);
 }
 
 .patient-detail-chrome {
@@ -2280,5 +2342,17 @@ onBeforeUnmount(() => {
   .pill {
     flex: 0 0 auto;
   }
+}
+</style>
+
+<style>
+.patient-detail-drawer.el-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding-bottom: 8px;
+}
+
+.patient-detail-drawer.el-drawer .el-drawer__body {
+  padding-top: 0;
+  overflow: hidden;
 }
 </style>

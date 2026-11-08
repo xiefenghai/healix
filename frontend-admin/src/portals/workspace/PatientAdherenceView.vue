@@ -106,9 +106,10 @@ interface AdherenceDetail {
   todayMeds: TodayMed[]
 }
 
+const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
 const router = useRouter()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
 const detail = ref<AdherenceDetail | null>(null)

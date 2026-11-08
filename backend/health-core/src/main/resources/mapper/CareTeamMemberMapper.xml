@@ -57,10 +57,13 @@
         ORDER BY joined_at ASC, id ASC
     </select>
 
+    <!-- 列表/分配场景「人数」= 在组患者数（不含主责等员工成员） -->
     <select id="countActiveByTeam" resultType="int">
         SELECT COUNT(1)
         FROM care_team_member
-        WHERE team_id = #{teamId} AND is_deleted = 0
+        WHERE team_id = #{teamId}
+          AND member_type = 'PATIENT'
+          AND is_deleted = 0
     </select>
 
     <select id="countPrimaryTeamsForStaff" resultType="int">

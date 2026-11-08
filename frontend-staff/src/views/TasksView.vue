@@ -184,7 +184,9 @@ async function loadSummary() {
 
 async function loadTeams() {
   try {
-    const res = await api<{ data: CareTeamListItem[] }>('/api/b/v1/care-teams')
+    const res = await api<{ data: CareTeamListItem[] }>(
+      '/api/b/v1/care-teams?assignableOnly=true',
+    )
     teams.value = res.data || []
   } catch {
     teams.value = []

@@ -95,7 +95,7 @@ public class IntakeAccessLinkService {
         String url = buildUrl(link.getToken());
         String display = politeAddress(people.getDisplayName(), people.getGender(), people.getBirthday());
         String staffName = resolveStaffDisplayName(staffId);
-        String copyText = buildCopyText(org.getName(), staffName, display, url, days);
+        String copyText = buildCopyText(staffName, display, url, days);
         return new IssueResult(
                 link.getId(),
                 link.getToken(),
@@ -284,13 +284,9 @@ public class IntakeAccessLinkService {
         return surname + honorific;
     }
 
-    /** 触达话术：机构抬头 + 健管师落款 + 利益点 + 有效期前置。 */
-    static String buildCopyText(
-            String orgName, String staffName, String address, String url, int days) {
+    /** 触达话术：健管师落款 + 利益点 + 有效期前置（不含机构抬头）。 */
+    static String buildCopyText(String staffName, String address, String url, int days) {
         StringBuilder sb = new StringBuilder();
-        if (StringUtils.hasText(orgName)) {
-            sb.append('【').append(orgName.trim()).append("】\n");
-        }
         String who = StringUtils.hasText(address) ? address.trim() : "朋友";
         sb.append(who).append("您好，");
         if (StringUtils.hasText(staffName)) {

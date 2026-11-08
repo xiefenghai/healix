@@ -121,10 +121,19 @@ public class BWorkspaceController {
         return ApiResult.ok(null);
     }
 
-    /** 列出当前机构照护团队。 */
+    /**
+     * 列出当前机构照护团队。
+     *
+     * @param assignableOnly true 时仅返回当前账号可分配患者的组：租户管理员看全部，健管师仅主责组
+     */
     @GetMapping("/care-teams")
-    public ApiResult<List<CareTeamListItem>> listCareTeams(@RequestParam(required = false) String keyword) {
+    public ApiResult<List<CareTeamListItem>> listCareTeams(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Boolean assignableOnly) {
         String orgId = SecurityUtils.requireCurrentOrgId();
+        if (Boolean.TRUE.equals(assignableOnly)) {
+            return ApiResult.ok(orgWorkspaceService.listAssignableCareTeams(orgId, keyword));
+        }
         return ApiResult.ok(orgWorkspaceService.listCareTeams(orgId, keyword));
     }
 

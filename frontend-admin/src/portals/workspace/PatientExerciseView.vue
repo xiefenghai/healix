@@ -110,9 +110,10 @@ const WEEKDAY = ['一', '二', '三', '四', '五', '六', '日']
 const LIST_DAYS = 30
 const BACKFILL_DAYS = 7
 
+const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
 const router = useRouter()
-const peopleId = computed(() => String(route.params.peopleId || ''))
+const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 const base = computed(() => `/api/b/v1/patients/${peopleId.value}/exercise`)
 
 const today = ref<Today | null>(null)

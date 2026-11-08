@@ -311,6 +311,31 @@ public class OrgWorkspaceService {
         return items;
     }
 
+    /**
+     * 分配患者用的健管组列表：租户管理员（机构侧超级/管理员）看全部；普通健管师只看自己主责的组。
+     */
+    public List<CareTeamListItem> listAssignableCareTeams(String orgId, String keyword) {
+        requireOrgWorkspaceAccess(orgId);
+        if (isTenantAdmin()) {
+            return listCareTeams(orgId, keyword);
+        }
+        String staffId = requireStaffId();
+        List<CareTeam> teams = careTeamMapper.listByPrimaryCareManager(orgId, staffId);
+        String kw = blankToNull(keyword);
+        List<CareTeamListItem> items = new ArrayList<>();
+        for (CareTeam team : teams) {
+            if (kw != null) {
+                String name = team.getName() == null ? "" : team.getName();
+                String code = team.getTeamCode() == null ? "" : team.getTeamCode();
+                if (!name.contains(kw) && !code.contains(kw)) {
+                    continue;
+                }
+            }
+            items.add(toTeamItem(team));
+        }
+        return items;
+    }
+
     public CareTeamListItem getCareTeam(String orgId, String teamId) {
         requireOrgWorkspaceAccess(orgId);
         return toTeamItem(requireTeamInOrg(orgId, teamId));
@@ -531,6 +556,7 @@ public class OrgWorkspaceService {
             throw new BusinessException(400, "请选择患者与健管组");
         }
         CareTeam target = requireTeamInOrg(orgId, targetTeamId);
+        assertCanAssignPatientToTeam(target);
         PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
         if (membership == null || !MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
             throw new BusinessException(400, "患者须先成为本机构有效成员");
@@ -1670,6 +1696,17 @@ public class OrgWorkspaceService {
             throw new BusinessException(404, "健管组不存在");
         }
         return team;
+    }
+
+    /** 非租户管理员只能把患者分到自己主责的健管组。 */
+    private void assertCanAssignPatientToTeam(CareTeam target) {
+        if (isTenantAdmin()) {
+            return;
+        }
+        String staffId = requireStaffId();
+        if (!staffId.equals(target.getPrimaryCareManagerStaffId())) {
+            throw new BusinessException(403, "只能将患者分配到自己主责的健管组");
+        }
     }
 
     private CareTeamListItem toTeamItem(CareTeam team) {

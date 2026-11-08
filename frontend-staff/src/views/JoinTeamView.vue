@@ -35,10 +35,13 @@ async function load() {
   try {
     const [taskRes, teamRes] = await Promise.all([
       api<{ data: TaskDetail }>(`/api/b/v1/workspace/tasks/${taskId.value}`),
-      api<{ data: CareTeamListItem[] }>('/api/b/v1/care-teams'),
+      api<{ data: CareTeamListItem[] }>('/api/b/v1/care-teams?assignableOnly=true'),
     ])
     task.value = taskRes.data
     teams.value = teamRes.data || []
+    if (teams.value.length === 1 && teams.value[0]?.id) {
+      teamId.value = teams.value[0].id
+    }
     if (taskRes.data.taskType !== 'TEAM_ASSIGN') {
       showToast('当前任务不是入组任务')
     }

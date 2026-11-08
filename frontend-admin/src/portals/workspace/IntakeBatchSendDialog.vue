@@ -95,7 +95,6 @@ watch(scriptStyle, () => {
 })
 
 function formatOneScript(row: IssuedLink, style: ScriptStyle): string {
-  const org = (row.orgName || orgName.value).trim() || '本机构'
   const address = (row.patientLabel || row.displayName || '朋友').trim()
   const staff = (row.staffDisplayName || staffNameHint.value).trim()
   const staffLine = staff ? `我是您的专属健管师${staff}` : '我是您的专属健管师'
@@ -111,7 +110,7 @@ function formatOneScript(row: IssuedLink, style: ScriptStyle): string {
   }
   if (style === 'elder') {
     return (
-      `【${org}】${address}您好，${staffLine}。为了更好帮您调理身体，请点开下面链接填一下健康信息，大概需要两分钟（7天内有效，信息已加密）。\n` +
+      `${address}您好，${staffLine}。为了更好帮您调理身体，请点开下面链接填一下健康信息，大概需要两分钟（7天内有效，信息已加密）。\n` +
       `链接：${url}`
     )
   }
@@ -120,7 +119,6 @@ function formatOneScript(row: IssuedLink, style: ScriptStyle): string {
     return row.copyText.trim()
   }
   return (
-    `【${org}】\n` +
     `${address}您好，${staffLine}。\n` +
     `为了能给您制定更适合的健康管理方案，劳烦您花约 2 分钟填写基础健康问卷（7天内有效，信息严格保密）。\n` +
     `👉 点击填写：${url}\n` +
