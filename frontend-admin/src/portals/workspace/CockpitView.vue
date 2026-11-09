@@ -2870,22 +2870,6 @@ const batchServeTeamOptions = computed((): BatchServeTeamOption[] => {
   return opts
 })
 
-/** 仅统计「本次分配」的人数分布（内部备用） */
-function summarizeAssignedBatch(peopleIds: string[]) {
-  let intake = 0
-  let stock = 0
-  let other = 0
-  for (const id of peopleIds) {
-    const card = findCardByPeopleId(id)
-    const s = card ? cardSopStage(card) : 'new'
-    if (s === 'new' || s === 'review') intake++
-    else if (s === 'plan' || s === 'active') stock++
-    else other++
-  }
-  if (intake + stock + other === 0) intake = peopleIds.length
-  return { intake, stock, other, total: peopleIds.length }
-}
-
 /**
  * 统计健管组当前真实花名册（含历史已在组内的患者），与左侧列表数字对齐。
  */
