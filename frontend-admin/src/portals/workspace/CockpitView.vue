@@ -2561,18 +2561,8 @@ function expandMineTeamCards(careTeamId: string, total: number) {
   }
 }
 
-function showAllMineTeamCards(careTeamId: string, total: number) {
-  mineTeamCardLimit.value = { ...mineTeamCardLimit.value, [careTeamId]: total }
-}
-
 function mineTeamFilter(careTeamId: string) {
   return mineTeamStageFilter.value[careTeamId] || 'all'
-}
-
-function setMineTeamFilter(careTeamId: string, filter: string) {
-  mineTeamStageFilter.value = { ...mineTeamStageFilter.value, [careTeamId]: filter }
-  // 切换筛选时重置分页
-  mineTeamCardLimit.value = { ...mineTeamCardLimit.value, [careTeamId]: MINE_TEAM_CARD_PAGE }
 }
 
 function filterCardsByMineStage(cards: PriorityCard[], filter: string) {
@@ -2584,19 +2574,6 @@ function filterCardsByMineStage(cards: PriorityCard[], filter: string) {
     if (filter === 'stock') return s === 'active' || s === 'plan'
     return true
   })
-}
-
-function mineTeamStageStats(cards: PriorityCard[]) {
-  let intake = 0
-  let plan = 0
-  let stock = 0
-  for (const c of cards) {
-    const s = cardSopStage(c)
-    if (s === 'new' || s === 'review') intake++
-    else if (s === 'plan') plan++
-    else if (s === 'active') stock++
-  }
-  return { intake, plan, stock, follow: stock }
 }
 
 function visibleMineTeamCards(g: MinePatientGroup) {
