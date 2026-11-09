@@ -2298,7 +2298,7 @@ onBeforeUnmount(() => {
     <div v-if="finalSummaryGenerating" class="ai-final-mask" aria-live="polite" aria-busy="true">
       <div class="ai-final-mask-card">
         <span class="ai-final-mask-spinner" aria-hidden="true" />
-        <p>正在为您生成最终病历总结...</p>
+        <p>正在为您生成最终健康总结...</p>
       </div>
     </div>
     <header class="top">
