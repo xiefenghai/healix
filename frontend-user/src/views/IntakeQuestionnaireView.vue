@@ -93,8 +93,6 @@ let saveHintTimer: ReturnType<typeof setTimeout> | null = null
 let skipAutosave = true
 let autoAdvanceTimer: ReturnType<typeof setTimeout> | null = null
 
-const depthMeta = computed(() => DEPTH_TABS.find((t) => t.code === depth.value))
-
 function getAns(field: string) {
   return answers[field]
 }
