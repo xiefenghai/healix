@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.common.exception.BusinessException;
 import com.healix.common.result.ApiResult;
 import com.healix.common.util.JsonUtils;
-import com.healix.core.followup.service.FollowupService;
 import com.healix.core.patient.domain.PatientCareAssignment;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
@@ -13,6 +12,7 @@ import com.healix.core.questionnaire.IntakeDepth;
 import com.healix.core.questionnaire.dto.IntakeStatusView;
 import com.healix.core.questionnaire.dto.QuestionnaireResponseView;
 import com.healix.core.questionnaire.service.QuestionnaireResponseService;
+import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import com.healix.security.SecurityUtils;
 import com.healix.web.b.persona.PersonaAppService;
 import java.util.LinkedHashMap;
@@ -43,10 +43,10 @@ import org.springframework.web.bind.annotation.RestController;
 public class CIntakeController {
 
     private final QuestionnaireResponseService responseService;
-    private final FollowupService followupService;
     private final PatientCareAssignmentMapper careAssignmentMapper;
     private final PatientOrgMembershipMapper membershipMapper;
     private final PersonaAppService personaAppService;
+    private final WorkspaceTaskGenerator workspaceTaskGenerator;
 
     @GetMapping("/status")
     public ApiResult<IntakeStatusView> status() {
@@ -105,17 +105,12 @@ public class CIntakeController {
         if (!StringUtils.hasText(orgId)) {
             orgId = requirePrimaryOrgId(tenantId, peopleId);
         }
+        // 患者交卷仅「待健管师确认」；入组随访办结 / 正式评估以 B 端确认提交为准
         try {
-            followupService.completeOnboardingAfterIntakeSubmit(
-                    orgId,
-                    peopleId,
-                    submitted.getFollowupRecordId(),
-                    submitted.getId(),
-                    submitted.getChannel(),
-                    accountId,
-                    null);
+            workspaceTaskGenerator.markPatientIntakeAwaitingReview(
+                    tenantId, orgId, peopleId, submitted.getFollowupRecordId(), submitted.getId());
         } catch (Exception e) {
-            log.warn("C 端首诊已提交，办结入组随访失败 responseId={}: {}", submitted.getId(), e.getMessage());
+            log.warn("C 端初步交卷后标记待确认失败 peopleId={}: {}", peopleId, e.getMessage());
         }
         try {
             personaAppService.scheduleAfterIntakeSubmit(tenantId, orgId, peopleId, null, accountId);

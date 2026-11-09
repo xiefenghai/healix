@@ -1,4 +1,4 @@
-package com.healix.agent.skill;
+package com.healix.agent.handler;
 
 import com.healix.agent.extract.ChatExtractCard;
 import com.healix.agent.extract.ChatExtractService;
@@ -9,24 +9,14 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+/** 整理记录（由 StaffAgentTools 调用）。 */
 @Component
 @RequiredArgsConstructor
-public class ChatExtractSkill implements AgentSkill {
+public class ChatExtractHandler {
 
     private final ChatExtractService chatExtractService;
 
-    @Override
-    public AgentCapability capability() {
-        return AgentCapability.CHAT_EXTRACT;
-    }
-
-    @Override
-    public boolean supports(AgentCapability routed, AgentChatCommand cmd) {
-        return routed == AgentCapability.CHAT_EXTRACT;
-    }
-
-    @Override
-    public AgentResponse execute(AgentSkillContext ctx) {
+    public AgentResponse execute(AgentHandlerContext ctx) {
         AgentChatCommand cmd = ctx.command();
         ChatExtractCard card = cmd.intakeFields() != null && !cmd.intakeFields().isEmpty()
                 ? chatExtractService.extractIntake(cmd.peopleId(), cmd.message(), cmd.intakeFields())

@@ -268,7 +268,27 @@ export interface IntakeModuleView {
 export interface IntakePrefillCell {
   value: unknown
   sourceBizCode?: string | null
+  /** C_APP / B_WORKSPACE / … */
+  sourceClientCode?: string | null
+  sourceRefId?: string | null
+  /** PATIENT / PEOPLE / STAFF / … */
+  updatedByType?: string | null
+  updatedById?: string | null
   gmtModified?: string | null
+  recordedAt?: string | null
+}
+
+/** 题目数据溯源（B 端题目微标） */
+export type IntakeProvenanceKind = 'PATIENT' | 'STAFF' | 'AI' | 'ARCHIVE'
+
+export interface IntakeFieldProvenance {
+  kind: IntakeProvenanceKind
+  /** 微标短文案 */
+  label: string
+  /** Hover Tooltip */
+  tip: string
+  /** 原患者/档案值已被健管师改过 */
+  staffEdited?: boolean
 }
 
 export interface IntakeCompleteness {
@@ -280,6 +300,10 @@ export interface IntakeCompleteness {
   allTotal?: number
   requiredMissing?: string[]
   firstVisitMissing?: string[]
+  /** AWAITING_STAFF / STAFF_CONFIRMED */
+  confirmState?: string | null
+  awaitingStaffConfirm?: boolean
+  sourcePatientResponseId?: string | null
 }
 
 export interface IntakeHighlightHit {
@@ -352,6 +376,9 @@ export interface QuestionnaireResponseView {
   purpose?: string
   status?: string
   channel?: string | null
+  /** PATIENT / STAFF：本卷主填写方 */
+  filledByType?: string | null
+  filledById?: string | null
   programCode?: string | null
   enrollmentId?: string | null
   followupRecordId?: string | null
@@ -398,6 +425,9 @@ export interface IntakeStatusView {
   /** C 端提交档位 MINIMAL / QUICK / FULL */
   submittedDepth?: string | null
   submittedDepthLabel?: string | null
+  /** 患者已初步交卷，待健管师确认正式提交 */
+  awaitingStaffConfirm?: boolean
+  awaitingConfirmResponseId?: string | null
 }
 
 export interface SaveDraftBody {
@@ -934,6 +964,114 @@ export function formatPrefillSource(sourceBizCode?: string | null): string {
   return map[code] || sourceBizCode || '预填'
 }
 
+function formatProvenanceTime(iso?: string | null): string {
+  if (!iso) return ''
+  return String(iso).replace('T', ' ').slice(0, 16)
+}
+
+/** 由预填单元格推断来源种类（患者 / 健管师 / AI / 档案） */
+export function classifyPrefillProvenance(cell?: IntakePrefillCell | null): IntakeProvenanceKind {
+  if (!cell) return 'ARCHIVE'
+  const by = String(cell.updatedByType || '').toUpperCase()
+  const client = String(cell.sourceClientCode || '').toUpperCase()
+  const biz = String(cell.sourceBizCode || '').toUpperCase()
+  if (by === 'PATIENT' || by === 'PEOPLE' || client === 'C_APP') return 'PATIENT'
+  if (client.includes('AGENT') || biz.includes('AI') || biz.includes('CHAT_EXTRACT') || by === 'AI') {
+    return 'AI'
+  }
+  if (by === 'STAFF' || client === 'B_WORKSPACE' || client === 'B_APP') return 'STAFF'
+  if (biz === 'INTAKE' || biz === 'INTAKE_QUESTIONNAIRE') {
+    // 旧数据无 updatedByType 时：默认按既往首诊（偏患者链路），前端仍可再结合 filledByType
+    return 'PATIENT'
+  }
+  return 'ARCHIVE'
+}
+
+function provenanceLabel(kind: IntakeProvenanceKind): string {
+  switch (kind) {
+    case 'PATIENT':
+      return '患者自填'
+    case 'STAFF':
+      return '健管师录入'
+    case 'AI':
+      return 'AI 提取'
+    default:
+      return '档案预填'
+  }
+}
+
+function provenanceTip(kind: IntakeProvenanceKind, cell?: IntakePrefillCell | null, staffEdited?: boolean): string {
+  const when = formatProvenanceTime(cell?.gmtModified || cell?.recordedAt)
+  const src = formatPrefillSource(cell?.sourceBizCode)
+  if (staffEdited) {
+    const origin =
+      kind === 'PATIENT' ? '患者自填' : kind === 'STAFF' ? '健管师录入' : kind === 'AI' ? 'AI 提取' : src
+    return when ? `原${origin}（${when}），已由健管师修改` : `原${origin}，已由健管师修改`
+  }
+  if (kind === 'PATIENT') {
+    return when ? `患者于 ${when} 提交` : '来自患者端填写'
+  }
+  if (kind === 'STAFF') {
+    return when ? `健管师于 ${when} 录入` : '来自健管师录入'
+  }
+  if (kind === 'AI') {
+    return when ? `AI 于 ${when} 提取写入` : '来自 AI 提取'
+  }
+  return when ? `${src} · ${when}` : src
+}
+
+/**
+ * B 端题目溯源微标。
+ * - 与预填一致：显示原来源
+ * - 改过预填：保留原来源 + staffEdited
+ * - 无预填、本卷新填：健管师录入
+ */
+export function resolveFieldProvenance(opts: {
+  field: string
+  answer: unknown
+  prefill?: IntakePrefillCell | null
+  /** 本卷 filledByType，用于无预填元数据时回落 */
+  responseFilledByType?: string | null
+  responseChannel?: string | null
+}): IntakeFieldProvenance | null {
+  const { answer, prefill: cell, responseFilledByType, responseChannel } = opts
+  if (isAnswerEmpty(answer)) return null
+
+  const hasPrefill = !!cell && !isAnswerEmpty(cell.value)
+  const dirty = hasPrefill && !valuesEqual(answer, cell!.value)
+
+  if (hasPrefill && !dirty) {
+    const kind = classifyPrefillProvenance(cell)
+    return { kind, label: provenanceLabel(kind), tip: provenanceTip(kind, cell) }
+  }
+
+  if (hasPrefill && dirty) {
+    const kind = classifyPrefillProvenance(cell)
+    return {
+      kind,
+      label: provenanceLabel(kind),
+      tip: provenanceTip(kind, cell, true),
+      staffEdited: true,
+    }
+  }
+
+  // 无预填：本卷新填
+  const by = String(responseFilledByType || '').toUpperCase()
+  const ch = String(responseChannel || '').toUpperCase()
+  if (by === 'PATIENT' || by === 'PEOPLE' || ch === 'C_APP') {
+    return {
+      kind: 'PATIENT',
+      label: '患者自填',
+      tip: '来自患者端填写',
+    }
+  }
+  return {
+    kind: 'STAFF',
+    label: '健管师录入',
+    tip: '本卷由健管师填写',
+  }
+}
+
 export function valuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (isAnswerEmpty(a) && isAnswerEmpty(b)) return true
@@ -1167,14 +1305,14 @@ const OPTION_SET_FALLBACKS: Record<string, string[]> = {
     'FLEXIBLE=不着急，先稳住',
   ],
   primaryAppeal: [
+    'FAT_LOSS=减脂减重',
     'GLUCOSE=控糖（糖尿病）',
     'BP=控压（高血压）',
-    'LIPID=控血脂',
-    'FAT_LOSS=减脂减重',
-    'BODY_SHAPE=塑形增肌',
-    'METABOLIC=三高 / 代谢综合',
     'SLEEP=改善睡眠',
+    'LIPID=控血脂',
+    'BODY_SHAPE=塑形增肌',
     'GUT=改善肠胃',
+    'METABOLIC=三高 / 代谢综合',
     'CONSULT=先了解看看',
     'OTHER=其他',
   ],
@@ -1335,6 +1473,116 @@ export function responseStatusLabel(status?: string | null): string {
   return map[status] || status
 }
 
+/**
+ * B 端首诊「现有疾病」高频首屏（其余折叠）。
+ * 已选项始终露出；与 C 端 C_ILLNESS_PRIMARY 对齐并略扩健管师常用项。
+ */
+export const PRESENT_ILLNESS_PRIMARY = [
+  'NONE',
+  'HYPERTENSION',
+  'DIABETES',
+  'PREDIABETES',
+  'HYPERLIPIDEMIA',
+  'CHD',
+  'OBESITY',
+  'GOUT',
+  'THYROID_DISORDER',
+  'STROKE',
+] as const
+
+/** 胶囊短标签（仅展示；落库仍用字典 code） */
+export const PRESENT_ILLNESS_SHORT_LABEL: Record<string, string> = {
+  NONE: '无',
+  HYPERTENSION: '高血压',
+  CHD: '冠心病',
+  STROKE: '脑卒中',
+  HEART_FAILURE: '心衰',
+  ATRIAL_FIBRILLATION: '房颤',
+  DIABETES: '2型糖尿病',
+  HYPERLIPIDEMIA: '高脂血症',
+  GOUT: '痛风',
+  COPD: '慢阻肺',
+  ASTHMA: '哮喘',
+  CKD: '慢性肾病',
+  CHRONIC_HEPATITIS: '慢性肝炎',
+  CIRRHOSIS: '肝硬化',
+  NAFLD: '脂肪肝',
+  CHRONIC_GI_DISEASE: '慢性胃病',
+  OSTEOPOROSIS: '骨质疏松',
+  RHEUMATOID_ARTHRITIS: '类风湿',
+  OSTEOARTHRITIS: '骨关节炎',
+  ALZHEIMERS: '阿尔茨海默',
+  PARKINSONS: '帕金森',
+  DEPRESSION: '抑郁',
+  ANXIETY: '焦虑',
+  MALIGNANT_TUMOR: '恶性肿瘤',
+  BPH: '前列腺增生',
+  THYROID_DISORDER: '甲状腺异常',
+  OBESITY: '肥胖症',
+  PREDIABETES: '糖尿病前期',
+  PCOS: '多囊卵巢',
+  OSA: '呼吸暂停',
+}
+
+/** 拼音首字母 / 常用别名检索（小写；支持 gxy、tnb、mzf、痛风 等） */
+export const PRESENT_ILLNESS_PINYIN: Record<string, string> = {
+  NONE: 'wu none',
+  HYPERTENSION: 'gxy gaoxueya',
+  CHD: 'gxb guanxinbing',
+  STROKE: 'ncz naocuzhong zhongfeng',
+  HEART_FAILURE: 'xl xinshuai xinlishuaijie',
+  ATRIAL_FIBRILLATION: 'fc fangchan',
+  DIABETES: 'tnb tangniaobing',
+  HYPERLIPIDEMIA: 'gzz gaozhizheng xuezhi',
+  GOUT: 'tf tongfeng gaoniaosuan',
+  COPD: 'mzf manzufei copd',
+  ASTHMA: 'xc xiaochuan',
+  CKD: 'mxsb manxingshenbing',
+  CHRONIC_HEPATITIS: 'mxgy manxingganyan',
+  CIRRHOSIS: 'gyh ganyinghua',
+  NAFLD: 'zfg zhifanggan',
+  CHRONIC_GI_DISEASE: 'mxwy weikaiyang weibing',
+  OSTEOPOROSIS: 'gzss guzhishusong',
+  RHEUMATOID_ARTHRITIS: 'lf lfgy',
+  OSTEOARTHRITIS: 'ggjy guguanjieyan',
+  ALZHEIMERS: 'aecmh laonianchimai',
+  PARKINSONS: 'pjs pajinsen',
+  DEPRESSION: 'yy yiyu',
+  ANXIETY: 'jl jiaolv',
+  MALIGNANT_TUMOR: 'exzl aizheng cancer',
+  BPH: 'qlxz qlxzs',
+  THYROID_DISORDER: 'jzx jiazhuangxian',
+  OBESITY: 'fp fpz feipang',
+  PREDIABETES: 'tnbqq xtpg',
+  PCOS: 'dndc duonang',
+  OSA: 'hxzt dahan',
+}
+
+export function presentIllnessDisplayLabel(code: string, fallback?: string): string {
+  const short = PRESENT_ILLNESS_SHORT_LABEL[code]
+  if (short) return short
+  return (fallback || code || '').trim() || code
+}
+
+/** 中文标签 / 短标签 / 拼音首字母均可命中 */
+export function matchPresentIllnessQuery(
+  opt: { code: string; label: string },
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const short = presentIllnessDisplayLabel(opt.code, opt.label).toLowerCase()
+  const full = (opt.label || '').toLowerCase()
+  const py = (PRESENT_ILLNESS_PINYIN[opt.code] || '').toLowerCase()
+  const code = (opt.code || '').toLowerCase()
+  return (
+    short.includes(q) ||
+    full.includes(q) ||
+    code.includes(q) ||
+    py.split(/\s+/).some((token) => token.startsWith(q) || token.includes(q))
+  )
+}
+
 /** 常见字典父码（走 DB，不在 optionSets 里）的本地兜底，避免详情页短暂/失败时露出英文码 */
 const DICT_OPTION_FALLBACKS: Record<string, string[]> = {
   presentIllness: [
@@ -1342,32 +1590,32 @@ const DICT_OPTION_FALLBACKS: Record<string, string[]> = {
     'HYPERTENSION=高血压',
     'CHD=冠心病',
     'STROKE=脑卒中',
-    'HEART_FAILURE=心力衰竭',
-    'ATRIAL_FIBRILLATION=心房颤动',
+    'HEART_FAILURE=心衰',
+    'ATRIAL_FIBRILLATION=房颤',
     'DIABETES=2型糖尿病',
     'HYPERLIPIDEMIA=高脂血症',
-    'GOUT=高尿酸血症/痛风',
-    'COPD=慢性阻塞性肺疾病',
-    'ASTHMA=支气管哮喘',
-    'CKD=慢性肾脏病',
+    'GOUT=痛风',
+    'COPD=慢阻肺',
+    'ASTHMA=哮喘',
+    'CKD=慢性肾病',
     'CHRONIC_HEPATITIS=慢性肝炎',
     'CIRRHOSIS=肝硬化',
     'NAFLD=脂肪肝',
-    'CHRONIC_GI_DISEASE=慢性胃炎/消化性溃疡',
-    'OSTEOPOROSIS=骨质疏松症',
-    'RHEUMATOID_ARTHRITIS=类风湿关节炎',
+    'CHRONIC_GI_DISEASE=慢性胃病',
+    'OSTEOPOROSIS=骨质疏松',
+    'RHEUMATOID_ARTHRITIS=类风湿',
     'OSTEOARTHRITIS=骨关节炎',
-    'ALZHEIMERS=阿尔茨海默病',
-    'PARKINSONS=帕金森病',
-    'DEPRESSION=抑郁症',
-    'ANXIETY=焦虑症',
+    'ALZHEIMERS=阿尔茨海默',
+    'PARKINSONS=帕金森',
+    'DEPRESSION=抑郁',
+    'ANXIETY=焦虑',
     'MALIGNANT_TUMOR=恶性肿瘤',
-    'BPH=良性前列腺增生',
-    'THYROID_DISORDER=甲状腺功能减退/亢进',
+    'BPH=前列腺增生',
+    'THYROID_DISORDER=甲状腺异常',
     'OBESITY=肥胖症',
-    'PREDIABETES=糖尿病前期（血糖偏高）',
-    'PCOS=多囊卵巢综合征',
-    'OSA=睡眠呼吸暂停',
+    'PREDIABETES=糖尿病前期',
+    'PCOS=多囊卵巢',
+    'OSA=呼吸暂停',
   ],
   exerciseFrequency: [
     'NONE=基本不运动',

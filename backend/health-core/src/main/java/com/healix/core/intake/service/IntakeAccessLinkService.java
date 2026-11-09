@@ -130,6 +130,14 @@ public class IntakeAccessLinkService {
 
     @Transactional
     public RedeemContext redeem(String token, String mobileLast4, String clientIp) {
+        return redeem(token, mobileLast4, false, clientIp);
+    }
+
+    /**
+     * @param skipMobileCheck 为 true 时跳过后四位硬校验（档案手机号录错时仍允许患者继续填写）
+     */
+    @Transactional
+    public RedeemContext redeem(String token, String mobileLast4, boolean skipMobileCheck, String clientIp) {
         checkRedeemRate(clientIp, token);
         IntakeAccessLink link = requireLinkByToken(token);
         refreshExpired(link);
@@ -142,10 +150,11 @@ public class IntakeAccessLinkService {
         }
 
         PeopleProfile people = requirePeople(link.getTenantId(), link.getPeopleId());
-        if (hasSelfMobile(people)) {
+        if (hasSelfMobile(people) && !skipMobileCheck) {
             String expected = MobileNumbers.tail(MobileNumbers.trySelf(people.getMobile()));
             String given = mobileLast4 == null ? "" : mobileLast4.trim();
             if (!expected.equals(given)) {
+                // 前端据此软提示并允许「继续填写」，勿当成死锁拦截
                 throw new BusinessException(403, "手机号后四位不正确");
             }
         }

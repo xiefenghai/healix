@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmClient.ChatTurn;
 import com.healix.agent.llm.LlmResponse;
-import com.healix.agent.skill.SkillMarkdown;
+import com.healix.agent.support.SkillMarkdown;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.careplan.enums.CarePlanTemplateKeyEnum;
@@ -340,6 +340,7 @@ public class CarePlanLlmGenerator {
                 请根据以下输入生成完整管理方案 JSON。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
                 goalSummary 须写具体目标（周期+数字：体重/血压/血糖/腰围等），禁止与「综合管理方案」类短标题同义复读口号。
+                减重数字必须自洽：若写「N个月减重Mkg」或「N个月内从Akg降至Bkg」，文中每周速度须≈总减重量/(N×4.3)kg（可四舍五入到0.1）；例：6个月从80kg降至60kg（减20kg）→每周约0.8kg，禁止写成每周0.5kg。calorieHint 中的每周速度须与 goalSummary 同一套数字，勿与 energyTarget.rateKgPerWeek 各写一套互相矛盾。
                 叙事与监测须对齐 patientContext.goals.careTracks（及 diabetesClinical / hypertensionClinical）；
                 无减重方向时不要写成减肥方案。
                 若有 patientContext.highlightGuidance，须把每条 mustApply 落实到运动/饮食/执行（clinicianNote 只吸收约束，勿照抄进患者正文）。

@@ -4,8 +4,6 @@ import com.healix.core.allergy.service.AllergyQueryService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 /** C 端助手可调用的健康工具（当前仅过敏原查询被主动编排）。 */
@@ -16,8 +14,8 @@ public class HealthTools {
 
     private final AllergyQueryService allergyQueryService;
 
-    @Tool(description = "List patient allergen names")
-    public String queryAllergens(@ToolParam(description = "Patient ID") String patientId) {
+    /** List patient allergen names */
+    public String queryAllergens(String patientId) {
         List<String> allergens = allergyQueryService.describeForContext(patientId);
         if (allergens.isEmpty()) {
             return "No known allergens";

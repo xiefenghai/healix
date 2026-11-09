@@ -69,8 +69,13 @@ public class CockpitFocusDto {
     private Integer intakeCompletenessPercent;
     private Integer intakeFilledCount;
     private Integer intakeTotalCount;
-    /** 是否已提交过首诊/补填 */
+    /** 是否已提交过首诊/补填（含患者初步交卷） */
     private Boolean intakeSubmitted;
+    /**
+     * 患者已初步交卷、待健管师确认正式评估。
+     * 为 true 时顶栏 SOP 仍停在「首诊评估」，不应跳到「制定方案」。
+     */
+    private Boolean intakeAwaitingStaffConfirm;
     /** 评估标签（血糖分标 / 发病风险等） */
     private List<AssessmentTag> assessmentTags = new ArrayList<>();
     private List<OpenTaskBrief> openTasks = new ArrayList<>();

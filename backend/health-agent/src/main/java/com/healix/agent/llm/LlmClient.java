@@ -1,43 +1,46 @@
 package com.healix.agent.llm;
 
 import com.healix.common.exception.BusinessException;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.StreamingResponseHandler;
+import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.output.Response;
+import dev.langchain4j.model.output.TokenUsage;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.content.Media;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
-import org.springframework.util.MimeType;
-import org.springframework.util.MimeTypeUtils;
 import org.springframework.util.StringUtils;
-import reactor.core.publisher.Flux;
 
+/**
+ * LLM 门面：文本 chat/stream 走 langchain4j；识图走 DeepSeek HTTP（关 thinking）。
+ */
 @Slf4j
 @Service
 public class LlmClient {
 
-    private final ChatModel chatModel;
-    private final ChatModel visionChatModel;
+    private final ChatLanguageModel chatModel;
+    private final StreamingChatLanguageModel streamingChatModel;
     private final DeepSeekChatCompletionsClient deepSeekChatCompletionsClient;
 
     public LlmClient(
-            @Qualifier("openAiChatModel") ChatModel chatModel,
-            @Autowired(required = false) @Qualifier("visionChatModel") ChatModel visionChatModel,
+            @Autowired(required = false) @Qualifier("healixChatModel") ChatLanguageModel chatModel,
+            @Autowired(required = false) @Qualifier("healixStreamingChatModel")
+                    StreamingChatLanguageModel streamingChatModel,
             @Autowired(required = false) DeepSeekChatCompletionsClient deepSeekChatCompletionsClient) {
         this.chatModel = chatModel;
-        this.visionChatModel = visionChatModel;
+        this.streamingChatModel = streamingChatModel;
         this.deepSeekChatCompletionsClient = deepSeekChatCompletionsClient;
     }
 
@@ -58,7 +61,7 @@ public class LlmClient {
     private boolean logRequest;
 
     public boolean isEnabled() {
-        return enabled;
+        return enabled && chatModel != null;
     }
 
     public LlmResponse chat(String systemPrompt, String userMessage, List<ChatTurn> history) {
@@ -66,8 +69,8 @@ public class LlmClient {
     }
 
     public LlmResponse chat(String scene, String systemPrompt, String userMessage, List<ChatTurn> history) {
-        if (!enabled) {
-            log.debug("[LLM] skipped scene={} reason=disabled", scene);
+        if (!enabled || chatModel == null) {
+            log.debug("[LLM] skipped scene={} reason={}", scene, enabled ? "no_model" : "disabled");
             return LlmResponse.disabled();
         }
         long started = System.currentTimeMillis();
@@ -82,10 +85,9 @@ public class LlmClient {
                 historySize);
         logRequestPayload(scene, "chat", systemPrompt, userMessage, history);
         try {
-            List<Message> messages = buildMessages(systemPrompt, userMessage, history);
+            List<ChatMessage> messages = buildMessages(systemPrompt, userMessage, history);
             logLlmRequest(chatModelName, formatMessagesInput(messages));
-            Prompt prompt = new Prompt(messages);
-            ChatResponse response = chatModel.call(prompt);
+            Response<AiMessage> response = chatModel.generate(messages);
             LlmResponse result = toResponse(response);
             logLlmReturn(chatModelName, result.content());
             logSuccess(scene, "chat", started, result);
@@ -107,8 +109,16 @@ public class LlmClient {
             String userMessage,
             List<ChatTurn> history,
             Consumer<String> onToken) {
-        if (!enabled) {
-            log.debug("[LLM] skipped scene={} reason=disabled", scene);
+        if (!enabled || streamingChatModel == null) {
+            // 无流式 bean 时回落同步 chat，再一次性回调
+            if (enabled && chatModel != null) {
+                LlmResponse once = chat(scene, systemPrompt, userMessage, history);
+                if (once.fromLlm() && StringUtils.hasText(once.content()) && onToken != null) {
+                    onToken.accept(once.content());
+                }
+                return once;
+            }
+            log.debug("[LLM] skipped scene={} reason={}", scene, enabled ? "no_stream_model" : "disabled");
             return LlmResponse.disabled();
         }
         long started = System.currentTimeMillis();
@@ -123,34 +133,56 @@ public class LlmClient {
                 historySize);
         logRequestPayload(scene, "stream", systemPrompt, userMessage, history);
         StringBuilder full = new StringBuilder();
-        int[] promptTokens = new int[1];
-        int[] completionTokens = new int[1];
-        boolean[] hasUsage = new boolean[1];
+        AtomicReference<TokenUsage> usageRef = new AtomicReference<>();
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
         try {
-            List<Message> messages = buildMessages(systemPrompt, userMessage, history);
+            List<ChatMessage> messages = buildMessages(systemPrompt, userMessage, history);
             logLlmRequest(chatModelName, formatMessagesInput(messages));
-            Prompt prompt = new Prompt(messages);
-            Flux<ChatResponse> flux = chatModel.stream(prompt);
-            flux.doOnNext(chunk -> {
-                        if (chunk.getMetadata() != null && chunk.getMetadata().getUsage() != null) {
-                            promptTokens[0] = (int) chunk.getMetadata().getUsage().getPromptTokens();
-                            completionTokens[0] = (int) chunk.getMetadata().getUsage().getCompletionTokens();
-                            hasUsage[0] = true;
-                        }
-                        String text = chunk.getResult().getOutput().getText();
-                        if (StringUtils.hasText(text)) {
-                            full.append(text);
-                            if (onToken != null) {
-                                onToken.accept(text);
+            streamingChatModel.generate(
+                    messages,
+                    new StreamingResponseHandler<>() {
+                        @Override
+                        public void onNext(String token) {
+                            if (StringUtils.hasText(token)) {
+                                full.append(token);
+                                if (onToken != null) {
+                                    onToken.accept(token);
+                                }
                             }
                         }
-                    })
-                    .blockLast();
+
+                        @Override
+                        public void onComplete(Response<AiMessage> response) {
+                            if (response != null) {
+                                usageRef.set(response.tokenUsage());
+                                if (full.isEmpty()
+                                        && response.content() != null
+                                        && StringUtils.hasText(response.content().text())) {
+                                    full.append(response.content().text());
+                                }
+                            }
+                            done.countDown();
+                        }
+
+                        @Override
+                        public void onError(Throwable error) {
+                            errorRef.set(error);
+                            done.countDown();
+                        }
+                    });
+            if (!done.await(180, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("LLM stream timeout");
+            }
+            if (errorRef.get() != null) {
+                throw new IllegalStateException(errorRef.get().getMessage(), errorRef.get());
+            }
+            TokenUsage usage = usageRef.get();
             LlmResponse result = new LlmResponse(
                     full.isEmpty() ? null : full.toString(),
                     !full.isEmpty(),
-                    hasUsage[0] ? promptTokens[0] : null,
-                    hasUsage[0] ? completionTokens[0] : null);
+                    usage == null ? null : usage.inputTokenCount(),
+                    usage == null ? null : usage.outputTokenCount());
             if (!result.fromLlm() || !StringUtils.hasText(result.content())) {
                 logLlmReturn(chatModelName, result.content());
                 log.warn(
@@ -170,32 +202,33 @@ public class LlmClient {
         }
     }
 
-    private List<Message> buildMessages(String systemPrompt, String userMessage, List<ChatTurn> history) {
-        List<Message> messages = new ArrayList<>();
-        messages.add(new SystemMessage(systemPrompt));
+    private List<ChatMessage> buildMessages(String systemPrompt, String userMessage, List<ChatTurn> history) {
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(SystemMessage.from(systemPrompt == null ? "" : systemPrompt));
         if (history != null) {
             for (ChatTurn turn : history) {
                 if (StringUtils.hasText(turn.user())) {
-                    messages.add(new UserMessage(turn.user()));
+                    messages.add(UserMessage.from(turn.user()));
                 }
                 if (StringUtils.hasText(turn.assistant())) {
-                    messages.add(new AssistantMessage(turn.assistant()));
+                    messages.add(AiMessage.from(turn.assistant()));
                 }
             }
         }
-        messages.add(new UserMessage(userMessage));
+        messages.add(UserMessage.from(userMessage == null ? "" : userMessage));
         return messages;
     }
 
-    private static LlmResponse toResponse(ChatResponse response) {
-        String content = response.getResult().getOutput().getText();
+    private static LlmResponse toResponse(Response<AiMessage> response) {
+        String content =
+                response == null || response.content() == null ? null : response.content().text();
         Integer promptTokens = null;
         Integer completionTokens = null;
-        if (response.getMetadata() != null && response.getMetadata().getUsage() != null) {
-            promptTokens = (int) response.getMetadata().getUsage().getPromptTokens();
-            completionTokens = (int) response.getMetadata().getUsage().getCompletionTokens();
+        if (response != null && response.tokenUsage() != null) {
+            promptTokens = response.tokenUsage().inputTokenCount();
+            completionTokens = response.tokenUsage().outputTokenCount();
         }
-        return new LlmResponse(content, true, promptTokens, completionTokens);
+        return new LlmResponse(content, StringUtils.hasText(content), promptTokens, completionTokens);
     }
 
     public LlmResponse chatWithImage(
@@ -219,8 +252,12 @@ public class LlmClient {
             log.debug("[LLM] skipped scene={} reason=empty_image", scene);
             return LlmResponse.disabled();
         }
-        ChatModel model = resolveVisionModel();
-        String modelLabel = visionChatModel != null ? visionModelName : chatModelName;
+        if (deepSeekChatCompletionsClient == null) {
+            throw new BusinessException(
+                    "检验单 OCR 需要识图模型。请配置 healix.agent.vision"
+                            + "（默认 deepseek-v4-flash-vision-exp，复用 DEEPSEEK_API_KEY / healix.agent.api-key）");
+        }
+        String modelLabel = StringUtils.hasText(visionModelName) ? visionModelName : chatModelName;
         long started = System.currentTimeMillis();
         log.info(
                 "[LLM] start scene={} mode=vision provider={} model={} systemChars={} userChars={} images={} imageBytes={}",
@@ -231,55 +268,21 @@ public class LlmClient {
                 length(userMessage),
                 images.size(),
                 images.stream().mapToInt(i -> i.base64().length()).sum());
-        // 识图不落 base64，只打文本侧 system/user
         logRequestPayload(scene, "vision", systemPrompt, userMessage, List.of());
         try {
-            if (deepSeekChatCompletionsClient != null && visionChatModel != null) {
-                List<String> dataUrls = images.stream()
-                        .map(i -> toImageDataUrl(i.base64(), i.mimeType()))
-                        .toList();
-                // 请求/返回日志在 DeepSeekChatCompletionsClient 真实 HTTP 调用处打印
-                var ds = deepSeekChatCompletionsClient.chatWithImages(scene, systemPrompt, userMessage, dataUrls);
-                LlmResponse result = new LlmResponse(
-                        ds.content(), ds.hasContent(), ds.promptTokens(), ds.completionTokens());
-                if (!StringUtils.hasText(result.content())) {
-                    log.warn(
-                            "[LLM] empty-content scene={} mode=vision provider={} model={} finishReason={}",
-                            scene,
-                            provider,
-                            modelLabel,
-                            ds.finishReason());
-                }
-                logSuccess(scene, "vision", started, result, modelLabel);
-                return result;
-            }
-            List<Media> medias = new ArrayList<>();
-            for (VisionImage image : images) {
-                byte[] bytes = Base64.getDecoder().decode(stripDataUrl(image.base64()));
-                MimeType mediaType = StringUtils.hasText(image.mimeType())
-                        ? MimeTypeUtils.parseMimeType(image.mimeType())
-                        : MimeTypeUtils.IMAGE_JPEG;
-                medias.add(Media.builder()
-                        .mimeType(mediaType)
-                        .data(new ByteArrayResource(bytes))
-                        .build());
-            }
-            UserMessage user = UserMessage.builder()
-                    .text(userMessage)
-                    .media(medias)
-                    .build();
-            List<Message> messages = List.of(new SystemMessage(systemPrompt), user);
-            logLlmRequest(modelLabel, formatVisionInput(systemPrompt, userMessage, images.size()));
-            ChatResponse response = model.call(new Prompt(messages));
-            LlmResponse result = toResponse(response);
-            logLlmReturn(modelLabel, result.content());
+            List<String> dataUrls = images.stream()
+                    .map(i -> toImageDataUrl(i.base64(), i.mimeType()))
+                    .toList();
+            var ds = deepSeekChatCompletionsClient.chatWithImages(scene, systemPrompt, userMessage, dataUrls);
+            LlmResponse result =
+                    new LlmResponse(ds.content(), ds.hasContent(), ds.promptTokens(), ds.completionTokens());
             if (!StringUtils.hasText(result.content())) {
                 log.warn(
-                        "[LLM] empty-content scene={} mode=vision provider={} model={} rawResponse={}",
+                        "[LLM] empty-content scene={} mode=vision provider={} model={} finishReason={}",
                         scene,
                         provider,
                         modelLabel,
-                        summarizeChatResponse(response));
+                        ds.finishReason());
             }
             logSuccess(scene, "vision", started, result, modelLabel);
             return result;
@@ -291,52 +294,12 @@ public class LlmClient {
         }
     }
 
-    private ChatModel resolveVisionModel() {
-        if (visionChatModel != null) {
-            return visionChatModel;
-        }
-        throw new BusinessException(
-                "检验单 OCR 需要识图模型。请配置 healix.agent.vision"
-                        + "（默认 deepseek-v4-flash-vision-exp，复用 spring.ai.openai.api-key）");
-    }
-
     private static String toImageDataUrl(String imageBase64, String mimeType) {
         String mime = StringUtils.hasText(mimeType) ? mimeType.trim() : "image/jpeg";
         if (imageBase64.startsWith("data:")) {
             return imageBase64;
         }
         return "data:" + mime + ";base64," + stripDataUrl(imageBase64);
-    }
-
-    private static String summarizeChatResponse(ChatResponse response) {
-        if (response == null) {
-            return "null";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("metadata=").append(response.getMetadata());
-        if (response.getResult() != null) {
-            var generation = response.getResult();
-            sb.append(" generation=").append(generation);
-            if (generation.getOutput() != null) {
-                var output = generation.getOutput();
-                sb.append(" outputText=").append(truncate(output.getText(), 500));
-                sb.append(" outputMetadata=").append(output.getMetadata());
-            }
-            if (generation.getMetadata() != null) {
-                sb.append(" genMetadata=").append(generation.getMetadata());
-            }
-        }
-        return truncate(sb.toString(), 4000);
-    }
-
-    private static String truncate(String text, int max) {
-        if (text == null) {
-            return "";
-        }
-        if (text.length() <= max) {
-            return text;
-        }
-        return text.substring(0, max) + "...(truncated)";
     }
 
     private BusinessException toVisionBusinessException(Exception e) {
@@ -348,49 +311,42 @@ public class LlmClient {
         return new BusinessException("检验单识图失败：" + message);
     }
 
-    /** 真实发往模型前：模型名 + 完整输入（system / history / user）。 */
     private static void logLlmRequest(String model, String input) {
         log.info("请求LLM，模型名称： {},输入：{}", model, input == null ? "" : input);
     }
 
-    /** 模型返回后：模型名 + 完整回复正文。 */
     private static void logLlmReturn(String model, String content) {
         log.info("模型：{},返回:{}", model, content == null ? "" : content);
     }
 
-    private static String formatMessagesInput(List<Message> messages) {
+    private static String formatMessagesInput(List<ChatMessage> messages) {
         if (messages == null || messages.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < messages.size(); i++) {
-            Message msg = messages.get(i);
+            ChatMessage msg = messages.get(i);
             if (i > 0) {
                 sb.append('\n');
             }
             String role;
-            if (msg instanceof SystemMessage) {
+            String text;
+            if (msg instanceof SystemMessage sm) {
                 role = "system";
-            } else if (msg instanceof UserMessage) {
+                text = sm.text();
+            } else if (msg instanceof UserMessage um) {
                 role = "user";
-            } else if (msg instanceof AssistantMessage) {
+                text = um.singleText();
+            } else if (msg instanceof AiMessage am) {
                 role = "assistant";
+                text = am.text();
             } else {
-                role = msg.getMessageType() == null ? "unknown" : msg.getMessageType().getValue();
+                role = "unknown";
+                text = String.valueOf(msg);
             }
-            sb.append('[').append(role).append("] ").append(msg.getText() == null ? "" : msg.getText());
+            sb.append('[').append(role).append("] ").append(text == null ? "" : text);
         }
         return sb.toString();
-    }
-
-    private static String formatVisionInput(String systemPrompt, String userMessage, int imageCount) {
-        return "[system] "
-                + (systemPrompt == null ? "" : systemPrompt)
-                + "\n[user] "
-                + (userMessage == null ? "" : userMessage)
-                + "\n[images] count="
-                + imageCount
-                + " (base64 omitted)";
     }
 
     private void logRequestPayload(

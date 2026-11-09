@@ -1,4 +1,4 @@
-package com.healix.agent.skill;
+package com.healix.agent.handler;
 
 import com.healix.agent.gateway.AgentAction;
 import com.healix.agent.gateway.AgentCapability;
@@ -11,7 +11,6 @@ import com.healix.core.storage.ImageFileService;
 import com.healix.core.storage.ObjectKeys;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -21,23 +20,12 @@ import org.springframework.util.StringUtils;
  */
 @Component
 @RequiredArgsConstructor
-public class OcrMedSkill implements AgentSkill {
+public class OcrMedHandler {
 
     private final MedOcrRecognitionService medOcrRecognitionService;
     private final ImageFileService imageFileService;
 
-    @Override
-    public AgentCapability capability() {
-        return AgentCapability.OCR_MED;
-    }
-
-    @Override
-    public boolean supports(AgentCapability routed, AgentChatCommand cmd) {
-        return routed == AgentCapability.OCR_MED;
-    }
-
-    @Override
-    public AgentResponse execute(AgentSkillContext ctx) {
+    public AgentResponse execute(AgentHandlerContext ctx) {
         AgentChatCommand cmd = ctx.command();
         if (!StringUtils.hasText(cmd.imageBase64())) {
             return new AgentResponse(
@@ -50,8 +38,8 @@ public class OcrMedSkill implements AgentSkill {
                     null);
         }
         try {
-            byte[] bytes = OcrSkillSupport.decodeImage(cmd.imageBase64());
-            String mime = OcrSkillSupport.mimeOrJpeg(cmd.imageMimeType());
+            byte[] bytes = OcrHandlerSupport.decodeImage(cmd.imageBase64());
+            String mime = OcrHandlerSupport.mimeOrJpeg(cmd.imageMimeType());
             MedOcrPrefillDto prefill = medOcrRecognitionService.recognize(bytes, mime);
             if (StringUtils.hasText(cmd.tenantId()) && StringUtils.hasText(cmd.peopleId())) {
                 prefill = prefill.withImageKey(
@@ -86,28 +74,11 @@ public class OcrMedSkill implements AgentSkill {
         }
     }
 
-    public static boolean matchesMessage(String message) {
-        if (!StringUtils.hasText(message)) {
-            return false;
-        }
-        String msg = message.toLowerCase(Locale.ROOT);
-        return OcrSkillSupport.containsAny(
-                msg,
-                "用药单",
-                "处方",
-                "药方",
-                "药品清单",
-                "带药",
-                "medication",
-                "prescription",
-                "ocr-med");
-    }
-
     private static String buildReply(MedOcrPrefillDto prefill) {
         int n = prefill.items() == null ? 0 : prefill.items().size();
         List<String> parts = new ArrayList<>();
         parts.add("用药单识别完成：已识别 " + n + " 种药品");
-        String hint = OcrSkillSupport.warningsHint(prefill.warnings());
+        String hint = OcrHandlerSupport.warningsHint(prefill.warnings());
         if (hint != null) {
             parts.add(hint);
         }

@@ -528,6 +528,9 @@ public class CockpitService {
             card.getTaskIds().add(task.getId());
             WorkspaceTaskType type = WorkspaceTaskType.require(task.getTaskType());
             addBadge(card, type.name());
+            if (WorkspaceTaskLabels.isPatientIntakeReview(task.getPayloadJson())) {
+                addBadge(card, "INTAKE_REVIEW");
+            }
             String label = taskLabel(task, type);
             if ("PATIENT_REQUEST".equals(task.getSource())) {
                 addTaskType(card, type, PATIENT_REQUEST_LABEL);
@@ -730,12 +733,16 @@ public class CockpitService {
         }
 
         boolean intakeDone = false;
+        boolean intakeAwaitingStaffConfirm = false;
         LocalDateTime intakeAt = null;
         try {
             IntakeStatusView intake = questionnaireResponseService.intakeStatus(tenantId, peopleId);
-            intakeDone = intake != null && intake.isHasSubmitted();
             if (intake != null) {
+                intakeAwaitingStaffConfirm = intake.isAwaitingStaffConfirm();
+                // 患者初步交卷不算办结；须健管师确认后才推进 SOP
+                intakeDone = intake.isHasSubmitted() && !intakeAwaitingStaffConfirm;
                 dto.setIntakeSubmitted(intake.isHasSubmitted());
+                dto.setIntakeAwaitingStaffConfirm(intakeAwaitingStaffConfirm);
                 dto.setIntakeCompletenessPercent(intake.getCompletenessPercent());
                 dto.setIntakeFilledCount(intake.getFilledCount());
                 dto.setIntakeTotalCount(intake.getTotalCount());
@@ -743,6 +750,20 @@ public class CockpitService {
             }
         } catch (Exception ignored) {
             // 焦点快照不因首诊状态失败中断
+        }
+        // 任务侧也标了待确认时，强制停在首诊（兼容旧卷尚无 confirmState）
+        if (!intakeAwaitingStaffConfirm) {
+            for (CockpitFocusDto.OpenTaskBrief t : dto.getOpenTasks()) {
+                if (t == null) {
+                    continue;
+                }
+                if (WorkspaceTaskLabels.isIntakeReviewLabel(t.getTaskTypeLabel())) {
+                    intakeAwaitingStaffConfirm = true;
+                    intakeDone = false;
+                    dto.setIntakeAwaitingStaffConfirm(true);
+                    break;
+                }
+            }
         }
 
         boolean hasCarePlanDraft = dto.getPendingDrafts().stream()
@@ -770,11 +791,11 @@ public class CockpitService {
             // ignore
         }
 
-        // 有方案/方案草稿可视为首诊已过；仅「已分组」不能跳过首诊评估
-        if (!intakeDone && !openOnboarding && planInPipeline) {
+        // 有方案/方案草稿可视为首诊已过；待健管师确认时不可跳过
+        if (!intakeDone && !openOnboarding && planInPipeline && !intakeAwaitingStaffConfirm) {
             intakeDone = true;
         }
-        if (openOnboarding) {
+        if (openOnboarding || intakeAwaitingStaffConfirm) {
             intakeDone = false;
         }
         if (intakeDone) {
@@ -864,6 +885,9 @@ public class CockpitService {
                 step.setStatus("done");
             } else if (i == current) {
                 step.setStatus("current");
+                if (i == 2 && intakeAwaitingStaffConfirm) {
+                    step.setHint("患者已交卷，请核对确认后再进入制定方案");
+                }
             } else {
                 step.setStatus("todo");
             }
@@ -1477,6 +1501,11 @@ public class CockpitService {
         }
         if (card.getTaskTypeLabels().contains(WorkspaceTaskLabels.PLAN_RENEW_LABEL)) {
             return WorkspaceTaskLabels.PLAN_RENEW_LABEL;
+        }
+        if (b.contains("INTAKE_REVIEW")
+                || (card.getTaskTypeLabels() != null
+                        && card.getTaskTypeLabels().contains(WorkspaceTaskLabels.INTAKE_REVIEW_LABEL))) {
+            return WorkspaceTaskLabels.INTAKE_REVIEW_LABEL;
         }
         if (b.contains("PLAN_CREATE")) {
             return "待制定方案";

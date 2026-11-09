@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
 import com.healix.agent.ocr.OcrRunner;
-import com.healix.agent.skill.SkillMarkdown;
+import com.healix.agent.support.SkillMarkdown;
 import com.healix.agent.support.AiUsageGuard;
 import com.healix.common.exception.BusinessException;
 import com.healix.core.diet.dto.DietDraftDto;

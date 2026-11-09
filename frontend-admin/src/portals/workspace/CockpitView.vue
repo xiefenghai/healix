@@ -28,6 +28,13 @@ import CreateCareTeamDrawer from './CreateCareTeamDrawer.vue'
 import CreateArchiveDrawer, { type CreateArchivePreset } from './CreateArchiveDrawer.vue'
 import UnassignedAssignDrawer from './UnassignedAssignDrawer.vue'
 import IntakeBatchSendDialog from './IntakeBatchSendDialog.vue'
+import BatchServeWorkbenchDrawer, {
+  type BatchServePatient,
+  type BatchServeTeamOption,
+} from './BatchServeWorkbenchDrawer.vue'
+
+/** 与 BatchServeWorkbenchDrawer 内「全部患者」选项 id 对齐 */
+const BATCH_SERVE_TEAM_ALL = '__ALL__'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
 import { onAgentCarePlanUpdated } from '../../shared/agent-events'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
@@ -169,6 +176,8 @@ interface Focus {
   intakeFilledCount?: number | null
   intakeTotalCount?: number | null
   intakeSubmitted?: boolean | null
+  /** 患者已初步交卷，待健管师确认正式评估 */
+  intakeAwaitingStaffConfirm?: boolean | null
   assessmentTags?: Array<{
     engineCode: string
     text: string
@@ -246,6 +255,8 @@ interface ChatMessage {
   elapsedMs?: number | null
   /** 后端 intent；轻量闲聊意图用于隐藏活动轨迹 */
   intent?: string
+  /** 气泡主文下方的次级提示（浅灰，不抢主操作） */
+  tip?: string
   /**
    * system 细分：briefing=今日机构简报区；notice=切焦点/新会话等提示（进对话流，不进简报槽）。
    */
@@ -353,6 +364,8 @@ const unassignedGuideCount = computed(
 const searchLoading = ref(false)
 const searchTried = ref(false)
 const focusPeopleId = ref<string | null>(null)
+/** 当前会话患者（机构会话为空）；驾驶舱无独立 Pinia，以此为全局焦点态 */
+const currentPatient = computed(() => focusPeopleId.value)
 const focus = ref<Focus | null>(null)
 const focusLoading = ref(false)
 /** 刚分配成功的覆盖：接口慢半拍时名单/焦点仍可能短暂显示未分组 */
@@ -734,6 +747,8 @@ watch(createArchiveOpen, (open) => {
   if (!open) createArchivePhase.value = 'form'
 })
 
+const inputLooksLikeArchive = computed(() => looksLikeArchiveDraft(input.value))
+
 const composerPlaceholder = computed(() => {
   if (createArchiveOpen.value) {
     if (createArchivePhase.value === 'assign') {
@@ -743,7 +758,21 @@ const composerPlaceholder = computed(() => {
   }
   if (isArchivedSession.value) return '历史会话只读'
   if (intakeDocked.value) return '贴一段面诊或聊天记录，再点「整理这段记录」'
-  return '输入患者信息，或说「帮我建档」……'
+  if (inputLooksLikeArchive.value) {
+    return '可粘贴建档信息，点「整理」由智能体识别建档或提取…'
+  }
+  // 新手第一步未完成：引导问建组，避免暗示可直接建档
+  if (needsPrimaryTeam.value) {
+    return '问我关于建组的问题，或点击左侧按钮开始...'
+  }
+  return '输入患者信息，或说「帮我建档」...'
+})
+
+const composerSendHint = computed(() => {
+  if (intakeDocked.value) {
+    return '贴上记录后点「整理这段记录」，由智能体识别后核对写入'
+  }
+  return 'Enter 发送 · 长文字点右侧「整理」，智能体自动选建档或提取'
 })
 
 /** 尚未有主责健管组：建档入口应锁定，只引导先建组 */
@@ -784,6 +813,14 @@ const onboardingHasMyPatient = computed(() => {
  */
 const isColdStart = computed(
   () => needsPrimaryTeam.value || !onboardingHasMyPatient.value,
+)
+
+/**
+ * 零数据新手：无主责组且机构内无患者。
+ * 用于隐藏机构级能力芯，避免空态点开无意义入口。
+ */
+const isNewbie = computed(
+  () => needsPrimaryTeam.value && (summary.value.orgPatientCount || 0) <= 0,
 )
 
 /** 走出新手起步后，若有未分组，自动落到「我的患者」方便搜索 */
@@ -901,7 +938,7 @@ const emptyStarters = computed((): EmptyStarter[] => {
         text: '帮我建档',
         capability: 'CREATE_ARCHIVE',
         locked: true,
-        lockHint: '请先在左侧完成第一步：创建健管组。',
+        lockHint: '请先在左侧创建您的专属健管组',
       },
     ]
   }
@@ -942,7 +979,7 @@ const emptyStarters = computed((): EmptyStarter[] => {
 
 function runEmptyStarter(s: EmptyStarter) {
   if (s.locked) {
-    ElMessage.warning(s.lockHint || '请先在左侧完成第一步：创建健管组。')
+    ElMessage.warning(s.lockHint || '请先在左侧创建您的专属健管组')
     return
   }
   if (s.action === 'open-unassigned') {
@@ -993,31 +1030,38 @@ function overduePatientPhrase(cards: PriorityCard[]) {
   return `【${name}】等患者`
 }
 
-/** 有组、有未分组或待首诊、且还没选人时的一句欢迎。逾期首诊先于分组播报。 */
+/** 日常登录简报占位：逾期待办 + 公共池认领优先。 */
 function standbyWelcomeText() {
   if (needsPrimaryTeam.value) return ''
   const n = unassignedGuideCount.value
-  const overdue = overdueIntakeCards.value
+  const overdueTasks = summary.value.overdueCount || 0
+  const overdueIntake = overdueIntakeCards.value
   const intake = intakeReadyCount.value
-  if (n <= 0 && intake <= 0 && overdue.length === 0) return ''
+  if (n <= 0 && intake <= 0 && overdueTasks <= 0 && overdueIntake.length === 0) return ''
   const hello = daypartHello()
-  if (n > 0 && overdue.length > 0) {
-    return `${hello}。今天有 ${n} 位患者等待分组；另外提醒您，${overduePatientPhrase(overdue)}的首诊评估已逾期，建议优先处理。`
+  if (overdueTasks > 0 && n > 0) {
+    return `${hello}。您有 ${overdueTasks} 项逾期待办，另有 ${n} 位公共患者待认领，需要先处理吗？`
   }
-  if (overdue.length > 0) {
-    return `${hello}。提醒您，${overduePatientPhrase(overdue)}的首诊评估已逾期，建议优先处理。`
+  if (overdueTasks > 0) {
+    return `${hello}。您有 ${overdueTasks} 项逾期待办，需要先处理吗？`
+  }
+  if (n > 0 && overdueIntake.length > 0) {
+    return `${hello}。今天有 ${n} 位公共患者待认领；另外提醒您，${overduePatientPhrase(overdueIntake)}的首诊评估已逾期，建议优先处理。`
+  }
+  if (overdueIntake.length > 0) {
+    return `${hello}。提醒您，${overduePatientPhrase(overdueIntake)}的首诊评估已逾期，建议优先处理。`
   }
   if (n > 0 && intake > 0) {
-    return `${hello}。今天有 ${n} 位患者等待分组，另外还有 ${intake} 位已入组患者需要首诊评估。`
+    return `${hello}。今天有 ${n} 位公共患者待认领，另外还有 ${intake} 位已入组患者需要首诊评估。`
   }
   if (n > 0) {
-    return `${hello}。今天有 ${n} 位患者等待分组。未分组的人已经列在左侧，点名字就能开始。`
+    return `${hello}。目前有 ${n} 位公共患者待认领，您可以先把他们分到自己的健管组。`
   }
   return `${hello}。今天有 ${intake} 位已入组患者需要首诊评估。点左侧名字就能开始。`
 }
 
 const emptyStartersLead = computed(() => {
-  if (needsPrimaryTeam.value) return '不知道聊什么？点一条直接开始'
+  if (needsPrimaryTeam.value) return '新手常见问题，点一条开始了解'
   // 简报已经把分组和逾期说清，这里不再重复一大段，避免和左栏各说各的
   if (standbyWelcomeText()) return '点一条直接开始'
   return '不知道聊什么？点一条直接开始'
@@ -1064,12 +1108,16 @@ const serviceFlowSteps = computed(() => {
   }))
 })
 
-const serviceFlowLabel = computed(
-  () =>
+const serviceFlowLabel = computed(() => {
+  const base =
     focus.value?.serviceStageLabel ||
     serviceFlowSteps.value.find((s) => s.status === 'current')?.label ||
-    '',
-)
+    ''
+  if (base && isIntakeAwaitingStaffConfirm(focus.value)) {
+    return base.includes('待确认') ? base : `${base}（待确认）`
+  }
+  return base
+})
 
 const currentServiceStage = computed(() =>
   (focus.value?.serviceStageCode || serviceFlowSteps.value.find((s) => s.status === 'current')?.code || '')
@@ -1162,6 +1210,14 @@ const stageQuickActions = computed((): QuickActionItem[] => {
       run: () => goIntakeQuick(),
       primary: true,
     },
+    intakeConfirm: {
+      key: 'intakeConfirm',
+      label: '确认并提交评估',
+      shortLabel: '确认',
+      icon: 'intake',
+      run: () => void openIntakeSheet(focusPeopleId.value || undefined),
+      primary: true,
+    },
     intakeDetail: {
       key: 'intakeDetail',
       label: '查看首诊问卷',
@@ -1223,6 +1279,7 @@ const stageQuickActions = computed((): QuickActionItem[] => {
     },
   }
   const hasSubmittedIntake = focus.value?.intakeSubmitted === true
+  const awaitingConfirm = isIntakeAwaitingStaffConfirm(focus.value)
   let order: string[]
   switch (stage) {
     case 'TEAM_ASSIGN':
@@ -1237,6 +1294,10 @@ const stageQuickActions = computed((): QuickActionItem[] => {
         : ['archive', 'intake', 'observations']
       break
     case 'INTAKE':
+      if (awaitingConfirm) {
+        order = ['intakeConfirm', 'intakeDetail', 'observations', 'archive']
+        break
+      }
       // 工作台待办里已有首诊时，不再在快捷办理重复放「开始首诊」
       order = hasOpenIntakeTodo.value
         ? ['observations', 'archive', 'assessments']
@@ -1247,6 +1308,10 @@ const stageQuickActions = computed((): QuickActionItem[] => {
       }
       break
     case 'CARE_PLAN':
+      if (awaitingConfirm) {
+        order = ['intakeConfirm', 'intakeDetail', 'archive', 'assessments']
+        break
+      }
       order = hasSubmittedIntake
         ? ['carePlan', 'intakeDetail', 'archive', 'assessments', 'observations']
         : ['carePlan', 'archive', 'assessments', 'observations']
@@ -1319,10 +1384,11 @@ const hasOpenIntakeTodo = computed(() =>
 
 /** 底部胶囊跟当前服务环节走：当前步高亮，还没到的步骤收淡 */
 function chipStageTone(code: string): 'now' | 'later' | '' {
-  if (!focus.value) return ''
+  if (!focus.value || !currentPatient.value) return ''
   const stage = currentServiceStage.value
-  if (stage === 'INTAKE' || hasOpenIntakeTodo.value) {
-    if (code === 'COMPLETE_TODOS') return 'now'
+  const awaitingConfirm = isIntakeAwaitingStaffConfirm(focus.value)
+  if (awaitingConfirm || stage === 'INTAKE' || hasOpenIntakeTodo.value) {
+    if (code === 'INTAKE_ASSESS' || code === 'COMPLETE_TODOS') return 'now'
     if (code === 'CARE_PLAN' || code === 'REPORT_SUMMARY') return 'later'
     return ''
   }
@@ -1337,7 +1403,7 @@ function chipStageTone(code: string): 'now' | 'later' | '' {
   }
   if (stage === 'ARCHIVE' || stage === 'TEAM_ASSIGN') {
     if (code === 'CREATE_ARCHIVE') return 'now'
-    if (code === 'CARE_PLAN' || code === 'REPORT_SUMMARY') return 'later'
+    if (code === 'CARE_PLAN' || code === 'REPORT_SUMMARY' || code === 'INTAKE_ASSESS') return 'later'
     return ''
   }
   return ''
@@ -1494,8 +1560,38 @@ const archiveHint = computed(() => {
   return `健康档案已填 ${f.archiveFilledCount}/${f.archiveTotalCount}`
 })
 
-/** 首诊阶段是否已走完（与顶栏 SOP 打勾对齐） */
+function isIntakeReviewLabel(text?: string | null) {
+  const t = (text || '').trim()
+  if (!t) return false
+  return (
+    t.includes('待确认') ||
+    t === '待复核（新问卷）' ||
+    t === '待确认（患者已交卷）'
+  )
+}
+
+function isIntakeAwaitingStaffConfirm(f?: Focus | null) {
+  if (!f) return false
+  if (f.intakeAwaitingStaffConfirm) return true
+  return (f.openTasks || []).some((t) =>
+    isIntakeReviewLabel(t.taskTypeLabel || t.summary),
+  )
+}
+
+/** 待确认评估未办结前，禁止跳进生成/出具方案 */
+function blockCarePlanUntilIntakeConfirmed(peopleId?: string | null): boolean {
+  const f = focus.value
+  const same =
+    !peopleId || !f?.peopleId || peopleId === f.peopleId || peopleId === focusPeopleId.value
+  if (!same || !isIntakeAwaitingStaffConfirm(f)) return false
+  ElMessage.warning('请先确认患者交卷并正式提交评估，再生成方案')
+  void openIntakeSheet(peopleId || focusPeopleId.value || undefined)
+  return true
+}
+
+/** 首诊阶段是否已走完（与顶栏 SOP 打勾对齐）；患者初步交卷不算办结 */
 function isIntakeStageDone(f: Focus) {
+  if (isIntakeAwaitingStaffConfirm(f)) return false
   if (f.intakeSubmitted) return true
   const stages = f.serviceStages || []
   const intake = stages.find((s) => (s.code || '').toUpperCase() === 'INTAKE')
@@ -1514,6 +1610,7 @@ const intakeCompleteness = computed(() => {
   const pct = f.intakeCompletenessPercent
   const filled = f.intakeFilledCount
   const total = f.intakeTotalCount
+  const awaitingConfirm = isIntakeAwaitingStaffConfirm(f)
   const stageDone = isIntakeStageDone(f)
   if (stageDone) {
     const thin = pct != null && pct < 100
@@ -1529,14 +1626,30 @@ const intakeCompleteness = computed(() => {
     }
   }
   if (pct == null || total == null || total <= 0) {
-    return { tone: '', label: '—', bar: 0, hint: '暂无首诊问卷进度', note: '' }
+    return {
+      tone: awaitingConfirm ? 'fair' : '',
+      label: awaitingConfirm ? '待确认' : '—',
+      bar: awaitingConfirm ? Math.max(pct || 0, 1) : 0,
+      hint: awaitingConfirm ? '患者已交卷，待健管师确认' : '暂无首诊问卷进度',
+      note: '',
+    }
   }
-  const tone = pct >= 80 ? 'good' : pct >= 50 ? 'fair' : 'poor'
+  const tone = awaitingConfirm ? 'fair' : pct >= 80 ? 'good' : pct >= 50 ? 'fair' : 'poor'
   const hint =
     filled != null
-      ? `首诊问卷已填 ${filled}/${total}${f.intakeSubmitted ? ' · 已提交' : ' · 草稿'}`
-      : '首诊评估问卷填写完整度'
-  return { tone, label: `${pct}%`, bar: pct, hint, note: '' }
+      ? `首诊问卷已填 ${filled}/${total}${
+          awaitingConfirm ? ' · 待确认' : f.intakeSubmitted ? ' · 已提交' : ' · 草稿'
+        }`
+      : awaitingConfirm
+        ? '患者已交卷，待健管师确认'
+        : '首诊评估问卷填写完整度'
+  return {
+    tone,
+    label: awaitingConfirm ? `${pct}%` : `${pct}%`,
+    bar: pct,
+    hint,
+    note: awaitingConfirm ? '请与患者核对后确认并提交评估' : '',
+  }
 })
 const assessmentTags = computed(() => focus.value?.assessmentTags || [])
 /** 档案几乎空白且无评估结果时，不展示「空标签」误导，明示待评估 */
@@ -1611,37 +1724,84 @@ const briefingMsg = computed(() => {
   if (m && isBriefingLike(m)) return m
   return null
 })
-const threadMessages = computed(() =>
-  briefingMsg.value ? messages.value.slice(1) : messages.value,
+
+const ZERO_TEAM_WELCOME =
+  '您好！我是您的专属 AI 健管助理。请先点击左侧的 [先创建我的健管组] 按钮，只需 10 秒即可完成初始化。'
+
+/** 零数据首次欢迎：不算正式对话，避免挤掉「新手常见问题」引导卡 */
+function isZeroTeamWelcome(m: ChatMessage) {
+  return (
+    m.role === 'assistant' &&
+    (m.intent === 'ORG_ONBOARDING_WELCOME' ||
+      (m.content || '').includes('专属 AI 健管助理'))
+  )
+}
+
+/** 用户或助手（非简报/非首次欢迎）任一发言后，引导卡必须消失 */
+const hasConversationTurns = computed(() =>
+  messages.value.some(
+    (m) =>
+      m.role === 'user' ||
+      (m.role === 'assistant' &&
+        !isBriefingLike(m) &&
+        !isZeroTeamWelcome(m) &&
+        !!(m.content || m.streamContent || m.activity?.length)),
+  ),
 )
 
+/**
+ * 未建组且尚未正式对话：静态欢迎气泡立刻可见（不依赖简报/会话异步回填）。
+ * 与 messages 里可能存在的同文案去重，避免刷新后叠两条。
+ */
+const showStaticNewbieWelcome = computed(
+  () =>
+    needsPrimaryTeam.value &&
+    !focusPeopleId.value &&
+    !hasConversationTurns.value &&
+    !sending.value,
+)
+
+const threadMessages = computed(() => {
+  let list = briefingMsg.value ? messages.value.slice(1) : messages.value
+  // 静态欢迎已展示时，滤掉 messages 里的同款，避免双气泡
+  if (showStaticNewbieWelcome.value) {
+    list = list.filter((m) => !isZeroTeamWelcome(m))
+  }
+  return list
+})
+
+/** 只要已开始聊天，立刻收起「不知道聊什么」，把空间留给对话流 */
 const showEmptyStarters = computed(
   () =>
     !focusPeopleId.value &&
     !sending.value &&
     emptyStarters.value.length > 0 &&
-    (threadMessages.value.length === 0 || needsPrimaryTeam.value),
+    !hasConversationTurns.value,
 )
 
+/** 无选中患者且非首诊抽屉：收起右栏，加宽中间对话 */
+const focusPanelCollapsed = computed(() => !focusPeopleId.value && !intakeDocked.value)
+
 /**
- * 空会话引导卡已有「新建患者档案」时，简报区隐藏重复建档 chip，只留「查看我的患者 / 刷新」等。
- * 历史会话里残留的建档动作也会被滤掉。
+ * 空会话引导卡已有「新建患者档案」时，简报区隐藏重复建档 chip。
+ * 日常登录保留「去认领/分配患者」等简报 CTA，与左侧橙条互补（文案不同、可一键打开批量面板）。
  */
 const briefingUiActions = computed(() => {
   const actions = briefingMsg.value?.actions || []
   return actions.filter((a) => {
-    // 空会话引导卡 / 左侧清单已承接建档与建组，简报不再重复挂同款 CTA
+    // 冷启动空会话：建档/建组由左侧与引导卡承接，简报不重复
     if (showEmptyStarters.value || isColdStart.value) {
       if (a.type === 'TRIGGER_CAPABILITY' && (a.path || '') === 'CREATE_ARCHIVE') return false
       if (a.type === 'NAVIGATE' && (a.path || '') === 'create-care-team') return false
+      if (a.type === 'NAVIGATE' && (a.path || '') === 'create-archive') return false
       if (/建档|开始建档|创建.*健管组/.test(a.label || '')) return false
     }
-    // 左侧橙条已承接未分组入口，简报不再重复「查看未分组」；保留刷新
+    // 旧文案「查看未分组 / 打开批量分组·分配面板」收掉；新「去认领/分配患者」保留
     if (
       (a.type === 'SET_COCKPIT_TAB' && (a.path || '') === 'mine' && /未分组/.test(a.label || '')) ||
       (a.label || '') === '查看未分组患者' ||
-      (a.type === 'NAVIGATE' && (a.path || '') === 'unassigned-workbench') ||
-      (a.label || '') === '打开批量分组面板'
+      (a.label || '') === '打开批量分组面板' ||
+      (a.label || '') === '打开批量分配面板'
     ) {
       return false
     }
@@ -1657,21 +1817,24 @@ const briefingShownText = computed(() => {
   const raw = (briefingMsg.value?.content || '').trim()
   const welcome = standbyWelcomeText()
   if (!welcome) return raw
-  const unassignedTalk =
-    !raw ||
-    /尚未分配健管组|批量分组|待分组|等待分组|未分组|还没分配健管组|已列出名单|点名字就能开始/.test(raw)
-  // 有逾期首诊时，旧简报若只催分组，改播这一句，避免和左栏高优待办脱节
-  if (overdueIntakeCards.value.length > 0 || unassignedTalk) return welcome
+  // 简报还没到：先用本地欢迎语占位
+  if (!raw) return welcome
+  const onlyUnassignedTalk =
+    /尚未分配健管组|批量分组|待分组|等待分组|未分组|还没分配健管组|已列出名单|点名字就能开始/.test(
+      raw,
+    )
+  // 有逾期待办/逾期首诊，但旧简报只催分组时，改播带逾期的欢迎语
+  const hasOverdueSignal =
+    overdueIntakeCards.value.length > 0 || (summary.value.overdueCount || 0) > 0
+  if (hasOverdueSignal && onlyUnassignedTalk) return welcome
   return raw
 })
 
 const briefingPreview = computed(() => {
-  const welcome = standbyWelcomeText()
-  if (welcome) return welcome
+  const shown = (briefingShownText.value || '').replace(/\s+/g, ' ').trim()
+  if (shown) return shown.length > 72 ? `${shown.slice(0, 72)}…` : shown
   if (showEmptyStarters.value) return '点下方卡片开始，或展开查看今日简报'
-  const raw = (briefingMsg.value?.content || '').replace(/\s+/g, ' ').trim()
-  if (!raw) return '点击展开查看今日建议'
-  return raw.length > 72 ? `${raw.slice(0, 72)}…` : raw
+  return '点击展开查看今日建议'
 })
 watch(
   () => threadMessages.value.length,
@@ -1682,7 +1845,7 @@ watch(
 watch(
   showEmptyStarters,
   (show) => {
-    if (show) briefingCollapsed.value = true
+    if (show && isColdStart.value) briefingCollapsed.value = true
   },
   { immediate: true },
 )
@@ -1846,10 +2009,50 @@ function cardHasTask(card: PriorityCard, code: string, label?: string) {
   return false
 }
 
-type CardNodeAction = 'assess' | 'plan' | 'plan-review' | 'report' | 'intake'
+type CardNodeAction =
+  | 'assess'
+  | 'plan'
+  | 'plan-review'
+  | 'report'
+  | 'intake'
+  | 'intake-review'
+  | 'follow'
+  | 'send-intake'
 
 /**
- * 左栏节点角标：可点击的下一步，优先于笼统「AI 草稿 / 待办 N」。
+ * 左栏 SOP 阶段（无独立 current_sop_stage 字段时，由 badges / 待办推导）。
+ * new → 新建/待评估；plan → 已评估待方案；active → 方案已生效。
+ */
+function cardSopStage(card: PriorityCard): 'unassigned' | 'new' | 'review' | 'plan' | 'active' | 'other' {
+  if (isUnassignedCard(card)) return 'unassigned'
+  const badges = card.badges || []
+  if (badges.includes('PLAN_ACTIVE') || hasPlanRate(card)) return 'active'
+  if (
+    badges.includes('PLAN_IN_PROGRESS') ||
+    badges.includes('PLAN_DRAFT') ||
+    cardHasTask(card, 'PLAN_CREATE', '制定方案') ||
+    cardHasTask(card, 'PLAN_REVIEW')
+  ) {
+    return 'plan'
+  }
+  if (
+    badges.includes('INTAKE_REVIEW') ||
+    (card.taskTypeLabels || []).some((t) => isIntakeReviewLabel(t))
+  ) {
+    return 'review'
+  }
+  if (
+    cardHasTask(card, 'ONBOARDING', '首诊') ||
+    badges.includes('ONBOARDING') ||
+    !(card.openTaskCount && card.openTaskCount > 0)
+  ) {
+    return 'new'
+  }
+  return 'other'
+}
+
+/**
+ * 左栏节点角标：按 SOP 阶段驱动可点 CTA（新建→首诊/发卷，已评估→出方案，生效→日常跟进）。
  */
 function cardNodeBadge(
   card: PriorityCard,
@@ -1858,23 +2061,28 @@ function cardNodeBadge(
   if (cardHasTask(card, 'ASSESSMENT_ESCALATION', '评估升级') || cardHasTask(card, 'ASSESSMENT_SUSPECTED')) {
     return { text: '点击确认风险', tone: 'cta-danger', action: 'assess' }
   }
-  if (cardHasTask(card, 'PLAN_CREATE', '制定方案')) {
-    return { text: '点击生成方案', tone: 'cta', action: 'plan' }
+  const stage = cardSopStage(card)
+  if (stage === 'review') {
+    return { text: '待确认评估', tone: 'high', action: 'intake-review' }
   }
-  if (cardHasTask(card, 'PLAN_REVIEW')) {
-    return { text: '点击审阅方案', tone: 'cta', action: 'plan-review' }
+  if (stage === 'active') {
+    return { text: '日常跟进', tone: 'cta-muted', action: 'follow' }
+  }
+  if (stage === 'plan') {
+    if (cardHasTask(card, 'PLAN_REVIEW') || (card.badges || []).includes('PLAN_IN_PROGRESS')) {
+      return { text: '去确认方案', tone: 'cta', action: 'plan-review' }
+    }
+    return { text: '去生成方案', tone: 'cta', action: 'plan' }
   }
   if (cardHasTask(card, 'REPORT_REVIEW')) {
     return { text: '点击审阅报告', tone: 'cta', action: 'report' }
   }
-  // 无待办任务时，用方案阶段角标引导，避免掉进「待评估」
-  if ((card.badges || []).includes('PLAN_IN_PROGRESS')) {
-    return { text: '点击确认方案', tone: 'cta', action: 'plan-review' }
-  }
-  if ((card.badges || []).includes('PLAN_DRAFT')) {
-    return { text: '点击完善方案', tone: 'cta', action: 'plan' }
-  }
-  if (cardHasTask(card, 'ONBOARDING', '首诊') || (card.badges || []).includes('ONBOARDING')) {
+  // 新建 / 待评估：首诊为主入口
+  if (stage === 'new' || stage === 'other') {
+    if (cardHasTask(card, 'ONBOARDING', '首诊') || (card.badges || []).includes('ONBOARDING')) {
+      return { text: '点击开始首诊', tone: 'cta-mid', action: 'intake' }
+    }
+    // 已入组但暂无待办：仍给服务入口，避免空白卡
     return { text: '点击开始首诊', tone: 'cta-mid', action: 'intake' }
   }
   return null
@@ -1893,12 +2101,24 @@ async function onCardNodeAction(ev: Event, card: PriorityCard) {
     goCarePlan()
     return
   }
+  if (node.action === 'intake-review') {
+    openSubmittedIntake(card.peopleId)
+    return
+  }
   if (node.action === 'assess') {
     goAssessments()
     return
   }
   if (node.action === 'report') {
     goReports()
+    return
+  }
+  if (node.action === 'follow') {
+    goFollowups()
+    return
+  }
+  if (node.action === 'send-intake') {
+    void sendMessage('请为这位患者生成并发送首诊问卷链接', false)
     return
   }
   if (node.action === 'intake') {
@@ -1933,7 +2153,26 @@ function riskBadge(card: PriorityCard) {
   if (isUnassignedCard(card)) {
     return { text: '待分组', tone: 'mid' }
   }
-  if (badges.includes('ONBOARDING')) {
+  if (
+    badges.includes('INTAKE_REVIEW') ||
+    (card.taskTypeLabels || []).some((t) => isIntakeReviewLabel(t))
+  ) {
+    return { text: '待确认评估', tone: 'high' }
+  }
+  // 方案阶段：有方案/草稿时绝不能再兜底「待评估」
+  const sop = cardSopStage(card)
+  if (sop === 'active') {
+    return { text: '日常跟进', tone: 'muted' }
+  }
+  if (sop === 'plan') {
+    if (badges.includes('PLAN_IN_PROGRESS')) return { text: '方案确认中', tone: 'mid' }
+    if (badges.includes('PLAN_DRAFT')) return { text: '方案草稿', tone: 'mid' }
+    return { text: '待制定方案', tone: 'mid' }
+  }
+  if (sop === 'review') {
+    return { text: '待确认评估', tone: 'high' }
+  }
+  if (badges.includes('ONBOARDING') || sop === 'new') {
     return { text: '待首诊', tone: 'mid' }
   }
   if (badges.includes('WATCHED') && !(card.openTaskCount && card.openTaskCount > 0)) {
@@ -1941,16 +2180,6 @@ function riskBadge(card: PriorityCard) {
   }
   if ((card.openTaskCount || 0) > 0) {
     return { text: '待跟进', tone: 'muted' }
-  }
-  // 方案阶段：有方案/草稿时绝不能再兜底「待评估」
-  if (badges.includes('PLAN_ACTIVE')) {
-    return { text: '日常跟进', tone: 'muted' }
-  }
-  if (badges.includes('PLAN_IN_PROGRESS')) {
-    return { text: '方案确认中', tone: 'mid' }
-  }
-  if (badges.includes('PLAN_DRAFT')) {
-    return { text: '方案草稿', tone: 'mid' }
   }
   return { text: '待评估', tone: 'low' }
 }
@@ -2076,13 +2305,19 @@ function overdueIntakeHeadline(card: PriorityCard): string {
   return days > 0 ? `首诊已逾期 ${days} 天` : '首诊已逾期'
 }
 
-/** 左栏排序：逾期首诊 > 其它逾期 > 待首诊 > 有待办 > 待评估 */
+/** 左栏排序：逾期首诊 > 其它逾期 > 待确认评估 > 待首诊 > 有待办 > 待评估 */
 function cardAttentionRank(card: PriorityCard): number {
   if (overdueIntakeHeadline(card)) return 0
   if ((card.overdueTaskCount || 0) > 0 || (card.badges || []).includes('OVERDUE')) return 1
-  if ((card.badges || []).includes('ONBOARDING') || (card.taskTypeLabels || []).includes('首诊')) return 2
-  if ((card.openTaskCount || 0) > 0) return 3
-  return 4
+  if (
+    (card.badges || []).includes('INTAKE_REVIEW') ||
+    (card.taskTypeLabels || []).some((t) => isIntakeReviewLabel(t))
+  ) {
+    return 2
+  }
+  if ((card.badges || []).includes('ONBOARDING') || (card.taskTypeLabels || []).includes('首诊')) return 3
+  if ((card.openTaskCount || 0) > 0) return 4
+  return 5
 }
 
 function cardHasOverdueTask(card: PriorityCard) {
@@ -2103,7 +2338,7 @@ function footerNote(card: PriorityCard) {
     return ''
   }
   const reason = card.topReason?.trim()
-  // 节点角标已点明卡点，底下不再重复「制定方案 / 评估升级」
+  // 节点角标已点明卡点，底下不再重复「制定方案 / 评估升级 / 待确认」
   if (cardNodeBadge(card)) {
     if (
       !reason ||
@@ -2112,6 +2347,7 @@ function footerNote(card: PriorityCard) {
       reason === '评估升级' ||
       reason === '首诊' ||
       reason === '待首诊' ||
+      isIntakeReviewLabel(reason) ||
       reason === '主责患者' ||
       reason === card.careTeamName
     ) {
@@ -2140,7 +2376,14 @@ function footerNote(card: PriorityCard) {
 function riskBadgeShowDot(card: PriorityCard) {
   if (cardNodeBadge(card)?.action) return false
   const t = riskBadge(card).text
-  return t !== '待分组' && t !== '待首诊' && t !== '待评估' && t !== '待跟进' && t !== '日常跟进'
+  return (
+    t !== '待分组' &&
+    t !== '待首诊' &&
+    t !== '待确认评估' &&
+    t !== '待评估' &&
+    t !== '待跟进' &&
+    t !== '日常跟进'
+  )
 }
 
 function priorityLabel(p?: string) {
@@ -2297,11 +2540,195 @@ const listCards = computed(() => (tab.value === 'mine' ? searchResults.value : c
 const collapsedMineTeams = ref<Set<string>>(new Set())
 const mineTeamCollapseTouched = ref<Set<string>>(new Set())
 
-const hasOverdueMineTask = computed(() =>
-  minePatientGroups.value.some(
-    (g) => !isUnassignedMineGroup(g) && g.cards.some((c) => cardHasOverdueTask(c)),
-  ),
-)
+/** 组内卡片默认只渲染前 N 张，避免百人一次挂载卡死 */
+const MINE_TEAM_CARD_PAGE = 10
+/** careTeamId → 已展开条数上限 */
+const mineTeamCardLimit = ref<Record<string, number>>({})
+/** careTeamId → 状态筛选：all | intake | stock | plan */
+const mineTeamStageFilter = ref<Record<string, string>>({})
+/** `${careTeamId}::${bucketKey}` 折叠态 */
+const collapsedMineStageBuckets = ref<Set<string>>(new Set())
+
+function mineTeamLimit(careTeamId: string) {
+  return mineTeamCardLimit.value[careTeamId] ?? MINE_TEAM_CARD_PAGE
+}
+
+function expandMineTeamCards(careTeamId: string, total: number) {
+  const cur = mineTeamLimit(careTeamId)
+  mineTeamCardLimit.value = {
+    ...mineTeamCardLimit.value,
+    [careTeamId]: Math.min(total, cur + MINE_TEAM_CARD_PAGE),
+  }
+}
+
+function showAllMineTeamCards(careTeamId: string, total: number) {
+  mineTeamCardLimit.value = { ...mineTeamCardLimit.value, [careTeamId]: total }
+}
+
+function mineTeamFilter(careTeamId: string) {
+  return mineTeamStageFilter.value[careTeamId] || 'all'
+}
+
+function setMineTeamFilter(careTeamId: string, filter: string) {
+  mineTeamStageFilter.value = { ...mineTeamStageFilter.value, [careTeamId]: filter }
+  // 切换筛选时重置分页
+  mineTeamCardLimit.value = { ...mineTeamCardLimit.value, [careTeamId]: MINE_TEAM_CARD_PAGE }
+}
+
+function filterCardsByMineStage(cards: PriorityCard[], filter: string) {
+  if (filter === 'all') return cards
+  return cards.filter((c) => {
+    const s = cardSopStage(c)
+    if (filter === 'intake') return s === 'new' || s === 'review'
+    if (filter === 'plan') return s === 'plan'
+    if (filter === 'stock') return s === 'active' || s === 'plan'
+    return true
+  })
+}
+
+function mineTeamStageStats(cards: PriorityCard[]) {
+  let intake = 0
+  let plan = 0
+  let stock = 0
+  for (const c of cards) {
+    const s = cardSopStage(c)
+    if (s === 'new' || s === 'review') intake++
+    else if (s === 'plan') plan++
+    else if (s === 'active') stock++
+  }
+  return { intake, plan, stock, follow: stock }
+}
+
+function visibleMineTeamCards(g: MinePatientGroup) {
+  const filtered = filterCardsByMineStage(g.cards, mineTeamFilter(g.careTeamId))
+  const limit = mineTeamLimit(g.careTeamId)
+  return {
+    filtered,
+    shown: filtered.slice(0, limit),
+    remain: Math.max(0, filtered.length - limit),
+  }
+}
+
+function stageBucketKey(careTeamId: string, bucket: string) {
+  return `${careTeamId}::${bucket}`
+}
+
+function isMineStageBucketCollapsed(careTeamId: string, bucket: string) {
+  // 默认：待首诊展开，其余折叠（仅当该组人数 > 分页阈值时启用分组折叠）
+  const key = stageBucketKey(careTeamId, bucket)
+  if (collapsedMineStageBuckets.value.has(key)) return true
+  if (collapsedMineStageBuckets.value.has(`open:${key}`)) return false
+  return bucket !== 'intake'
+}
+
+function toggleMineStageBucket(careTeamId: string, bucket: string) {
+  const key = stageBucketKey(careTeamId, bucket)
+  const openKey = `open:${key}`
+  const next = new Set(collapsedMineStageBuckets.value)
+  if (isMineStageBucketCollapsed(careTeamId, bucket)) {
+    next.delete(key)
+    next.add(openKey)
+  } else {
+    next.delete(openKey)
+    next.add(key)
+  }
+  collapsedMineStageBuckets.value = next
+}
+
+/** 大组按状态拆桶；小组直接扁平列表 */
+function mineTeamBuckets(g: MinePatientGroup) {
+  if (g.cards.length <= MINE_TEAM_CARD_PAGE) return null
+  const buckets: Array<{ key: string; label: string; cards: PriorityCard[] }> = [
+    { key: 'intake', label: '待首诊', cards: [] },
+    { key: 'plan', label: '待制定方案', cards: [] },
+    { key: 'follow', label: '日常跟进', cards: [] },
+    { key: 'other', label: '其他', cards: [] },
+  ]
+  for (const c of g.cards) {
+    const s = cardSopStage(c)
+    if (s === 'new' || s === 'review') buckets[0]!.cards.push(c)
+    else if (s === 'plan') buckets[1]!.cards.push(c)
+    else if (s === 'active') buckets[2]!.cards.push(c)
+    else buckets[3]!.cards.push(c)
+  }
+  return buckets.filter((b) => b.cards.length > 0)
+}
+
+function visibleBucketCards(careTeamId: string, bucketKey: string, cards: PriorityCard[]) {
+  const limitKey = `${careTeamId}::${bucketKey}`
+  const limit = mineTeamCardLimit.value[limitKey] ?? MINE_TEAM_CARD_PAGE
+  return {
+    shown: cards.slice(0, limit),
+    remain: Math.max(0, cards.length - limit),
+    limitKey,
+  }
+}
+
+function expandBucketCards(limitKey: string, total: number) {
+  const cur = mineTeamCardLimit.value[limitKey] ?? MINE_TEAM_CARD_PAGE
+  mineTeamCardLimit.value = {
+    ...mineTeamCardLimit.value,
+    [limitKey]: Math.min(total, cur + MINE_TEAM_CARD_PAGE),
+  }
+}
+
+type MineRenderBlock =
+  | { kind: 'bucket-head'; key: string; careTeamId: string; bucketKey: string; label: string; count: number }
+  | { kind: 'card'; key: string; card: PriorityCard }
+  | { kind: 'more'; key: string; remain: number; onExpand: () => void }
+
+/** 组内渲染块：大组按状态分桶+分页；小组直接分页；搜索时全量展示 */
+function mineTeamRenderBlocks(g: MinePatientGroup): MineRenderBlock[] {
+  const blocks: MineRenderBlock[] = []
+  if (searchKeyword.value.trim()) {
+    for (const c of g.cards) {
+      blocks.push({ kind: 'card', key: c.peopleId, card: c })
+    }
+    return blocks
+  }
+  const buckets = mineTeamBuckets(g)
+  if (!buckets) {
+    const vis = visibleMineTeamCards(g)
+    for (const c of vis.shown) {
+      blocks.push({ kind: 'card', key: c.peopleId, card: c })
+    }
+    if (vis.remain > 0) {
+      blocks.push({
+        kind: 'more',
+        key: `more-${g.careTeamId}`,
+        remain: vis.remain,
+        onExpand: () => expandMineTeamCards(g.careTeamId, vis.filtered.length),
+      })
+    }
+    return blocks
+  }
+  for (const b of buckets) {
+    blocks.push({
+      kind: 'bucket-head',
+      key: `bh-${g.careTeamId}-${b.key}`,
+      careTeamId: g.careTeamId,
+      bucketKey: b.key,
+      label: b.label,
+      count: b.cards.length,
+    })
+    if (isMineStageBucketCollapsed(g.careTeamId, b.key)) continue
+    const vis = visibleBucketCards(g.careTeamId, b.key, b.cards)
+    for (const c of vis.shown) {
+      blocks.push({ kind: 'card', key: `${b.key}-${c.peopleId}`, card: c })
+    }
+    if (vis.remain > 0) {
+      const limitKey = vis.limitKey
+      const total = b.cards.length
+      blocks.push({
+        kind: 'more',
+        key: `bm-${g.careTeamId}-${b.key}`,
+        remain: vis.remain,
+        onExpand: () => expandBucketCards(limitKey, total),
+      })
+    }
+  }
+  return blocks
+}
 
 /** 日常进舱：未分组默认收起，把已入组患者露出来；顶部橙条仍可一键去处理。 */
 function shouldAutoCollapseMineTeam(careTeamId: string) {
@@ -2338,19 +2765,17 @@ function expandMineTeam(careTeamId: string) {
   mineTeamCollapseTouched.value = touched
 }
 
-/** 逾期组排到未分组前面；组内逾期盖过待评估 */
+/** 未分组永远置顶；其余组里有逾期的靠前；组内逾期盖过待评估 */
 const displayMinePatientGroups = computed(() => {
-  const overdueExists = hasOverdueMineTask.value
   const groups = minePatientGroups.value.map((g) => ({
     ...g,
     cards: [...g.cards].sort((a, b) => cardAttentionRank(a) - cardAttentionRank(b)),
   }))
   groups.sort((a, b) => {
     const rank = (g: MinePatientGroup) => {
-      // 未分组自己的待分配逾期不能压过已入组的临床逾期
-      if (!isUnassignedMineGroup(g) && g.cards.some((c) => cardHasOverdueTask(c))) return 0
-      if (isUnassignedMineGroup(g)) return overdueExists ? 2 : 0
-      return 1
+      if (isUnassignedMineGroup(g)) return 0
+      if (g.cards.some((c) => cardHasOverdueTask(c))) return 1
+      return 2
     }
     return rank(a) - rank(b)
   })
@@ -2365,8 +2790,13 @@ const unassignedWorkbenchPatients = computed(() => unassignedMineGroup.value?.ca
 const pendingIntakeBatch = ref<{
   peopleIds: string[]
   careTeamName: string
+  careTeamId?: string
 } | null>(null)
 const intakeBatchSendOpen = ref(false)
+
+/** 批量跟进工作台 */
+const batchServeWorkbenchOpen = ref(false)
+const batchServeInitialFilter = ref<'all' | 'stock' | null>(null)
 
 const intakeBatchSendPatients = computed(() => {
   const ids = pendingIntakeBatch.value?.peopleIds || []
@@ -2379,12 +2809,303 @@ const intakeBatchSendPatients = computed(() => {
   })
 })
 
+function findCardByPeopleId(peopleId: string): PriorityCard | undefined {
+  for (const g of minePatientGroups.value) {
+    const hit = g.cards.find((c) => c.peopleId === peopleId)
+    if (hit) return hit
+  }
+  return searchResults.value.find((c) => c.peopleId === peopleId)
+}
+
+function toBatchServePatient(
+  peopleId: string,
+  team?: Pick<MinePatientGroup, 'careTeamId' | 'careTeamName'> | null,
+): BatchServePatient {
+  const card = findCardByPeopleId(peopleId)
+  const stage = card ? cardSopStage(card) : 'new'
+  const stageLabel =
+    stage === 'active'
+      ? '日常跟进'
+      : stage === 'plan'
+        ? '待制定方案'
+        : stage === 'review'
+          ? '待确认评估'
+          : stage === 'new'
+            ? '待首诊'
+            : '可服务'
+  const careTeamId = (team?.careTeamId || card?.careTeamId || '').trim() || undefined
+  const rawName = (team?.careTeamName || card?.careTeamName || '').trim()
+  const careTeamName = careTeamId
+    ? isUnassignedMineGroup({
+        careTeamId,
+        careTeamName: rawName || '未分组患者',
+      })
+      ? '公共池'
+      : rawName || '未命名组'
+    : undefined
+  return {
+    peopleId,
+    displayName: (card?.displayName || '患者').trim(),
+    age: card?.age ?? null,
+    diseaseLabels: card?.diseaseLabels || [],
+    stage: stage === 'unassigned' ? 'other' : stage,
+    stageLabel,
+    ctaText: card ? cardNodeBadge(card)?.text : undefined,
+    careTeamId,
+    careTeamName,
+  }
+}
+
+/** 工作台花名册：全量组内患者，供顶部下拉切换组别 */
+const batchServeWorkbenchPatients = computed((): BatchServePatient[] => {
+  const out: BatchServePatient[] = []
+  const seen = new Set<string>()
+  for (const g of minePatientGroups.value) {
+    for (const c of g.cards) {
+      if (!c.peopleId || seen.has(c.peopleId)) continue
+      seen.add(c.peopleId)
+      out.push(toBatchServePatient(c.peopleId, g))
+    }
+  }
+  if (out.length) return out
+  // 花名册尚未拉到时，退回本批 peopleIds
+  const ids = pendingIntakeBatch.value?.peopleIds || []
+  return ids.map((id) => toBatchServePatient(id))
+})
+
+/** 工作台健管组下拉：全部 + 各组 + 公共池 */
+const batchServeTeamOptions = computed((): BatchServeTeamOption[] => {
+  const opts: BatchServeTeamOption[] = [
+    {
+      id: BATCH_SERVE_TEAM_ALL,
+      name: '全部患者',
+      count: batchServeWorkbenchPatients.value.length,
+    },
+  ]
+  for (const g of minePatientGroups.value) {
+    const name = isUnassignedMineGroup(g) ? '公共池' : g.careTeamName || '未命名组'
+    opts.push({
+      id: g.careTeamId,
+      name,
+      count: g.cards?.length || 0,
+    })
+  }
+  return opts
+})
+
+/** 仅统计「本次分配」的人数分布（内部备用） */
+function summarizeAssignedBatch(peopleIds: string[]) {
+  let intake = 0
+  let stock = 0
+  let other = 0
+  for (const id of peopleIds) {
+    const card = findCardByPeopleId(id)
+    const s = card ? cardSopStage(card) : 'new'
+    if (s === 'new' || s === 'review') intake++
+    else if (s === 'plan' || s === 'active') stock++
+    else other++
+  }
+  if (intake + stock + other === 0) intake = peopleIds.length
+  return { intake, stock, other, total: peopleIds.length }
+}
+
+/**
+ * 统计健管组当前真实花名册（含历史已在组内的患者），与左侧列表数字对齐。
+ */
+function summarizeCareTeamRoster(careTeamId: string | null | undefined) {
+  const id = (careTeamId || '').trim()
+  const g = id
+    ? minePatientGroups.value.find((x) => x.careTeamId === id)
+    : null
+  const cards = g?.cards || []
+  let intake = 0
+  let plan = 0
+  let follow = 0
+  let other = 0
+  for (const c of cards) {
+    const s = cardSopStage(c)
+    if (s === 'new' || s === 'review') intake++
+    else if (s === 'plan') plan++
+    else if (s === 'active') follow++
+    else other++
+  }
+  return {
+    total: cards.length,
+    intake,
+    plan,
+    follow,
+    stock: plan + follow,
+    other,
+  }
+}
+
+function openBatchServeWorkbench(opts?: {
+  peopleIds?: string[]
+  careTeamName?: string | null
+  careTeamId?: string | null
+  filter?: 'all' | 'stock' | null
+}) {
+  const ids = opts?.peopleIds?.filter(Boolean) || pendingIntakeBatch.value?.peopleIds || []
+  batchServeInitialFilter.value = opts?.filter || 'all'
+  // 打开前刷新花名册，保证组别下拉 / Tab 计数与左侧一致
+  void searchPatients().finally(() => {
+    const rosterIds =
+      ids.length > 0
+        ? ids
+        : minePatientGroups.value.flatMap((g) => g.cards.map((c) => c.peopleId)).filter(Boolean)
+    if (!rosterIds.length) {
+      ElMessage.info('没有可服务的患者')
+      return
+    }
+    pendingIntakeBatch.value = {
+      peopleIds: [...new Set(rosterIds)],
+      careTeamName: (opts?.careTeamName || pendingIntakeBatch.value?.careTeamName || '').trim(),
+      careTeamId:
+        (opts?.careTeamId || pendingIntakeBatch.value?.careTeamId || '').trim() || undefined,
+    }
+    batchServeWorkbenchOpen.value = true
+  })
+}
+
+function onBatchServeSendIntake(peopleIds: string[]) {
+  batchServeWorkbenchOpen.value = false
+  openIntakeBatchSend(peopleIds, pendingIntakeBatch.value?.careTeamName)
+  // 发卷后刷新，Tab 数字随状态变化
+  void searchPatients()
+}
+
+function onBatchServeFocus(peopleId: string) {
+  batchServeWorkbenchOpen.value = false
+  void selectPatient(peopleId, { autoAsk: true, reason: '批量工作台切入' })
+}
+
+/** 存量批量跟进：写入会话引导，并打开工作台中第一位患者 */
+function onBatchServeFollow(peopleIds: string[]) {
+  const ids = [...new Set(peopleIds.filter(Boolean))]
+  if (!ids.length) return
+  batchServeWorkbenchOpen.value = false
+  const team = pendingIntakeBatch.value?.careTeamName || '健管组'
+  messages.value.push({
+    role: 'assistant',
+    content:
+      `已圈定 ${ids.length} 位存量/已评估患者（「${team}」）。` +
+      '建议按左侧状态逐个跟进：待出方案的生成方案，方案已生效的做日常随访。',
+    actions: [
+      {
+        type: 'FOCUS_PATIENT',
+        label: '切入第一位存量患者',
+        peopleId: ids[0],
+        payload: { autoAsk: true },
+      },
+      {
+        type: 'NAVIGATE',
+        path: 'batch-serve-workbench',
+        label: '返回批量工作台',
+        payload: {
+          peopleIds: pendingIntakeBatch.value?.peopleIds || ids,
+          careTeamName: team,
+          careTeamId: pendingIntakeBatch.value?.careTeamId,
+          filter: 'stock',
+          batchServe: true,
+        },
+      },
+    ],
+    at: nowClock(),
+  })
+  cacheOrgSession()
+  void selectPatient(ids[0]!, { autoAsk: true, reason: '存量批量跟进' })
+  void scrollToBottom()
+}
+
+/** 批量转移组成功：乐观挪组 + 刷新花名册/摘要，工作台 Tab 与人数立刻对齐 */
+function onBatchServeTransferred(payload: {
+  peopleIds: string[]
+  toCareTeamId: string
+  toCareTeamName: string
+}) {
+  const ids = [...new Set((payload.peopleIds || []).filter(Boolean))]
+  if (!ids.length) return
+  for (const id of ids) {
+    rememberTeamAssign(id, payload.toCareTeamId, payload.toCareTeamName)
+    optimisticMovePatientToTeam(id, payload.toCareTeamId, payload.toCareTeamName)
+  }
+  void Promise.all([searchPatients(), loadSummary()])
+}
+
+/** 存量批量生成方案：切入第一位并挂方案能力，其余人可返回工作台继续 */
+function onBatchServePlan(peopleIds: string[]) {
+  const ids = [...new Set(peopleIds.filter(Boolean))]
+  if (!ids.length) return
+  batchServeWorkbenchOpen.value = false
+  const team = pendingIntakeBatch.value?.careTeamName || '健管组'
+  messages.value.push({
+    role: 'assistant',
+    content:
+      `已选中 ${ids.length} 位待制定方案/存量患者（「${team}」）。` +
+      '请逐个生成管理方案：先切入第一位，点下方「生成方案草稿」；完成后可返回工作台继续下一位。',
+    actions: [
+      {
+        type: 'TRIGGER_CAPABILITY',
+        path: 'CARE_PLAN',
+        label: '生成方案草稿',
+        peopleId: ids[0],
+      },
+      {
+        type: 'NAVIGATE',
+        path: 'batch-serve-workbench',
+        label: '返回批量工作台',
+        payload: {
+          peopleIds: pendingIntakeBatch.value?.peopleIds || ids,
+          careTeamName: team,
+          careTeamId: pendingIntakeBatch.value?.careTeamId,
+          filter: 'stock',
+          batchServe: true,
+        },
+      },
+    ],
+    at: nowClock(),
+  })
+  cacheOrgSession()
+  void selectPatient(ids[0]!, { autoAsk: false, reason: '批量生成方案' }).then(() => {
+    stickyCapability.value = 'CARE_PLAN'
+  })
+  void scrollToBottom()
+  void searchPatients()
+}
+
 /** 橙条：批量分配入口。未分组名单默认展开，点人名即可，不必先弹窗。 */
 function openUnassignedInbox() {
   tab.value = 'mine'
   void searchPatients().then(() => {
     unassignedWorkbenchOpen.value = true
   })
+}
+
+/** 左侧「+ 新建组」：打开创建健管组抽屉（支持再建多组） */
+function openCreateCareTeamFromList() {
+  createCareTeamPresetName.value = null
+  createCareTeamOpen.value = true
+}
+
+/** 与后端 StaffBizTools.asksCreateCareTeamIntent 对齐：再建/新建健管组 */
+function asksCreateCareTeamIntent(message: string) {
+  const m = message.trim()
+  if (!m) return false
+  return (
+    m.includes('再建一个组') ||
+    m.includes('再建一个健管组') ||
+    m.includes('再创建一个组') ||
+    m.includes('再创建一个健管组') ||
+    m.includes('再建组') ||
+    m.includes('再创建健管组') ||
+    m.includes('新建健管组') ||
+    m.includes('新建一个健管组') ||
+    m.includes('新建组') ||
+    m.includes('创建健管组') ||
+    m.includes('创建一个健管组') ||
+    m.includes('加一个健管组') ||
+    m.includes('再开一个组')
+  )
 }
 
 /** 点「帮我看一下今天的待办」：不堆文字，右侧直接列出可跳转事项 */
@@ -2545,6 +3266,7 @@ async function onUnassignedBatchAssigned(payload: {
   pendingIntakeBatch.value = {
     peopleIds: payload.peopleIds,
     careTeamName: payload.careTeamName || '',
+    careTeamId: payload.careTeamId || undefined,
   }
   if (payload.careTeamId) {
     for (const pid of payload.peopleIds) {
@@ -2552,6 +3274,11 @@ async function onUnassignedBatchAssigned(payload: {
       optimisticMovePatientToTeam(pid, payload.careTeamId, payload.careTeamName)
     }
     expandMineTeam(payload.careTeamId)
+    // 大组默认只露前 10 张，避免一次渲染百人
+    mineTeamCardLimit.value = {
+      ...mineTeamCardLimit.value,
+      [payload.careTeamId]: MINE_TEAM_CARD_PAGE,
+    }
   }
   // 强制刷新左栏：未分组数字下降、目标组人数上升；并展开目标组让用户立刻看见
   await Promise.all([loadSummary(), searchPatients(), loadPriority()])
@@ -2565,25 +3292,86 @@ async function onUnassignedBatchAssigned(payload: {
   const remain = unassignedGuideCount.value
   const n = payload.peopleIds.length
   const team = payload.careTeamName || '健管组'
-  const actions: AgentAction[] = [
-    {
+  // 组内真实花名册（含历史患者），与左侧「健管一组 (N人)」对齐
+  const teamStats = summarizeCareTeamRoster(payload.careTeamId)
+  const teamPeopleIds =
+    minePatientGroups.value.find((x) => x.careTeamId === payload.careTeamId)?.cards.map(
+      (c) => c.peopleId,
+    ) || payload.peopleIds
+  const bulk = n >= 5
+  const actions: AgentAction[] = []
+  if (bulk) {
+    // ≥5 人：汇总看板 + 批量工作台 / 发卷 / 存量，不逐人挂姓名 chip
+    actions.push({
+      type: 'NAVIGATE',
+      path: 'batch-serve-workbench',
+      label: `📦 去服务这批患者`,
+      payload: {
+        peopleIds: teamPeopleIds,
+        careTeamName: team,
+        careTeamId: payload.careTeamId,
+        batchServe: true,
+      },
+    })
+    actions.push({
+      type: 'CALL_API',
+      path: 'BATCH_COPY_INTAKE_LINKS',
+      label: '📨 批量发送首诊问卷',
+      payload: { peopleIds: payload.peopleIds, careTeamName: team },
+    })
+    if (teamStats.stock > 0) {
+      actions.push({
+        type: 'NAVIGATE',
+        path: 'batch-serve-workbench',
+        label: '📦 批量处理存量患者',
+        payload: {
+          peopleIds: teamPeopleIds,
+          careTeamName: team,
+          careTeamId: payload.careTeamId,
+          filter: 'stock',
+          batchServe: true,
+        },
+      })
+    }
+  } else {
+    actions.push({
+      type: 'NAVIGATE',
+      path: 'batch-serve-workbench',
+      label: `👤 去服务这 ${n} 位患者`,
+      payload: {
+        peopleIds: teamPeopleIds,
+        careTeamName: team,
+        careTeamId: payload.careTeamId,
+        batchServe: true,
+      },
+    })
+    actions.push({
       type: 'CALL_API',
       path: 'BATCH_COPY_INTAKE_LINKS',
       label: '批量发送问卷链接',
       payload: { peopleIds: payload.peopleIds, careTeamName: team },
-    },
-  ]
+    })
+  }
   if (remain > 0) {
     actions.push({ type: 'SET_COCKPIT_TAB', path: 'mine', label: '继续处理未分组' })
   } else {
     actions.push({ type: 'SET_COCKPIT_TAB', path: 'mine', label: '查看我的患者' })
   }
+  const teamTotal = teamStats.total || n
+  const summaryBoard =
+    `\n\n目前「${team}」总共有 ${teamTotal} 人` +
+    (teamTotal > n ? '（含历史患者）' : '') +
+    `。其中待首诊 ${teamStats.intake} 人，待制定方案 ${teamStats.plan} 人，日常跟进 ${teamStats.follow} 人。` +
+    (teamStats.other > 0 ? `另有其他 ${teamStats.other} 人。` : '')
   messages.value.push({
     role: 'assistant',
     content:
-      `太棒了！已成功将 ${n} 位患者分配到「${team}」。` +
-      (remain > 0 ? `还剩 ${remain} 位未分组。` : '当前没有待分组患者了。') +
-      '接下来需要为这批患者批量发送首诊问卷链接吗？还是您要逐一为他们做首诊评估？',
+      `太棒了！刚才成功分配了 ${n} 位患者。` +
+      summaryBoard +
+      (remain > 0 ? `还剩 ${remain} 位未分组。` : '') +
+      (bulk
+        ? '\n\n请用下方批量入口处理，避免逐个点开。也可打开「批量跟进工作台」多选后统一发卷。'
+        : '接下来您可以直接切入服务，或批量发首诊问卷链接。'),
     actions,
     at: nowClock(),
   })
@@ -2647,11 +3435,14 @@ async function loadBriefing(force = false) {
   } finally {
     // 空态有引导卡时收起简报，避免与「点下方卡片」文案双重啰嗦；用户点刷新后仍可手动展开
     if (!force) collapseBriefingForEmptyStarters()
+    // 简报/会话回填可能冲掉本地欢迎，补回缓存（UI 静态气泡不依赖此）
+    ensureZeroTeamWelcome()
   }
 }
 
 function collapseBriefingForEmptyStarters() {
-  if (showEmptyStarters.value) briefingCollapsed.value = true
+  // 日常登录简报即「今日工作播报」，默认展开；仅冷启动空会话收起，避免与左侧新手步骤打架
+  if (isColdStart.value && showEmptyStarters.value) briefingCollapsed.value = true
 }
 
 type SessionBundlePayload = {
@@ -2964,8 +3755,20 @@ function resolveFocusNextStep(f: Focus): { content: string; actions: AgentAction
     ['PLAN_CREATE', 'PLAN_REVIEW'].includes((t.taskType || '').toUpperCase()),
   )
   const hasReportTask = tasks.some((t) => (t.taskType || '').toUpperCase() === 'REPORT_REVIEW')
+  const awaitingConfirm = isIntakeAwaitingStaffConfirm(f)
 
   // 标准路径：建档 → 分组 → 首诊评估 → 制定方案 → 日常跟进 → 定期报告 → 阶段总结 → 结束
+  // 患者已交卷待确认：压过「制定方案」话术，避免误导先出方案
+  if (awaitingConfirm && !needTeam) {
+    return {
+      content: `「${name}」已提交初步评估。请打开问卷与患者沟通核对，按需补全后「确认并提交评估」——确认前不要直接出方案。`,
+      actions: [
+        { type: 'OPEN_INTAKE_CONFIRM', label: '打开问卷并确认', peopleId: pid },
+        { type: 'OPEN_INTAKE_DETAIL', label: '只看已交卷', peopleId: pid },
+      ],
+    }
+  }
+
   if (needTeam) {
     // 未分组但已有方案草稿：兼顾「可先出初版方案」卖点与 SOP 分组
     if (planDraft) {
@@ -3350,7 +4153,24 @@ function flashArchiveStep() {
   }, 4200)
 }
 
-/** 创建健管组成功：左栏第一步变绿并高亮第二步，保留对话，单按钮打开建档抽屉。 */
+/** 气泡点「去创建健管组」时，左侧第一步轻微闪烁 */
+const pulseTeamStep = ref(false)
+let pulseTeamStepTimer: ReturnType<typeof setTimeout> | null = null
+
+function flashTeamStep() {
+  pulseTeamStep.value = true
+  if (pulseTeamStepTimer) clearTimeout(pulseTeamStepTimer)
+  pulseTeamStepTimer = setTimeout(() => {
+    pulseTeamStep.value = false
+    pulseTeamStepTimer = null
+  }, 2800)
+}
+
+/** 建组成功气泡底部：继续建组的次级引导（不抢主 CTA） */
+const CREATE_CARE_TEAM_CONTINUE_TIP =
+  '如果您还想再创建健管组，可以直接点击左侧列表上方的「+ 新建组」按钮，或者直接对我说「再创建一个健管组」。'
+
+/** 创建健管组成功：若机构有公共池/未分配患者，优先引导认领；否则引导建档。 */
 async function onCareTeamCreated(team: { id: string; name: string }) {
   await loadSummary()
   tab.value = 'mine'
@@ -3358,17 +4178,35 @@ async function onCareTeamCreated(team: { id: string; name: string }) {
   flashArchiveStep()
   if (focusPeopleId.value) return
   const name = team?.name?.trim() || '专属小分队'
-  messages.value.push({
-    role: 'assistant',
-    content:
-      `太好了！「${name}」已就绪。现在，您可以直接在对话框中发我患者的姓名、电话，` +
-      '或者点击下方按钮，我来为您录入。',
-    actions: [
-      { type: 'NAVIGATE', path: 'create-archive', label: '新建患者档案' },
-    ],
-    at: nowClock(),
-    intent: 'ORG_CHAT_CREATE_CARE_TEAM',
-  })
+  const n = unassignedGuideCount.value
+  if (n > 0) {
+    messages.value.push({
+      role: 'assistant',
+      content:
+        `太棒了！您的专属健管组「${name}」已创建完毕。目前系统有 ${n} 位未分配/公共池患者。` +
+        '您可以先把他们认领到您的组，或直接新建患者。',
+      tip: CREATE_CARE_TEAM_CONTINUE_TIP,
+      actions: [
+        { type: 'NAVIGATE', path: 'unassigned-workbench', label: `去认领/分配患者（${n}）` },
+        { type: 'NAVIGATE', path: 'create-archive', label: '新建患者档案' },
+      ],
+      at: nowClock(),
+      intent: 'ORG_CHAT_CREATE_CARE_TEAM',
+    })
+  } else {
+    messages.value.push({
+      role: 'assistant',
+      content:
+        `太好了！「${name}」已就绪。现在，您可以直接在对话框中发我患者的姓名、电话，` +
+        '或者点击下方按钮，我来为您录入。',
+      tip: CREATE_CARE_TEAM_CONTINUE_TIP,
+      actions: [
+        { type: 'NAVIGATE', path: 'create-archive', label: '新建患者档案' },
+      ],
+      at: nowClock(),
+      intent: 'ORG_CHAT_CREATE_CARE_TEAM',
+    })
+  }
   cacheOrgSession()
   void scrollToBottom()
 }
@@ -3566,17 +4404,53 @@ async function maybeNudgeUnassignedPatients() {
 const pendingIntakeNudge = ref<{ peopleId: string; displayName: string } | null>(null)
 
 async function copyIntakeFillLink(peopleId: string) {
+  // 用对象承接弹窗回调赋值，避免 TS 把闭包外的字面量窄化成永远 KEEP
+  const choice = { prefillMode: 'KEEP' as 'KEEP' | 'CLEAR' }
+  try {
+    await ElMessageBox.confirm(
+      `<div style="line-height:1.65;color:#334155">
+        <p style="margin:0 0 10px">重新发送前，请选择带给患者的内容：</p>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;cursor:pointer">
+          <input type="radio" name="hx-cockpit-prefill-mode" value="KEEP" checked style="margin-top:4px" />
+          <span><b>保留当前数据发送</b>（患者只需核对修改，推荐）</span>
+        </label>
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+          <input type="radio" name="hx-cockpit-prefill-mode" value="CLEAR" style="margin-top:4px" />
+          <span><b>清空所有数据发送</b>（仅供患者完全填错人等极端情况）</span>
+        </label>
+      </div>`,
+      '发送患者填写链接',
+      {
+        confirmButtonText: '生成并复制链接',
+        cancelButtonText: '取消',
+        dangerouslyUseHTMLString: true,
+        beforeClose: (action, _instance, done) => {
+          if (action === 'confirm') {
+            const picked = document.querySelector(
+              'input[name="hx-cockpit-prefill-mode"]:checked',
+            ) as HTMLInputElement | null
+            choice.prefillMode = picked?.value === 'CLEAR' ? 'CLEAR' : 'KEEP'
+          }
+          done()
+        },
+      },
+    )
+  } catch {
+    return
+  }
   const res = await api<{ data: { url: string; copyText: string } }>(
     `/api/b/v1/patients/${peopleId}/intake-access-links`,
     {
       method: 'POST',
-      body: JSON.stringify({ validDays: 7 }),
+      body: JSON.stringify({ validDays: 7, prefillMode: choice.prefillMode }),
     },
   )
   const text = res.data?.copyText || res.data?.url || ''
   if (!text) throw new Error('未返回链接')
   await navigator.clipboard.writeText(text)
-  ElMessage.success('已复制患者填写链接，可发微信')
+  ElMessage.success(
+    choice.prefillMode === 'CLEAR' ? '已复制空白问卷链接' : '已复制核对链接（已带上当前草稿）',
+  )
 }
 
 /** 建档已落库、抽屉进入分配步：第二步立刻打勾，AI 同步播报（抽屉仍开着）。 */
@@ -3667,7 +4541,7 @@ async function onArchiveCreatedFromDrawer(result: {
       : `患者建档成功！「${display}」已建好档案。接下来要为他分配健管组吗？`,
     actions: skippedHint
       ? [
-          { type: 'NAVIGATE', path: 'unassigned-workbench', label: '打开批量分组面板' },
+          { type: 'NAVIGATE', path: 'unassigned-workbench', label: '打开批量分配面板' },
           { type: 'NAVIGATE', path: 'join-care-team', label: '去分配健管组', peopleId: pid },
         ]
       : [{ type: 'NAVIGATE', path: 'join-care-team', label: '去分配健管组', peopleId: pid }],
@@ -3755,6 +4629,30 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
   // 已入组且首诊逾期：清掉「未分组」开场，直接给出代填 / 发链接
   if (opts?.autoAsk !== false && ensureOverdueIntakeTurn(peopleId, name)) {
     await scrollToBottom()
+    return
+  }
+  // C 端刚初步交卷：今日优先「待确认评估」
+  const reviewCard =
+    rosterCard ||
+    cards.value.find((c) => c.peopleId === peopleId) ||
+    listCards.value.find((c) => c.peopleId === peopleId)
+  const needsIntakeReview =
+    isIntakeAwaitingStaffConfirm(focus.value) ||
+    (!!reviewCard &&
+      ((reviewCard.badges || []).includes('INTAKE_REVIEW') ||
+        (reviewCard.taskTypeLabels || []).some((t) => isIntakeReviewLabel(t)) ||
+        isIntakeReviewLabel(reviewCard.topReason)))
+  if (needsIntakeReview && opts?.autoAsk !== false) {
+    const already = messages.value.some(
+      (m) =>
+        m.intent === 'INTAKE_REVIEW' &&
+        ((m.content || '').includes('初步评估') || (m.content || '').includes('确认并提交评估')),
+    )
+    if (!already) {
+      lastAutoAskAt.value[peopleId] = Date.now()
+      pushIntakeReviewNudge(peopleId, name)
+      await scrollToBottom()
+    }
     return
   }
   if (opts?.autoAsk === false) return
@@ -3861,73 +4759,114 @@ const pulseArchiveChip = computed(() => {
   )
 })
 
-/** 芯片展示：GENERAL_CHAT / 建档不要求先选患者；单据录入 / 完成待办为本地能力 */
-const capabilityChips = computed(() => {
-  const chips = capabilities.value
-    .filter((c) => c.code !== 'CHAT_EXTRACT')
-    .map((c) => {
-    if (c.code === 'GENERAL_CHAT') {
-      const hasPatient = !!focusPeopleId.value
-      return {
-        ...c,
-        label: hasPatient ? '患者建议' : '今日建议',
-        hint: hasPatient
-          ? '根据当前患者档案与近期情况给出管理建议'
-          : '根据今日优先名单给出可推进的工作建议',
-        needsPatient: false,
-      }
-    }
-    if (c.code === 'CREATE_ARCHIVE') {
-      return {
-        ...c,
-        label: '建档',
-        hint: needsPrimaryTeam.value
-          ? '请先在左侧完成第一步：创建健管组'
-          : '打开表单填写，或直接发姓名/性别/生日/手机号',
-        needsPatient: false,
-      }
-    }
-    return {
-      ...c,
+type QuickChip = {
+  code: string
+  label: string
+  hint?: string
+  needsPatient?: boolean
+  enabled?: boolean
+}
+
+/** 机构会话：简报 / 批量跟进 / 运营统计（占位） */
+const orgCapabilityChips = computed((): QuickChip[] => {
+  const patientTotal = summary.value.orgPatientCount || 0
+  return [
+    {
+      code: 'ORG_BRIEFING',
+      label: '📊 机构简报',
+      hint: '展开今日机构简报，查看优先与待办摘要',
+      needsPatient: false,
+      enabled: true,
+    },
+    {
+      code: 'BATCH_SERVE',
+      label: '📦 批量跟进',
+      hint:
+        patientTotal <= 0
+          ? '系统内暂无患者，请先建档后再批量跟进'
+          : '打开批量跟进工作台，拉取全员或公共池',
+      needsPatient: false,
+      enabled: true,
+    },
+    {
+      code: 'OPS_STATS',
+      label: '📈 运营统计',
+      hint: '即将上线',
+      needsPatient: false,
+      enabled: false,
+    },
+  ]
+})
+
+/** 患者会话：建档 / 评估 / 方案 / 报告 / 单据 / 建议 / 待办 */
+const patientCapabilityChips = computed((): QuickChip[] => {
+  const byCode = new Map(
+    capabilities.value.filter((c) => c.code !== 'CHAT_EXTRACT').map((c) => [c.code, c]),
+  )
+  const labelOf = (code: string, fallback: string) => byCode.get(code)?.label || fallback
+  const chips: QuickChip[] = [
+    {
+      code: 'CREATE_ARCHIVE',
+      label: '建档',
       hint: needsPrimaryTeam.value
-        ? '请先完成左侧第一步：创建健管组。'
-        : !focusPeopleId.value
-          ? '请先选择患者'
-          : c.label,
+        ? '请先在左侧创建您的专属健管组'
+        : '打开表单填写，或直接发姓名/性别/生日/手机号',
+      needsPatient: false,
+      enabled: true,
+    },
+    {
+      code: 'INTAKE_ASSESS',
+      label: '评估',
+      hint: needsPrimaryTeam.value
+        ? '请先完成左侧新手引导的第一步（创建健管组）'
+        : '打开首诊评估问卷',
       needsPatient: true,
-    }
-  })
-  // 底部只留全局/工具类：建档、方案、报告、单据、建议、待办；患者专属操作归右侧快捷办理
-  const archiveIdx = chips.findIndex((c) => c.code === 'CREATE_ARCHIVE')
-  if (archiveIdx > 0) {
-    const [arch] = chips.splice(archiveIdx, 1)
-    chips.unshift(arch)
-  }
-  const reportIdx = chips.findIndex((c) => c.code === 'REPORT_SUMMARY')
-  const ocrChip = {
-    code: 'OCR_UPLOAD',
-    label: '单据录入',
-    hint: needsPrimaryTeam.value
-      ? '请先完成左侧第一步：创建健管组。'
-      : !focusPeopleId.value
-        ? '请先选择患者'
+      enabled: true,
+    },
+    {
+      code: 'CARE_PLAN',
+      label:
+        isIntakeAwaitingStaffConfirm(focus.value) ? '确认评估' : labelOf('CARE_PLAN', '生成方案'),
+      hint: isIntakeAwaitingStaffConfirm(focus.value)
+        ? '患者已交卷，请先确认并提交评估，再生成方案'
+        : needsPrimaryTeam.value
+          ? '请先完成左侧新手引导的第一步（创建健管组）'
+          : '为当前患者生成管理方案草稿',
+      needsPatient: true,
+      enabled: true,
+    },
+    {
+      code: 'REPORT_SUMMARY',
+      label: labelOf('REPORT_SUMMARY', '报告点评'),
+      hint: needsPrimaryTeam.value
+        ? '请先完成左侧新手引导的第一步（创建健管组）'
+        : '为当前患者生成或点评管理报告',
+      needsPatient: true,
+      enabled: true,
+    },
+    {
+      code: 'OCR_UPLOAD',
+      label: '单据录入',
+      hint: needsPrimaryTeam.value
+        ? '请先完成左侧新手引导的第一步（创建健管组）'
         : '上传检验/检查/用药单，对话内核对入库',
-    needsPatient: true,
-    enabled: true,
-  }
-  if (reportIdx >= 0) {
-    chips.splice(reportIdx + 1, 0, ocrChip)
-  } else {
-    chips.push(ocrChip)
-  }
+      needsPatient: true,
+      enabled: true,
+    },
+    {
+      code: 'GENERAL_CHAT',
+      label: '今日建议',
+      hint: '根据当前患者档案与近期情况给出管理建议',
+      needsPatient: false,
+      enabled: true,
+    },
+  ]
   const todoCount = todoTasks.value.length
   chips.push({
     code: 'COMPLETE_TODOS',
     label: todoCount > 0 ? `完成待办(${todoCount})` : '完成待办',
     hint: needsPrimaryTeam.value
-      ? '请先完成左侧第一步：创建健管组。'
-      : !focusPeopleId.value
-      ? '请先选择患者'
+      ? '请先完成左侧新手引导的第一步（创建健管组）'
       : todoCount > 0
         ? `请模型给出办理建议，并挂出 ${todoCount} 项办结入口`
         : '当前患者暂无工作台待办',
@@ -3937,14 +4876,173 @@ const capabilityChips = computed(() => {
   return chips
 })
 
+/** 按会话上下文切换：机构态 / 患者态两套能力芯；无组或无患者时隐藏机构芯 */
+const capabilityChips = computed((): QuickChip[] => {
+  if (currentPatient.value) return patientCapabilityChips.value
+  // 新手零数据，或已建组但尚未引入任何患者：机构芯无意义，只留输入框
+  if (isNewbie.value || needsPrimaryTeam.value || (summary.value.orgPatientCount || 0) <= 0) {
+    return []
+  }
+  return orgCapabilityChips.value
+})
+
 /** 方案/点评多轮修订：无显式能力时沿用上一轮 */
 const stickyCapability = ref<string | null>(null)
 
-function quickCapability(code: string, label: string) {
-  // 0 组：方案、单据、建档都不能做，点了只提示先建组（按钮保持可点，避免点了没反应）
-  if (needsPrimaryTeam.value && code !== 'GENERAL_CHAT') {
-    ElMessage.warning('请先完成左侧第一步：创建健管组。')
+/** 未建组时，患者态除「建档」外底部快捷胶囊置灰；机构态不受此规则影响 */
+function isQuickChipLockedByNoTeam(code: string) {
+  if (!currentPatient.value) return false
+  return needsPrimaryTeam.value && code !== 'CREATE_ARCHIVE'
+}
+
+/**
+ * 底部能力芯总锁定：机构态按人数/占位；患者态按无组 / SOP 阶段防呆。
+ */
+function isQuickChipLocked(cap: { code: string; needsPatient?: boolean; enabled?: boolean }) {
+  if (cap.code === 'ORG_BRIEFING') return false
+  if (cap.code === 'OPS_STATS' || cap.enabled === false) return true
+  if (cap.code === 'BATCH_SERVE') {
+    return (summary.value.orgPatientCount || 0) <= 0
+  }
+  if (isQuickChipLockedByNoTeam(cap.code)) return true
+  if (cap.needsPatient && !currentPatient.value) return true
+  if (!currentPatient.value || !focus.value) return false
+  const stage = (currentServiceStage.value || '').toUpperCase()
+  const awaiting = isIntakeAwaitingStaffConfirm(focus.value)
+  // 生成方案：首诊未交卷且非「待确认评估」时禁用；待确认时芯片已改名为「确认评估」可点
+  if (cap.code === 'CARE_PLAN') {
+    if (awaiting) return false
+    if (
+      stage === 'INTAKE' ||
+      stage === 'TEAM_ASSIGN' ||
+      stage === 'ARCHIVE' ||
+      hasOpenIntakeTodo.value
+    ) {
+      const hasPlanHint =
+        (focus.value.openTasks || []).some((t) =>
+          ['PLAN_CREATE', 'PLAN_REVIEW', 'CARE_PLAN'].includes((t.taskType || '').toUpperCase()),
+        ) ||
+        focus.value.intakeSubmitted === true ||
+        (focus.value.assessmentTags || []).length > 0 ||
+        !!(focus.value.waterTargetMl && focus.value.waterTargetMl > 0)
+      return !hasPlanHint
+    }
+  }
+  return false
+}
+
+function quickChipLockHint(cap: { code: string; hint?: string }) {
+  if (cap.code === 'BATCH_SERVE' && (summary.value.orgPatientCount || 0) <= 0) {
+    return '系统内暂无患者，请先建档后再批量跟进'
+  }
+  if (cap.code === 'OPS_STATS') return '即将上线'
+  if (isQuickChipLockedByNoTeam(cap.code)) {
+    return '请先完成左侧新手引导的第一步（创建健管组）'
+  }
+  if (
+    cap.code !== 'CREATE_ARCHIVE' &&
+    cap.code !== 'GENERAL_CHAT' &&
+    cap.code !== 'ORG_BRIEFING' &&
+    cap.code !== 'BATCH_SERVE' &&
+    !currentPatient.value
+  ) {
+    return '请先从左侧选择一位患者'
+  }
+  if (cap.code === 'CARE_PLAN' && isQuickChipLocked({ code: 'CARE_PLAN', needsPatient: true })) {
+    return '请先完成首诊评估，再生成方案'
+  }
+  return cap.hint || ''
+}
+
+function onQuickChipClick(cap: QuickChip) {
+  if (isQuickChipLocked(cap)) {
+    ElMessage.warning(quickChipLockHint(cap) || '当前步骤暂不可用')
+    if (isQuickChipLockedByNoTeam(cap.code)) flashTeamStep()
     return
+  }
+  quickCapability(cap.code, cap.label)
+}
+
+/** 机构简报：展开顶部简报区（数据分析入口） */
+function openOrgBriefingFromChip() {
+  briefingCollapsed.value = false
+  void nextTick(() => {
+    document.querySelector('.briefing')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
+  if (!(briefingMsg.value?.content || '').trim()) {
+    void refreshBriefing()
+  }
+}
+
+/** 机构批量跟进：优先拉最大健管组花名册；无组则走公共池分配面板 */
+function openOrgBatchFollowFromChip() {
+  if ((summary.value.orgPatientCount || 0) <= 0) {
+    ElMessage.info('系统内暂无患者，请先建档后再批量跟进')
+    return
+  }
+  const teams = minePatientGroups.value.filter(
+    (g) => !isUnassignedMineGroup(g) && (g.cards?.length || 0) > 0,
+  )
+  if (teams.length) {
+    const g = teams.reduce((a, b) => ((a.cards?.length || 0) >= (b.cards?.length || 0) ? a : b))
+    openBatchServeWorkbench({
+      peopleIds: g.cards.map((c) => c.peopleId),
+      careTeamId: g.careTeamId,
+      careTeamName: g.careTeamName,
+    })
+    return
+  }
+  if (unassignedGuideCount.value > 0) {
+    if (needsPrimaryTeam.value) {
+      ElMessage.warning('请先创建至少一个健管组')
+      flashTeamStep()
+      return
+    }
+    unassignedWorkbenchOpen.value = true
+    return
+  }
+  ElMessage.info('暂无患者可跟进，请先刷新左侧名单')
+}
+
+function quickCapability(code: string, label: string) {
+  if (code === 'ORG_BRIEFING') {
+    openOrgBriefingFromChip()
+    return
+  }
+  if (code === 'BATCH_SERVE') {
+    openOrgBatchFollowFromChip()
+    return
+  }
+  if (code === 'OPS_STATS') {
+    ElMessage.info('运营统计即将上线')
+    return
+  }
+  // 0 组：建档也不可用，点了提示先建组；其它能力由置灰胶囊拦截
+  if (needsPrimaryTeam.value) {
+    if (code === 'CREATE_ARCHIVE') {
+      ElMessage.warning('请先在左侧创建您的专属健管组')
+      return
+    }
+    if (code !== 'GENERAL_CHAT') {
+      ElMessage.warning('请先完成左侧新手引导的第一步（创建健管组）')
+      return
+    }
+  }
+  if (code === 'INTAKE_ASSESS') {
+    if (!currentPatient.value) {
+      ElMessage.info('请先从左侧选择一位患者')
+      return
+    }
+    goIntakeQuick()
+    return
+  }
+  if (code === 'CARE_PLAN') {
+    if (isIntakeAwaitingStaffConfirm(focus.value)) {
+      // 芯片在待确认时改名为「确认评估」，直接打开问卷
+      void openIntakeSheet(currentPatient.value || undefined)
+      return
+    }
+    if (blockCarePlanUntilIntakeConfirmed(currentPatient.value)) return
   }
   // 右侧表单已打开：不要再走对话建档，避免进度清单抢焦点
   if (code === 'CREATE_ARCHIVE' && createArchiveOpen.value) {
@@ -3952,7 +5050,7 @@ function quickCapability(code: string, label: string) {
     return
   }
   if (code === 'OCR_UPLOAD') {
-    if (!focusPeopleId.value) {
+    if (!currentPatient.value) {
       ElMessage.info('请先从左侧选择一位患者')
       return
     }
@@ -3960,12 +5058,12 @@ function quickCapability(code: string, label: string) {
     return
   }
   if (code === 'COMPLETE_TODOS') {
-    if (!focusPeopleId.value) {
+    if (!currentPatient.value) {
       ElMessage.info('请先从左侧选择一位患者')
       return
     }
     if (currentServiceStage.value === 'INTAKE' || hasOpenIntakeTodo.value) {
-      beginIntake(focusPeopleId.value)
+      beginIntake(currentPatient.value)
       return
     }
     if (!todoTasks.value.length) {
@@ -3980,7 +5078,7 @@ function quickCapability(code: string, label: string) {
     )
     return
   }
-  if ((code === 'CARE_PLAN' || code === 'REPORT_SUMMARY') && !focusPeopleId.value) {
+  if ((code === 'CARE_PLAN' || code === 'REPORT_SUMMARY') && !currentPatient.value) {
     ElMessage.info('请先从左侧选择一位患者')
     return
   }
@@ -3988,7 +5086,7 @@ function quickCapability(code: string, label: string) {
     CREATE_ARCHIVE: '帮我建档',
     CARE_PLAN: '请为这位患者生成管理方案草稿',
     REPORT_SUMMARY: '请为这位患者生成或点评管理报告',
-    GENERAL_CHAT: focusPeopleId.value
+    GENERAL_CHAT: currentPatient.value
       ? '请根据这位患者的档案与近期情况，给出可执行的管理建议'
       : '请根据今日优先名单，给出我现在可推进的工作建议',
   }
@@ -3999,18 +5097,16 @@ function quickCapability(code: string, label: string) {
 function onComposerEnter() {
   if (!input.value.trim()) return
   if (blockPlainEnter(input.value)) {
+    // 长文统一走「整理」软入口（后端 ReAct 选建档/提取），避免误 Enter
     ElMessage.info('请点「整理这段记录」。要提问请缩短文字后再发送')
     return
   }
+  // 无 capabilityHint：后端 ReAct 选工具
   void sendMessage(input.value)
 }
 
 function organizeRecord() {
   const text = input.value
-  if (!focusPeopleId.value) {
-    ElMessage.info('请先选择患者')
-    return
-  }
   if (!text.trim()) {
     ElMessage.info('请先粘贴一段记录')
     return
@@ -4019,8 +5115,14 @@ function organizeRecord() {
     ElMessage.info('请拆短后再贴')
     return
   }
+  // 软入口：不带硬 hint，由后端 ReAct 在建档/整理等工具间选择
+  // 无患者也可以发（建档稿）；问卷 docked 时仍附带 intake schema
   let intakeFields: ReturnType<NonNullable<IntakeFormExpose['intakeExtractSchema']>> | undefined
   if (intakeDocked.value) {
+    if (!focusPeopleId.value) {
+      ElMessage.info('请先选择患者，或粘贴含姓名与手机的建档信息')
+      return
+    }
     const formPeopleId = sheetPeopleId.value || focusPeopleId.value
     if (formPeopleId !== focusPeopleId.value) {
       ElMessage.info('当前问卷和会话不是同一位患者')
@@ -4033,7 +5135,7 @@ function organizeRecord() {
     }
     intakeFormRef.value?.dismissPasteHint?.()
   }
-  void sendMessage(text, false, 'CHAT_EXTRACT', null, intakeFields)
+  void sendMessage(text, false, null, null, intakeFields)
 }
 
 watch(input, (value) => {
@@ -4179,14 +5281,27 @@ function actionChipLabel(label?: string | null) {
   } else if (/^查看(.+)档案$/.test(head) || /^(打开该患者|打开患者|查看档案|打开档案)$/.test(head)) {
     // 档案入口保持原意，避免误写成含糊的「为TA健管服务」
     head = '打开档案'
-  } else if (/^打开「([^」]+)」$/.test(head)) {
+  }   else if (/^打开「([^」]+)」$/.test(head)) {
     head = `打开${RegExp.$1}`
+  } else if (
+    /批量分配面板/.test(head) ||
+    /批量分组面板/.test(head) ||
+    head === '打开批量分配面板' ||
+    head === '打开批量分组面板'
+  ) {
+    head = '打开批量分配面板'
+  } else if (/去服务这/.test(head) || /批量处理存量/.test(head) || /批量发送首诊/.test(head)) {
+    // 分配后批量 CTA：保留完整文案
+    head = head.replace(/\s+/g, ' ').trim()
   } else {
     // 仅办结类长文案去书名号；其它按钮保留原文
     head = head.replace(/\s+/g, ' ').trim()
   }
   const withCount = `${head}${countSuffix}`
-  return withCount.length > 16 ? `${withCount.slice(0, 15)}…` : withCount
+  // 批量分流主按钮放宽，避免「去服务这批患者」等被截断
+  const maxLen =
+    /去服务这|批量处理存量|批量发送首诊/.test(withCount) ? 22 : 16
+  return withCount.length > maxLen ? `${withCount.slice(0, maxLen - 1)}…` : withCount
 }
 
 type StepCta = {
@@ -4256,15 +5371,118 @@ function visibleHeroActions(actions: AgentAction[]) {
   return heroActions(actions) || []
 }
 
-/** 已有方案卡片时，编辑入口留给卡片主按钮，气泡不再重复「制定/编辑方案」 */
-function bubbleActions(msg: ChatMessage) {
-  const acts = visibleActions(msg)
-  if (!msg.carePlanPreview) return acts
-  return acts.filter((a) => !isCarePlanChatAction(a))
+function isCreateCareTeamAction(a: AgentAction) {
+  if (a.type === 'NAVIGATE' && (a.path || '') === 'create-care-team') return true
+  return (
+    (a.label || '') === '去创建健管组' ||
+    (a.label || '') === '去创建我的健管组' ||
+    (a.label || '') === '先创建我的健管组'
+  )
 }
 
-function bubbleHasVisibleActions(msg: ChatMessage) {
-  const acts = bubbleActions(msg)
+/** 全会话只保留最新一条的入口类 CTA，避免连续气泡重复蓝按钮 */
+function isSingletonBubbleAction(a: AgentAction) {
+  if (isCreateCareTeamAction(a)) return true
+  if (a.type === 'NAVIGATE' && (a.path || '') === 'unassigned-workbench') return true
+  if (a.type === 'NAVIGATE' && (a.path || '') === 'create-archive') return true
+  return false
+}
+
+function sameSingletonAction(a: AgentAction, b: AgentAction) {
+  if (!isSingletonBubbleAction(a) || !isSingletonBubbleAction(b)) return false
+  if (a.type === b.type && (a.path || '') === (b.path || '')) return true
+  return (a.label || '') === (b.label || '') && !!(a.label || '')
+}
+
+function laterMessageHasSingleton(fromIdx: number, action: AgentAction) {
+  const list = threadMessages.value
+  for (let j = fromIdx + 1; j < list.length; j++) {
+    const later = list[j]
+    if (later.role !== 'assistant') continue
+    if ((later.actions || []).some((x) => sameSingletonAction(x, action))) return true
+  }
+  return false
+}
+
+/** 已有方案卡片时，编辑入口留给卡片主按钮，气泡不再重复「制定/编辑方案」 */
+function bubbleActions(msg: ChatMessage, msgIdx?: number) {
+  let acts = visibleActions(msg)
+  if (msg.carePlanPreview) {
+    acts = acts.filter((a) => !isCarePlanChatAction(a))
+  }
+  // 未建组：建组入口排前（主按钮），批量面板排后（次按钮/可置灰）
+  if (needsPrimaryTeam.value) {
+    acts = [...acts].sort((a, b) => {
+      const rank = (x: AgentAction) => {
+        if (isCreateCareTeamAction(x)) return 0
+        if (x.type === 'NAVIGATE' && (x.path || '') === 'unassigned-workbench') return 1
+        return 2
+      }
+      return rank(a) - rank(b)
+    })
+  }
+  if (msgIdx != null) {
+    acts = acts.filter((a) => !isSingletonBubbleAction(a) || !laterMessageHasSingleton(msgIdx, a))
+  }
+  return acts
+}
+
+/** 气泡主按钮：未建组时强制「去创建我的健管组」为主色；分配后「去服务」为主、发卷/继续为次 */
+function isBubbleActionPrimary(a: AgentAction, ai: number, msg: ChatMessage) {
+  if (
+    msg.carePlanPreview &&
+    a.type === 'TRIGGER_CAPABILITY' &&
+    (a.path || '') === 'GENERAL_CHAT'
+  ) {
+    return false
+  }
+  if (needsPrimaryTeam.value) {
+    return isCreateCareTeamAction(a)
+  }
+  const label = a.label || ''
+  if (
+    /去服务这/.test(label) ||
+    a.payload?.batchServe === true ||
+    ((a.path || '') === 'batch-serve-workbench' && !/存量/.test(label))
+  ) {
+    return true
+  }
+  // 分配后分流：发卷 / 存量 / 继续处理降为次按钮
+  if ((a.path || '') === 'BATCH_COPY_INTAKE_LINKS') return false
+  if ((a.path || '') === 'batch-serve-workbench' && /存量/.test(label)) return false
+  if (a.type === 'SET_COCKPIT_TAB' && /未分组|我的患者/.test(label)) return false
+  return ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'
+}
+
+function isUnassignedWorkbenchAction(a: AgentAction) {
+  return a.type === 'NAVIGATE' && (a.path || '') === 'unassigned-workbench'
+}
+
+const BUBBLE_ACTION_LOCK_HINT = '请先创建至少一个健管组'
+
+/** 未建组 / 后端显式 disabled：批量分配面板仅作预告，置灰不可点 */
+function isBubbleActionLocked(a: AgentAction) {
+  if (a.payload?.disabled === true) return true
+  return needsPrimaryTeam.value && isUnassignedWorkbenchAction(a)
+}
+
+function bubbleActionLockHint(a: AgentAction) {
+  const reason = a.payload?.disabledReason
+  if (typeof reason === 'string' && reason.trim()) return reason.trim()
+  return BUBBLE_ACTION_LOCK_HINT
+}
+
+function onBubbleActionClick(a: AgentAction) {
+  if (isBubbleActionLocked(a)) {
+    ElMessage.warning(bubbleActionLockHint(a))
+    flashTeamStep()
+    return
+  }
+  void runAction(a)
+}
+
+function bubbleHasVisibleActions(msg: ChatMessage, msgIdx?: number) {
+  const acts = bubbleActions(msg, msgIdx)
   if (!acts.length) return false
   if (!isHeroActions(acts)) return true
   return visibleHeroActions(acts).length + restAfterHero(acts).length > 0
@@ -4281,15 +5499,11 @@ async function sendMessage(
   if (stickyCapability.value && !capabilityHint && !stickyHint && !image) {
     stickyCapability.value = null
   }
-  // 任意会话（含已选患者）直接贴建档信息 → 显式带 CREATE_ARCHIVE，避免被当成对当前患者闲聊
-  const archiveHint =
-    !capabilityHint && !image && !stickyHint && looksLikeArchiveDraft(text.trim())
-      ? 'CREATE_ARCHIVE'
-      : null
+  // 软入口不前端猜意图；仅 sticky / 芯片硬 hint。建档 vs 整理由后端 ReAct 选工具
   const effectiveHint =
     capabilityHint ||
     (!image && stickyHint ? stickyHint : null) ||
-    archiveHint
+    null
   const userText =
     text.trim() ||
     (effectiveHint === 'OCR_EXAM'
@@ -4325,6 +5539,31 @@ async function sendMessage(
   }
   if (image && !focusPeopleId.value) {
     ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  // 机构会话：明确再建/新建健管组 → 本地引导 + 直接打开建组抽屉
+  if (!focusPeopleId.value && !image && !effectiveHint && asksCreateCareTeamIntent(userText)) {
+    messages.value.push({
+      role: 'user',
+      content: userText,
+      at: nowClock(),
+    })
+    if (!keepInput) input.value = ''
+    const createLabel = needsPrimaryTeam.value ? '去创建我的健管组' : '去创建健管组'
+    const guide = needsPrimaryTeam.value
+      ? '好的，先建一个健管组打底。点下方按钮打开创建面板即可。'
+      : '可以再建一个健管组。点下方按钮打开创建面板，或用左侧「+ 新建组」。'
+    messages.value.push({
+      role: 'assistant',
+      content: guide,
+      actions: [{ type: 'NAVIGATE', path: 'create-care-team', label: createLabel }],
+      at: nowClock(),
+    })
+    cacheOrgSession()
+    createCareTeamPresetName.value = null
+    if (needsPrimaryTeam.value) flashTeamStep()
+    createCareTeamOpen.value = true
+    await scrollToBottom()
     return
   }
   const boundPeopleId = focusPeopleId.value
@@ -4760,12 +5999,72 @@ function runAction(action: AgentAction) {
     return
   }
   if (needsPrimaryTeam.value && actionNeedsReadyTeam(action)) {
-    ElMessage.warning('请先完成左侧第一步：创建健管组。')
+    ElMessage.warning('请先完成左侧新手引导的第一步（创建健管组）')
     return
   }
   if (action.type === 'FOCUS_PATIENT' && action.peopleId) {
+    // 批量服务：打开工作台，不默认选中第一人
+    if (action.payload?.batchServe === true) {
+      const raw = action.payload?.peopleIds
+      const ids = Array.isArray(raw)
+        ? raw.map((x) => String(x || '')).filter(Boolean)
+        : [action.peopleId]
+      openBatchServeWorkbench({
+        peopleIds: ids,
+        careTeamName:
+          typeof action.payload?.careTeamName === 'string' ? action.payload.careTeamName : null,
+        careTeamId:
+          typeof action.payload?.careTeamId === 'string' ? action.payload.careTeamId : null,
+        filter: action.payload?.filter === 'stock' ? 'stock' : 'all',
+      })
+      return
+    }
     const autoAsk = action.payload?.autoAsk !== false
     void selectPatient(action.peopleId, { autoAsk })
+    return
+  }
+  if (action.type === 'OPEN_INTAKE_CONFIRM') {
+    const pid = action.peopleId || focusPeopleId.value
+    if (!pid) {
+      ElMessage.info('请先选择患者')
+      return
+    }
+    const go = () => void openIntakeSheet(pid)
+    if (pid !== focusPeopleId.value) {
+      void selectPatient(pid, { autoAsk: false }).then(go)
+    } else {
+      go()
+    }
+    return
+  }
+  if (action.type === 'OPEN_INTAKE_DETAIL') {
+    const pid = action.peopleId || focusPeopleId.value
+    if (!pid) {
+      ElMessage.info('请先选择患者')
+      return
+    }
+    const go = () => void openIntakeDetail()
+    if (pid !== focusPeopleId.value) {
+      void selectPatient(pid, { autoAsk: false }).then(go)
+    } else {
+      go()
+    }
+    return
+  }
+  if (action.type === 'SEND_INTAKE_LINK') {
+    const pid = action.peopleId || focusPeopleId.value
+    if (!pid) {
+      ElMessage.info('请先选择患者')
+      return
+    }
+    const go = () => {
+      void sendMessage('请为这位患者生成并发送完整版首诊补充问卷链接', false)
+    }
+    if (pid !== focusPeopleId.value) {
+      void selectPatient(pid, { autoAsk: false }).then(go)
+    } else {
+      go()
+    }
     return
   }
   if (action.type === 'REFRESH') {
@@ -4781,11 +6080,36 @@ function runAction(action: AgentAction) {
       const raw = action.payload?.name
       createCareTeamPresetName.value =
         typeof raw === 'string' && raw.trim() ? raw.trim() : null
+      if (needsPrimaryTeam.value) flashTeamStep()
       createCareTeamOpen.value = true
       return
     }
     if (action.path === 'unassigned-workbench') {
+      if (needsPrimaryTeam.value) {
+        ElMessage.warning('请先创建健管组')
+        flashTeamStep()
+        return
+      }
       openUnassignedInbox()
+      return
+    }
+    if (action.path === 'batch-serve-workbench') {
+      const raw = action.payload?.peopleIds
+      const ids = Array.isArray(raw)
+        ? raw.map((x) => String(x || '')).filter(Boolean)
+        : pendingIntakeBatch.value?.peopleIds || []
+      openBatchServeWorkbench({
+        peopleIds: ids,
+        careTeamName:
+          typeof action.payload?.careTeamName === 'string'
+            ? action.payload.careTeamName
+            : pendingIntakeBatch.value?.careTeamName,
+        careTeamId:
+          typeof action.payload?.careTeamId === 'string'
+            ? action.payload.careTeamId
+            : pendingIntakeBatch.value?.careTeamId,
+        filter: action.payload?.filter === 'stock' ? 'stock' : 'all',
+      })
       return
     }
     if (action.path === 'archive-confirm-assign') {
@@ -4798,7 +6122,7 @@ function runAction(action: AgentAction) {
     }
     if (action.path === 'create-archive') {
       if (needsPrimaryTeam.value) {
-        ElMessage.warning('请先在左侧完成第一步：创建健管组。')
+        ElMessage.warning('请先在左侧创建您的专属健管组')
         return
       }
       // 保持原按钮可再点；抽屉已开时不重复打开
@@ -4874,7 +6198,7 @@ function runAction(action: AgentAction) {
     // 建档可在机构会话触发，不要求已有患者；但无健管组时先拦住，避免未分组孤儿
     if (action.path === 'CREATE_ARCHIVE') {
       if (needsPrimaryTeam.value) {
-        ElMessage.warning('请先在左侧完成第一步：创建健管组。')
+        ElMessage.warning('请先在左侧创建您的专属健管组')
         return
       }
       void sendMessage('帮我建档', false, 'CREATE_ARCHIVE')
@@ -4885,8 +6209,12 @@ function runAction(action: AgentAction) {
       ElMessage.info('请先选择患者')
       return
     }
+    if (action.path === 'CARE_PLAN' && blockCarePlanUntilIntakeConfirmed(peopleId)) {
+      return
+    }
     if (peopleId !== focusPeopleId.value) {
       void selectPatient(peopleId, { autoAsk: false }).then(() => {
+        if (action.path === 'CARE_PLAN' && blockCarePlanUntilIntakeConfirmed(peopleId)) return
         void sendMessage(action.label, false, action.path)
       })
       return
@@ -4896,6 +6224,12 @@ function runAction(action: AgentAction) {
   }
   if (action.type === 'OPEN_SHEET' && action.path) {
     const peopleId = action.peopleId || focusPeopleId.value || undefined
+    if (
+      (action.path === 'care-plan' || isCarePlanPath(action.path)) &&
+      blockCarePlanUntilIntakeConfirmed(peopleId)
+    ) {
+      return
+    }
     if (action.path === 'intake' || isIntakePath(action.path)) {
       const parsed = isIntakePath(action.path) ? parseIntakeNav(action.path) : {}
       const purpose =
@@ -4956,6 +6290,7 @@ function runAction(action: AgentAction) {
   }
   if (action.type === 'PREVIEW' || isCarePlanPath(action.path)) {
     const peopleId = action.peopleId || focusPeopleId.value || undefined
+    if (blockCarePlanUntilIntakeConfirmed(peopleId)) return
     if (peopleId) {
       setAgentDraft({ peopleId, mode: 'care-plan', openCompose: true })
     }
@@ -5610,6 +6945,9 @@ function parseIntakeNav(path: string): {
 }
 
 async function openSheet(mode: CockpitSheetMode, peopleId?: string, observationsSub?: string) {
+  if (mode === 'care-plan' && blockCarePlanUntilIntakeConfirmed(peopleId || focusPeopleId.value)) {
+    return
+  }
   const id = peopleId || focusPeopleId.value
   if (!id) {
     ElMessage.info('请先从左侧选择一位患者')
@@ -5832,6 +7170,34 @@ async function openIntakeDetail() {
   } finally {
     intakeDetailLoading.value = false
   }
+}
+
+/** 左栏「待确认」角标：打开可编辑问卷，核对后正式确认提交 */
+async function openSubmittedIntake(peopleId: string) {
+  await openIntakeSheet(peopleId)
+}
+
+function pushIntakeReviewNudge(peopleId: string, displayName: string) {
+  const name = (displayName || '这位患者').trim()
+  const polite = /先生|女士|老师/.test(name) ? name : `${name}`
+  messages.value.push({
+    role: 'assistant',
+    content: `${polite}已提交初步评估。请打开问卷与患者沟通核对，按需补全后「确认并提交评估」——确认前不要直接出方案。`,
+    intent: 'INTAKE_REVIEW',
+    at: nowClock(),
+    actions: [
+      { type: 'OPEN_INTAKE_CONFIRM', label: '打开问卷并确认', peopleId },
+      { type: 'OPEN_INTAKE_DETAIL', label: '只看已交卷', peopleId },
+      {
+        type: 'SEND_INTAKE_LINK',
+        label: '下发完整补充问卷',
+        peopleId,
+        payload: { depth: 'FULL' },
+      },
+    ],
+  })
+  cachePatientSession(peopleId)
+  void scrollToBottom()
 }
 
 /** 右侧快捷办理：当前患者首诊。直接拉开问卷，不经过随访类型下拉。 */
@@ -6080,6 +7446,7 @@ function beginIntake(peopleId?: string, followupRecordId?: string | null) {
 }
 function goCarePlan() {
   const id = focusPeopleId.value
+  if (blockCarePlanUntilIntakeConfirmed(id)) return
   if (id) setAgentDraft({ peopleId: id, mode: 'care-plan', openCompose: true })
   openSheet('care-plan')
 }
@@ -6524,6 +7891,28 @@ function messageHasPatientGhost(m: ChatMessage) {
   return /已经在您名下|已在您名下|去单据录入|手动录入|位患者等待分组|位患者待分组/.test(text)
 }
 
+/** 首次零数据：同步写入会话缓存（UI 以静态气泡为准，避免异步回填闪烁） */
+function ensureZeroTeamWelcome() {
+  if (!needsPrimaryTeam.value || focusPeopleId.value) return
+  if (hasConversationTurns.value) return
+  if (messages.value.some(isZeroTeamWelcome)) return
+  const welcome: ChatMessage = {
+    role: 'assistant',
+    content: ZERO_TEAM_WELCOME,
+    at: nowClock(),
+    intent: 'ORG_ONBOARDING_WELCOME',
+  }
+  const briefIdx = messages.value.findIndex((m) => isBriefingLike(m))
+  if (briefIdx >= 0) {
+    const next = messages.value.slice()
+    next.splice(briefIdx + 1, 0, welcome)
+    messages.value = next
+  } else {
+    messages.value = [welcome, ...messages.value]
+  }
+  cacheOrgSession()
+}
+
 /** 组被删光后，丢掉还在点名旧患者的机构会话，避免和左侧「先建组」对着干 */
 let zeroTeamScrubStarted = false
 async function resetOrgChatIfPatientGhosts() {
@@ -6560,15 +7949,21 @@ async function resetOrgChatIfPatientGhosts() {
   } catch {
     messages.value = []
   }
+  ensureZeroTeamWelcome()
 }
 
-watch(needsPrimaryTeam, (need, prev) => {
-  if (!need) {
-    zeroTeamScrubStarted = false
-    return
-  }
-  if (prev === false) void resetOrgChatIfPatientGhosts()
-})
+watch(
+  needsPrimaryTeam,
+  (need, prev) => {
+    if (!need) {
+      zeroTeamScrubStarted = false
+      return
+    }
+    if (prev === false) void resetOrgChatIfPatientGhosts()
+    ensureZeroTeamWelcome()
+  },
+  { immediate: true },
+)
 
 onMounted(async () => {
   if (chipHandler) chipHandler.value = onChip
@@ -6624,6 +8019,7 @@ onMounted(async () => {
     if (qTab === 'urgent' || qTab === 'watch') void loadPriority()
     await maybeNudgeUnassignedPatients()
     await resetOrgChatIfPatientGhosts()
+    ensureZeroTeamWelcome()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '驾驶舱加载失败')
   }
@@ -6647,9 +8043,16 @@ onUnmounted(() => {
 
 <template>
   <div class="cockpit">
-    <div class="board" :class="{ 'intake-open': intakeDocked }">
+    <div
+      class="board"
+      :class="{
+        'intake-open': intakeDocked,
+        'focus-collapsed': focusPanelCollapsed,
+        'is-cold-start': isColdStart,
+      }"
+    >
       <!-- 左：今日优先 / 冷启动步骤清单 -->
-      <section class="col left">
+      <section class="col left" :class="{ 'is-onboarding': isColdStart }">
         <div class="col-head">
           <div class="col-head-text">
             <h3>{{ isColdStart ? '新手起步' : '今日优先' }}</h3>
@@ -6692,7 +8095,14 @@ onUnmounted(() => {
               v-for="(step, si) in onboardingSteps"
               :key="step.key"
               class="ob-step"
-              :class="[step.status, { pulse: step.key === 'archive' && pulseArchiveStep && step.status === 'active' }]"
+              :class="[
+                step.status,
+                {
+                  pulse:
+                    (step.key === 'archive' && pulseArchiveStep && step.status === 'active') ||
+                    (step.key === 'team' && pulseTeamStep && step.status === 'active'),
+                },
+              ]"
             >
               <span class="ob-mark" aria-hidden="true">
                 <template v-if="step.status === 'done'">✓</template>
@@ -6732,7 +8142,16 @@ onUnmounted(() => {
               @click="tab = 'urgent'"
             >
               <span class="tab-label">立即处理</span>
-              <span v-if="summary.urgentCount" class="count">{{ summary.urgentCount }}</span>
+              <span
+                v-if="summary.overdueCount"
+                class="count warn"
+                :title="`逾期待办 ${summary.overdueCount}`"
+              >{{ summary.overdueCount }}</span>
+              <span
+                v-else-if="summary.urgentCount"
+                class="count"
+                :title="`待办 ${summary.urgentCount}`"
+              >{{ summary.urgentCount }}</span>
             </button>
             <button
               type="button"
@@ -6775,30 +8194,40 @@ onUnmounted(() => {
           </div>
 
           <div v-if="tab === 'mine'" class="search-box">
-            <input
-              v-model="searchKeyword"
-              type="search"
-              class="search-input"
-              placeholder="在我的患者中筛选姓名…"
-              autocomplete="off"
-              @input="onSearchInput"
-              @keydown.enter.prevent="searchPatients"
-            />
+            <div class="search-row">
+              <input
+                v-model="searchKeyword"
+                type="search"
+                class="search-input"
+                placeholder="在我的患者中筛选姓名…"
+                autocomplete="off"
+                @input="onSearchInput"
+                @keydown.enter.prevent="searchPatients"
+              />
+              <button
+                type="button"
+                class="new-team-btn"
+                title="新建健管组"
+                @click="openCreateCareTeamFromList"
+              >
+                + 新建组
+              </button>
+            </div>
           </div>
 
           <button
-            v-if="tab === 'mine' && unassignedMineCount > 0 && !searchKeyword.trim()"
+            v-if="unassignedGuideCount > 0 && !(tab === 'mine' && searchKeyword.trim())"
             type="button"
             class="unassigned-banner"
             :class="{ busy: unassignedWorkbenchOpen }"
             :disabled="unassignedWorkbenchOpen"
-            :title="unassignedWorkbenchOpen ? '正在处理分组' : '打开待分组处理台'"
+            :title="unassignedWorkbenchOpen ? '正在处理认领' : '打开公共池认领/分配面板'"
             @click="openUnassignedInbox"
           >
             <span class="unassigned-banner-text">
-              <template v-if="unassignedWorkbenchOpen">正在处理分组…</template>
+              <template v-if="unassignedWorkbenchOpen">正在处理认领…</template>
               <template v-else>
-                {{ unassignedMineCount }} 位患者待分组，点击去处理
+                {{ unassignedGuideCount }} 位公共池患者待认领，点击去处理
               </template>
             </span>
             <span v-if="!unassignedWorkbenchOpen" class="unassigned-banner-arrow" aria-hidden="true">
@@ -6866,128 +8295,187 @@ onUnmounted(() => {
                   v-show="!isMineTeamCollapsed(g.careTeamId)"
                   class="team-group-body"
                 >
-                <div
-                  v-for="c in g.cards"
-                  :key="c.peopleId"
-                  class="person-card"
-                  :class="{ active: focusPeopleId === c.peopleId }"
-                  role="button"
-                  tabindex="0"
-                  @click="
-                    selectPatient(c.peopleId, {
-                      autoAsk: true,
-                      reason: c.topReason || (isUnassignedMineGroup(g) ? '待分配健管组' : '我的患者'),
-                    })
-                  "
-                  @keydown.enter.prevent="
-                    selectPatient(c.peopleId, {
-                      autoAsk: true,
-                      reason: c.topReason || (isUnassignedMineGroup(g) ? '待分配健管组' : '我的患者'),
-                    })
-                  "
-                >
-                  <div class="card-top">
-                    <span class="avatar" :style="{ background: avatarTone(c.peopleId || c.displayName) }">
-                      {{ nameInitial(c.displayName) }}
-                    </span>
-                    <strong class="name">{{ c.displayName || c.peopleId }}</strong>
-                    <span
-                      v-if="overdueIntakeHeadline(c) && priorityLabel(c.maxTaskPriority)"
-                      class="name-pri"
-                      :class="(c.maxTaskPriority || '').toLowerCase()"
-                    >{{ priorityLabel(c.maxTaskPriority) }}</span>
-                    <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
-                    <span
-                      v-if="!overdueIntakeHeadline(c) && cardNodeBadge(c)?.action"
-                      role="button"
-                      tabindex="0"
-                      class="risk risk-cta"
-                      :class="cardNodeBadge(c)!.tone"
-                      :title="cardNodeBadge(c)!.text"
-                      @click="onCardNodeAction($event, c)"
-                      @keydown.enter.prevent="onCardNodeAction($event, c)"
-                    >
-                      {{ cardNodeBadge(c)!.text }}
-                    </span>
-                    <span
-                      v-else-if="!overdueIntakeHeadline(c)"
-                      class="risk"
-                      :class="[riskBadge(c).tone, { plain: !riskBadgeShowDot(c) }]"
-                    >
-                      <i v-if="riskBadgeShowDot(c)" class="dot" />
-                      {{ riskBadge(c).text }}
-                    </span>
-                  </div>
-                  <p v-if="overdueIntakeHeadline(c)" class="card-alert">
-                    <i class="dot" />{{ overdueIntakeHeadline(c) }}
-                  </p>
-                  <div
-                    v-else-if="cardTags(c).length || (taskMeta(c) && !isUnassignedCard(c))"
-                    class="card-chips"
+                <template v-for="block in mineTeamRenderBlocks(g)" :key="block.key">
+                  <button
+                    v-if="block.kind === 'bucket-head'"
+                    type="button"
+                    class="stage-bucket-head"
+                    :class="`tone-${block.bucketKey}`"
+                    :aria-expanded="!isMineStageBucketCollapsed(block.careTeamId, block.bucketKey)"
+                    @click="toggleMineStageBucket(block.careTeamId, block.bucketKey)"
                   >
-                    <div class="tag-row" v-if="cardTags(c).length">
+                    <span class="stage-bucket-caret" aria-hidden="true">{{
+                      isMineStageBucketCollapsed(block.careTeamId, block.bucketKey) ? '▶' : '▼'
+                    }}</span>
+                    <span class="stage-bucket-dot" aria-hidden="true" />
+                    <span>{{ block.label }}</span>
+                    <span class="stage-bucket-count">({{ block.count }})</span>
+                  </button>
+                  <button
+                    v-else-if="block.kind === 'more'"
+                    type="button"
+                    class="team-expand-more"
+                    @click="block.onExpand()"
+                  >
+                    展开查看剩余 {{ block.remain }} 人
+                  </button>
+                  <div
+                    v-else
+                    class="person-card"
+                    :class="{ active: focusPeopleId === block.card.peopleId }"
+                    role="button"
+                    tabindex="0"
+                    @click="
+                      selectPatient(block.card.peopleId, {
+                        autoAsk: true,
+                        reason:
+                          block.card.topReason ||
+                          (isUnassignedMineGroup(g) ? '待分配健管组' : '我的患者'),
+                      })
+                    "
+                    @keydown.enter.prevent="
+                      selectPatient(block.card.peopleId, {
+                        autoAsk: true,
+                        reason:
+                          block.card.topReason ||
+                          (isUnassignedMineGroup(g) ? '待分配健管组' : '我的患者'),
+                      })
+                    "
+                  >
+                    <div class="card-top">
                       <span
-                        v-for="t in cardTags(c)"
-                        :key="t"
-                        class="tag"
-                        :class="t === '待分组' || t === 'TEAM_ASSIGN' ? 'warn' : 'brand'"
+                        class="avatar"
+                        :style="{
+                          background: avatarTone(block.card.peopleId || block.card.displayName),
+                        }"
                       >
-                        {{ t === 'TEAM_ASSIGN' ? '待分组' : t }}
+                        {{ nameInitial(block.card.displayName) }}
+                      </span>
+                      <strong class="name">{{ block.card.displayName || block.card.peopleId }}</strong>
+                      <span
+                        v-if="
+                          overdueIntakeHeadline(block.card) &&
+                          priorityLabel(block.card.maxTaskPriority)
+                        "
+                        class="name-pri"
+                        :class="(block.card.maxTaskPriority || '').toLowerCase()"
+                      >{{ priorityLabel(block.card.maxTaskPriority) }}</span>
+                      <span v-if="cardMeta(block.card)" class="card-meta">{{
+                        cardMeta(block.card)
+                      }}</span>
+                      <span
+                        v-if="!overdueIntakeHeadline(block.card) && cardNodeBadge(block.card)?.action"
+                        role="button"
+                        tabindex="0"
+                        class="risk risk-cta"
+                        :class="cardNodeBadge(block.card)!.tone"
+                        :title="cardNodeBadge(block.card)!.text"
+                        @click="onCardNodeAction($event, block.card)"
+                        @keydown.enter.prevent="onCardNodeAction($event, block.card)"
+                      >
+                        {{ cardNodeBadge(block.card)!.text }}
+                      </span>
+                      <span
+                        v-else-if="!overdueIntakeHeadline(block.card)"
+                        class="risk"
+                        :class="[
+                          riskBadge(block.card).tone,
+                          { plain: !riskBadgeShowDot(block.card) },
+                        ]"
+                      >
+                        <i v-if="riskBadgeShowDot(block.card)" class="dot" />
+                        {{ riskBadge(block.card).text }}
                       </span>
                     </div>
-                    <div class="task-meta" v-if="taskMeta(c) && !isUnassignedCard(c)">
-                    <span
-                      class="pri"
-                      :class="(c.maxTaskPriority || '').toLowerCase()"
-                      v-if="priorityLabel(c.maxTaskPriority)"
+                    <p v-if="overdueIntakeHeadline(block.card)" class="card-alert">
+                      <i class="dot" />{{ overdueIntakeHeadline(block.card) }}
+                    </p>
+                    <div
+                      v-else-if="
+                        cardTags(block.card).length ||
+                        (taskMeta(block.card) && !isUnassignedCard(block.card))
+                      "
+                      class="card-chips"
                     >
-                      {{ priorityLabel(c.maxTaskPriority) }}
-                    </span>
-                    <span>待办 {{ c.openTaskCount ?? 0 }}</span>
-                    <span v-if="(c.overdueTaskCount ?? 0) > 0" class="overdue">
-                      超期 {{ c.overdueTaskCount }}
-                    </span>
-                    </div>
-                  </div>
-                  <p v-if="footerNote(c) && !overdueIntakeHeadline(c)" class="note">{{ footerNote(c) }}</p>
-                  <div class="card-foot" :class="{ 'only-more': !hasPlanRate(c) }">
-                    <div v-if="hasPlanRate(c)" class="progress" title="近 7 日方案完成率">
-                      <div class="bar">
-                        <div class="fill" :style="{ width: `${ratePct(c.planRate7d)}%` }" />
+                      <div v-if="cardTags(block.card).length" class="tag-row">
+                        <span
+                          v-for="t in cardTags(block.card)"
+                          :key="t"
+                          class="tag"
+                          :class="t === '待分组' || t === 'TEAM_ASSIGN' ? 'warn' : 'brand'"
+                        >
+                          {{ t === 'TEAM_ASSIGN' ? '待分组' : t }}
+                        </span>
                       </div>
-                      <span class="pct">{{ rateText(c.planRate7d) }}</span>
+                      <div
+                        v-if="taskMeta(block.card) && !isUnassignedCard(block.card)"
+                        class="task-meta"
+                      >
+                        <span
+                          v-if="priorityLabel(block.card.maxTaskPriority)"
+                          class="pri"
+                          :class="(block.card.maxTaskPriority || '').toLowerCase()"
+                        >
+                          {{ priorityLabel(block.card.maxTaskPriority) }}
+                        </span>
+                        <span>待办 {{ block.card.openTaskCount ?? 0 }}</span>
+                        <span v-if="(block.card.overdueTaskCount ?? 0) > 0" class="overdue">
+                          超期 {{ block.card.overdueTaskCount }}
+                        </span>
+                      </div>
                     </div>
-                    <el-dropdown
-                      trigger="click"
-                      @command="(cmd: string | number) => onPersonCardMenu(cmd, c)"
-                      @click.stop
+                    <p
+                      v-if="footerNote(block.card) && !overdueIntakeHeadline(block.card)"
+                      class="note"
                     >
-                      <button
-                        type="button"
-                        class="card-more"
-                        title="更多操作"
-                        aria-label="更多操作"
+                      {{ footerNote(block.card) }}
+                    </p>
+                    <div class="card-foot" :class="{ 'only-more': !hasPlanRate(block.card) }">
+                      <div
+                        v-if="hasPlanRate(block.card)"
+                        class="progress"
+                        title="近 7 日方案完成率"
+                      >
+                        <div class="bar">
+                          <div
+                            class="fill"
+                            :style="{ width: `${ratePct(block.card.planRate7d)}%` }"
+                          />
+                        </div>
+                        <span class="pct">{{ rateText(block.card.planRate7d) }}</span>
+                      </div>
+                      <el-dropdown
+                        trigger="click"
+                        @command="(cmd: string | number) => onPersonCardMenu(cmd, block.card)"
                         @click.stop
                       >
-                        ···
-                      </button>
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item
-                            v-if="isUnassignedCard(c) || isUnassignedMineGroup(g)"
-                            command="assign"
-                          >
-                            分配健管组
-                          </el-dropdown-item>
-                          <el-dropdown-item v-else command="assign">变更健管组</el-dropdown-item>
-                          <el-dropdown-item command="remove" divided>
-                            删除档案
-                          </el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
+                        <button
+                          type="button"
+                          class="card-more"
+                          title="更多操作"
+                          aria-label="更多操作"
+                          @click.stop
+                        >
+                          ···
+                        </button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item
+                              v-if="isUnassignedCard(block.card) || isUnassignedMineGroup(g)"
+                              command="assign"
+                            >
+                              分配健管组
+                            </el-dropdown-item>
+                            <el-dropdown-item v-else command="assign">变更健管组</el-dropdown-item>
+                            <el-dropdown-item command="remove" divided>
+                              删除档案
+                            </el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
+                    </div>
                   </div>
-                </div>
+                </template>
                 <div
                   v-if="!g.cards.length && !isUnassignedMineGroup(g)"
                   class="team-group-empty"
@@ -7145,7 +8633,10 @@ onUnmounted(() => {
         @dragend="resetImageDrop"
       >
         <div v-if="imageDropActive" class="drop-mask">{{ imageDropHint() }}</div>
+        <div class="chat-stage">
+          <div class="chat-stage-inner">
         <div class="chat-head">
+          <div class="chat-read-rail">
           <div class="chat-head-main">
             <div class="ai-avatar" aria-hidden="true">
               <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
@@ -7252,9 +8743,30 @@ onUnmounted(() => {
               待分组
             </button>
           </div>
+          </div>
         </div>
 
-        <div ref="chatBodyRef" class="chat-body">
+        <div
+          ref="chatBodyRef"
+          class="chat-body"
+          :class="{ 'is-empty-idle': showEmptyStarters }"
+        >
+          <div class="chat-read-rail">
+          <!-- 零数据新手：静态欢迎气泡（首屏即显，不依赖会话异步） -->
+          <div
+            v-if="showStaticNewbieWelcome"
+            class="msg-row assistant newbie-welcome"
+          >
+            <div class="msg-avatar ai" aria-hidden="true">
+              <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
+            </div>
+            <div class="bubble assistant">
+              <div class="bubble-head">
+                <span>{{ AGENT_NAME }}</span>
+              </div>
+              <div class="bubble-text md-body">{{ ZERO_TEAM_WELCOME }}</div>
+            </div>
+          </div>
           <!-- 冷启动时左侧已有唯一 CTA，隐藏紫色简报避免「创建健管组」三处打架 -->
           <div
             v-if="briefingMsg && !isColdStart"
@@ -7397,6 +8909,7 @@ onUnmounted(() => {
               >
                 {{ msg.content }}
               </div>
+              <p v-if="msg.tip" class="bubble-tip">{{ msg.tip }}</p>
               <AgentReportReviewCard v-if="msg.reportReview" :preview="msg.reportReview" />
               <AgentCarePlanCard
                 v-if="msg.carePlanPreview"
@@ -7431,13 +8944,13 @@ onUnmounted(() => {
                 @discarded="onExtractDiscarded"
               />
               <div
-                v-if="bubbleHasVisibleActions(msg)"
+                v-if="bubbleHasVisibleActions(msg, idx)"
                 class="bubble-actions"
-                :class="{ stepped: visibleHeroActions(bubbleActions(msg)).length > 0 }"
+                :class="{ stepped: visibleHeroActions(bubbleActions(msg, idx)).length > 0 }"
               >
-                <template v-if="isHeroActions(bubbleActions(msg))">
+                <template v-if="isHeroActions(bubbleActions(msg, idx))">
                   <button
-                    v-for="(step, si) in visibleHeroActions(bubbleActions(msg))"
+                    v-for="(step, si) in visibleHeroActions(bubbleActions(msg, idx))"
                     :key="`step-${si}`"
                     type="button"
                     class="action-step"
@@ -7461,7 +8974,7 @@ onUnmounted(() => {
                     }}</span>
                   </button>
                   <button
-                    v-for="(a, ai) in restAfterHero(bubbleActions(msg))"
+                    v-for="(a, ai) in restAfterHero(bubbleActions(msg, idx))"
                     :key="`rest-${ai}`"
                     type="button"
                     class="action-chip"
@@ -7481,53 +8994,62 @@ onUnmounted(() => {
                   </button>
                 </template>
                 <template v-else>
-                  <button
-                    v-for="(a, ai) in shownActions(bubbleActions(msg), 'thread', idx)"
+                  <el-tooltip
+                    v-for="(a, ai) in shownActions(bubbleActions(msg, idx), 'thread', idx)"
                     :key="ai"
-                    type="button"
-                    class="action-chip"
-                    :class="{
-                      quiet:
-                        !!msg.carePlanPreview &&
-                        a.type === 'TRIGGER_CAPABILITY' &&
-                        a.path === 'GENERAL_CHAT',
-                      primary:
-                        !(
-                          msg.carePlanPreview &&
-                          a.type === 'TRIGGER_CAPABILITY' &&
-                          a.path === 'GENERAL_CHAT'
-                        ) &&
-                        (ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'),
-                      do:
-                        !(
-                          msg.carePlanPreview &&
-                          a.type === 'TRIGGER_CAPABILITY' &&
-                          a.path === 'GENERAL_CHAT'
-                        ) && (a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'),
-                      done: a.runState === 'done',
-                    }"
-                    :title="a.label"
-                    :disabled="a.runState === 'busy' || a.runState === 'done'"
-                    @click="runAction(a)"
+                    :disabled="!isBubbleActionLocked(a)"
+                    :content="bubbleActionLockHint(a)"
+                    placement="top"
                   >
-                    <span class="action-chip-text">
-                      <template v-if="a.runState === 'done'">✓ </template>{{
-                        a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
-                      }}
+                    <span class="action-chip-tip-wrap">
+                      <button
+                        type="button"
+                        class="action-chip"
+                        :class="{
+                          quiet:
+                            !isBubbleActionLocked(a) &&
+                            !!msg.carePlanPreview &&
+                            a.type === 'TRIGGER_CAPABILITY' &&
+                            a.path === 'GENERAL_CHAT',
+                          primary: !isBubbleActionLocked(a) && isBubbleActionPrimary(a, ai, msg),
+                          do:
+                            !isBubbleActionLocked(a) &&
+                            !(
+                              msg.carePlanPreview &&
+                              a.type === 'TRIGGER_CAPABILITY' &&
+                              a.path === 'GENERAL_CHAT'
+                            ) &&
+                            (a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'),
+                          done: a.runState === 'done',
+                          locked: isBubbleActionLocked(a),
+                        }"
+                        :title="isBubbleActionLocked(a) ? bubbleActionLockHint(a) : a.label"
+                        :aria-disabled="isBubbleActionLocked(a) ? 'true' : undefined"
+                        :disabled="
+                          isBubbleActionLocked(a) || a.runState === 'busy' || a.runState === 'done'
+                        "
+                        @click="onBubbleActionClick(a)"
+                      >
+                        <span class="action-chip-text">
+                          <template v-if="a.runState === 'done'">✓ </template>{{
+                            a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
+                          }}
+                        </span>
+                      </button>
                     </span>
-                  </button>
+                  </el-tooltip>
                   <button
-                    v-if="hiddenActionCount(bubbleActions(msg), 'thread', idx)"
+                    v-if="hiddenActionCount(bubbleActions(msg, idx), 'thread', idx)"
                     type="button"
                     class="action-chip more"
                     @click="toggleActionList('thread', idx)"
                   >
-                    展开其余 {{ hiddenActionCount(bubbleActions(msg), 'thread', idx) }} 项
+                    展开其余 {{ hiddenActionCount(bubbleActions(msg, idx), 'thread', idx) }} 项
                   </button>
                   <button
                     v-else-if="
                       isActionListExpanded('thread', idx) &&
-                      displayActions(bubbleActions(msg)).length > ACTION_CHIP_PREVIEW
+                      displayActions(bubbleActions(msg, idx)).length > ACTION_CHIP_PREVIEW
                     "
                     type="button"
                     class="action-chip more"
@@ -7542,6 +9064,7 @@ onUnmounted(() => {
           <div
             v-if="showEmptyStarters"
             class="empty-starters"
+            :class="{ 'after-welcome': showStaticNewbieWelcome }"
             aria-label="试试这样开始"
           >
             <p class="empty-starters-title">{{ emptyStartersLead }}</p>
@@ -7554,7 +9077,7 @@ onUnmounted(() => {
                 :class="{ locked: !!s.locked }"
                 :disabled="sending || isArchivedSession"
                 :aria-disabled="s.locked ? 'true' : undefined"
-                :title="s.locked ? s.lockHint || '请先在左侧完成第一步：创建健管组。' : s.label"
+                :title="s.locked ? s.lockHint || '请先在左侧创建您的专属健管组' : s.label"
                 @click="runEmptyStarter(s)"
               >
                 <span v-if="s.locked" class="empty-starter-lock" aria-hidden="true">
@@ -7569,41 +9092,61 @@ onUnmounted(() => {
             </div>
           </div>
           <div ref="chatEndRef" class="chat-end" aria-hidden="true" />
+          </div>
         </div>
 
         <div v-if="isArchivedSession" class="session-banner">
+          <div class="chat-read-rail session-banner-inner">
           <span>当前为历史会话，发送前请先继续</span>
           <button type="button" class="session-resume" :disabled="historyBusy" @click="resumeArchivedSession">
             继续此会话
           </button>
+          </div>
         </div>
 
         <div class="composer">
-          <div v-if="capabilityChips.length" class="quick-rail" aria-label="快捷能力">
-            <button
+          <div class="chat-read-rail">
+          <TransitionGroup
+            v-if="capabilityChips.length"
+            name="quick-chip-fade"
+            tag="div"
+            class="quick-rail"
+            :aria-label="currentPatient ? '患者快捷能力' : '机构快捷能力'"
+          >
+            <el-tooltip
               v-for="(cap, ci) in capabilityChips"
               :key="cap.code"
-              type="button"
-              class="quick-chip"
-              :class="{
-                primary:
-                  chipStageTone(cap.code) === 'now' ||
-                  (!focus && (ci === 0 || cap.code === 'CREATE_ARCHIVE')),
-                later: chipStageTone(cap.code) === 'later',
-                pulse: cap.code === 'CREATE_ARCHIVE' && pulseArchiveChip,
-              }"
-              :disabled="
-                sending ||
-                uploading ||
-                isArchivedSession ||
-                (cap.needsPatient && !focusPeopleId && !needsPrimaryTeam)
-              "
-              :title="cap.hint"
-              @click="quickCapability(cap.code, cap.label)"
+              :disabled="!isQuickChipLocked(cap)"
+              :content="quickChipLockHint(cap)"
+              placement="top"
             >
-              {{ cap.label }}
-            </button>
-          </div>
+              <span class="quick-chip-tip-wrap">
+                <button
+                  type="button"
+                  class="quick-chip"
+                  :class="{
+                    primary:
+                      chipStageTone(cap.code) === 'now' ||
+                      (!currentPatient &&
+                        !isQuickChipLocked(cap) &&
+                        (ci === 0 || cap.code === 'ORG_BRIEFING')) ||
+                      (!!currentPatient &&
+                        !focus &&
+                        (ci === 0 || cap.code === 'CREATE_ARCHIVE')),
+                    later: chipStageTone(cap.code) === 'later' && !isQuickChipLocked(cap),
+                    pulse: cap.code === 'CREATE_ARCHIVE' && pulseArchiveChip,
+                    locked: isQuickChipLocked(cap),
+                  }"
+                  :disabled="sending || uploading || isArchivedSession || isQuickChipLocked(cap)"
+                  :aria-disabled="isQuickChipLocked(cap) ? 'true' : undefined"
+                  :title="quickChipLockHint(cap)"
+                  @click="onQuickChipClick(cap)"
+                >
+                  {{ cap.label }}
+                </button>
+              </span>
+            </el-tooltip>
+          </TransitionGroup>
           <div
             v-if="composerNameHint"
             class="composer-name-hint"
@@ -7637,19 +9180,15 @@ onUnmounted(() => {
             />
             <div class="composer-bar">
               <div class="composer-send">
-                <span class="hint">{{
-                  intakeDocked
-                    ? '贴上记录后点「整理这段记录」，核对后再写入问卷'
-                    : 'Enter 发送 · 微信长文字点右侧「整理」自动提取'
-                }}</span>
+                <span class="hint">{{ composerSendHint }}</span>
                 <button
                   type="button"
                   class="send-btn ghost"
                   :disabled="sending || uploading || isArchivedSession || !input.trim()"
                   :title="
                     input.trim().length > 80
-                      ? '长文字建议点这里，自动整理成可核对的信息'
-                      : '粘贴微信聊天记录等长文字后点此整理'
+                      ? '长文字点这里，由智能体识别建档或提取'
+                      : '粘贴微信聊天/建档信息后点此整理'
                   "
                   @click="organizeRecord"
                 >
@@ -7679,6 +9218,9 @@ onUnmounted(() => {
             @change="onReportFile"
           />
           <p class="disclaimer">智能体基于知识库与患者数据生成建议，请人工核对。</p>
+          </div>
+        </div>
+          </div>
         </div>
 
         <el-drawer
@@ -7735,8 +9277,13 @@ onUnmounted(() => {
         </el-drawer>
       </section>
 
-      <!-- 右：当前焦点 -->
-      <aside class="col right" :class="{ 'is-intake': intakeDocked }" v-loading="focusLoading && !intakeDocked">
+      <!-- 右：当前焦点（无患者时折叠，给中间对话让宽） -->
+      <aside
+        v-show="!focusPanelCollapsed"
+        class="col right"
+        :class="{ 'is-intake': intakeDocked }"
+        v-loading="focusLoading && !intakeDocked"
+      >
         <PatientIntakeView
           v-if="intakeDocked"
           ref="intakeFormRef"
@@ -8234,6 +9781,20 @@ onUnmounted(() => {
       @sent="onIntakeBatchSent"
     />
 
+    <BatchServeWorkbenchDrawer
+      v-model="batchServeWorkbenchOpen"
+      :patients="batchServeWorkbenchPatients"
+      :teams="batchServeTeamOptions"
+      :care-team-name="pendingIntakeBatch?.careTeamName"
+      :initial-care-team-id="pendingIntakeBatch?.careTeamId"
+      :initial-filter="batchServeInitialFilter"
+      @send-intake="onBatchServeSendIntake"
+      @focus="onBatchServeFocus"
+      @batch-follow="onBatchServeFollow"
+      @batch-plan="onBatchServePlan"
+      @transferred="onBatchServeTransferred"
+    />
+
     <el-image-viewer
       v-if="imagePreviewUrl"
       :url-list="[imagePreviewUrl]"
@@ -8256,16 +9817,46 @@ onUnmounted(() => {
 }
 
 .board {
+  --chat-inline: 22px;
   display: grid;
   grid-template-columns: minmax(268px, 300px) minmax(0, 1.55fr) minmax(260px, 300px);
-  gap: 14px;
+  gap: 12px;
   flex: 1;
   min-height: 0;
   transition: grid-template-columns 0.28s ease;
 }
 
+.board.focus-collapsed {
+  /* 右栏收起：中间白板铺满剩余宽度，与左栏顶底对齐 */
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.board.is-cold-start.focus-collapsed {
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+}
+
 .board.intake-open {
   grid-template-columns: minmax(220px, 260px) minmax(320px, 0.82fr) minmax(520px, 1.2fr);
+}
+
+.board.intake-open.focus-collapsed {
+  grid-template-columns: minmax(220px, 260px) minmax(320px, 0.82fr) minmax(520px, 1.2fr);
+}
+
+.col.right {
+  animation: focus-panel-in 0.28s ease;
+}
+
+@keyframes focus-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .col.right.is-intake {
@@ -8298,15 +9889,36 @@ onUnmounted(() => {
   overflow: hidden;
   background: var(--admin-card, #fff);
   border: 1px solid var(--ink-200);
-  border-radius: var(--admin-radius, 12px);
-  box-shadow: var(--admin-shadow);
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+}
+
+.col.left {
+  align-self: stretch;
+  height: 100%;
+}
+
+.col.left.is-onboarding {
+  border-radius: 14px;
+  border-color: rgba(15, 23, 42, 0.06);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 10px 28px rgba(15, 23, 42, 0.07);
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
 }
 
 .col.center {
   position: relative;
+  /* 外层只做壳：白色主聊天卡由 chat-stage-inner 铺满剩余空间 */
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  align-self: stretch;
+  height: 100%;
+  min-height: 0;
 }
 
-.col.center.drop-active {
+.col.center.drop-active .chat-stage-inner {
   border-color: var(--brand-500, #2c7ef8);
 }
 
@@ -8493,20 +10105,25 @@ onUnmounted(() => {
   color: #5b6b7a;
 }
 
-/* 聊天时左栏也保持可滚动，新手三步曲钉住不丢 */
+/* 聊天时左栏也保持可滚动，新手三步曲钉住不丢；撑满高度避免「断截」感 */
 .onboarding-scroll {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   scrollbar-width: thin;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.35) 0%, transparent 42%);
 }
 
 .onboarding-checklist {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin: 12px;
-  padding: 4px 0 12px;
+  gap: 12px;
+  margin: 14px;
+  padding: 2px 0 18px;
+  box-sizing: border-box;
 }
 
 .ob-step {
@@ -8674,11 +10291,17 @@ onUnmounted(() => {
 }
 
 .empty-starters {
-  margin: 8px 12px 16px;
-  padding: 14px 12px;
+  margin: 4px 0 12px;
+  padding: 14px 14px;
   border-radius: 12px;
   background: #f8fafc;
   border: 1px dashed var(--ink-200);
+  box-sizing: border-box;
+}
+
+/* 欢迎气泡下方的「新手常见问题」拉开间距，避免贴住气泡 */
+.empty-starters.after-welcome {
+  margin-top: 20px;
 }
 
 .empty-starters-title {
@@ -8723,8 +10346,16 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .search-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
   border: 1px solid var(--ink-200);
   border-radius: 8px;
@@ -8743,6 +10374,25 @@ onUnmounted(() => {
 
 .search-input::placeholder {
   color: var(--ink-400);
+}
+
+.new-team-btn {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand-600, #2563eb);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  border-radius: 6px;
+  transition: var(--admin-transition);
+}
+
+.new-team-btn:hover {
+  color: var(--brand-700, #1d4ed8);
+  background: var(--brand-50, #eff6ff);
 }
 
 /* 未分组入口：折起时只占一行，不把健管组顶出视口 */
@@ -8821,7 +10471,14 @@ onUnmounted(() => {
   color: #fff;
 }
 
-.priority-tabs button.active .count:not(.muted) {
+.priority-tabs .count.warn,
+.priority-tabs button:not(.active) .count.warn,
+.priority-tabs button.active .count.warn {
+  background: #ea580c;
+  color: #fff;
+}
+
+.priority-tabs button.active .count:not(.muted):not(.warn) {
   background: var(--rose-500);
 }
 
@@ -8996,6 +10653,79 @@ onUnmounted(() => {
   text-decoration: underline;
 }
 
+.stage-bucket-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 4px 0 2px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-600, #475569);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.stage-bucket-head:hover {
+  background: #f8fafc;
+  color: var(--ink-800, #1f2937);
+}
+.stage-bucket-caret {
+  width: 12px;
+  font-size: 9px;
+  color: var(--ink-400, #94a3b8);
+}
+.stage-bucket-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #94a3b8;
+}
+.stage-bucket-head.tone-intake .stage-bucket-dot {
+  background: #f97316;
+}
+.stage-bucket-head.tone-intake {
+  color: #c2410c;
+}
+.stage-bucket-head.tone-plan .stage-bucket-dot {
+  background: #3b82f6;
+}
+.stage-bucket-head.tone-plan {
+  color: #1d4ed8;
+}
+.stage-bucket-head.tone-follow .stage-bucket-dot {
+  background: #22c55e;
+}
+.stage-bucket-head.tone-follow {
+  color: #15803d;
+}
+.stage-bucket-head.tone-other .stage-bucket-dot {
+  background: #94a3b8;
+}
+.stage-bucket-count {
+  font-weight: 600;
+  color: var(--ink-400, #94a3b8);
+}
+.team-expand-more {
+  display: block;
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--ink-200, #e2e8f0);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--brand-600, #2563eb);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.team-expand-more:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
 .team-group-empty-hint {
   font-size: 12px;
   color: var(--ink-400, #94a3b8);
@@ -9245,6 +10975,22 @@ onUnmounted(() => {
   background: #ffedd5;
 }
 
+.risk.cta-muted {
+  background: #f8fafc;
+  color: #334155;
+  border-color: #e2e8f0;
+  box-shadow: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.risk.cta-muted:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
 .tag-row {
   display: flex;
   flex-wrap: wrap;
@@ -9433,10 +11179,18 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  padding: 12px 18px 10px;
+  gap: 0;
+  padding-top: 12px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--ink-100);
   flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.chat-head > .chat-read-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .chat-head-main {
@@ -9444,6 +11198,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  width: 100%;
 }
 
 .service-flow {
@@ -9608,18 +11363,68 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-.session-banner {
+/* 中间对话工作台：白板铺满剩余空间；内部阅读区限宽居中 */
+.chat-stage {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 14px;
-  padding: 8px 12px;
-  border-radius: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  background: transparent;
+}
+
+.chat-stage-inner {
+  --chat-inline: 22px;
+  --chat-read-max: 900px;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: var(--admin-card, #fff);
+  border: 1px solid var(--ink-200);
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  overflow: hidden;
+}
+
+/* 顶栏 / 消息 / 输入：统一阅读轨，左侧垂直对齐 */
+.chat-read-rail {
+  width: 100%;
+  max-width: var(--chat-read-max);
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.chat-head,
+.chat-body,
+.composer,
+.session-banner {
+  padding-left: var(--chat-inline);
+  padding-right: var(--chat-inline);
+}
+
+.session-banner {
+  margin: 0;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-radius: 0;
   background: var(--brand-50, #eff6ff);
   color: var(--ink-700);
   font-size: 12px;
   flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.session-banner-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .session-resume {
@@ -9949,11 +11754,34 @@ onUnmounted(() => {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px 18px 14px;
+  padding-top: 16px;
+  padding-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #fbfcfe 0%, #fff 100%);
+  box-sizing: border-box;
+}
+
+.chat-body > .chat-read-rail {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  background: linear-gradient(180deg, #fbfcfe 0%, #fff 100%);
+  flex: 1 0 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/* 零对话空态：欢迎语 + 常见问题垂直居中，避免全挤在上方 */
+.chat-body.is-empty-idle {
+  justify-content: center;
+}
+
+.chat-body.is-empty-idle > .chat-read-rail {
+  flex: 0 1 auto;
+  margin-top: auto;
+  margin-bottom: auto;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
 .chat-body::-webkit-scrollbar {
@@ -9992,11 +11820,11 @@ onUnmounted(() => {
 
 .msg-row.assistant {
   align-self: flex-start;
-  max-width: min(760px, 96%);
+  max-width: min(720px, 94%);
 }
 
 .msg-row.assistant.has-extract {
-  max-width: min(1080px, 100%);
+  max-width: 100%;
 }
 
 .msg-row.assistant.has-extract .bubble {
@@ -10006,7 +11834,7 @@ onUnmounted(() => {
 .msg-row.user {
   align-self: flex-end;
   flex-direction: row-reverse;
-  max-width: min(420px, 88%);
+  max-width: min(420px, 86%);
 }
 
 .msg-row.user .bubble {
@@ -10097,6 +11925,15 @@ onUnmounted(() => {
 
 .bubble-text {
   word-break: break-word;
+}
+
+.bubble-tip {
+  margin: 10px 0 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  font-weight: 400;
+  color: var(--ink-400, #94a3b8);
 }
 
 .bubble-text.stream-live::after {
@@ -10789,6 +12626,24 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
+.action-chip-tip-wrap {
+  display: inline-flex;
+  max-width: min(100%, 11.5em);
+}
+.action-chip.locked,
+.action-chip.locked:hover,
+.action-chip.locked:disabled,
+.action-chip.locked:disabled:hover {
+  opacity: 0.55;
+  cursor: not-allowed;
+  color: var(--ink-400, #9ca3af);
+  background: #f3f4f6;
+  border-color: var(--ink-200, #e5e7eb);
+  box-shadow: none;
+  filter: grayscale(0.35);
+  transform: none;
+}
+
 .action-chip.done,
 .action-chip.done:hover {
   background: #ecfdf5;
@@ -10839,14 +12694,45 @@ onUnmounted(() => {
   flex-shrink: 0;
   border-top: 1px solid var(--ink-100);
   background: #fff;
-  padding: 12px 14px 14px;
+  padding-top: 12px;
+  padding-bottom: 14px;
+  box-sizing: border-box;
+}
+
+.composer > .chat-read-rail {
+  width: 100%;
 }
 
 .quick-rail {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+  min-height: 36px;
+}
+
+.quick-chip-tip-wrap {
+  display: inline-flex;
+}
+
+.quick-chip-fade-enter-active,
+.quick-chip-fade-leave-active {
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease;
+}
+.quick-chip-fade-enter-from,
+.quick-chip-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.quick-chip-fade-leave-active {
+  position: absolute;
+  pointer-events: none;
+}
+.quick-chip-fade-move {
+  transition: transform 0.22s ease;
 }
 
 .quick-chip {
@@ -10907,9 +12793,23 @@ onUnmounted(() => {
   border-color: var(--ink-200, #e2e8f0);
 }
 
-.quick-chip:disabled {
+.quick-chip:disabled,
+.quick-chip.locked {
   opacity: 0.5;
   cursor: not-allowed;
+  color: var(--ink-400, #9ca3af);
+  background: #f3f4f6;
+  border-color: var(--ink-200, #e5e7eb);
+  box-shadow: none;
+  filter: grayscale(0.35);
+}
+
+.quick-chip.locked:hover,
+.quick-chip.primary.locked:hover,
+.quick-chip.later.locked:hover {
+  border-color: var(--ink-200, #e5e7eb);
+  background: #f3f4f6;
+  color: var(--ink-400, #9ca3af);
 }
 
 .composer-box {
@@ -11012,6 +12912,7 @@ onUnmounted(() => {
   margin: 8px 0 0;
   font-size: 11px;
   color: var(--ink-400);
+  line-height: 1.45;
 }
 
 .report-file-input {
@@ -11660,6 +13561,12 @@ onUnmounted(() => {
   .board {
     grid-template-columns: minmax(252px, 280px) minmax(0, 1fr) minmax(240px, 280px);
   }
+  .board.focus-collapsed {
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  }
+  .board.is-cold-start.focus-collapsed {
+    grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+  }
   .board.intake-open {
     grid-template-columns: minmax(200px, 240px) minmax(280px, 0.75fr) minmax(440px, 1.15fr);
   }
@@ -11669,12 +13576,21 @@ onUnmounted(() => {
   .board {
     grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
   }
+  .board.focus-collapsed {
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  }
+  .board.is-cold-start.focus-collapsed {
+    grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+  }
   .board.intake-open {
     grid-template-columns: minmax(180px, 220px) minmax(240px, 0.72fr) minmax(360px, 1fr);
   }
   .right {
     grid-column: 1 / -1;
     min-height: 280px;
+  }
+  .board.focus-collapsed .right {
+    display: none;
   }
   .board.intake-open .right {
     grid-column: auto;

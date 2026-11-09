@@ -1,14 +1,14 @@
-package com.healix.agent.skill;
+package com.healix.agent.handler;
 
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import org.springframework.util.StringUtils;
 
-/** 检验 / 检查 / 用药 OCR Skill 共用工具（解码、关键词、提示截断）。 */
-final class OcrSkillSupport {
+/** 检验 / 检查 / 用药 OCR Handler 共用（解码、提示截断）。 */
+final class OcrHandlerSupport {
 
-    private OcrSkillSupport() {}
+    private OcrHandlerSupport() {}
 
     static byte[] decodeImage(String imageBase64) {
         String raw = imageBase64.trim();

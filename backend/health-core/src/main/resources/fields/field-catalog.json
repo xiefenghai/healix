@@ -101,14 +101,14 @@
       "FLEXIBLE=不着急，先稳住"
     ],
     "primaryAppeal": [
+      "FAT_LOSS=减脂减重",
       "GLUCOSE=控糖（糖尿病）",
       "BP=控压（高血压）",
-      "LIPID=控血脂",
-      "FAT_LOSS=减脂减重",
-      "BODY_SHAPE=塑形增肌",
-      "METABOLIC=三高 / 代谢综合",
       "SLEEP=改善睡眠",
+      "LIPID=控血脂",
+      "BODY_SHAPE=塑形增肌",
       "GUT=改善肠胃",
+      "METABOLIC=三高 / 代谢综合",
       "CONSULT=先了解看看",
       "OTHER=其他"
     ],

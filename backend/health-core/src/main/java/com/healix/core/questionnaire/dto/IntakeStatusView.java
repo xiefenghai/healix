@@ -25,6 +25,13 @@ public class IntakeStatusView {
     private Integer completenessPercent;
     private Integer filledCount;
     private Integer totalCount;
+    /**
+     * 患者已初步交卷、待健管师沟通确认后正式提交。
+     * 为 true 时 B 端应打开可编辑草稿做「确认并提交评估」，而不是直接当正式办结。
+     */
+    private boolean awaitingStaffConfirm;
+    /** 待确认时对应的患者已交卷 ID（只读对照用） */
+    private String awaitingConfirmResponseId;
 
     @Getter
     @Setter

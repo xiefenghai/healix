@@ -1,4 +1,4 @@
-package com.healix.agent.skill;
+package com.healix.agent.support;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,8 +41,11 @@ class SkillMarkdownTest {
     void loadsGeneralChatOrgTemplate() {
         String body = SkillMarkdown.loadClasspath("skills/general-chat/org-system.md", "");
         assertThat(body).contains("{{ORG_BRIEF}}");
-        assertThat(body).contains("去创建健管组");
-        assertThat(body).contains("批量分组面板");
+        assertThat(body).contains("创建健管组");
+        assertThat(body).contains("批量分配面板");
+        assertThat(body).contains("去创建我的健管组");
+        assertThat(body).contains("专属服务小分队");
+        assertThat(body).doesNotContain("打底");
         assertThat(body).doesNotContain("name: general-chat-org");
     }
 

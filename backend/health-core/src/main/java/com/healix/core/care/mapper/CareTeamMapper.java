@@ -11,6 +11,9 @@ public interface CareTeamMapper {
 
     CareTeam findById(@Param("id") String id);
 
+    /** 机构内按名称精确匹配（未删除），用于防重名。 */
+    CareTeam findByOrgAndName(@Param("orgId") String orgId, @Param("name") String name);
+
     List<CareTeam> listByOrg(@Param("orgId") String orgId, @Param("keyword") String keyword);
 
     /** 当前员工作为主责健管师的健管组。 */

@@ -6,6 +6,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   loadDictOptions,
+  matchPresentIllnessQuery,
+  PRESENT_ILLNESS_PRIMARY,
+  presentIllnessDisplayLabel,
   toggleExclusiveMulti,
   type DictOption,
   type IntakeFieldType,
@@ -50,8 +53,13 @@ const dictOptions = ref<DictOption[]>([])
 const loadingOpts = ref(false)
 const choiceRow = ref<HTMLElement | null>(null)
 const choiceCompact = ref(false)
+/** 现病史：搜索词 + 是否展开低频项 */
+const illnessQuery = ref('')
+const illnessExpanded = ref(false)
 let choiceObserver: ResizeObserver | null = null
 let choiceFittedWidth = 0
+
+const isPresentIllness = computed(() => (props.options || '') === 'presentIllness')
 
 function choiceOrphan(el: HTMLElement) {
   const kids = [...el.querySelectorAll(':scope > .opt-btn')] as HTMLElement[]
@@ -164,11 +172,60 @@ const choiceOptions = computed(() => {
   return []
 })
 
+const selectedCodes = computed(() => {
+  if (!Array.isArray(props.modelValue)) return new Set<string>()
+  return new Set((props.modelValue as unknown[]).map(String))
+})
+
+/** 现病史：搜索过滤 → 再按高频折叠（有搜索词时不折叠） */
+const displayedChoiceOptions = computed(() => {
+  const list = choiceOptions.value
+  if (!isPresentIllness.value) return list
+  const q = illnessQuery.value.trim()
+  const filtered = q ? list.filter((o) => matchPresentIllnessQuery(o, q)) : list
+  if (q || illnessExpanded.value) return filtered
+  const primary = new Set<string>(PRESENT_ILLNESS_PRIMARY)
+  const selected = selectedCodes.value
+  return filtered.filter((o) => primary.has(o.code) || selected.has(o.code))
+})
+
+const illnessHiddenCount = computed(() => {
+  if (!isPresentIllness.value || illnessExpanded.value || illnessQuery.value.trim()) return 0
+  return Math.max(0, choiceOptions.value.length - displayedChoiceOptions.value.length)
+})
+
+watch(
+  () => props.options,
+  () => {
+    illnessQuery.value = ''
+    illnessExpanded.value = false
+  },
+)
+
 watch(choiceOptions, () => {
   choiceCompact.value = false
   choiceFittedWidth = 0
   void nextTick(() => fitChoices())
 })
+
+watch(displayedChoiceOptions, () => {
+  choiceCompact.value = false
+  choiceFittedWidth = 0
+  void nextTick(() => fitChoices())
+})
+
+function optionButtonLabel(o: DictOption) {
+  if (isPresentIllness.value) return presentIllnessDisplayLabel(o.code, o.label)
+  return o.label
+}
+
+function optionButtonTitle(o: DictOption, selected: boolean) {
+  const full = o.label || o.code
+  const short = optionButtonLabel(o)
+  const base = short !== full ? full : ''
+  if (selected) return base ? `${base} · 再次点击取消` : '再次点击取消'
+  return base || undefined
+}
 
 const toneClass = computed(() => ({
   'is-prefill': !!props.prefilled && !props.dirty,
@@ -191,6 +248,10 @@ function toggleMulti(code: string) {
   const prev = Array.isArray(props.modelValue) ? [...(props.modelValue as string[])] : []
   const available = choiceOptions.value.map((o) => o.code)
   emit('update:modelValue', toggleExclusiveMulti(prev, code, props.exclusive, available))
+  // 现病史：点选后清空搜索词，恢复首屏列表，避免搜完一直卡在过滤态
+  if (isPresentIllness.value && illnessQuery.value.trim()) {
+    illnessQuery.value = ''
+  }
 }
 
 const numberMin = computed(() => {
@@ -326,24 +387,55 @@ function onYearChange(v: string | null) {
     </template>
 
     <template v-else-if="type === 'MULTI'">
+      <div v-if="isPresentIllness" class="illness-toolbar">
+        <input
+          v-model="illnessQuery"
+          type="search"
+          class="illness-search"
+          :disabled="disabled"
+          placeholder="搜疾病，如痛风 / tf / gxy"
+          autocomplete="off"
+          @keydown.esc.prevent="illnessQuery = ''"
+        />
+        <span v-if="illnessQuery.trim() && !displayedChoiceOptions.length" class="hint">无匹配疾病</span>
+      </div>
       <div ref="choiceRow" class="btn-group" :class="{ 'is-compact': choiceCompact }" :aria-busy="loadingOpts">
         <button
-          v-for="o in choiceOptions"
+          v-for="o in displayedChoiceOptions"
           :key="o.code"
           type="button"
           class="opt-btn"
           :class="{
-            on: Array.isArray(modelValue) && (modelValue as string[]).includes(o.code),
+            on: selectedCodes.has(o.code),
             'has-badge': !!(optionBadges && optionBadges[o.code]),
           }"
           :disabled="disabled"
+          :title="optionButtonTitle(o, selectedCodes.has(o.code))"
           @click="toggleMulti(o.code)"
         >
-          <span class="opt-label">{{ o.label }}</span>
+          <span class="opt-label">{{ optionButtonLabel(o) }}</span>
           <span v-if="optionBadges && optionBadges[o.code]" class="opt-badge">{{ optionBadges[o.code] }}</span>
         </button>
         <span v-if="!choiceOptions.length && !loadingOpts" class="hint">暂无选项（{{ options || '—' }}）</span>
       </div>
+      <button
+        v-if="isPresentIllness && illnessHiddenCount > 0"
+        type="button"
+        class="illness-expand"
+        :disabled="disabled"
+        @click="illnessExpanded = true"
+      >
+        展开其他疾病（{{ illnessHiddenCount }}）
+      </button>
+      <button
+        v-else-if="isPresentIllness && illnessExpanded && !illnessQuery.trim()"
+        type="button"
+        class="illness-expand"
+        :disabled="disabled"
+        @click="illnessExpanded = false"
+      >
+        收起较少见疾病
+      </button>
     </template>
 
     <template v-else-if="type === 'NUMBER'">
@@ -493,6 +585,61 @@ function onYearChange(v: string | null) {
 
 .field-input.is-dirty {
   background: #fef9c3;
+}
+
+.illness-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.illness-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 280px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--ink-200);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-800);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.illness-search:focus {
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.illness-search:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.illness-expand {
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--brand-600);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 0;
+  cursor: pointer;
+}
+
+.illness-expand:hover:not(:disabled) {
+  color: var(--brand-700);
+  text-decoration: underline;
+}
+
+.illness-expand:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .btn-group {

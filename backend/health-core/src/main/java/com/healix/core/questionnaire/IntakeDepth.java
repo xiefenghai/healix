@@ -4,16 +4,16 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * C 端首诊填写深度：按题目 {@code level} 过滤。
+ * C 端首诊填写深度：按题目 {@code level} + 白名单过滤（同一套题，不同端看到不同子集）。
  *
  * <ul>
- *   <li>MINIMAL — 仅 REQUIRED（极简）
- *   <li>QUICK — REQUIRED + FIRST_VISIT（快速）
- *   <li>FULL — 再加 LATER（完整；永不含 STAFF）
+ *   <li>MINIMAL（C_FAST）— REQUIRED + FIRST_VISIT，再经 {@link PatientCFastFields} 收至约 15–20 题
+ *   <li>QUICK — REQUIRED + FIRST_VISIT，再经 {@link PatientCQuickFields}（兼容旧「标准」档）
+ *   <li>FULL — 再加 LATER（完整补充；永不含 STAFF）
  * </ul>
  */
 public enum IntakeDepth {
-    MINIMAL("极简", Set.of("REQUIRED")),
+    MINIMAL("极简", Set.of("REQUIRED", "FIRST_VISIT")),
     QUICK("快速", Set.of("REQUIRED", "FIRST_VISIT")),
     FULL("完整", Set.of("REQUIRED", "FIRST_VISIT", "LATER"));
 

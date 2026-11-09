@@ -1,40 +1,23 @@
 package com.healix.agent.gateway;
 
-import com.healix.agent.careplan.CarePlanAgentService;
-import com.healix.agent.careplan.CarePlanStreamSummary;
-import com.healix.agent.llm.LlmClient.ChatTurn;
+import com.healix.agent.extract.ChatExtractCard;
 import com.healix.agent.log.AgentInteractionLog;
 import com.healix.agent.log.AgentInteractionLogMapper;
 import com.healix.agent.memory.AgentConversationService;
 import com.healix.agent.memory.StaffSessionStore;
-import com.healix.agent.ocr.ObservationReportIngestService;
+import com.healix.agent.react.StaffReActRunner;
+import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.agent.support.AgentSessionIds;
 import com.healix.agent.support.AiUsageGuard;
-import com.healix.agent.extract.ChatExtractCard;
-import com.healix.agent.extract.ChatExtractService;
-import com.healix.agent.extract.ChatScreenshotDetector;
-import com.healix.agent.skill.AgentSkill;
-import com.healix.agent.skill.AgentSkillContext;
-import com.healix.agent.skill.CarePlanSkill;
-import com.healix.agent.skill.CreateArchiveSkill;
-import com.healix.agent.skill.GeneralChatSkill;
-import com.healix.agent.skill.OcrExamSkill;
-import com.healix.agent.skill.OcrLabSkill;
-import com.healix.agent.skill.OcrMedSkill;
-import com.healix.agent.skill.ReportSummarySkill;
-import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.domain.EntityMeta;
-import com.healix.common.exception.BusinessException;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.agent.enums.AgentTypeEnum;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.careplan.dto.CarePlanBundleDto;
 import com.healix.core.govern.enums.FeatureFlagKeyEnum;
 import com.healix.core.govern.enums.QuotaKeyEnum;
-import com.healix.core.observation.dto.ObservationOcrPreviewDto;
 import com.healix.core.people.domain.PeopleProfile;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,23 +28,18 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 /**
- * B 端员工智能体网关：支持有 peopleId 的患者会话，以及驾驶舱无 peopleId 的机构级会话。
+ * B 端员工智能体网关：会话/鉴权/落库；业务一律经 {@link StaffReActRunner} + Tools。
  */
 @Service
 @RequiredArgsConstructor
 public class StaffAgentGateway {
 
-    private final List<AgentSkill> skills;
     private final StaffSessionStore sessionStore;
     private final AgentConversationService conversationService;
     private final ArchiveAccessService archiveAccessService;
     private final AgentInteractionLogMapper interactionLogMapper;
-    private final CarePlanAgentService carePlanAgentService;
-    private final GeneralChatSkill generalChatSkill;
-    private final ReportSummarySkill reportSummarySkill;
-    private final ObservationReportIngestService observationReportIngestService;
-    private final ChatExtractService chatExtractService;
     private final AiUsageGuard aiUsageGuard;
+    private final StaffReActRunner staffReActRunner;
 
     public List<CapabilityView> capabilities() {
         List<CapabilityView> views = new ArrayList<>();
@@ -116,58 +94,30 @@ public class StaffAgentGateway {
                 cmd.peopleId(),
                 AgentSessionIds.normalize(cmd.sessionId()));
         var history = sessionStore.loadTurns(sessionId);
-        AgentCapability routed = route(cmd);
+
+        AgentCapability forced = AgentCapability.fromHint(cmd.capabilityHint());
         if (orgSession
-                && routed != AgentCapability.GENERAL_CHAT
-                && routed != AgentCapability.CREATE_ARCHIVE) {
-            // 机构首页会话禁止需患者的能力（方案 / OCR 等）；建档例外
-            routed = AgentCapability.GENERAL_CHAT;
-        }
-        boolean ocrAuto =
-                StringUtils.hasText(cmd.imageBase64())
-                        && routed == AgentCapability.GENERAL_CHAT
-                        && StringUtils.hasText(cmd.peopleId());
-        if (ocrAuto) {
-            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.skill("检查检验用药单识别", "自动分类识别"));
-            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("开始处理：单据识别"));
-        } else {
-            AgentStreamEvent.safeEmit(
-                    sink, AgentStreamEvent.skill(routed.label(), "已选择：" + routed.label()));
-            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("开始处理：" + routed.label()));
+                && forced != null
+                && forced != AgentCapability.GENERAL_CHAT
+                && forced != AgentCapability.CREATE_ARCHIVE) {
+            forced = AgentCapability.GENERAL_CHAT;
         }
 
-        AgentSkillContext ctx = new AgentSkillContext(cmd, sessionId, history, displayName);
-
-        AgentResponse response;
-        if (ocrAuto) {
-            response = streamOcrAuto(ctx, sink);
-        } else if (routed == AgentCapability.CARE_PLAN) {
-            response = streamCarePlan(ctx, sink);
-        } else if (routed == AgentCapability.REPORT_SUMMARY) {
-            response = reportSummarySkill.executeStream(ctx, sink);
-        } else if (routed == AgentCapability.GENERAL_CHAT) {
-            response = sink != null ? generalChatSkill.executeStream(ctx, sink) : generalChatSkill.execute(ctx);
-        } else {
-            // OCR 等非流式 Skill：流式通道上先推进度，再同步执行
-            if (sink != null) {
-                AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress(ocrProgressLabel(routed)));
-                AgentStreamEvent.safeEmit(
-                        sink, AgentStreamEvent.tool(routed.name(), "running", ocrProgressLabel(routed)));
-            }
-            long ocrStarted = System.currentTimeMillis();
-            response = resolveSkill(routed, cmd).execute(ctx);
-            if (sink != null) {
-                AgentStreamEvent.safeEmit(
-                        sink,
-                        AgentStreamEvent.tool(
-                                routed.name(),
-                                "done",
-                                "识别完成 · " + (System.currentTimeMillis() - ocrStarted) + "ms"));
-            }
+        AgentResponse response = staffReActRunner.run(cmd, sessionId, history, displayName, sink, forced);
+        if (orgSession
+                && response != null
+                && !AgentCapability.GENERAL_CHAT.name().equals(response.capability())
+                && !AgentCapability.CREATE_ARCHIVE.name().equals(response.capability())) {
+            response = new AgentResponse(
+                    sessionId,
+                    AgentCapability.GENERAL_CHAT.name(),
+                    "GENERAL_CHAT",
+                    "机构会话里请先建档或选择患者，再做方案/整理/识单。",
+                    List.of(),
+                    List.of(),
+                    null);
         }
 
-        // 机构会话与患者会话同一路径：一问一答成对落库（中途断开不落半截 USER）
-        // 助手为空时整轮不落库，避免刷新后只剩一排用户气泡
         if (StringUtils.hasText(response.reply())) {
             if (response.extracted() instanceof ChatExtractCard card) {
                 String preview = response.reply();
@@ -175,7 +125,7 @@ public class StaffAgentGateway {
                 sessionStore.appendTurn(sessionId, preview, preview);
                 conversationService.appendChatExtract(sessionId, storedUser, preview, card);
                 Map<String, Object> payload =
-                        JsonUtils.mapper().convertValue(card, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                        JsonUtils.mapper().convertValue(card, new com.fasterxml.jackson.core.type.TypeReference<>() {});
                 response = new AgentResponse(
                         sessionId,
                         response.capability(),
@@ -222,247 +172,6 @@ public class StaffAgentGateway {
                 response.extracted());
     }
 
-    private static String ocrProgressLabel(AgentCapability routed) {
-        if (routed == AgentCapability.OCR_LAB) {
-            return "正在识别检验单…";
-        }
-        if (routed == AgentCapability.OCR_EXAM) {
-            return "正在识别检查单…";
-        }
-        if (routed == AgentCapability.OCR_MED) {
-            return "正在识别用药单…";
-        }
-        if (routed == AgentCapability.REPORT_SUMMARY) {
-            return "正在生成报告点评…";
-        }
-        if (routed == AgentCapability.CHAT_EXTRACT) {
-            return "正在整理这段记录…";
-        }
-        if (routed == AgentCapability.CREATE_ARCHIVE) {
-            return "正在建档…";
-        }
-        return "正在处理…";
-    }
-
-    /** 驾驶舱通用上传：自动分类检验/检查，与专用 OCR Skill 同一流式通道。 */
-    private AgentResponse streamOcrAuto(AgentSkillContext ctx, Consumer<AgentStreamEvent> sink) {
-        AgentChatCommand cmd = ctx.command();
-        if (sink != null) {
-            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在识别单据…"));
-            AgentStreamEvent.safeEmit(sink, AgentStreamEvent.tool("OCR_AUTO", "running", "自动分类识别"));
-        }
-        long started = System.currentTimeMillis();
-        try {
-            byte[] bytes = decodeImageBase64(cmd.imageBase64());
-            String mime = StringUtils.hasText(cmd.imageMimeType()) ? cmd.imageMimeType() : "image/jpeg";
-            String text = observationReportIngestService.readImageText(
-                    cmd.tenantId(), cmd.orgId(), cmd.peopleId(), bytes, mime);
-            if (ChatScreenshotDetector.isChatRecord(text)) {
-                if (sink != null) {
-                    AgentStreamEvent.safeEmit(
-                            sink, AgentStreamEvent.tool("OCR_AUTO", "done", "识别为聊天记录"));
-                    AgentStreamEvent.safeEmit(sink, AgentStreamEvent.progress("正在整理这段记录…"));
-                }
-                ChatExtractCard card = chatExtractService.extract(cmd.tenantId(), cmd.peopleId(), text);
-                card.setSourceText(text.trim());
-                int count = card.getItems() == null ? 0 : card.getItems().size();
-                String preview = count > 0
-                        ? "提取到 " + count + " 项，请在卡片里核对"
-                        : "这段话里没有对上可写入的内容";
-                return new AgentResponse(
-                        ctx.sessionId(),
-                        AgentCapability.CHAT_EXTRACT.name(),
-                        "CHAT_EXTRACT",
-                        preview,
-                        List.of(),
-                        List.of(),
-                        card);
-            }
-            ObservationOcrPreviewDto preview =
-                    observationReportIngestService.structureFromText(
-                            cmd.tenantId(), cmd.peopleId(), bytes, mime, text);
-            String kind = preview.kind() == null ? "EXAM" : preview.kind().trim().toUpperCase();
-            AgentCapability cap =
-                    switch (kind) {
-                        case "LAB" -> AgentCapability.OCR_LAB;
-                        case "MED" -> AgentCapability.OCR_MED;
-                        default -> AgentCapability.OCR_EXAM;
-                    };
-            String kindLabel =
-                    switch (kind) {
-                        case "LAB" -> "检验单";
-                        case "MED" -> "用药单";
-                        default -> "检查单";
-                    };
-            if (sink != null) {
-                AgentStreamEvent.safeEmit(
-                        sink,
-                        AgentStreamEvent.tool(
-                                "OCR_AUTO",
-                                "done",
-                                "识别为" + kindLabel + " · " + (System.currentTimeMillis() - started) + "ms"));
-            }
-            String title = StringUtils.hasText(preview.title()) ? preview.title() : kindLabel;
-            String reply = "已识别为「" + title + "」，请在下方卡片核对后确认入库。";
-            return new AgentResponse(
-                    ctx.sessionId(),
-                    cap.name(),
-                    cap.name(),
-                    reply,
-                    List.of(),
-                    List.of(),
-                    preview);
-        } catch (BusinessException e) {
-            if (sink != null) {
-                AgentStreamEvent.safeEmit(sink, AgentStreamEvent.tool("OCR_AUTO", "done", "识别失败"));
-            }
-            return new AgentResponse(
-                    ctx.sessionId(),
-                    AgentCapability.OCR_LAB.name(),
-                    "OCR_AUTO",
-                    e.getMessage(),
-                    List.of(),
-                    List.of(),
-                    null);
-        } catch (Exception e) {
-            if (sink != null) {
-                AgentStreamEvent.safeEmit(sink, AgentStreamEvent.tool("OCR_AUTO", "done", "识别失败"));
-            }
-            return new AgentResponse(
-                    ctx.sessionId(),
-                    AgentCapability.OCR_LAB.name(),
-                    "OCR_AUTO",
-                    "识别失败，请检查图片清晰度或稍后重试。",
-                    List.of(),
-                    List.of(),
-                    null);
-        }
-    }
-
-    private static byte[] decodeImageBase64(String imageBase64) {
-        String raw = imageBase64.trim();
-        int comma = raw.indexOf(',');
-        if (raw.startsWith("data:") && comma > 0) {
-            raw = raw.substring(comma + 1);
-        }
-        return Base64.getDecoder().decode(raw);
-    }
-
-    private AgentResponse streamCarePlan(AgentSkillContext ctx, Consumer<AgentStreamEvent> sink) {
-        AgentChatCommand cmd = ctx.command();
-        String instruction = StringUtils.hasText(cmd.message()) ? cmd.message() : "生成管理方案";
-        boolean revise = shouldReviseCarePlan(cmd);
-        CarePlanBundleDto bundle;
-        List<ChatTurn> history = ctx.history() == null ? List.of() : ctx.history();
-        if (revise) {
-            bundle = carePlanAgentService.reviseStream(
-                    cmd.tenantId(),
-                    cmd.orgId(),
-                    cmd.peopleId(),
-                    cmd.staffId(),
-                    instruction,
-                    sink,
-                    history);
-        } else if (sink != null) {
-            bundle = carePlanAgentService.generateStream(
-                    cmd.tenantId(),
-                    cmd.orgId(),
-                    cmd.peopleId(),
-                    cmd.staffId(),
-                    instruction,
-                    null,
-                    null,
-                    true,
-                    sink,
-                    true,
-                    history);
-        } else {
-            bundle = carePlanAgentService.generateStream(
-                    cmd.tenantId(),
-                    cmd.orgId(),
-                    cmd.peopleId(),
-                    cmd.staffId(),
-                    instruction,
-                    null,
-                    null,
-                    true,
-                    null,
-                    true,
-                    history);
-        }
-        return new AgentResponse(
-                ctx.sessionId(),
-                AgentCapability.CARE_PLAN.name(),
-                revise ? "CARE_PLAN_REVISE" : "CARE_PLAN_GENERATE",
-                CarePlanStreamSummary.buildReply(bundle, revise),
-                List.of(
-                        AgentAction.openSheet("编辑方案草稿", "care-plan", cmd.peopleId()),
-                        AgentAction.publishCarePlan("确认发布方案", cmd.peopleId()),
-                        AgentAction.triggerCapability("继续闲聊", "GENERAL_CHAT", cmd.peopleId())),
-                List.of(),
-                bundle);
-    }
-
-    /** 已有草稿且非「重新生成」时走修订；明确修订关键词优先。无草稿时 reviseStream 会回退生成。 */
-    private static boolean shouldReviseCarePlan(AgentChatCommand cmd) {
-        if (CarePlanSkill.wantsFullRegenerate(cmd.message())) {
-            return false;
-        }
-        if (CarePlanSkill.matchesReviseMessage(cmd.message())) {
-            return true;
-        }
-        if (CarePlanSkill.matchesGenerateMessage(cmd.message())) {
-            return false;
-        }
-        return StringUtils.hasText(cmd.message());
-    }
-
-    private AgentCapability route(AgentChatCommand cmd) {
-        AgentCapability hinted = AgentCapability.fromHint(cmd.capabilityHint());
-        if (hinted != null && hinted.enabled()) {
-            if (!StringUtils.hasText(cmd.peopleId())
-                    && hinted != AgentCapability.GENERAL_CHAT
-                    && hinted != AgentCapability.CREATE_ARCHIVE) {
-                return AgentCapability.GENERAL_CHAT;
-            }
-            return hinted;
-        }
-        // 建档可在机构会话发起，优先于「无患者则闲聊」
-        if (CreateArchiveSkill.matchesMessage(cmd.message())) {
-            return AgentCapability.CREATE_ARCHIVE;
-        }
-        if (!StringUtils.hasText(cmd.peopleId())) {
-            return AgentCapability.GENERAL_CHAT;
-        }
-        if (CarePlanSkill.matchesMessage(cmd.message())) {
-            return AgentCapability.CARE_PLAN;
-        }
-        if (ReportSummarySkill.matchesMessage(cmd.message())) {
-            return AgentCapability.REPORT_SUMMARY;
-        }
-        // 用药单关键词优先于检验（避免「处方」误入检验）
-        if (OcrMedSkill.matchesMessage(cmd.message())) {
-            return AgentCapability.OCR_MED;
-        }
-        // 检查单关键词优先于检验（避免「检查」误入检验）
-        if (OcrExamSkill.matchesMessage(cmd.message())) {
-            return AgentCapability.OCR_EXAM;
-        }
-        if (OcrLabSkill.matchesMessage(cmd.message())) {
-            return AgentCapability.OCR_LAB;
-        }
-        return AgentCapability.GENERAL_CHAT;
-    }
-
-    private AgentSkill resolveSkill(AgentCapability routed, AgentChatCommand cmd) {
-        for (AgentSkill skill : skills) {
-            if (skill.supports(routed, cmd)) {
-                return skill;
-            }
-        }
-        return generalChatSkill;
-    }
-
     private void persistLog(AgentChatCommand cmd, String sessionId, AgentResponse response) {
         AgentInteractionLog logEntity = new AgentInteractionLog();
         logEntity.setSessionId(sessionId);
@@ -474,8 +183,8 @@ public class StaffAgentGateway {
         logEntity.setUserMessage(redactedUserMessage(cmd, response));
         logEntity.setPromptSnapshot("capability=" + response.capability());
         logEntity.setToolCallsJson(summarizeExtracted(response.extracted()));
-        logEntity.setDraftReply(redactedReply(cmd, response));
-        logEntity.setFinalReply(redactedReply(cmd, response));
+        logEntity.setDraftReply(response.reply());
+        logEntity.setFinalReply(response.reply());
         EntityMeta.onCreate(logEntity);
         interactionLogMapper.insert(logEntity);
     }
@@ -542,10 +251,6 @@ public class StaffAgentGateway {
             return "已整理一段记录，共 " + chars + " 字";
         }
         return cmd.message();
-    }
-
-    private static String redactedReply(AgentChatCommand cmd, AgentResponse response) {
-        return response.reply();
     }
 
     public record CapabilityView(String code, String label) {}

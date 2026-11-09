@@ -32,6 +32,7 @@ import {
   openIntakeSupplement,
   parseIntakeAiSummaryText,
   primaryProgramFromTracks,
+  resolveFieldProvenance,
   resolveIntakeFieldLabel,
   saveIntakeDraft,
   severityLabel,
@@ -40,6 +41,7 @@ import {
   suggestedCareTracksFromIllness,
   valuesEqual,
   type IntakeCompleteness,
+  type IntakeFieldProvenance,
   type IntakeHighlightHit,
   type IntakeItemView,
   type IntakeModuleView,
@@ -102,6 +104,22 @@ const isSupplement = computed(() => {
   if (props.embedded) return props.purpose === 'SUPPLEMENT'
   return String(route.query.purpose || '') === 'SUPPLEMENT'
 })
+/** 患者已初步交卷，本草稿用于健管师核对后正式确认 */
+const awaitingStaffConfirm = computed(
+  () =>
+    !!completeness.value?.awaitingStaffConfirm ||
+    completeness.value?.confirmState === 'AWAITING_STAFF',
+)
+const submitActionLabel = computed(() => {
+  if (isSupplement.value) return '提交'
+  if (awaitingStaffConfirm.value) return '确认并提交评估'
+  return '提交'
+})
+const submitSuccessMessage = computed(() => {
+  if (isSupplement.value) return '待补问卷已提交'
+  if (awaitingStaffConfirm.value) return '评估已确认提交'
+  return '首诊已提交'
+})
 
 const loading = ref(true)
 const saving = ref(false)
@@ -112,6 +130,8 @@ const lastSavedAt = ref<Date | null>(null)
 const patientName = ref('')
 const responseId = ref('')
 const status = ref('DRAFT')
+const responseChannel = ref<string | null>(null)
+const responseFilledByType = ref<string | null>(null)
 const programCode = ref<IntakeProgramCode>('NONE')
 const quickMode = ref(true)
 const activeModule = ref('')
@@ -288,6 +308,43 @@ function isPrefillTone(field: string) {
   const cell = prefill.value[field]
   if (!cell || isAnswerEmpty(cell.value)) return false
   return valuesEqual(answers[field], cell.value)
+}
+
+/** 题目右上角溯源微标（患者自填 / 健管师录入 / AI / 档案） */
+function fieldProvenance(field: string): IntakeFieldProvenance | null {
+  return resolveFieldProvenance({
+    field,
+    answer: answers[field],
+    prefill: prefill.value[field],
+    responseFilledByType: responseFilledByType.value,
+    responseChannel: responseChannel.value,
+  })
+}
+
+/** 左侧模块：患者已填数 / 本题组可见题数 */
+function modulePatientFillHint(m: IntakeModuleView): string {
+  const items = m.items || []
+  if (!items.length) return ''
+  let patientFilled = 0
+  let staffFilled = 0
+  let filled = 0
+  for (const it of items) {
+    if (!isFilled(it.field)) continue
+    filled += 1
+    const p = fieldProvenance(it.field)
+    if (p?.kind === 'PATIENT') patientFilled += 1
+    else if (p?.kind === 'STAFF' || p?.staffEdited) staffFilled += 1
+  }
+  if (filled <= 0) return ''
+  if (patientFilled > 0 && filled < items.length) {
+    return `患者已填 ${patientFilled}/${items.length}`
+  }
+  if (patientFilled > 0 && staffFilled > 0 && filled >= items.length) {
+    return '健管师已补全'
+  }
+  if (patientFilled >= items.length) return `患者已填 ${patientFilled}/${items.length}`
+  if (staffFilled > 0 && filled >= items.length) return '健管师已补全'
+  return ''
 }
 
 const visibleModules = computed(() =>
@@ -1187,10 +1244,14 @@ const canSubmit = computed(
 )
 
 const openingSummary = ref(false)
+/** 去提交时因总结为空而自动生成——专用遮罩文案 */
+const finalSummaryGenerating = ref(false)
 
 function applyView(view: QuestionnaireResponseView, seedAnswers: boolean) {
   responseId.value = view.id
   status.value = view.status || 'DRAFT'
+  responseChannel.value = view.channel || null
+  responseFilledByType.value = view.filledByType || null
   programCode.value = (view.programCode as IntakeProgramCode) || 'NONE'
   modules.value = view.modules || []
   prefill.value = (view.prefill || {}) as Record<string, IntakePrefillCell>
@@ -1581,10 +1642,21 @@ async function openSummaryDialog() {
   endCheckTour()
   // 有未填风险题时必须在本弹窗重新勾选，按钮才可点
   riskAck.value = !riskUnasked.value.length
-  // 正式首诊：提交前按当前答卷重生成，避免 AI 总结与变更对照/表单数据打架
+  // 正式首诊：总结为空时先自动生成再进确认，避免「去提交」直接放过空总结
   if (!isSupplement.value && (!requiredStillMissing() || allowIncompleteSubmit.value)) {
-    openingSummary.value = true
-    await runAiSummary(true)
+    if (isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) {
+      openingSummary.value = true
+      finalSummaryGenerating.value = true
+      try {
+        await runAiSummary(true)
+      } finally {
+        finalSummaryGenerating.value = false
+      }
+      if (isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY])) {
+        ElMessage.warning('AI 总结尚未生成，请重试后再提交')
+        return
+      }
+    }
   }
   summaryOpen.value = true
 }
@@ -1594,6 +1666,34 @@ function jumpToAiSummary() {
   activeModule.value = 'INTAKE_AI_SUMMARY'
   void focusQuestion(FIELD_STAFF_AI_SUMMARY)
 }
+
+/** AI 总结页：跳到左侧第一个未填必收项 */
+function goFirstRequiredMissing() {
+  const field = localCompleteness.value.requiredMissing?.[0]
+  if (!field) {
+    ElMessage.success('必收项已填齐')
+    return
+  }
+  void jumpToField(field)
+}
+
+const aiSummaryActionLabel = computed(() => {
+  if (aiSummaryGenerating.value) return '正在生成…'
+  if (requiredStillMissing()) {
+    const c = localCompleteness.value
+    return `请先完成必收项（${c.requiredDone || 0}/${c.requiredTotal || 0}）`
+  }
+  if (hasAiSummary.value) return '🔄 重新生成总结'
+  return '✨ 点击生成 AI 总结'
+})
+
+const aiSummaryGenReady = computed(
+  () =>
+    status.value === 'DRAFT' &&
+    !aiSummaryGenerating.value &&
+    !requiredStillMissing() &&
+    !hasAiSummary.value,
+)
 
 function clearFocusTimer() {
   if (focusClearTimer) {
@@ -2035,18 +2135,56 @@ function endCheckTour() {
 
 async function copyPatientFillLink() {
   if (!peopleId.value || copyingLink.value) return
+  // 用对象承接弹窗回调赋值，避免 TS 把闭包外的字面量窄化成永远 KEEP
+  const choice = { prefillMode: 'KEEP' as 'KEEP' | 'CLEAR' }
+  try {
+    await ElMessageBox.confirm(
+      `<div style="line-height:1.65;color:#334155">
+        <p style="margin:0 0 10px">重新发送前，请选择带给患者的内容：</p>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;cursor:pointer">
+          <input type="radio" name="hx-prefill-mode" value="KEEP" checked style="margin-top:4px" />
+          <span><b>保留当前数据发送</b>（患者只需核对修改，推荐）</span>
+        </label>
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+          <input type="radio" name="hx-prefill-mode" value="CLEAR" style="margin-top:4px" />
+          <span><b>清空所有数据发送</b>（仅供患者完全填错人等极端情况）</span>
+        </label>
+      </div>`,
+      '发送患者填写链接',
+      {
+        confirmButtonText: '生成并复制链接',
+        cancelButtonText: '取消',
+        dangerouslyUseHTMLString: true,
+        beforeClose: (action, _instance, done) => {
+          if (action === 'confirm') {
+            const picked = document.querySelector(
+              'input[name="hx-prefill-mode"]:checked',
+            ) as HTMLInputElement | null
+            choice.prefillMode = picked?.value === 'CLEAR' ? 'CLEAR' : 'KEEP'
+          }
+          done()
+        },
+      },
+    )
+  } catch {
+    return
+  }
   copyingLink.value = true
   try {
     const res = await api<{
-      data: { url: string; copyText: string; expireAt?: string }
+      data: { url: string; copyText: string; expireAt?: string; prefillMode?: string }
     }>(`/api/b/v1/patients/${peopleId.value}/intake-access-links`, {
       method: 'POST',
-      body: JSON.stringify({ validDays: 7 }),
+      body: JSON.stringify({ validDays: 7, prefillMode: choice.prefillMode }),
     })
     const text = res.data?.copyText || res.data?.url || ''
     if (!text) throw new Error('未返回链接')
     await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制患者填写链接，可发微信')
+    ElMessage.success(
+      choice.prefillMode === 'CLEAR'
+        ? '已复制空白问卷链接（已清空作答）'
+        : '已复制核对链接（已带上当前草稿）',
+    )
   } catch (e) {
     ElMessage.error((e as Error).message || '生成链接失败')
   } finally {
@@ -2068,7 +2206,7 @@ async function doSubmit(conflictResolutions?: Record<string, unknown>) {
     applyView(view, false)
     status.value = view.status || 'SUBMITTED'
     summaryOpen.value = false
-    ElMessage.success(isSupplement.value ? '待补问卷已提交' : '首诊已提交')
+    ElMessage.success(submitSuccessMessage.value)
     // 通知仍打开的患者详情页刷新首诊状态 / 档案
     publishPatientCrossTab({
       peopleId: peopleId.value,
@@ -2157,6 +2295,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="intake" :class="{ 'intake--embedded': isEmbedded }" v-loading="loading">
+    <div v-if="finalSummaryGenerating" class="ai-final-mask" aria-live="polite" aria-busy="true">
+      <div class="ai-final-mask-card">
+        <span class="ai-final-mask-spinner" aria-hidden="true" />
+        <p>正在为您生成最终病历总结...</p>
+      </div>
+    </div>
     <header class="top">
       <div class="top-left">
         <button
@@ -2169,7 +2313,9 @@ onBeforeUnmount(() => {
         </button>
         <div class="who">
           <strong>{{ patientName || peopleId }}</strong>
-          <span class="sub">{{ isSupplement ? '待补问卷' : '首诊问卷' }}</span>
+          <span class="sub">{{
+            isSupplement ? '待补问卷' : awaitingStaffConfirm ? '确认患者交卷' : '首诊问卷'
+          }}</span>
         </div>
       </div>
 
@@ -2204,10 +2350,25 @@ onBeforeUnmount(() => {
           :loading="submitting || openingSummary"
           @click="openSummary"
         >
-          {{ openingSummary ? 'AI 正在总结…' : submitting ? '提交中…' : '提交' }}
+          {{
+            openingSummary
+              ? '正在生成最终总结…'
+              : submitting
+                ? '提交中…'
+                : submitActionLabel
+          }}
         </el-button>
       </div>
     </header>
+
+    <div
+      v-if="!loading && status === 'DRAFT' && awaitingStaffConfirm && !isSupplement"
+      class="confirm-patient-banner"
+    >
+      <p>
+        患者已提交初步评估。请与患者沟通核对、按需补全后，再点「确认并提交评估」——确认后才算正式办结。
+      </p>
+    </div>
 
     <div v-if="!loading && status === 'DRAFT' && isEmbedded && showPasteHint && !extractReview" class="paste-hint">
       <p>有面诊记录或聊天记录，贴到左侧输入框，再点「整理这段记录」。核对后才会写入。</p>
@@ -2268,7 +2429,10 @@ onBeforeUnmount(() => {
           }"
           @click="goModule(m.code)"
         >
-          <span class="nav-title">{{ m.title }}</span>
+          <span class="nav-copy">
+            <span class="nav-title">{{ m.title }}</span>
+            <span v-if="modulePatientFillHint(m)" class="nav-prov">{{ modulePatientFillHint(m) }}</span>
+          </span>
           <span class="nav-marks">
             <span v-if="moduleTone(m) === 'green'" class="nav-mark ok" aria-label="已填完">✓</span>
             <i
@@ -2396,11 +2560,13 @@ onBeforeUnmount(() => {
             <div class="ai-summary-actions">
               <el-button
                 type="primary"
+                class="ai-gen-btn"
+                :class="{ 'ai-gen-ready': aiSummaryGenReady }"
                 :loading="aiSummaryGenerating"
                 :disabled="status !== 'DRAFT' || requiredStillMissing()"
                 @click="runAiSummary(true)"
               >
-                {{ isAnswerEmpty(answers[FIELD_STAFF_AI_SUMMARY]) ? '生成总结' : '重新生成' }}
+                {{ aiSummaryActionLabel }}
               </el-button>
               <el-button
                 v-if="showAiSummaryBlocks"
@@ -2432,12 +2598,15 @@ onBeforeUnmount(() => {
             />
             <p v-else-if="!aiSummaryGenerating" class="ai-empty-hint">
               <template v-if="requiredStillMissing()">
-                请先完成必收项（{{ localCompleteness.requiredDone || 0 }}/{{
-                  localCompleteness.requiredTotal || 0
-                }}），再生成 AI 总结。
+                <span
+                  >请先完成必收项（{{ localCompleteness.requiredDone || 0 }}/{{
+                    localCompleteness.requiredTotal || 0
+                  }}）</span
+                >
+                <button type="button" class="ai-fill-link" @click="goFirstRequiredMissing">去补全</button>
               </template>
               <template v-else>
-                点击「生成总结」后将按概况、要点、风险与下一步分节展示。
+                点击「✨ 点击生成 AI 总结」后将按概况、要点、风险与下一步分节展示。
               </template>
             </p>
           </div>
@@ -2477,6 +2646,26 @@ onBeforeUnmount(() => {
                     >（{{ questionHint(it.label) }}）</span>
                   </span>
                   <span class="q-tags">
+                    <template v-for="prov in [fieldProvenance(it.field)]" :key="it.field + '-prov'">
+                      <template v-if="prov">
+                        <el-tooltip :content="prov.tip" placement="top" :show-after="280">
+                          <span
+                            class="prov-tag"
+                            :class="[`prov-${prov.kind.toLowerCase()}`, { 'prov-dim': prov.staffEdited }]"
+                          >
+                            {{ prov.label }}
+                          </span>
+                        </el-tooltip>
+                        <el-tooltip
+                          v-if="prov.staffEdited"
+                          content="健管师已在患者/预填值基础上修改"
+                          placement="top"
+                          :show-after="280"
+                        >
+                          <span class="prov-tag prov-edited">已由健管师修改</span>
+                        </el-tooltip>
+                      </template>
+                    </template>
                     <span v-if="isRiskGap(it.field)" class="tag tag-risk">影响方案</span>
                     <button
                       v-if="isRiskGap(it.field)"
@@ -2491,22 +2680,20 @@ onBeforeUnmount(() => {
                     <span v-if="it.sensitive && !modulePrivacyNotice" class="tag">敏感</span>
                   </span>
                 </div>
-                <div v-if="isPrefillTone(it.field)" class="prefill-note">
+                <div v-if="isDirty(it.field) && prefill[it.field]" class="prefill-note dirty-note">
+                  已改预填值
+                  <button type="button" class="restore" @click="restorePrefill(it.field)">
+                    恢复
+                  </button>
+                </div>
+                <div
+                  v-else-if="isPrefillTone(it.field) && fieldProvenance(it.field)?.kind === 'ARCHIVE'"
+                  class="prefill-note"
+                >
                   预填 · {{ formatPrefillSource(prefill[it.field]?.sourceBizCode) }}
                   <template v-if="prefill[it.field]?.gmtModified">
                     · {{ String(prefill[it.field]?.gmtModified).replace('T', ' ').slice(0, 16) }}
                   </template>
-                </div>
-                <div v-else-if="isDirty(it.field)" class="prefill-note dirty-note">
-                  已改预填值
-                  <button
-                    v-if="prefill[it.field]"
-                    type="button"
-                    class="restore"
-                    @click="restorePrefill(it.field)"
-                  >
-                    恢复
-                  </button>
                 </div>
                 <p v-if="it.field === FIELD_STAFF_AI_SUMMARY" class="ai-edit-hint">
                   按【要点】【风险与禁忌】【建议下一步】分节书写时，上方会自动拆成要点展示。
@@ -2572,7 +2759,15 @@ onBeforeUnmount(() => {
               :loading="submitting || openingSummary"
               @click="openSummary"
             >
-              {{ openingSummary ? 'AI 正在总结…' : submitting ? '提交中…' : '去提交' }}
+              {{
+                openingSummary
+                  ? '正在生成最终总结…'
+                  : submitting
+                    ? '提交中…'
+                    : awaitingStaffConfirm
+                      ? '去确认提交'
+                      : '去提交'
+              }}
             </el-button>
           </div>
         </template>
@@ -2832,8 +3027,12 @@ onBeforeUnmount(() => {
                 isSupplement
                   ? '提交待补'
                   : riskUnasked.length
-                    ? '仍要提交'
-                    : '提交并完成首诊'
+                    ? awaitingStaffConfirm
+                      ? '仍要确认提交'
+                      : '仍要提交'
+                    : awaitingStaffConfirm
+                      ? '确认并提交评估'
+                      : '提交并完成首诊'
               }}
             </el-button>
           </div>
@@ -2845,6 +3044,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .intake {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -2984,6 +3184,21 @@ onBeforeUnmount(() => {
   background: #fff;
   color: var(--ink-800);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.confirm-patient-banner {
+  flex-shrink: 0;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e3a8a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.confirm-patient-banner p {
+  margin: 0;
 }
 
 .paste-hint {
@@ -3609,8 +3824,19 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.nav-item.on .nav-fill {
-  color: var(--brand-600);
+.nav-prov {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--ink-400);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-item.on .nav-fill,
+.nav-item.on .nav-prov {
+  color: #3b82f6;
 }
 
 .nav-item .dot {
@@ -3722,6 +3948,20 @@ onBeforeUnmount(() => {
   gap: 8px 12px;
 }
 
+.ai-gen-btn.ai-gen-ready {
+  animation: ai-gen-breathe 2.6s ease-in-out infinite;
+}
+
+@keyframes ai-gen-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.06);
+  }
+}
+
 .ai-meta {
   font-size: 12px;
   color: var(--ink-500);
@@ -3735,9 +3975,75 @@ onBeforeUnmount(() => {
 
 .ai-empty-hint {
   margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
   font-size: 12px;
   color: var(--ink-400);
   line-height: 1.45;
+}
+
+.ai-fill-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.ai-fill-link:hover {
+  text-decoration: underline;
+}
+
+.ai-final-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(1px);
+}
+
+.ai-final-mask-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 240px;
+  max-width: min(92vw, 360px);
+  padding: 22px 24px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+  text-align: center;
+}
+
+.ai-final-mask-card p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-700, #334155);
+  line-height: 1.45;
+}
+
+.ai-final-mask-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2.5px solid #dbeafe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: ai-final-spin 0.8s linear infinite;
+}
+
+@keyframes ai-final-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .ai-edit-hint {
@@ -4032,6 +4338,49 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.prov-tag {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-weight: 600;
+  cursor: default;
+}
+
+.prov-patient {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.prov-staff {
+  color: #0f766e;
+  background: #ecfdf5;
+}
+
+.prov-ai {
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.prov-archive {
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.prov-dim {
+  opacity: 0.72;
+}
+
+.prov-edited {
+  color: #c2410c;
+  background: #fff7ed;
+  font-weight: 650;
 }
 
 .tag {

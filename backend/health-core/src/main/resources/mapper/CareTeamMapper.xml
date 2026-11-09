@@ -15,6 +15,15 @@
         WHERE id = #{id} AND is_deleted = 0
     </select>
 
+    <select id="findByOrgAndName" resultType="com.healix.core.care.domain.CareTeam">
+        SELECT <include refid="cols"/>
+        FROM care_team
+        WHERE org_id = #{orgId}
+          AND is_deleted = 0
+          AND name = #{name}
+        LIMIT 1
+    </select>
+
     <select id="listByOrg" resultType="com.healix.core.care.domain.CareTeam">
         SELECT <include refid="cols"/>
         FROM care_team

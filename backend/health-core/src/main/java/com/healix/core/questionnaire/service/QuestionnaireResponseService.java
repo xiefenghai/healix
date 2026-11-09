@@ -31,6 +31,8 @@ import com.healix.core.medication.enums.MedicationSourceEnum;
 import com.healix.core.medication.enums.MedicationStatusEnum;
 import com.healix.core.medication.service.MedicationService;
 import com.healix.core.medication.service.MedicationService.MedicationCommand;
+import com.healix.core.identity.domain.StaffProfile;
+import com.healix.core.identity.mapper.StaffProfileMapper;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.program.domain.PeopleProgramEnrollment;
@@ -39,6 +41,7 @@ import com.healix.core.questionnaire.HighlightRule;
 import com.healix.core.questionnaire.IntakeDepth;
 import com.healix.core.questionnaire.ModuleDef;
 import com.healix.core.questionnaire.ModuleItem;
+import com.healix.core.questionnaire.PatientCFastFields;
 import com.healix.core.questionnaire.PatientCQuickFields;
 import com.healix.core.questionnaire.QuestionnaireCatalog;
 import com.healix.core.questionnaire.QuestionnaireDef;
@@ -98,6 +101,17 @@ public class QuestionnaireResponseService {
     private final PeopleConsentMapper consentMapper;
     private final MedicationService medicationService;
     private final AllergyService allergyService;
+    private final StaffProfileMapper staffProfileMapper;
+
+    /** 重发链接：保留当前草稿/上版答案给患者核对 */
+    public static final String RELINK_KEEP = "KEEP";
+    /** 重发链接：清空作答（仅换人/全填错） */
+    public static final String RELINK_CLEAR = "CLEAR";
+
+    /** 患者已初步交卷，待健管师沟通确认 */
+    public static final String CONFIRM_AWAITING_STAFF = "AWAITING_STAFF";
+    /** 健管师已确认并正式提交评估 */
+    public static final String CONFIRM_STAFF_CONFIRMED = "STAFF_CONFIRMED";
 
     private static final String FIELD_MEDICATION_CURRENT = "medication.current";
     private static final String FIELD_ALLERGY_STATUS = "allergy.status";
@@ -105,6 +119,9 @@ public class QuestionnaireResponseService {
     private static final String FIELD_ALLERGY_DRUG = "allergy.drug";
     private static final String FIELD_ALLERGY_FOOD_TAGS = "allergy.foodTags";
     private static final String FIELD_ALLERGY_DRUG_TAGS = "allergy.drugTags";
+    /** C 端「其他」手填，随 Tags 一并写入过敏档案 */
+    private static final String FIELD_ALLERGY_FOOD_OTHER_NOTE = "allergy.foodOtherNote";
+    private static final String FIELD_ALLERGY_DRUG_OTHER_NOTE = "allergy.drugOtherNote";
 
     public QuestionnaireResponseView get(String id) {
         QuestionnaireResponse row = require(id);
@@ -126,6 +143,11 @@ public class QuestionnaireResponseService {
         view.setQuestionnaireCode(latest.code());
         view.setLatestVersion(latest.version());
         view.setHasSubmitted(submitted != null);
+        QuestionnaireResponse awaiting = findAwaitingStaffConfirmSubmit(tenantId, peopleId);
+        if (awaiting != null) {
+            view.setAwaitingStaffConfirm(true);
+            view.setAwaitingConfirmResponseId(awaiting.getId());
+        }
         if (submitted != null) {
             view.setSubmittedVersion(submitted.getQuestionnaireVersion());
             view.setLatestSubmittedId(submitted.getId());
@@ -216,6 +238,7 @@ public class QuestionnaireResponseService {
                                         answersLookup(JsonUtils.emptyObject()),
                                         null)));
             }
+            seedStaffConfirmDraftIfNeeded(draft, tenantId, peopleId, staffId, q);
             EntityMeta.onUpdate(draft);
             responseMapper.updateDraft(draft);
             return toView(draft, true);
@@ -240,9 +263,54 @@ public class QuestionnaireResponseService {
         row.setFilledById(staffId);
         row.setCompletenessJson(JsonUtils.toJson(completeness(q, JsonUtils.emptyObject(), answersLookup(JsonUtils.emptyObject()), null)));
         applyEnrollment(row, tenantId, orgId, peopleId, staffId);
+        seedStaffConfirmDraftIfNeeded(row, tenantId, peopleId, staffId, q);
         EntityMeta.onCreate(row);
         responseMapper.insert(row);
         return toView(row, true);
+    }
+
+    /**
+     * B 端重发填写链接前准备草稿。
+     *
+     * <p>{@link #RELINK_KEEP}：保留当前草稿或上版已提交答案，并标注健管师相对患者上版改动的字段；
+     * {@link #RELINK_CLEAR}：清空作答，仅保留档案类预填。
+     */
+    @Transactional
+    public void preparePatientRelinkDraft(
+            String tenantId, String orgId, String peopleId, String staffId, String prefillMode) {
+        String mode = StringUtils.hasText(prefillMode) ? prefillMode.trim().toUpperCase(Locale.ROOT) : RELINK_KEEP;
+        if (RELINK_CLEAR.equals(mode)) {
+            clearPatientRelinkDraft(tenantId, orgId, peopleId, staffId);
+            return;
+        }
+        QuestionnaireResponseView opened =
+                openIntake(tenantId, orgId, peopleId, staffId, null, null, "B_WORKSPACE");
+        QuestionnaireResponse row = require(opened.getId());
+        // 刷新预填元数据，但保留健管师已改的答案
+        QuestionnaireDef q =
+                catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
+        ObjectNode answers = asObject(row.getAnswersJson());
+        ObjectNode freshPrefill = buildPrefill(tenantId, peopleId, q, true);
+        // 答案里已有的值写回预填 value，便于 C 端展示溯源/建议修改
+        Iterator<Map.Entry<String, JsonNode>> it = answers.fields();
+        while (it.hasNext()) {
+            Map.Entry<String, JsonNode> e = it.next();
+            if (ArchiveFields.isEmpty(e.getValue())) {
+                continue;
+            }
+            ObjectNode cell = freshPrefill.has(e.getKey()) && freshPrefill.get(e.getKey()).isObject()
+                    ? (ObjectNode) freshPrefill.get(e.getKey())
+                    : JsonUtils.emptyObject();
+            cell.set("value", e.getValue());
+            freshPrefill.set(e.getKey(), cell);
+        }
+        row.setPrefillJson(JsonUtils.toJson(freshPrefill));
+        row.setFilledByType("STAFF");
+        row.setFilledById(staffId);
+        row.setChannel("B_WORKSPACE");
+        annotateStaffReviewHints(row, staffId);
+        EntityMeta.onUpdate(row);
+        responseMapper.updateDraft(row);
     }
 
     /**
@@ -255,15 +323,18 @@ public class QuestionnaireResponseService {
         QuestionnaireResponseView view =
                 openIntake(tenantId, orgId, peopleId, accountId, null, null, "C_APP");
         QuestionnaireResponse row = require(view.getId());
-        row.setFilledByType("PATIENT");
-        row.setFilledById(accountId);
-        row.setChannel("C_APP");
         // 把建档预填铺进答案；姓名等已有值不再出题；授权方式由同意题代填
         ObjectNode seeded =
                 mergePrefillValues(asObject(row.getPrefillJson()), asObject(row.getAnswersJson()));
         ensureCareTracksFromAppeal(seeded);
         ensurePatientConsentMethod(seeded);
         row.setAnswersJson(JsonUtils.toJson(seeded));
+        // 相对患者上版差异 → staffSuggested（健管师改过的题）
+        String hintStaffId = row.getFilledById();
+        row.setFilledByType("PATIENT");
+        row.setFilledById(accountId);
+        row.setChannel("C_APP");
+        annotateStaffReviewHints(row, hintStaffId);
         ObjectNode complete = asObject(row.getCompletenessJson());
         complete.put("depth", d.name());
         complete.put("depthLabel", d.label());
@@ -271,6 +342,144 @@ public class QuestionnaireResponseService {
         EntityMeta.onUpdate(row);
         responseMapper.updateDraft(row);
         return toPatientView(require(row.getId()), d);
+    }
+
+    private void clearPatientRelinkDraft(String tenantId, String orgId, String peopleId, String staffId) {
+        QuestionnaireResponseView opened =
+                openIntake(tenantId, orgId, peopleId, staffId, null, null, "B_WORKSPACE");
+        QuestionnaireResponse row = require(opened.getId());
+        QuestionnaireDef q =
+                catalog.requireQuestionnaire(row.getQuestionnaireCode(), row.getQuestionnaireVersion());
+        ObjectNode prefill = buildPrefill(tenantId, peopleId, q, false);
+        row.setPrefillJson(JsonUtils.toJson(prefill));
+        row.setAnswersJson("{}");
+        row.setFilledByType("STAFF");
+        row.setFilledById(staffId);
+        row.setChannel("B_WORKSPACE");
+        ObjectNode complete = asObject(row.getCompletenessJson());
+        complete.remove("reviewHints");
+        complete.put("depth", IntakeDepth.MINIMAL.name());
+        complete.put("depthLabel", IntakeDepth.MINIMAL.label());
+        row.setCompletenessJson(JsonUtils.toJson(complete));
+        EntityMeta.onUpdate(row);
+        responseMapper.updateDraft(row);
+    }
+
+    /**
+     * 对比「患者上一版已提交」与当前草稿答案，标出健管师改过的字段，写入 prefill.staffSuggested
+     * 与 completeness.reviewHints，供 C 端高亮确认。
+     */
+    private void annotateStaffReviewHints(QuestionnaireResponse row, String staffIdHint) {
+        ObjectNode prefill = asObject(row.getPrefillJson());
+        ObjectNode answers = asObject(row.getAnswersJson());
+        ObjectNode current = mergePrefillValues(prefill, answers);
+        QuestionnaireResponse lastPatient = findLastPatientSubmitted(row.getTenantId(), row.getPeopleId());
+        ObjectNode baseline =
+                lastPatient == null ? JsonUtils.emptyObject() : resolveSubmittedAnswers(lastPatient);
+        ArrayNode suggested = JsonUtils.mapper().createArrayNode();
+        if (lastPatient != null) {
+            Iterator<Map.Entry<String, JsonNode>> it = current.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                String field = e.getKey();
+                JsonNode curr = e.getValue();
+                if (ArchiveFields.isEmpty(curr)) {
+                    continue;
+                }
+                JsonNode base = baseline.get(field);
+                if (jsonValueEquals(curr, base)) {
+                    continue;
+                }
+                suggested.add(field);
+                ObjectNode cell =
+                        prefill.has(field) && prefill.get(field).isObject()
+                                ? (ObjectNode) prefill.get(field)
+                                : JsonUtils.emptyObject();
+                cell.set("value", curr);
+                cell.put("staffSuggested", true);
+                if (!StringUtils.hasText(cell.path("updatedByType").asText(null))) {
+                    cell.put("updatedByType", "STAFF");
+                }
+                if (!StringUtils.hasText(cell.path("sourceClientCode").asText(null))) {
+                    cell.put("sourceClientCode", "B_WORKSPACE");
+                }
+                prefill.set(field, cell);
+            }
+        }
+        row.setPrefillJson(JsonUtils.toJson(prefill));
+        ObjectNode complete = asObject(row.getCompletenessJson());
+        ObjectNode hints = JsonUtils.emptyObject();
+        boolean confirmMode = lastPatient != null;
+        hints.put("confirmMode", confirmMode);
+        hints.put("staffSuggestedCount", suggested.size());
+        hints.set("staffSuggestedFields", suggested);
+        String staffName = resolveStaffDisplayName(staffIdHint);
+        if (!StringUtils.hasText(staffName) && lastPatient != null) {
+            // 回落：找最近一次 STAFF 提交人
+            staffName = resolveStaffDisplayName(findLatestStaffActorId(row.getTenantId(), row.getPeopleId()));
+        }
+        if (StringUtils.hasText(staffName)) {
+            hints.put("staffDisplayName", staffName);
+        }
+        if (lastPatient != null && lastPatient.getSubmittedAt() != null) {
+            hints.put("previousSubmittedAt", lastPatient.getSubmittedAt().toString());
+        }
+        complete.set("reviewHints", hints);
+        row.setCompletenessJson(JsonUtils.toJson(complete));
+    }
+
+    private QuestionnaireResponse findLastPatientSubmitted(String tenantId, String peopleId) {
+        List<QuestionnaireResponse> rows = responseMapper.listSubmitted(tenantId, peopleId, PURPOSE_INTAKE, 30);
+        if (rows == null) {
+            return null;
+        }
+        for (QuestionnaireResponse r : rows) {
+            if (r == null) {
+                continue;
+            }
+            String by = r.getFilledByType();
+            String ch = r.getChannel();
+            if ("PATIENT".equalsIgnoreCase(by)
+                    || "PEOPLE".equalsIgnoreCase(by)
+                    || "C_APP".equalsIgnoreCase(ch)) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    private String findLatestStaffActorId(String tenantId, String peopleId) {
+        List<QuestionnaireResponse> rows = responseMapper.listSubmitted(tenantId, peopleId, PURPOSE_INTAKE, 10);
+        if (rows == null) {
+            return null;
+        }
+        for (QuestionnaireResponse r : rows) {
+            if (r != null && "STAFF".equalsIgnoreCase(r.getFilledByType()) && StringUtils.hasText(r.getFilledById())) {
+                return r.getFilledById();
+            }
+        }
+        return null;
+    }
+
+    private String resolveStaffDisplayName(String staffId) {
+        if (!StringUtils.hasText(staffId)) {
+            return "";
+        }
+        StaffProfile staff = staffProfileMapper.findById(staffId);
+        if (staff == null || !StringUtils.hasText(staff.getDisplayName())) {
+            return "";
+        }
+        return staff.getDisplayName().trim();
+    }
+
+    private static boolean jsonValueEquals(JsonNode a, JsonNode b) {
+        if (ArchiveFields.isEmpty(a) && ArchiveFields.isEmpty(b)) {
+            return true;
+        }
+        if (a == null || b == null) {
+            return false;
+        }
+        return Objects.equals(JsonUtils.toJson(a), JsonUtils.toJson(b));
     }
 
     /** C 端存草稿：全量答案保留，仅更新当前档位标记。 */
@@ -304,7 +513,8 @@ public class QuestionnaireResponseService {
     }
 
     /**
-     * C 端提交：按当前档位校验可见必填；不要求案头 AI 总结；办结逻辑由 Controller 调随访。
+     * C 端初步交卷：按当前档位校验可见必填；不要求案头 AI 总结。
+     * 语义是「待健管师确认」，正式办结由 B 端 staff submit 完成。
      */
     @Transactional
     public QuestionnaireResponseView submitPatientIntake(
@@ -363,6 +573,7 @@ public class QuestionnaireResponseService {
         ObjectNode complete = completeness(q, answers, lookup, null);
         complete.put("depth", d.name());
         complete.put("depthLabel", d.label());
+        putConfirmState(complete, CONFIRM_AWAITING_STAFF, row.getId());
         row.setAnswersJson(JsonUtils.toJson(answers));
         row.setChangesJson(JsonUtils.toJson(changes));
         row.setHighlightsJson(JsonUtils.toJson(highlights));
@@ -421,7 +632,7 @@ public class QuestionnaireResponseService {
             if (PATIENT_ALWAYS_HIDDEN.contains(item.field())) {
                 continue;
             }
-            if (depth == IntakeDepth.QUICK && !PatientCQuickFields.includes(item.field())) {
+            if (!patientDepthAllowsField(depth, item.field())) {
                 continue;
             }
             if (isPatientSkipIfAlreadyFilled(item.field(), lookup)) {
@@ -436,6 +647,17 @@ public class QuestionnaireResponseService {
             }
         }
         return missing;
+    }
+
+    /** MINIMAL / QUICK 各自白名单；FULL 放开（仍不含 STAFF，由调用方过滤）。 */
+    private static boolean patientDepthAllowsField(IntakeDepth depth, String field) {
+        if (depth == IntakeDepth.MINIMAL) {
+            return PatientCFastFields.includes(field);
+        }
+        if (depth == IntakeDepth.QUICK) {
+            return PatientCQuickFields.includes(field);
+        }
+        return true;
     }
 
     /** TEXT 类选填：档位校验不强制。 */
@@ -479,7 +701,7 @@ public class QuestionnaireResponseService {
                 if (depth != null && !depth.includes(iv.getLevel())) {
                     continue;
                 }
-                if (depth == IntakeDepth.QUICK && !PatientCQuickFields.includes(iv.getField())) {
+                if (!patientDepthAllowsField(depth, iv.getField())) {
                     continue;
                 }
                 if (isPatientUneditableField(iv.getField())) {
@@ -723,6 +945,19 @@ public class QuestionnaireResponseService {
             activateEnrollments(row, answers);
         }
 
+        String sourcePatientId = complete.path("sourcePatientResponseId").asText(null);
+        if (!StringUtils.hasText(sourcePatientId)) {
+            QuestionnaireResponse awaiting =
+                    findAwaitingStaffConfirmSubmit(row.getTenantId(), row.getPeopleId());
+            if (awaiting != null) {
+                sourcePatientId = awaiting.getId();
+            }
+        }
+        putConfirmState(complete, CONFIRM_STAFF_CONFIRMED, sourcePatientId);
+        if (PURPOSE_INTAKE.equals(row.getPurpose()) && StringUtils.hasText(sourcePatientId)) {
+            markPatientSubmitStaffConfirmed(sourcePatientId, row.getId(), staffId);
+        }
+
         row.setAnswersJson(JsonUtils.toJson(answers));
         row.setChangesJson(JsonUtils.toJson(changes));
         row.setHighlightsJson(JsonUtils.toJson(highlights));
@@ -741,6 +976,134 @@ public class QuestionnaireResponseService {
             throw new BusinessException("提交失败，请刷新后重试");
         }
         return toView(require(row.getId()), true);
+    }
+
+    /** 健管师打开草稿时：若有患者待确认交卷且草稿仍空，铺入患者答案并标确认态。 */
+    private void seedStaffConfirmDraftIfNeeded(
+            QuestionnaireResponse draft,
+            String tenantId,
+            String peopleId,
+            String staffId,
+            QuestionnaireDef q) {
+        if (draft == null || !PURPOSE_INTAKE.equals(draft.getPurpose())) {
+            return;
+        }
+        QuestionnaireResponse awaiting = findAwaitingStaffConfirmSubmit(tenantId, peopleId);
+        if (awaiting == null) {
+            return;
+        }
+        ObjectNode answers = asObject(draft.getAnswersJson());
+        boolean blank = answersBlank(answers);
+        ObjectNode patientAnswers = resolveSubmittedAnswers(awaiting);
+        if (blank && !answersBlank(patientAnswers)) {
+            draft.setAnswersJson(JsonUtils.toJson(patientAnswers.deepCopy()));
+            answers = asObject(draft.getAnswersJson());
+        }
+        ObjectNode prefill = asObject(draft.getPrefillJson());
+        if (prefill.isEmpty()) {
+            prefill = buildPrefill(tenantId, peopleId, q, true);
+        }
+        // 患者答案写进预填 value，便于溯源展示
+        Iterator<Map.Entry<String, JsonNode>> it = patientAnswers.fields();
+        while (it.hasNext()) {
+            Map.Entry<String, JsonNode> e = it.next();
+            if (ArchiveFields.isEmpty(e.getValue())) {
+                continue;
+            }
+            ObjectNode cell = prefill.has(e.getKey()) && prefill.get(e.getKey()).isObject()
+                    ? (ObjectNode) prefill.get(e.getKey())
+                    : JsonUtils.emptyObject();
+            if (!cell.has("value") || ArchiveFields.isEmpty(cell.get("value"))) {
+                cell.set("value", e.getValue());
+            }
+            if (!cell.has("updatedByType")) {
+                cell.put("updatedByType", "PATIENT");
+            }
+            prefill.set(e.getKey(), cell);
+        }
+        draft.setPrefillJson(JsonUtils.toJson(prefill));
+        Function<String, JsonNode> lookup = answersLookup(answersBlank(answers) ? patientAnswers : answers);
+        ObjectNode complete = completeness(q, answersBlank(answers) ? patientAnswers : answers, lookup, null);
+        putConfirmState(complete, CONFIRM_AWAITING_STAFF, awaiting.getId());
+        IntakeDepth depth = IntakeDepth.fromCompletenessJson(awaiting.getCompletenessJson());
+        complete.put("depth", depth.name());
+        complete.put("depthLabel", depth.label());
+        draft.setCompletenessJson(JsonUtils.toJson(complete));
+        draft.setFilledByType("STAFF");
+        draft.setFilledById(staffId);
+        draft.setChannel("B_WORKSPACE");
+    }
+
+    private QuestionnaireResponse findAwaitingStaffConfirmSubmit(String tenantId, String peopleId) {
+        List<QuestionnaireResponse> rows = responseMapper.listSubmitted(tenantId, peopleId, PURPOSE_INTAKE, 20);
+        if (rows == null) {
+            return null;
+        }
+        for (QuestionnaireResponse r : rows) {
+            if (r == null || !STATUS_SUBMITTED.equals(r.getStatus())) {
+                continue;
+            }
+            if (!isAwaitingStaffConfirm(r.getCompletenessJson())) {
+                continue;
+            }
+            String by = r.getFilledByType();
+            String ch = r.getChannel();
+            if ("PATIENT".equalsIgnoreCase(by)
+                    || "PEOPLE".equalsIgnoreCase(by)
+                    || "C_APP".equalsIgnoreCase(ch)) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isAwaitingStaffConfirm(String completenessJson) {
+        if (!StringUtils.hasText(completenessJson)) {
+            return false;
+        }
+        JsonNode n = JsonUtils.readTree(completenessJson);
+        if (n == null || !n.isObject()) {
+            return false;
+        }
+        if (n.path("awaitingStaffConfirm").asBoolean(false)) {
+            return true;
+        }
+        return CONFIRM_AWAITING_STAFF.equalsIgnoreCase(n.path("confirmState").asText(""));
+    }
+
+    private static void putConfirmState(ObjectNode complete, String state, String sourcePatientResponseId) {
+        if (complete == null) {
+            return;
+        }
+        complete.put("confirmState", state);
+        boolean awaiting = CONFIRM_AWAITING_STAFF.equals(state);
+        complete.put("awaitingStaffConfirm", awaiting);
+        if (StringUtils.hasText(sourcePatientResponseId)) {
+            complete.put("sourcePatientResponseId", sourcePatientResponseId);
+        }
+        if (!awaiting) {
+            complete.put("awaitingStaffConfirm", false);
+        }
+    }
+
+    /** 患者初交卷标记为已被健管师正式确认（留底，不改 answers）。 */
+    private void markPatientSubmitStaffConfirmed(
+            String patientResponseId, String staffResponseId, String staffId) {
+        QuestionnaireResponse patient = responseMapper.findById(patientResponseId);
+        if (patient == null) {
+            return;
+        }
+        ObjectNode complete = asObject(patient.getCompletenessJson());
+        putConfirmState(complete, CONFIRM_STAFF_CONFIRMED, patientResponseId);
+        if (StringUtils.hasText(staffResponseId)) {
+            complete.put("confirmedByResponseId", staffResponseId);
+        }
+        if (StringUtils.hasText(staffId)) {
+            complete.put("confirmedByStaffId", staffId);
+        }
+        patient.setCompletenessJson(JsonUtils.toJson(complete));
+        EntityMeta.onUpdate(patient);
+        responseMapper.updateSubmittedCompleteness(patient);
     }
 
     private void writeBack(
@@ -888,8 +1251,16 @@ public class QuestionnaireResponseService {
             }
             BigDecimal value = new BigDecimal(e.getValue().asText());
             JsonNode pref = prefill.path(e.getKey()).path("value");
+            // 预填未改：仅当体征库已有同值时才跳过。
+            // 否则「答卷/预填同源但从未写入 vital」会导致热量估算缺身高体重。
             if (!pref.isMissingNode() && !pref.isNull() && numbersEqual(pref, e.getValue())) {
-                continue; // 预填未改，不重复写
+                List<VitalRecord> latest = vitalRecordMapper.listByPeople(
+                        row.getTenantId(), row.getPeopleId(), metricType, null, null, 1);
+                if (!latest.isEmpty()
+                        && latest.get(0).getValue() != null
+                        && latest.get(0).getValue().compareTo(value) == 0) {
+                    continue;
+                }
             }
             vitalService.record(
                     row.getPeopleId(),
@@ -980,9 +1351,21 @@ public class QuestionnaireResponseService {
         boolean touchStatus = filter == null || filter.contains(FIELD_ALLERGY_STATUS);
         if (touchFoodTags && isVisible(row, FIELD_ALLERGY_FOOD_TAGS, lookup)) {
             writeAllergyTags(row, answers.get(FIELD_ALLERGY_FOOD_TAGS), AllergyCategoryEnum.FOOD, source);
+            writeAllergyOtherNote(
+                    row,
+                    answers.get(FIELD_ALLERGY_FOOD_TAGS),
+                    answers.get(FIELD_ALLERGY_FOOD_OTHER_NOTE),
+                    AllergyCategoryEnum.FOOD,
+                    source);
         }
         if (touchDrugTags && isVisible(row, FIELD_ALLERGY_DRUG_TAGS, lookup)) {
             writeAllergyTags(row, answers.get(FIELD_ALLERGY_DRUG_TAGS), AllergyCategoryEnum.DRUG, source);
+            writeAllergyOtherNote(
+                    row,
+                    answers.get(FIELD_ALLERGY_DRUG_TAGS),
+                    answers.get(FIELD_ALLERGY_DRUG_OTHER_NOTE),
+                    AllergyCategoryEnum.DRUG,
+                    source);
         }
         if (touchFood && isVisible(row, FIELD_ALLERGY_FOOD, lookup)) {
             writeAllergyItems(row, answers.get(FIELD_ALLERGY_FOOD), AllergyCategoryEnum.FOOD, source);
@@ -995,6 +1378,12 @@ public class QuestionnaireResponseService {
         }
     }
 
+    /** C 端 PATIENT / 生活史 PEOPLE 写回走患者过敏接口；B 端 STAFF 走医护接口。 */
+    private static boolean isPatientAllergyWriter(FieldWriteSource source) {
+        String t = source == null ? null : source.updatedByType();
+        return "PATIENT".equalsIgnoreCase(t) || "PEOPLE".equalsIgnoreCase(t);
+    }
+
     /** C 端常见过敏 Tag → 过敏档案条目（字典码对齐 AllergenCatalog）。 */
     private void writeAllergyTags(
             QuestionnaireResponse row, JsonNode value, AllergyCategoryEnum category, FieldWriteSource source) {
@@ -1005,7 +1394,7 @@ public class QuestionnaireResponseService {
         String peopleId = row.getPeopleId();
         String staffId = source.updatedById();
         String orgId = row.getOrgId();
-        boolean byPatient = "PEOPLE".equalsIgnoreCase(source.updatedByType());
+        boolean byPatient = isPatientAllergyWriter(source);
         for (JsonNode n : value) {
             String code = n == null || n.isNull() ? null : n.asText(null);
             if (!StringUtils.hasText(code) || "OTHER".equalsIgnoreCase(code.trim())) {
@@ -1046,6 +1435,60 @@ public class QuestionnaireResponseService {
         }
     }
 
+    /** Tags 含 OTHER 且有手填文案时，写入自由过敏原（无字典码）。 */
+    private void writeAllergyOtherNote(
+            QuestionnaireResponse row,
+            JsonNode tags,
+            JsonNode noteNode,
+            AllergyCategoryEnum category,
+            FieldWriteSource source) {
+        if (tags == null || !tags.isArray()) {
+            return;
+        }
+        boolean hasOther = false;
+        for (JsonNode n : tags) {
+            if (n != null && !n.isNull() && "OTHER".equalsIgnoreCase(n.asText("").trim())) {
+                hasOther = true;
+                break;
+            }
+        }
+        if (!hasOther) {
+            return;
+        }
+        String note = noteNode == null || noteNode.isNull() ? null : noteNode.asText(null);
+        if (!StringUtils.hasText(note)) {
+            return;
+        }
+        String name = note.trim();
+        AllergyCommand cmd = new AllergyCommand(
+                category.name(),
+                null,
+                name,
+                "ALLERGY",
+                null,
+                null,
+                "UNKNOWN",
+                "ACTIVE",
+                "UNCONFIRMED",
+                null,
+                null,
+                "来自首诊「其他」手填");
+        try {
+            if (isPatientAllergyWriter(source)) {
+                allergyService.createByPatient(row.getTenantId(), row.getPeopleId(), cmd);
+            } else {
+                allergyService.createByStaff(
+                        row.getTenantId(), row.getOrgId(), row.getPeopleId(), source.updatedById(), cmd);
+            }
+        } catch (BusinessException ex) {
+            log.debug(
+                    "[Intake] allergy other-note skip peopleId={} name={}: {}",
+                    row.getPeopleId(),
+                    name,
+                    ex.getMessage());
+        }
+    }
+
     private void writeAllergyItems(
             QuestionnaireResponse row, JsonNode value, AllergyCategoryEnum category, FieldWriteSource source) {
         if (value == null || value.isNull() || value.isMissingNode() || ArchiveFields.isEmpty(value)) {
@@ -1058,6 +1501,7 @@ public class QuestionnaireResponseService {
         String orgId = row.getOrgId();
         String tenantId = row.getTenantId();
         String peopleId = row.getPeopleId();
+        boolean byPatient = isPatientAllergyWriter(source);
         for (JsonNode item : value) {
             if (item == null || !item.isObject()) {
                 continue;
@@ -1069,13 +1513,30 @@ public class QuestionnaireResponseService {
             String existingId = textOrNull(item.get("id"));
             if (StringUtils.hasText(existingId)) {
                 try {
-                    allergyService.updateByStaff(tenantId, orgId, peopleId, staffId, existingId, cmd);
+                    if (byPatient) {
+                        allergyService.updateByPatient(tenantId, peopleId, existingId, cmd);
+                    } else {
+                        allergyService.updateByStaff(tenantId, orgId, peopleId, staffId, existingId, cmd);
+                    }
                     continue;
                 } catch (BusinessException ex) {
                     // id 失效则新建
                 }
             }
-            allergyService.createByStaff(tenantId, orgId, peopleId, staffId, cmd);
+            try {
+                if (byPatient) {
+                    allergyService.createByPatient(tenantId, peopleId, cmd);
+                } else {
+                    allergyService.createByStaff(tenantId, orgId, peopleId, staffId, cmd);
+                }
+            } catch (BusinessException ex) {
+                // 与 tags 重复写入等同过敏原时忽略
+                log.debug(
+                        "[Intake] allergy item skip peopleId={} name={}: {}",
+                        peopleId,
+                        cmd.allergenName(),
+                        ex.getMessage());
+            }
         }
     }
 
@@ -1134,8 +1595,12 @@ public class QuestionnaireResponseService {
             return;
         }
         try {
-            allergyService.setStatusByStaff(
-                    row.getTenantId(), row.getOrgId(), row.getPeopleId(), source.updatedById(), status);
+            if (isPatientAllergyWriter(source)) {
+                allergyService.setStatusByPatient(row.getTenantId(), row.getPeopleId(), status);
+            } else {
+                allergyService.setStatusByStaff(
+                        row.getTenantId(), row.getOrgId(), row.getPeopleId(), source.updatedById(), status);
+            }
         } catch (BusinessException ex) {
             // 仍有生效条目时无法标 NKA：保留条目，不阻断整份问卷提交
             if (!AllergyStatusEnum.NKA.name().equals(status)) {
@@ -1569,14 +2034,24 @@ public class QuestionnaireResponseService {
      * staff.* 案头字段不预填，避免把上次 AI 总结当成新答案。
      */
     private ObjectNode buildPrefill(String tenantId, String peopleId, QuestionnaireDef q) {
+        return buildPrefill(tenantId, peopleId, q, true);
+    }
+
+    /**
+     * @param seedSubmittedAnswers false 时不带入既往首诊/后补答卷（重发「清空」模式）
+     */
+    private ObjectNode buildPrefill(
+            String tenantId, String peopleId, QuestionnaireDef q, boolean seedSubmittedAnswers) {
         peopleFieldService.ensureMigrated(tenantId, peopleId);
         ObjectNode out = JsonUtils.emptyObject();
         Set<String> fields = new LinkedHashSet<>();
         for (ModuleItem item : catalog.itemsOf(q)) {
             fields.add(item.field());
         }
-        seedLastSubmittedAnswers(out, tenantId, peopleId, PURPOSE_INTAKE, fields);
-        seedLastSubmittedAnswers(out, tenantId, peopleId, PURPOSE_SUPPLEMENT, fields);
+        if (seedSubmittedAnswers) {
+            seedLastSubmittedAnswers(out, tenantId, peopleId, PURPOSE_INTAKE, fields);
+            seedLastSubmittedAnswers(out, tenantId, peopleId, PURPOSE_SUPPLEMENT, fields);
+        }
 
         PeopleProfile profile = peopleProfileMapper.findById(peopleId);
         AllergySummaryDto allergySummary = null;
@@ -1606,11 +2081,15 @@ public class QuestionnaireResponseService {
                     if (fv.isPresent()
                             && !ArchiveFields.isEmpty(fv.get().value())
                             && !isMaskedPlaceholder(fv.get().value())) {
-                        cell.set("value", fv.get().value());
-                        cell.put("sourceBizCode", nullToEmpty(fv.get().sourceBizCode()));
-                        cell.put("sourceRefId", nullToEmpty(fv.get().sourceRefId()));
-                        if (fv.get().gmtModified() != null) {
-                            cell.put("gmtModified", fv.get().gmtModified().toString());
+                        FieldValue f = fv.get();
+                        cell.set("value", f.value());
+                        cell.put("sourceBizCode", nullToEmpty(f.sourceBizCode()));
+                        cell.put("sourceClientCode", nullToEmpty(f.sourceClientCode()));
+                        cell.put("sourceRefId", nullToEmpty(f.sourceRefId()));
+                        cell.put("updatedByType", nullToEmpty(f.updatedByType()));
+                        cell.put("updatedById", nullToEmpty(f.updatedById()));
+                        if (f.gmtModified() != null) {
+                            cell.put("gmtModified", f.gmtModified().toString());
                         }
                         out.set(code, cell);
                     }
@@ -1710,6 +2189,23 @@ public class QuestionnaireResponseService {
                 cell.set("value", e.getValue());
                 cell.put("sourceBizCode", "INTAKE_QUESTIONNAIRE");
                 cell.put("sourceRefId", last.getId());
+                // 溯源：C 端患者自填 vs B 端健管师录入
+                String channel = last.getChannel();
+                String filledByType = last.getFilledByType();
+                if (!StringUtils.hasText(filledByType)) {
+                    filledByType = "C_APP".equalsIgnoreCase(channel) ? "PATIENT" : "STAFF";
+                }
+                String client =
+                        "C_APP".equalsIgnoreCase(channel)
+                                ? "C_APP"
+                                : (StringUtils.hasText(channel) ? "B_WORKSPACE" : null);
+                if (StringUtils.hasText(client)) {
+                    cell.put("sourceClientCode", client);
+                }
+                cell.put("updatedByType", filledByType);
+                if (StringUtils.hasText(last.getFilledById())) {
+                    cell.put("updatedById", last.getFilledById());
+                }
                 if (last.getSubmittedAt() != null) {
                     cell.put("gmtModified", last.getSubmittedAt().toString());
                 }
@@ -2286,6 +2782,8 @@ public class QuestionnaireResponseService {
         v.setPurpose(row.getPurpose());
         v.setStatus(row.getStatus());
         v.setChannel(row.getChannel());
+        v.setFilledByType(row.getFilledByType());
+        v.setFilledById(row.getFilledById());
         v.setProgramCode(row.getProgramCode());
         v.setEnrollmentId(row.getEnrollmentId());
         v.setFollowupRecordId(row.getFollowupRecordId());

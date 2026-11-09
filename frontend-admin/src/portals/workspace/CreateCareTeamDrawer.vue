@@ -29,6 +29,8 @@ const visible = computed({
 const formRef = ref<FormInstance>()
 const nameInputRef = ref<InputInstance>()
 const staffList = ref<OrgStaffItem[]>([])
+/** 机构内已有组名（小写对比），用于前端防重名 */
+const existingTeamNames = ref<string[]>([])
 const loadingStaff = ref(false)
 const creating = ref(false)
 const form = ref({
@@ -37,12 +39,28 @@ const form = ref({
   primaryDoctorStaffId: null as string | null,
 })
 
+function isDuplicateTeamName(name: string) {
+  const n = name.trim().toLowerCase()
+  if (!n) return false
+  return existingTeamNames.value.some((x) => x === n)
+}
+
 const rules = {
   name: [
     {
       required: true,
       whitespace: true,
       message: '请输入健管组名称',
+      trigger: 'blur',
+    },
+    {
+      validator: (_: unknown, value: string, callback: (e?: Error) => void) => {
+        if (isDuplicateTeamName(value || '')) {
+          callback(new Error('机构内已存在同名健管组，请换一个名称'))
+          return
+        }
+        callback()
+      },
       trigger: 'blur',
     },
   ],
@@ -92,11 +110,22 @@ async function loadStaff() {
   }
 }
 
+async function loadExistingTeamNames() {
+  try {
+    const res = await api<{ data: { name?: string }[] }>('/api/b/v1/care-teams')
+    existingTeamNames.value = (res.data ?? [])
+      .map((t) => (t.name || '').trim().toLowerCase())
+      .filter(Boolean)
+  } catch {
+    existingTeamNames.value = []
+  }
+}
+
 watch(
   () => props.modelValue,
   async (open) => {
     if (!open) return
-    await loadStaff()
+    await Promise.all([loadStaff(), loadExistingTeamNames()])
     resetForm()
   },
 )
@@ -104,7 +133,10 @@ watch(
 watch(
   () => form.value.name,
   () => {
-    if (form.value.name.trim()) formRef.value?.clearValidate('name')
+    // 输入中清错；失焦时再做重名校验
+    if (form.value.name.trim() && !isDuplicateTeamName(form.value.name)) {
+      formRef.value?.clearValidate('name')
+    }
   },
 )
 

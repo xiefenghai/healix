@@ -46,8 +46,9 @@ public class PublicIntakeAccessController {
             @RequestBody(required = false) RedeemRequest body,
             HttpServletRequest request) {
         String mobileLast4 = body != null ? body.mobileLast4() : null;
+        boolean skipMobileCheck = body != null && Boolean.TRUE.equals(body.skipMobileCheck());
         IntakeAccessLinkService.RedeemContext ctx =
-                intakeAccessLinkService.redeem(token, mobileLast4, clientIp(request));
+                intakeAccessLinkService.redeem(token, mobileLast4, skipMobileCheck, clientIp(request));
         String accessToken = jwtTokenProvider.createIntakeLinkToken(
                 ctx.linkId(), ctx.peopleId(), ctx.tenantId(), ctx.orgId(), intakeLinkJwtSeconds);
         return ApiResult.ok(new RedeemView(accessToken, ctx.depthDefault(), intakeLinkJwtSeconds));
@@ -70,7 +71,7 @@ public class PublicIntakeAccessController {
             String patientLabel,
             boolean needMobileLast4) {}
 
-    public record RedeemRequest(String mobileLast4) {}
+    public record RedeemRequest(String mobileLast4, Boolean skipMobileCheck) {}
 
     public record RedeemView(String accessToken, String depthDefault, long expiresInSeconds) {}
 }

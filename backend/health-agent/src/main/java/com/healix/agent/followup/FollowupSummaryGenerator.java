@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.agent.llm.LlmResponse;
-import com.healix.agent.skill.SkillMarkdown;
+import com.healix.agent.support.SkillMarkdown;
 import com.healix.common.util.JsonUtils;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

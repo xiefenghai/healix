@@ -11,6 +11,7 @@ import com.healix.core.cockpit.service.CockpitService;
 import com.healix.core.job.support.JobCronSupport;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -74,7 +75,7 @@ public class CockpitBriefingService {
 
         CockpitBriefingDto dto;
         if (isIdleDay(summary, top)) {
-            // 空态用可控模板：讲清服务流程 + 下一步，避免 LLM 又说「去看左侧」
+            // 空态用可控模板：讲清下一步，避免 LLM 又说「去看左侧」
             dto = guidedIdleBriefing(summary);
             dto.setActions(idleActions(summary));
         } else {
@@ -82,7 +83,7 @@ public class CockpitBriefingService {
             if (dto == null || !StringUtils.hasText(dto.getText())) {
                 dto = templateBriefing(summary, top, facts);
             }
-            dto.setActions(toActions(top));
+            dto.setActions(enrichDailyActions(toActions(top), summary));
         }
         dto.setCached(false);
         redisTemplate.opsForValue().set(cacheKey, JsonUtils.toJson(dto), CACHE_TTL);
@@ -97,11 +98,26 @@ public class CockpitBriefingService {
                 && summary.getPendingReportDraftCount() <= 0;
     }
 
+    private static String dayPartHello() {
+        int h = LocalTime.now(JobCronSupport.ZONE).getHour();
+        if (h < 11) {
+            return "早上好";
+        }
+        if (h < 13) {
+            return "中午好";
+        }
+        if (h < 18) {
+            return "下午好";
+        }
+        return "晚上好";
+    }
+
     private static CockpitBriefingDto guidedIdleBriefing(CockpitSummaryDto summary) {
         boolean noPrimaryTeam = summary.getPrimaryCareTeamCount() <= 0;
         boolean coldStart = summary.getOrgPatientCount() <= 0;
         int unassigned = Math.max(0, summary.getUnassignedPatientCount());
-        // 短句 + 单一下一步：小白不读说明书也能动手；0 患者绝不提「去左侧选人」
+        String hello = dayPartHello();
+        // 短句 + 下一步；0 患者绝不提「去左侧选人」
         String text;
         if (noPrimaryTeam) {
             text = "欢迎使用智能驾驶舱。开始服务前，请先创建以你为主责的健管组"
@@ -111,14 +127,12 @@ public class CockpitBriefingService {
                     + "请点下方卡片开始第一位客户建档；"
                     + "若已有客户名单，也可直接发给我（如：张三 女 45岁 13800000000）。";
         } else if (unassigned > 0) {
-            text = "今天有 "
+            text = hello
+                    + "。目前有 "
                     + unassigned
-                    + " 位患者还没分配健管组。"
-                    + "左侧「未分组患者」已列出名单，点名字即可处理；"
-                    + "要一次性分配，用左侧橙色条打开批量面板。";
+                    + " 位公共患者待认领。您可以先把他们认领到您的组，或直接新建患者。";
         } else {
-            // 空会话下方已有引导卡，此处只报状态，避免「点下方卡片」双重啰嗦
-            text = "今天没有紧急待办。需要跟进时，可从左侧「我的患者」选人。";
+            text = hello + "。今天没有紧急待办。需要跟进时，可从左侧「我的患者」选人。";
         }
         CockpitBriefingDto dto = new CockpitBriefingDto();
         dto.setText(text);
@@ -128,13 +142,12 @@ public class CockpitBriefingService {
                         ? "冷启动-先建健管组"
                         : coldStart
                                 ? "冷启动-建档"
-                                : unassigned > 0 ? "清闲日-未分组提醒" : "清闲日引导简报");
+                                : unassigned > 0 ? "清闲日-公共池提醒" : "清闲日引导简报");
         return dto;
     }
 
     /**
-     * 空态简报动作：建档交给下方「不知道聊什么」大卡片，避免与紫色框双重引导。
-     * 前端还会追加「刷新今日建议」。
+     * 空态简报动作：有公共池时挂认领 + 建档；前端还会追加「刷新今日建议」。
      */
     private static List<CockpitBriefingDto.BriefingAction> idleActions(CockpitSummaryDto summary) {
         List<CockpitBriefingDto.BriefingAction> out = new ArrayList<>();
@@ -147,7 +160,21 @@ public class CockpitBriefingService {
             out.add(createTeam);
             return out;
         }
-        if (summary.getOrgPatientCount() > 0 && summary.getUnassignedPatientCount() <= 0) {
+        int unassigned = Math.max(0, summary.getUnassignedPatientCount());
+        if (unassigned > 0) {
+            CockpitBriefingDto.BriefingAction claim = new CockpitBriefingDto.BriefingAction();
+            claim.setType("NAVIGATE");
+            claim.setPath("unassigned-workbench");
+            claim.setLabel("去认领/分配患者（" + unassigned + "）");
+            out.add(claim);
+            CockpitBriefingDto.BriefingAction archive = new CockpitBriefingDto.BriefingAction();
+            archive.setType("NAVIGATE");
+            archive.setPath("create-archive");
+            archive.setLabel("新建患者档案");
+            out.add(archive);
+            return out;
+        }
+        if (summary.getOrgPatientCount() > 0) {
             CockpitBriefingDto.BriefingAction mine = new CockpitBriefingDto.BriefingAction();
             mine.setType("SET_COCKPIT_TAB");
             mine.setPath("mine");
@@ -174,9 +201,9 @@ public class CockpitBriefingService {
                        若摘要显示主责健管组数为 0：只建议先创建以自己为主责的健管组（点下方按钮打开创建抽屉即可），
                        严禁说「去系统管理」「没有权限」「联系管理员」；
                        已有主责组但无患者：只建议建档或把客户信息发给助手，禁止说「去左侧选患者」；
-                       若摘要「未分组患者」大于 0：用一句话说明左侧「未分组患者」已列出名单、点名字即可，批量分配走左侧橙色条；
-                       不要再写「打开批量分组面板」或「点下方按钮」；禁止装作没事人只说「今日暂无待办」；
-                       有患者则建议点下方卡片或从「我的患者」选人继续，勿暗示今日优先名单一定有人。
+                       若摘要「未分组患者」大于 0：称其为「公共患者待认领」，提醒可点下方「去认领/分配患者」认领到自己的组；
+                       不要只说「去看左侧橙色条」而无动作指引；禁止装作没事人只说「今日暂无待办」；
+                       有患者则建议从「我的患者」选人继续，勿暗示今日优先名单一定有人。
                     3. 若摘要中方案待确认或报告待审阅大于 0，用一句提醒健管师处理右栏草稿箱（勿虚构具体患者）。
                     4. 不要使用「红人」「红标」「依从红人」「红灯患者」等产品未展示的标签；优先用名单/摘要里的具体事实：连续未打卡、近7日依从偏低、超期待办、临床高/中风险、血压读数等。
                     5. 不做诊断、不开方；禁止 Markdown（不要 #、**、表格、列表符号），用纯中文短句。
@@ -185,9 +212,9 @@ public class CockpitBriefingService {
                     7. 若名单主因/待办含「分组」「分配健管组」「TEAM_ASSIGN」：先建议完成分组；
                        若含「首诊」「ONBOARDING」：建议完成首诊评估。
                        禁止对首诊待办再说「开随访」「新建随访」——首诊本身已是待办，再开随访会叠单。
-                    8. 若优先名单里有人已入组、且首诊/ONBOARDING 已超期：第一句必须点名该患者，
-                       说明首诊评估已逾期、建议优先处理；若同时有未分组患者，用分号接上人数，
-                       禁止只谈分组而漏掉逾期首诊。
+                    8. 若摘要「超期」大于 0：开场用「您有 X 项逾期待办」点明；若同时有公共患者待认领，接上人数并问是否先处理。
+                    9. 若优先名单里有人已入组、且首诊/ONBOARDING 已超期：点名该患者说明首诊已逾期；
+                       禁止只谈分组/认领而漏掉逾期首诊。
                     """;
             String user = buildUserPrompt(summary, top, facts);
             var llm = llmClient.chat("COCKPIT_BRIEFING", system, user, List.of());
@@ -212,24 +239,34 @@ public class CockpitBriefingService {
     private static CockpitBriefingDto templateBriefing(
             CockpitSummaryDto summary, List<CockpitPriorityCardDto> top, Map<String, List<String>> facts) {
         StringBuilder sb = new StringBuilder();
-        String overdueLead = overdueIntakeReminder(top);
-        if (StringUtils.hasText(overdueLead)) {
-            sb.append(overdueLead);
+        int overdue = Math.max(0, summary.getOverdueCount());
+        int unassigned = Math.max(0, summary.getUnassignedPatientCount());
+        sb.append(dayPartHello()).append("。");
+        if (overdue > 0 && unassigned > 0) {
+            sb.append("您有 ")
+                    .append(overdue)
+                    .append(" 项逾期待办，另有 ")
+                    .append(unassigned)
+                    .append(" 位公共患者待认领，需要先处理吗？");
+        } else if (overdue > 0) {
+            sb.append("您有 ").append(overdue).append(" 项逾期待办，需要先处理吗？");
+        } else {
+            String overdueLead = overdueIntakeReminder(top);
+            if (StringUtils.hasText(overdueLead)) {
+                sb.append(overdueLead);
+            }
+            sb.append("今日待办 ").append(summary.getOpenTaskCount()).append("。");
+            if (unassigned > 0) {
+                sb.append("另有 ").append(unassigned).append(" 位公共患者待认领。");
+            }
         }
-        sb.append("今日待办 ")
-                .append(summary.getOpenTaskCount())
-                .append("，超期 ")
-                .append(summary.getOverdueCount())
-                .append("。");
         if (top.isEmpty()) {
             if (summary.getOrgPatientCount() <= 0) {
                 sb.append("机构里还没有客户档案。请点下方卡片建档，或直接把客户信息发给我。");
-            } else if (summary.getUnassignedPatientCount() > 0) {
-                sb.append("另有 ")
-                        .append(summary.getUnassignedPatientCount())
-                        .append(" 位未分组患者，请打开批量分组面板或点左侧橙色待分组卡片一键分配。");
-            } else {
-                sb.append("当前没有紧急优先对象。可点下方卡片开始，或从左侧「我的患者」继续跟进。");
+            } else if (unassigned > 0 && overdue <= 0) {
+                sb.append("可点下方按钮认领到您的组，或新建患者。");
+            } else if (overdue <= 0) {
+                sb.append("当前没有紧急优先对象。可从左侧「我的患者」继续跟进。");
             }
         } else {
             sb.append("建议优先：");
@@ -329,6 +366,35 @@ public class CockpitBriefingService {
             a.setPeopleId(c.getPeopleId());
             a.setLabel("处理" + name);
             out.add(a);
+        }
+        return out;
+    }
+
+    /** 日常简报：逾期待办 / 公共池认领先于具体患者动作。 */
+    private static List<CockpitBriefingDto.BriefingAction> enrichDailyActions(
+            List<CockpitBriefingDto.BriefingAction> base, CockpitSummaryDto summary) {
+        List<CockpitBriefingDto.BriefingAction> out = new ArrayList<>();
+        int overdue = Math.max(0, summary.getOverdueCount());
+        int unassigned = Math.max(0, summary.getUnassignedPatientCount());
+        if (overdue > 0) {
+            CockpitBriefingDto.BriefingAction overdueAct = new CockpitBriefingDto.BriefingAction();
+            overdueAct.setType("SET_COCKPIT_TAB");
+            overdueAct.setPath("urgent");
+            overdueAct.setLabel("查看逾期待办（" + overdue + "）");
+            out.add(overdueAct);
+        }
+        if (unassigned > 0) {
+            CockpitBriefingDto.BriefingAction claim = new CockpitBriefingDto.BriefingAction();
+            claim.setType("NAVIGATE");
+            claim.setPath("unassigned-workbench");
+            claim.setLabel("去认领/分配患者（" + unassigned + "）");
+            out.add(claim);
+        }
+        if (base != null) {
+            out.addAll(base);
+        }
+        if (out.size() > 5) {
+            return new ArrayList<>(out.subList(0, 5));
         }
         return out;
     }
@@ -440,14 +506,14 @@ public class CockpitBriefingService {
     private static String cacheKey(
             String staffId, String orgId, int primaryTeamCount, int orgPatientCount, int unassignedCount) {
         LocalDate day = LocalDate.now(JobCronSupport.ZONE);
-        // v17：有逾期首诊时简报必须先点名，不能只催分组
+        // v18：日常简报强调逾期待办 + 公共池认领 CTA
         return HealthConstants.REDIS_COCKPIT_BRIEFING_PREFIX
                 + staffId
                 + ":"
                 + orgId
                 + ":"
                 + day
-                + ":v17:t"
+                + ":v18:t"
                 + primaryTeamCount
                 + ":p"
                 + orgPatientCount

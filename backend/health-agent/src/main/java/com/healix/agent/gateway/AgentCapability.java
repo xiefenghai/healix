@@ -33,10 +33,27 @@ public enum AgentCapability {
         if (!org.springframework.util.StringUtils.hasText(hint)) {
             return null;
         }
+        String normalized = hint.trim().toUpperCase(Locale.ROOT);
+        // 软入口标记：不当硬能力（交给 ReAct）
+        if (isSoftHint(normalized)) {
+            return null;
+        }
         try {
-            return valueOf(hint.trim().toUpperCase(Locale.ROOT));
+            return valueOf(normalized);
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    /**
+     * 软入口：无芯片硬 hint / INTENT_AUTO / REACT → 走 ReAct。
+     * 芯片点选的 CREATE_ARCHIVE、CARE_PLAN 等返回 false。
+     */
+    public static boolean isSoftHint(String hint) {
+        if (!org.springframework.util.StringUtils.hasText(hint)) {
+            return true;
+        }
+        String h = hint.trim().toUpperCase(Locale.ROOT);
+        return "INTENT_AUTO".equals(h) || "AUTO".equals(h) || "REACT".equals(h);
     }
 }

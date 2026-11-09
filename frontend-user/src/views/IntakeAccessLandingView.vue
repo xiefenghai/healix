@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * 首诊 Magic Link 落地：预览 → 可选后四位核身 → redeem → 进三档问卷。
+ * 后四位比对失败不硬挡：软提示后可「继续填写」。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -26,6 +27,8 @@ const redeeming = ref(false)
 const preview = ref<Preview | null>(null)
 const errorMsg = ref('')
 const mobileLast4 = ref('')
+/** 后四位未匹配：允许跳过硬校验继续填 */
+const softMismatch = ref(false)
 
 const expireLabel = computed(() => {
   const raw = preview.value?.expireAt
@@ -35,21 +38,30 @@ const expireLabel = computed(() => {
 
 const canStart = computed(() => {
   if (!preview.value?.usable || redeeming.value) return false
+  if (softMismatch.value) return true
   if (preview.value.needMobileLast4) {
     return mobileLast4.value.replace(/\D/g, '').length === 4
   }
   return true
 })
 
+const ctaLabel = computed(() => {
+  if (redeeming.value) return '正在进入…'
+  if (softMismatch.value) return '继续填写'
+  return '开始评估 (约需 1 分钟)'
+})
+
 watch(mobileLast4, (v) => {
   const digits = v.replace(/\D/g, '').slice(0, 4)
   if (digits !== v) mobileLast4.value = digits
+  if (softMismatch.value) softMismatch.value = false
 })
 
 async function loadPreview() {
   loading.value = true
   errorMsg.value = ''
   preview.value = null
+  softMismatch.value = false
   try {
     const res = await fetch(`/api/public/v1/intake-access/${encodeURIComponent(token.value)}`)
     const data = await res.json().catch(() => ({}))
@@ -67,24 +79,41 @@ async function loadPreview() {
   }
 }
 
+function isLast4Mismatch(message: string, code?: number) {
+  return code === 403 || /后四位|不正确|不匹配/.test(message || '')
+}
+
 async function startFill() {
   if (!canStart.value) {
-    if (preview.value?.needMobileLast4) showToast('请输入手机号后四位')
+    if (preview.value?.needMobileLast4 && !softMismatch.value) {
+      showToast('请输入手机尾号后4位')
+    }
     return
   }
   redeeming.value = true
   try {
-    const body = preview.value?.needMobileLast4
-      ? JSON.stringify({ mobileLast4: mobileLast4.value.replace(/\D/g, '').slice(-4) })
-      : JSON.stringify({})
+    const digits = mobileLast4.value.replace(/\D/g, '').slice(-4)
+    const body: Record<string, unknown> = {}
+    if (preview.value?.needMobileLast4 && digits) {
+      body.mobileLast4 = digits
+    }
+    if (softMismatch.value) {
+      body.skipMobileCheck = true
+    }
     const res = await fetch(`/api/public/v1/intake-access/${encodeURIComponent(token.value)}/redeem`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body,
+      body: JSON.stringify(body),
     })
     const data = await res.json().catch(() => ({}))
+    const msg = String(data.message || '')
     if (!res.ok || (typeof data.code === 'number' && data.code !== 0)) {
-      throw new Error(data.message || '无法进入填写')
+      if (!softMismatch.value && isLast4Mismatch(msg, data.code)) {
+        softMismatch.value = true
+        showToast('未匹配到档案，请直接点击下方继续填写')
+        return
+      }
+      throw new Error(msg || '无法进入填写')
     }
     const accessToken = data.data?.accessToken as string
     const depthDefault = (data.data?.depthDefault as string) || 'MINIMAL'
@@ -145,12 +174,24 @@ onMounted(() => {
           v-model="mobileLast4"
           type="tel"
           inputmode="numeric"
+          pattern="[0-9]*"
           maxlength="4"
-          placeholder="····"
+          placeholder="请输入手机尾号后4位"
           autocomplete="one-time-code"
           aria-describedby="last4-hint"
         />
-        <p id="last4-hint" class="hint tight">与档案中本人手机号比对，防止误填</p>
+        <p
+          id="last4-hint"
+          class="hint tight"
+          :class="{ 'hint--soft': softMismatch }"
+        >
+          <template v-if="softMismatch">
+            未匹配到档案，请直接点击下方继续填写（健管师后续可再核实）
+          </template>
+          <template v-else>
+            与档案中本人手机号比对，防止误填
+          </template>
+        </p>
       </div>
 
       <button
@@ -160,7 +201,7 @@ onMounted(() => {
         @click="startFill"
       >
         <span v-if="redeeming" class="cta-spin" />
-        {{ redeeming ? '正在进入…' : '开始初步评估' }}
+        {{ ctaLabel }}
       </button>
     </div>
   </div>
@@ -282,6 +323,10 @@ h1 {
 .hint.tight {
   margin-top: 8px;
 }
+.hint--soft {
+  color: var(--hx-teal-700);
+  font-weight: 500;
+}
 
 .bullets {
   margin: 0 0 28px;
@@ -314,14 +359,22 @@ h1 {
   border: 1.5px solid var(--hx-n-300);
   border-radius: 14px;
   padding: 0 16px;
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
-  letter-spacing: 0.55em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.35em;
   text-align: center;
   background: #fff;
   color: var(--ink);
   box-sizing: border-box;
   transition: border-color 0.15s, box-shadow 0.15s;
+  -webkit-text-security: none;
+}
+.verify input::placeholder {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: #9aa3af;
 }
 .verify input:focus {
   outline: none;

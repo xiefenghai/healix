@@ -149,13 +149,14 @@ public class AllergyService {
 
     // ---------- 员工 ----------
 
-    @Transactional
+    /** noRollbackFor：首诊写回会吞掉「重复」等业务异常，避免外层事务被标成 rollback-only 后提交变 500。 */
+    @Transactional(noRollbackFor = BusinessException.class)
     public AllergyItemDto createByStaff(String tenantId, String orgId, String peopleId, String staffId, AllergyCommand cmd) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         return create(tenantId, peopleId, Actor.staff(staffId, orgId), cmd);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public AllergyItemDto updateByStaff(
             String tenantId, String orgId, String peopleId, String staffId, String allergyId, AllergyCommand cmd) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
@@ -190,7 +191,7 @@ public class AllergyService {
     }
 
     /** 设置「无已知过敏」或退回「未询问」；同时记为医护已核对。 */
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public AllergySummaryDto setStatusByStaff(String tenantId, String orgId, String peopleId, String staffId, String status) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         setStatus(tenantId, peopleId, Actor.staff(staffId, orgId), status);
@@ -211,13 +212,13 @@ public class AllergyService {
 
     // ---------- 患者 ----------
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public AllergyItemDto createByPatient(String tenantId, String peopleId, AllergyCommand cmd) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         return create(tenantId, peopleId, Actor.patient(peopleId), cmd);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public AllergyItemDto updateByPatient(String tenantId, String peopleId, String allergyId, AllergyCommand cmd) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         assertPatientEditable(requireOwned(tenantId, peopleId, allergyId));
@@ -231,7 +232,7 @@ public class AllergyService {
         delete(tenantId, peopleId, Actor.patient(peopleId), allergyId);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public AllergySummaryDto setStatusByPatient(String tenantId, String peopleId, String status) {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         setStatus(tenantId, peopleId, Actor.patient(peopleId), status);

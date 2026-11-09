@@ -16,7 +16,7 @@ import org.springframework.web.client.RestClient;
 
 /**
  * DeepSeek Chat Completions 直连客户端，支持关闭 thinking 并记录原始响应。
- * 用于 V4 视觉模型 OCR：Spring AI 默认会把 token 预算耗尽在 reasoning_content 上。
+ * 用于 V4 视觉模型 OCR：直连可关闭 thinking，避免 token 耗在 reasoning_content 上。
  */
 @Slf4j
 @Component

@@ -1,4 +1,4 @@
-package com.healix.agent.skill;
+package com.healix.agent.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.gateway.AgentAction;
@@ -21,7 +21,6 @@ import com.healix.core.report.service.HealthReportService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
@@ -29,32 +28,33 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /**
- * 对话内管理报告：无草稿时先尝试生成最近已结束周期报告，再出 AI 点评草稿；支持流式与多轮修订寄语。
+ * 对话内管理报告（由 StaffAgentTools 调用）。
  */
 @Component
 @RequiredArgsConstructor
-public class ReportSummarySkill implements AgentSkill {
+public class ReportSummaryHandler {
 
     private final HealthReportService healthReportService;
     private final ReportSummaryGenerator reportSummaryGenerator;
     private final FeatureFlagService featureFlagService;
 
-    @Override
-    public AgentCapability capability() {
-        return AgentCapability.REPORT_SUMMARY;
+    public enum ReviseMode {
+        /** 有点评草稿且有跟进话术 → 修订，否则新生成 */
+        AUTO,
+        FORCE_GENERATE,
+        FORCE_REVISE
     }
 
-    @Override
-    public boolean supports(AgentCapability routed, AgentChatCommand cmd) {
-        return routed == AgentCapability.REPORT_SUMMARY;
+    public AgentResponse execute(AgentHandlerContext ctx) {
+        return executeStream(ctx, null, ReviseMode.AUTO);
     }
 
-    @Override
-    public AgentResponse execute(AgentSkillContext ctx) {
-        return executeStream(ctx, null);
+    public AgentResponse executeStream(AgentHandlerContext ctx, Consumer<AgentStreamEvent> sink) {
+        return executeStream(ctx, sink, ReviseMode.AUTO);
     }
 
-    public AgentResponse executeStream(AgentSkillContext ctx, Consumer<AgentStreamEvent> sink) {
+    public AgentResponse executeStream(
+            AgentHandlerContext ctx, Consumer<AgentStreamEvent> sink, ReviseMode mode) {
         AgentChatCommand cmd = ctx.command();
         if (!StringUtils.hasText(cmd.peopleId())) {
             return fail(ctx, "请先选择患者，再生成管理报告或点评。", List.of());
@@ -91,7 +91,7 @@ public class ReportSummarySkill implements AgentSkill {
             return fail(ctx, prefix + e.getMessage(), actions);
         }
 
-        boolean revise = shouldRevise(cmd, report);
+        boolean revise = resolveRevise(mode, cmd, report);
         ReviseContext reviseCtx = null;
         if (revise) {
             reviseCtx = new ReviseContext(
@@ -158,107 +158,21 @@ public class ReportSummarySkill implements AgentSkill {
                 toExtracted(report, draft, newlyGenerated, revise));
     }
 
-    public static boolean matchesMessage(String message) {
-        return matchesGenerateMessage(message) || matchesReviseMessage(message);
-    }
-
-    public static boolean matchesGenerateMessage(String message) {
-        if (!StringUtils.hasText(message)) {
+    /** 不靠关键词：强制模式优先；AUTO 时看是否已有点评草稿。 */
+    static boolean resolveRevise(ReviseMode mode, AgentChatCommand cmd, HealthReportViewDto report) {
+        if (mode == ReviseMode.FORCE_GENERATE) {
             return false;
         }
-        String msg = message.toLowerCase(Locale.ROOT);
-        return containsAny(
-                msg,
-                "报告点评",
-                "点评报告",
-                "生成点评",
-                "ai点评",
-                "ai 点评",
-                "写点评",
-                "写寄语",
-                "审阅报告",
-                "管理报告点评",
-                "报告寄语",
-                "生成周报",
-                "生成月报",
-                "生成季报",
-                "生成三月报",
-                "出周报",
-                "出月报",
-                "出报告",
-                "生成报告",
-                "管理报告",
-                "report summary",
-                "report-summary");
-    }
-
-    public static boolean matchesReviseMessage(String message) {
-        if (!StringUtils.hasText(message)) {
-            return false;
-        }
-        String msg = message.toLowerCase(Locale.ROOT);
-        if (wantsFullRegenerate(msg)) {
-            return false;
-        }
-        return containsAny(
-                msg,
-                "改寄语",
-                "改点评",
-                "修改寄语",
-                "修改点评",
-                "调整寄语",
-                "调整点评",
-                "修订寄语",
-                "修订点评",
-                "寄语改",
-                "点评改",
-                "改一下寄语",
-                "改一下点评",
-                "下期关注改",
-                "下阶段关注改",
-                "改下期关注",
-                "寄语写短",
-                "寄语写长",
-                "写短一点",
-                "写长一点",
-                "语气改",
-                "语气更",
-                "更温和",
-                "更亲切",
-                "更专业",
-                "缩短寄语",
-                "加长寄语",
-                "revise comment",
-                "revise report");
-    }
-
-    public static boolean wantsFullRegenerate(String message) {
-        if (!StringUtils.hasText(message)) {
-            return false;
-        }
-        String msg = message.toLowerCase(Locale.ROOT);
-        return containsAny(msg, "重新生成点评", "重新写寄语", "从头写寄语", "再生成一版点评", "regenerate comment");
-    }
-
-    /** 有现有点评且非强制重生成时，跟进话术走修订。 */
-    static boolean shouldRevise(AgentChatCommand cmd, HealthReportViewDto report) {
-        if (wantsFullRegenerate(cmd.message())) {
-            return false;
-        }
-        if (matchesReviseMessage(cmd.message())) {
+        if (mode == ReviseMode.FORCE_REVISE) {
             return true;
         }
-        if (matchesGenerateMessage(cmd.message())) {
-            return false;
-        }
-        // 能力芯片再次点「报告点评」→ 新生成；其它跟进句且已有点评 → 修订
         boolean hasComment = StringUtils.hasText(currentStaffComment(report))
                 || StringUtils.hasText(currentNextFocus(report));
         return hasComment && StringUtils.hasText(cmd.message());
     }
 
     private EnsureResult ensureDraftReport(AgentChatCommand cmd) {
-        HealthReportPeriodType periodType = resolvePeriodType(cmd.message());
+        HealthReportPeriodType periodType = HealthReportPeriodType.WEEK;
         try {
             HealthReportViewDto created =
                     healthReportService.generate(
@@ -311,17 +225,6 @@ public class ReportSummarySkill implements AgentSkill {
             return "未能自动生成" + period + "：" + msg + "。可打开报告页核对入组与周期后再试。";
         }
         return "未能自动生成" + period + "。可打开报告页核对入组与周期后再试。";
-    }
-
-    private static HealthReportPeriodType resolvePeriodType(String message) {
-        String msg = message == null ? "" : message.toLowerCase(Locale.ROOT);
-        if (containsAny(msg, "三月报", "季报", "季度", "quarter")) {
-            return HealthReportPeriodType.QUARTER;
-        }
-        if (containsAny(msg, "月报", "month")) {
-            return HealthReportPeriodType.MONTH;
-        }
-        return HealthReportPeriodType.WEEK;
     }
 
     private HealthReportListItemDto findLatestDraft(String orgId, String peopleId) {
@@ -435,7 +338,7 @@ public class ReportSummarySkill implements AgentSkill {
         return map;
     }
 
-    private static AgentResponse fail(AgentSkillContext ctx, String reply, List<AgentAction> actions) {
+    private static AgentResponse fail(AgentHandlerContext ctx, String reply, List<AgentAction> actions) {
         return new AgentResponse(
                 ctx.sessionId(),
                 AgentCapability.REPORT_SUMMARY.name(),
@@ -444,15 +347,6 @@ public class ReportSummarySkill implements AgentSkill {
                 actions,
                 List.of(),
                 null);
-    }
-
-    private static boolean containsAny(String msg, String... keywords) {
-        for (String kw : keywords) {
-            if (msg.contains(kw.toLowerCase(Locale.ROOT))) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private record EnsureResult(HealthReportViewDto report, String message) {}

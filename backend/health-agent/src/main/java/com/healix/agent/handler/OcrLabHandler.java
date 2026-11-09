@@ -1,4 +1,4 @@
-package com.healix.agent.skill;
+package com.healix.agent.handler;
 
 import com.healix.agent.gateway.AgentAction;
 import com.healix.agent.gateway.AgentCapability;
@@ -11,33 +11,19 @@ import com.healix.core.storage.ImageFileService;
 import com.healix.core.storage.ObjectKeys;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-/**
- * 对话内检验单识别：复用观测页 OCR 服务，结果供人工确认后录入。
- */
+/** 对话内检验单识别（由 StaffAgentTools 调用）。 */
 @Component
 @RequiredArgsConstructor
-public class OcrLabSkill implements AgentSkill {
+public class OcrLabHandler {
 
     private final LabOcrRecognitionService labOcrRecognitionService;
     private final ImageFileService imageFileService;
 
-    @Override
-    public AgentCapability capability() {
-        return AgentCapability.OCR_LAB;
-    }
-
-    @Override
-    public boolean supports(AgentCapability routed, AgentChatCommand cmd) {
-        return routed == AgentCapability.OCR_LAB;
-    }
-
-    @Override
-    public AgentResponse execute(AgentSkillContext ctx) {
+    public AgentResponse execute(AgentHandlerContext ctx) {
         AgentChatCommand cmd = ctx.command();
         String path = "/workspace/patients/" + cmd.peopleId() + "/observations/labs?ocr=1";
         if (!StringUtils.hasText(cmd.imageBase64())) {
@@ -51,8 +37,8 @@ public class OcrLabSkill implements AgentSkill {
                     null);
         }
         try {
-            byte[] bytes = OcrSkillSupport.decodeImage(cmd.imageBase64());
-            String mime = OcrSkillSupport.mimeOrJpeg(cmd.imageMimeType());
+            byte[] bytes = OcrHandlerSupport.decodeImage(cmd.imageBase64());
+            String mime = OcrHandlerSupport.mimeOrJpeg(cmd.imageMimeType());
             LabOcrPrefillDto prefill = labOcrRecognitionService.recognize(bytes, mime);
             if (StringUtils.hasText(cmd.tenantId()) && StringUtils.hasText(cmd.peopleId())) {
                 prefill = prefill.withImageKey(
@@ -87,15 +73,6 @@ public class OcrLabSkill implements AgentSkill {
         }
     }
 
-    public static boolean matchesMessage(String message) {
-        if (!StringUtils.hasText(message)) {
-            return false;
-        }
-        String msg = message.toLowerCase(Locale.ROOT);
-        return OcrSkillSupport.containsAny(
-                msg, "检验单", "化验单", "检验报告", "化验报告", "lab report", "ocr-lab");
-    }
-
     private static String buildReply(LabOcrPrefillDto prefill) {
         int mapped = prefill.items() == null ? 0 : prefill.items().size();
         int ignored = prefill.ignoredItems() == null ? 0 : prefill.ignoredItems().size();
@@ -104,7 +81,7 @@ public class OcrLabSkill implements AgentSkill {
         if (ignored > 0) {
             parts.add("忽略未收录 " + ignored + " 项");
         }
-        String hint = OcrSkillSupport.warningsHint(prefill.warnings());
+        String hint = OcrHandlerSupport.warningsHint(prefill.warnings());
         if (hint != null) {
             parts.add(hint);
         }

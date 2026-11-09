@@ -38,6 +38,7 @@ import com.healix.core.worktask.support.InitialPlanGate;
 import com.healix.core.worktask.support.MetricAbnormalEvaluator;
 import com.healix.core.worktask.support.MetricAbnormalEvaluator.AbnormalHit;
 import com.healix.core.worktask.support.MetricEscalationRules;
+import com.healix.core.worktask.support.WorkspaceTaskLabels;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -401,6 +402,21 @@ public class WorkspaceTaskGenerator {
     @Transactional
     public String ensurePlanCreateAfterOnboarding(
             String tenantId, String orgId, String peopleId, String followupId) {
+        return ensurePlanCreateAfterOnboarding(tenantId, orgId, peopleId, followupId, false, null);
+    }
+
+    /**
+     * 首诊办结后开「制定方案」；若来自 C 端患者自填，打上 {@code patientIntakeReview}，
+     * 驾驶舱展示为「待确认评估」。
+     */
+    @Transactional
+    public String ensurePlanCreateAfterOnboarding(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String followupId,
+            boolean patientIntakeReview,
+            String intakeResponseId) {
         if (hasActivePlan(tenantId, peopleId)) {
             return null;
         }
@@ -410,6 +426,9 @@ public class WorkspaceTaskGenerator {
         }
         WorkspaceTask open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);
         if (open != null) {
+            if (patientIntakeReview) {
+                markPlanCreateAsPatientIntakeReview(open, intakeResponseId);
+            }
             return open.getId();
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -417,6 +436,15 @@ public class WorkspaceTaskGenerator {
             payload.put("fromFollowupId", followupId);
         }
         payload.put("reason", "ONBOARDING_DONE");
+        if (patientIntakeReview) {
+            payload.put("patientIntakeReview", true);
+            if (StringUtils.hasText(intakeResponseId)) {
+                payload.put("intakeResponseId", intakeResponseId);
+            }
+        }
+        String summary = patientIntakeReview
+                ? WorkspaceTaskLabels.INTAKE_REVIEW_LABEL
+                : InitialPlanGate.summary("DONE");
         openIfAbsent(
                 tenantId,
                 orgId,
@@ -425,11 +453,79 @@ public class WorkspaceTaskGenerator {
                 peopleId,
                 "FOLLOWUP",
                 LocalDate.now(JobCronSupport.ZONE),
-                InitialPlanGate.summary("DONE"),
+                summary,
                 payload,
                 false);
         open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);
         return open == null ? null : open.getId();
+    }
+
+    /** C 端初步交卷后：把制定方案/入组随访待办标成「待确认评估」。 */
+    @Transactional
+    public void markPatientIntakeAwaitingReview(
+            String tenantId, String orgId, String peopleId, String followupId, String intakeResponseId) {
+        String id = ensurePlanCreateAfterOnboarding(
+                tenantId, orgId, peopleId, followupId, true, intakeResponseId);
+        if (StringUtils.hasText(id)) {
+            WorkspaceTask open = taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.PLAN_CREATE.name(), peopleId);
+            if (open != null) {
+                markTaskAsPatientIntakeReview(open, intakeResponseId);
+            }
+        }
+        // 未入组或尚无制定方案单：挂到入组随访任务上，驾驶舱仍能看到「待确认」
+        if (StringUtils.hasText(followupId)) {
+            WorkspaceTask fu =
+                    taskMapper.findOpen(tenantId, orgId, WorkspaceTaskType.FOLLOW_UP.name(), followupId);
+            if (fu != null) {
+                markTaskAsPatientIntakeReview(fu, intakeResponseId);
+            }
+        }
+    }
+
+    /** 健管师正式确认提交评估后：清掉「待确认」标记。 */
+    @Transactional
+    public void clearPatientIntakeReview(String tenantId, String orgId, String peopleId) {
+        List<WorkspaceTask> opens = taskMapper.listOpenByPeople(orgId, peopleId);
+        if (opens == null || opens.isEmpty()) {
+            return;
+        }
+        for (WorkspaceTask open : opens) {
+            if (open == null || !WorkspaceTaskLabels.isPatientIntakeReview(open.getPayloadJson())) {
+                continue;
+            }
+            Map<String, Object> payload = JsonUtils.fromJson(open.getPayloadJson(), new TypeReference<>() {});
+            if (payload == null) {
+                payload = new LinkedHashMap<>();
+            } else {
+                payload = new LinkedHashMap<>(payload);
+            }
+            payload.remove("patientIntakeReview");
+            payload.remove("intakeResponseId");
+            WorkspaceTaskType type = WorkspaceTaskType.require(open.getTaskType());
+            String summary = WorkspaceTaskLabels.of(type, JsonUtils.toJson(payload));
+            if (type == WorkspaceTaskType.PLAN_CREATE) {
+                summary = InitialPlanGate.summary("DONE");
+            }
+            taskMapper.updatePayload(open.getId(), summary, JsonUtils.toJson(payload));
+        }
+    }
+
+    private void markTaskAsPatientIntakeReview(WorkspaceTask open, String intakeResponseId) {
+        Map<String, Object> payload = JsonUtils.fromJson(open.getPayloadJson(), new TypeReference<>() {});
+        if (payload == null) {
+            payload = new LinkedHashMap<>();
+        } else {
+            payload = new LinkedHashMap<>(payload);
+        }
+        payload.put("patientIntakeReview", true);
+        if (StringUtils.hasText(intakeResponseId)) {
+            payload.put("intakeResponseId", intakeResponseId);
+        }
+        taskMapper.updatePayload(open.getId(), WorkspaceTaskLabels.INTAKE_REVIEW_LABEL, JsonUtils.toJson(payload));
+    }
+
+    private void markPlanCreateAsPatientIntakeReview(WorkspaceTask open, String intakeResponseId) {
+        markTaskAsPatientIntakeReview(open, intakeResponseId);
     }
 
     /**

@@ -35,4 +35,7 @@ public interface QuestionnaireResponseMapper {
     int updateDraft(QuestionnaireResponse row);
 
     int markSubmitted(QuestionnaireResponse row);
+
+    /** 已提交卷仅更新完整性/确认态元数据（不改 answers）。 */
+    int updateSubmittedCompleteness(QuestionnaireResponse row);
 }

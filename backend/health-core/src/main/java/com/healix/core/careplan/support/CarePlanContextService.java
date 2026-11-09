@@ -33,6 +33,7 @@ import com.healix.core.goal.mapper.PeopleHealthGoalMapper;
 import com.healix.core.people.domain.PeopleBasicArchive;
 import com.healix.core.people.mapper.PeopleBasicArchiveMapper;
 import com.healix.core.people.support.DiseaseCodeLabels;
+import com.healix.core.questionnaire.IntakeDepth;
 import com.healix.core.questionnaire.domain.QuestionnaireResponse;
 import com.healix.core.questionnaire.mapper.QuestionnaireResponseMapper;
 import com.healix.core.vitals.domain.VitalRecord;
@@ -420,6 +421,15 @@ public class CarePlanContextService {
                 }
                 if (StringUtils.hasText(r.getProgramCode())) {
                     brief.put("programCode", r.getProgramCode());
+                }
+                IntakeDepth submittedDepth = IntakeDepth.fromCompletenessJson(r.getCompletenessJson());
+                brief.put("depth", submittedDepth.name());
+                brief.put("depthLabel", submittedDepth.label());
+                if (submittedDepth == IntakeDepth.MINIMAL || submittedDepth == IntakeDepth.QUICK) {
+                    // 喂模型 / 方案页：温柔说明这是初步信息，避免「问太少就开方」的不信任感
+                    brief.put(
+                            "preliminaryDisclaimer",
+                            "本次方案基于患者的初步信息生成。后续将通过微信或当面沟通，进一步完善健康档案。");
                 }
                 String aiSummary = extractAiSummary(r.getAnswersJson());
                 if (StringUtils.hasText(aiSummary)) {

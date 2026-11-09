@@ -360,11 +360,13 @@ public class OrgWorkspaceService {
         if (primaryDoctorStaffId != null) {
             assertOrgClinicalStaff(orgId, primaryDoctorStaffId, StaffRoleEnum.DOCTOR);
         }
+        String trimmedName = name.trim();
+        assertCareTeamNameUnique(orgId, trimmedName, null);
         CareTeam team = new CareTeam();
         team.setTenantId(tenantId);
         team.setOrgId(orgId);
         team.setTeamCode(SnowflakeId.nextCode("02", 32));
-        team.setName(name.trim());
+        team.setName(trimmedName);
         team.setPrimaryCareManagerStaffId(primaryCareManagerStaffId);
         team.setPrimaryDoctorStaffId(primaryDoctorStaffId);
         team.setStatus(EnableStatusEnum.ACTIVE.name());
@@ -396,7 +398,9 @@ public class OrgWorkspaceService {
         if (!StringUtils.hasText(name)) {
             throw new BusinessException(400, "请填写名称");
         }
-        team.setName(name.trim());
+        String trimmedName = name.trim();
+        assertCareTeamNameUnique(orgId, trimmedName, teamId);
+        team.setName(trimmedName);
         EntityMeta.onUpdate(team);
         careTeamMapper.update(team);
         auditService.record(
@@ -1696,6 +1700,18 @@ public class OrgWorkspaceService {
             throw new BusinessException(404, "健管组不存在");
         }
         return team;
+    }
+
+    /** 同一机构下健管组名称不可重复（软删后可复用）。 */
+    private void assertCareTeamNameUnique(String orgId, String name, String excludeTeamId) {
+        CareTeam existing = careTeamMapper.findByOrgAndName(orgId, name);
+        if (existing == null) {
+            return;
+        }
+        if (StringUtils.hasText(excludeTeamId) && excludeTeamId.equals(existing.getId())) {
+            return;
+        }
+        throw new BusinessException(400, "机构内已存在同名健管组，请换一个名称");
     }
 
     /** 非租户管理员只能把患者分到自己主责的健管组。 */

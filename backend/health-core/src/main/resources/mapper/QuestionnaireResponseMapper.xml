@@ -89,4 +89,10 @@
             gmt_modified = #{gmtModified}
         WHERE id = #{id} AND status = 'DRAFT' AND is_deleted = 0
     </update>
+    <update id="updateSubmittedCompleteness">
+        UPDATE questionnaire_response SET
+            completeness_json = #{completenessJson},
+            gmt_modified = #{gmtModified}
+        WHERE id = #{id} AND status = 'SUBMITTED' AND is_deleted = 0
+    </update>
 </mapper>

@@ -17,6 +17,9 @@ public class QuestionnaireResponseView {
     private String purpose;
     private String status;
     private String channel;
+    /** PATIENT / STAFF：本卷主填写方 */
+    private String filledByType;
+    private String filledById;
     private String programCode;
     private String enrollmentId;
     private String followupRecordId;

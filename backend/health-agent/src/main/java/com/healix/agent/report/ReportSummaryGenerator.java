@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.llm.LlmClient;
 import com.healix.core.compliance.ComplianceText;
 import com.healix.agent.llm.LlmResponse;
-import com.healix.agent.skill.SkillMarkdown;
+import com.healix.agent.support.SkillMarkdown;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.util.JsonUtils;
 import java.nio.charset.StandardCharsets;

@@ -310,6 +310,7 @@ const isFullscreenCompose = computed(() =>
 )
 const patientName = ref('')
 const patientGender = ref('')
+const patientClientLinked = ref<boolean | null>(null)
 
 const loading = ref(false)
 const saving = ref(false)
@@ -335,16 +336,19 @@ function backFromCompose() {
 async function loadPatientName() {
   if (!peopleId.value) return
   try {
-    const res = await api<{ data: { displayName?: string; gender?: string } }>(
-      `/api/b/v1/patients/${peopleId.value}`,
-    )
+    const res = await api<{
+      data: { displayName?: string; gender?: string; clientLinked?: boolean | null }
+    }>(`/api/b/v1/patients/${peopleId.value}`)
     const name = String(res.data?.displayName || '').trim()
     // 绝不用 peopleId 冒充姓名（解读话术会变成「2E先生您好」）
     patientName.value = name
     patientGender.value = String(res.data?.gender || '').trim()
+    patientClientLinked.value =
+      typeof res.data?.clientLinked === 'boolean' ? res.data.clientLinked : null
   } catch {
     patientName.value = ''
     patientGender.value = ''
+    patientClientLinked.value = null
   }
 }
 
@@ -894,6 +898,7 @@ function syncFormFromBundle() {
   editForm.dietNotes = src?.diet?.notes || ''
   syncDietNoteRowsFromForm()
   scheduleSampleDayEstimate()
+  void ensureEnergyFromArchive()
   editForm.dietRecommended = asFoodList(src?.diet?.recommended)
   editForm.dietLimited = asFoodList(src?.diet?.limited)
   editForm.dietAllergensAvoid = asFoodList(src?.diet?.allergensAvoid)
@@ -1996,34 +2001,75 @@ const energySource = computed<EnergyTarget['source'] | null>(() =>
 const energyNeedsSync = computed(() => energySource.value === 'PLAN_EDIT' || energySource.value === 'ESTIMATED')
 
 const energyPreviewing = ref(false)
+/** 档案缺项导致无法估算热量时的中文标签 */
+const energyArchiveMissing = ref<string[]>([])
+const ENERGY_MISSING_LABELS: Record<string, string> = {
+  GENDER: '性别',
+  BIRTHDAY: '出生日期',
+  HEIGHT: '身高',
+  WEIGHT: '体重',
+}
+
+async function loadEnergyArchiveStatus() {
+  if (!peopleId.value) return
+  try {
+    const res = await api<{ data: { missing?: string[] } }>(
+      `/api/b/v1/patients/${peopleId.value}/diet/goal`,
+    )
+    energyArchiveMissing.value = (res.data?.missing || []).map(
+      (m) => ENERGY_MISSING_LABELS[m] || m,
+    )
+  } catch {
+    energyArchiveMissing.value = []
+  }
+}
+
+/** 热量未写入时：查缺项；档案齐全则自动按当前目标类型估算填入 */
+async function ensureEnergyFromArchive() {
+  if (!isDraftMode.value || editForm.energyKcal) {
+    energyArchiveMissing.value = []
+    return
+  }
+  await loadEnergyArchiveStatus()
+  if (energyArchiveMissing.value.length) return
+  await refreshEnergyFromGoalType()
+}
 
 async function refreshEnergyFromGoalType() {
   if (!isDraftMode.value || !peopleId.value) return
   energyPreviewing.value = true
   try {
-    const res = await api<{ data: { energyKcal?: number; carbG?: number; proteinG?: number; fatG?: number } }>(
-      `/api/b/v1/patients/${peopleId.value}/diet/goal/preview`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          goalType: editForm.energyGoalType,
-          rateKgPerWeek: editForm.energyGoalType === 'MAINTAIN' ? null : editForm.energyRateKgPerWeek,
-        }),
-      },
-    )
+    const res = await api<{
+      data: { energyKcal?: number; carbG?: number; proteinG?: number; fatG?: number }
+    }>(`/api/b/v1/patients/${peopleId.value}/diet/goal/preview`, {
+      method: 'POST',
+      body: JSON.stringify({
+        goalType: editForm.energyGoalType,
+        rateKgPerWeek: editForm.energyGoalType === 'MAINTAIN' ? null : editForm.energyRateKgPerWeek,
+      }),
+    })
     if (res.data?.energyKcal) {
       editForm.energyKcal = res.data.energyKcal
+      energyArchiveMissing.value = []
       // 预览宏量仅展示用：保存后服务端会按 PLAN_EDIT 重算
-      if (editForm.energyTarget) {
-        editForm.energyTarget = {
-          ...editForm.energyTarget,
-          carbG: res.data.carbG,
-          proteinG: res.data.proteinG,
-          fatG: res.data.fatG,
-        }
+      editForm.energyTarget = {
+        ...(editForm.energyTarget || {
+          energyKcal: res.data.energyKcal,
+          goalType: editForm.energyGoalType,
+          source: 'PLAN_EDIT' as const,
+        }),
+        energyKcal: res.data.energyKcal,
+        carbG: res.data.carbG,
+        proteinG: res.data.proteinG,
+        fatG: res.data.fatG,
+        goalType: editForm.energyGoalType,
+        rateKgPerWeek:
+          editForm.energyGoalType === 'MAINTAIN' ? undefined : editForm.energyRateKgPerWeek,
+        source: editForm.energyTarget?.source === 'ESTIMATED' ? 'ESTIMATED' : 'PLAN_EDIT',
       }
     }
   } catch (e) {
+    await loadEnergyArchiveStatus()
     ElMessage.warning(e instanceof Error ? e.message : '无法按目标类型重算热量，请直接填写千卡')
   } finally {
     energyPreviewing.value = false
@@ -2366,20 +2412,18 @@ async function onBriefingSubmit(payload: CarePlanBriefingSubmitPayload) {
     syncFormFromBundle()
     briefingOpen.value = false
     if (payload.result === 'ACCEPTED') {
-      const active = res.data?.activeVersion
-      const ver =
-        active?.versionLabel ||
-        (active ? `V${active.schemaVersion || active.versionNo || ''}` : '') ||
-        '当前方案'
-      const days = Number(editForm.horizonDays) > 0 ? Number(editForm.horizonDays) : 14
-      ElMessage.success(`方案 ${ver} 已生效，开启 ${days} 天打卡！`)
+      ElMessage.success(
+        patientClientLinked.value === true
+          ? '✅ 方案已生效，并已开启打卡任务'
+          : '✅ 方案已生效，后续请通过线下或人工方式跟进打卡',
+      )
       emitAgentCarePlanUpdated(peopleId.value)
       emit('published')
-    } else if (payload.result === 'NEED_REGENERATE') {
-      ElMessage.success('已记录疑虑，方案退回草稿，请按反馈重新生成')
-      openGenerateDialog({ seedFromComm: true })
+    } else if (payload.result === 'NEED_MODIFY') {
+      ElMessage.success('已保存沟通记录，方案退回草稿，请按反馈微调后继续')
     } else {
-      ElMessage.success('已记录微调需求，方案退回草稿；可直接改草稿，或按反馈重新生成')
+      // 拒绝/有疑虑：仅落库沟通记录，不自动弹重生
+      ElMessage.success('已保存沟通记录，方案保持草稿，可稍后按反馈调整')
     }
     refreshAfterMutation()
   } catch (e) {
@@ -3844,9 +3888,26 @@ watch(
                     : '保存后按病种重算碳水 / 蛋白质 / 脂肪'
                 }}
               </p>
-              <p v-else class="energy-meta">
-                制定方案时会按档案自动估算；档案缺性别、出生日期、身高或体重时请直接填写
-              </p>
+              <div v-else class="energy-meta energy-meta--empty">
+                <p v-if="energyArchiveMissing.length">
+                  制定方案时未能写入热量：档案缺少
+                  <b>{{ energyArchiveMissing.join('、') }}</b>
+                  。请补全后点「按档案估算」，或直接填写千卡。
+                </p>
+                <p v-else>
+                  制定方案时未能写入热量。档案齐全时可点「按档案估算」，或直接填写千卡。
+                </p>
+                <el-button
+                  v-if="isDraftMode"
+                  size="small"
+                  type="primary"
+                  plain
+                  :loading="energyPreviewing"
+                  @click="refreshEnergyFromGoalType"
+                >
+                  按档案估算
+                </el-button>
+              </div>
               <el-checkbox v-if="isDraftMode && energyNeedsSync" v-model="editForm.syncDietGoal">
                 将每日 {{ editForm.energyKcal || editForm.energyTarget?.energyKcal || '—' }} 千卡作为患者执行目标（患者端只读）
               </el-checkbox>
@@ -4618,11 +4679,13 @@ watch(
       :version-label="briefingVersionLabel"
       :goal-summary="editForm.goalSummary || editForm.exerciseGoal"
       :energy-target="editForm.energyTarget"
+      :calorie-hint="editForm.dietCalorieHint"
       :allergen-labels="briefingAllergenLabels"
       :exercise-goal="editForm.exerciseGoal"
       :weekly-plan="editForm.weeklyPlan"
       :diet-notes="editForm.dietNotes"
       :show-med-with-meal="briefingShowMedWithMeal"
+      :client-linked="patientClientLinked"
       :submitting="briefingSubmitting"
       @submit="onBriefingSubmit"
     />
@@ -6052,6 +6115,23 @@ watch(
   margin: 0;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+.energy-meta--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.energy-meta--empty p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.energy-meta--empty b {
+  color: #b45309;
+  font-weight: 700;
 }
 
 .food-row {

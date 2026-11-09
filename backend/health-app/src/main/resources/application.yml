@@ -26,6 +26,7 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
+  # 过渡期保留：healix.agent.* 未显式配置时回落读这些键（已不再依赖 Spring AI 运行时）
   ai:
     openai:
       api-key: ${DEEPSEEK_API_KEY:${OPENAI_API_KEY:sk-placeholder}}
@@ -34,9 +35,6 @@ spring:
         options:
           model: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
           temperature: 0.3
-      embedding:
-        options:
-          model: ${EMBEDDING_MODEL:text-embedding-3-small}
 
 mybatis:
   mapper-locations: classpath*:/mapper/**/*.xml
@@ -76,8 +74,10 @@ healix:
   agent:
     enabled: ${AGENT_LLM_ENABLED:false}
     provider: deepseek
+    api-key: ${DEEPSEEK_API_KEY:${spring.ai.openai.api-key:}}
+    base-url: ${DEEPSEEK_BASE_URL:${spring.ai.openai.base-url:https://api.deepseek.com}}
     models:
-      chat: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
+      chat: ${DEEPSEEK_CHAT_MODEL:${spring.ai.openai.chat.options.model:deepseek-chat}}
       vision: ${VISION_MODEL:deepseek-v4-flash-vision-exp}
     vision:
       api-key: ${VISION_API_KEY:${DEEPSEEK_API_KEY:${spring.ai.openai.api-key:}}}
@@ -109,7 +109,7 @@ logging:
     com.healix: INFO
     com.healix.agent.llm: INFO
     com.healix.agent.ocr: INFO
-    org.springframework.ai: WARN
+    com.healix.agent.gateway: INFO
     dev.langchain4j: WARN
     # 未登录/无权限被拒是常态，不需要每次打完整 AccessDeniedException 堆栈
     org.springframework.security: WARN

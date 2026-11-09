@@ -29,7 +29,7 @@ import {
 import { setAgentDraft } from './agent-draft-bus'
 import { formatAssistantPlainHtml } from './agent-plain-text'
 import { callApiDoneLabel, runAgentCallApi } from './agent-call-api'
-import { looksLikeArchiveDraft, resolveStickyCapabilityHint } from './agent-sticky'
+import { resolveStickyCapabilityHint } from './agent-sticky'
 import {
   buildConfirmBody,
   buildOcrReview,
@@ -299,14 +299,10 @@ async function sendMessage(
   if (stickyCapability.value && !capabilityHint && !stickyHint && !image) {
     stickyCapability.value = null
   }
-  const archiveHint =
-    !capabilityHint && !image && !stickyHint && looksLikeArchiveDraft(message.trim())
-      ? 'CREATE_ARCHIVE'
-      : null
   const effectiveHint =
     capabilityHint ||
     (!image && stickyHint ? stickyHint : null) ||
-    archiveHint
+    null
   const userText = message.trim() || (image ? '请识别这张单据' : '')
   const extractMode = effectiveHint === 'CHAT_EXTRACT'
   const isCarePlan = effectiveHint === 'CARE_PLAN'
@@ -833,10 +829,6 @@ function onComposerEnter() {
 
 function organizeRecord() {
   const text = input.value
-  if (!props.peopleId) {
-    ElMessage.info('请先选择患者')
-    return
-  }
   if (!text.trim()) {
     ElMessage.info('请先粘贴一段记录')
     return
@@ -845,7 +837,8 @@ function organizeRecord() {
     ElMessage.info('请拆短后再贴')
     return
   }
-  void sendMessage(text, 'CHAT_EXTRACT')
+  // 软入口：不带硬 hint，后端 ReAct 选建档/整理等工具
+  void sendMessage(text)
 }
 
 function visibleActions(msg: ChatMessage) {
@@ -1257,6 +1250,7 @@ watch(
               type="button"
               class="send-btn ghost"
               :disabled="sending || uploading || isArchivedSession || !input.trim()"
+              title="粘贴长文字后点此整理，由智能体识别建档或提取"
               @click="organizeRecord"
             >
               整理这段记录

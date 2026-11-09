@@ -11,6 +11,7 @@ import com.healix.core.program.service.ProgramEnrollmentService;
 import com.healix.core.questionnaire.dto.IntakeStatusView;
 import com.healix.core.questionnaire.dto.QuestionnaireResponseView;
 import com.healix.core.questionnaire.service.QuestionnaireResponseService;
+import com.healix.core.worktask.service.WorkspaceTaskGenerator;
 import com.healix.security.SecurityUtils;
 import com.healix.web.b.persona.PersonaAppService;
 import java.util.LinkedHashMap;
@@ -42,6 +43,7 @@ public class BIntakeController {
     private final FollowupService followupService;
     private final IntakeAiSummaryService intakeAiSummaryService;
     private final PersonaAppService personaAppService;
+    private final WorkspaceTaskGenerator workspaceTaskGenerator;
 
     /** 客户页首诊卡片：待补题数。 */
     @GetMapping("/patients/{peopleId}/intake/status")
@@ -156,6 +158,12 @@ public class BIntakeController {
                         aiSummary);
             } catch (Exception e) {
                 log.warn("首诊作答已提交，但自动办结随访失败 responseId={}: {}", submitted.getId(), e.getMessage());
+            }
+            try {
+                workspaceTaskGenerator.clearPatientIntakeReview(
+                        tenantId, orgId, submitted.getPeopleId());
+            } catch (Exception e) {
+                log.warn("正式提交后清除待确认标记失败 peopleId={}: {}", submitted.getPeopleId(), e.getMessage());
             }
         }
         if (QuestionnaireResponseService.PURPOSE_INTAKE.equals(submitted.getPurpose())

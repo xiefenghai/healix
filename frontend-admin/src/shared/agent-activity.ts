@@ -41,10 +41,20 @@ export function ensureActivityList(list?: ActivityItem[] | null): ActivityItem[]
 
 export function markActivityDone(list: ActivityItem[], exceptTitle?: string) {
   for (const item of list) {
-    if (item.status === 'running' && item.title !== exceptTitle) {
-      item.status = 'done'
-    }
+    if (item.status !== 'running' || item.title === exceptTitle) continue
+    // 思考跨工具持续（如边 llm.chat 边输出），不能被后续 tool/progress 提前关掉，
+    // 否则 thinkingDone 会再开一条几乎空的「思考过程」
+    if (item.kind === 'thinking') continue
+    item.status = 'done'
   }
+}
+
+function finalizeThinkingItem(item: ActivityItem, elapsedMs?: number) {
+  item.status = 'done'
+  if (elapsedMs != null) item.elapsedMs = elapsedMs
+  item.collapsed = true
+  item.title =
+    item.elapsedMs != null ? `思考过程 · ${formatDuration(item.elapsedMs)}` : '思考过程'
 }
 
 export function finishAllActivity(list?: ActivityItem[] | null) {
@@ -109,16 +119,26 @@ export function appendSkill(list: ActivityItem[], event: StreamSkillEvent) {
   })
 }
 
+/** 阶段提示，不是真正的模型思考正文 */
+function isThinkingStatusPhrase(text: string) {
+  const t = text.trim()
+  if (!t) return true
+  return /^(开始组织正式回复|整理机构级会话目标|开始推理|模型未返回有效内容)/.test(t)
+}
+
 export function appendThinking(list: ActivityItem[], event: StreamThinkingEvent) {
   let item = [...list].reverse().find((x) => x.kind === 'thinking' && x.status === 'running')
-  if (!item) {
-    // 允许在 done 前复用最近一条未折叠完的 thinking
-    const last = [...list].reverse().find((x) => x.kind === 'thinking')
-    if (last && last.status !== 'done') {
-      item = last
-    }
+  // done / 晚到的 delta：即使被其它事件误标 done，也并回最近一条，避免再开空块
+  if (!item && (event.status === 'done' || event.status === 'delta')) {
+    item = [...list].reverse().find((x) => x.kind === 'thinking') || undefined
   }
   if (!item) {
+    // 新开思考前，收口上一条仍 running 的思考
+    for (const x of list) {
+      if (x.kind === 'thinking' && x.status === 'running') {
+        finalizeThinkingItem(x)
+      }
+    }
     markActivityDone(list)
     item = {
       id: nextId('thinking'),
@@ -152,16 +172,19 @@ export function appendThinking(list: ActivityItem[], event: StreamThinkingEvent)
     return
   }
   if (event.status === 'done') {
-    item.status = 'done'
-    item.elapsedMs = event.elapsedMs
     // 结束时不要覆盖已有思考正文；仅在完全没有正文时写入兜底说明
-    if (text && !(item.body || '').trim()) {
+    if (text && !(item.body || '').trim() && !isThinkingStatusPhrase(text)) {
       item.body = text
       item.detail = text
+    } else if (text && !(item.body || '').trim() && isThinkingStatusPhrase(text)) {
+      // 只有阶段提示、没有正文：不单独占一条空「思考过程」，直接丢掉这条
+      const idx = list.indexOf(item)
+      if (idx >= 0 && !(item.body || '').trim()) {
+        list.splice(idx, 1)
+        return
+      }
     }
-    item.title =
-      event.elapsedMs != null ? `思考过程 · ${formatDuration(event.elapsedMs)}` : '思考过程'
-    item.collapsed = true
+    finalizeThinkingItem(item, event.elapsedMs)
   }
 }
 

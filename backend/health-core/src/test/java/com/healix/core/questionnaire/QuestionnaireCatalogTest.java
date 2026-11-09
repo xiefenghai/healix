@@ -101,6 +101,15 @@ class QuestionnaireCatalogTest {
         assertTrue(PatientCQuickFields.includes("basic.sleep.refreshed"));
         assertTrue(PatientCQuickFields.includes("basic.schedule.offWork"));
         assertTrue(PatientCQuickFields.includes("basic.schedule.offWorkNote"));
+        // C_FAST：代谢 + 红线 + 粗生活方式；不含腰围/血压/晚餐细节
+        assertTrue(PatientCFastFields.includes("goal.primaryAppeal"));
+        assertTrue(PatientCFastFields.includes("basic.medical.exerciseRestriction"));
+        assertTrue(PatientCFastFields.includes("allergy.status"));
+        assertTrue(PatientCFastFields.includes("basic.medicationFlags"));
+        assertTrue(PatientCFastFields.includes("basic.diet.takeoutFrequency"));
+        assertFalse(PatientCFastFields.includes("metric.WAIST"));
+        assertFalse(PatientCFastFields.includes("basic.diet.dinnerTime"));
+        assertFalse(PatientCFastFields.includes("medication.mealRelation"));
         var sleep = catalog.requireModule("SLEEP_SUBSTANCE", 2);
         assertTrue(sleep.items().stream().anyMatch(i ->
                 "basic.schedule.offWork".equals(i.field())

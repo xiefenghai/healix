@@ -2,7 +2,10 @@
 
 export type IntakeDepth = 'MINIMAL' | 'QUICK' | 'FULL'
 
-/** 患者可见文案；内部仍用 MINIMAL/QUICK/FULL 码 */
+/**
+ * C 端对外只展示两档：极简（C_FAST / MINIMAL）→ 完整补充（FULL）。
+ * QUICK 仍保留在类型里兼容旧会话，但不进选择器。
+ */
 export const DEPTH_TABS: {
   code: IntakeDepth
   label: string
@@ -10,15 +13,20 @@ export const DEPTH_TABS: {
   eta: string
   about: string
 }[] = [
-  { code: 'MINIMAL', label: '快捷', hint: '只答最关键的几题', eta: '约 1 分钟', about: '最快了解你的情况' },
   {
-    code: 'QUICK',
-    label: '标准',
-    hint: '禁忌、习惯与开方关键项（约 30–40 题）',
-    eta: '约 5 分钟',
-    about: '够定制一版方案',
+    code: 'MINIMAL',
+    label: '极简',
+    hint: '代谢与安全红线，约 15 题',
+    eta: '约 1–2 分钟',
+    about: '即刻生成初步方案',
   },
-  { code: 'FULL', label: '详细', hint: '尽量说清楚习惯与病史', eta: '约 12 分钟', about: '方便更精细的方案' },
+  {
+    code: 'FULL',
+    label: '完整补充',
+    hint: '习惯、病史与细节，方案更精准',
+    eta: '约 10 分钟',
+    about: '面诊前可分次补完',
+  },
 ]
 
 export const C_INTAKE_TITLE = '初步评估'
@@ -44,13 +52,29 @@ export type IntakeModule = {
   items: IntakeItem[]
 }
 
+export type IntakePrefillCellC = {
+  value?: unknown
+  staffSuggested?: boolean
+  updatedByType?: string | null
+  sourceClientCode?: string | null
+  gmtModified?: string | null
+}
+
+export type IntakeReviewHints = {
+  confirmMode?: boolean
+  staffDisplayName?: string | null
+  staffSuggestedCount?: number
+  staffSuggestedFields?: string[]
+  previousSubmittedAt?: string | null
+}
+
 export type IntakeView = {
   id: string
   peopleId: string
   status: string
   title?: string
   answers?: Record<string, unknown> | null
-  prefill?: Record<string, { value?: unknown } | unknown> | null
+  prefill?: Record<string, IntakePrefillCellC | unknown> | null
   completeness?: {
     depth?: string
     depthLabel?: string
@@ -59,8 +83,25 @@ export type IntakeView = {
     requiredTotal?: number
     firstVisitDone?: number
     firstVisitTotal?: number
+    reviewHints?: IntakeReviewHints | null
   } | null
   modules?: IntakeModule[]
+}
+
+export function readPrefillCell(
+  prefill: IntakeView['prefill'],
+  field: string,
+): IntakePrefillCellC | null {
+  if (!prefill || typeof prefill !== 'object') return null
+  const cell = (prefill as Record<string, unknown>)[field]
+  if (!cell || typeof cell !== 'object') return null
+  return cell as IntakePrefillCellC
+}
+
+export function isStaffSuggestedField(view: IntakeView | null | undefined, field: string): boolean {
+  const hints = view?.completeness?.reviewHints
+  if (hints?.staffSuggestedFields?.includes(field)) return true
+  return !!readPrefillCell(view?.prefill, field)?.staffSuggested
 }
 
 export type IntakeStatus = {
@@ -94,11 +135,148 @@ export const C_LABEL_OVERRIDES: Record<string, string> = {
   'basic.exercise.availableSlots': '一般什么时候方便运动？（可多选）',
   'allergy.foodTags': '对哪些食物过敏或不耐受？（可多选）',
   'allergy.drugTags': '对哪些药物过敏？（可多选）',
+  'measure.method': '这些身高体重数据是怎么来的？',
+  'basic.presentIllness': '医生说过你有哪些病？（可多选）',
+  'basic.medicationFlags': '目前在吃哪类药？（可多选）',
 }
 
 /**
- * C 端「标准」档白名单（与后端 PatientCQuickFields 对齐）。
- * FULL 档不受此限制；MINIMAL 仅 REQUIRED。
+ * C 端选项文案改写（码不变；B 端仍用字典原文如「客户自述」）。
+ * key = options 字典父码 或 field 码。
+ */
+export const C_OPTION_LABELS: Record<string, Record<string, string>> = {
+  measureMethod: {
+    ONSITE: '现场刚量的',
+    DEVICE: '家里秤 / 设备量的',
+    SELF_REPORT: '我凭印象填的（可能不太准）',
+  },
+  /** 现病史：大白话，降低医学名词劝退 */
+  presentIllness: {
+    NONE: '都没有（医生没说过）',
+    HYPERTENSION: '高血压',
+    DIABETES: '糖尿病',
+    PREDIABETES: '血糖偏高',
+    HYPERLIPIDEMIA: '血脂高',
+    CHD: '冠心病 / 心绞痛',
+    HEART_FAILURE: '心衰（心脏泵血不好）',
+    ATRIAL_FIBRILLATION: '房颤（心跳不齐）',
+    STROKE: '中风 / 脑梗',
+    GOUT: '痛风',
+    COPD: '老慢支 / 慢阻肺（总喘不上气）',
+    ASTHMA: '哮喘',
+    CKD: '慢性肾病',
+    CHRONIC_HEPATITIS: '慢性肝炎',
+    CIRRHOSIS: '肝硬化',
+    NAFLD: '脂肪肝',
+    CHRONIC_GI_DISEASE: '慢性胃炎 / 胃溃疡',
+    OSTEOPOROSIS: '骨质疏松',
+    RHEUMATOID_ARTHRITIS: '类风湿',
+    OSTEOARTHRITIS: '骨关节疼 / 骨刺',
+    ALZHEIMERS: '老年痴呆',
+    PARKINSONS: '帕金森',
+    DEPRESSION: '抑郁',
+    ANXIETY: '焦虑',
+    MALIGNANT_TUMOR: '恶性肿瘤（癌症）',
+    BPH: '前列腺增生',
+    THYROID_DISORDER: '甲状腺问题',
+    OBESITY: '肥胖',
+    PCOS: '多囊卵巢',
+    OSA: '睡觉打鼾 / 呼吸暂停',
+  },
+  medicationFlags: {
+    NONE: '都没有',
+    HYPOGLYCEMIC: '降糖药或胰岛素',
+    ANTIHYPERTENSIVE: '降压药',
+    STATIN: '降脂药',
+    THYROID: '甲状腺药',
+    WEIGHT_LOSS_DRUG: '减重药（如司美格鲁肽）',
+    STEROID: '长期激素',
+    PSYCH: '精神/神经类药（如安眠、抗焦虑等）',
+    OTHER: '其他',
+  },
+  /** 过敏 Tag：C 端白话；B 端字典仍可保留「请健管师补明细」 */
+  foodAllergyTags: {
+    SEAFOOD: '海鲜/水产类',
+    OTHER: '其他（请手动填写）',
+  },
+  drugAllergyTags: {
+    OTHER: '其他药物（请手动填写）',
+  },
+}
+
+/**
+ * C 端食物过敏首屏隐藏细分子类，只留「海鲜/水产类」统称（码仍写 SEAFOOD；
+ * 档案侧 SEAFOOD 已覆盖鱼/虾/蟹/贝关键词）。
+ */
+export const C_FOOD_ALLERGY_HIDE = new Set(['FISH', 'SHELLFISH'])
+
+/** C 端现病史首屏高频（其余折叠） */
+export const C_ILLNESS_PRIMARY = [
+  'NONE',
+  'HYPERTENSION',
+  'DIABETES',
+  'PREDIABETES',
+  'HYPERLIPIDEMIA',
+  'CHD',
+  'OBESITY',
+  'GOUT',
+] as const
+
+/** C 端用药首屏：精神类等放进「展开」 */
+export const C_MED_PRIMARY = [
+  'NONE',
+  'HYPOGLYCEMIC',
+  'ANTIHYPERTENSIVE',
+  'STATIN',
+  'THYROID',
+  'WEIGHT_LOSS_DRUG',
+  'OTHER',
+] as const
+
+export function multiExclusiveHint(field: string): string {
+  if (field === 'basic.presentIllness') return '可多选 · 「都没有」与具体疾病互斥'
+  if (field === 'basic.medicationFlags') return '可多选 · 「都没有」与具体用药互斥'
+  if (field === 'basic.medical.exerciseRestriction') return '可多选 · 「没有」与其它情况互斥'
+  return '可多选'
+}
+
+export function cOptionLabel(
+  optionsParent: string | null | undefined,
+  code: string,
+  fallback: string,
+): string {
+  if (!optionsParent) return fallback
+  return C_OPTION_LABELS[optionsParent]?.[code] || fallback
+}
+
+/**
+ * C 端「极简 / C_FAST」白名单（与后端 PatientCFastFields 对齐）。
+ * Magic Link 默认只渲染这些题。
+ */
+export const C_FAST_FIELDS = new Set<string>([
+  'profile.displayName',
+  'profile.gender',
+  'profile.birthday',
+  'profile.mobile',
+  'metric.HEIGHT',
+  'metric.WEIGHT',
+  'measure.method',
+  'goal.primaryAppeal',
+  'basic.presentIllness',
+  'basic.medical.exerciseRestriction',
+  'allergy.status',
+  'allergy.foodTags',
+  'allergy.drugTags',
+  'basic.medicationFlags',
+  'profile.workSchedule',
+  'basic.lifestyle.activityLevel',
+  'basic.diet.mealRegularity',
+  'basic.diet.takeoutFrequency',
+])
+
+/**
+ * C 端旧「标准」档白名单（与后端 PatientCQuickFields 对齐；兼容续填）。
+ * FULL 档不受此限制。
  */
 export const C_QUICK_FIELDS = new Set<string>([
   'goal.primaryAppeal',
@@ -323,7 +501,7 @@ export function initAnswers(view: IntakeView): Record<string, unknown> {
   return out
 }
 
-/** 是否应在 C 端步骤中出现（depth 与后端 PatientCQuickFields 对齐） */
+/** 是否应在 C 端步骤中出现（depth 与后端 C_FAST / C_QUICK 白名单对齐） */
 export function shouldAskOnC(
   item: IntakeItem,
   answers: Record<string, unknown>,
@@ -335,8 +513,8 @@ export function shouldAskOnC(
   if (ARCHIVE_IDENTITY_FIELDS.has(item.field) && isFilledValue(answers[item.field])) return false
   // 文案含「健管师」的题默认不对客户展示（双保险）
   if (/健管师|案头|内部|请勿对客户/.test(item.label || '')) return false
+  if (depth === 'MINIMAL' && !C_FAST_FIELDS.has(item.field)) return false
   if (depth === 'QUICK' && !C_QUICK_FIELDS.has(item.field)) return false
-  if (depth === 'MINIMAL' && item.level !== 'REQUIRED') return false
   return true
 }
 

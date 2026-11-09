@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName, getStaffId } from '../../shared/http'
 import { StaffRole } from '../../shared/enums'
 
@@ -37,11 +37,40 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const createVisible = ref(false)
 const creating = ref(false)
+const createFormRef = ref<FormInstance>()
 const createForm = ref({
   name: '',
   primaryCareManagerStaffId: null as string | null,
   primaryDoctorStaffId: null as string | null,
 })
+
+const isCreatePrimarySelf = computed(() => {
+  const selfId = getStaffId()
+  return !!selfId && createForm.value.primaryCareManagerStaffId === selfId
+})
+
+const createRules = {
+  name: [
+    { required: true, whitespace: true, message: '请填写健管组名称', trigger: 'blur' },
+    {
+      validator: (_: unknown, value: string, callback: (e?: Error) => void) => {
+        const nameKey = (value || '').trim().toLowerCase()
+        if (
+          nameKey &&
+          list.value.some((t) => (t.name || '').trim().toLowerCase() === nameKey)
+        ) {
+          callback(new Error('机构内已存在同名健管组，请换一个名称'))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur',
+    },
+  ],
+  primaryCareManagerStaffId: [
+    { required: true, message: '请选择主责健管师', trigger: 'change' },
+  ],
+}
 
 const careManagers = computed(() =>
   staffList.value.filter(
@@ -152,12 +181,9 @@ async function maybeOpenCreateFromQuery() {
 }
 
 async function submitCreate() {
-  if (!createForm.value.name.trim()) {
-    ElMessage.warning('请填写健管组名称')
-    return
-  }
-  if (!createForm.value.primaryCareManagerStaffId) {
-    ElMessage.warning('请选择主责健管师')
+  try {
+    await createFormRef.value?.validate()
+  } catch {
     return
   }
   creating.value = true
@@ -395,20 +421,42 @@ watch(keyword, () => {
       />
     </div>
 
-    <el-dialog v-model="createVisible" title="新建健管组" width="520px">
-      <el-form label-width="120px">
-        <el-form-item label="名称" required>
-          <el-input v-model="createForm.name" maxlength="40" show-word-limit placeholder="例如：减重管理一组" />
+    <el-dialog
+      v-model="createVisible"
+      title="新建健管组"
+      width="480px"
+      destroy-on-close
+      append-to-body
+      class="create-care-team-dialog"
+      @closed="createFormRef?.clearValidate()"
+    >
+      <el-form
+        ref="createFormRef"
+        :model="createForm"
+        :rules="createRules"
+        label-position="top"
+        class="create-care-team-form"
+        @submit.prevent
+      >
+        <el-form-item label="健管组名称" prop="name" required>
+          <el-input
+            v-model="createForm.name"
+            maxlength="40"
+            show-word-limit
+            placeholder="例如：减重管理一组"
+            @keyup.enter="submitCreate"
+          />
         </el-form-item>
-        <el-form-item required>
+        <el-form-item prop="primaryCareManagerStaffId" required>
           <template #label>
             <span>主责健管师</span>
-            <span
-              v-if="createForm.primaryCareManagerStaffId && createForm.primaryCareManagerStaffId === getStaffId()"
-              class="cm-default-hint"
-            >（默认：当前登录账号）</span>
           </template>
-          <el-select v-model="createForm.primaryCareManagerStaffId" filterable style="width: 100%">
+          <el-select
+            v-model="createForm.primaryCareManagerStaffId"
+            filterable
+            placeholder="选择主责健管师"
+            style="width: 100%"
+          >
             <el-option
               v-for="s in careManagers"
               :key="s.staffId"
@@ -416,15 +464,27 @@ watch(keyword, () => {
               :value="s.staffId"
             />
           </el-select>
+          <p v-if="isCreatePrimarySelf" class="field-hint">已默认选中当前登录账号</p>
         </el-form-item>
-        <el-form-item label="主责医生">
-          <el-select v-model="createForm.primaryDoctorStaffId" clearable filterable style="width: 100%">
-            <el-option v-for="s in doctors" :key="s.staffId" :label="s.displayName" :value="s.staffId" />
+        <el-form-item label="主责医生（可选）">
+          <el-select
+            v-model="createForm.primaryDoctorStaffId"
+            clearable
+            filterable
+            placeholder="可稍后指定"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="s in doctors"
+              :key="s.staffId"
+              :label="s.displayName"
+              :value="s.staffId"
+            />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="createVisible = false">取消</el-button>
+        <el-button :disabled="creating" @click="createVisible = false">取消</el-button>
         <el-button type="primary" :loading="creating" @click="submitCreate">确定创建</el-button>
       </template>
     </el-dialog>
@@ -445,6 +505,22 @@ watch(keyword, () => {
   margin-left: 4px;
   font-size: 12px;
   font-weight: 400;
+  color: var(--ink-400, #9ca3af);
+}
+
+.create-care-team-form :deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
+.create-care-team-form :deep(.el-form-item__label) {
+  font-weight: 600;
+  color: var(--ink-700, #374151);
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--ink-400, #9ca3af);
 }
 

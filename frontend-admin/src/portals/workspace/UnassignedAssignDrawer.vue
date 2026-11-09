@@ -52,7 +52,7 @@ const filteredPatients = computed(() => {
   })
 })
 
-/** 全选/反选作用在当前可见列表（有搜索时只勾可见项） */
+/** 全选作用在当前可见列表（有搜索时只勾可见项） */
 const visibleIds = computed(() => filteredPatients.value.map((p) => p.peopleId).filter(Boolean))
 const allSelected = computed(
   () =>
@@ -64,6 +64,21 @@ const selectedTeamName = computed(
 )
 const canSubmit = computed(
   () => selectedCount.value > 0 && !!teamId.value && teams.value.length > 0 && !submitting.value,
+)
+const listRows = computed(() =>
+  filteredPatients.value.map((p) => {
+    const tags = (p.diseaseLabels || []).map((t) => (t || '').trim()).filter(Boolean)
+    const demoParts: string[] = []
+    if (p.age != null) demoParts.push(`${p.age}岁`)
+    if (p.gender === 'MALE') demoParts.push('男')
+    else if (p.gender === 'FEMALE') demoParts.push('女')
+    return {
+      ...p,
+      demographics: demoParts.join(' · '),
+      diseaseShown: tags.slice(0, 2),
+      diseaseExtra: Math.max(0, tags.length - 2),
+    }
+  }),
 )
 
 /**
@@ -169,19 +184,6 @@ function toggleAll(checked: boolean | string | number) {
   selectedIds.value = selectedIds.value.filter((id) => !drop.has(id))
 }
 
-function selectAll() {
-  toggleAll(true)
-}
-
-function invertSelect() {
-  const set = new Set(selectedIds.value)
-  for (const id of visibleIds.value) {
-    if (set.has(id)) set.delete(id)
-    else set.add(id)
-  }
-  selectedIds.value = [...set]
-}
-
 function toggleOne(peopleId: string, checked: boolean | string | number) {
   if (checked) {
     if (!selectedIds.value.includes(peopleId)) {
@@ -198,15 +200,6 @@ function applyAiTeam() {
   ElMessage.success(`已选中「${aiHint.value.teamName}」`)
 }
 
-function rowMeta(p: UnassignedPatientRow) {
-  const parts: string[] = []
-  if (p.age != null) parts.push(`${p.age}岁`)
-  if (p.gender === 'MALE') parts.push('男')
-  else if (p.gender === 'FEMALE') parts.push('女')
-  if (p.diseaseLabels?.length) parts.push(p.diseaseLabels.slice(0, 2).join('/'))
-  return parts.join(' · ') || '暂无更多档案信息'
-}
-
 async function submitBatch() {
   if (!canSubmit.value) {
     if (!selectedIds.value.length) ElMessage.info('请先勾选要分配的患者')
@@ -216,18 +209,13 @@ async function submitBatch() {
   const careTeamId = teamId.value!
   const careTeamName = selectedTeamName.value || '健管组'
   const count = selectedIds.value.length
-  const previewNames = selectedIds.value
-    .slice(0, 3)
-    .map((id) => props.patients.find((p) => p.peopleId === id)?.displayName || '患者')
-    .join('、')
-  const more = count > 3 ? `等 ${count} 人` : ''
   try {
     await ElMessageBox.confirm(
-      `确认将「${previewNames}${more}」分配到「${careTeamName}」？分配后可在该组列表中查看。`,
+      `确认将选中的 ${count} 位患者，分配给「${careTeamName}」吗？`,
       '确认批量分配',
       {
         type: 'warning',
-        confirmButtonText: `确认分配（${count}）`,
+        confirmButtonText: `确认分配 (${count})`,
         cancelButtonText: '再看看',
       },
     )
@@ -306,26 +294,13 @@ function goCreateTeam() {
         :disabled="!visibleIds.length"
         @change="toggleAll"
       >
-        全选（已选 {{ selectedCount }}）
+        全选 (已选 {{ selectedCount }})
       </el-checkbox>
-      <div class="toolbar-actions">
-        <button type="button" class="link-btn" :disabled="!visibleIds.length" @click="selectAll">
-          全选
-        </button>
-        <button
-          type="button"
-          class="link-btn"
-          :disabled="!visibleIds.length"
-          @click="invertSelect"
-        >
-          反选
-        </button>
-      </div>
     </div>
 
-    <div v-if="filteredPatients.length" class="list">
+    <div v-if="listRows.length" class="list">
       <label
-        v-for="p in filteredPatients"
+        v-for="p in listRows"
         :key="p.peopleId"
         class="row"
         :class="{ checked: selectedIds.includes(p.peopleId) }"
@@ -337,7 +312,21 @@ function goCreateTeam() {
         <span class="avatar">{{ (p.displayName || '?').slice(0, 1) }}</span>
         <span class="body">
           <strong class="name">{{ p.displayName || p.peopleId }}</strong>
-          <span class="meta">{{ rowMeta(p) }}</span>
+          <span class="meta">
+            <span v-if="p.demographics" class="demo">{{ p.demographics }}</span>
+            <span
+              v-if="p.diseaseShown.length"
+              class="tags"
+              :class="{ 'with-demo': !!p.demographics }"
+            >
+              <span v-for="tag in p.diseaseShown" :key="tag" class="tag">{{ tag }}</span>
+              <span v-if="p.diseaseExtra > 0" class="tag more">+{{ p.diseaseExtra }}</span>
+            </span>
+            <span
+              v-if="!p.demographics && !p.diseaseShown.length"
+              class="demo muted"
+            >暂无更多档案信息</span>
+          </span>
         </span>
       </label>
     </div>
@@ -375,12 +364,18 @@ function goCreateTeam() {
               </span>
             </el-option>
           </el-select>
-          <el-button type="primary" :loading="submitting" :disabled="!canSubmit" @click="submitBatch">
+          <el-button
+            type="primary"
+            class="batch-assign-btn"
+            :loading="submitting"
+            :disabled="selectedCount === 0 || !teamId || submitting"
+            @click="submitBatch"
+          >
             {{
               submitting
                 ? '分配中…'
                 : selectedCount
-                  ? `批量分配（${selectedCount}）`
+                  ? `批量分配 (${selectedCount})`
                   : '批量分配'
             }}
           </el-button>
@@ -429,30 +424,8 @@ function goCreateTeam() {
 .toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   margin-bottom: 10px;
-}
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.link-btn {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--brand-600, #2563eb);
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.link-btn:disabled {
-  color: var(--ink-300, #cbd5e1);
-  cursor: not-allowed;
-}
-.link-btn:not(:disabled):hover {
-  text-decoration: underline;
 }
 .list {
   display: flex;
@@ -472,15 +445,16 @@ function goCreateTeam() {
   border-radius: 12px;
   background: #fff;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .row:hover {
   border-color: var(--ink-200, #e2e8f0);
   background: #f8fafc;
 }
 .row.checked {
-  border-color: #93c5fd;
-  background: #eff6ff;
+  border-color: #60a5fa;
+  background: #dbeafe;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
 }
 .avatar {
   flex: 0 0 34px;
@@ -495,7 +469,7 @@ function goCreateTeam() {
   font-weight: 700;
 }
 .row.checked .avatar {
-  background: #3b82f6;
+  background: #2563eb;
 }
 .body {
   flex: 1;
@@ -511,9 +485,56 @@ function goCreateTeam() {
   color: var(--ink-800, #1f2937);
 }
 .meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   line-height: 1.45;
   color: var(--ink-500, #6b7280);
+}
+.demo.muted {
+  color: var(--ink-400, #9ca3af);
+}
+.tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.tags.with-demo::before {
+  content: '·';
+  margin-right: 2px;
+  color: var(--ink-300, #cbd5e1);
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 7.5em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row.checked .tag {
+  background: #bfdbfe;
+  color: #1e40af;
+}
+.tag.more {
+  background: #e2e8f0;
+  color: #64748b;
+  max-width: none;
+}
+.row.checked .tag.more {
+  background: #93c5fd;
+  color: #1e3a8a;
 }
 .footer {
   width: 100%;
@@ -544,6 +565,13 @@ function goCreateTeam() {
   margin-left: 12px;
   color: var(--ink-400, #9ca3af);
   font-size: 12px;
+}
+.batch-assign-btn.is-disabled,
+.batch-assign-btn:disabled {
+  background: #e2e8f0 !important;
+  border-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  opacity: 1;
 }
 </style>
 

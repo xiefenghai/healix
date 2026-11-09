@@ -1,4 +1,4 @@
-package com.healix.agent.skill;
+package com.healix.agent.handler;
 
 import com.healix.agent.archive.CreateArchiveDraft;
 import com.healix.agent.archive.CreateArchiveParser;
@@ -20,36 +20,22 @@ import java.time.Period;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /**
- * 对话建档：抽四要素 → 查重 → 无冲突直接建档并切焦点；需确认时挂 CALL_API。
- *
- * <p>已在本机构时：顺势调出档案继续服务；他人主责时柔和提示并可改挂/协同查看。
+ * 对话建档（由 StaffAgentTools 调用）：抽四要素 → 查重 → 核对卡确认后写库。
  */
 @Component
 @RequiredArgsConstructor
-public class CreateArchiveSkill implements AgentSkill {
+public class CreateArchiveHandler {
 
     private final OrgWorkspaceService orgWorkspaceService;
     private final CareTeamMapper careTeamMapper;
 
-    @Override
-    public AgentCapability capability() {
-        return AgentCapability.CREATE_ARCHIVE;
-    }
-
-    @Override
-    public boolean supports(AgentCapability routed, AgentChatCommand cmd) {
-        return routed == AgentCapability.CREATE_ARCHIVE || matchesMessage(cmd.message());
-    }
-
-    @Override
-    public AgentResponse execute(AgentSkillContext ctx) {
+    public AgentResponse execute(AgentHandlerContext ctx) {
         AgentChatCommand cmd = ctx.command();
         CreateArchiveDraft current = CreateArchiveParser.parse(cmd.message());
         // 芯片「建档」/「需要哪些信息」等开场话：本轮无身份要素 → 不吞历史里旧患者，避免误报「已建过档」
@@ -108,7 +94,7 @@ public class CreateArchiveSkill implements AgentSkill {
      * 患者已在本机构：顺势继续服务，不说「无需重复创建」。
      * 自己主责 → 直接引导首诊；他人主责 → 柔和说明并可改挂/协同查看。
      */
-    private AgentResponse alreadyExistsResponse(AgentSkillContext ctx, String peopleId) {
+    private AgentResponse alreadyExistsResponse(AgentHandlerContext ctx, String peopleId) {
         AgentChatCommand cmd = ctx.command();
         OrgPatientListItem item = orgWorkspaceService.getOrgPatient(cmd.orgId(), peopleId);
         String name = StringUtils.hasText(item.getDisplayName()) ? item.getDisplayName() : "该患者";
@@ -247,7 +233,7 @@ public class CreateArchiveSkill implements AgentSkill {
         return out;
     }
 
-    private AgentResponse doCreate(AgentSkillContext ctx, CreateArchiveDraft draft, String attachPeopleId) {
+    private AgentResponse doCreate(AgentHandlerContext ctx, CreateArchiveDraft draft, String attachPeopleId) {
         AgentChatCommand cmd = ctx.command();
         String accountId = requireAccountId();
         String staffId = requireStaffId();
@@ -320,7 +306,7 @@ public class CreateArchiveSkill implements AgentSkill {
     }
 
     private AgentResponse confirmDuplicates(
-            AgentSkillContext ctx, CreateArchiveDraft draft, List<DuplicateCandidate> needConfirm) {
+            AgentHandlerContext ctx, CreateArchiveDraft draft, List<DuplicateCandidate> needConfirm) {
         StringBuilder sb = new StringBuilder();
         sb.append("这个本人手机号已有档案，但姓名/生日与你刚填的不一致，请确认：\n");
         List<AgentAction> actions = new ArrayList<>();
@@ -378,7 +364,7 @@ public class CreateArchiveSkill implements AgentSkill {
         return payload;
     }
 
-    private AgentResponse needInfo(AgentSkillContext ctx, CreateArchiveDraft draft, String prompt) {
+    private AgentResponse needInfo(AgentHandlerContext ctx, CreateArchiveDraft draft, String prompt) {
         List<AgentAction> actions = new ArrayList<>();
         // 前端会自动拉开建档抽屉；按钮保留给「抽屉已关」时再打开，文案不再挂进度清单抢视线
         actions.add(AgentAction.openCreateArchive("打开建档表单", draftFormPayload(draft)));
@@ -418,7 +404,7 @@ public class CreateArchiveSkill implements AgentSkill {
 
     /** 四要素齐全后的人审确认（点 CALL_API 才建档）。 */
     private AgentResponse confirmReadyCreate(
-            AgentSkillContext ctx, CreateArchiveDraft draft, String attachPeopleId) {
+            AgentHandlerContext ctx, CreateArchiveDraft draft, String attachPeopleId) {
         String name = draft.name().trim();
         StringBuilder sb = new StringBuilder();
         sb.append("已帮你整理好建档信息，请核对：\n");
@@ -491,8 +477,8 @@ public class CreateArchiveSkill implements AgentSkill {
     }
 
     /**
-     * 开场建档（无姓名/手机/生日等）：视为新开一档，不合并历史。
-     * 多轮补全（本轮带了任一要素）仍走 {@link #mergeFromHistory}。
+     * 本轮抽不到身份要素：视为新开一档，不合并历史。
+     * 多轮补全（本轮带了姓名/手机/生日/性别）仍走 {@link #mergeFromHistory}。
      */
     static boolean isFreshArchiveStart(String message, CreateArchiveDraft current) {
         if (current != null
@@ -502,20 +488,8 @@ public class CreateArchiveSkill implements AgentSkill {
                         || current.hasGender())) {
             return false;
         }
-        if (!StringUtils.hasText(message)) {
-            return false;
-        }
-        String msg = message.trim();
-        if (msg.contains("需要哪些信息")
-                || msg.contains("需要什么信息")
-                || msg.contains("怎么建档")
-                || msg.contains("重新建档")
-                || msg.contains("再建一个")
-                || msg.contains("再建一个档")) {
-            return true;
-        }
-        // 「帮我建档」「建档」等口令且本轮抽不到身份字段
-        return matchesMessage(msg);
+        // 不再用「建档」等口令关键词；无身份要素即新开
+        return true;
     }
 
     private static String requireAccountId() {
@@ -544,58 +518,4 @@ public class CreateArchiveSkill implements AgentSkill {
         return "";
     }
 
-    public static boolean matchesMessage(String message) {
-        if (!StringUtils.hasText(message)) {
-            return false;
-        }
-        String msg = message.toLowerCase(Locale.ROOT);
-        if (containsAny(
-                msg,
-                "建档",
-                "新建患者",
-                "新建客户",
-                "录入患者",
-                "登记患者",
-                "帮我建一个",
-                "建一个患者",
-                "建个患者",
-                "create archive",
-                "new patient")) {
-            return true;
-        }
-        // 小白常在任意会话（含已选患者）直接粘贴四要素，不写「建档」
-        return looksLikeArchiveDraft(message);
-    }
-
-    /**
-     * 启发式：抽到较完整身份信息即当作建档意图。
-     *
-     * <p>避免误伤普通病情描述（仅姓名+性别、无手机/生日时不命中）。
-     */
-    static boolean looksLikeArchiveDraft(String message) {
-        CreateArchiveDraft draft = CreateArchiveParser.parse(message);
-        if (draft.isComplete()) {
-            return true;
-        }
-        // 姓名 + 手机号：足够启动建档（缺项由 Skill 追问）
-        if (draft.hasName() && draft.hasMobile()) {
-            return true;
-        }
-        // 表单口吻：有「姓名」标签，且有手机号或生日
-        String text = message.trim();
-        boolean labeled = text.contains("姓名") || text.contains("患者姓名");
-        if (labeled && draft.hasName() && (draft.hasMobile() || draft.hasBirthday())) {
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean containsAny(String msg, String... keys) {
-        for (String k : keys) {
-            if (msg.contains(k.toLowerCase(Locale.ROOT))) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

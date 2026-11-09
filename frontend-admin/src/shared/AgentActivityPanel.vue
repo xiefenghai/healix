@@ -87,7 +87,12 @@ const summaryHint = computed(() => {
   const preview = thinkingPreview(thinking?.body)
   if (preview && preview !== '暂无思考内容') return preview
   const lastTool = [...props.items].reverse().find((i) => i.kind === 'tool')
-  if (lastTool) return humanizeDetail(lastTool.detail) || humanizeToolTitle(lastTool.title)
+  if (lastTool) {
+    return (
+      humanizeDetail(lastTool.detail) ||
+      humanizeToolTitle(lastTool.title, lastTool.status === 'done')
+    )
+  }
   return '点击展开查看工具与思考过程'
 })
 
@@ -114,18 +119,19 @@ function humanizeDetail(detail?: string) {
     .replace(/正在调用\s*/g, '')
 }
 
-function humanizeToolTitle(title?: string) {
+function humanizeToolTitle(title?: string, done = false) {
   const raw = String(title || '').trim()
-  if (!raw) return '正在处理…'
+  if (!raw) return done ? '已完成' : '正在处理…'
   if (/^(DeepSeek|OpenAI|GPT-?4|Claude|Qwen)$/i.test(raw) || raw === '临床方案推理') {
-    return '正在综合患者数据与指南起草…'
+    return done ? '已综合患者数据与指南起草' : '正在综合患者数据与指南起草…'
   }
   const cleaned = humanizeDetail(raw)
-  return cleaned ? `正在处理：${cleaned}` : '正在处理…'
+  if (!cleaned) return done ? '已完成' : '正在处理…'
+  return done ? `已完成：${cleaned}` : `正在处理：${cleaned}`
 }
 
 function stepTitle(item: ActivityItem) {
-  if (item.kind === 'tool') return humanizeToolTitle(item.title)
+  if (item.kind === 'tool') return humanizeToolTitle(item.title, item.status === 'done')
   return humanizeDetail(item.title) || item.title
 }
 </script>

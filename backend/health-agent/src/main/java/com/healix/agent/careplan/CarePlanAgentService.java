@@ -23,7 +23,7 @@ import com.healix.core.careplan.support.CarePlanPromptContextSupport;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry;
 import com.healix.core.careplan.template.CarePlanTemplateRegistry.GeneratedPlan;
 import com.healix.agent.careplan.CarePlanLlmGenerator.LlmPlanResult;
-import com.healix.agent.skill.SkillMarkdown;
+import com.healix.agent.support.SkillMarkdown;
 import com.healix.common.exception.BusinessException;
 import java.util.ArrayList;
 import java.util.List;

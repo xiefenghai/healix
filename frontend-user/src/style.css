@@ -115,6 +115,15 @@
   --van-popup-round-radius: 24px;
 }
 
+/* 开场「完整评估」二次确认：取消侧深灰字，主按钮保持青绿焦点 */
+.hx-depth-confirm .van-dialog__cancel {
+  font-weight: 600;
+  color: #374151;
+}
+.hx-depth-confirm .van-dialog__confirm {
+  font-weight: 700;
+}
+
 * {
   box-sizing: border-box;
 }

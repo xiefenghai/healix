@@ -11,6 +11,7 @@ import {
   getQuestionnaireResponse,
   isAnswerEmpty,
   loadIntakeOptionMaps,
+  resolveFieldProvenance,
   resolveIntakeFieldLabel,
   responseStatusLabel,
   severityLabel,
@@ -18,6 +19,7 @@ import {
   type IntakeItemView,
   type IntakeModuleView,
   type IntakeOptionMaps,
+  type IntakePrefillCell,
   type QuestionnaireResponseView,
 } from '../../shared/intake'
 import { loadAllergyCatalog } from '../../shared/allergy'
@@ -99,6 +101,25 @@ function formatTime(iso?: string | null) {
   return String(iso).replace('T', ' ').slice(0, 16)
 }
 
+function fieldProvenance(field: string) {
+  const prefill = (view.value?.prefill || {}) as Record<string, IntakePrefillCell>
+  return resolveFieldProvenance({
+    field,
+    answer: answers.value[field],
+    prefill: prefill[field],
+    responseFilledByType: view.value?.filledByType,
+    responseChannel: view.value?.channel,
+  })
+}
+
+const responseProvenanceLabel = computed(() => {
+  const by = String(view.value?.filledByType || '').toUpperCase()
+  const ch = String(view.value?.channel || '').toUpperCase()
+  if (by === 'PATIENT' || by === 'PEOPLE' || ch === 'C_APP') return '患者自填'
+  if (by === 'STAFF' || ch === 'B_WORKSPACE') return '健管师录入'
+  return ''
+})
+
 function moduleFilled(m: IntakeModuleView) {
   return (m.items || []).length
 }
@@ -174,6 +195,14 @@ watch(responseId, (id, prev) => {
         </div>
       </div>
       <div class="top-right">
+        <el-tag
+          v-if="responseProvenanceLabel"
+          size="small"
+          :type="responseProvenanceLabel === '患者自填' ? 'info' : 'success'"
+          effect="plain"
+        >
+          {{ responseProvenanceLabel }}
+        </el-tag>
         <el-tag v-if="view?.status" size="small" effect="plain">{{ responseStatusLabel(view.status) }}</el-tag>
         <span class="meta">提交于 {{ formatTime(view?.submittedAt) }}</span>
         <el-button v-if="!embedded" type="primary" plain @click="openFillAgain">再次首诊</el-button>
@@ -222,8 +251,22 @@ watch(responseId, (id, prev) => {
           <h2>{{ m.title }}</h2>
           <div v-for="it in m.items" :key="it.field" class="q">
             <div class="q-label">
-              {{ it.label }}
-              <span v-if="it.level === 'STAFF'" class="tag">内部</span>
+              <span>{{ it.label }}</span>
+              <span class="q-label-tags">
+                <el-tooltip
+                  v-if="fieldProvenance(it.field)"
+                  :content="fieldProvenance(it.field)!.tip"
+                  placement="top"
+                >
+                  <span
+                    class="prov-tag"
+                    :class="`prov-${fieldProvenance(it.field)!.kind.toLowerCase()}`"
+                  >
+                    {{ fieldProvenance(it.field)!.label }}
+                  </span>
+                </el-tooltip>
+                <span v-if="it.level === 'STAFF'" class="tag">内部</span>
+              </span>
             </div>
             <div class="q-val">{{ displayAnswer(it) }}</div>
           </div>
@@ -391,14 +434,53 @@ watch(responseId, (id, prev) => {
 }
 
 .q-label {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   font-size: 13px;
   font-weight: 600;
   color: var(--ink-700);
   margin-bottom: 4px;
 }
 
+.q-label-tags {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.prov-tag {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.prov-patient {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.prov-staff {
+  color: #0f766e;
+  background: #ecfdf5;
+}
+
+.prov-ai {
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.prov-archive {
+  color: #64748b;
+  background: #f8fafc;
+}
+
 .tag {
-  margin-left: 6px;
   font-size: 11px;
   font-weight: 500;
   color: var(--ink-400);

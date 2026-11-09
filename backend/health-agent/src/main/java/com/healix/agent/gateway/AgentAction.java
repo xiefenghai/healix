@@ -53,7 +53,21 @@ public record AgentAction(
 
     /** 打开驾驶舱「未分组批量处理台」抽屉（勾选 + AI 建议 + 一键分配）。 */
     public static AgentAction openUnassignedWorkbench(String label) {
-        return navigate(label, "unassigned-workbench");
+        return openUnassignedWorkbench(label, false);
+    }
+
+    /**
+     * @param disabled true 时前端置灰不可点（未建组防呆），并带 disabledReason 作 Tooltip。
+     */
+    public static AgentAction openUnassignedWorkbench(String label, boolean disabled) {
+        String text = StringUtils.hasText(label) ? label.trim() : "打开批量分配面板";
+        if (!disabled) {
+            return navigate(text, "unassigned-workbench");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("disabled", true);
+        payload.put("disabledReason", "请先创建至少一个健管组");
+        return navigate(text, "unassigned-workbench", payload);
     }
 
     /** 切入患者后打开「单据录入」上传（驾驶舱 NAVIGATE ocr-upload）。 */

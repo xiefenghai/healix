@@ -1,4 +1,4 @@
-package com.healix.agent.skill;
+package com.healix.agent.support;
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
@@ -7,8 +7,8 @@ import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
 
 /**
- * Skill 文档工具。YAML frontmatter（{@code ---}…{@code ---}）是 Cursor/本地元数据，
- * 喂给 LLM 前应剥掉，避免占 token。
+ * classpath {@code resources/skills/} 下 Markdown 提示词加载器（剥 YAML frontmatter）。
+ * <p>对话能力实现在 {@code com.healix.agent.handler}；本类只负责 Prompt 文档加载。
  */
 public final class SkillMarkdown {
 
