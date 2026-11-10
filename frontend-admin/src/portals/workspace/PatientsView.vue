@@ -8,6 +8,7 @@ import { TABLE_COL } from '../../shared/table-columns'
 import { checkinStatus } from '../../shared/rewards'
 import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
 import CreateArchiveDrawer from './CreateArchiveDrawer.vue'
+import UnassignedAssignDrawer, { type UnassignedPatientRow } from './UnassignedAssignDrawer.vue'
 
 interface OrgPatientListItem {
   peopleId: string
@@ -56,7 +57,7 @@ const loading = ref(false)
 const list = ref<OrgPatientListItem[]>([])
 const listTotal = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 /** 顶栏 KPI（/org-patients/stats） */
 const stats = ref({
   total: 0,
@@ -79,6 +80,29 @@ const teamDialogPeopleId = ref<string | null>(null)
 const teamDialogPeopleName = ref<string | null>(null)
 const teamDialogCurrentTeamId = ref<string | null>(null)
 
+/** 列表勾选 → 批量加入健管组 */
+const selectedRows = ref<OrgPatientListItem[]>([])
+const tableRef = ref<{ clearSelection?: () => void } | null>(null)
+const batchAssignOpen = ref(false)
+const selectedCount = computed(() => selectedRows.value.length)
+const canBatchAssign = computed(() => selectedCount.value > 0)
+const batchAssignPatients = computed<UnassignedPatientRow[]>(() =>
+  selectedRows.value.map((r) => ({
+    peopleId: r.peopleId,
+    displayName: r.displayName,
+    diseaseLabels: r.diseaseLabels || [],
+    gender: r.gender,
+    careTeamId: r.careTeamId,
+  })),
+)
+
+/** 仅未入组 / 当前页全无组时隐藏主责列 */
+const showPrimaryManagerColumn = computed(() => {
+  if (unassignedOnly.value) return false
+  if (list.value.length > 0 && list.value.every((r) => !r.careTeamId)) return false
+  return true
+})
+
 
 const totalCount = computed(() => stats.value.total)
 const unassignedCount = computed(() => stats.value.unassigned)
@@ -98,7 +122,7 @@ type SummaryKey = 'all' | 'unassigned' | 'watched' | 'month' | 'adherence' | 'cl
 const summaryCards = computed(() => [
   {
     key: 'all' as SummaryKey,
-    label: '在管患者',
+    label: '总患者数',
     value: String(totalCount.value),
     hint: '当前机构全部档案',
     active:
@@ -198,19 +222,61 @@ function patientMeta(row: OrgPatientListItem) {
   return parts.join(' · ') || '-'
 }
 
-function assessmentToneType(tone?: string): 'danger' | 'warning' | 'success' | 'info' | undefined {
-  switch (tone) {
-    case 'danger':
-      return 'danger'
-    case 'warning':
-      return 'warning'
-    case 'success':
-      return 'success'
-    case 'info':
-      return 'info'
-    default:
-      return undefined
+/** 评估/风险标签：统一偏红警示 */
+function isRiskAssessmentTone(tone?: string) {
+  return tone === 'danger' || tone === 'warning' || !tone
+}
+
+/** 跟在姓名后的状态小字：打卡中断 / N天未打卡 */
+function patientStatusHint(row: OrgPatientListItem) {
+  const st = checkinStatus(row)
+  if (!st) {
+    if (row.streakDays === 0) return '打卡中断'
+    return ''
   }
+  if (st.tone === 'ok') return ''
+  return st.text
+}
+
+function onSelectionChange(rows: OrgPatientListItem[]) {
+  selectedRows.value = Array.isArray(rows) ? [...rows] : []
+}
+
+function clearSelection() {
+  selectedRows.value = []
+  tableRef.value?.clearSelection?.()
+}
+
+async function openBatchAssign() {
+  const rows = selectedRows.value
+  if (!rows.length) {
+    ElMessage.info('请先勾选要加入健管组的患者')
+    return
+  }
+  const total = rows.length
+  const alreadyInTeam = rows.filter((r) => !!r.careTeamId).length
+  // 混合勾选（或含已入组）：二次确认，防止误覆盖原分组
+  if (alreadyInTeam > 0) {
+    try {
+      await ElMessageBox.confirm(
+        `您选中的 ${total} 人中，有 ${alreadyInTeam} 人已分入其他健管组，继续操作将覆盖其原有分组。确认继续吗？`,
+        '确认批量加入健管组',
+        {
+          type: 'warning',
+          confirmButtonText: '确认继续',
+          cancelButtonText: '取消',
+        },
+      )
+    } catch {
+      return
+    }
+  }
+  batchAssignOpen.value = true
+}
+
+async function onBatchAssigned() {
+  clearSelection()
+  await Promise.all([load(), loadBaseline()])
 }
 
 function archiveToneClass(percent?: number | null) {
@@ -305,6 +371,7 @@ async function load() {
 
 function reloadFromFirstPage() {
   page.value = 1
+  clearSelection()
   void load()
 }
 
@@ -431,7 +498,7 @@ onMounted(async () => {
       <div>
         <h1>患者管理</h1>
         <p>
-          共 <strong class="em">{{ totalCount }}</strong> 位在管患者
+          共 <strong class="em">{{ totalCount }}</strong> 位患者
           · 今日新增 {{ todayNewCount }} 位
           · {{ unassignedCount }} 位未入组
           · {{ getCurrentOrgName() || '-' }}
@@ -508,11 +575,33 @@ onMounted(async () => {
               <template v-if="filterTotal !== totalCount"> · 在管 {{ totalCount }}</template>
             </span>
           </div>
+          <el-button
+            type="primary"
+            class="batch-assign-btn"
+            :class="{ ready: canBatchAssign }"
+            :disabled="!canBatchAssign"
+            @click="openBatchAssign"
+          >
+            {{
+              selectedCount > 0
+                ? `批量加入健管组 (${selectedCount})`
+                : '批量加入健管组'
+            }}
+          </el-button>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="list" stripe class="patients-table">
-        <el-table-column label="患者" min-width="160">
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="list"
+        stripe
+        row-key="peopleId"
+        class="patients-table"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column type="selection" width="44" />
+        <el-table-column label="患者" :min-width="showPrimaryManagerColumn ? 180 : 220">
           <template #default="{ row }">
             <div class="patient-cell">
               <div class="patient-av" :style="avatarStyle(row.displayName)">
@@ -520,69 +609,64 @@ onMounted(async () => {
               </div>
               <div class="patient-text">
                 <div class="patient-name">
-                  {{ row.displayName || '-' }}
+                  <el-tooltip
+                    :content="row.displayName || '-'"
+                    placement="top"
+                    :disabled="!(row.displayName && row.displayName.length > 6)"
+                  >
+                    <span class="patient-name-text">{{ row.displayName || '-' }}</span>
+                  </el-tooltip>
+                  <span v-if="patientStatusHint(row)" class="status-hint">
+                    ({{ patientStatusHint(row) }})
+                  </span>
                   <el-tag v-if="row.watched" size="small" type="warning" effect="plain" class="watch-tag">
                     关注
                   </el-tag>
                   <span
                     v-if="row.streakDays"
-                    class="flame-tag"
+                    class="flame-inline"
                     :title="`连续打卡 ${row.streakDays} 天`"
                   >🔥{{ row.streakDays }}</span>
-                  <span v-else-if="row.streakDays === 0" class="flame-tag flame-tag--out" title="打卡已中断">打卡中断</span>
                 </div>
                 <div class="patient-meta">{{ patientMeta(row) }}</div>
-                <div
-                  v-if="checkinStatus(row)"
-                  class="checkin-status"
-                  :class="`checkin-status--${checkinStatus(row)!.tone}`"
-                >{{ checkinStatus(row)!.text }}</div>
               </div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="病种档案" min-width="140">
+        <el-table-column label="病种档案" :min-width="showPrimaryManagerColumn ? 140 : 180">
           <template #default="{ row }">
             <div v-if="row.diseaseLabels?.length" class="tag-wrap">
-              <el-tag
-                v-for="d in row.diseaseLabels"
-                :key="d"
-                size="small"
-                effect="light"
-                type="warning"
-              >
-                {{ d }}
-              </el-tag>
+              <span v-for="d in row.diseaseLabels" :key="d" class="tag-disease">{{ d }}</span>
             </div>
             <span v-else class="muted">暂无</span>
           </template>
         </el-table-column>
-        <el-table-column label="评估标签" min-width="200">
+        <el-table-column label="评估标签" :min-width="showPrimaryManagerColumn ? 180 : 220">
           <template #default="{ row }">
             <div v-if="row.assessmentTags?.length" class="tag-wrap">
-              <el-tag
+              <span
                 v-for="t in row.assessmentTags"
                 :key="t.engineCode || t.text"
-                size="small"
-                effect="plain"
-                :type="assessmentToneType(t.tone)"
+                class="tag-risk"
+                :class="{ mild: !isRiskAssessmentTone(t.tone) }"
                 :title="t.title || t.text"
-              >
-                {{ t.text }}
-              </el-tag>
+              >{{ t.text }}</span>
             </div>
             <span v-else class="muted">暂无</span>
           </template>
         </el-table-column>
-        <el-table-column label="主责健管师" min-width="110" show-overflow-tooltip>
+        <el-table-column
+          v-if="showPrimaryManagerColumn"
+          label="主责健管师"
+          min-width="110"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">{{ row.primaryCareManagerName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="健管组" min-width="120">
+        <el-table-column label="健管组" min-width="110">
           <template #default="{ row }">
-            <el-tag v-if="row.careTeamName" size="small" effect="light" type="primary">
-              {{ row.careTeamName }}
-            </el-tag>
-            <el-tag v-else size="small" effect="plain" type="info">未入组</el-tag>
+            <span v-if="row.careTeamName" class="team-name">{{ row.careTeamName }}</span>
+            <span v-else class="team-unassigned">未分组</span>
           </template>
         </el-table-column>
         <el-table-column label="档案完整度" width="120">
@@ -607,40 +691,56 @@ onMounted(async () => {
         <el-table-column label="入机构时间" v-bind="TABLE_COL.datetime">
           <template #default="{ row }">{{ formatTime(row.joinedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="280" align="right" fixed="right">
+        <el-table-column label="操作" width="248" align="right" fixed="right" class-name="col-actions">
           <template #default="{ row }">
-            <el-button
-              link
-              type="primary"
-              @click="router.push({ path: `/workspace/patients/${row.peopleId}/persona`, query: { name: row.displayName } })"
-            >
-              详情
-            </el-button>
-            <el-button link type="primary" @click="openCareTeamDialog(row)">
-              {{ row.careTeamId ? '变更健管组' : '加入健管组' }}
-            </el-button>
-            <el-button
-              link
-              type="danger"
-              :loading="removingPeopleId === row.peopleId"
-              @click="removeOrgPatient(row)"
-            >
-              删除
-            </el-button>
+            <div class="row-actions">
+              <el-button
+                link
+                type="primary"
+                @click="router.push({ path: `/workspace/patients/${row.peopleId}/persona`, query: { name: row.displayName } })"
+              >
+                详情
+              </el-button>
+              <el-button link type="primary" @click="openCareTeamDialog(row)">
+                {{ row.careTeamId ? '变更健管组' : '加入健管组' }}
+              </el-button>
+              <el-dropdown trigger="click" @command="(cmd: string) => cmd === 'remove' && removeOrgPatient(row)">
+                <el-button link class="more-btn">更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      command="remove"
+                      class="danger-item"
+                      :disabled="removingPeopleId === row.peopleId"
+                    >
+                      删除
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!loading && list.length === 0" description="暂无患者" :image-size="72" />
       <div v-if="filterTotal > 0" class="list-pagination">
         <el-pagination
-          :current-page="page"
-          :page-size="pageSize"
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
           :total="filterTotal"
-          layout="total, prev, pager, next"
+          :page-sizes="[10, 15, 20, 50]"
+          layout="total, sizes, prev, pager, next"
           background
           @current-change="
-            (p: number) => {
-              page = p
+            () => {
+              clearSelection()
+              void load()
+            }
+          "
+          @size-change="
+            () => {
+              page = 1
+              clearSelection()
               void load()
             }
           "
@@ -659,6 +759,19 @@ onMounted(async () => {
       @create="
         () => {
           closeCareTeamDialog()
+          void router.push('/workspace/care-teams?create=1')
+        }
+      "
+    />
+
+    <UnassignedAssignDrawer
+      v-model="batchAssignOpen"
+      :patients="batchAssignPatients"
+      select-all-on-open
+      @assigned="onBatchAssigned"
+      @create-team="
+        () => {
+          batchAssignOpen = false
           void router.push('/workspace/care-teams?create=1')
         }
       "
@@ -690,16 +803,39 @@ onMounted(async () => {
   cursor: default;
 }
 
+.toolbar {
+  gap: 12px;
+}
 .toolbar-search {
   flex: 1;
   min-width: 220px;
   max-width: 360px;
+}
+.toolbar :deep(.el-input__wrapper),
+.toolbar :deep(.el-select__wrapper),
+.toolbar :deep(.el-button:not(.is-link)) {
+  min-height: 32px;
+}
+
+.list-card :deep(.patients-table) {
+  width: 100%;
+  --el-table-row-hover-bg-color: #f8fafc;
+}
+.list-card :deep(.patients-table .el-table__header th.el-table__cell) {
+  background: var(--el-table-header-bg-color, var(--ink-50));
+  color: var(--el-table-header-text-color, var(--ink-500)) !important;
+  font-size: 12px;
+  font-weight: 600;
+}
+.list-card :deep(.patients-table .el-table__body td.el-table__cell) {
+  font-size: 13px;
 }
 
 .table-head-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .table-title {
@@ -712,6 +848,19 @@ onMounted(async () => {
   color: var(--ink-400);
   font-weight: 500;
   margin-left: 4px;
+}
+
+.batch-assign-btn.is-disabled,
+.batch-assign-btn:disabled {
+  background: #e5e7eb !important;
+  border-color: #e5e7eb !important;
+  color: #9ca3af !important;
+  opacity: 1 !important;
+}
+.batch-assign-btn.ready:not(.is-disabled):not(:disabled) {
+  background: var(--el-color-primary, #409eff) !important;
+  border-color: var(--el-color-primary, #409eff) !important;
+  color: #fff !important;
 }
 
 .patient-cell {
@@ -742,43 +891,36 @@ onMounted(async () => {
   color: var(--ink-800);
   line-height: 1.3;
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.patient-name-text {
+  display: inline-block;
+  max-width: 120px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+.status-hint {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #94a3b8;
 }
 
 .watch-tag {
   font-weight: 500;
 }
-.flame-tag {
-  margin-left: 4px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #fff1e3;
-  color: #e0632a;
+.flame-inline {
   font-size: 12px;
   font-weight: 700;
+  color: #e0632a;
   font-variant-numeric: tabular-nums;
-}
-.flame-tag--out {
-  background: #f0f2f5;
-  color: #a0a8b3;
-  font-weight: 600;
-}
-.checkin-status {
-  margin-top: 2px;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-.checkin-status--ok {
-  color: #0b7a66;
-}
-.checkin-status--idle {
-  color: #a0a8b3;
-}
-.checkin-status--warn {
-  color: #d03050;
 }
 
 .patient-meta {
@@ -795,6 +937,68 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 4px;
   align-items: center;
+}
+
+.tag-disease {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+.tag-risk {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+.tag-risk.mild {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.team-name {
+  font-size: 13px;
+  color: var(--ink-700, #334155);
+}
+.team-unassigned {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  white-space: nowrap;
+}
+.row-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.more-btn {
+  color: #94a3b8 !important;
+}
+.more-btn:hover {
+  color: var(--el-color-primary) !important;
+}
+:deep(.danger-item) {
+  color: #f56c6c !important;
+}
+:deep(.col-actions .cell) {
+  overflow: visible;
 }
 
 .muted {
@@ -864,7 +1068,7 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
-  padding: 0 4px 4px;
+  padding: 0 4px 24px;
 }
 
 .list-card :deep(.el-card__header) {

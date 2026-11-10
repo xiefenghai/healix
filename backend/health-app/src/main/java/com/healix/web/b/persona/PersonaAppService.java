@@ -43,8 +43,17 @@ public class PersonaAppService {
         if (personaService.isStaffLocked(existing)) {
             throw new BusinessException(400, "叙事已锁定，请先解锁再生成");
         }
-        personaService.markGenerating(tenantId, peopleId);
         ObjectNode dimensions = personaService.aggregateDimensions(tenantId, orgId, peopleId);
+        // 指纹未变：直接回缓存叙事，不打 LLM（省 Token）
+        if (fingerprintMatchesCachedNarrative(existing, dimensions)) {
+            log.info("[Persona] generate skip LLM, fingerprint hit peopleId={}", peopleId);
+            PersonaView cached =
+                    personaService.persistRefresh(
+                            tenantId, orgId, peopleId, dimensions, null, false, staffId, accountId);
+            cached.setLlmSkipped(true);
+            return cached;
+        }
+        personaService.markGenerating(tenantId, peopleId);
         try {
             ObjectNode narrative = runLlmOrTemplate(tenantId, peopleId, dimensions);
             boolean template = "template".equals(narrative.path("model").asText());
@@ -70,6 +79,15 @@ public class PersonaAppService {
             return personaService.persistRefresh(
                     tenantId, orgId, peopleId, dimensions, null, true, staffId, accountId);
         }
+        // 指纹未变：只落维度，不重跑 LLM
+        if (fingerprintMatchesCachedNarrative(row, dimensions)) {
+            log.info("[Persona] refresh skip LLM, fingerprint hit peopleId={}", peopleId);
+            PersonaView cached =
+                    personaService.persistRefresh(
+                            tenantId, orgId, peopleId, dimensions, null, false, staffId, accountId);
+            cached.setLlmSkipped(true);
+            return cached;
+        }
         personaService.markGenerating(tenantId, peopleId);
         try {
             ObjectNode narrative = runLlmOrTemplate(tenantId, peopleId, dimensions);
@@ -81,6 +99,18 @@ public class PersonaAppService {
             log.warn("[Persona] refresh failed peopleId={}: {}", peopleId, e.getMessage());
             return personaService.get(tenantId, orgId, peopleId);
         }
+    }
+
+    /** 活维度指纹与叙事绑定指纹一致，且已有叙事 → 可跳过 LLM。 */
+    static boolean fingerprintMatchesCachedNarrative(PeoplePersona row, ObjectNode dimensions) {
+        if (row == null || dimensions == null) {
+            return false;
+        }
+        if (!StringUtils.hasText(row.getNarrativeJson()) || !StringUtils.hasText(row.getNarrativeFingerprint())) {
+            return false;
+        }
+        String liveFp = dimensions.path("sourceFingerprint").asText(null);
+        return StringUtils.hasText(liveFp) && liveFp.equals(row.getNarrativeFingerprint());
     }
 
     public PersonaView saveNarrative(

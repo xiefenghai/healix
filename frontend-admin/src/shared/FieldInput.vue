@@ -279,13 +279,14 @@ function onDateInput(e: Event) {
 /* 档案页：与 archive-row 同构（左标签 + 右控件 + 底部分隔线） */
 .fi--row {
   display: grid;
-  grid-template-columns: minmax(72px, 112px) minmax(0, 1fr);
-  gap: 12px 16px;
-  padding: 16px 0;
+  grid-template-columns: minmax(88px, 112px) minmax(0, 1fr);
+  gap: 10px 16px;
+  padding: 12px 0;
   border: none;
   border-radius: 0;
   border-bottom: 1px solid var(--admin-border, #e5e7eb);
   background: transparent;
+  box-shadow: none;
 }
 .fi--row.prefilled,
 .fi--row.dirty {

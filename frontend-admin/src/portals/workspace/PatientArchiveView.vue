@@ -118,9 +118,10 @@ const DISEASE_SYMPTOM_OTHER = 'OTHER'
 const DISEASE_COMPLICATION_OTHER = 'OTHER'
 const DIABETES_COMPLICATION_HYPOGLYCEMIA = 'HYPOGLYCEMIA'
 
-const activeTab = ref('basic')
+/** 左侧主导航：基础档案 | 病种档案 */
+const activeTab = ref<'basic' | 'disease'>('basic')
 const activeDiseaseTab = ref('')
-/** 基础档案内二级分区：健康 / 指标 / 生活方式 / … */
+/** 基础档案内分区：健康 / 生活方式 / 心理 / 女性健康 */
 const basicSubTab = ref('health')
 const saving = ref(false)
 const loading = ref(false)
@@ -676,13 +677,53 @@ async function confirmDiscardBasicChanges(
   }
 }
 
-async function onArchiveTabBeforeLeave(newName: string | number, oldName: string | number) {
-  if (String(oldName) !== 'basic' || String(newName) === 'basic') return true
-  return confirmDiscardBasicChanges()
+const basicNavItems = computed(() => {
+  const items = [
+    { key: 'health', label: '健康信息' },
+    { key: 'lifestyle', label: '生活方式' },
+    { key: 'psych', label: '心理与情绪' },
+  ]
+  if (showWomenHealthTab.value) {
+    items.push({ key: 'women', label: '女性健康' })
+  }
+  return items
+})
+
+async function selectArchiveSection(section: 'basic' | 'disease') {
+  if (section === activeTab.value) {
+    if (section === 'basic' && !basicNavItems.value.some((i) => i.key === basicSubTab.value)) {
+      basicSubTab.value = 'health'
+    }
+    return
+  }
+  if (activeTab.value === 'basic' && section === 'disease') {
+    const ok = await confirmDiscardBasicChanges()
+    if (!ok) return
+  }
+  activeTab.value = section
+  if (section === 'basic' && !basicNavItems.value.some((i) => i.key === basicSubTab.value)) {
+    basicSubTab.value = 'health'
+  }
+  if (section === 'disease') {
+    const codes = enabledDiseases.value.map((d) => d.dictCode)
+    if (!codes.includes(activeDiseaseTab.value)) {
+      activeDiseaseTab.value = codes[0] ?? ''
+    }
+  }
 }
 
-function onArchiveTabChange(name: string | number) {
-  activeTab.value = String(name)
+function selectBasicSubNav(key: string) {
+  if (activeTab.value !== 'basic') {
+    activeTab.value = 'basic'
+  }
+  basicSubTab.value = key
+}
+
+async function selectDiseaseNav(code: string) {
+  await selectArchiveSection('disease')
+  if (code) {
+    activeDiseaseTab.value = code
+  }
 }
 
 function buildContentJson() {
@@ -855,6 +896,7 @@ async function confirmAddDisease() {
     enabledDiseaseCodes.value = [...enabledDiseaseCodes.value, code]
   }
   addDiseaseVisible.value = false
+  await selectArchiveSection('disease')
   activeTab.value = 'disease'
   activeDiseaseTab.value = code
   const name = diseases.value.find((d) => d.dictCode === code)?.dictCodeDesc ?? code
@@ -1215,17 +1257,44 @@ onBeforeUnmount(() => {
         class="archive-main"
         :class="{
           'archive-main--basic-dock': !isEmbedded && activeTab === 'basic' && basicSnapshotReady,
+          'archive-main--disease-dock': !isEmbedded && activeTab === 'disease',
         }"
       >
-    <el-tabs
-      :model-value="activeTab"
-      class="archive-tabs hx-pill-tabs"
-      :before-leave="onArchiveTabBeforeLeave"
-      @tab-change="onArchiveTabChange"
-    >
-      <el-tab-pane label="基础档案" name="basic">
-        <el-tabs v-model="basicSubTab" class="basic-sub-tabs hx-pill-tabs">
-          <el-tab-pane label="健康信息" name="health">
+    <div class="archive-workspace">
+      <nav class="archive-side-nav" aria-label="档案分区">
+        <div class="nav-group" :class="{ 'nav-group--active': activeTab === 'basic' }">
+          <div class="nav-group-title">基础档案</div>
+          <button
+            v-for="item in basicNavItems"
+            :key="item.key"
+            type="button"
+            class="nav-item"
+            :class="{ active: activeTab === 'basic' && basicSubTab === item.key }"
+            @click="selectBasicSubNav(item.key)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+        <div class="nav-group" :class="{ 'nav-group--active': activeTab === 'disease' }">
+          <div class="nav-group-title">病种档案</div>
+          <button
+            v-for="d in enabledDiseases"
+            :key="d.dictCode"
+            type="button"
+            class="nav-item"
+            :class="{ active: activeTab === 'disease' && activeDiseaseTab === d.dictCode }"
+            @click="selectDiseaseNav(d.dictCode)"
+          >
+            {{ diseaseLabel(d) }}
+          </button>
+          <button type="button" class="nav-item nav-item--add" @click="openAddDisease">
+            + 添加病种
+          </button>
+        </div>
+      </nav>
+
+      <div class="archive-content">
+        <div v-show="activeTab === 'basic' && basicSubTab === 'health'" class="archive-panel">
         <el-card shadow="never" class="section-card">
           <div class="archive-row">
             <label class="row-label">现有疾病</label>
@@ -1276,9 +1345,9 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </el-card>
-          </el-tab-pane>
+        </div>
 
-          <el-tab-pane label="生活方式" name="lifestyle" lazy>
+        <div v-show="activeTab === 'basic' && basicSubTab === 'lifestyle'" class="archive-panel">
         <el-card shadow="never" class="section-card">
           <p class="section-hint section-hint--block">患者可在 C 端自行更新；操作者见修订历史</p>
 
@@ -1616,9 +1685,9 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </el-card>
-          </el-tab-pane>
+        </div>
 
-          <el-tab-pane label="心理与情绪" name="psych" lazy>
+        <div v-show="activeTab === 'basic' && basicSubTab === 'psych'" class="archive-panel">
         <el-card shadow="never" class="section-card">
           <p class="section-hint section-hint--block">敏感信息；按角色在接口层脱敏</p>
           <div class="extra-fields extra-fields--rows">
@@ -1639,9 +1708,12 @@ onBeforeUnmount(() => {
             />
           </div>
         </el-card>
-          </el-tab-pane>
+        </div>
 
-          <el-tab-pane v-if="showWomenHealthTab" label="女性健康" name="women" lazy>
+        <div
+          v-show="activeTab === 'basic' && basicSubTab === 'women' && showWomenHealthTab"
+          class="archive-panel"
+        >
         <el-card shadow="never" class="section-card">
           <div class="extra-fields extra-fields--rows">
             <FieldInput
@@ -1661,13 +1733,12 @@ onBeforeUnmount(() => {
             />
           </div>
         </el-card>
-          </el-tab-pane>
-        </el-tabs>
-      </el-tab-pane>
+        </div>
 
-      <el-tab-pane label="病种档案" name="disease">
+        <div v-show="activeTab === 'disease'" class="archive-panel">
         <div class="disease-tabs-bar">
-          <el-tabs v-model="activeDiseaseTab" class="disease-tabs hx-pill-tabs">
+          <!-- 病种切换已并入左侧导航，此处隐藏顶栏胶囊 -->
+          <el-tabs v-model="activeDiseaseTab" class="disease-tabs disease-tabs--headless">
             <el-tab-pane
               v-for="d in enabledDiseases"
               :key="d.dictCode"
@@ -1680,7 +1751,7 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-if="d.dictCode === 'diabetes'">
-                  <div class="disease-pair">
+                  <div class="disease-pair disease-pair--compact">
                     <div class="archive-row compact disease-pair-item">
                       <label class="row-label">糖尿病类型</label>
                       <div class="row-body">
@@ -1688,7 +1759,7 @@ onBeforeUnmount(() => {
                           v-model="diseaseForms.diabetes.diabetesType"
                           clearable
                           placeholder="请选择"
-                          class="disease-select"
+                          class="disease-select disease-select--fixed"
                         >
                           <el-option
                             v-for="o in diabetesTypeOptions"
@@ -1707,7 +1778,7 @@ onBeforeUnmount(() => {
                           type="date"
                           value-format="YYYY-MM-DD"
                           placeholder="选择日期"
-                          class="disease-select"
+                          class="disease-select disease-select--fixed"
                         />
                       </div>
                     </div>
@@ -1718,7 +1789,7 @@ onBeforeUnmount(() => {
                     <div class="row-body">
                       <el-checkbox-group
                         v-model="diseaseForms.diabetes.symptoms"
-                        class="illness-grid"
+                        class="illness-grid illness-grid--3col"
                       >
                         <el-checkbox
                           v-for="o in diabetesSymptomOptions"
@@ -2222,26 +2293,30 @@ onBeforeUnmount(() => {
                 </div>
               </el-card>
 
-              <div v-if="!isEmbedded" class="save-bar">
-                <el-button
-                  type="primary"
-                  size="large"
-                  :loading="saving"
-                  @click="saveDisease(d.dictCode)"
-                >
-                  保存{{ d.dictCodeDesc }}档案
-                </el-button>
-              </div>
             </el-tab-pane>
           </el-tabs>
-          <el-button type="primary" class="add-disease-btn" @click="openAddDisease">添加病种</el-button>
+        </div>
+        <div
+          v-if="!isEmbedded && enabledDiseases.length && activeDiseaseTab"
+          class="save-bar save-bar--disease"
+        >
+          <el-button
+            type="primary"
+            size="large"
+            :loading="saving"
+            @click="saveDisease(activeDiseaseTab)"
+          >
+            保存{{
+              enabledDiseases.find((x) => x.dictCode === activeDiseaseTab)?.dictCodeDesc || ''
+            }}档案
+          </el-button>
         </div>
         <el-empty
           v-if="!enabledDiseases.length"
-          description="暂无病种档案，请点击右上角添加病种"
+          description="暂无病种档案，请在左侧点击「+ 添加病种」"
         />
-      </el-tab-pane>
-    </el-tabs>
+        </div>
+
         <div
           v-if="!isEmbedded && activeTab === 'basic' && basicSnapshotReady"
           class="basic-save-dock"
@@ -2252,6 +2327,8 @@ onBeforeUnmount(() => {
           <span v-else class="basic-save-dock-status">已保存</span>
           <el-button type="primary" :loading="saving" @click="saveBasic">保存基础档案</el-button>
         </div>
+      </div>
+    </div>
       </div>
 
       <aside v-if="!isEmbedded" class="archive-aside">
@@ -2328,15 +2405,142 @@ onBeforeUnmount(() => {
   padding-right: 4px;
 }
 
-.archive-main--basic-dock {
+.archive-main--basic-dock,
+.archive-main--disease-dock {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.archive-main--basic-dock .archive-tabs {
+.archive-main--disease-dock {
+  min-height: calc(100vh - 220px);
+}
+
+.archive-main--disease-dock .archive-workspace {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.archive-main--disease-dock .archive-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 24px;
+}
+
+.archive-main--disease-dock .archive-panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.archive-main--disease-dock .disease-tabs-bar {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.archive-workspace {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.archive-side-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 8px 0 24px;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-group-title {
+  padding: 4px 12px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink-700, #334155);
+  line-height: 1.3;
+}
+
+.nav-item {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-600, #475569);
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+/* 子菜单相对父级标题缩进 */
+.nav-group .nav-item:not(.nav-item--section) {
+  padding-left: 28px;
+  margin-left: 0;
+}
+
+.nav-item--add {
+  color: var(--brand-600, #1e63d9);
+  font-weight: 550;
+}
+
+.nav-item:hover {
+  color: var(--ink-800, #1e293b);
+  background: #f1f5f9;
+}
+
+.nav-item--add:hover {
+  color: var(--brand-700, #174db0);
+  background: var(--brand-50, #eaf2ff);
+}
+
+.nav-item.active {
+  color: var(--brand-600, #1e63d9);
+  background: var(--brand-50, #eaf2ff);
+  font-weight: 600;
+}
+
+.nav-group--active .nav-group-title {
+  color: var(--ink-800, #1e293b);
+}
+
+.archive-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px;
+  padding-bottom: 40px;
+  box-sizing: border-box;
+}
+
+.archive-main--basic-dock .archive-content {
+  /* 吸底「保存基础档案」栏高度 + 余量，避免过敏史表格被遮挡 */
+  padding-bottom: 100px;
+}
+
+.archive-panel {
+  min-width: 0;
+  padding-bottom: 8px;
 }
 
 .basic-save-dock {
@@ -2370,7 +2574,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-/* 与指标检验 sub-tabs 同构的胶囊 Tab */
+/* 病种内多病种切换：轻量胶囊，避免再与主导航冲突 */
 .hx-pill-tabs :deep(.el-tabs__header) {
   margin-bottom: 14px;
   border: none;
@@ -2398,52 +2602,24 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   background: #fff;
   padding: 6px;
-  box-shadow: var(--admin-shadow, 0 1px 2px rgba(15, 23, 42, 0.04));
 }
 
 .hx-pill-tabs :deep(.el-tabs__item) {
   height: auto !important;
   line-height: 1.25 !important;
-  padding: 8px 16px !important;
+  padding: 7px 14px !important;
   margin: 0 !important;
   border: none !important;
   border-radius: 7px;
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-600, #475569);
-  transition:
-    color 0.15s ease,
-    background 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.hx-pill-tabs :deep(.el-tabs__item:hover) {
-  color: var(--ink-800, #1e293b);
 }
 
 .hx-pill-tabs :deep(.el-tabs__item.is-active) {
-  color: #fff !important;
-  background: var(--brand-500, #2c7ef8);
-  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
-}
-
-.hx-pill-tabs :deep(.el-tabs__item:focus),
-.hx-pill-tabs :deep(.el-tabs__item:focus-visible) {
-  outline: none;
+  color: var(--brand-600, #1e63d9) !important;
+  background: var(--brand-50, #eaf2ff);
   box-shadow: none;
-}
-
-.hx-pill-tabs :deep(.el-tabs__item.is-active:focus),
-.hx-pill-tabs :deep(.el-tabs__item.is-active:focus-visible) {
-  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
-}
-
-.basic-sub-tabs :deep(.el-tabs__header) {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  padding-top: 2px;
-  background: var(--admin-bg, #f5f7fa);
 }
 
 .section-hint--block {
@@ -2455,15 +2631,12 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-.disease-tabs :deep(.el-tabs__header) {
-  padding-right: 108px;
+.disease-tabs--headless :deep(.el-tabs__header) {
+  display: none;
 }
 
-.add-disease-btn {
-  position: absolute;
-  top: 6px;
-  right: 0;
-  z-index: 2;
+.disease-tabs--headless :deep(.el-tabs__content) {
+  padding: 0;
 }
 
 .archive-body {
@@ -2576,15 +2749,18 @@ onBeforeUnmount(() => {
 }
 
 .section-card {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+  border: none;
+  background: transparent;
 }
 
 .section-card :deep(.el-card__header) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 20px;
-  background: #f8fafc;
+  padding: 8px 0 12px;
+  background: transparent;
+  border-bottom: 1px solid var(--admin-border, #e2e8f0);
 }
 
 .card-head-left {
@@ -2617,14 +2793,29 @@ onBeforeUnmount(() => {
 }
 
 .section-card :deep(.el-card__body) {
-  padding: 8px 20px 20px;
+  padding: 0;
+}
+
+.disease-card.section-card {
+  border: 1px solid var(--admin-border, #e2e8f0);
+  background: #fff;
+  border-radius: 8px;
+}
+
+.disease-card.section-card :deep(.el-card__header) {
+  padding: 12px 16px;
+  background: #f8fafc;
+}
+
+.disease-card.section-card :deep(.el-card__body) {
+  padding: 8px 16px 16px;
 }
 
 .archive-row {
   display: grid;
-  grid-template-columns: minmax(72px, 112px) minmax(0, 1fr);
-  gap: 12px 16px;
-  padding: 16px 0;
+  grid-template-columns: minmax(88px, 112px) minmax(0, 1fr);
+  gap: 10px 16px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--admin-border);
   align-items: flex-start;
 }
@@ -2659,6 +2850,26 @@ onBeforeUnmount(() => {
   gap: 8px 14px;
 }
 
+.illness-grid--3col {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.illness-grid--3col .illness-check {
+  align-items: flex-start;
+  height: auto;
+  white-space: normal;
+  margin-right: 0;
+  width: 100%;
+}
+
+.illness-grid--3col .illness-check :deep(.el-checkbox__label) {
+  white-space: normal;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .illness-check {
   margin-right: 0;
   height: auto;
@@ -2671,7 +2882,7 @@ onBeforeUnmount(() => {
 }
 
 .illness-other {
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
 .tag-select {
@@ -2743,10 +2954,19 @@ onBeforeUnmount(() => {
 .save-bar {
   position: sticky;
   bottom: 0;
-  padding: 16px 0 8px;
+  z-index: 10;
+  margin-top: 16px;
+  padding: 16px;
   display: flex;
   justify-content: flex-end;
-  background: linear-gradient(180deg, transparent, var(--admin-bg) 24%);
+  background: #fff;
+  border-top: 1px solid #eee;
+  box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.04);
+}
+
+.save-bar--disease {
+  flex: 0 0 auto;
+  margin-top: auto;
 }
 
 .disease-grid {
@@ -2783,6 +3003,23 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--admin-border);
 }
 
+.disease-pair--compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 28px;
+  justify-content: flex-start;
+}
+
+.disease-pair--compact .disease-pair-item {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 100%;
+  grid-template-columns: auto minmax(0, max-content);
+  gap: 8px 12px;
+  padding: 10px 0;
+}
+
 .disease-pair .archive-row {
   border-bottom: none;
 }
@@ -2790,6 +3027,15 @@ onBeforeUnmount(() => {
 .disease-select {
   width: 100%;
   max-width: 280px;
+}
+
+.disease-select--fixed {
+  width: 240px !important;
+  max-width: 240px;
+}
+
+.disease-select--fixed.el-date-editor {
+  width: 240px !important;
 }
 
 .disease-bp-row {
@@ -2860,6 +3106,11 @@ onBeforeUnmount(() => {
     position: static;
   }
 
+  .archive-workspace {
+    grid-template-columns: 168px minmax(0, 1fr);
+    gap: 12px;
+  }
+
   .summary-list {
     max-height: none;
   }
@@ -2879,12 +3130,42 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
+  .archive-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .archive-side-nav {
+    position: static;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .nav-group {
+    gap: 4px;
+  }
+
+  .nav-group-title {
+    padding-bottom: 4px;
+  }
+
   .archive-row {
     grid-template-columns: 1fr;
   }
   .disease-pair {
     grid-template-columns: 1fr;
+  }
+  .disease-pair--compact .disease-pair-item {
+    grid-template-columns: 1fr;
+  }
+  .disease-select--fixed,
+  .disease-select--fixed.el-date-editor {
+    width: 100% !important;
+    max-width: 100%;
+  }
+  .illness-grid--3col {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
   .lifestyle-field,
   .lifestyle-field--inline {
@@ -2893,6 +3174,12 @@ onBeforeUnmount(() => {
   .row-label {
     line-height: 1.4;
     padding-top: 0;
+  }
+}
+
+@media (max-width: 1100px) {
+  .illness-grid--3col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

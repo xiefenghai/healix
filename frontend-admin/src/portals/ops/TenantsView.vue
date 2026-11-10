@@ -12,7 +12,7 @@ const canWrite = isOpsSuperAdmin()
 
 const keyword = ref('')
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const total = ref(0)
 const loading = ref(false)
 const list = ref<TenantListItem[]>([])

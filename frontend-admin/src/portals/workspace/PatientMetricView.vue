@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api } from '../../shared/http'
+import { api, apiUpload } from '../../shared/http'
 import { formatHealthDataSource, isPatientSource } from '../../shared/health-data-source'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
+import { saveLabOcrDraft, type LabOcrDraft } from '../../shared/lab-ocr'
 import {
   abnormalLabel,
   evaluateAbnormal,
@@ -96,11 +97,63 @@ const LATEST_TYPE_ORDER = [
 ]
 
 const props = defineProps<{ peopleId?: string }>()
+const emit = defineEmits<{ ocrReady: [] }>()
 const route = useRoute()
+const router = useRouter()
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
+/** 驾驶舱抽屉等嵌入态：OCR 成功后交给父布局切到化验报告 */
+const embedded = computed(() => !!props.peopleId)
 
 const loading = ref(false)
 const saving = ref(false)
+const ocrLoading = ref(false)
+const ocrFileInputRef = ref<HTMLInputElement | null>(null)
+
+function openOcrPicker() {
+  ocrFileInputRef.value?.click()
+}
+
+async function onOcrFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !peopleId.value) return
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.warning('图片大小不能超过 5MB')
+    return
+  }
+  ocrLoading.value = true
+  try {
+    const res = await apiUpload<{ data: LabOcrDraft }>(
+      `/api/b/v1/patients/${peopleId.value}/lab-reports/ocr`,
+      file,
+    )
+    const data = res.data
+    if (!data.items?.length) {
+      const ignored = data.ignoredItems?.map((i) => i.rawName).join('、') || ''
+      ElMessage.warning(
+        ignored ? `未识别到可录入项目，已忽略：${ignored}` : '未识别到可录入的检验项目',
+      )
+      return
+    }
+    saveLabOcrDraft(data)
+    if (data.warnings?.length) {
+      ElMessage.info(data.warnings.join('；'))
+    }
+    if (embedded.value) {
+      emit('ocrReady')
+      return
+    }
+    await router.push({
+      path: `/workspace/patients/${peopleId.value}/observations/labs`,
+      query: { ...route.query, ocr: '1' },
+    })
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '识别失败')
+  } finally {
+    ocrLoading.value = false
+  }
+}
 const list = ref<Metric[]>([])
 const latest = ref<LatestSlot[]>([])
 const metricTypeOptions = ref<DictItem[]>([])
@@ -140,6 +193,19 @@ function dayKeyOf(v?: string) {
 function clockOf(v?: string) {
   if (!v) return ''
   return v.replace('T', ' ').slice(11, 16)
+}
+
+/** 按天节点：11-10 */
+function dayStamp(dayKey: string) {
+  if (!dayKey || dayKey === 'unknown') return '未知'
+  return dayKey.slice(5)
+}
+
+function refCellText(row: Metric) {
+  const ctx = contextText(row)
+  const range = rowJudge(row).rangeText
+  if (ctx && range) return `${ctx} ${range}`
+  return ctx || range || '—'
 }
 
 function metricSortIndex(metricType: string) {
@@ -584,151 +650,239 @@ onMounted(() => {
 
 <template>
   <div v-loading="loading" class="metric-page">
-    <el-card shadow="never" class="section-card">
-      <template #header>
+    <section class="entry-shell">
+      <header class="entry-card-head">
         <span class="section-title">就诊录入</span>
-      </template>
-      <el-form label-width="88px" class="entry-form" @keydown="onEntryKeydown">
-        <el-form-item label="测量时间">
-          <el-date-picker
-            v-model="form.recordedAt"
-            type="datetime"
-            value-format="YYYY-MM-DDTHH:mm"
-            format="YYYY-MM-DD HH:mm"
-            placeholder="测量时间"
-          />
-        </el-form-item>
-        <el-form-item label="血压">
-          <div class="inline-fields">
-            <el-select v-model="form.bpContext" style="width: 110px">
+        <button
+          type="button"
+          class="ocr-btn"
+          :disabled="ocrLoading || !peopleId"
+          @click="openOcrPicker"
+        >
+          <span v-if="ocrLoading" class="ocr-btn-loading">识别中…</span>
+          <span v-else>📷 上传化验单/OCR识别</span>
+        </button>
+        <input
+          ref="ocrFileInputRef"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          class="hidden-input"
+          @change="onOcrFileChange"
+        />
+      </header>
+
+      <el-form label-position="right" label-width="72px" class="entry-form" @keydown="onEntryKeydown">
+        <div class="entry-grid">
+          <el-form-item label="血压">
+            <div class="input-group">
+              <el-input-number
+                v-model="form.sys"
+                :min="0"
+                :max="300"
+                :controls="false"
+                placeholder="收缩压"
+                class="group-part"
+              />
+              <span class="group-divider" aria-hidden="true" />
+              <el-input-number
+                v-model="form.dia"
+                :min="0"
+                :max="200"
+                :controls="false"
+                placeholder="舒张压"
+                class="group-part"
+              />
+              <span class="group-addon">mmHg</span>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="指尖血糖">
+            <div class="input-group">
+              <el-select v-model="form.mealContext" class="group-prefix" placeholder="场景">
+                <el-option label="空腹" value="FASTING" />
+                <el-option label="餐后" value="POSTPRANDIAL" />
+                <el-option label="随机" value="RANDOM" />
+              </el-select>
+              <span class="group-divider" aria-hidden="true" />
+              <el-input-number
+                v-model="form.glucose"
+                :min="0"
+                :max="40"
+                :precision="1"
+                :step="0.1"
+                :controls="false"
+                class="group-part"
+              />
+              <span class="group-addon">mmol/L</span>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="心率">
+            <div class="input-group input-group--simple">
+              <el-input-number
+                v-model="form.heartRate"
+                :min="0"
+                :max="250"
+                :controls="false"
+                class="group-part"
+              />
+              <span class="group-addon">bpm</span>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="身高">
+            <div class="input-group input-group--simple">
+              <el-input-number
+                v-model="form.height"
+                :min="0"
+                :max="250"
+                :precision="1"
+                :controls="false"
+                class="group-part"
+              />
+              <span class="group-addon">cm</span>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="体重">
+            <div class="input-group input-group--simple">
+              <el-input-number
+                v-model="form.weight"
+                :min="0"
+                :max="300"
+                :precision="1"
+                :controls="false"
+                class="group-part"
+              />
+              <span class="group-addon">kg</span>
+              <span v-if="bmiDisplay" class="bmi">BMI {{ bmiDisplay }}</span>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="腰围">
+            <div class="input-group input-group--simple">
+              <el-input-number
+                v-model="form.waist"
+                :min="0"
+                :max="200"
+                :precision="1"
+                :controls="false"
+                class="group-part"
+              />
+              <span class="group-addon">cm</span>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="测量时间" class="entry-meta-item">
+            <el-date-picker
+              v-model="form.recordedAt"
+              type="datetime"
+              value-format="YYYY-MM-DDTHH:mm"
+              format="MM-DD HH:mm"
+              placeholder="测量时间"
+              class="field-fill"
+            />
+          </el-form-item>
+
+          <el-form-item label="测量场景" class="entry-meta-item">
+            <el-select v-model="form.bpContext" class="field-fill" placeholder="血压场景">
               <el-option label="诊室" value="CLINIC" />
               <el-option label="家庭" value="HOME" />
             </el-select>
-            <el-input-number v-model="form.sys" :min="0" :max="300" controls-position="right" placeholder="收缩压" />
-            <span>/</span>
-            <el-input-number v-model="form.dia" :min="0" :max="200" controls-position="right" placeholder="舒张压" />
-            <span class="unit">mmHg</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="指尖血糖">
-          <div class="inline-fields">
-            <el-select v-model="form.mealContext" style="width: 110px">
-              <el-option label="空腹" value="FASTING" />
-              <el-option label="餐后" value="POSTPRANDIAL" />
-              <el-option label="随机" value="RANDOM" />
-            </el-select>
-            <el-input-number
-              v-model="form.glucose"
-              :min="0"
-              :max="40"
-              :precision="1"
-              :step="0.1"
-              controls-position="right"
-            />
-            <span class="unit">mmol/L</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="身高/体重">
-          <div class="inline-fields">
-            <el-input-number v-model="form.height" :min="0" :max="250" :precision="1" controls-position="right" />
-            <span class="unit">cm</span>
-            <span v-if="heightFromPrefill" class="prefill-tag">沿用</span>
-            <el-input-number v-model="form.weight" :min="0" :max="300" :precision="1" controls-position="right" />
-            <span class="unit">kg</span>
-            <span v-if="bmiDisplay" class="bmi">BMI {{ bmiDisplay }}</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="腰围">
-          <div class="inline-fields">
-            <el-input-number v-model="form.waist" :min="0" :max="200" :precision="1" controls-position="right" />
-            <span class="unit">cm</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="心率">
-          <div class="inline-fields">
-            <el-input-number v-model="form.heartRate" :min="0" :max="250" controls-position="right" />
-            <span class="unit">bpm</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="form.note" maxlength="200" show-word-limit />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="saving" @click="submitEntry">保存录入</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
+          </el-form-item>
 
-    <el-card shadow="never" class="section-card">
-      <template #header>
-        <div class="card-head">
-          <span class="section-title">近期记录</span>
-          <el-radio-group v-model="listFilter" size="small">
-            <el-radio-button value="DEFAULT">默认指标</el-radio-button>
-            <el-radio-button value="OTHER">其它（步数/睡眠/体温）</el-radio-button>
-            <el-radio-button value="ALL">全部</el-radio-button>
-          </el-radio-group>
+          <el-form-item label="备注" class="entry-note">
+            <el-input
+              v-model="form.note"
+              type="textarea"
+              :rows="3"
+              maxlength="200"
+              show-word-limit
+              resize="none"
+              placeholder="可选备注"
+              class="note-input"
+            />
+          </el-form-item>
         </div>
-      </template>
-      <el-empty v-if="!recordGroups.length" description="暂无记录" :image-size="64" />
-      <div v-else class="record-days">
-        <section v-for="group in recordGroups" :key="group.key" class="day-group">
-          <div class="day-head">
-            <span v-if="group.relative" class="day-relative">{{ group.relative }}</span>
-            <span class="day-date">{{ group.dateText }}</span>
-            <span class="day-count">{{ group.count }} 条</span>
-          </div>
-          <div v-for="cluster in group.clusters" :key="cluster.key" class="time-cluster">
-            <div class="time-mark">
-              <span class="time-clock">{{ cluster.time }}</span>
-              <el-tag
-                v-if="cluster.sameSource"
-                :type="sourceTagType(cluster.source)"
-                size="small"
-                effect="plain"
-              >
-                {{ sourceLabel(cluster.source) }}
-              </el-tag>
-            </div>
-            <div class="time-rows">
-              <div
-                v-for="row in cluster.rows"
-                :key="row.id"
-                class="metric-row"
-                :class="{ 'metric-row--abnormal': rowJudge(row).abnormal }"
-              >
-                <span class="metric-name">{{ metricLabel(row.metricType) }}</span>
-                <span class="metric-value" :class="{ 'value-abnormal': rowJudge(row).abnormal }">
-                  {{ row.value }} {{ row.unit || '' }}
-                </span>
-                <span class="metric-ref">{{ rowJudge(row).rangeText || '—' }}</span>
-                <span class="metric-judge">
-                  <el-tag v-if="rowJudge(row).abnormal" type="danger" size="small" effect="dark">
-                    {{ abnormalLabel(rowJudge(row).flag) }}
-                  </el-tag>
-                  <span v-else-if="rowJudge(row).rangeText" class="normal-mark">正常</span>
-                  <span v-else class="ref-text">—</span>
-                </span>
-                <span class="metric-context">{{ contextText(row) || '—' }}</span>
-                <el-tag
-                  v-if="!cluster.sameSource"
-                  :type="sourceTagType(row.source)"
-                  size="small"
-                  effect="plain"
-                >
-                  {{ sourceLabel(row.source) }}
-                </el-tag>
-                <span v-else />
-                <span class="metric-actions">
-                  <el-button link type="primary" @click="openEdit(row)">更正</el-button>
-                  <el-button link type="danger" @click="removeRow(row)">删除</el-button>
-                </span>
+
+        <div class="entry-actions">
+          <el-button type="primary" class="save-btn" :loading="saving" @click="submitEntry">
+            保存录入
+          </el-button>
+        </div>
+      </el-form>
+    </section>
+
+    <section class="records-card">
+      <header class="records-card-head">
+        <span class="section-title">近期记录</span>
+        <el-radio-group v-model="listFilter" size="small" class="records-filter">
+          <el-radio-button value="DEFAULT">默认</el-radio-button>
+          <el-radio-button value="OTHER">其它</el-radio-button>
+          <el-radio-button value="ALL">全部</el-radio-button>
+        </el-radio-group>
+      </header>
+
+      <div class="records-scroll">
+        <div class="records-table-head">
+          <span class="head-day">日期</span>
+          <span class="col-time">时间 / 来源</span>
+          <span class="col-name">指标</span>
+          <span class="col-value">数值</span>
+          <span class="col-status">状态</span>
+          <span class="col-ref">参考范围</span>
+          <span class="col-actions">操作</span>
+        </div>
+
+        <el-empty v-if="!recordGroups.length" description="暂无记录" :image-size="48" />
+        <div v-else class="day-timeline">
+          <section v-for="group in recordGroups" :key="group.key" class="day-block">
+            <div class="day-side">
+              <div class="day-rail" aria-hidden="true">
+                <span class="day-dot" />
+              </div>
+              <div class="day-meta">
+                <span class="day-stamp">{{ dayStamp(group.key) }}</span>
+                <span v-if="group.relative" class="day-rel">{{ group.relative }}</span>
               </div>
             </div>
-          </div>
-        </section>
+            <div class="day-rows">
+              <template v-for="cluster in group.clusters" :key="cluster.key">
+                <div
+                  v-for="row in cluster.rows"
+                  :key="row.id"
+                  class="metric-line"
+                  :class="{ 'metric-line--abnormal': rowJudge(row).abnormal }"
+                >
+                  <div class="col-time">
+                    <span class="line-clock">{{ cluster.time }}</span>
+                    <span class="line-source">{{ sourceLabel(row.source) }}</span>
+                  </div>
+                  <span class="col-name">{{ metricLabel(row.metricType) }}</span>
+                  <span class="col-value" :class="{ 'value-abnormal': rowJudge(row).abnormal }">
+                    {{ row.value }}{{ row.unit ? ` ${row.unit}` : '' }}
+                  </span>
+                  <span class="col-status">
+                    <span v-if="rowJudge(row).abnormal" class="status-tag status-tag--bad">
+                      {{ abnormalLabel(rowJudge(row).flag) }}
+                    </span>
+                    <span v-else-if="rowJudge(row).rangeText" class="status-tag status-tag--ok">
+                      正常
+                    </span>
+                    <span v-else class="status-empty">—</span>
+                  </span>
+                  <span class="col-ref">{{ refCellText(row) }}</span>
+                  <span class="col-actions">
+                    <el-button link type="primary" @click="openEdit(row)">更正</el-button>
+                    <el-button link type="danger" @click="removeRow(row)">删除</el-button>
+                  </span>
+                </div>
+              </template>
+            </div>
+          </section>
+        </div>
       </div>
-    </el-card>
+    </section>
 
     <el-dialog v-model="editVisible" title="更正指标" width="480px" destroy-on-close>
       <el-form label-width="88px">
@@ -738,7 +892,7 @@ onMounted(() => {
             v-model="editing.value"
             :min="0"
             :precision="2"
-            controls-position="right"
+            :controls="false"
           />
           <span class="unit" style="margin-left: 8px">{{ editing.unit }}</span>
         </el-form-item>
@@ -778,19 +932,59 @@ onMounted(() => {
 <style scoped>
 .metric-page {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
   gap: 16px;
-}
-
-.section-card {
-  border-radius: var(--admin-radius, 12px);
   overflow: hidden;
 }
 
-.section-card :deep(.el-card__header) {
-  padding: 14px 18px;
+.entry-shell {
+  flex: 0 0 40%;
+  max-width: 40%;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.7);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  padding: 12px 14px 14px;
+  box-sizing: border-box;
+}
+
+.records-card {
+  flex: 1 1 60%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.7);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.records-card-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--ink-100, #f1f5f9);
+}
+
+.records-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 10px 12px;
 }
 
 .section-title {
@@ -800,185 +994,567 @@ onMounted(() => {
   letter-spacing: -0.01em;
 }
 
-.card-head {
+.entry-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-}
-
-.ref-text {
-  color: var(--admin-text-secondary, #64748b);
-  font-size: 12px;
-}
-
-.value-abnormal {
-  color: var(--admin-danger, #dc2626);
-  font-weight: 600;
-}
-
-.normal-mark {
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: 5px;
-  background: var(--teal-50);
-  color: #0f766e;
-}
-
-.record-days {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.day-group {
-  border: 1px solid var(--ink-100, #f1f5f9);
-  border-radius: 12px;
-  overflow: hidden;
-  background: #fff;
-}
-
-.day-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: #f8fafc;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--ink-100, #f1f5f9);
 }
 
-.day-relative {
+.ocr-btn {
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: #e6f7ff;
+  color: var(--brand-700, #174db0);
   font-size: 13px;
-  font-weight: 700;
-  color: var(--ink-900, #0f172a);
+  font-weight: 550;
+  line-height: 1.3;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
-.day-date {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-700, #334155);
+.ocr-btn:hover:not(:disabled) {
+  background: #d6efff;
+  border-color: var(--brand-200, #bfdbfe);
+  color: var(--brand-700, #174db0);
 }
 
-.day-count {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--ink-400, #94a3b8);
+.ocr-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
-.time-cluster {
+.ocr-btn-loading {
+  letter-spacing: 0.02em;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.records-filter {
+  flex: 0 0 auto;
+}
+
+/* 日期侧栏 + 6 列表格：时间/来源 | 指标 | 数值 | 状态 | 参考 | 操作 */
+.records-table-head {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   display: grid;
-  grid-template-columns: 108px 1fr;
-  gap: 8px;
-  padding: 12px 14px;
+  grid-template-columns: 108px 120px 80px 80px 52px minmax(96px, 1fr) 88px;
+  column-gap: 10px;
+  align-items: center;
+  margin: 0 -10px;
+  padding: 8px 10px;
+  background: #fff;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-500, #64748b);
 }
 
-.time-cluster + .time-cluster {
-  border-top: 1px dashed #e8eef2;
+.records-table-head .col-actions {
+  text-align: right;
 }
 
-.time-mark {
+.day-timeline {
+  position: relative;
+  padding: 6px 0 4px;
+}
+
+/* 整条时间轴一根竖线贯穿，避免按天分段断开 */
+.day-timeline::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 10px;
+  bottom: 14px;
+  width: 1px;
+  background: #d0d5dd;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.day-block {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: stretch;
+  padding: 8px 0 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.day-side {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  align-self: stretch;
+  padding-top: 6px;
+}
+
+.day-rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-self: stretch;
+  min-height: 100%;
+}
+
+.day-dot {
+  position: relative;
+  z-index: 2;
+  width: 8px;
+  height: 8px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--brand-500, #2c7ef8);
+  box-sizing: border-box;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.day-meta {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  padding-top: 2px;
-}
-
-.time-clock {
-  font-size: 15px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-900, #0f172a);
-}
-
-.time-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
 }
 
-.metric-row {
+.day-stamp {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-800, #1e293b);
+  line-height: 1.3;
+}
+
+.day-rel {
+  font-size: 11px;
+  color: var(--brand-600, #1e63d9);
+  font-weight: 550;
+}
+
+.day-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.metric-line {
   display: grid;
-  grid-template-columns: minmax(72px, 1.1fr) minmax(88px, 1fr) minmax(88px, 1fr) 72px 56px auto minmax(96px, auto);
-  gap: 8px;
+  grid-template-columns: 120px 80px 80px 52px minmax(96px, 1fr) 88px;
+  column-gap: 10px;
   align-items: center;
-  padding: 8px 10px;
-  border-radius: 8px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 6px;
   background: #f8fafc;
 }
 
-.metric-row--abnormal {
+.metric-line--abnormal {
   background: #fef2f2;
 }
 
-.metric-name {
-  font-weight: 600;
-  color: var(--ink-800, #1e293b);
+.metric-line .col-time {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
-.metric-value {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-.metric-ref,
-.metric-context {
+.line-clock {
   font-size: 12px;
-  color: var(--admin-text-secondary, #64748b);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-800, #1e293b);
+  line-height: 1.2;
 }
 
-.metric-actions {
+.line-source {
+  font-size: 10px;
+  color: #a0aec0;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-line .col-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-700, #334155);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-line .col-value {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-900, #0f172a);
+  white-space: nowrap;
+}
+
+.value-abnormal {
+  color: var(--admin-danger, #dc2626) !important;
+}
+
+.metric-line .col-status {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 18px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.status-tag--bad {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.status-tag--ok {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.status-empty {
+  font-size: 11px;
+  color: #cbd5e1;
+}
+
+.metric-line .col-ref {
+  font-size: 11px;
+  color: #a8b0bd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-line .col-actions {
   display: flex;
   justify-content: flex-end;
   white-space: nowrap;
 }
 
-@media (max-width: 960px) {
-  .time-cluster {
-    grid-template-columns: 1fr;
+.metric-line .col-actions :deep(.el-button) {
+  padding: 0 3px;
+  height: 20px;
+  font-size: 11px;
+}
+
+@media (max-width: 1100px) {
+  .metric-page {
+    flex-direction: column;
+    height: auto;
+    overflow: visible;
   }
 
-  .metric-row {
-    grid-template-columns: 1fr 1fr;
+  .entry-shell,
+  .records-card {
+    flex: none;
+    max-width: none;
+    width: 100%;
   }
 
-  .metric-actions {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
+  .records-card {
+    max-height: 58vh;
+  }
+
+  .records-table-head {
+    grid-template-columns: 84px 100px 68px 68px 44px minmax(72px, 1fr) 72px;
+    column-gap: 6px;
+  }
+
+  .day-block {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+
+  .metric-line {
+    grid-template-columns: 100px 68px 68px 44px minmax(72px, 1fr) 72px;
+    column-gap: 6px;
   }
 }
 
 .entry-form {
-  max-width: 720px;
+  width: 100%;
 }
 
-.inline-fields {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+.entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+  align-items: start;
 }
 
-.unit {
-  color: var(--admin-text-secondary, #666);
+.entry-grid > :deep(*) {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.entry-note {
+  grid-column: 1 / -1;
+  justify-self: stretch;
+}
+
+.entry-meta-item :deep(.el-form-item__label) {
+  font-size: 13px;
+  color: var(--ink-500, #64748b);
+  font-weight: 450;
+}
+
+.entry-meta-item :deep(.el-input__wrapper),
+.entry-meta-item :deep(.el-select__wrapper),
+.entry-meta-item :deep(.el-date-editor .el-input__wrapper) {
   font-size: 13px;
 }
 
-.bmi {
-  margin-left: 8px;
-  color: var(--brand-500);
-  font-weight: 600;
+.entry-form :deep(.el-form-item) {
+  margin-bottom: 0;
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8f9fa;
+  box-sizing: border-box;
 }
 
-.prefill-tag {
+.entry-form :deep(.entry-note) {
+  background: #f8f9fa;
+  width: 100%;
+}
+
+.entry-form :deep(.entry-note .el-form-item__content) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.entry-form :deep(.entry-note .el-textarea),
+.entry-form :deep(.entry-note .note-input) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.entry-form :deep(.el-form-item__label) {
+  width: 72px !important;
+  flex: 0 0 72px;
+  margin-right: 8px;
+  padding: 0;
+  height: 36px;
+  line-height: 36px;
+  color: var(--ink-600, #475569);
+  font-weight: 500;
+  text-align: right;
+  box-sizing: border-box;
+}
+
+.entry-form :deep(.el-form-item__content) {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 36px;
+  margin-left: 0 !important;
+}
+
+/* 复合输入组：统一外框、等高、单位右镶嵌 */
+.input-group {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.input-group:focus-within {
+  border-color: var(--brand-500, #2c7ef8);
+}
+
+.input-group--simple .group-part {
+  flex: 1 1 auto;
+}
+
+.group-prefix {
+  flex: 0 0 76px;
+  width: 76px;
+}
+
+.group-part {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto !important;
+}
+
+.group-divider {
+  flex: 0 0 1px;
+  width: 1px;
+  align-self: stretch;
+  background: #e8e8e8;
+}
+
+.group-addon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
   font-size: 12px;
-  color: var(--ink-400, #94a3b8);
+  color: #999;
+  background: #fafafa;
+  border-left: 1px solid #eee;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.bmi {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px 0 0;
+  color: var(--brand-600, #1e63d9);
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  background: #fafafa;
+}
+
+.unit {
+  color: #999;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.entry-form :deep(.field-fill) {
+  width: 100%;
+}
+
+.entry-form :deep(.el-input-number) {
+  width: 100%;
+}
+
+.entry-form :deep(.el-input-number .el-input__inner) {
+  text-align: left;
+  height: 34px;
+}
+
+.entry-form :deep(.el-input__wrapper),
+.entry-form :deep(.el-select__wrapper),
+.entry-form :deep(.el-date-editor.el-input__wrapper),
+.entry-form :deep(.el-date-editor .el-input__wrapper) {
+  min-height: 36px;
+  height: 36px;
+  padding-left: 11px;
+  padding-right: 11px;
+  border-radius: 6px;
+  box-shadow: none !important;
+  border: 1px solid #d9d9d9;
+  background: #fff;
+}
+
+.entry-form :deep(.el-input__wrapper:hover),
+.entry-form :deep(.el-select__wrapper:hover) {
+  border-color: #bfbfbf;
+}
+
+.entry-form :deep(.el-input__wrapper.is-focus),
+.entry-form :deep(.el-select__wrapper.is-focused),
+.entry-form :deep(.el-select__wrapper.is-hovering:not(.is-focused)) {
+  box-shadow: none !important;
+}
+
+.entry-form :deep(.el-input__wrapper.is-focus),
+.entry-form :deep(.el-select__wrapper.is-focused) {
+  border-color: var(--brand-500, #2c7ef8);
+}
+
+/* 复合组内部：去掉各自边框，交给外框 */
+.entry-form :deep(.input-group .el-input__wrapper),
+.entry-form :deep(.input-group .el-select__wrapper) {
+  height: 34px;
+  min-height: 34px;
+  border: none !important;
+  border-radius: 0;
+  box-shadow: none !important;
+  background: transparent;
+}
+
+.entry-form :deep(.input-group .group-prefix .el-select__wrapper) {
+  background: #fafafa;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+
+.entry-form :deep(.entry-note .el-textarea__inner) {
+  height: 80px !important;
+  min-height: 80px !important;
+  max-height: 80px !important;
+  border-radius: 6px;
+  box-shadow: none !important;
+  border: 1px solid #d9d9d9;
+  resize: none;
+}
+
+.entry-actions {
+  display: flex;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ink-100, #f1f5f9);
+  box-shadow: 0 -6px 12px -10px rgba(15, 23, 42, 0.12);
+}
+
+.save-btn {
+  width: 100%;
+  height: 36px;
 }
 
 .metric-page :deep(.el-empty) {
   padding: 28px 12px;
+}
+
+@media (max-width: 720px) {
+  .entry-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .entry-actions {
+    justify-content: stretch;
+  }
+
+  .save-btn {
+    width: 100%;
+  }
 }
 </style>

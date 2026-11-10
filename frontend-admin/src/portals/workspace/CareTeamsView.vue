@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { ElMessage, type FormInstance } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName, getStaffId } from '../../shared/http'
 import { StaffRole } from '../../shared/enums'
+import DeleteCareTeamDialog, { type DeleteCareTeamTarget } from './DeleteCareTeamDialog.vue'
 
 interface CareTeamListItem {
   id: string
@@ -212,26 +213,19 @@ function openDetail(row: CareTeamListItem) {
 
 function onCardCommand(cmd: string, row: CareTeamListItem) {
   if (cmd === 'detail' || cmd === 'members') openDetail(row)
-  else if (cmd === 'delete') void deleteTeam(row)
+  else if (cmd === 'delete') openDeleteTeam(row)
 }
 
-async function deleteTeam(row: CareTeamListItem) {
-  try {
-    await ElMessageBox.confirm(
-      `确认删除健管组「${row.name}」？组成员关系将解除，机构患者归属保留。`,
-      '删除健管组',
-      { type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await api(`/api/b/v1/care-teams/${row.id}`, { method: 'DELETE' })
-    ElMessage.success('已删除')
-    await load()
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '删除失败')
-  }
+const deleteDialogOpen = ref(false)
+const deleteTarget = ref<DeleteCareTeamTarget | null>(null)
+
+function openDeleteTeam(row: CareTeamListItem) {
+  deleteTarget.value = { id: row.id, name: row.name }
+  deleteDialogOpen.value = true
+}
+
+async function onTeamDeleted() {
+  await load()
 }
 
 onMounted(async () => {
@@ -488,6 +482,12 @@ watch(keyword, () => {
         <el-button type="primary" :loading="creating" @click="submitCreate">确定创建</el-button>
       </template>
     </el-dialog>
+
+    <DeleteCareTeamDialog
+      v-model="deleteDialogOpen"
+      :team="deleteTarget"
+      @deleted="onTeamDeleted"
+    />
   </div>
 </template>
 

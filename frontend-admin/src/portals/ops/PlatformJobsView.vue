@@ -56,7 +56,7 @@ const logJob = ref<JobDef | null>(null)
 const logLoading = ref(false)
 const logList = ref<JobRun[]>([])
 const logPage = ref(1)
-const logPageSize = ref(20)
+const logPageSize = ref(10)
 const logTotal = ref(0)
 
 const runningCode = ref<string | null>(null)

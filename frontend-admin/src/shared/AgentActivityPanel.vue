@@ -122,7 +122,7 @@ function humanizeDetail(detail?: string) {
 function humanizeToolTitle(title?: string, done = false) {
   const raw = String(title || '').trim()
   if (!raw) return done ? '已完成' : '正在处理…'
-  if (/^(DeepSeek|OpenAI|GPT-?4|Claude|Qwen)$/i.test(raw) || raw === '临床方案推理') {
+  if (/^(DeepSeek|OpenAI|GPT-?4|Claude|Qwen)$/i.test(raw) || raw === '方案推理') {
     return done ? '已综合患者数据与指南起草' : '正在综合患者数据与指南起草…'
   }
   const cleaned = humanizeDetail(raw)

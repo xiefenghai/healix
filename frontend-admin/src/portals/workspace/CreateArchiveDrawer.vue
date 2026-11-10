@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ElMessage,
   ElMessageBox,
-  type DrawerProps,
+  type DialogProps,
   type FormInstance,
   type FormRules,
   type InputInstance,
 } from 'element-plus'
 import { api } from '../../shared/http'
+import { markBirthdayEstimated } from '../../shared/birthday-estimated'
 
 export interface CreateArchivePreset {
   name?: string | null
@@ -24,6 +25,8 @@ export interface CreateArchiveResult {
   careTeamAssigned: boolean
   /** 已入组时的健管组 id，便于左栏展开 */
   careTeamId?: string | null
+  /** 生日是否由年龄推算（YYYY-01-01） */
+  birthdayEstimated?: boolean
 }
 
 interface DuplicateCandidate {
@@ -53,13 +56,55 @@ const props = defineProps<{
   /** 从某健管组「+」进入：建档成功后自动入该组，跳过分配步 */
   defaultCareTeamId?: string | null
   defaultCareTeamName?: string | null
+  /**
+   * 局部挂载点：CSS 选择器或 HTMLElement（如驾驶舱中间栏）。
+   * 有值且已解析到节点时，遮罩/弹窗仅覆盖该容器；否则挂 body。
+   */
+  mountSelector?: string | HTMLElement | null
 }>()
+
+/**
+ * Teleport 目标须在挂载前存在；同树内的 #cockpit-workbench 首帧可能尚未入库。
+ * 先挂 body，nextTick / 打开时再解析到真实容器，避免 Vue warn。
+ */
+const dialogAppendTo = ref<string | HTMLElement>('body')
+
+function syncDialogAppendTo() {
+  const raw = props.mountSelector
+  if (!raw) {
+    dialogAppendTo.value = 'body'
+    return
+  }
+  if (typeof raw !== 'string') {
+    dialogAppendTo.value = raw
+    return
+  }
+  const sel = raw.trim()
+  if (!sel || sel === 'body') {
+    dialogAppendTo.value = 'body'
+    return
+  }
+  const el = typeof document !== 'undefined' ? document.querySelector(sel) : null
+  dialogAppendTo.value = el instanceof HTMLElement ? el : 'body'
+}
+
+const scopedToWorkbench = computed(
+  () => !!props.mountSelector && dialogAppendTo.value !== 'body',
+)
+const dialogModalClass = computed(() =>
+  [
+    'create-archive-dialog-overlay',
+    scopedToWorkbench.value ? 'create-archive-dialog-overlay--scoped' : '',
+  ]
+    .filter(Boolean)
+    .join(' '),
+)
 
 const emit = defineEmits<{
   'update:modelValue': [boolean]
   /** form | assign，供父级改输入框提示 */
   phase: [phase: 'form' | 'assign']
-  /** 建档已落库、进入分配步（尚未关抽屉） */
+  /** 建档已落库、进入分配步（尚未关弹窗） */
   archived: [payload: { peopleId: string; displayName: string }]
   /** 分配步确认或暂不分配后关闭 */
   created: [result: CreateArchiveResult]
@@ -68,6 +113,21 @@ const emit = defineEmits<{
 const visible = computed({
   get: () => props.modelValue,
   set: (v: boolean) => emit('update:modelValue', v),
+})
+
+onMounted(() => {
+  void nextTick(syncDialogAppendTo)
+})
+
+watch(
+  () => props.mountSelector,
+  () => {
+    void nextTick(syncDialogAppendTo)
+  },
+)
+
+watch(visible, (open) => {
+  if (open) syncDialogAppendTo()
 })
 
 const IDENTITY_OPTIONS = [
@@ -89,7 +149,22 @@ function emptyForm() {
 
 const formRef = ref<FormInstance>()
 const nameInputRef = ref<InputInstance>()
+const birthdayPickerRef = ref<unknown>(null)
 const form = ref(emptyForm())
+/** 失焦校验专用：空值也要显示范围提示（而非仅「请选择日期」） */
+const birthdayBlurInvalid = ref(false)
+/** date=日历；age=仅输入年龄并推算 YYYY-01-01 */
+const birthdayInputMode = ref<'date' | 'age'>('date')
+const ageInput = ref('')
+const ageError = ref('')
+/** 当前 birthday 是否由年龄推算（提交后仍回显「估算」） */
+const birthdayEstimated = ref(false)
+
+const estimatedBirthdayPreview = computed(() => {
+  const age = parseAgeInput(ageInput.value)
+  if (age == null) return ''
+  return ageToBirthday(age)
+})
 const showIdentity = ref(false)
 const submitting = ref(false)
 const duplicates = ref<DuplicateCandidate[]>([])
@@ -114,17 +189,11 @@ const assignRules: FormRules = {
   teamId: [{ required: true, message: '请选择健管组', trigger: 'change' }],
 }
 
-const drawerTitle = computed(() =>
+const dialogTitle = computed(() =>
   step.value === 'assign' ? '分配健管组' : '患者建档',
 )
 
-const formHint = computed(() => {
-  const team = (props.defaultCareTeamName || '').trim()
-  if (team) {
-    return `填写必填项即可建档，创建后将自动加入「${team}」。`
-  }
-  return '填写必填项即可建档，或直接在左侧对话中发我信息。'
-})
+const formHintTeam = computed(() => (props.defaultCareTeamName || '').trim())
 
 async function joinCareTeam(peopleId: string, careTeamId: string): Promise<boolean> {
   try {
@@ -147,8 +216,86 @@ watch(archiveParsed, (v) => {
   if (!v) return
   form.value.gender = v.gender
   form.value.birthday = v.birthday
+  birthdayInputMode.value = 'date'
+  birthdayEstimated.value = false
+  ageInput.value = ''
+  ageError.value = ''
   formRef.value?.clearValidate(['gender', 'birthday'])
 })
+
+function parseAgeInput(raw: string): number | null {
+  const text = (raw || '').trim()
+  if (!text || !/^\d+$/.test(text)) return null
+  const n = Number(text)
+  if (!Number.isInteger(n) || n < 0 || n > 120) return null
+  return n
+}
+
+function ageToBirthday(age: number): string {
+  const year = new Date().getFullYear() - age
+  return `${year}-01-01`
+}
+
+function switchBirthdayMode() {
+  if (archiveParsed.value) return
+  if (birthdayInputMode.value === 'date') {
+    birthdayInputMode.value = 'age'
+    birthdayBlurInvalid.value = false
+    ageError.value = ''
+    if (form.value.birthday && isValidBirthday(form.value.birthday)) {
+      const y = Number(String(form.value.birthday).slice(0, 4))
+      const age = new Date().getFullYear() - y
+      if (age >= 0 && age <= 120) ageInput.value = String(age)
+    }
+    void formRef.value?.clearValidate('birthday')
+    return
+  }
+  birthdayInputMode.value = 'date'
+  ageError.value = ''
+  // 切回日期时保留已推算的 birthday，但允许用户改精确日
+}
+
+watch(birthdayInputMode, (mode) => {
+  if (mode === 'date') bindBirthdayNativeInput()
+  else unbindBirthdayNativeInput()
+})
+
+onUnmounted(() => unbindBirthdayNativeInput())
+
+function onAgeInput(v: string | number) {
+  ageInput.value = String(v ?? '')
+    .replace(/\D/g, '')
+    .slice(0, 3)
+  ageError.value = ''
+}
+
+function onAgeBlur() {
+  const raw = ageInput.value.trim()
+  if (!raw) {
+    ageError.value = ''
+    form.value.birthday = ''
+    birthdayEstimated.value = false
+    void formRef.value?.validateField('birthday')
+    return
+  }
+  if (!/^\d+$/.test(raw)) {
+    ageError.value = '请输入 0～120 的整数年龄'
+    form.value.birthday = ''
+    birthdayEstimated.value = false
+    return
+  }
+  const n = Number(raw)
+  if (n < 0 || n > 120) {
+    ageError.value = '请输入 0～120 的整数年龄'
+    form.value.birthday = ''
+    birthdayEstimated.value = false
+    return
+  }
+  ageError.value = ''
+  form.value.birthday = ageToBirthday(n)
+  birthdayEstimated.value = true
+  void formRef.value?.clearValidate('birthday')
+}
 
 function parseIdCard(raw: string) {
   const id = (raw || '').trim().toUpperCase()
@@ -174,31 +321,174 @@ function parseIdCard(raw: string) {
   return { birthday, gender }
 }
 
+const BIRTHDAY_RANGE_HINT = '请输入正确的日期范围（1900年-至今）'
+
 function disabledBirthdayDate(d: Date) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const year = d.getFullYear()
+  if (year < 1900 || year > today.getFullYear()) return true
+  const x = new Date(year, d.getMonth(), d.getDate())
   return x.getTime() > today.getTime()
+}
+
+/** 19900101 / 1990-01-01 / 1990/01/01 → YYYY-MM-DD；无法识别返回 null */
+function formatCompactBirthday(raw: string): string | null {
+  const text = (raw || '').trim()
+  if (!text) return null
+  const digits = text.replace(/\D/g, '')
+  if (digits.length === 8) {
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`
+  }
+  const normalized = text.replace(/[/.]/g, '-')
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) {
+    const [y, m, d] = normalized.split('-')
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  return null
+}
+
+function isValidBirthday(value: unknown): boolean {
+  if (value == null || value === '') return false
+  const raw = formatCompactBirthday(String(value)) || String(value).trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false
+  const d = new Date(`${raw}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return false
+  const [y, m, day] = raw.split('-').map(Number)
+  if (d.getFullYear() !== y || d.getMonth() + 1 !== m || d.getDate() !== day) return false
+  if (y < 1900) return false
+  return !disabledBirthdayDate(d)
+}
+
+function readBirthdayInputEl(): HTMLInputElement | null {
+  // 优先用已绑定的原生 input，避免 EP 组件 $el 形态不一致
+  if (birthdayNativeInputEl?.isConnected) return birthdayNativeInputEl
+  const inst = birthdayPickerRef.value as
+    | { $el?: unknown; input?: HTMLInputElement | { $el?: unknown } }
+    | null
+    | undefined
+  if (!inst) return null
+  // Element Plus DatePicker 可能暴露 input 组件/节点
+  const exposed = inst.input
+  if (exposed instanceof HTMLInputElement) return exposed
+  if (exposed && typeof exposed === 'object' && exposed.$el instanceof HTMLInputElement) {
+    return exposed.$el
+  }
+  const root = inst.$el
+  if (!(root instanceof Element)) return null
+  return (
+    (root.querySelector('input.el-input__inner') as HTMLInputElement | null) ||
+    (root.querySelector('input') as HTMLInputElement | null)
+  )
+}
+
+let birthdayNativeInputEl: HTMLInputElement | null = null
+
+/** 连续输入 8 位数字时即时格式化为 YYYY-MM-DD */
+function onBirthdayNativeInput(e: Event) {
+  const input = e.target as HTMLInputElement
+  const raw = input.value || ''
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length !== 8) return
+  const formatted = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`
+  input.value = formatted
+  birthdayBlurInvalid.value = false
+  birthdayEstimated.value = false
+  if (isValidBirthday(formatted)) {
+    form.value.birthday = formatted
+    void formRef.value?.clearValidate('birthday')
+  } else {
+    // 先展示格式化结果，失焦时再严格校验清空
+    form.value.birthday = formatted
+  }
+}
+
+function unbindBirthdayNativeInput() {
+  if (!birthdayNativeInputEl) return
+  birthdayNativeInputEl.removeEventListener('input', onBirthdayNativeInput)
+  birthdayNativeInputEl = null
+}
+
+function bindBirthdayNativeInput() {
+  unbindBirthdayNativeInput()
+  const attach = (tries = 0) => {
+    const input = readBirthdayInputEl()
+    if (!input) {
+      if (tries < 8) void nextTick(() => attach(tries + 1))
+      return
+    }
+    birthdayNativeInputEl = input
+    input.addEventListener('input', onBirthdayNativeInput)
+  }
+  void nextTick(() => attach())
+}
+
+function clearBirthdayWithError() {
+  birthdayBlurInvalid.value = true
+  form.value.birthday = ''
+  const input = readBirthdayInputEl()
+  if (input) input.value = ''
+  void nextTick(() => {
+    void formRef.value?.validateField('birthday')
+  })
+}
+
+/** 面板点选或解析成功后的值校验 */
+function onBirthdayPicked(value: string | null) {
+  birthdayBlurInvalid.value = false
+  if (!value) return
+  const formatted = formatCompactBirthday(value) || value
+  if (isValidBirthday(formatted)) {
+    form.value.birthday = formatted
+    birthdayEstimated.value = false
+    void formRef.value?.clearValidate('birthday')
+    return
+  }
+  clearBirthdayWithError()
+}
+
+/** 失焦：智能格式化 + 严格范围校验；非法则清空并红框提示 */
+function onBirthdayBlur() {
+  const input = readBirthdayInputEl()
+  const raw = (input?.value || form.value.birthday || '').trim()
+  if (!raw) {
+    birthdayBlurInvalid.value = false
+    void formRef.value?.validateField('birthday')
+    return
+  }
+  const formatted = formatCompactBirthday(raw)
+  if (!formatted || !isValidBirthday(formatted)) {
+    clearBirthdayWithError()
+    return
+  }
+  birthdayBlurInvalid.value = false
+  form.value.birthday = formatted
+  birthdayEstimated.value = false
+  if (input && input.value !== formatted) input.value = formatted
+  void formRef.value?.clearValidate('birthday')
 }
 
 const rules: FormRules = {
   name: [{ required: true, whitespace: true, message: '请输入姓名', trigger: 'blur' }],
   gender: [{ required: true, message: '请选择性别', trigger: 'change' }],
   birthday: [
-    { required: true, message: '请选择日期', trigger: 'change' },
     {
       validator: (_rule, value, callback) => {
-        if (!value) {
-          callback()
+        if (birthdayBlurInvalid.value) {
+          callback(new Error(BIRTHDAY_RANGE_HINT))
           return
         }
-        if (disabledBirthdayDate(new Date(value))) {
-          callback(new Error('出生日期不能晚于今天'))
+        if (!value) {
+          callback(new Error('请选择日期'))
+          return
+        }
+        if (!isValidBirthday(value)) {
+          callback(new Error(BIRTHDAY_RANGE_HINT))
           return
         }
         callback()
       },
-      trigger: 'change',
+      trigger: ['change', 'blur'],
     },
   ],
   mobile: [
@@ -250,11 +540,28 @@ function resetAssignState() {
   assigning.value = false
 }
 
+/** 流程词/脏缓存不得进姓名框；未明确抽到姓名时保持空白 */
+function sanitizePresetName(raw?: string | null): string {
+  const name = String(raw || '').trim()
+  if (!name) return ''
+  if (
+    /^(患者|客户|建档|新建|录入|登记|姓名|本人|手机|电话|出生|日期|待补充|未填写|分组|未分组|待分组|健管组|分配|批量|确认|创建|表单)$/.test(
+      name,
+    ) ||
+    name.includes('分组') ||
+    name.includes('健管')
+  ) {
+    return ''
+  }
+  return name
+}
+
 function applyPreset() {
   const next = emptyForm()
   const p = props.preset
   if (p) {
-    if (p.name?.trim()) next.name = p.name.trim()
+    const name = sanitizePresetName(p.name)
+    if (name) next.name = name
     if (p.gender === 'MALE' || p.gender === 'FEMALE' || p.gender === 'UNKNOWN') {
       next.gender = p.gender
     }
@@ -263,6 +570,11 @@ function applyPreset() {
   }
   form.value = next
   showIdentity.value = false
+  birthdayBlurInvalid.value = false
+  birthdayInputMode.value = 'date'
+  ageInput.value = ''
+  ageError.value = ''
+  birthdayEstimated.value = false
   duplicates.value = []
   duplicateVisible.value = false
   resetAssignState()
@@ -275,6 +587,9 @@ watch(
     if (open) {
       applyPreset()
       emit('phase', 'form')
+      if (birthdayInputMode.value === 'date') bindBirthdayNativeInput()
+    } else {
+      unbindBirthdayNativeInput()
     }
   },
 )
@@ -311,13 +626,14 @@ const formDirty = computed(() => {
     f.name.trim() ||
     f.gender ||
     f.birthday ||
+    ageInput.value.trim() ||
     f.mobile.trim() ||
     f.identityValue.trim() ||
     showIdentity.value
   )
 })
 
-/** 结束建档流程：通知父级刷新左栏，再收起抽屉 */
+/** 结束建档流程：通知父级刷新左栏，再关闭弹窗 */
 function emitCreatedAndClose(careTeamAssigned: boolean, careTeamId?: string | null) {
   const peopleId = createdPeopleId.value
   const displayName = createdDisplayName.value
@@ -328,12 +644,19 @@ function emitCreatedAndClose(careTeamAssigned: boolean, careTeamId?: string | nu
   createdPeopleId.value = ''
   allowCloseOnce.value = true
   if (peopleId) {
-    emit('created', { peopleId, displayName, careTeamAssigned, careTeamId: teamId })
+    if (birthdayEstimated.value) markBirthdayEstimated(peopleId)
+    emit('created', {
+      peopleId,
+      displayName,
+      careTeamAssigned,
+      careTeamId: teamId,
+      birthdayEstimated: birthdayEstimated.value,
+    })
   }
   visible.value = false
 }
 
-const beforeClose: DrawerProps['beforeClose'] = (done) => {
+const beforeClose: DialogProps['beforeClose'] = (done) => {
   if (allowCloseOnce.value) {
     allowCloseOnce.value = false
     done()
@@ -363,7 +686,7 @@ const beforeClose: DrawerProps['beforeClose'] = (done) => {
   })
     .then(() => done())
     .catch(() => {
-      /* 留在抽屉 */
+      /* 留在弹窗 */
     })
 }
 
@@ -382,13 +705,26 @@ async function focusFirstInvalid() {
   }
   // 性别/日期为选择器，滚动到表单顶部附近即可
   const err = document.querySelector(
-    '.create-archive-drawer .el-form-item.is-error',
+    '.create-archive-dialog .el-form-item.is-error',
   ) as HTMLElement | null
   err?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
 async function submit() {
   if (submitting.value) return
+  if (birthdayInputMode.value === 'age') {
+    onAgeBlur()
+    if (ageError.value) {
+      void focusFirstInvalid()
+      return
+    }
+  } else {
+    onBirthdayBlur()
+    if (birthdayBlurInvalid.value) {
+      void focusFirstInvalid()
+      return
+    }
+  }
   if (showIdentity.value && form.value.identityValue.trim()) {
     try {
       await formRef.value?.validateField('identityValue')
@@ -615,6 +951,7 @@ async function createArchive(
       visible.value = false
       return
     }
+    if (birthdayEstimated.value) markBirthdayEstimated(peopleId)
     createdPeopleId.value = peopleId
     createdDisplayName.value = displayName
     // 从指定组「+」进入：直接入该组
@@ -660,156 +997,253 @@ function duplicateLabel(d: DuplicateCandidate) {
 </script>
 
 <template>
-  <el-drawer
+  <el-dialog
     v-model="visible"
-    :title="drawerTitle"
-    size="400px"
+    :title="dialogTitle"
+    width="560px"
+    align-center
     destroy-on-close
-    append-to-body
-    class="create-archive-drawer"
+    :append-to="dialogAppendTo"
+    :append-to-body="false"
+    :lock-scroll="!scopedToWorkbench"
+    class="create-archive-dialog healix-form-dialog"
+    :modal-class="dialogModalClass"
+    :close-on-click-modal="true"
     :before-close="beforeClose"
   >
-    <template v-if="step === 'form'">
-      <p class="hint">{{ formHint }}</p>
-      <el-form
-        ref="formRef"
-        :model="form"
-        :rules="rules"
-        label-position="top"
-        require-asterisk-position="left"
-        class="form"
-        @submit.prevent
-      >
-        <el-form-item label="姓名" prop="name" required>
-          <el-input
-            ref="nameInputRef"
-            v-model="form.name"
-            maxlength="64"
-            placeholder="请输入姓名"
-          />
-        </el-form-item>
-        <div class="pair-row">
-          <el-form-item label="性别" prop="gender" required class="field-gender">
-            <el-select v-model="form.gender" :disabled="!!archiveParsed" style="width: 100%">
-              <el-option label="男" value="MALE" />
-              <el-option label="女" value="FEMALE" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="出生日期" prop="birthday" required class="field-birthday">
-            <el-date-picker
-              v-model="form.birthday"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="请选择日期"
-              :disabled="!!archiveParsed"
-              :disabled-date="disabledBirthdayDate"
-              style="width: 100%"
+    <div class="dialog-body">
+      <template v-if="step === 'form'">
+        <div class="form-hint">
+          <p class="form-hint-main">请填写必填信息完成建档。</p>
+          <p v-if="formHintTeam" class="form-hint-team">
+            创建后将自动加入组：
+            <span class="form-hint-team-tag">{{ formHintTeam }}</span>
+          </p>
+        </div>
+        <el-form
+          ref="formRef"
+          :model="form"
+          :rules="rules"
+          label-position="top"
+          require-asterisk-position="left"
+          class="form"
+          @submit.prevent
+        >
+          <el-form-item label="姓名" prop="name" required>
+            <el-input
+              ref="nameInputRef"
+              v-model="form.name"
+              maxlength="64"
+              placeholder="请输入姓名"
             />
           </el-form-item>
-        </div>
-        <el-form-item label="联系电话（患者本人）" prop="mobile" required class="field-mobile">
-          <el-input v-model="form.mobile" maxlength="11" placeholder="请输入手机号" />
-        </el-form-item>
-
-        <el-button
-          v-if="!showIdentity"
-          link
-          type="primary"
-          class="id-toggle"
-          :disabled="submitting"
-          @click="showIdentity = true"
-        >
-          + 补充证件信息（选填）
-        </el-button>
-        <Transition name="id-panel">
-          <div v-if="showIdentity" class="id-panel">
-            <el-form-item label="证件类型">
-              <el-select v-model="form.identityType" style="width: 100%">
-                <el-option
-                  v-for="opt in IDENTITY_OPTIONS"
-                  :key="opt.value"
-                  :label="opt.label"
-                  :value="opt.value"
-                />
+          <div class="pair-row">
+            <el-form-item label="性别" prop="gender" required class="field-gender">
+              <el-select v-model="form.gender" :disabled="!!archiveParsed" style="width: 100%">
+                <el-option label="男" value="MALE" />
+                <el-option label="女" value="FEMALE" />
               </el-select>
             </el-form-item>
-            <el-form-item label="证件号码" prop="identityValue">
-              <el-input v-model="form.identityValue" placeholder="选填，可以后再补" />
-              <div class="form-tip">填写身份证会自动带出性别和出生日期</div>
-            </el-form-item>
-            <el-button link type="primary" class="id-toggle" :disabled="submitting" @click="showIdentity = false">
-              收起证件信息
-            </el-button>
-          </div>
-        </Transition>
-      </el-form>
-    </template>
-
-    <template v-else>
-      <div class="assign-banner" role="status">
-        <p class="hint assign-ok">
-          <strong>建档成功！</strong>
-          为了让【{{ createdDisplayName || '患者' }}】进入后续的首诊流程，请为其分配健管组。
-        </p>
-        <p class="hint assign-sub">也可以选择「暂不分配，稍后处理」。</p>
-      </div>
-      <el-form
-        ref="assignFormRef"
-        :model="assignForm"
-        :rules="assignRules"
-        label-position="top"
-        class="form"
-        require-asterisk-position="right"
-        v-loading="loadingTeams"
-        @submit.prevent
-      >
-        <el-form-item label="健管组" prop="teamId">
-          <el-select
-            v-model="assignForm.teamId"
-            filterable
-            clearable
-            teleported
-            fit-input-width
-            :default-first-option="false"
-            :disabled="!teams.length"
-            :placeholder="
-              teams.length === 1
-                ? teams[0]?.name || '搜索组名或主责姓名'
-                : '搜索组名或主责姓名'
-            "
-            style="width: 100%"
-            popper-class="care-team-select-popper"
-            :filter-method="filterTeamMethod"
-            :popper-options="{
-              modifiers: [{ name: 'offset', options: { offset: [0, 6] } }],
-            }"
-            @visible-change="onAssignSelectVisible"
-            @keydown="onAssignSelectKeydown"
-          >
-            <el-option
-              v-for="t in filteredTeams"
-              :key="t.id"
-              :label="t.name"
-              :value="t.id"
-            >
-              <div class="opt" @mouseenter="allowEnterSelect = true">
-                <span class="opt-name">{{ t.name }}</span>
-                <span class="opt-meta">
-                  主责 {{ (t.primaryCareManagerName || '').trim() || '未指定' }}
-                  <template v-if="(t.primaryDoctorName || '').trim()">
-                    · 医生 {{ t.primaryDoctorName }}
+            <el-form-item prop="birthday" required class="field-birthday">
+              <template #label>
+                <div class="birthday-label-row">
+                  <span class="birthday-label-text">出生日期</span>
+                  <button
+                    type="button"
+                    class="birthday-mode-mini"
+                    :disabled="(birthdayInputMode === 'date' && !!archiveParsed) || submitting"
+                    @click.prevent="switchBirthdayMode"
+                  >
+                    {{ birthdayInputMode === 'date' ? '切换填年龄' : '切换填日期' }}
+                  </button>
+                </div>
+              </template>
+              <div class="birthday-control">
+                <el-date-picker
+                  v-if="birthdayInputMode === 'date'"
+                  ref="birthdayPickerRef"
+                  v-model="form.birthday"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  placeholder="选择或输入日期"
+                  :editable="true"
+                  :disabled="!!archiveParsed"
+                  :disabled-date="disabledBirthdayDate"
+                  teleported
+                  placement="top-start"
+                  :fallback-placements="['top', 'top-end']"
+                  popper-class="create-archive-date-popper"
+                  :popper-options="{
+                    modifiers: [
+                      {
+                        name: 'flip',
+                        options: {
+                          padding: 8,
+                          fallbackPlacements: ['top', 'top-end'],
+                        },
+                      },
+                      {
+                        name: 'preventOverflow',
+                        options: {
+                          padding: 8,
+                          boundary: 'clippingParents',
+                          altAxis: true,
+                        },
+                      },
+                    ],
+                  }"
+                  style="width: 100%"
+                  @change="onBirthdayPicked"
+                  @blur="onBirthdayBlur"
+                  @vue:mounted="bindBirthdayNativeInput"
+                />
+                <el-input
+                  v-else
+                  :model-value="ageInput"
+                  inputmode="numeric"
+                  maxlength="3"
+                  placeholder="请输入年龄"
+                  :disabled="submitting"
+                  class="age-input-row"
+                  :class="{ 'age-input-error': !!ageError }"
+                  @update:model-value="onAgeInput"
+                  @blur="onAgeBlur"
+                >
+                  <template #suffix>
+                    <span class="age-suffix">岁</span>
                   </template>
-                  · {{ t.memberCount ?? 0 }} 位患者
-                </span>
+                </el-input>
               </div>
-            </el-option>
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <div v-if="!loadingTeams && !teams.length" class="assign-empty">
-        暂无健管组。可先暂不分配，之后在左侧「未分组患者」里补分；或先去创建健管组。
-      </div>
-    </template>
+              <p v-if="birthdayInputMode === 'age' && ageError" class="age-error">{{ ageError }}</p>
+              <p
+                v-else-if="birthdayInputMode === 'age' && estimatedBirthdayPreview"
+                class="age-preview"
+              >
+                估算生日约为：{{ estimatedBirthdayPreview }}
+                <el-tag size="small" effect="plain" class="birthday-est-tag">估算</el-tag>
+              </p>
+              <p
+                v-else-if="birthdayInputMode === 'date' && birthdayEstimated && form.birthday"
+                class="age-preview"
+              >
+                <el-tag size="small" effect="plain" class="birthday-est-tag">估算</el-tag>
+                <span class="birthday-est-hint">由年龄推算，建议补录证件后核对</span>
+              </p>
+              <p v-else-if="birthdayInputMode === 'date'" class="birthday-kb-hint">
+                支持键盘输入(如19900101)
+              </p>
+            </el-form-item>
+          </div>
+          <el-form-item label="联系电话（患者本人）" prop="mobile" required class="field-mobile">
+            <el-input v-model="form.mobile" maxlength="11" placeholder="请输入手机号" />
+          </el-form-item>
+
+          <el-button
+            v-if="!showIdentity"
+            link
+            type="primary"
+            class="id-toggle"
+            :disabled="submitting"
+            @click="showIdentity = true"
+          >
+            + 补充证件信息（选填）
+          </el-button>
+          <Transition name="id-panel">
+            <div v-if="showIdentity" class="id-panel">
+              <el-form-item label="证件类型">
+                <el-select v-model="form.identityType" style="width: 100%">
+                  <el-option
+                    v-for="opt in IDENTITY_OPTIONS"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="证件号码" prop="identityValue">
+                <el-input v-model="form.identityValue" placeholder="选填，可以后再补" />
+                <div class="form-tip">填写身份证会自动带出性别和出生日期</div>
+              </el-form-item>
+              <el-button
+                link
+                type="primary"
+                class="id-toggle"
+                :disabled="submitting"
+                @click="showIdentity = false"
+              >
+                收起证件信息
+              </el-button>
+            </div>
+          </Transition>
+        </el-form>
+      </template>
+
+      <template v-else>
+        <div class="assign-banner" role="status">
+          <p class="hint assign-ok">
+            <strong>建档成功！</strong>
+            为了让【{{ createdDisplayName || '患者' }}】进入后续的首诊流程，请为其分配健管组。
+          </p>
+          <p class="hint assign-sub">也可以选择「暂不分配，稍后处理」。</p>
+        </div>
+        <el-form
+          ref="assignFormRef"
+          :model="assignForm"
+          :rules="assignRules"
+          label-position="top"
+          class="form"
+          require-asterisk-position="right"
+          v-loading="loadingTeams"
+          @submit.prevent
+        >
+          <el-form-item label="健管组" prop="teamId">
+            <el-select
+              v-model="assignForm.teamId"
+              filterable
+              clearable
+              teleported
+              fit-input-width
+              :default-first-option="false"
+              :disabled="!teams.length"
+              :placeholder="
+                teams.length === 1
+                  ? teams[0]?.name || '搜索组名或主责姓名'
+                  : '搜索组名或主责姓名'
+              "
+              style="width: 100%"
+              popper-class="care-team-select-popper"
+              :filter-method="filterTeamMethod"
+              :popper-options="{
+                modifiers: [{ name: 'offset', options: { offset: [0, 6] } }],
+              }"
+              @visible-change="onAssignSelectVisible"
+              @keydown="onAssignSelectKeydown"
+            >
+              <el-option
+                v-for="t in filteredTeams"
+                :key="t.id"
+                :label="t.name"
+                :value="t.id"
+              >
+                <div class="opt" @mouseenter="allowEnterSelect = true">
+                  <span class="opt-name">{{ t.name }}</span>
+                  <span class="opt-meta">
+                    主责 {{ (t.primaryCareManagerName || '').trim() || '未指定' }}
+                    <template v-if="(t.primaryDoctorName || '').trim()">
+                      · 医生 {{ t.primaryDoctorName }}
+                    </template>
+                    · {{ t.memberCount ?? 0 }} 位患者
+                  </span>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <div v-if="!loadingTeams && !teams.length" class="assign-empty">
+          暂无健管组。可先暂不分配，之后在左侧「未分组患者」里补分；或先去创建健管组。
+        </div>
+      </template>
+    </div>
 
     <template #footer>
       <div class="footer" v-if="step === 'form'">
@@ -830,7 +1264,7 @@ function duplicateLabel(d: DuplicateCandidate) {
         </el-button>
       </div>
     </template>
-  </el-drawer>
+  </el-dialog>
 
   <el-dialog v-model="duplicateVisible" title="可能是同一人" width="520px" append-to-body>
     <p class="dup-tip">
@@ -865,6 +1299,42 @@ function duplicateLabel(d: DuplicateCandidate) {
   line-height: 1.5;
   font-weight: 400;
   color: var(--ink-400, #9ca3af);
+}
+.form-hint {
+  margin: 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-hint-main {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #999999;
+  font-weight: 400;
+}
+.form-hint-team {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #999999;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.form-hint-team-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
 }
 .assign-banner {
   margin: 0 0 18px;
@@ -906,16 +1376,122 @@ function duplicateLabel(d: DuplicateCandidate) {
   font-size: 12px;
   color: var(--ink-400, #9ca3af);
 }
+.dialog-body {
+  min-height: 0;
+}
 .form {
-  padding-right: 4px;
+  padding-right: 2px;
 }
 .pair-row {
-  display: grid;
-  grid-template-columns: minmax(96px, 1fr) minmax(0, 2.2fr);
+  display: flex;
+  align-items: flex-start;
   gap: 16px;
 }
 .pair-row .el-form-item {
-  margin-bottom: 18px;
+  margin-bottom: 0;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  position: relative;
+}
+.birthday-label-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  min-width: 0;
+}
+.birthday-label-text {
+  flex: 1;
+  min-width: 0;
+}
+.birthday-mode-mini {
+  flex-shrink: 0;
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--el-color-primary, #409eff);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.birthday-mode-mini:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.birthday-mode-mini:disabled {
+  color: #c0c4cc;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+.birthday-control {
+  width: 100%;
+  height: 36px;
+}
+.birthday-control :deep(.el-date-editor),
+.birthday-control :deep(.el-input) {
+  width: 100%;
+  height: 36px;
+}
+.birthday-control :deep(.el-input__wrapper) {
+  min-height: 36px;
+  height: 36px;
+}
+.birthday-control :deep(.age-input-error .el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+.age-suffix {
+  color: #999999;
+  font-size: 13px;
+  line-height: 1;
+  padding-right: 2px;
+  user-select: none;
+  pointer-events: none;
+}
+.create-archive-dialog .field-birthday .el-form-item__content {
+  position: relative;
+}
+.field-birthday .age-error,
+.field-birthday .age-preview,
+.field-birthday .birthday-kb-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.field-birthday .age-error {
+  color: var(--el-color-danger);
+}
+.field-birthday.is-error .birthday-kb-hint {
+  display: none;
+}
+.birthday-est-hint {
+  font-size: 12px;
+  color: #999;
+  line-height: 1.4;
+}
+.birthday-est-tag {
+  --el-tag-bg-color: #fffbeb;
+  --el-tag-border-color: #fde68a;
+  --el-tag-text-color: #b45309;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
 }
 .form-tip {
   margin-top: 6px;
@@ -984,58 +1560,222 @@ function duplicateLabel(d: DuplicateCandidate) {
 </style>
 
 <style>
-/* append-to-body：表单层级、报错间距、星号间距 */
-.create-archive-drawer.el-drawer .el-drawer__body {
-  padding-top: 12px;
+/* 遮罩层：视口内水平+垂直居中（默认挂 body） */
+.el-overlay.create-archive-dialog-overlay .el-overlay-dialog {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
 }
-.create-archive-drawer.el-drawer .el-drawer__footer {
+/* 驾驶舱局部挂载：遮罩仅盖中间工作区，不挡左右栏 */
+.el-overlay.create-archive-dialog-overlay--scoped {
+  position: absolute !important;
+  inset: 0;
+  border-radius: inherit;
+}
+.el-overlay.create-archive-dialog-overlay--scoped .el-overlay-dialog {
+  position: absolute;
+  inset: 0;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+/* 弹窗本体：内容撑开 + 高度防溢出，底部按钮吸底 */
+.create-archive-dialog.el-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100% - 48px));
+  max-width: 560px;
+  max-height: min(85vh, calc(100% - 48px));
+  margin: auto !important;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+.create-archive-dialog .el-dialog__header {
+  flex-shrink: 0;
+  margin-right: 0;
+  padding: 32px 32px 12px !important;
+}
+.create-archive-dialog .el-dialog__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-900, #111827);
+  line-height: 1.4;
+}
+.create-archive-dialog .el-dialog__headerbtn {
+  top: 28px;
+  right: 24px;
+  width: 28px;
+  height: 28px;
+}
+.create-archive-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 32px 8px !important;
+}
+.create-archive-dialog .el-dialog__footer {
+  flex: none;
+  flex-shrink: 0;
   position: sticky;
   bottom: 0;
   z-index: 2;
   border-top: 1px solid var(--ink-100, #e5e7eb);
   background: #fff;
-  padding: 12px 16px;
+  padding: 16px 32px 32px !important;
 }
-.create-archive-drawer .form .el-form-item {
-  margin-bottom: 18px;
+.create-archive-dialog .form .el-form-item {
+  margin-bottom: 24px;
 }
-.create-archive-drawer .form .el-form-item__label {
+.create-archive-dialog .form .pair-row {
+  margin-bottom: 24px;
+  /* 预留键盘提示 / 绝对定位报错，避免压住下一行 */
+  padding-bottom: 22px;
+}
+.create-archive-dialog .form .pair-row > .el-form-item {
+  margin-bottom: 0;
+}
+.create-archive-dialog .form .pair-row > .el-form-item .el-form-item__error {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 2px);
+  padding-top: 0;
+  margin: 0;
+  line-height: 1.35;
+  z-index: 2;
+}
+.create-archive-dialog .form .field-gender .el-select,
+.create-archive-dialog .form .field-gender .el-select__wrapper {
+  width: 100%;
+  min-height: 36px;
+  height: 36px;
+}
+.create-archive-dialog .form .el-form-item__label {
   margin-bottom: 6px !important;
   padding: 0 !important;
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-500, #6b7280);
   line-height: 1.4;
+  height: auto !important;
+  display: inline-flex !important;
+  align-items: center;
 }
-.create-archive-drawer .form .el-form-item.is-required:not(.is-no-asterisk).asterisk-left > .el-form-item__label::before,
-.create-archive-drawer .form .el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before {
+.create-archive-dialog .form .field-birthday > .el-form-item__label {
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex !important;
+}
+.create-archive-dialog .form .field-birthday > .el-form-item__label .birthday-label-row {
+  flex: 1;
+  min-width: 0;
+}
+.create-archive-dialog .form .el-form-item.is-required:not(.is-no-asterisk).asterisk-left > .el-form-item__label::before,
+.create-archive-dialog .form .el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before {
   margin-right: 4px;
 }
-.create-archive-drawer .form .el-form-item__error {
-  padding-top: 4px;
+/* 红字占位，避免压住下一字段标签（姓名报错 vs 性别） */
+.create-archive-dialog .form .el-form-item__error {
+  position: static;
+  display: block;
+  padding-top: 6px;
+  margin-bottom: 2px;
   font-size: 12px;
   line-height: 1.4;
 }
+.create-archive-dialog .form > .el-form-item.is-error {
+  margin-bottom: 18px;
+}
+.create-archive-dialog .form .pair-row > .el-form-item.is-error {
+  margin-bottom: 0;
+}
+.create-archive-dialog .form .pair-row > .el-form-item.is-error .el-form-item__content {
+  margin-bottom: 0;
+}
 /* 报错后与「补充证件」拉开呼吸感 */
-.create-archive-drawer .form .field-mobile {
+.create-archive-dialog .form .field-mobile {
   margin-bottom: 8px;
 }
-.create-archive-drawer .form .field-mobile.is-error {
+.create-archive-dialog .form .field-mobile.is-error {
   margin-bottom: 4px;
 }
-.create-archive-drawer .form .field-mobile + .id-toggle {
+.create-archive-dialog .form .field-mobile + .id-toggle {
   margin-top: 18px;
 }
-.create-archive-drawer .form .el-input__inner,
-.create-archive-drawer .form .el-select__selected-item,
-.create-archive-drawer .form .el-select__placeholder,
-.create-archive-drawer .form .el-date-editor .el-input__inner {
+.create-archive-dialog .form .el-input__inner,
+.create-archive-dialog .form .el-select__selected-item,
+.create-archive-dialog .form .el-select__placeholder,
+.create-archive-dialog .form .el-date-editor .el-input__inner {
   font-size: 14px;
   font-weight: 400;
   color: var(--ink-800, #1f2937);
 }
-.create-archive-drawer .form .el-input__wrapper,
-.create-archive-drawer .form .el-select__wrapper {
+.create-archive-dialog .form .el-input__wrapper,
+.create-archive-dialog .form .el-select__wrapper {
   min-height: 36px;
+  background-color: #fff !important;
+  box-shadow: 0 0 0 1px var(--ink-200, #e2e8f0) inset !important;
+}
+.create-archive-dialog .form .el-input__wrapper.is-focus,
+.create-archive-dialog .form .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--brand-500, #2c7ef8) inset !important;
+}
+/* 出生日期：仅日期模式下日历图标靠右；年龄模式使用正常 suffix */
+.create-archive-dialog .field-birthday .el-date-editor.el-input {
+  width: 100%;
+}
+.create-archive-dialog .field-birthday .el-date-editor .el-input__wrapper {
+  position: relative;
+  padding-left: 12px;
+  padding-right: 56px;
+}
+.create-archive-dialog .field-birthday .el-date-editor .el-input__prefix {
+  position: absolute;
+  right: 10px;
+  left: auto;
+  top: 50%;
+  transform: translateY(-50%);
+  order: unset;
+}
+.create-archive-dialog .field-birthday .el-date-editor .el-input__prefix-inner {
+  display: inline-flex;
+  align-items: center;
+}
+.create-archive-dialog .field-birthday .el-date-editor .el-input__suffix {
+  position: absolute;
+  right: 34px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 8px;
+}
+.create-archive-dialog .field-birthday .el-date-editor .el-input__suffix .el-input__clear,
+.create-archive-dialog .field-birthday .el-date-editor .el-input__suffix .clear-icon {
+  margin-right: 0;
+}
+.create-archive-dialog .field-birthday .el-date-editor .el-input__inner {
+  padding-left: 0 !important;
+  text-align: left;
+  cursor: text;
+}
+.create-archive-dialog .field-birthday .age-input-row {
+  width: 100%;
+}
+.create-archive-dialog .field-birthday .age-input-row .el-input__wrapper {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.create-archive-dialog .field-birthday .age-input-row .el-input__inner {
+  cursor: text;
+}
+/* 日历面板：挂到 body，优先向上弹出，层级高于弹窗 */
+.create-archive-date-popper,
+.create-archive-date-popper.el-popper,
+.el-picker__popper.create-archive-date-popper {
+  z-index: 5200 !important;
 }
 </style>

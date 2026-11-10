@@ -171,7 +171,7 @@ async function submit() {
         </div>
 
         <div class="brand-foot">
-          <div>© 2026 Healix · 个人技术演示项目</div>
+          <div>© 2026 Healix · 智能健康管理平台</div>
           <IcpFooter />
         </div>
       </div>

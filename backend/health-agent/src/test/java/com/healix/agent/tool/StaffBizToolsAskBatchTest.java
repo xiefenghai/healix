@@ -31,7 +31,32 @@ class StaffBizToolsAskBatchTest {
         assertThat(StaffBizTools.asksCreateCareTeamIntent("再创建健管组")).isTrue();
         assertThat(StaffBizTools.asksCreateCareTeamIntent("新建健管组")).isTrue();
         assertThat(StaffBizTools.asksCreateCareTeamIntent("帮我创建一个健管组")).isTrue();
+        // 短口令 / 带组名（新手起步：「建组 健管二组」）
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("建组")).isTrue();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("建组 健管二组")).isTrue();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("帮我建组")).isTrue();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("建个组")).isTrue();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("建一个组")).isTrue();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("创建组")).isTrue();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("我要建组")).isTrue();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("怎么建组")).isFalse();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("建组后怎么录入")).isFalse();
+        assertThat(StaffBizTools.asksCreateCareTeamIntent("帮我建档")).isFalse();
         assertThat(StaffBizTools.asksCreateCareTeamIntent("今天天气怎么样")).isFalse();
         assertThat(StaffBizTools.asksCreateCareTeamIntent(null)).isFalse();
+    }
+
+    @Test
+    void extractSuggestedCareTeamName_parsesExplicitName() {
+        assertThat(StaffBizTools.extractSuggestedCareTeamName("建组 健管二组"))
+                .isEqualTo("健管二组");
+        assertThat(StaffBizTools.extractSuggestedCareTeamName("创建健管组 健管二组"))
+                .isEqualTo("健管二组");
+        assertThat(StaffBizTools.extractSuggestedCareTeamName("新建健管组：减重一组"))
+                .isEqualTo("减重一组");
+        assertThat(StaffBizTools.extractSuggestedCareTeamName("创建一个健管组叫「慢病组」"))
+                .isEqualTo("慢病组");
+        assertThat(StaffBizTools.extractSuggestedCareTeamName("帮我创建一个健管组")).isNull();
+        assertThat(StaffBizTools.extractSuggestedCareTeamName("今天天气怎么样")).isNull();
     }
 }

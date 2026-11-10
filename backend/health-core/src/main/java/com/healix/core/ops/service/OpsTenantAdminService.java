@@ -452,7 +452,7 @@ public class OpsTenantAdminService {
 
     private static int normalizePageSize(Integer pageSize) {
         if (pageSize == null || pageSize < 1) {
-            return 20;
+            return 10;
         }
         return Math.min(pageSize, MAX_PAGE_SIZE);
     }

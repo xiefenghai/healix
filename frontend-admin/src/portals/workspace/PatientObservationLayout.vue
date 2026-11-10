@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { apiUpload } from '../../shared/http'
-import { saveLabOcrDraft, type LabOcrDraft } from '../../shared/lab-ocr'
 import PatientMetricView from './PatientMetricView.vue'
 import PatientMetricTrendView from './PatientMetricTrendView.vue'
 import PatientLabView from './PatientLabView.vue'
@@ -38,15 +35,12 @@ const activeSub = computed(() => {
   return 'metrics'
 })
 
-const ocrLoading = ref(false)
-const fileInputRef = ref<HTMLInputElement | null>(null)
-
-const SUB_TABS = [
-  { name: 'metrics', label: '指标录入' },
-  { name: 'trends', label: '趋势分析' },
-  { name: 'labs', label: '化验报告' },
-  { name: 'exams', label: '检查记录' },
-] as const
+const SUB_NAV = [
+  { name: 'metrics' as const, label: '指标录入' },
+  { name: 'trends' as const, label: '趋势分析' },
+  { name: 'labs' as const, label: '化验报告' },
+  { name: 'exams' as const, label: '检查记录' },
+]
 
 watch(
   () => props.peopleId,
@@ -56,160 +50,202 @@ watch(
   },
 )
 
-function switchSub(name: string) {
+function switchSub(name: SubName) {
   if (embedded.value) {
-    localSub.value = name as typeof localSub.value
+    // 侧栏切换时不要沿用 OCR 草稿消费标记，否则会误触上传
+    consumeOcrDraft.value = false
+    localSub.value = name
     return
   }
   const base = `/workspace/patients/${peopleId.value}/observations`
-  router.push({ path: `${base}/${name}`, query: route.query })
+  // 侧栏切换勿保留 ocr=1，否则化验报告页会反复自动弹上传框
+  const query = { ...route.query }
+  delete query.ocr
+  router.push({ path: `${base}/${name}`, query })
 }
 
-function openOcrPicker() {
-  fileInputRef.value?.click()
-}
-
-async function onOcrFileChange(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file || !peopleId.value) return
-  if (file.size > 5 * 1024 * 1024) {
-    ElMessage.warning('图片大小不能超过 5MB')
-    return
-  }
-  ocrLoading.value = true
-  try {
-    const res = await apiUpload<{ data: LabOcrDraft }>(
-      `/api/b/v1/patients/${peopleId.value}/lab-reports/ocr`,
-      file,
-    )
-    const data = res.data
-    if (!data.items?.length) {
-      const ignored = data.ignoredItems?.map((i) => i.rawName).join('、') || ''
-      ElMessage.warning(
-        ignored ? `未识别到可录入项目，已忽略：${ignored}` : '未识别到可录入的检验项目',
-      )
-      return
-    }
-    saveLabOcrDraft(data)
-    if (data.warnings?.length) {
-      ElMessage.info(data.warnings.join('；'))
-    }
-    if (embedded.value) {
-      consumeOcrDraft.value = true
-      localSub.value = 'labs'
-      labRemountKey.value += 1
-      return
-    }
-    router.push({
-      path: `/workspace/patients/${peopleId.value}/observations/labs`,
-      query: { ...route.query, ocr: '1' },
-    })
-  } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '识别失败')
-  } finally {
-    ocrLoading.value = false
-  }
+/** 指标录入页 OCR 成功后，嵌入态切到化验报告并消费草稿 */
+function onMetricOcrReady() {
+  consumeOcrDraft.value = true
+  localSub.value = 'labs'
+  labRemountKey.value += 1
 }
 </script>
 
 <template>
   <div class="obs-layout">
-    <div class="obs-toolbar">
-      <div class="sub-tabs" role="tablist">
-        <button
-          v-for="tab in SUB_TABS"
-          :key="tab.name"
-          type="button"
-          class="sub-tab"
-          :class="{ active: activeSub === tab.name }"
-          role="tab"
-          :aria-selected="activeSub === tab.name"
-          @click="switchSub(tab.name)"
-        >
-          {{ tab.label }}
-        </button>
+    <div class="obs-workspace">
+      <nav class="obs-side-nav" aria-label="指标检验分区">
+        <div class="nav-group">
+          <button
+            v-for="tab in SUB_NAV"
+            :key="tab.name"
+            type="button"
+            class="nav-item"
+            :class="{ active: activeSub === tab.name }"
+            @click="switchSub(tab.name)"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+      </nav>
+
+      <div class="obs-content">
+        <div class="obs-panel">
+          <template v-if="embedded">
+            <PatientMetricView
+              v-if="activeSub === 'metrics'"
+              :people-id="peopleId"
+              @ocr-ready="onMetricOcrReady"
+            />
+            <PatientMetricTrendView v-else-if="activeSub === 'trends'" :people-id="peopleId" />
+            <PatientLabView
+              v-else-if="activeSub === 'labs'"
+              :key="labRemountKey"
+              :people-id="peopleId"
+              :consume-ocr-draft="consumeOcrDraft"
+            />
+            <PatientExamView v-else-if="activeSub === 'exams'" :people-id="peopleId" />
+          </template>
+          <router-view v-else />
+        </div>
       </div>
-      <el-button type="primary" :loading="ocrLoading" @click="openOcrPicker">OCR 识别</el-button>
-      <input
-        ref="fileInputRef"
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        class="hidden-input"
-        @change="onOcrFileChange"
-      />
     </div>
-    <template v-if="embedded">
-      <PatientMetricView v-if="activeSub === 'metrics'" :people-id="peopleId" />
-      <PatientMetricTrendView v-else-if="activeSub === 'trends'" :people-id="peopleId" />
-      <PatientLabView
-        v-else-if="activeSub === 'labs'"
-        :key="labRemountKey"
-        :people-id="peopleId"
-        :consume-ocr-draft="consumeOcrDraft"
-      />
-      <PatientExamView v-else-if="activeSub === 'exams'" :people-id="peopleId" />
-    </template>
-    <router-view v-else />
   </div>
 </template>
 
 <style scoped>
 .obs-layout {
-  padding: 0 0 16px;
-}
-
-.obs-toolbar {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.sub-tabs {
+.obs-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.obs-side-nav {
   display: flex;
-  gap: 6px;
-  background: #fff;
-  padding: 6px;
-  border-radius: 10px;
-  border: 1px solid var(--admin-border, #e2e8f0);
-  box-shadow: var(--admin-shadow);
-  width: fit-content;
-  max-width: 100%;
-  overflow-x: auto;
+  flex-direction: column;
+  padding: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.sub-tab {
-  margin: 0;
-  padding: 8px 16px;
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  display: block;
+  width: auto;
+  margin: 0 12px;
   border: none;
-  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  padding: 9px 12px 9px 14px;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-600, #475569);
-  background: transparent;
   cursor: pointer;
-  white-space: nowrap;
+  box-sizing: border-box;
+  position: relative;
   transition:
     color 0.15s ease,
-    background 0.15s ease,
-    box-shadow 0.15s ease;
+    background 0.15s ease;
 }
 
-.sub-tab:hover {
+.nav-item:hover {
   color: var(--ink-800, #1e293b);
+  background: #f1f5f9;
 }
 
-.sub-tab.active {
-  background: var(--brand-500);
-  color: #fff;
-  box-shadow: 0 4px 8px rgba(44, 126, 248, 0.25);
+.nav-item.active {
+  color: var(--brand-600, #1e63d9);
+  background: var(--brand-50, #eaf2ff);
+  font-weight: 600;
 }
 
-.hidden-input {
-  display: none;
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--brand-500, #2c7ef8);
+}
+
+.obs-content {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.obs-panel {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* 指标录入页内部自滚动；其它子页可在此区域滚动 */
+  overflow: auto;
+}
+
+.obs-panel > :deep(.metric-page),
+.obs-panel > :deep(.lab-page) {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+@media (max-width: 900px) {
+  .obs-workspace {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .obs-side-nav {
+    position: static;
+    padding: 0;
+  }
+
+  .nav-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .nav-item {
+    width: auto;
+    margin: 0;
+    padding: 8px 12px;
+  }
+
+  .nav-item.active::before {
+    display: none;
+  }
 }
 </style>

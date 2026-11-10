@@ -51,7 +51,7 @@ public class CreateArchiveHandler {
                             + "把手机号发给我即可，大白话也行。");
         }
         if (!draft.isComplete()) {
-            return needInfo(ctx, draft, missingPrompt(draft));
+            return needInfo(ctx, draft, filledOrMissingPrompt(draft));
         }
 
         try {
@@ -71,13 +71,8 @@ public class CreateArchiveHandler {
                 return confirmDuplicates(ctx, draft, needConfirm);
             }
 
-            String attachPeopleId = duplicates.stream()
-                    .filter(d -> !d.confirmRequired())
-                    .map(DuplicateCandidate::peopleId)
-                    .findFirst()
-                    .orElse(null);
-            // 四要素齐全：先给人核对卡片，点确认才写库（医疗数据忌静默落档）
-            return confirmReadyCreate(ctx, draft, attachPeopleId);
+            // 四要素齐全：打开右侧表单预填，由健管师点「确认创建」入库（忌静默落档）
+            return needInfo(ctx, draft, filledOrMissingPrompt(draft));
         } catch (BusinessException e) {
             return new AgentResponse(
                     ctx.sessionId(),
@@ -435,6 +430,45 @@ public class CreateArchiveHandler {
             // 前端会自动打开右侧表单：话术只引导填表，避免再教「粘贴格式」抢焦点
             return "好的，建档表单已为您打开。请直接在右侧填写，完成后点击右下角「确认创建」即可。";
         }
+        List<String> miss = missingFields(draft);
+        return "还差：" + String.join("、", miss) + "。请在右侧表单补全后点「确认创建」。";
+    }
+
+    /** 已抽出姓名等字段：明确告知已回填；齐全时引导点抽屉「确认创建」。 */
+    static String filledOrMissingPrompt(CreateArchiveDraft draft) {
+        if (draft == null || !draft.hasName()) {
+            return missingPrompt(draft == null ? new CreateArchiveDraft(null, null, null, null, false) : draft);
+        }
+        StringBuilder who = new StringBuilder(draft.name().trim());
+        boolean hasGender = draft.hasGender();
+        Integer age = ageYears(draft.birthday());
+        if (hasGender || age != null) {
+            who.append('（');
+            if (hasGender) {
+                who.append(genderPlain(draft.gender()));
+            }
+            if (age != null) {
+                if (hasGender) {
+                    who.append('，');
+                }
+                who.append(age).append('岁');
+            }
+            who.append('）');
+        }
+        List<String> miss = missingFields(draft);
+        if (miss.isEmpty()) {
+            return "收到！已为您提取并填入右侧表单："
+                    + who
+                    + "。请核对无误后点击右下角「确认创建」。";
+        }
+        return "收到！已为您提取并填入右侧表单："
+                + who
+                + "。还差："
+                + String.join("、", miss)
+                + "，请在右侧补全后点「确认创建」。";
+    }
+
+    private static List<String> missingFields(CreateArchiveDraft draft) {
         List<String> miss = new ArrayList<>();
         if (!draft.hasName()) {
             miss.add("姓名");
@@ -448,7 +482,7 @@ public class CreateArchiveHandler {
         if (!draft.hasMobile()) {
             miss.add("本人手机号");
         }
-        return "还差：" + String.join("、", miss) + "。请在右侧表单补全后点「确认创建」。";
+        return miss;
     }
 
     private static String genderPlain(String gender) {
@@ -469,7 +503,18 @@ public class CreateArchiveHandler {
                     continue;
                 }
                 if (StringUtils.hasText(turn.user())) {
-                    merged = CreateArchiveParser.merge(merged, CreateArchiveParser.parse(turn.user()));
+                    CreateArchiveDraft parsed = CreateArchiveParser.parse(turn.user());
+                    // 历史脏名（如「分组」）不得污染本轮建档预填
+                    if (parsed.hasName() && CreateArchiveParser.isNoiseName(parsed.name())) {
+                        parsed =
+                                new CreateArchiveDraft(
+                                        null,
+                                        parsed.gender(),
+                                        parsed.birthday(),
+                                        parsed.mobile(),
+                                        parsed.noMobile());
+                    }
+                    merged = CreateArchiveParser.merge(merged, parsed);
                 }
             }
         }

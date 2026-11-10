@@ -20,12 +20,15 @@ const props = withDefaults(
     hideSider?: boolean
     /** 全屏业务页（如首诊工作台）隐藏壳顶栏 */
     hideTopbar?: boolean
+    /** 选机构等页：隐藏左侧面包屑与机构切换，只保留用户菜单 */
+    hideCrumbs?: boolean
     orgSwitchable?: boolean
     flushContent?: boolean
   }>(),
   {
     flushContent: false,
     hideTopbar: false,
+    hideCrumbs: false,
   },
 )
 
@@ -80,9 +83,9 @@ function onSwitchOrg() {
 
 <template>
   <div class="shell" :class="{ 'no-topbar': hideTopbar }">
-    <header v-if="!hideTopbar" class="topbar">
+    <header v-if="!hideTopbar" class="topbar" :class="{ 'topbar-minimal': hideCrumbs }">
       <div class="left">
-        <div class="crumbs">
+        <div v-if="!hideCrumbs" class="crumbs">
           <span class="crumb-muted">机构工作台</span>
           <span class="crumb-sep">/</span>
           <strong>{{ title }}</strong>
@@ -92,21 +95,19 @@ function onSwitchOrg() {
         </div>
       </div>
       <div class="right">
-        <template v-if="orgName && entry === 'workspace'">
-          <el-dropdown v-if="orgSwitchable" trigger="click">
-            <button type="button" class="org-switch">
-              <span class="org-avatar">{{ orgInitial }}</span>
-              <span class="org-meta">
-                <span class="org-name">{{ orgName }}</span>
-                <span class="org-role">点击切换机构</span>
-              </span>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="onSwitchOrg">切换机构</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+        <template v-if="!hideCrumbs && orgName && entry === 'workspace'">
+          <button
+            v-if="orgSwitchable"
+            type="button"
+            class="org-switch"
+            @click="onSwitchOrg"
+          >
+            <span class="org-avatar">{{ orgInitial }}</span>
+            <span class="org-meta">
+              <span class="org-name">{{ orgName }}</span>
+              <span class="org-role">点击切换机构</span>
+            </span>
+          </button>
           <div v-else class="org-switch static">
             <span class="org-avatar">{{ orgInitial }}</span>
             <span class="org-meta">
@@ -114,13 +115,13 @@ function onSwitchOrg() {
             </span>
           </div>
         </template>
-        <el-dropdown>
-          <span class="admin">
+        <el-dropdown trigger="click" :teleported="true">
+          <button type="button" class="admin" aria-label="账号菜单">
             <span class="user-avatar">管</span>
-          </span>
+          </button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="goSecurity">安全设置</el-dropdown-item>
+              <el-dropdown-item @click="goSecurity">账号设置</el-dropdown-item>
               <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -320,6 +321,19 @@ function onSwitchOrg() {
 .admin {
   cursor: pointer;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  line-height: 0;
+}
+
+.admin:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+  border-radius: 999px;
 }
 
 .user-avatar {
@@ -332,6 +346,10 @@ function onSwitchOrg() {
   color: #fff;
   font-weight: 600;
   font-size: 12px;
+}
+
+.topbar-minimal .left {
+  min-width: 0;
 }
 
 .body {

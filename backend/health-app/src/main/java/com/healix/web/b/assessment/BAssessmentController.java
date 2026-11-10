@@ -44,7 +44,7 @@ public class BAssessmentController {
             @PathVariable String peopleId,
             @RequestParam(required = false) String engineCode,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "10") int pageSize) {
         return ApiResult.ok(assessmentOrchestrator.history(
                 SecurityUtils.requireTenantId(),
                 SecurityUtils.requireCurrentOrgId(),

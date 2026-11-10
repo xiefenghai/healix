@@ -22,14 +22,16 @@ public final class CreateArchiveParser {
     /** 「90年5月1日」「90年5月出生」 */
     private static final Pattern BIRTHDAY_CN_SHORT =
             Pattern.compile("(?<!\\d)(\\d{2})\\s*年\\s*(\\d{1,2})\\s*月(?:\\s*(\\d{1,2})\\s*日?)?");
+    /** 「35岁」「35 岁」→ 推算出生年元旦（仅作建档预填，健管师可在表单改） */
+    private static final Pattern AGE_YEARS = Pattern.compile("(?<!\\d)(\\d{1,3})\\s*岁");
     /**
      * 「1.姓名：李大牛」「姓名：待补充」等表单式粘贴（可多行或同一行连写）。
      * group1=标签，group2=值。
      */
     private static final Pattern LABELED_FIELD =
             Pattern.compile(
-                    "(?:\\d+[\\.．、\\)]\\s*)?(姓名|患者|客户|性别|出生日期|出生|生日|手机号|手机|电话|联系电话)\\s*[:：]\\s*"
-                            + "(.+?)(?=(?:\\s*\\d+[\\.．、\\)]\\s*)?(?:姓名|患者|客户|性别|出生日期|出生|生日|手机号|手机|电话|联系电话)\\s*[:：]|$)");
+                    "(?:\\d+[\\.．、\\)]\\s*)?(姓名|患者|客户|性别|出生日期|出生|生日|年龄|手机号|手机|电话|联系电话)\\s*[:：]\\s*"
+                            + "(.+?)(?=(?:\\s*\\d+[\\.．、\\)]\\s*)?(?:姓名|患者|客户|性别|出生日期|出生|生日|年龄|手机号|手机|电话|联系电话)\\s*[:：]|$)");
     private static final Pattern NAME_LABELED =
             Pattern.compile(
                     "(?:姓名|患者|客户|叫|建档)\\s*[:：]?\\s*([\\u4e00-\\u9fa5·]{2,8})",
@@ -41,10 +43,15 @@ public final class CreateArchiveParser {
     private static final Pattern NAME_FOR_PERSON =
             Pattern.compile("(?:给|为)\\s*([\\u4e00-\\u9fa5·]{2,4})\\s*(?:建|新建|登记)");
     private static final Pattern BARE_CN_NAME =
-            Pattern.compile("(?<!\\d)([\\u4e00-\\u9fa5]{2,4})(?=\\s*[男女]|\\s+(?:男|女)|[，,]\\s*[男女])");
+            Pattern.compile(
+                    "(?<!\\d)([\\u4e00-\\u9fa5]{2,4})(?=\\s*[男女]|\\s+(?:男|女)|[，,]\\s*[男女]"
+                            + "|\\s+\\d{1,3}\\s*岁)");
     /** 「赵雨桐 13655556677」这类缺性别锚点的粘贴 */
     private static final Pattern NAME_BEFORE_MOBILE =
             Pattern.compile("([\\u4e00-\\u9fa5·]{2,4})\\s*(?=1[3-9]\\d{9})");
+    /** 「18758222123 李默 35岁 男」手机号在前 */
+    private static final Pattern NAME_AFTER_MOBILE =
+            Pattern.compile("1[3-9]\\d{9}\\s+([\\u4e00-\\u9fa5·]{2,4})(?=\\s|$|[男女，,。/]|\\d)");
 
     private CreateArchiveParser() {}
 
@@ -66,9 +73,18 @@ public final class CreateArchiveParser {
         LocalDate birthday = null;
         if (StringUtils.hasText(labeled.birthday) && !isPlaceholder(labeled.birthday)) {
             birthday = parseBirthday(labeled.birthday);
+            if (birthday == null) {
+                birthday = birthdayFromAge(labeled.birthday);
+            }
+        }
+        if (birthday == null && StringUtils.hasText(labeled.age) && !isPlaceholder(labeled.age)) {
+            birthday = birthdayFromAge(labeled.age);
         }
         if (birthday == null) {
             birthday = parseBirthday(text);
+        }
+        if (birthday == null) {
+            birthday = birthdayFromAge(text);
         }
         String name = null;
         if (StringUtils.hasText(labeled.name) && !isPlaceholder(labeled.name) && !isNoiseName(labeled.name)) {
@@ -179,6 +195,10 @@ public final class CreateArchiveParser {
         if (afterVerb != null && !isNoiseName(afterVerb) && !isPlaceholder(afterVerb)) {
             return afterVerb;
         }
+        String afterMobile = firstGroup(NAME_AFTER_MOBILE, text);
+        if (afterMobile != null && !isNoiseName(afterMobile) && !isPlaceholder(afterMobile)) {
+            return afterMobile;
+        }
         String bare = firstGroup(BARE_CN_NAME, text);
         if (bare != null && !isNoiseName(bare) && !isPlaceholder(bare)) {
             return bare;
@@ -188,6 +208,43 @@ public final class CreateArchiveParser {
             return beforeMobile;
         }
         return null;
+    }
+
+    /** 「35岁」→ 当年往前推 N 年的 1 月 1 日，供建档预填。 */
+    static LocalDate birthdayFromAge(String text) {
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        Matcher m = AGE_YEARS.matcher(text);
+        if (!m.find()) {
+            // 纯数字年龄（标签「年龄：35」）
+            String digits = text.trim().replaceAll("[^0-9]", "");
+            if (!StringUtils.hasText(digits) || digits.length() > 3) {
+                return null;
+            }
+            try {
+                int age = Integer.parseInt(digits);
+                return ageToBirthday(age);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        try {
+            return ageToBirthday(Integer.parseInt(m.group(1)));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static LocalDate ageToBirthday(int age) {
+        if (age < 1 || age > 120) {
+            return null;
+        }
+        int year = LocalDate.now().getYear() - age;
+        if (year < 1900 || year > LocalDate.now().getYear()) {
+            return null;
+        }
+        return LocalDate.of(year, 1, 1);
     }
 
     private static LabeledFields extractLabeled(String text) {
@@ -215,6 +272,11 @@ public final class CreateArchiveParser {
                 case "出生日期", "出生", "生日" -> {
                     if (!StringUtils.hasText(out.birthday)) {
                         out.birthday = value;
+                    }
+                }
+                case "年龄" -> {
+                    if (!StringUtils.hasText(out.age)) {
+                        out.age = value;
                     }
                 }
                 case "手机号", "手机", "电话", "联系电话" -> {
@@ -253,8 +315,13 @@ public final class CreateArchiveParser {
         };
     }
 
-    private static boolean isNoiseName(String name) {
-        return switch (name) {
+    /** 供 Handler 合并历史时剔除「分组」等脏名。 */
+    public static boolean isNoiseName(String name) {
+        if (!StringUtils.hasText(name)) {
+            return true;
+        }
+        String n = name.trim();
+        return switch (n) {
             case "患者",
                     "客户",
                     "建档",
@@ -268,9 +335,19 @@ public final class CreateArchiveParser {
                     "出生",
                     "日期",
                     "待补充",
-                    "未填写" ->
+                    "未填写",
+                    "分组",
+                    "未分组",
+                    "待分组",
+                    "建组",
+                    "健管组",
+                    "分配",
+                    "批量",
+                    "确认",
+                    "创建",
+                    "表单" ->
                     true;
-            default -> false;
+            default -> n.contains("分组") || n.contains("建组") || n.contains("健管");
         };
     }
 
@@ -292,6 +369,7 @@ public final class CreateArchiveParser {
         String name;
         String gender;
         String birthday;
+        String age;
         String mobile;
     }
 }

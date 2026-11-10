@@ -32,7 +32,7 @@ const ORG_TYPE_LABELS: Record<string, string> = {
   SPECIALTY_HOSPITAL: '专科医院',
   TCM_GENERAL_HOSPITAL: '中医综合医院',
   COMMUNITY_HOSPITAL: '社区医院',
-  OTHER: '其他',
+  OTHER: '健康管理工作室',
 }
 
 const ENABLE_STATUS_LABELS: Record<string, string> = {

@@ -200,19 +200,29 @@ public class GeneralChatHandler {
             if (!hasPatientButtons) {
                 reply = stripFakePatientButtonHints(reply);
             }
+            String suggestedTeamName = StaffBizTools.extractSuggestedCareTeamName(cmd.message());
+            boolean createTeamIntent = StaffBizTools.asksCreateCareTeamIntent(cmd.message());
             if (noPrimaryTeam) {
                 // 未建组：建组为主、批量分配面板置灰预告（顺序与视觉主次一致）
-                ensureCreateCareTeamAction(actions, reply);
+                ensureCreateCareTeamAction(actions, reply, suggestedTeamName);
                 ensureUnassignedWorkbenchAction(actions, reply, true);
                 prioritizeNoTeamActions(actions);
                 lockUnassignedWorkbenchActions(actions);
             } else {
                 // 已有组：批量分配面板 / 再建组入口按话术与意图补齐
                 ensureUnassignedWorkbenchAction(actions, reply, false);
-                if (StaffBizTools.asksCreateCareTeamIntent(cmd.message())
-                        || replyMentionsCreateCareTeam(reply)) {
-                    ensureCreateCareTeamAction(actions, reply);
+                if (createTeamIntent || replyMentionsCreateCareTeam(reply)) {
+                    ensureCreateCareTeamAction(actions, reply, suggestedTeamName);
                 }
+            }
+            // 明确建组指令：统一话术为「已打开面板」；有组名则写入预填说明（勿说已创建成功）
+            if (createTeamIntent) {
+                reply =
+                        StringUtils.hasText(suggestedTeamName)
+                                ? "好的，已为您打开创建面板并填写名称「"
+                                        + suggestedTeamName
+                                        + "」，请点击确认创建。"
+                                : "好的，已为您打开创建面板，请填写名称并确认创建。";
             }
             reply = alignReplyWithVisibleActions(reply, actions);
         }
@@ -325,6 +335,12 @@ public class GeneralChatHandler {
 
     /** 保证「去创建健管组」真实挂在下方（未建组 / 再建组）。 */
     static void ensureCreateCareTeamAction(List<AgentAction> actions, String reply) {
+        ensureCreateCareTeamAction(actions, reply, null);
+    }
+
+    /** @param suggestedName 用户话术中的组名，非空时写入 payload.name 供前端预填 */
+    static void ensureCreateCareTeamAction(
+            List<AgentAction> actions, String reply, String suggestedName) {
         if (actions == null) {
             return;
         }
@@ -336,14 +352,17 @@ public class GeneralChatHandler {
                                                 && "NAVIGATE".equals(a.type())
                                                 && "create-care-team".equals(a.path()));
         String label =
-                StringUtils.hasText(reply) && (reply.contains("再建") || reply.contains("再创建"))
-                        ? "去创建健管组"
-                        : "去创建我的健管组";
+                StringUtils.hasText(suggestedName)
+                        ? "打开创建面板"
+                        : (StringUtils.hasText(reply)
+                                        && (reply.contains("再建") || reply.contains("再创建"))
+                                ? "去创建健管组"
+                                : "去创建我的健管组");
         if (!has) {
-            actions.add(0, AgentAction.createCareTeam(label, null));
+            actions.add(0, AgentAction.createCareTeam(label, suggestedName));
             return;
         }
-        // 统一可点文案（保留已有「去创建健管组」）
+        // 统一可点文案；若动作尚无 name 而用户给了组名，补上预填
         for (int i = 0; i < actions.size(); i++) {
             AgentAction a = actions.get(i);
             if (a == null
@@ -352,8 +371,21 @@ public class GeneralChatHandler {
                 continue;
             }
             String cur = a.label() == null ? "" : a.label();
-            if (!cur.contains("创建") || cur.contains("左侧")) {
-                actions.set(i, AgentAction.createCareTeam(label, null));
+            Object existingName = a.payload() == null ? null : a.payload().get("name");
+            boolean needName =
+                    StringUtils.hasText(suggestedName)
+                            && (existingName == null
+                                    || !StringUtils.hasText(String.valueOf(existingName)));
+            if (!cur.contains("创建") || cur.contains("左侧") || needName) {
+                String keepLabel =
+                        StringUtils.hasText(suggestedName)
+                                ? "打开创建面板"
+                                : (cur.contains("创建") && !cur.contains("左侧") ? cur : label);
+                String name =
+                        needName
+                                ? suggestedName
+                                : (existingName == null ? null : String.valueOf(existingName));
+                actions.set(i, AgentAction.createCareTeam(keepLabel, name));
             }
         }
     }

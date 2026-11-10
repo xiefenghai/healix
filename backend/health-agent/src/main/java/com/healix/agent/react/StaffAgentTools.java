@@ -52,7 +52,7 @@ public class StaffAgentTools {
     private final ChatExtractService chatExtractService;
     private final StaffBizTools staffBizTools;
 
-    @Tool("新建患者档案。用户粘贴含姓名+手机/生日的建档稿，或明确要登记新患者时调用。不要把已选患者的补血压/体重当成建档。")
+    @Tool("新建患者档案。用户粘贴含姓名+手机号/年龄或生日/性别的建档稿（如「18758222123 李默 35岁 男」），或明确要登记/建档新患者时调用；系统会抽取并预填右侧表单。用户说「建组」「创建健管组」「新建组」是建健管组不是建档，禁止调用本工具。不要把已选患者的补血压/体重当成建档。")
     public String createArchiveDraft() {
         return runPrimary("患者建档", () -> createArchiveHandler.execute(StaffAgentTurnContext.require().handlerContext()));
     }

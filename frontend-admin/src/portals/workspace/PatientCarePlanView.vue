@@ -2217,7 +2217,7 @@ async function signActiveVersion() {
   const versionId = bundle.value?.activeVersion?.id
   if (!versionId) return
   try {
-    await ElMessageBox.prompt('请填写临床审阅意见（将写入修订留痕）', '医生签署方案', {
+    await ElMessageBox.prompt('请填写审阅意见（将写入修订留痕）', '医生签署方案', {
       confirmButtonText: '确认签署',
       cancelButtonText: '取消',
       inputPlaceholder: '如：同意本阶段运动与饮食安排',

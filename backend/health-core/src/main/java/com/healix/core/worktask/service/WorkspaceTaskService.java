@@ -20,8 +20,11 @@ import com.healix.core.identity.mapper.StaffOrgBindingMapper;
 import com.healix.core.identity.mapper.StaffProfileMapper;
 import com.healix.core.job.support.JobCronSupport;
 import com.healix.core.patientcard.service.PeopleLinkService;
+import com.healix.core.archive.domain.PeopleDiseaseArchive;
+import com.healix.core.archive.mapper.PeopleDiseaseArchiveMapper;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
+import com.healix.core.people.support.DiseaseCodeLabels;
 import com.healix.core.portal.enums.PortalEnum;
 import com.healix.core.followup.catalog.FollowupRecordSource;
 import com.healix.core.followup.catalog.FollowupRecordStatus;
@@ -76,6 +79,7 @@ public class WorkspaceTaskService {
     private final StaffOrgBindingMapper staffOrgBindingMapper;
     private final CareTeamMemberMapper careTeamMemberMapper;
     private final CareTeamMapper careTeamMapper;
+    private final PeopleDiseaseArchiveMapper diseaseArchiveMapper;
     private final AuditService auditService;
 
     public WorkspaceTaskSummaryDto summary(String orgId) {
@@ -586,10 +590,33 @@ public class WorkspaceTaskService {
         dto.setDueAt(row.getDueAt());
         dto.setDoneAt(row.getDoneAt());
         dto.setDeepLink(deepLink(type, row.getPeopleId(), dto.getPeopleName()));
+        dto.setDiseaseLabels(resolveDiseaseLabels(row.getTenantId(), row.getPeopleId()));
         int hits = MetricAbnormalEvaluator.hitCount(row.getPayloadJson());
         dto.setHitCount(hits);
         dto.setSuppressedCount(Math.max(0, hits - 1));
         return dto;
+    }
+
+    /** 列表轻量取病种标签；失败不阻断任务列表。 */
+    private List<String> resolveDiseaseLabels(String tenantId, String peopleId) {
+        if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(peopleId)) {
+            return List.of();
+        }
+        try {
+            List<String> labels = new ArrayList<>();
+            for (PeopleDiseaseArchive row : diseaseArchiveMapper.listByTenantAndPeople(tenantId, peopleId)) {
+                if (row == null || !StringUtils.hasText(row.getDiseaseCode())) {
+                    continue;
+                }
+                String label = DiseaseCodeLabels.label(row.getDiseaseCode());
+                if (StringUtils.hasText(label)) {
+                    labels.add(label);
+                }
+            }
+            return labels;
+        } catch (Exception ignored) {
+            return List.of();
+        }
     }
 
     private WorkspaceTaskDetailDto toDetail(WorkspaceTask row) {

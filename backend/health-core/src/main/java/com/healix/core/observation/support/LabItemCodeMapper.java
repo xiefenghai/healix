@@ -41,13 +41,23 @@ public class LabItemCodeMapper {
                 return Optional.of(code);
             }
         }
+        // 模糊匹配必须按名称长度降序，避免「糖化血红蛋白」被「血红蛋白」先命中
+        String bestCode = null;
+        int bestLen = -1;
         for (DictItemDto item : catalog()) {
             String desc = normalize(item.getDictCodeDesc());
-            if (StringUtils.hasText(desc) && (normalized.contains(desc) || desc.contains(normalized))) {
-                return Optional.of(item.getDictCode());
+            if (!StringUtils.hasText(desc)) {
+                continue;
+            }
+            if (!(normalized.contains(desc) || desc.contains(normalized))) {
+                continue;
+            }
+            if (desc.length() > bestLen) {
+                bestLen = desc.length();
+                bestCode = item.getDictCode();
             }
         }
-        return Optional.empty();
+        return Optional.ofNullable(bestCode);
     }
 
     public boolean isKnownCode(String itemCode) {

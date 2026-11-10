@@ -113,6 +113,11 @@ function buildBmiSeries(): Array<{ time: string; value: number }> {
   return out
 }
 
+function formatTooltipValue(v: unknown, unit: string) {
+  if (v == null || v === '') return '-'
+  return unit ? `${v} ${unit}` : String(v)
+}
+
 function baseOption(unit: string) {
   return {
     color: ['#ef4444', '#2c7ef8', '#00b8a9', '#8b5cf6'],
@@ -121,26 +126,50 @@ function baseOption(unit: string) {
       backgroundColor: '#0F172A',
       borderColor: '#0F172A',
       textStyle: { color: '#fff', fontSize: 11 },
-      valueFormatter: (v: unknown) => (v == null || v === '' ? '-' : `${v} ${unit}`),
+      valueFormatter: (v: unknown) => formatTooltipValue(v, unit),
     },
-    legend: { top: 0, right: 0, textStyle: { color: '#64748b', fontSize: 11 } },
-    grid: { left: 40, right: 16, top: 36, bottom: 48 },
+    legend: {
+      top: 2,
+      right: 4,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { color: '#64748b', fontSize: 11 },
+    },
+    // 压缩上下留白；底部留给 X 轴标签 + DataZoom，避免互相遮挡
+    grid: { left: 36, right: 12, top: 28, bottom: 58 },
     dataZoom: [
       { type: 'inside' as const, start: 0, end: 100 },
-      { type: 'slider' as const, height: 18, bottom: 8 },
+      {
+        type: 'slider' as const,
+        height: 14,
+        bottom: 2,
+        brushSelect: false,
+        borderColor: '#E2E8F0',
+        fillerColor: 'rgba(44, 126, 248, 0.12)',
+        handleSize: 14,
+        textStyle: { color: '#94A3B8', fontSize: 10 },
+      },
     ],
     xAxis: {
       type: 'category' as const,
       boundaryGap: false,
       axisLine: { lineStyle: { color: '#E2E8F0' } },
-      axisLabel: { hideOverlap: true, color: '#94A3B8', fontSize: 10 },
+      axisLabel: {
+        hideOverlap: true,
+        color: '#94A3B8',
+        fontSize: 10,
+        margin: 10,
+        showMinLabel: true,
+        showMaxLabel: true,
+      },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value' as const,
       scale: true,
-      name: unit,
-      nameTextStyle: { padding: [0, 0, 0, 8], color: '#94A3B8', fontSize: 10 },
+      name: unit || undefined,
+      nameTextStyle: { padding: [0, 0, 0, 4], color: '#94A3B8', fontSize: 10 },
       axisLabel: { color: '#94A3B8', fontSize: 10 },
       splitLine: { lineStyle: { color: '#F1F5F9' } },
     },
@@ -179,6 +208,7 @@ function renderLine(
         name: s.name,
         type: 'line',
         smooth: true,
+        symbol: 'circle',
         showSymbol: s.data.filter((v) => v != null).length <= 24,
         symbolSize: 6,
         connectNulls: false,
@@ -335,7 +365,10 @@ onBeforeUnmount(() => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  /* 1080P 底部安全区，避免末行卡片贴边被切 */
+  padding-bottom: 40px;
+  box-sizing: border-box;
 }
 
 .section-card {
@@ -352,7 +385,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  padding: 14px 18px;
+  padding: 10px 14px;
 }
 
 .section-title {
@@ -365,11 +398,12 @@ onBeforeUnmount(() => {
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
+  margin-bottom: 40px;
 }
 
 .panel-head {
-  padding: 14px 18px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--ink-100, #f1f5f9);
 }
 
@@ -381,17 +415,21 @@ onBeforeUnmount(() => {
 }
 
 .chart-body {
-  padding: 12px 14px 16px;
+  padding: 4px 8px 6px;
 }
 
 .chart-el {
   width: 100%;
-  height: 240px;
+  height: 200px;
 }
 
 @media (max-width: 960px) {
   .chart-grid {
     grid-template-columns: 1fr;
+  }
+
+  .chart-el {
+    height: 220px;
   }
 }
 </style>

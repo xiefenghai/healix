@@ -144,7 +144,7 @@ const overview = ref<AdherenceOverview | null>(null)
 const items = ref<AdherencePatientItem[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 
 const trendLoading = ref(false)
 const trendDays = ref(30)

@@ -12,7 +12,7 @@ const MODEL_NAME_RE =
 /** 底层工具名 / 技术文案 → 健管师可读短句 */
 const TOOL_LABEL: Record<string, string> = {
   DeepSeek: '正在综合患者数据与指南起草方案…',
-  临床方案推理: '正在综合患者数据与指南起草方案…',
+  方案推理: '正在综合患者数据与指南起草方案…',
   resolveTemplateKey: '正在匹配适宜的管理方向…',
   匹配管理方向: '正在匹配适宜的管理方向…',
   CarePlanTemplateRegistry: '正在按标准模板生成方案…',

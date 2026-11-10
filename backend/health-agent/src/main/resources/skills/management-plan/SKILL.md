@@ -224,7 +224,7 @@ display_name: 管理方案生成
 | `relatedRef` | 可选，关联运动类型或指标，如 `WALKING`、`BLOOD_GLUCOSE`、`SEDENTARY_BREAK` |
 | `targetMl` | **仅 `WATER`**：每日饮水目标毫升（整数） |
 | `enabled` | 是否启用；关掉后患者端不展示 |
-| `rationale` | 可选，灰色「临床依据」短句（患者/健管师可见） |
+| `rationale` | 可选，灰色「健康依据」短句（患者/健管师可见） |
 
 **编制原则**：
 

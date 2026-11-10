@@ -3,6 +3,7 @@ package com.healix.web.b.workspace;
 import com.healix.common.result.ApiResult;
 import com.healix.common.result.PageResult;
 import com.healix.core.care.domain.CareTeamMember;
+import com.healix.core.workspace.dto.CareTeamDeleteImpact;
 import com.healix.core.workspace.dto.CareTeamListItem;
 import com.healix.core.workspace.dto.OrgPatientListItem;
 import com.healix.core.workspace.dto.OrgPatientListStats;
@@ -166,12 +167,22 @@ public class BWorkspaceController {
         return ApiResult.ok(orgWorkspaceService.updateCareTeamName(orgId, teamId, request.name(), accountId));
     }
 
-    /** 删除照护团队。 */
+    /** 删除健管组前影响预览（患者数 / 未完成待办数）。 */
+    @GetMapping("/care-teams/{teamId}/delete-impact")
+    public ApiResult<CareTeamDeleteImpact> previewCareTeamDelete(@PathVariable String teamId) {
+        String orgId = SecurityUtils.requireCurrentOrgId();
+        return ApiResult.ok(orgWorkspaceService.previewCareTeamDelete(orgId, teamId));
+    }
+
+    /**
+     * 软删除照护团队。须传 confirmName=组名防误触；患者进公共池，未完成待办待认领，档案/方案保留。
+     */
     @DeleteMapping("/care-teams/{teamId}")
-    public ApiResult<Void> deleteCareTeam(@PathVariable String teamId) {
+    public ApiResult<Void> deleteCareTeam(
+            @PathVariable String teamId, @RequestParam String confirmName) {
         String orgId = SecurityUtils.requireCurrentOrgId();
         String accountId = SecurityUtils.requireContext().getAccountId();
-        orgWorkspaceService.deleteCareTeam(orgId, teamId, accountId);
+        orgWorkspaceService.deleteCareTeam(orgId, teamId, confirmName, accountId);
         return ApiResult.ok(null);
     }
 
@@ -232,7 +243,7 @@ public class BWorkspaceController {
             @RequestParam(required = false) Boolean unassigned,
             @RequestParam(required = false) Boolean watched,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         String orgId = SecurityUtils.requireCurrentOrgId();
         return ApiResult.ok(orgWorkspaceService.pageOrgPatients(
                 orgId, keyword, careTeamId, unassigned, watched, page, size));

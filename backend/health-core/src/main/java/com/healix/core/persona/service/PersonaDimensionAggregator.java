@@ -30,14 +30,16 @@ import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.questionnaire.domain.QuestionnaireResponse;
 import com.healix.core.questionnaire.mapper.QuestionnaireResponseMapper;
+import com.healix.core.job.support.JobCronSupport;
 import com.healix.core.worktask.domain.WorkspaceTask;
 import com.healix.core.worktask.mapper.WorkspaceTaskMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.Period;
+import java.time.Year;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -97,7 +99,11 @@ public class PersonaDimensionAggregator {
                 identity.put("sex", profile.getGender());
             }
             if (profile.getBirthday() != null) {
-                identity.put("age", Period.between(profile.getBirthday(), LocalDate.now()).getYears());
+                // 与首诊摘要口径对齐：当前年 − 出生年（上海时区）
+                int ageYears =
+                        Year.now(JobCronSupport.ZONE).getValue() - profile.getBirthday().getYear();
+                identity.put("birthday", profile.getBirthday().toString());
+                identity.put("age", Math.max(0, ageYears));
             }
         }
 
@@ -119,7 +125,8 @@ public class PersonaDimensionAggregator {
 
         PatientOrgMembership membership = membershipMapper.findByOrgAndPeople(orgId, peopleId);
         if (membership != null && membership.getJoinedAt() != null) {
-            long days = ChronoUnit.DAYS.between(membership.getJoinedAt().toLocalDate(), LocalDate.now());
+            long days = ChronoUnit.DAYS.between(
+                    membership.getJoinedAt().toLocalDate(), LocalDate.now(JobCronSupport.ZONE));
             identity.put("enrolledDays", Math.max(0, days));
         }
 
@@ -129,26 +136,121 @@ public class PersonaDimensionAggregator {
                 try {
                     JsonNode tags = JsonUtils.readTree(plan.getDiseaseTagsJson());
                     if (tags.isArray()) {
-                        identity.set("diseaseTags", tags);
+                        identity.set("diseaseTags", dedupeConflictingDiseaseTags(tags));
                     }
                 } catch (Exception ignored) {
                     // ignore
                 }
             }
-            if (StringUtils.hasText(plan.getCurrentVersionId())) {
-                CarePlanVersion ver = carePlanVersionMapper.findById(plan.getCurrentVersionId());
-                if (ver != null && StringUtils.hasText(ver.getContextSnapshotJson())) {
-                    try {
-                        JsonNode snap = JsonUtils.readTree(ver.getContextSnapshotJson());
-                        String key = snap.path("templateKey").asText(null);
-                        if (StringUtils.hasText(key)) {
-                            identity.put("activePlanTemplateKey", key);
-                        }
-                    } catch (Exception ignored) {
-                        // ignore
-                    }
-                }
+            String templateKey = resolveActivePlanTemplateKey(plan);
+            if (StringUtils.hasText(templateKey)) {
+                identity.put("activePlanTemplateKey", templateKey);
             }
+        }
+    }
+
+    /**
+     * 病种互斥：已确诊糖尿病则去掉前期；已确诊高血压则去掉「偏高/前期」宽泛标签。
+     */
+    static ArrayNode dedupeConflictingDiseaseTags(JsonNode tags) {
+        ArrayNode out = JsonUtils.mapper().createArrayNode();
+        if (tags == null || !tags.isArray()) {
+            return out;
+        }
+        List<String> raw = new ArrayList<>();
+        for (JsonNode n : tags) {
+            if (n == null || n.isNull()) {
+                continue;
+            }
+            String s = n.asText(null);
+            if (StringUtils.hasText(s)) {
+                raw.add(s.trim());
+            }
+        }
+        boolean hasDiabetes =
+                raw.stream().anyMatch(PersonaDimensionAggregator::isConfirmedDiabetesTag);
+        boolean hasHypertension =
+                raw.stream().anyMatch(PersonaDimensionAggregator::isConfirmedHypertensionTag);
+        for (String s : raw) {
+            if (hasDiabetes && isPrediabetesTag(s)) {
+                continue;
+            }
+            if (hasHypertension && isElevatedBpTag(s)) {
+                continue;
+            }
+            out.add(s);
+        }
+        return out;
+    }
+
+    static boolean isConfirmedDiabetesTag(String tag) {
+        String u = tag == null ? "" : tag.trim().toUpperCase();
+        String zh = tag == null ? "" : tag.trim();
+        if ("DIABETES".equals(u) || "T2DM".equals(u) || "TYPE2_DIABETES".equals(u)) {
+            return true;
+        }
+        return (zh.contains("糖尿病") || zh.contains("2型"))
+                && !zh.contains("前期")
+                && !u.contains("PREDIABETES");
+    }
+
+    static boolean isPrediabetesTag(String tag) {
+        String u = tag == null ? "" : tag.trim().toUpperCase();
+        String zh = tag == null ? "" : tag.trim();
+        return "PREDIABETES".equals(u)
+                || zh.contains("糖尿病前期")
+                || zh.contains("糖前期")
+                || zh.contains("空腹血糖受损")
+                || zh.contains("糖耐量异常");
+    }
+
+    static boolean isConfirmedHypertensionTag(String tag) {
+        String u = tag == null ? "" : tag.trim().toUpperCase();
+        String zh = tag == null ? "" : tag.trim();
+        if ("HYPERTENSION".equals(u) || "HTN".equals(u)) {
+            return true;
+        }
+        return zh.contains("高血压") && !zh.contains("前期") && !zh.contains("偏高");
+    }
+
+    static boolean isElevatedBpTag(String tag) {
+        String u = tag == null ? "" : tag.trim().toUpperCase();
+        String zh = tag == null ? "" : tag.trim();
+        return "PREHYPERTENSION".equals(u)
+                || "BP_ELEVATED".equals(u)
+                || "ELEVATED_BP".equals(u)
+                || zh.contains("高血压前期")
+                || zh.contains("血压偏高")
+                || zh.equals("偏高血压");
+    }
+
+    /**
+     * 画像侧「有生效方案」：ACTIVE 且已发布当前版本即可。
+     * 不强制入组——入组与否不影响方案是否存在；未入组但已发布方案时叙事不得写「尚无生效管理方案」。
+     */
+    private boolean hasPersonaEffectivePlan(String tenantId, String orgId, String peopleId) {
+        CarePlan plan = carePlanMapper.findByTenantAndPeople(tenantId, peopleId);
+        if (plan == null || !"ACTIVE".equals(plan.getStatus())) {
+            return false;
+        }
+        // 有已发布版本即生效；模板 key 仅用于展示方案类型，缺 key 不否定「有方案」
+        return StringUtils.hasText(plan.getCurrentVersionId());
+    }
+
+    private String resolveActivePlanTemplateKey(CarePlan plan) {
+        if (plan == null || !StringUtils.hasText(plan.getCurrentVersionId())) {
+            return null;
+        }
+        CarePlanVersion ver = carePlanVersionMapper.findById(plan.getCurrentVersionId());
+        if (ver == null || !StringUtils.hasText(ver.getContextSnapshotJson())) {
+            return null;
+        }
+        try {
+            JsonNode snap = JsonUtils.readTree(ver.getContextSnapshotJson());
+            String key = snap.path("templateKey").asText(null);
+            return StringUtils.hasText(key) ? key : null;
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
@@ -197,9 +299,38 @@ public class PersonaDimensionAggregator {
     private void fillRisk(ObjectNode risk, String tenantId, String orgId, String peopleId) {
         ArrayNode tags = risk.putArray("tags");
         List<AssessmentTagView> list = assessmentTagAssembler.assemble(tenantId, orgId, peopleId);
+        boolean hasDiabetes =
+                list.stream()
+                        .anyMatch(
+                                t ->
+                                        t != null
+                                                && isConfirmedDiabetesTag(
+                                                        t.getDiseaseCode() == null
+                                                                ? ""
+                                                                : t.getDiseaseCode()));
+        boolean hasHypertension =
+                list.stream()
+                        .anyMatch(
+                                t ->
+                                        t != null
+                                                && isConfirmedHypertensionTag(
+                                                        t.getDiseaseCode() == null
+                                                                ? ""
+                                                                : t.getDiseaseCode()));
         for (AssessmentTagView t : list) {
+            if (t == null || !StringUtils.hasText(t.getDiseaseCode())) {
+                continue;
+            }
+            String code = t.getDiseaseCode().trim();
+            // 与病种标签同一互斥：确诊糖尿病去掉前期；确诊高血压去掉偏高/前期
+            if (hasDiabetes && isPrediabetesTag(code)) {
+                continue;
+            }
+            if (hasHypertension && isElevatedBpTag(code)) {
+                continue;
+            }
             ObjectNode n = tags.addObject();
-            n.put("diseaseCode", t.getDiseaseCode());
+            n.put("diseaseCode", code);
             n.put("category", t.getCategory());
             n.put("level", t.getLevel());
             n.put("levelLabel", t.getText() != null ? t.getText() : t.getLevel());
@@ -247,8 +378,8 @@ public class PersonaDimensionAggregator {
     }
 
     /**
-     * 备注只用方案影响（planEffect）；禁止回退到题干 label。
-     * 高亮码用 severity（CAUTION/REFER/BLOCK）。
+     * 高亮码用 severity；备注禁止写入 planEffect（AI 开方内部指令，会穿帮进「健康风险」列表）。
+     * 可展示的短备注仅接受已是业务风险口吻的 note（不含「方案加入/不按…写」等 Prompt 句式）。
      */
     static void appendConstraintHighlight(ArrayNode highlightCodes, ArrayNode notes, JsonNode h) {
         if (h == null || h.isNull()) {
@@ -258,14 +389,23 @@ public class PersonaDimensionAggregator {
         if (StringUtils.hasText(severity)) {
             highlightCodes.add(severity.trim().toUpperCase());
         }
-        String note = textOrNull(h, "planEffect");
+        String note = textOrNull(h, "note");
         if (!StringUtils.hasText(note)) {
-            note = textOrNull(h, "note");
+            return;
         }
-        // 明确不使用 label（题干）
-        if (StringUtils.hasText(note)) {
-            notes.add(note.trim());
+        String trimmed = note.trim();
+        // 过滤开方 Prompt / 方案写作指令
+        if (trimmed.contains("方案加入")
+                || trimmed.contains("不按自己做饭")
+                || trimmed.contains("给能点到的替换")
+                || trimmed.contains("写入方案")
+                || trimmed.contains("开方")) {
+            return;
         }
+        if (trimmed.length() > 40) {
+            return;
+        }
+        notes.add(trimmed);
     }
 
     private void fillBehavior(ObjectNode behavior, String tenantId, String peopleId) {
@@ -420,11 +560,24 @@ public class PersonaDimensionAggregator {
     private void fillExecution(ObjectNode execution, String tenantId, String orgId, String peopleId) {
         // 激励火苗尚未接入画像；不写 flameStatus，前端隐藏该行
         execution.putNull("medMissStreak");
+        // 无 ACTIVE 已发布方案 → 叙事/依从一律按无方案处理
+        if (!hasPersonaEffectivePlan(tenantId, orgId, peopleId)) {
+            putNoActivePlanExecution(execution);
+            return;
+        }
+        // 已有生效方案：hasActivePlan 必须为 true（勿被「执行窗口外 / 未入组」打回 false，否则叙事会写「尚无方案」）
+        execution.put("hasActivePlan", true);
         try {
             AdherencePatientSummaryDto summary =
-                    adherenceQueryService.patientSummary(tenantId, orgId, peopleId, LocalDate.now());
-            boolean hasPlan = summary.isHasActivePlan();
-            execution.put("hasActivePlan", hasPlan);
+                    adherenceQueryService.patientSummary(
+                            tenantId, orgId, peopleId, LocalDate.now(JobCronSupport.ZONE));
+            // 打卡窗口内才填完成率/连续天；窗口外保留 hasActivePlan=true，指标 null
+            if (!summary.isHasActivePlan()) {
+                execution.putNull("planCompletion7d");
+                execution.putNull("planMissStreak");
+                execution.putNull("medCompletion7d");
+                return;
+            }
             if (summary.getRate() != null) {
                 execution.put("planCompletion7d", summary.getRate());
             } else {
@@ -439,11 +592,17 @@ public class PersonaDimensionAggregator {
             }
         } catch (Exception e) {
             log.debug("[Persona] adherence failed peopleId={}", peopleId, e);
-            execution.put("hasActivePlan", false);
             execution.putNull("planCompletion7d");
-            execution.put("planMissStreak", 0);
+            execution.putNull("planMissStreak");
             execution.putNull("medCompletion7d");
         }
+    }
+
+    private static void putNoActivePlanExecution(ObjectNode execution) {
+        execution.put("hasActivePlan", false);
+        execution.putNull("planCompletion7d");
+        execution.putNull("planMissStreak");
+        execution.putNull("medCompletion7d");
     }
 
     private void fillFocus(ObjectNode focus, String orgId, String peopleId, ObjectNode execution) {
@@ -482,9 +641,12 @@ public class PersonaDimensionAggregator {
                 return "优先处理：" + title;
             }
         }
-        int streak = execution.path("planMissStreak").asInt(0);
-        if (streak >= 3) {
-            return "先电话确认连续 " + streak + " 日方案未完成原因";
+        if (!execution.path("hasActivePlan").asBoolean(false)) {
+            return null;
+        }
+        JsonNode streakNode = execution.get("planMissStreak");
+        if (streakNode != null && !streakNode.isNull() && streakNode.asInt(0) >= 3) {
+            return "先电话确认连续 " + streakNode.asInt() + " 日方案未完成原因";
         }
         JsonNode rate = execution.get("planCompletion7d");
         if (rate != null && !rate.isNull() && rate.asDouble() < 0.6d) {
@@ -493,11 +655,13 @@ public class PersonaDimensionAggregator {
         return null;
     }
 
-    private static String fingerprint(ObjectNode dimensions) {
+    /** 临床指纹：不含时间戳 / 依从打卡 / 待办（避免每日打卡把画像打成 dirty）。 */
+    static String fingerprint(ObjectNode dimensions) {
         try {
-            // 去掉易变时间戳再哈希
             ObjectNode copy = dimensions.deepCopy();
             copy.remove("aggregatedAt");
+            copy.remove("execution");
+            copy.remove("focus");
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] dig = md.digest(JsonUtils.toJson(copy).getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(dig);

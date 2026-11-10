@@ -66,7 +66,7 @@ public class BAdherenceController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Boolean unassigned,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         return ApiResult.ok(adherenceQueryService.pagePatients(
                 SecurityUtils.requireTenantId(),
                 SecurityUtils.requireCurrentOrgId(),

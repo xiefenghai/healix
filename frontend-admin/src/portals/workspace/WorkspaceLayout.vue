@@ -67,8 +67,12 @@ const isCarePlanComposeWorkspace = computed(() =>
 const isFullscreenWorkspace = computed(
   () => isIntakeWorkspace.value || isCarePlanComposeWorkspace.value,
 )
+const isOrgPicker = computed(() => route.path.startsWith('/workspace/orgs'))
 const hideSiderEffective = computed(() => hideSider.value || isFullscreenWorkspace.value)
-const flushContent = computed(() => isCockpit.value || isFullscreenWorkspace.value)
+const flushContent = computed(
+  () => isCockpit.value || isFullscreenWorkspace.value || isOrgPicker.value,
+)
+const hideCrumbs = computed(() => isOrgPicker.value)
 
 const pageTitle = computed(() => {
   if (/\/workspace\/intake-responses\//.test(route.path)) return '首诊详情'
@@ -123,7 +127,7 @@ provide('subscribeCareChatEvent', (handler: CareChatSseHandler) => {
 })
 
 function switchOrg() {
-  router.push('/workspace/orgs')
+  router.push({ path: '/workspace/orgs', query: { from: 'switch' } })
 }
 
 function onChip(kind: 'tasks' | 'overdue') {
@@ -221,6 +225,7 @@ onBeforeUnmount(() => {
     :menus="menus"
     :hide-sider="hideSiderEffective"
     :hide-topbar="isFullscreenWorkspace"
+    :hide-crumbs="hideCrumbs"
     :org-switchable="orgSwitchable && !isFullscreenWorkspace"
     :flush-content="flushContent"
     @switch-org="switchOrg"

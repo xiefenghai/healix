@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatRole, StaffRole } from '../../shared/enums'
 import { TABLE_COL } from '../../shared/table-columns'
+import DeleteCareTeamDialog, { type DeleteCareTeamTarget } from './DeleteCareTeamDialog.vue'
 
 interface CareTeamListItem {
   id: string
@@ -259,24 +260,17 @@ async function removeMember(m: CareTeamMember) {
   }
 }
 
-async function deleteTeam() {
+const deleteDialogOpen = ref(false)
+const deleteTarget = ref<DeleteCareTeamTarget | null>(null)
+
+function deleteTeam() {
   if (!current.value) return
-  try {
-    await ElMessageBox.confirm(
-      `确认删除健管组「${current.value.name}」？组成员关系将解除，机构患者归属保留。`,
-      '删除健管组',
-      { type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await api(`/api/b/v1/care-teams/${current.value.id}`, { method: 'DELETE' })
-    ElMessage.success('已删除')
-    await router.push('/workspace/care-teams')
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '删除失败')
-  }
+  deleteTarget.value = { id: current.value.id, name: current.value.name }
+  deleteDialogOpen.value = true
+}
+
+async function onTeamDeleted() {
+  await router.push('/workspace/care-teams')
 }
 
 onMounted(async () => {
@@ -394,6 +388,12 @@ onMounted(async () => {
         </div>
       </el-card>
     </template>
+
+    <DeleteCareTeamDialog
+      v-model="deleteDialogOpen"
+      :team="deleteTarget"
+      @deleted="onTeamDeleted"
+    />
   </div>
 </template>
 

@@ -9,6 +9,8 @@ export interface UnassignedPatientRow {
   age?: number | null
   diseaseLabels?: string[]
   gender?: string | null
+  /** 已有健管组时批量分配会覆盖 */
+  careTeamId?: string | null
 }
 
 interface CareTeamListItem {
@@ -22,6 +24,8 @@ interface CareTeamListItem {
 const props = defineProps<{
   modelValue: boolean
   patients: UnassignedPatientRow[]
+  /** 打开时默认勾选全部传入患者（患者管理批量入组） */
+  selectAllOnOpen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -58,10 +62,17 @@ const allSelected = computed(
   () =>
     visibleIds.value.length > 0 && visibleIds.value.every((id) => selectedIds.value.includes(id)),
 )
+/**
+ * 勾选集合与搜索过滤解耦：keyword 只影响列表展示，不改 selectedIds。
+ * 已勾的 3 人在过滤后仍计入批量分配。
+ */
 const selectedCount = computed(() => selectedIds.value.length)
 const selectedTeamName = computed(
   () => teams.value.find((t) => t.id === teamId.value)?.name?.trim() || '',
 )
+/** 仅一个可分配组：隐藏下拉，展示只读目标，避免无效点击 */
+const singleTeamOnly = computed(() => teams.value.length === 1)
+const soleTeam = computed(() => (singleTeamOnly.value ? teams.value[0] || null : null))
 const canSubmit = computed(
   () => selectedCount.value > 0 && !!teamId.value && teams.value.length > 0 && !submitting.value,
 )
@@ -139,7 +150,9 @@ watch(
   () => props.modelValue,
   (open) => {
     if (!open) return
-    selectedIds.value = []
+    selectedIds.value = props.selectAllOnOpen
+      ? props.patients.map((p) => p.peopleId).filter(Boolean)
+      : []
     teamId.value = null
     keyword.value = ''
     void loadTeams()
@@ -209,16 +222,18 @@ async function submitBatch() {
   const careTeamId = teamId.value!
   const careTeamName = selectedTeamName.value || '健管组'
   const count = selectedIds.value.length
+  const selectedPeople = props.patients.filter((p) => selectedIds.value.includes(p.peopleId))
+  const alreadyInTeam = selectedPeople.filter((p) => !!p.careTeamId).length
+  const confirmMsg =
+    alreadyInTeam > 0
+      ? `您选中的 ${count} 人中，有 ${alreadyInTeam} 人已分入其他健管组，继续操作将覆盖其原有分组，并分配给「${careTeamName}」。确认继续吗？`
+      : `确认将选中的 ${count} 位患者，分配给「${careTeamName}」吗？`
   try {
-    await ElMessageBox.confirm(
-      `确认将选中的 ${count} 位患者，分配给「${careTeamName}」吗？`,
-      '确认批量分配',
-      {
-        type: 'warning',
-        confirmButtonText: `确认分配 (${count})`,
-        cancelButtonText: '再看看',
-      },
-    )
+    await ElMessageBox.confirm(confirmMsg, '确认批量分配', {
+      type: 'warning',
+      confirmButtonText: `确认分配 (${count})`,
+      cancelButtonText: '再看看',
+    })
   } catch {
     return
   }
@@ -339,36 +354,47 @@ function goCreateTeam() {
     <template #footer>
       <div class="footer" v-loading="loadingTeams">
         <div class="footer-main">
-          <span class="assign-label">分配到</span>
-          <el-select
-            v-model="teamId"
-            filterable
-            clearable
-            teleported
-            placeholder="选择健管组…"
-            :disabled="!teams.length || !selectedCount"
-            style="flex: 1; min-width: 0"
-            popper-class="unassigned-assign-select-popper"
-            :popper-options="{
-              modifiers: [
-                { name: 'flip', options: { fallbackPlacements: ['top', 'bottom'] } },
-                { name: 'offset', options: { offset: [0, 6] } },
-              ],
-            }"
-          >
-            <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id">
-              <span>{{ t.name }}</span>
-              <span class="opt-meta">
-                {{ (t.primaryCareManagerName || '').trim() || '未指定主责' }} ·
-                {{ t.memberCount ?? 0 }} 位患者
-              </span>
-            </el-option>
-          </el-select>
+          <div class="footer-target">
+            <span class="assign-label">选择目标组：</span>
+            <!-- 仅 1 个组：只读展示，避免无效下拉点击 -->
+            <div v-if="singleTeamOnly && soleTeam" class="target-readonly" :title="soleTeam.name">
+              <span class="target-icon" aria-hidden="true">📁</span>
+              <strong class="target-name">{{ soleTeam.name }}</strong>
+            </div>
+            <el-select
+              v-else
+              v-model="teamId"
+              filterable
+              clearable
+              teleported
+              class="target-select"
+              placeholder="请选择健管组…"
+              :disabled="!teams.length || !selectedCount"
+              popper-class="unassigned-assign-select-popper"
+              :popper-options="{
+                modifiers: [
+                  { name: 'flip', options: { fallbackPlacements: ['top', 'bottom'] } },
+                  { name: 'offset', options: { offset: [0, 6] } },
+                ],
+              }"
+            >
+              <template #prefix>
+                <span class="target-icon" aria-hidden="true">📁</span>
+              </template>
+              <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id">
+                <span class="opt-name">📁 {{ t.name }}</span>
+                <span class="opt-meta">
+                  {{ (t.primaryCareManagerName || '').trim() || '未指定主责' }} ·
+                  {{ t.memberCount ?? 0 }} 位患者
+                </span>
+              </el-option>
+            </el-select>
+          </div>
           <el-button
             type="primary"
             class="batch-assign-btn"
             :loading="submitting"
-            :disabled="selectedCount === 0 || !teamId || submitting"
+            :disabled="!canSubmit"
             @click="submitBatch"
           >
             {{
@@ -542,15 +568,58 @@ function goCreateTeam() {
 .footer-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
+}
+.footer-target {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 .assign-label {
   flex-shrink: 0;
+  margin-right: 8px;
   font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-600, #475569);
+  font-weight: 700;
+  color: var(--ink-800, #1e293b);
   white-space: nowrap;
+  line-height: 36px;
+}
+.target-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+.target-readonly {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f8f9fa;
+  border: 1px solid #e5e7eb;
+}
+.target-readonly .target-name {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.target-select {
+  flex: 1;
+  min-width: 0;
+}
+.batch-assign-btn {
+  flex-shrink: 0;
+  height: 36px;
 }
 .footer-empty {
   display: flex;
@@ -559,6 +628,10 @@ function goCreateTeam() {
   margin-top: 8px;
   font-size: 13px;
   color: var(--ink-500, #6b7280);
+}
+.opt-name {
+  font-weight: 600;
+  color: #0f172a;
 }
 .opt-meta {
   float: right;
@@ -591,5 +664,42 @@ function goCreateTeam() {
 .unassigned-assign-select-popper {
   z-index: 4000 !important;
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14) !important;
+}
+/* 目标组下拉：浅底容器感 + 选中组名加粗加深 */
+.unassigned-assign-drawer .target-select .el-select__wrapper {
+  background: #f8f9fa !important;
+  box-shadow: 0 0 0 1px #d1d5db inset !important;
+  min-height: 36px;
+}
+.unassigned-assign-drawer .target-select .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset !important;
+}
+.unassigned-assign-drawer .target-select .el-select__selected-item,
+.unassigned-assign-drawer .target-select .el-select__placeholder {
+  font-size: 14px;
+}
+.unassigned-assign-drawer .target-select .el-select__selected-item {
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+.unassigned-assign-drawer .target-select .el-select__prefix {
+  color: inherit;
+}
+/* 下拉列表中当前选中项：浅蓝高亮，便于二次确认 */
+.unassigned-assign-select-popper .el-select-dropdown__item.is-selected {
+  background: #eff6ff !important;
+  color: #1e40af !important;
+  font-weight: 700;
+}
+.unassigned-assign-select-popper .el-select-dropdown__item.is-selected .opt-name {
+  color: #1e40af;
+}
+.unassigned-assign-select-popper .el-select-dropdown__item.is-hovering,
+.unassigned-assign-select-popper .el-select-dropdown__item:hover {
+  background: #f1f5f9;
+}
+.unassigned-assign-select-popper .el-select-dropdown__item.is-selected.is-hovering,
+.unassigned-assign-select-popper .el-select-dropdown__item.is-selected:hover {
+  background: #dbeafe !important;
 }
 </style>

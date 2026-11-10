@@ -1057,11 +1057,11 @@ function goNextModule() {
 }
 
 const RISK_BUCKET: Record<string, string> = {
-  BODY_MEASURE: '临床体征',
-  DM_CLINICAL: '临床体征',
-  HTN_CLINICAL: '临床体征',
-  GOALS_PREFERENCE: '临床体征',
-  WL_WEIGHT_HISTORY: '临床体征',
+  BODY_MEASURE: '健康体征',
+  DM_CLINICAL: '健康体征',
+  HTN_CLINICAL: '健康体征',
+  GOALS_PREFERENCE: '健康体征',
+  WL_WEIGHT_HISTORY: '健康体征',
   MEDICAL_HISTORY: '用药与病史',
   ALLERGY_DIET_RESTRICTION: '用药与病史',
   FAMILY_HISTORY: '用药与病史',
@@ -1089,7 +1089,7 @@ const riskGroups = computed(() => {
     list.push(it)
     buckets.set(title, list)
   }
-  return ['临床体征', '用药与病史', '生活方式', '其他']
+  return ['健康体征', '用药与病史', '生活方式', '其他']
     .filter((title) => buckets.has(title))
     .map((title) => ({ title, items: buckets.get(title) || [] }))
 })

@@ -17,6 +17,10 @@ import type { AssessmentSnapshot } from '../../shared/assessment'
 import { allergyTick } from '../../shared/allergy'
 import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
+import {
+  clearBirthdayEstimated,
+  isBirthdayEstimated,
+} from '../../shared/birthday-estimated'
 import PatientPersonaPanel from './PatientPersonaPanel.vue'
 import PatientArchiveView from './PatientArchiveView.vue'
 import PatientObservationLayout from './PatientObservationLayout.vue'
@@ -221,6 +225,20 @@ const patientAge = computed(() => {
   return `${age} 岁`
 })
 
+/** 建档时用年龄推算的生日：详情回显「估算」；补录证件后清除 */
+const birthdayEstimated = computed(() => {
+  const id = peopleId.value
+  if (!id || patient.value?.identityMask) return false
+  return isBirthdayEstimated(id)
+})
+
+watch(
+  () => [peopleId.value, patient.value?.identityMask] as const,
+  ([id, mask]) => {
+    if (id && mask) clearBirthdayEstimated(id)
+  },
+)
+
 const nameInitial = computed(() => {
   const name = patient.value?.displayName?.trim()
   return name ? name.slice(0, 1) : '患'
@@ -350,17 +368,27 @@ function buildTags(category: AssessmentGroup['category']): HeroTag[] {
   return tags
 }
 
-/** 评估标签：未患病种的患病风险 */
-const riskTags = computed(() => buildTags('RISK'))
 /** 病情标签：已患病种的严重等级分层 */
 const conditionTags = computed(() => buildTags('SEVERITY'))
-const riskTagsAlert = computed(() => riskTags.value.some((t) => t.tone === 'danger'))
-const conditionTagsAlert = computed(() => conditionTags.value.some((t) => t.tone === 'danger'))
+/**
+ * 评估标签：未患病种的患病风险。
+ * 若 RISK 为空但病情侧已有高/中危分层，顶上同步警示，避免与画像「风险与病情」穿帮。
+ */
+const riskTags = computed(() => {
+  const risk = buildTags('RISK')
+  if (risk.length) return risk
+  return conditionTags.value.filter((t) => t.tone === 'danger' || t.tone === 'warning')
+})
+const riskTagsAlert = computed(() =>
+  riskTags.value.some((t) => t.tone === 'danger' || t.tone === 'warning'),
+)
+const conditionTagsAlert = computed(() =>
+  conditionTags.value.some((t) => t.tone === 'danger' || t.tone === 'warning'),
+)
 
 /**
- * 方案执行（头图合并卡）：主文案为跟进状态，副文案带近 7 日完成率。
- * 与依从看板同一口径：今日方案/用药未完成或连续未完成 ≥3 天 → 需跟进；
- * 近 7 日完成率低于 60% → 完成偏低；其余执行正常。
+ * 方案执行（头图合并卡）：只信依从摘要 hasActivePlan（= ACTIVE 已发布方案）。
+ * 不让画像旧数据 gate 把「有方案」盖成「暂无」；无完成率时显示「暂无任务」而非「暂无方案」。
  */
 const planExecution = computed(() => {
   const a = adherence.value
@@ -375,16 +403,18 @@ const planExecution = computed(() => {
       percent: null as number | null,
     }
   }
-  if (!a.hasActivePlan) {
+  // 仅依从摘要；画像 gate 不得否定真实 ACTIVE 方案
+  if (a.hasActivePlan !== true) {
     return {
-      value: '暂无方案',
-      hint: '还没有执行中的管理方案',
+      value: '暂无进行中的方案',
+      hint: '尚未生成生效的管理方案',
       tone: 'empty' as const,
-      title: '没有执行中的健康管理方案，不判断要不要跟进',
+      title: '没有执行中的健康管理方案，不判断打卡或跟进',
       percent: null,
     }
   }
-  const streak = a.streakDays || 0
+  const streak = Number(a.streakDays)
+  const safeStreak = Number.isFinite(streak) && streak > 0 ? streak : 0
   const planMiss = !!a.planTodayIncomplete
   const medMiss = !!a.medTodayIncomplete
   const level = a.riskLevel || ''
@@ -394,9 +424,9 @@ const planExecution = computed(() => {
     const bits: string[] = []
     if (planMiss) bits.push('今日方案未打完')
     if (medMiss) bits.push('今日用药未打卡')
-    if (streak >= 3) bits.push(`连续 ${streak} 天未完成`)
+    if (safeStreak >= 3) bits.push(`连续 ${safeStreak} 天未完成`)
     let value = '需跟进'
-    if (streak >= 3) value = `连续${streak}天`
+    if (safeStreak >= 3) value = `连续${safeStreak}天`
     else if (planMiss && medMiss) value = '今日未完成'
     else if (planMiss) value = '方案未完成'
     else if (medMiss) value = '用药未打卡'
@@ -423,7 +453,7 @@ const planExecution = computed(() => {
       value: '暂无任务',
       hint: '近 7 日没有应打卡任务',
       tone: 'empty' as const,
-      title: '有执行中方案，但这 7 天没有应完成的任务',
+      title: '已有生效管理方案，但这 7 天没有应完成的任务（或尚未进入打卡窗口）',
       percent: null,
     }
   }
@@ -1037,7 +1067,8 @@ onBeforeUnmount(() => {
             <button
               v-if="intakeStatus && intakeStatus.hasSubmitted && intakeStatus.pendingCount > 0"
               type="button"
-              class="text-btn pending"
+              class="pending-chip"
+              :title="`${intakeStatus.pendingCount} 项待补`"
               @click="
                 router.push({
                   path: `/workspace/patients/${peopleId}/intake`,
@@ -1045,6 +1076,11 @@ onBeforeUnmount(() => {
                 })
               "
             >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              </svg>
               {{ intakeStatus.pendingCount }} 项待补
             </button>
             <span
@@ -1059,7 +1095,14 @@ onBeforeUnmount(() => {
           <dl class="hero-fields">
             <div class="hf">
               <dt>年龄</dt>
-              <dd>{{ patientAge }}</dd>
+              <dd>
+                {{ patientAge }}
+                <span
+                  v-if="birthdayEstimated && patientAge !== '-' && patientAge !== '需核对'"
+                  class="birthday-est-tag"
+                  title="由年龄推算的出生日期，建议补录证件后核对"
+                >估算</span>
+              </dd>
             </div>
             <div class="hf">
               <dt>性别</dt>
@@ -1137,7 +1180,7 @@ onBeforeUnmount(() => {
                         ?
                       </button>
                     </span>
-                    <span v-if="!riskTags.length" class="eval-empty">无需做患病风险评估</span>
+                    <span v-if="!riskTags.length" class="eval-empty">暂无患病风险标签</span>
                   </div>
                 </div>
                 <div class="eval-row">
@@ -1223,7 +1266,7 @@ onBeforeUnmount(() => {
                   :key="card.key"
                   type="button"
                   class="trend-card"
-                  :class="card.tone"
+                  :class="[card.tone, { compact: !sparkPath(card.points, 96, 28) }]"
                   @click="onNavClick('observations')"
                 >
                   <div class="trend-card-top">
@@ -1231,13 +1274,13 @@ onBeforeUnmount(() => {
                     <strong class="trend-card-val">{{ card.display }}</strong>
                   </div>
                   <svg
-                    v-if="sparkPath(card.points, 96, 36)"
+                    v-if="sparkPath(card.points, 96, 28)"
                     class="trend-spark"
-                    viewBox="0 0 96 36"
+                    viewBox="0 0 96 28"
                     aria-hidden="true"
                   >
                     <path
-                      :d="sparkPath(card.points, 96, 36)"
+                      :d="sparkPath(card.points, 96, 28)"
                       fill="none"
                       stroke="currentColor"
                       stroke-width="2"
@@ -1245,7 +1288,6 @@ onBeforeUnmount(() => {
                       stroke-linejoin="round"
                     />
                   </svg>
-                  <div v-else class="trend-spark-empty">暂无走势</div>
                   <span class="trend-card-hint">{{ card.hint }}</span>
                 </button>
               </div>
@@ -1262,7 +1304,7 @@ onBeforeUnmount(() => {
           </button>
           <button
             type="button"
-            class="btn ghost"
+            class="btn secondary"
             :class="{ 'is-watched': patient?.watched }"
             :disabled="watching || !patient"
             @click="toggleWatch"
@@ -1272,7 +1314,7 @@ onBeforeUnmount(() => {
             </svg>
             {{ watching ? '处理中…' : patient?.watched ? '取消关注' : '重点关注' }}
           </button>
-          <button type="button" class="btn ghost" :disabled="issuing" @click="issueCode">
+          <button type="button" class="btn secondary" :disabled="issuing" @click="issueCode">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <line x1="9" y1="9" x2="15" y2="9" />
@@ -1283,7 +1325,7 @@ onBeforeUnmount(() => {
           <button
             v-if="latestInvite?.active"
             type="button"
-            class="btn ghost"
+            class="btn secondary"
             @click="copyCode"
           >
             复制激活码
@@ -1570,6 +1612,20 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.birthday-est-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
 .hf dd.mono {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
@@ -1602,9 +1658,9 @@ onBeforeUnmount(() => {
 .trend-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 10px;
   background: #f8fafc;
   border: 1px solid var(--ink-100, #eef2f6);
@@ -1633,9 +1689,9 @@ onBeforeUnmount(() => {
 .trend-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  padding: 10px 10px 8px;
+  padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--ink-200, #e2e8f0);
   background: #fff;
@@ -1649,6 +1705,11 @@ onBeforeUnmount(() => {
 .trend-card:hover {
   border-color: rgba(44, 126, 248, 0.35);
   box-shadow: 0 2px 8px -4px rgba(15, 23, 42, 0.16);
+}
+
+.trend-card.compact {
+  padding-block: 6px;
+  gap: 2px;
 }
 
 .trend-card-top {
@@ -1677,16 +1738,8 @@ onBeforeUnmount(() => {
 .trend-spark {
   display: block;
   width: 100%;
-  height: 36px;
+  height: 28px;
   color: var(--brand-500, #2c7ef8);
-}
-
-.trend-spark-empty {
-  height: 36px;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  color: var(--ink-300, #cbd5e1);
 }
 
 .trend-card-hint {
@@ -1812,7 +1865,17 @@ onBeforeUnmount(() => {
 .eval-stat.good .eval-stat-val { color: #047857; }
 .eval-stat.fair .eval-stat-val { color: #92400e; }
 .eval-stat.poor .eval-stat-val { color: #b91c1c; }
-.eval-stat.empty .eval-stat-val { color: var(--ink-400); }
+.eval-stat.empty {
+  border-color: var(--ink-100, #eef2f6);
+  background: #f8fafc;
+}
+.eval-stat.empty .eval-stat-val {
+  color: var(--ink-300, #cbd5e1);
+  font-weight: 600;
+}
+.eval-stat.empty .eval-stat-hint {
+  color: var(--ink-300, #cbd5e1);
+}
 .eval-stat.good .eval-stat-bar i { background: #10b981; }
 .eval-stat.fair .eval-stat-bar i { background: #f59e0b; }
 .eval-stat.poor .eval-stat-bar i { background: #ef4444; }
@@ -2089,23 +2152,28 @@ onBeforeUnmount(() => {
   transform: translateY(-1px);
 }
 
-.btn.ghost {
+.btn.ghost,
+.btn.secondary {
   background: #fff;
   border-color: var(--ink-200);
-  color: var(--ink-700);
+  color: var(--ink-500, #64748b);
 }
 
-.btn.ghost:hover:not(:disabled) {
+.btn.ghost:hover:not(:disabled),
+.btn.secondary:hover:not(:disabled) {
   background: var(--ink-50);
+  color: var(--ink-700, #334155);
 }
 
-.btn.ghost.is-watched {
-  border-color: #f59e0b;
-  color: #b45309;
+.btn.ghost.is-watched,
+.btn.secondary.is-watched {
+  border-color: #e2e8f0;
+  color: #92400e;
   background: #fffbeb;
 }
 
-.btn.ghost.is-watched svg {
+.btn.ghost.is-watched svg,
+.btn.secondary.is-watched svg {
   fill: #f59e0b;
   stroke: #f59e0b;
 }
@@ -2129,8 +2197,34 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
-.text-btn.pending {
-  color: #c2410c;
+.pending-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ink-200, #e2e8f0);
+  background: var(--ink-50, #f8fafc);
+  color: var(--ink-500, #64748b);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.pending-chip svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--ink-400, #94a3b8);
+}
+
+.pending-chip:hover {
+  background: var(--ink-100, #f1f5f9);
+  color: var(--ink-600, #475569);
 }
 
 .intake-depth {
@@ -2251,6 +2345,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 16px;
   margin-bottom: 0;
   padding: 8px 10px;
   background: #fff;

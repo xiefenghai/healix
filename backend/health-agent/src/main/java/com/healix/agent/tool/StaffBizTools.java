@@ -10,6 +10,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -59,16 +61,22 @@ public class StaffBizTools {
             boolean batchHowTo = asksBatchAssign(message);
             boolean careTeamHowTo = asksCareTeamGuide(message);
             boolean createTeamIntent = asksCreateCareTeamIntent(message);
+            String suggestedTeamName = extractSuggestedCareTeamName(message);
             if (noPrimaryTeam) {
                 // 未建组：建组可点；批量分配面板一并挂出但置灰（防呆：没组无法分配）
-                actions.add(AgentAction.createCareTeam("去创建我的健管组", null));
+                actions.add(
+                        AgentAction.createCareTeam(
+                                "去创建我的健管组", suggestedTeamName));
                 if (unassigned > 0 || batchHowTo || careTeamHowTo) {
                     actions.add(AgentAction.openUnassignedWorkbench("打开批量分配面板", true));
                 }
             } else {
-                // 已有组：用户明确要再建组时挂创建入口（支持多组）
+                // 已有组：用户明确要再建组时挂创建入口（支持多组）；有组名则预填
                 if (createTeamIntent) {
-                    actions.add(AgentAction.createCareTeam("去创建健管组", null));
+                    actions.add(
+                            AgentAction.createCareTeam(
+                                    StringUtils.hasText(suggestedTeamName) ? "打开创建面板" : "去创建健管组",
+                                    suggestedTeamName));
                 }
                 if (unassigned > 0 || batchHowTo) {
                     actions.add(AgentAction.openUnassignedWorkbench("打开批量分配面板"));
@@ -123,12 +131,38 @@ public class StaffBizTools {
                 || (m.contains("分组") && (m.contains("怎么") || m.contains("如何") || m.contains("为什么")));
     }
 
-    /** 明确要创建/再建健管组（含已有组后再建）。 */
+    /**
+     * 明确要创建/再建健管组（含已有组后再建）。
+     * 覆盖「建组」「建组 健管二组」「帮我建组」等；排除「怎么建组」「建组后怎么…」问答。
+     */
     public static boolean asksCreateCareTeamIntent(String message) {
         if (!StringUtils.hasText(message)) {
             return false;
         }
         String m = message.trim();
+        // 问答/说明：不打开创建面板
+        if (m.matches("^(怎么|如何|怎样|为何|为什么|啥是|什么是).*")) {
+            return false;
+        }
+        if (m.contains("建组后")
+                || m.contains("创建组后")
+                || m.contains("创建健管组后")
+                || m.contains("之后怎么")
+                || m.contains("之后如何")
+                || m.contains("是什么意思")
+                || m.contains("干什么的")) {
+            return false;
+        }
+        // 「建/创建/新建 … 组」即可（可带组名），避免只认整句短口令
+        if (m.matches(
+                ".*(?:帮我|请|我想|我要|麻烦|去)?"
+                        + "(?:再)?"
+                        + "(?:建|创建|新建)"
+                        + "(?:一个|个)?"
+                        + "(?:健管)?"
+                        + "组.*")) {
+            return true;
+        }
         return m.contains("再建一个组")
                 || m.contains("再建一个健管组")
                 || m.contains("再创建一个组")
@@ -141,7 +175,85 @@ public class StaffBizTools {
                 || m.contains("创建健管组")
                 || m.contains("创建一个健管组")
                 || m.contains("加一个健管组")
-                || m.contains("再开一个组");
+                || m.contains("再开一个组")
+                || m.contains("帮我建组")
+                || m.contains("我要建组")
+                || m.contains("去建组");
+    }
+
+    private static final Pattern CARE_TEAM_NAME_QUOTED =
+            Pattern.compile("(?:再)?(?:建|创建|新建)(?:一个|个)?(?:健管)?组\\s*[「『\"']([^」』\"']+)[」』\"']");
+    private static final Pattern CARE_TEAM_NAME_CALLED =
+            Pattern.compile("(?:名叫|叫作?|名称[是为：:\\s]*|名为)\\s*[「『\"']?([^」』\"'\\s，,。！？!?]+)[」』\"']?");
+    private static final Pattern CARE_TEAM_NAME_AFTER =
+            Pattern.compile("(?:再)?(?:建|创建|新建)(?:一个|个)?(?:健管)?组\\s*[：:，,、]?\\s*(.+)$");
+    private static final Pattern CARE_TEAM_NAME_AFTER_SHORT =
+            Pattern.compile("再建(?:一个)?组\\s*[：:，,、]?\\s*(.+)$");
+
+    /**
+     * 从「建组 健管二组」「创建健管组 健管二组」「新建组叫XX」等话术提取预填组名；无明确名称时返回 null。
+     */
+    public static String extractSuggestedCareTeamName(String message) {
+        if (!asksCreateCareTeamIntent(message)) {
+            return null;
+        }
+        String m = message.trim();
+        Matcher quoted = CARE_TEAM_NAME_QUOTED.matcher(m);
+        if (quoted.find()) {
+            String n = sanitizeSuggestedCareTeamName(quoted.group(1));
+            if (n != null) {
+                return n;
+            }
+        }
+        Matcher named = CARE_TEAM_NAME_CALLED.matcher(m);
+        if (named.find()) {
+            String n = sanitizeSuggestedCareTeamName(named.group(1));
+            if (n != null) {
+                return n;
+            }
+        }
+        Matcher after = CARE_TEAM_NAME_AFTER.matcher(m);
+        if (after.find()) {
+            String n = sanitizeSuggestedCareTeamName(after.group(1));
+            if (n != null) {
+                return n;
+            }
+        }
+        Matcher afterShort = CARE_TEAM_NAME_AFTER_SHORT.matcher(m);
+        if (afterShort.find()) {
+            return sanitizeSuggestedCareTeamName(afterShort.group(1));
+        }
+        return null;
+    }
+
+    static String sanitizeSuggestedCareTeamName(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String name =
+                raw.trim()
+                        .replaceAll("^[「『\"']+|[」』\"']+$", "")
+                        .replaceAll("^(叫|名叫|叫作|名称是|名称为|名为)", "")
+                        .replaceAll("[。！？!?，,；;]+$", "")
+                        .trim();
+        if (!StringUtils.hasText(name)) {
+            return null;
+        }
+        if (name.matches("^(吧|啊|呀|呢|吗|嘛|谢谢|一下|一个|帮我|请|的)$")) {
+            return null;
+        }
+        if (name.contains("健管组")
+                || name.contains("创建")
+                || name.contains("新建")
+                || name.contains("再建")
+                || name.contains("分配")
+                || name.contains("患者")) {
+            return null;
+        }
+        if (name.length() > 20) {
+            return null;
+        }
+        return name;
     }
 
     private static AgentAction trendAction(String label, String peopleId) {

@@ -450,10 +450,48 @@ function openCreateArchiveDrawer(  preset?: CreateArchivePreset | null,
   createArchiveOpen.value = true
 }
 
+/** 建档预填姓名黑名单：历史脏数据/流程词不得灌进姓名框 */
+const ARCHIVE_NAME_NOISE = new Set([
+  '患者',
+  '客户',
+  '建档',
+  '新建',
+  '录入',
+  '登记',
+  '姓名',
+  '本人',
+  '手机',
+  '电话',
+  '出生',
+  '日期',
+  '待补充',
+  '未填写',
+  '分组',
+  '未分组',
+  '待分组',
+  '建组',
+  '健管组',
+  '分配',
+  '批量',
+  '确认',
+  '创建',
+  '表单',
+])
+
+function sanitizeArchivePresetName(raw?: string | null): string | null {
+  const name = String(raw || '').trim()
+  if (!name) return null
+  if (ARCHIVE_NAME_NOISE.has(name) || name.includes('分组') || name.includes('健管')) return null
+  return name
+}
+
 function archivePresetFromPayload(payload?: Record<string, unknown> | null): CreateArchivePreset | null {
   if (!payload || typeof payload !== 'object') return null
   const out: CreateArchivePreset = {}
-  if (typeof payload.name === 'string' && payload.name.trim()) out.name = payload.name.trim()
+  const name = sanitizeArchivePresetName(
+    typeof payload.name === 'string' ? payload.name : null,
+  )
+  if (name) out.name = name
   if (typeof payload.gender === 'string' && payload.gender.trim()) out.gender = payload.gender.trim()
   if (typeof payload.birthday === 'string' && payload.birthday.trim()) {
     out.birthday = payload.birthday.trim().slice(0, 10)
@@ -807,28 +845,43 @@ const onboardingHasMyPatient = computed(() => {
 })
 
 /**
+ * 左栏首屏数据是否就绪。summary 默认 primaryCareTeamCount=0，未加载完前会误判「新手起步」闪一下。
+ */
+const leftRailReady = ref(false)
+
+/**
  * 新手起步：仅在「没建组」或「组下还没有任何患者」时展示。
- * 一旦有患者（含未分组），立刻切回「今日优先 / 我的患者」，否则搜不到人、也点不到未分组。
+ * 一旦有患者（含未分组），立刻切回「今日优先」。
  * 未分组后的「去分配」改由点选患者后的 AI 承接，不再用整栏清单卡住。
  */
-const isColdStart = computed(
-  () => needsPrimaryTeam.value || !onboardingHasMyPatient.value,
-)
+const isColdStart = computed(() => {
+  if (!leftRailReady.value) return false
+  return needsPrimaryTeam.value || !onboardingHasMyPatient.value
+})
 
 /**
  * 零数据新手：无主责组且机构内无患者。
  * 用于隐藏机构级能力芯，避免空态点开无意义入口。
  */
 const isNewbie = computed(
-  () => needsPrimaryTeam.value && (summary.value.orgPatientCount || 0) <= 0,
+  () =>
+    leftRailReady.value &&
+    needsPrimaryTeam.value &&
+    (summary.value.orgPatientCount || 0) <= 0,
 )
 
-/** 走出新手起步后，若有未分组，自动落到「我的患者」方便搜索 */
+/** 走出新手起步后：先刷新立即处理名单，再按是否有活决定默认 Tab */
 watch(isColdStart, (cold, wasCold) => {
-  if (wasCold && !cold && unassignedMineCount.value > 0) {
-    tab.value = 'mine'
-    void searchPatients()
-  }
+  if (!leftRailReady.value || !wasCold || cold) return
+  void (async () => {
+    await searchPatients()
+    const qTabRaw = typeof route.query.tab === 'string' ? route.query.tab : ''
+    const qTab = qTabRaw === 'intake' ? 'urgent' : qTabRaw
+    if (qTab === 'urgent' || qTab === 'watch' || qTab === 'mine') return
+    tab.value = 'urgent'
+    await loadPriority()
+    applyDefaultCockpitTab()
+  })()
 })
 
 const contextHint = computed(() => {
@@ -2462,6 +2515,33 @@ async function loadPriority() {
   }
 }
 
+/** 「立即处理」是否有可跟进事项（名单或角标计数） */
+function hasUrgentWork() {
+  if (cards.value.length > 0) return true
+  if ((summary.value.urgentCount || 0) > 0) return true
+  if ((summary.value.overdueCount || 0) > 0) return true
+  return false
+}
+
+/**
+ * 默认 Tab：有立即处理任务 → 立即处理；否则 → 我的患者。
+ * 不覆盖 URL 显式 ?tab=。
+ */
+function applyDefaultCockpitTab(opts?: { force?: boolean }) {
+  const qTabRaw = typeof route.query.tab === 'string' ? route.query.tab : ''
+  const qTab = qTabRaw === 'intake' ? 'urgent' : qTabRaw
+  if (!opts?.force && (qTab === 'urgent' || qTab === 'watch' || qTab === 'mine')) {
+    return
+  }
+  const next: TabKey = hasUrgentWork() ? 'urgent' : 'mine'
+  if (tab.value === next) {
+    if (next === 'urgent') void loadPriority()
+    else void searchPatients()
+    return
+  }
+  tab.value = next
+}
+
 const listRefreshing = computed(() =>
   tab.value === 'mine' ? searchLoading.value : loading.value,
 )
@@ -3042,16 +3122,25 @@ function openUnassignedInbox() {
   })
 }
 
-/** 左侧「+ 新建组」：打开创建健管组抽屉（支持再建多组） */
+/** 左侧「+ 新建组」：打开创建健管组弹窗（支持再建多组） */
 function openCreateCareTeamFromList() {
   createCareTeamPresetName.value = null
   createCareTeamOpen.value = true
 }
 
-/** 与后端 StaffBizTools.asksCreateCareTeamIntent 对齐：再建/新建健管组 */
+/** 与后端 StaffBizTools.asksCreateCareTeamIntent 对齐：再建/新建健管组（含「建组 健管二组」） */
 function asksCreateCareTeamIntent(message: string) {
   const m = message.trim()
   if (!m) return false
+  // 问答/说明：不打开创建面板
+  if (/^(怎么|如何|怎样|为何|为什么|啥是|什么是)/.test(m)) return false
+  if (/建组后|创建组后|创建健管组后|之后怎么|之后如何|是什么意思|干什么的/.test(m)) {
+    return false
+  }
+  // 「建/创建/新建 … 组」即可（可带组名），避免只认整句短口令
+  if (/(?:帮我|请|我想|我要|麻烦|去)?(?:再)?(?:建|创建|新建)(?:一个|个)?(?:健管)?组/.test(m)) {
+    return true
+  }
   return (
     m.includes('再建一个组') ||
     m.includes('再建一个健管组') ||
@@ -3065,8 +3154,55 @@ function asksCreateCareTeamIntent(message: string) {
     m.includes('创建健管组') ||
     m.includes('创建一个健管组') ||
     m.includes('加一个健管组') ||
-    m.includes('再开一个组')
+    m.includes('再开一个组') ||
+    m.includes('帮我建组') ||
+    m.includes('我要建组') ||
+    m.includes('去建组')
   )
+}
+
+/** 从「建组 健管二组」「创建健管组 健管二组」等话术提取预填组名；无明确名称时返回 null */
+function extractSuggestedCareTeamName(message: string): string | null {
+  const m = message.trim()
+  if (!m || !asksCreateCareTeamIntent(m)) return null
+  const quoted = m.match(
+    /(?:再)?(?:建|创建|新建)(?:一个|个)?(?:健管)?组\s*[「『""']([^」』""']+)[」』""']/,
+  )
+  if (quoted?.[1]?.trim()) return sanitizeSuggestedCareTeamName(quoted[1])
+  const named = m.match(
+    /(?:名叫|叫作?|名称[是为：:\s]*|名为)\s*[「『""']?([^」』""'\s，,。！？!?]+)[」』""']?/,
+  )
+  if (named?.[1]?.trim()) {
+    const n = sanitizeSuggestedCareTeamName(named[1])
+    if (n) return n
+  }
+  const after = m.match(
+    /(?:再)?(?:建|创建|新建)(?:一个|个)?(?:健管)?组\s*[：:，,、]?\s*(.+)$/,
+  )
+  if (after?.[1]) {
+    const n = sanitizeSuggestedCareTeamName(after[1])
+    if (n) return n
+  }
+  const afterShort = m.match(/再建(?:一个)?组\s*[：:，,、]?\s*(.+)$/)
+  if (afterShort?.[1]) {
+    const n = sanitizeSuggestedCareTeamName(afterShort[1])
+    if (n) return n
+  }
+  return null
+}
+
+function sanitizeSuggestedCareTeamName(raw: string): string | null {
+  let name = String(raw || '')
+    .trim()
+    .replace(/^[「『""']+|[」』""']+$/g, '')
+    .replace(/^(叫|名叫|叫作|名称是|名称为|名为)/, '')
+    .replace(/[。！？!?，,；;]+$/g, '')
+    .trim()
+  if (!name) return null
+  if (/^(吧|啊|呀|呢|吗|嘛|谢谢|一下|一个|帮我|请|的)$/.test(name)) return null
+  if (/健管组|创建|新建|再建|分配|患者/.test(name)) return null
+  if (name.length > 20) return null
+  return name
 }
 
 /** 点「帮我看一下今天的待办」：不堆文字，右侧直接列出可跳转事项 */
@@ -4131,8 +4267,21 @@ function flashTeamStep() {
 const CREATE_CARE_TEAM_CONTINUE_TIP =
   '如果您还想再创建健管组，可以直接点击左侧列表上方的「+ 新建组」按钮，或者直接对我说「再创建一个健管组」。'
 
+/** 建组成功后：仅把历史「去创建健管组」CTA 标成已完成（灰态），避免新气泡误挂僵尸按钮 */
+function markHistoricalCreateCareTeamActionsDone() {
+  for (const msg of messages.value) {
+    if (!msg.actions?.length) continue
+    for (const a of msg.actions) {
+      if (isCreateCareTeamAction(a)) {
+        a.payload = { ...(a.payload || {}), createSucceeded: true }
+      }
+    }
+  }
+}
+
 /** 创建健管组成功：若机构有公共池/未分配患者，优先引导认领；否则引导建档。 */
 async function onCareTeamCreated(team: { id: string; name: string }) {
+  markHistoricalCreateCareTeamActionsDone()
   await loadSummary()
   tab.value = 'mine'
   await searchPatients()
@@ -4148,7 +4297,7 @@ async function onCareTeamCreated(team: { id: string; name: string }) {
         '您可以先把他们认领到您的组，或直接新建患者。',
       tip: CREATE_CARE_TEAM_CONTINUE_TIP,
       actions: [
-        { type: 'NAVIGATE', path: 'unassigned-workbench', label: `去认领/分配患者（${n}）` },
+        { type: 'NAVIGATE', path: 'unassigned-workbench', label: `去认领/分配患者 (${n})` },
         { type: 'NAVIGATE', path: 'create-archive', label: '新建患者档案' },
       ],
       at: nowClock(),
@@ -4348,17 +4497,6 @@ function patchFocusAfterAssign(peopleId: string, careTeamId: string, careTeamNam
       (t) => (t.taskType || '').toUpperCase() !== 'TEAM_ASSIGN',
     ),
   }
-}
-
-/**
- * 重新打开时若有未分组患者，落到「我的患者」让名单直接可见。
- * 不再另发一条点名气泡：左栏名单、橙色批量条和顶部简报已经说过这件事。
- */
-async function maybeNudgeUnassignedPatients() {
-  if (focusPeopleId.value || needsPrimaryTeam.value) return
-  const g = minePatientGroups.value.find((x) => isUnassignedMineGroup(x))
-  if (!g?.cards?.length) return
-  tab.value = 'mine'
 }
 
 /** 入组完成后再推首诊引导（多组时需先选组） */
@@ -5209,7 +5347,7 @@ function actionChipLabel(label?: string | null) {
   const raw = String(label || '').trim()
   if (!raw) return ''
   const countMatch = raw.match(/[（(](\d+)[）)]$/)
-  const countSuffix = countMatch ? `×${countMatch[1]}` : ''
+  const countSuffix = countMatch ? ` (${countMatch[1]})` : ''
   // 去掉 · 后摘要与末尾（N），避免通栏长文案
   let head = raw
     .replace(/[（(]\d+[）)]\s*$/, '')
@@ -5261,7 +5399,7 @@ function actionChipLabel(label?: string | null) {
   const withCount = `${head}${countSuffix}`
   // 批量分流主按钮放宽，避免「去服务这批患者」等被截断
   const maxLen =
-    /去服务这|批量处理存量|批量发送首诊/.test(withCount) ? 22 : 16
+    /去服务这|批量处理存量|批量发送首诊|去认领\/分配患者/.test(withCount) ? 22 : 16
   return withCount.length > maxLen ? `${withCount.slice(0, maxLen - 1)}…` : withCount
 }
 
@@ -5420,23 +5558,38 @@ function isUnassignedWorkbenchAction(a: AgentAction) {
 }
 
 const BUBBLE_ACTION_LOCK_HINT = '请先创建至少一个健管组'
+const CREATE_TEAM_DONE_HINT = '已创建成功，请勿重复创建'
+const CREATE_TEAM_DONE_LABEL = '✅ 已成功创建'
 
-/** 未建组 / 后端显式 disabled：批量分配面板仅作预告，置灰不可点 */
+/** 仅「真实建组成功」事件打标后才灰态；勿因已有组就锁死新建入口 */
+function isCreateCareTeamDoneAction(a: AgentAction) {
+  return isCreateCareTeamAction(a) && a.payload?.createSucceeded === true
+}
+
+/** 未建组时锁认领；创建按钮仅在 runState=done（建组成功事件）时锁 */
 function isBubbleActionLocked(a: AgentAction) {
   if (a.payload?.disabled === true) return true
-  return needsPrimaryTeam.value && isUnassignedWorkbenchAction(a)
+  if (needsPrimaryTeam.value && isUnassignedWorkbenchAction(a)) return true
+  if (isCreateCareTeamDoneAction(a)) return true
+  return false
 }
 
 function bubbleActionLockHint(a: AgentAction) {
   const reason = a.payload?.disabledReason
   if (typeof reason === 'string' && reason.trim()) return reason.trim()
+  if (isCreateCareTeamDoneAction(a)) return CREATE_TEAM_DONE_HINT
   return BUBBLE_ACTION_LOCK_HINT
+}
+
+function bubbleActionChipLabel(a: AgentAction) {
+  if (isCreateCareTeamDoneAction(a)) return CREATE_TEAM_DONE_LABEL
+  return actionChipLabel(a.label)
 }
 
 function onBubbleActionClick(a: AgentAction) {
   if (isBubbleActionLocked(a)) {
     ElMessage.warning(bubbleActionLockHint(a))
-    flashTeamStep()
+    if (needsPrimaryTeam.value && isUnassignedWorkbenchAction(a)) flashTeamStep()
     return
   }
   void runAction(a)
@@ -5502,7 +5655,7 @@ async function sendMessage(
     ElMessage.info('请先从左侧选择一位患者')
     return
   }
-  // 机构会话：明确再建/新建健管组 → 本地引导 + 直接打开建组抽屉
+  // 机构会话：明确再建/新建健管组 → 提取组名、打开抽屉预填；勿挂「已成功创建」僵尸按钮
   if (!focusPeopleId.value && !image && !effectiveHint && asksCreateCareTeamIntent(userText)) {
     messages.value.push({
       role: 'user',
@@ -5510,18 +5663,28 @@ async function sendMessage(
       at: nowClock(),
     })
     if (!keepInput) input.value = ''
+    const suggestedName = extractSuggestedCareTeamName(userText)
     const createLabel = needsPrimaryTeam.value ? '去创建我的健管组' : '去创建健管组'
-    const guide = needsPrimaryTeam.value
-      ? '好的，先建一个健管组打底。点下方按钮打开创建面板即可。'
-      : '可以再建一个健管组。点下方按钮打开创建面板，或用左侧「+ 新建组」。'
+    const guide = suggestedName
+      ? `好的，已为您打开创建面板并填写名称「${suggestedName}」，请点击确认创建。`
+      : '好的，已为您打开创建面板，请填写名称并确认创建。'
+    // 抽屉已打开：挂可点的「打开创建面板」便于关掉后再开；绝不能标 done
     messages.value.push({
       role: 'assistant',
       content: guide,
-      actions: [{ type: 'NAVIGATE', path: 'create-care-team', label: createLabel }],
+      actions: [
+        {
+          type: 'NAVIGATE',
+          path: 'create-care-team',
+          label: suggestedName ? '打开创建面板' : createLabel,
+          payload: suggestedName ? { name: suggestedName } : undefined,
+        },
+      ],
       at: nowClock(),
+      intent: 'ORG_CHAT_OPEN_CREATE_CARE_TEAM',
     })
     cacheOrgSession()
-    createCareTeamPresetName.value = null
+    createCareTeamPresetName.value = suggestedName
     if (needsPrimaryTeam.value) flashTeamStep()
     createCareTeamOpen.value = true
     await scrollToBottom()
@@ -5726,16 +5889,49 @@ async function sendMessage(
         } else if (data.capability === 'CARE_PLAN') {
           row.planGenerating = false
         }
-        // 缺信息：自动打开建档抽屉；按钮保持可点，关掉抽屉后还能再打开
+        // 建档缺信息/已提取：自动打开抽屉并预填；保留后端话术（勿覆盖成空表单废话）
         if (stillBound() && data.capability === 'CREATE_ARCHIVE' && data.intent === 'CREATE_ARCHIVE_NEED_INFO') {
           const formAction = (data.actions || []).find(
             (a) => a.type === 'NAVIGATE' && a.path === 'create-archive',
           )
-          openCreateArchiveDrawer(archivePresetFromPayload(formAction?.payload))
+          const preset = archivePresetFromPayload(formAction?.payload)
+          openCreateArchiveDrawer(preset)
+          const backendReply = (data.reply && data.reply.trim()) || ''
           row.content =
-            '好的，建档表单已为您打开。请直接在右侧填写，完成后点击右下角「确认创建」即可。'
+            backendReply ||
+            (preset?.name
+              ? `收到！已为您提取并填入右侧表单：${preset.name}。请核对无误后点击右下角「确认创建」。`
+              : '好的，建档表单已为您打开。请直接在右侧填写，完成后点击右下角「确认创建」即可。')
           row.activity = []
           row.elapsedMs = null
+        }
+        // 明确「创建健管组」指令（含组名）：自动打开创建面板并预填，勿把按钮标成已成功
+        // 若后端/模型已写「已为您打开创建面板」但意图漏检，也强制打开，避免文案撒谎
+        if (stillBound() && !focusPeopleId.value) {
+          const createAct = (data.actions || []).find(
+            (a) => a.type === 'NAVIGATE' && (a.path || '') === 'create-care-team',
+          )
+          const lastUserText = String(userRow.content || '').trim()
+          const replyText = String(row.content || data.reply || '')
+          const claimsOpened = /已为您打开创建面板/.test(replyText)
+          if (
+            createAct &&
+            createAct.payload?.createSucceeded !== true &&
+            (asksCreateCareTeamIntent(lastUserText) || claimsOpened)
+          ) {
+            const rawName = createAct.payload?.name
+            const suggested =
+              typeof rawName === 'string' && rawName.trim()
+                ? rawName.trim()
+                : extractSuggestedCareTeamName(lastUserText)
+            createCareTeamPresetName.value = suggested
+            createCareTeamOpen.value = true
+            if (suggested) {
+              row.content = `好的，已为您打开创建面板并填写名称「${suggested}」，请点击确认创建。`
+            } else if (!replyText.includes('已为您打开创建面板')) {
+              row.content = '好的，已为您打开创建面板，请填写名称并确认创建。'
+            }
+          }
         }
         // 仅新建档成功才自动切焦点；已存在留在机构会话，等人点「先协同查看 / 为××健管服务」再跳
         if (stillBound() && data.capability === 'CREATE_ARCHIVE' && data.intent === 'CREATE_ARCHIVE_OK') {
@@ -7952,11 +8148,20 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', onVis)
   stopVisibilityRefresh = () => document.removeEventListener('visibilitychange', onVis)
   try {
+    // 先按「立即处理」拉名单，便于判定默认 Tab；左栏在 leftRailReady 前只显示骨架，避免闪「新手起步」
+    tab.value = 'urgent'
     await Promise.all([loadSummary(), loadPriority(), loadCapabilities(), loadDraftInbox()])
+    // 始终拉「我的患者」：刷新后也能立刻看到「未分组」兜底，并避免冷启动误判
+    await searchPatients()
+
     const qTabRaw = typeof route.query.tab === 'string' ? route.query.tab : ''
     const qTab = qTabRaw === 'intake' ? 'urgent' : qTabRaw
     if (qTab === 'urgent' || qTab === 'watch' || qTab === 'mine') {
       tab.value = qTab
+      if (qTab === 'mine') await searchPatients()
+      else if (qTab === 'watch') await loadPriority()
+    } else {
+      applyDefaultCockpitTab()
     }
 
     const freshDay = await startFreshOrgSessionForNewDay()
@@ -7975,13 +8180,16 @@ onMounted(async () => {
       }
     }
 
-    // 始终拉「我的患者」：刷新后也能立刻看到「未分组」兜底，并触发 AI 揽责提示
-    await searchPatients()
-    if (qTab === 'urgent' || qTab === 'watch') void loadPriority()
-    await maybeNudgeUnassignedPatients()
+    if (tab.value === 'urgent' || tab.value === 'watch') void loadPriority()
     await resetOrgChatIfPatientGhosts()
     ensureZeroTeamWelcome()
+    // 无 URL tab 时，按立即处理是否有数据再定一次默认落点
+    if (qTab !== 'urgent' && qTab !== 'watch' && qTab !== 'mine') {
+      applyDefaultCockpitTab()
+    }
+    leftRailReady.value = true
   } catch (e) {
+    leftRailReady.value = true
     ElMessage.error(e instanceof Error ? e.message : '驾驶舱加载失败')
   }
 })
@@ -8013,23 +8221,25 @@ onUnmounted(() => {
       }"
     >
       <!-- 左：今日优先 / 冷启动步骤清单 -->
-      <section class="col left" :class="{ 'is-onboarding': isColdStart }">
+      <section class="col left" :class="{ 'is-onboarding': leftRailReady && isColdStart }">
         <div class="col-head">
           <div class="col-head-text">
-            <h3>{{ isColdStart ? '新手起步' : '今日优先' }}</h3>
+            <h3>{{ leftRailReady && isColdStart ? '新手起步' : '今日优先' }}</h3>
             <p class="sub">
               {{
-                isColdStart
-                  ? '按步骤完成即可开始服务'
-                  : tab === 'mine'
-                    ? '主责健管组 · 可搜索'
-                    : tab === 'watch'
-                      ? '个人重点关注患者'
-                      : `智能排序 · 占比 ${urgentShare}`
+                !leftRailReady
+                  ? '正在同步今日工作…'
+                  : isColdStart
+                    ? '按步骤完成即可开始服务'
+                    : tab === 'mine'
+                      ? '主责健管组 · 可搜索'
+                      : tab === 'watch'
+                        ? '个人重点关注患者'
+                        : `智能排序 · 占比 ${urgentShare}`
               }}
             </p>
           </div>
-          <div v-if="!isColdStart" class="col-actions">
+          <div v-if="leftRailReady && !isColdStart" class="col-actions">
             <button
               type="button"
               class="list-refresh"
@@ -8049,7 +8259,9 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <template v-if="isColdStart">
+        <div v-if="!leftRailReady" class="left-boot" v-loading="true" aria-label="正在加载今日优先" />
+
+        <template v-else-if="isColdStart">
           <div class="onboarding-scroll" aria-label="新手任务清单">
             <div class="onboarding-checklist">
             <div
@@ -8583,8 +8795,9 @@ onUnmounted(() => {
         </template>
       </section>
 
-      <!-- 中：健管智能体 -->
+      <!-- 中：健管智能体（建档弹窗局部挂载于此，不遮挡左右栏） -->
       <section
+        id="cockpit-workbench"
         class="col center"
         :class="{ 'drop-active': imageDropActive }"
         @dragenter="onAgentDragEnter"
@@ -8993,7 +9206,7 @@ onUnmounted(() => {
                       >
                         <span class="action-chip-text">
                           <template v-if="a.runState === 'done'">✓ </template>{{
-                            a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
+                            a.runState === 'busy' ? '处理中…' : bubbleActionChipLabel(a)
                           }}
                         </span>
                       </button>
@@ -9715,6 +9928,7 @@ onUnmounted(() => {
     <CreateArchiveDrawer
       ref="createArchiveDrawerRef"
       v-model="createArchiveOpen"
+      mount-selector="#cockpit-workbench"
       :preset="createArchivePreset"
       :default-care-team-id="createArchiveDefaultTeamId"
       :default-care-team-name="createArchiveDefaultTeamName"
@@ -9868,6 +10082,13 @@ onUnmounted(() => {
   background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
 }
 
+.left-boot {
+  flex: 1;
+  min-height: 220px;
+  margin: 8px 4px 12px;
+  border-radius: 12px;
+}
+
 .col.center {
   position: relative;
   /* 外层只做壳：白色主聊天卡由 chat-stage-inner 铺满剩余空间 */
@@ -9877,6 +10098,9 @@ onUnmounted(() => {
   align-self: stretch;
   height: 100%;
   min-height: 0;
+  /* 建档弹窗局部遮罩的定位参照 */
+  isolation: isolate;
+  overflow: hidden;
 }
 
 .col.center.drop-active .chat-stage-inner {
@@ -11891,10 +12115,10 @@ onUnmounted(() => {
 .bubble-tip {
   margin: 10px 0 0;
   padding: 0;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.55;
   font-weight: 400;
-  color: var(--ink-400, #94a3b8);
+  color: #999;
 }
 
 .bubble-text.stream-live::after {

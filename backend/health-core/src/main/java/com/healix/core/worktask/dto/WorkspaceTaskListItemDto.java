@@ -1,6 +1,8 @@
 package com.healix.core.worktask.dto;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Data;
 
 @Data
@@ -24,6 +26,8 @@ public class WorkspaceTaskListItemDto {
     private LocalDateTime dueAt;
     private LocalDateTime doneAt;
     private String deepLink;
+    /** 患者已建病种档案标签（高血压 / 糖尿病等），列表抢单评估用。 */
+    private List<String> diseaseLabels = new ArrayList<>();
     /** 异常单汇总的测量条数（METRIC_ALERT）。 */
     private int hitCount;
     /** @deprecated 兼容旧前端；等于 max(0, hitCount-1) */

@@ -58,13 +58,13 @@ public class CarePlanLlmGenerator {
                 instruction == null ? 0 : instruction.length(),
                 turns.size(),
                 ctx != null && ctx.contextIncomplete());
-        CarePlanStreamSink.progress(sink, "正在翻阅方案生成指引与临床共识…");
+        CarePlanStreamSink.progress(sink, "正在翻阅方案生成指引与健康评估共识…");
         String skill = loadSkillMarkdown();
         String userMessage = buildUserMessage(templateKey, ctx, instruction, diseaseCodes);
         CarePlanStreamSink.progress(sink, "正在结合指南起草运动、饮食与执行计划…");
         long thinkStarted = System.currentTimeMillis();
         CarePlanStreamSink.thinkingStart(sink, "规划运动、饮食与执行结构…");
-        CarePlanStreamSink.tool(sink, "临床方案推理", "running", "正在综合患者数据与指南起草方案…");
+        CarePlanStreamSink.tool(sink, "方案推理", "running", "正在综合患者数据与指南起草方案…");
         CarePlanReadableStreamer readable = new CarePlanReadableStreamer(sink);
         LlmResponse llm = llmClient.streamChat(
                 "CARE_PLAN_GENERATE",
@@ -123,7 +123,7 @@ public class CarePlanLlmGenerator {
         CarePlanStreamSink.progress(sink, "正在按你的意见修订方案草稿…");
         long thinkStarted = System.currentTimeMillis();
         CarePlanStreamSink.thinkingStart(sink, "对照草稿落实修订意见…");
-        CarePlanStreamSink.tool(sink, "临床方案推理", "running", "正在按意见调整运动、饮食与执行计划…");
+        CarePlanStreamSink.tool(sink, "方案推理", "running", "正在按意见调整运动、饮食与执行计划…");
         CarePlanReadableStreamer readable = new CarePlanReadableStreamer(sink);
         LlmResponse llm = llmClient.streamChat(
                 "CARE_PLAN_REVISE",
@@ -148,13 +148,13 @@ public class CarePlanLlmGenerator {
                     "[CarePlan] LLM empty response, {} templateKey={}",
                     revise ? "revise failed" : "fallback to template",
                     templateKey);
-            CarePlanStreamSink.tool(sink, "临床方案推理", "done", "未能完成草案，请稍后重试");
+            CarePlanStreamSink.tool(sink, "方案推理", "done", "未能完成草案，请稍后重试");
             CarePlanStreamSink.thinkingDone(sink, "暂未形成可用草案", thinkMs);
             return Optional.empty();
         }
         CarePlanStreamSink.tool(
                 sink,
-                "临床方案推理",
+                "方案推理",
                 "done",
                 revise ? "修订草案已整理完成" : "运动、饮食与执行草案已整理完成");
         CarePlanStreamSink.thinkingDone(

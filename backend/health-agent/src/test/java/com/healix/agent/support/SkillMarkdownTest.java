@@ -45,7 +45,12 @@ class SkillMarkdownTest {
         assertThat(body).contains("批量分配面板");
         assertThat(body).contains("去创建我的健管组");
         assertThat(body).contains("专属服务小分队");
+        assertThat(body).contains("分工明确不背锅");
+        assertThat(body).contains("按病种或服务阶段");
+        assertThat(body).doesNotContain("请点击下方「去创建我的健管组」");
         assertThat(body).doesNotContain("打底");
+        assertThat(body).contains("已为您打开创建面板");
+        assertThat(body).contains("已为您成功创建");
         assertThat(body).doesNotContain("name: general-chat-org");
     }
 

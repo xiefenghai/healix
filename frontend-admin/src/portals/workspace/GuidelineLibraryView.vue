@@ -48,7 +48,7 @@ onMounted(load)
         :closable="false"
         show-icon
         title="依据库尚未启用"
-        description="条目经临床顾问审定后上线；上线前生成的方案不显示依据标签。"
+        description="条目经健康顾问审定后上线；上线前生成的方案不显示依据标签。"
         class="mb12"
       />
       <el-alert

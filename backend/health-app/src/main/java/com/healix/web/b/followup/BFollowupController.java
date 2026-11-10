@@ -37,7 +37,7 @@ public class BFollowupController {
             @RequestParam(required = false) String recordType,
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         return ApiResult.ok(followupService.page(
                 SecurityUtils.requireCurrentOrgId(), status, recordType, keyword, page, size));
     }

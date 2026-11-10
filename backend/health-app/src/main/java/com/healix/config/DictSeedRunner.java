@@ -151,7 +151,8 @@ public class DictSeedRunner implements ApplicationRunner {
                 seedOptionEnsure(set, options.get(i).code(), options.get(i).label(), 1000 - i * 10);
             }
         });
-        seedOptionIfAbsent("presentIllness", "PREDIABETES", "糖尿病前期（血糖偏高）", 224);
+        // 短标签：长文案「糖尿病前期（血糖偏高）」会撑破现有疾病网格
+        seedOptionEnsure("presentIllness", "PREDIABETES", "糖尿病前期", 224);
         seedOptionIfAbsent("presentIllness", "PCOS", "多囊卵巢综合征", 122);
         seedOptionIfAbsent("presentIllness", "OSA", "睡眠呼吸暂停", 121);
         log.warn("Ensured field catalog dict options");

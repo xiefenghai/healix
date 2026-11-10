@@ -110,6 +110,29 @@
           AND is_deleted = 0
     </update>
 
+    <update id="releaseOpenToPublic">
+        UPDATE workspace_task
+        SET assignee_staff_id = NULL,
+            gmt_modified = #{gmtModified}
+        WHERE org_id = #{orgId}
+          AND people_id = #{peopleId}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+          AND assignee_staff_id IS NOT NULL
+    </update>
+
+    <select id="countOpenByPeopleIds" resultType="long">
+        SELECT COUNT(1)
+        FROM workspace_task
+        WHERE org_id = #{orgId}
+          AND status = 'OPEN'
+          AND is_deleted = 0
+          AND people_id IN
+        <foreach collection="peopleIds" item="pid" open="(" separator="," close=")">
+            #{pid}
+        </foreach>
+    </select>
+
     <select id="findById" resultType="com.healix.core.worktask.domain.WorkspaceTask">
         SELECT <include refid="cols"/>
         FROM workspace_task

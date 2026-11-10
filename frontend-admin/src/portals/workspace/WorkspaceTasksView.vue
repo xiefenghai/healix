@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName, getStaffId, hasRole } from '../../shared/http'
@@ -39,6 +39,7 @@ interface WorkspaceTaskItem {
   dueAt?: string
   doneAt?: string
   deepLink?: string
+  diseaseLabels?: string[]
   suppressedCount?: number
   hitCount?: number
 }
@@ -74,7 +75,10 @@ const loading = ref(false)
 const items = ref<WorkspaceTaskItem[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
+/** 总量 < 20 时全量展示并隐藏分页器 */
+const FULL_LIST_THRESHOLD = 20
+const DEFAULT_PAGE_SIZE = 10
 const summary = ref<WorkspaceTaskSummary | null>(null)
 const teams = ref<CareTeamListItem[]>([])
 const staff = ref<OrgStaffItem[]>([])
@@ -84,6 +88,13 @@ const taskType = ref('')
 const status = ref('')
 const careTeamId = ref('')
 const keyword = ref('')
+/** 公共池批量领取勾选（与搜索/分页解耦，切池时清空） */
+const selectedRows = ref<WorkspaceTaskItem[]>([])
+const batchClaiming = ref(false)
+/** 驱动到期红绿灯随系统时间刷新 */
+const nowMs = ref(Date.now())
+let nowTimer: ReturnType<typeof setInterval> | null = null
+const tableRef = ref<{ clearSelection?: () => void } | null>(null)
 
 const isAdmin = computed(() => hasRole('TENANT_ADMIN'))
 const formTaskId = ref<string | null>(null)
@@ -112,20 +123,50 @@ async function loadSummary() {
   summary.value = res.data
 }
 
-async function loadList() {
+function buildListQuery(pageNo: number, size: number) {
   const q = new URLSearchParams()
   q.set('pool', pool.value)
-  q.set('page', String(page.value))
-  q.set('size', String(pageSize.value))
+  q.set('page', String(pageNo))
+  q.set('size', String(size))
   if (taskType.value) q.set('taskType', taskType.value)
   if (pool.value === 'ALL' && status.value) q.set('status', status.value)
   if (careTeamId.value) q.set('careTeamId', careTeamId.value)
   if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
+  return q
+}
+
+async function fetchListPage(pageNo: number, size: number) {
   const res = await api<{ data: { total: number; items: WorkspaceTaskItem[] } }>(
-    `/api/b/v1/workspace/tasks?${q}`,
+    `/api/b/v1/workspace/tasks?${buildListQuery(pageNo, size)}`,
   )
-  total.value = res.data.total
-  items.value = res.data.items ?? []
+  return res.data
+}
+
+const showPagination = computed(() => total.value >= FULL_LIST_THRESHOLD)
+
+async function loadList() {
+  // 未知或小列表：先按阈值抓取，避免 17 条被默认 15 截断
+  const probing = total.value < FULL_LIST_THRESHOLD
+  const reqPage = probing ? 1 : page.value
+  const reqSize = probing ? Math.max(pageSize.value, FULL_LIST_THRESHOLD) : pageSize.value
+  let data = await fetchListPage(reqPage, reqSize)
+  total.value = data.total
+  items.value = data.items ?? []
+
+  if (total.value >= FULL_LIST_THRESHOLD) {
+    // 大列表：固定默认 15/页；若刚才是探测请求则按正式分页重拉
+    if (pageSize.value !== DEFAULT_PAGE_SIZE && probing) {
+      pageSize.value = DEFAULT_PAGE_SIZE
+    }
+    if (probing || reqSize !== pageSize.value || reqPage !== page.value) {
+      page.value = probing ? 1 : page.value
+      data = await fetchListPage(page.value, pageSize.value)
+      total.value = data.total
+      items.value = data.items ?? []
+    }
+  } else if (total.value > 0) {
+    page.value = 1
+  }
 }
 
 async function load() {
@@ -152,12 +193,15 @@ async function loadStaff() {
 
 function onSearch() {
   page.value = 1
+  total.value = 0
   void load()
 }
 
 function switchPool(next: Pool) {
   pool.value = next
   page.value = 1
+  total.value = 0
+  selectedRows.value = []
   // 摘要卡按全量统计；切池时清掉列表筛，避免「有数但列表为空」
   taskType.value = ''
   careTeamId.value = ''
@@ -166,38 +210,125 @@ function switchPool(next: Pool) {
   void load()
 }
 
+/** 生成时间：完整 `YYYY-MM-DD HH:mm`，禁止被省略号截断 */
 function formatTime(v?: string) {
   if (!v) return '-'
-  return v.replace('T', ' ').slice(0, 16)
+  const s = String(v).replace('T', ' ')
+  return s.length >= 16 ? s.slice(0, 16) : s
 }
 
-/** 到期列紧凑展示：MM-DD HH:mm */
+/** 到期列紧凑：`MM-DD HH:mm` */
 function formatDueShort(v?: string) {
   if (!v) return '-'
-  const s = v.replace('T', ' ')
+  const s = String(v).replace('T', ' ')
   return s.length >= 16 ? s.slice(5, 16) : s.slice(0, 16)
 }
 
-/** OPEN 且已到期，或距到期不足 1 天 → 到期时间标红。 */
-function isDueUrgent(row: WorkspaceTaskItem) {
-  if (row.status !== 'OPEN' || !row.dueAt) return false
-  const due = Date.parse(row.dueAt)
-  if (!Number.isFinite(due)) return false
-  const oneDayMs = 24 * 60 * 60 * 1000
-  return due - Date.now() <= oneDayMs
+/**
+ * 解析到期时间戳。兼容 string / number / Jackson 数组 `[y,m,d,h,mi,s]`。
+ * 无时区按本地时间。`currentTime > expireTime` → 逾期。
+ */
+function parseDueMs(v: unknown): number {
+  if (v == null || v === '') return NaN
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN
+  if (Array.isArray(v) && v.length >= 3) {
+    const [y, m, d, h = 0, mi = 0, s = 0] = v.map((n) => Number(n))
+    const dt = new Date(y, m - 1, d, h, mi, s)
+    return dt.getTime()
+  }
+  const raw = String(v).trim()
+  if (!raw) return NaN
+  // 去掉时区后缀，统一按本地墙钟比较（与后端 LocalDateTime 一致）
+  const localish = raw
+    .replace(/Z$/i, '')
+    .replace(/[+-]\d{2}:?\d{2}$/, '')
+    .trim()
+  const normalized = localish.includes('T') ? localish : localish.replace(' ', 'T')
+  const m = normalized.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?)?/,
+  )
+  if (m) {
+    const dt = new Date(
+      Number(m[1]),
+      Number(m[2]) - 1,
+      Number(m[3]),
+      Number(m[4] || 0),
+      Number(m[5] || 0),
+      Number(m[6] || 0),
+    )
+    return dt.getTime()
+  }
+  let ms = Date.parse(normalized)
+  if (!Number.isFinite(ms)) {
+    ms = Date.parse(normalized.replace(/-/g, '/').replace('T', ' '))
+  }
+  return ms
+}
+
+function isClosedTask(row: WorkspaceTaskItem) {
+  const s = String(row.status || '').toUpperCase()
+  return s === 'DONE' || s === 'CANCELLED' || s === 'EXPIRED'
+}
+
+/** 当前时间 > 到期 → 已逾期；剩余 < 2h → 即将到期；否则宽裕。 */
+function dueTone(row: WorkspaceTaskItem): 'overdue' | 'soon' | 'normal' | '' {
+  void nowMs.value
+  if (!row.dueAt || isClosedTask(row)) return ''
+  const due = parseDueMs(row.dueAt)
+  if (!Number.isFinite(due)) return ''
+  const now = Date.now()
+  if (now > due) return 'overdue'
+  if (due - now < 2 * 60 * 60 * 1000) return 'soon'
+  return 'normal'
 }
 
 function isDueOverdue(row: WorkspaceTaskItem) {
-  if (row.status !== 'OPEN' || !row.dueAt) return false
-  const due = Date.parse(row.dueAt)
-  return Number.isFinite(due) && due < Date.now()
+  return dueTone(row) === 'overdue'
 }
 
-function dueHint(row: WorkspaceTaskItem) {
-  if (row.status !== 'OPEN' || !row.dueAt) return ''
-  if (isDueOverdue(row)) return '已逾期'
-  if (isDueUrgent(row)) return '即将到期'
-  return ''
+/** 强制内联色：避免被表格全局灰字盖掉 */
+function dueTimeStyle(row: WorkspaceTaskItem): Record<string, string> {
+  const tone = dueTone(row)
+  if (tone === 'overdue') {
+    return { color: '#F56C6C', fontWeight: '700', fontSize: '12px' }
+  }
+  if (tone === 'soon') {
+    return { color: '#E6A23C', fontWeight: '700', fontSize: '12px' }
+  }
+  return { color: '#909399', fontWeight: '500', fontSize: '12px' }
+}
+
+function dueCellClass(row: WorkspaceTaskItem) {
+  const tone = dueTone(row)
+  return tone ? `is-${tone}` : ''
+}
+
+/** 类型标签色系：按业务线区分胶囊样式 */
+function taskTypeTone(taskType?: string): string {
+  switch (taskType) {
+    case 'TEAM_ASSIGN':
+      return 'assign'
+    case 'PLAN_CREATE':
+    case 'PLAN_NUDGE':
+      return 'plan'
+    case 'FOLLOW_UP':
+      return 'followup'
+    case 'REPORT_REVIEW':
+      return 'report'
+    case 'METRIC_ALERT':
+    case 'EXERCISE_ALERT':
+    case 'MED_FEEDBACK':
+    case 'MED_VERIFY':
+      return 'alert'
+    case 'ASSESSMENT_ESCALATION':
+    case 'ASSESSMENT_SUSPECTED':
+      return 'assess'
+    case 'QUESTIONNAIRE_EXPIRED':
+    case 'ARCHIVE_SELF_REPORT':
+      return 'intake'
+    default:
+      return 'default'
+  }
 }
 
 function poolLabel(row: WorkspaceTaskItem) {
@@ -210,28 +341,6 @@ function poolTagType(row: WorkspaceTaskItem): 'warning' | 'info' {
 }
 
 const POOL_COLUMN_HINT = '任务归属：公共=无人领取，个人=已有归属人'
-
-function taskTypeTagType(taskType?: string): 'danger' | 'warning' | 'primary' | 'info' {
-  switch (taskType) {
-    case 'METRIC_ALERT':
-    case 'EXERCISE_ALERT':
-    case 'MED_FEEDBACK':
-    case 'ASSESSMENT_ESCALATION':
-    case 'ASSESSMENT_SUSPECTED':
-      return 'danger'
-    case 'PLAN_NUDGE':
-    case 'QUESTIONNAIRE_EXPIRED':
-      return 'warning'
-    case 'FOLLOW_UP':
-      return 'primary'
-    case 'PLAN_CREATE':
-      return 'primary'
-    case 'TEAM_ASSIGN':
-      return 'info'
-    default:
-      return 'info'
-  }
-}
 
 const poolTitle = computed(() => {
   switch (pool.value) {
@@ -276,21 +385,13 @@ const summaryCards = computed(() => [
   },
 ])
 
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-/** 摘要中的指标数值标红（如 180、156/92、9）。 */
-function highlightMetricSummary(summary?: string) {
-  if (!summary) return '-'
-  return escapeHtml(summary).replace(
-    /(\d+(?:\.\d+)?(?:\s*\/\s*(?:\d+(?:\.\d+)?|-))?)/g,
-    '<span class="metric-abnormal">$1</span>',
-  )
+function taskLineTitle(row: WorkspaceTaskItem) {
+  const bits = [
+    row.taskTypeLabel || '',
+    row.peopleName || '',
+    ...(row.diseaseLabels || []).slice(0, 3),
+  ].filter(Boolean)
+  return bits.join(' · ')
 }
 
 function isMineOpen(row: WorkspaceTaskItem) {
@@ -430,6 +531,120 @@ async function claim(row: WorkspaceTaskItem) {
     await load()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '领取失败')
+  }
+}
+
+function onSelectionChange(rows: WorkspaceTaskItem[]) {
+  // 表头全选 / 行勾选立刻驱动右上角批量领取高亮
+  selectedRows.value = Array.isArray(rows) ? [...rows] : []
+}
+
+function clearSelection() {
+  selectedRows.value = []
+  tableRef.value?.clearSelection?.()
+}
+
+const selectedCount = computed(() => selectedRows.value.length)
+
+/** 公共池：勾选后按钮高亮并可点（行可选已由 canClaim 约束） */
+const canBatchClaim = computed(
+  () => pool.value === 'PUBLIC' && selectedCount.value > 0,
+)
+
+const batchClaimLabel = computed(() =>
+  selectedCount.value > 0 ? `批量领取 (${selectedCount.value})` : '批量领取',
+)
+
+/**
+ * 并发抢单兜底：逐条 claim + allSettled，部分失败不崩。
+ * 成功后清勾选并刷新列表/看板；取消确认框时不要调用本函数（保留勾选）。
+ */
+async function executeBatchClaim(rows: WorkspaceTaskItem[]) {
+  if (batchClaiming.value) return { ok: 0, fail: 0 }
+  batchClaiming.value = true
+  let ok = 0
+  let fail = 0
+  try {
+    const results = await Promise.allSettled(
+      rows.map((r) => api(`/api/b/v1/workspace/tasks/${r.id}/claim`, { method: 'POST' })),
+    )
+    for (const r of results) {
+      if (r.status === 'fulfilled') ok++
+      else fail++
+    }
+    if (ok && !fail) {
+      ElMessage.success(`已成功领取 ${ok} 项任务`)
+    } else if (ok && fail) {
+      ElMessage.warning(`成功领取 ${ok} 项任务。有 ${fail} 项任务已被他人领取。`)
+    } else if (!ok && fail) {
+      ElMessage.warning(`未能领取：选中的 ${fail} 项任务均已被他人领取。`)
+    } else {
+      ElMessage.info('没有可领取的任务')
+    }
+    // 无论全成/部分成/全败，都刷新，避免界面与真实池状态脱节
+    clearSelection()
+    await load()
+  } catch (e) {
+    // 不应走到这里（allSettled 已吞单条失败）；兜底仍刷新
+    ElMessage.error(e instanceof Error ? e.message : '批量领取失败')
+    await load()
+  } finally {
+    batchClaiming.value = false
+  }
+  return { ok, fail }
+}
+
+async function batchClaim() {
+  if (batchClaiming.value) return
+  const rows = selectedRows.value.filter((r) => canClaim(r))
+  if (!rows.length) {
+    ElMessage.info('请先勾选要领取的公共池任务')
+    return
+  }
+  const count = rows.length
+  // ≤3：直接领取；>3：二次确认防呆
+  if (count <= 3) {
+    await executeBatchClaim(rows)
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确认要一次性领取选中的 <strong>${count}</strong> 项任务吗？领取后，它们将全部进入您的个人待办列表，请确保您有足够的精力处理。`,
+      '确认批量领取',
+      {
+        confirmButtonText: '确认领取',
+        cancelButtonText: '取消',
+        type: 'warning',
+        dangerouslyUseHTMLString: true,
+        distinguishCancelAndClose: true,
+        closeOnClickModal: false,
+        closeOnPressEscape: true,
+        beforeClose: async (action, instance, done) => {
+          // 取消 / 右上角 X：关窗并保留勾选，绝不 clearSelection
+          if (action !== 'confirm') {
+            done()
+            return
+          }
+          // 确认：按钮立刻 Loading，防连点重复打接口
+          if (batchClaiming.value) return
+          instance.confirmButtonLoading = true
+          instance.confirmButtonText = '领取中...'
+          instance.showCancelButton = false
+          try {
+            await executeBatchClaim(rows)
+            done()
+          } catch {
+            instance.confirmButtonLoading = false
+            instance.confirmButtonText = '确认领取'
+            instance.showCancelButton = true
+            done()
+          }
+        },
+      },
+    )
+  } catch {
+    // 用户点取消 / 关闭：保留 selectedRows，不做任何清理
   }
 }
 
@@ -896,154 +1111,183 @@ function applyRouteQuery() {
 }
 
 onMounted(async () => {
+  nowTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, 30_000)
   if (!ensureOrg()) return
   applyRouteQuery()
   await Promise.all([loadTeams(), loadStaff(), load()])
+})
+
+onUnmounted(() => {
+  if (nowTimer) {
+    clearInterval(nowTimer)
+    nowTimer = null
+  }
 })
 </script>
 
 <template>
   <div class="workspace-tasks">
-    <div class="page-title">
+    <div class="page-title page-title--compact">
       <div>
         <h1>工作台任务</h1>
-        <p>
-          点击上方卡片可快速切换任务池
-          · 我的 {{ summary?.mineOpenCount ?? 0 }} · 公共 {{ summary?.publicOpenCount ?? 0 }}
-          · {{ getCurrentOrgName() || '-' }}
-        </p>
-      </div>
-      <div class="actions">
-        <el-button @click="load">刷新</el-button>
+        <p>{{ getCurrentOrgName() || '-' }} · 点击卡片切换任务池</p>
       </div>
     </div>
 
-    <div v-loading="loading" class="summary-row">
+    <div v-loading="loading" class="summary-row summary-row--compact">
       <button
         v-for="card in summaryCards"
         :key="card.key"
         type="button"
-        class="summary-card"
+        class="summary-card summary-card--compact"
         :class="[`tone-${card.tone}`, { 'is-active': pool === card.key }]"
         @click="switchPool(card.key)"
       >
         <div class="summary-label">{{ card.label }}</div>
-        <div class="summary-value">{{ card.value }}</div>
-        <div class="summary-hint">{{ card.hint }}</div>
+        <div class="summary-meta">
+          <span class="summary-value">{{ card.value }}</span>
+          <span class="summary-hint">{{ card.hint }}</span>
+        </div>
       </button>
       <button
         v-if="isAdmin"
         type="button"
-        class="summary-card tone-violet"
+        class="summary-card summary-card--compact tone-violet"
         :class="{ 'is-active': pool === 'ALL' }"
         @click="switchPool('ALL')"
       >
         <div class="summary-label">全部任务</div>
-        <div class="summary-value">{{ pool === 'ALL' ? total : '—' }}</div>
-        <div class="summary-hint">管理员视角 · 可筛状态</div>
+        <div class="summary-meta">
+          <span class="summary-value">{{ pool === 'ALL' ? total : '—' }}</span>
+          <span class="summary-hint">管理员</span>
+        </div>
       </button>
     </div>
 
-    <el-card shadow="never" class="filter-card">
-      <div class="toolbar">
-        <el-radio-group :model-value="pool" @change="(v: string) => switchPool(v as Pool)">
-          <el-radio-button value="MINE">我的待办</el-radio-button>
-          <el-radio-button value="PUBLIC">公共池</el-radio-button>
-          <el-radio-button value="DONE">今日已办</el-radio-button>
-          <el-radio-button v-if="isAdmin" value="ALL">全部</el-radio-button>
-        </el-radio-group>
-        <el-select v-model="taskType" clearable placeholder="类型: 全部" style="width: 160px">
-          <el-option v-for="t in TASK_TYPES" :key="t.value" :label="t.label" :value="t.value" />
-        </el-select>
-        <el-select
-          v-if="pool === 'ALL'"
-          v-model="status"
-          clearable
-          placeholder="状态: 全部"
-          style="width: 130px"
-        >
-          <el-option label="待处理" value="OPEN" />
-          <el-option label="已完成" value="DONE" />
-          <el-option label="已取消" value="CANCELLED" />
-          <el-option label="已过期" value="EXPIRED" />
-        </el-select>
-        <el-select v-model="careTeamId" clearable placeholder="健管组: 全部" style="width: 180px">
-          <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
-        </el-select>
-        <el-input
-          v-model="keyword"
-          placeholder="搜索患者姓名"
-          clearable
-          class="toolbar-search"
-          @keyup.enter="onSearch"
-        />
-        <el-button type="primary" @click="onSearch">查询</el-button>
-      </div>
-    </el-card>
-
     <el-card shadow="never" class="list-card">
       <template #header>
-        <div class="table-head-bar">
-          <div class="table-title">
-            {{ poolTitle }}
-            <span class="count">
-              · {{ total }} 项
-              <template v-if="overdueInList > 0 && (pool === 'PUBLIC' || pool === 'MINE')">
-                · {{ overdueInList }} 项逾期（本页）
-              </template>
-            </span>
+        <div class="list-head">
+          <div class="list-head-top">
+            <div class="table-title">
+              {{ poolTitle }}
+              <span class="count">
+                · {{ total }} 项
+                <template v-if="overdueInList > 0 && (pool === 'PUBLIC' || pool === 'MINE')">
+                  · {{ overdueInList }} 项逾期（本页）
+                </template>
+              </span>
+            </div>
+            <div class="list-head-actions">
+              <el-button
+                v-if="pool === 'PUBLIC'"
+                type="primary"
+                size="small"
+                class="batch-claim-btn"
+                :class="{ ready: canBatchClaim }"
+                :disabled="!canBatchClaim"
+                :loading="batchClaiming"
+                @click="batchClaim"
+              >
+                {{ batchClaimLabel }}
+              </el-button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <el-select v-model="taskType" clearable placeholder="类型" style="width: 132px">
+              <el-option v-for="t in TASK_TYPES" :key="t.value" :label="t.label" :value="t.value" />
+            </el-select>
+            <el-select
+              v-if="pool === 'ALL'"
+              v-model="status"
+              clearable
+              placeholder="状态"
+              style="width: 110px"
+            >
+              <el-option label="待处理" value="OPEN" />
+              <el-option label="已完成" value="DONE" />
+              <el-option label="已取消" value="CANCELLED" />
+              <el-option label="已过期" value="EXPIRED" />
+            </el-select>
+            <el-select v-model="careTeamId" clearable placeholder="健管组" style="width: 150px">
+              <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
+            </el-select>
+            <el-input
+              v-model="keyword"
+              placeholder="搜索患者"
+              clearable
+              class="toolbar-search"
+              @keyup.enter="onSearch"
+            />
+            <el-button type="primary" @click="onSearch">查询</el-button>
+            <button
+              type="button"
+              class="toolbar-refresh"
+              title="刷新列表"
+              aria-label="刷新列表"
+              :disabled="loading"
+              @click="load"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" />
+                <path d="M3 21v-5h5" />
+                <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" />
+                <path d="M21 3v5h-5" />
+              </svg>
+            </button>
           </div>
         </div>
       </template>
 
-      <el-table :data="items" stripe class="tasks-table" style="width: 100%">
-        <el-table-column label="任务" min-width="200">
+      <el-table
+        ref="tableRef"
+        :key="`${pool}-${page}-${pageSize}`"
+        :data="items"
+        stripe
+        class="tasks-table"
+        style="width: 100%"
+        row-key="id"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column
+          v-if="pool === 'PUBLIC'"
+          type="selection"
+          width="42"
+          :selectable="(row: WorkspaceTaskItem) => canClaim(row)"
+        />
+        <el-table-column label="任务" min-width="320" class-name="col-task">
           <template #default="{ row }">
-            <div class="task-cell">
-              <div class="task-type-icon" :class="`tt-${taskTypeTagType(row.taskType)}`">
-                {{ (row.taskTypeLabel || '?').slice(0, 1) }}
-              </div>
-              <div class="task-text">
-                <div class="task-title" :title="row.summary || row.taskTypeLabel || ''">
-                  <span
-                    v-if="row.taskType === 'METRIC_ALERT'"
-                    class="summary-text"
-                    v-html="highlightMetricSummary(row.summary)"
-                  />
-                  <span v-else>{{ row.summary || row.taskTypeLabel || '-' }}</span>
-                  <el-tag
-                    v-if="row.taskType === 'METRIC_ALERT' && (row.hitCount || 0) > 1"
-                    size="small"
-                    type="warning"
-                    effect="plain"
-                    class="hit-tag"
-                  >
-                    {{ row.hitCount }} 项异常
-                  </el-tag>
-                </div>
-                <div class="task-meta">
-                  {{ row.peopleName || '-' }}
-                  <template v-if="row.careTeamName"> · {{ row.careTeamName }}</template>
-                </div>
-              </div>
+            <div class="task-cell" :title="taskLineTitle(row)">
+              <span
+                class="type-pill"
+                :class="`tone-${taskTypeTone(row.taskType)}`"
+                :title="row.taskTypeLabel"
+              >
+                {{ row.taskTypeLabel }}
+              </span>
+              <span class="task-patient">{{ row.peopleName || '-' }}</span>
+              <span
+                v-for="d in (row.diseaseLabels || []).slice(0, 2)"
+                :key="d"
+                class="disease-chip"
+              >{{ d }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="类型" min-width="110" class-name="col-tag">
-          <template #default="{ row }">
-            <el-tag size="small" effect="light" :type="taskTypeTagType(row.taskType)">
-              {{ row.taskTypeLabel }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" min-width="92" class-name="col-tag">
+        <el-table-column
+          v-if="pool !== 'PUBLIC' && pool !== 'MINE'"
+          label="状态"
+          width="84"
+          class-name="col-tag"
+        >
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small" effect="light">
               {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" min-width="76" class-name="col-tag">
+        <el-table-column v-if="pool === 'ALL'" width="72" class-name="col-tag">
           <template #header>
             <el-tooltip :content="POOL_COLUMN_HINT" placement="top">
               <span class="col-hint">归属</span>
@@ -1055,18 +1299,18 @@ onMounted(async () => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="处理人" min-width="100" show-overflow-tooltip>
+        <el-table-column v-if="pool === 'DONE'" label="处理人" width="88" show-overflow-tooltip>
           <template #default="{ row }">{{ row.doneByName || '-' }}</template>
         </el-table-column>
         <el-table-column
-          v-if="pool === 'PUBLIC' || pool === 'MINE' || pool === 'ALL'"
+          v-if="pool === 'MINE' || pool === 'ALL'"
           label="归属人"
-          min-width="100"
+          width="88"
           show-overflow-tooltip
         >
           <template #default="{ row }">{{ row.assigneeName || '-' }}</template>
         </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" label="处理人" min-width="100" show-overflow-tooltip>
+        <el-table-column v-if="pool === 'ALL'" label="处理人" width="88" show-overflow-tooltip>
           <template #default="{ row }">
             {{
               row.status === 'DONE' || row.status === 'CANCELLED' || row.status === 'EXPIRED'
@@ -1075,31 +1319,28 @@ onMounted(async () => {
             }}
           </template>
         </el-table-column>
-        <el-table-column label="生成时间" min-width="120">
+        <el-table-column label="生成时间" width="152" class-name="col-time">
           <template #default="{ row }">
-            <span class="time-cell">{{ formatDueShort(row.openedAt) }}</span>
+            <span class="time-cell" :title="formatTime(row.openedAt)">{{ formatTime(row.openedAt) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="到期" min-width="136" class-name="col-due">
+        <el-table-column label="到期" width="168" class-name="col-due">
           <template #default="{ row }">
-            <div
-              class="due-cell"
-              :class="{
-                'is-overdue': isDueOverdue(row),
-                'is-urgent': !isDueOverdue(row) && isDueUrgent(row),
-              }"
-            >
-              <span class="due-time">{{ formatDueShort(row.dueAt) }}</span>
-              <span v-if="dueHint(row)" class="due-hint">{{ dueHint(row) }}</span>
+            <div class="due-cell" :class="dueCellClass(row)">
+              <i v-if="isDueOverdue(row)" class="due-dot" aria-hidden="true" />
+              <span class="due-time" :style="dueTimeStyle(row)">{{ formatDueShort(row.dueAt) }}</span>
+              <span v-if="isDueOverdue(row)" class="due-mark">已逾期</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="完成时间" min-width="148" show-overflow-tooltip>
-          <template #default="{ row }">{{ formatTime(row.doneAt) }}</template>
+        <el-table-column v-if="pool === 'DONE'" label="完成时间" width="152" class-name="col-time">
+          <template #default="{ row }">
+            <span class="time-cell">{{ formatTime(row.doneAt) }}</span>
+          </template>
         </el-table-column>
         <el-table-column
           label="操作"
-          :width="isAdmin ? 300 : 232"
+          :width="isAdmin ? 220 : 168"
           align="right"
           class-name="col-actions"
         >
@@ -1129,27 +1370,31 @@ onMounted(async () => {
               >
                 处理
               </el-button>
-              <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-              <el-button
+              <button type="button" class="action-link" @click="openDetail(row)">详情</button>
+              <button
                 v-if="canAssignOrRelease(row)"
-                link
-                type="primary"
+                type="button"
+                class="action-link"
                 @click="openAssign(row)"
               >
                 分派
-              </el-button>
-              <span v-if="canRelease(row) || canCancel(row)" class="action-slot action-slot--release">
-                <el-button v-if="canRelease(row)" link @click="release(row)">退回</el-button>
-                <span v-else class="action-placeholder" aria-hidden="true">--</span>
-              </span>
-              <el-button
+              </button>
+              <button
+                v-if="canRelease(row)"
+                type="button"
+                class="action-link"
+                @click="release(row)"
+              >
+                退回
+              </button>
+              <button
                 v-if="canCancel(row)"
-                link
-                type="danger"
+                type="button"
+                class="action-link action-link--danger"
                 @click="cancelTask(row)"
               >
                 取消
-              </el-button>
+              </button>
             </div>
           </template>
         </el-table-column>
@@ -1159,19 +1404,31 @@ onMounted(async () => {
         :description="pool === 'DONE' ? '今日暂无你办结的任务' : '暂无任务'"
       />
       <div v-if="total > 0" class="list-pagination">
-        <el-pagination
-          :current-page="page"
-          :page-size="pageSize"
-          :total="total"
-          layout="total, prev, pager, next"
-          background
-          @current-change="
-            (p: number) => {
-              page = p
-              void loadList()
-            }
-          "
-        />
+        <template v-if="showPagination">
+          <el-pagination
+            v-model:current-page="page"
+            v-model:page-size="pageSize"
+            :total="total"
+            :page-sizes="[10, 15, 20, 50]"
+            layout="total, sizes, prev, pager, next"
+            background
+            class="list-pagination-bar"
+            @current-change="
+              () => {
+                clearSelection()
+                void loadList()
+              }
+            "
+            @size-change="
+              () => {
+                page = 1
+                clearSelection()
+                void loadList()
+              }
+            "
+          />
+        </template>
+        <div v-else class="list-total-only">共 {{ total }} 条</div>
       </div>
     </el-card>
 
@@ -1338,190 +1595,333 @@ onMounted(async () => {
 <style scoped>
 .workspace-tasks {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 40px;
+}
+
+.page-title--compact {
+  margin-bottom: 0 !important;
+  align-items: center;
+  gap: 8px 16px;
+}
+.page-title--compact :deep(h1),
+.page-title--compact h1 {
+  margin: 0 !important;
+  font-size: 18px !important;
+  line-height: 1.25;
+}
+.page-title--compact :deep(p),
+.page-title--compact p {
+  font-size: 12px !important;
+  line-height: 1.3;
 }
 
 .summary-row {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-
+.summary-row--compact {
+  gap: 8px !important;
+  margin-bottom: 0 !important;
+}
 .workspace-tasks:has(.tone-violet) .summary-row {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.summary-card .summary-label {
-  margin-top: 0;
-  margin-bottom: 10px;
+.summary-card--compact {
+  padding: 8px 12px !important;
+  box-shadow: none !important;
 }
-
-.summary-card .summary-value {
-  margin-top: 0;
+.summary-card--compact:hover {
+  transform: none !important;
+}
+.summary-card--compact .summary-label {
+  margin: 0 0 2px !important;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.summary-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.summary-card--compact .summary-value {
+  margin: 0 !important;
+  font-size: 20px !important;
+  line-height: 1.15;
+}
+.summary-card--compact .summary-hint {
+  margin: 0 !important;
+  font-size: 11px;
+  color: var(--ink-400);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tone-teal .summary-value {
   color: var(--teal-500, #00b8a9);
 }
-
 .tone-brand.is-active .summary-value {
   color: var(--brand-600);
 }
-
 .tone-violet .summary-value {
   color: var(--violet-500, #8b5cf6);
 }
 
+.toolbar {
+  gap: 12px;
+}
 .toolbar-search {
   flex: 1;
   min-width: 160px;
-  max-width: 240px;
+  max-width: 280px;
+}
+.toolbar :deep(.el-input__wrapper),
+.toolbar :deep(.el-select__wrapper),
+.toolbar :deep(.el-button:not(.is-link)) {
+  min-height: 32px;
+}
+.toolbar-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.toolbar-refresh:hover:not(:disabled) {
+  color: var(--el-color-primary, #409eff);
+  background: #f1f5f9;
+}
+.toolbar-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.toolbar-refresh svg {
+  width: 16px;
+  height: 16px;
 }
 
-.table-head-bar {
+.list-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.list-head-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
-
+.list-head-actions {
+  flex-shrink: 0;
+}
 .table-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--ink-800);
+  min-width: 0;
 }
-
 .table-title .count {
   color: var(--ink-400);
   font-weight: 500;
   margin-left: 4px;
 }
 
+.list-card {
+  flex: none;
+  height: auto;
+  margin-bottom: 40px;
+  background: #fff;
+  border: none;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
 .list-card :deep(.el-card__header) {
   padding: 14px 18px !important;
+  border-bottom: 1px solid var(--ink-100, #eef2f4);
 }
-
 .list-card :deep(.el-card__body) {
-  padding-top: 0 !important;
+  padding: 0 18px 8px !important;
+  height: auto;
 }
 
 .task-cell {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.task-type-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.tt-danger {
-  background: #fee9e7;
-  color: #ef4444;
-}
-
-.tt-warning {
-  background: #fef6e2;
-  color: #b45309;
-}
-
-.tt-primary {
-  background: #eaf2ff;
-  color: #1e63d9;
-}
-
-.tt-info {
-  background: #f1f5f9;
-  color: #64748b;
-}
-
-.task-text {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-}
-
-.task-title {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
   gap: 6px;
-  font-weight: 600;
-  color: var(--ink-800);
-  line-height: 1.3;
   min-width: 0;
+  height: 28px;
   overflow: hidden;
-}
-
-.task-title > span:not(.hit-tag) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.task-meta {
-  margin-top: 2px;
-  font-size: 11.5px;
-  color: var(--ink-400);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.hit-tag {
+.task-patient {
   flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-900, #0f172a);
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+.disease-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
 
 .muted {
   color: var(--ink-400);
 }
 
-.summary-text :deep(.metric-abnormal) {
-  color: var(--el-color-danger);
+/* 类型胶囊：按业务线区分色系 */
+.type-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 80px;
+  max-width: 80px;
+  box-sizing: border-box;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid transparent;
+}
+.type-pill.tone-assign {
+  color: #0f766e;
+  background: #ecfdf5;
+  border-color: #99f6e4;
+}
+.type-pill.tone-plan {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.type-pill.tone-followup {
+  color: #5b21b6;
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+}
+.type-pill.tone-report {
+  color: #b45309;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+.type-pill.tone-alert {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.type-pill.tone-assess {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+.type-pill.tone-intake {
+  color: #0369a1;
+  background: #f0f9ff;
+  border-color: #bae6fd;
+}
+.type-pill.tone-default {
+  color: #475569;
+  background: #f8fafc;
+  border-color: #e2e8f0;
 }
 
 .due-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
+  max-width: 100%;
 }
-
 .due-time {
-  font-weight: 600;
-  color: var(--ink-800);
+  white-space: nowrap;
+}
+.due-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f56c6c;
+  flex-shrink: 0;
+}
+.due-cell.is-overdue .due-time {
+  color: #f56c6c !important;
+  font-weight: 700 !important;
+}
+.due-cell.is-soon .due-time {
+  color: #e6a23c !important;
+  font-weight: 700 !important;
+}
+.due-cell.is-normal .due-time {
+  color: #909399 !important;
+  font-weight: 500 !important;
+}
+.due-mark {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #f56c6c;
+  background: #fef0f0;
+  border: 1px solid #fde2e2;
+  line-height: 1.4;
   white-space: nowrap;
 }
 
-.due-hint {
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
+.batch-claim-btn.is-disabled,
+.batch-claim-btn:disabled {
+  background: #e5e7eb !important;
+  border-color: #e5e7eb !important;
+  color: #9ca3af !important;
+  opacity: 1 !important;
+  cursor: not-allowed;
 }
-
-.due-cell.is-overdue,
-.due-cell.is-overdue .due-time,
-.due-cell.is-overdue .due-hint {
-  color: var(--rose-500, #ef4444);
-}
-
-.due-cell.is-urgent,
-.due-cell.is-urgent .due-time,
-.due-cell.is-urgent .due-hint {
-  color: var(--amber-500, #f59e0b);
+.batch-claim-btn.ready:not(.is-disabled):not(:disabled) {
+  background: var(--el-color-primary, #409eff) !important;
+  border-color: var(--el-color-primary, #409eff) !important;
+  color: #fff !important;
+  box-shadow: 0 1px 2px rgba(64, 158, 255, 0.35);
 }
 
 .time-cell {
+  display: inline-block;
   font-variant-numeric: tabular-nums;
+  font-size: 12px;
   color: var(--ink-700, #334155);
   white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  letter-spacing: -0.01em;
 }
 
 .row-actions {
@@ -1531,18 +1931,37 @@ onMounted(async () => {
   align-items: center;
   gap: 0;
   white-space: nowrap;
+  width: 100%;
 }
 
 .row-actions :deep(.el-button + .el-button) {
   margin-left: 0;
 }
 
-.row-actions :deep(.el-button.is-link) {
-  padding: 4px 4px;
+.row-actions :deep(.el-button--primary) {
+  margin-right: 4px;
 }
 
-.row-actions :deep(.el-button--small) {
-  padding: 5px 8px;
+.action-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin-left: 12px;
+  color: #666;
+  font-size: 14px;
+  line-height: 1.2;
+  cursor: pointer;
+  font-weight: 500;
+}
+.action-link:hover {
+  color: var(--el-color-primary, #409eff);
+}
+.action-link--danger {
+  color: #f56c6c;
+}
+.action-link--danger:hover {
+  color: #dd6161;
 }
 
 .assessment-task-body {
@@ -1586,37 +2005,21 @@ onMounted(async () => {
 .self-report-row span { font-size: 13px; color: var(--hx-n-800, #243642); }
 .self-report-fallback { margin: 0; font-size: 13px; color: var(--hx-n-700, #3d5160); }
 
-.action-slot--release {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2.5em;
-}
-
-.action-placeholder {
-  display: inline-block;
-  min-width: 2.5em;
-  padding: 4px 4px;
-  text-align: center;
-  color: var(--el-text-color-placeholder);
-  font-size: 13px;
-  line-height: 1;
-  user-select: none;
-}
-
-/* 仅任务列做省略；标签列禁止裁切，避免「报告审阅..」 */
+/* 类型列允许胶囊省略，避免挤占生成时间 */
 :deep(.col-tag .cell) {
-  overflow: visible;
+  overflow: hidden;
 }
-
 :deep(.col-tag .el-tag) {
-  max-width: none;
+  max-width: 100%;
 }
-
+:deep(.col-time .cell),
 :deep(.col-due .cell) {
-  overflow: visible;
+  overflow: visible !important;
+  text-overflow: clip;
 }
-
+:deep(.col-time .cell) {
+  white-space: nowrap;
+}
 :deep(.col-actions .cell) {
   overflow: visible;
 }
@@ -1628,19 +2031,64 @@ onMounted(async () => {
 
 .list-pagination {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  margin-top: 16px;
-  padding: 0 4px 4px;
+  margin-top: 12px;
+  padding: 0 4px 12px;
+  min-height: 36px;
+}
+.list-pagination-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.list-pagination-bar :deep(.el-pagination__total) {
+  margin-right: auto;
+  line-height: 28px;
+}
+.list-pagination-bar :deep(.el-pagination__sizes),
+.list-pagination-bar :deep(.el-pager),
+.list-pagination-bar :deep(.btn-prev),
+.list-pagination-bar :deep(.btn-next) {
+  align-self: center;
+}
+.list-total-only {
+  width: 100%;
+  text-align: right;
+  font-size: 13px;
+  color: var(--ink-500, #64748b);
+  line-height: 28px;
 }
 
 .list-card :deep(.tasks-table) {
-  width: 100%;
+  width: 100% !important;
+  --el-table-row-hover-bg-color: #f8fafc;
 }
-
-.list-card :deep(.tasks-table .el-table__header th.el-table__cell),
+.list-card :deep(.tasks-table .el-table__inner-wrapper),
+.list-card :deep(.tasks-table .el-table__header-wrapper),
+.list-card :deep(.tasks-table .el-table__body-wrapper),
+.list-card :deep(.tasks-table table) {
+  width: 100% !important;
+}
+.list-card :deep(.tasks-table .el-table__header th.el-table__cell) {
+  background: var(--el-table-header-bg-color, var(--ink-50));
+  color: var(--el-table-header-text-color, var(--ink-500)) !important;
+  font-size: 12px;
+  font-weight: 600;
+}
 .list-card :deep(.tasks-table .el-table__body td.el-table__cell) {
-  padding-left: 10px;
-  padding-right: 10px;
+  font-size: 13px;
+}
+.list-card :deep(.col-actions .cell) {
+  text-align: right;
+}
+/* 防止 el-table 默认省略把时间裁成 11-10... */
+.list-card :deep(.col-time .cell),
+.list-card :deep(.col-due .cell) {
+  overflow: visible !important;
 }
 
 @media (max-width: 1280px) {
@@ -1654,6 +2102,9 @@ onMounted(async () => {
   .summary-row,
   .workspace-tasks:has(.tone-violet) .summary-row {
     grid-template-columns: 1fr;
+  }
+  .list-head-top {
+    flex-wrap: wrap;
   }
 }
 </style>

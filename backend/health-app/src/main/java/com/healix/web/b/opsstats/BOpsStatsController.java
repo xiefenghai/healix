@@ -46,7 +46,7 @@ public class BOpsStatsController {
             @RequestParam(required = false) String careTeamId,
             @RequestParam(required = false) String staffId,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         return ApiResult.ok(opsStatsService.listTasks(
                 SecurityUtils.requireCurrentOrgId(), from, to, careTeamId, staffId, kind, page, size));
     }

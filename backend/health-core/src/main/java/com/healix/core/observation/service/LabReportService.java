@@ -288,16 +288,15 @@ public class LabReportService {
     }
 
     private String resolveItemName(LabItemCommand cmd) {
+        // 一律以目录名为准，避免客户端/OCR 传入的 itemName 与 itemCode 张冠李戴
+        String fromDict = labItemCodeMapper.resolveName(cmd.itemCode().trim());
+        if (StringUtils.hasText(fromDict) && !fromDict.equals(cmd.itemCode().trim())) {
+            return fromDict;
+        }
         if (StringUtils.hasText(cmd.itemName())) {
             return cmd.itemName().trim();
         }
-        return dictService
-                .listMerged(DictService.PLATFORM_TENANT, DictTypeEnum.OPTION.name(), "labItemCode")
-                .stream()
-                .filter(d -> cmd.itemCode().equals(d.getDictCode()))
-                .map(DictItemDto::getDictCodeDesc)
-                .findFirst()
-                .orElse(cmd.itemCode());
+        return cmd.itemCode();
     }
 
     private DictDefaults dictDefaults(String itemCode) {

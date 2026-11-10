@@ -410,7 +410,7 @@ async function loadDrill() {
     const q = queryParams()
     q.set('kind', drillKind.value)
     q.set('page', String(drillPage.value))
-    q.set('size', '20')
+    q.set('size', '10')
     const res = await api<{ data: { total: number; items: TaskItem[] } }>(
       `/api/b/v1/ops-stats/tasks?${q}`,
     )
@@ -676,10 +676,10 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
       </el-table>
-      <div v-if="drillTotal > 20" class="drill-pager">
+      <div v-if="drillTotal > 10" class="drill-pager">
         <el-pagination
           :current-page="drillPage"
-          :page-size="20"
+          :page-size="10"
           :total="drillTotal"
           layout="prev, pager, next"
           background

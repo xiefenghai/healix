@@ -22,4 +22,15 @@ class CreateArchiveHandlerMatchTest {
         CreateArchiveDraft withMobile = CreateArchiveParser.parse("13800138000");
         assertFalse(CreateArchiveHandler.isFreshArchiveStart("13800138000", withMobile));
     }
+
+    @Test
+    void filledPromptForMobileFirstAgePaste() {
+        CreateArchiveDraft d = CreateArchiveParser.parse("18758222123 李默 35岁 男");
+        String prompt = CreateArchiveHandler.filledOrMissingPrompt(d);
+        assertTrue(prompt.contains("李默"));
+        assertTrue(prompt.contains("男"));
+        assertTrue(prompt.contains("35岁"));
+        assertTrue(prompt.contains("确认创建"));
+        assertFalse(prompt.contains("建档表单已为您打开"));
+    }
 }

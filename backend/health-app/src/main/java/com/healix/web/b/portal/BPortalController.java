@@ -301,7 +301,7 @@ public class BPortalController {
             @RequestParam(required = false) String roleCode,
             @RequestParam(required = false) String orgId,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "10") int pageSize) {
         return ApiResult.ok(tenantAdminService.listStaff(
                 new StaffListQuery(keyword, status, roleCode, orgId, page, pageSize)));
     }

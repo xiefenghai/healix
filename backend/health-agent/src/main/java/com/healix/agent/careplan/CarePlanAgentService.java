@@ -532,7 +532,7 @@ public class CarePlanAgentService {
 
     private String loadSkillMarkdown(Consumer<AgentStreamEvent> sink) {
         String path = "classpath:skills/management-plan/SKILL.md";
-        CarePlanStreamSink.progress(sink, "正在翻阅方案生成指引与临床共识…");
+        CarePlanStreamSink.progress(sink, "正在翻阅方案生成指引与健康评估共识…");
         try {
             Resource res = new ClassPathResource("skills/management-plan/SKILL.md", getClass().getClassLoader());
             if (res.exists()) {

@@ -32,7 +32,7 @@ public class BOrgRecipeController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         return ApiResult.ok(orgRecipeService.page(
                 SecurityUtils.requireTenantId(),
                 SecurityUtils.requireCurrentOrgId(),

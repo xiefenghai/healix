@@ -92,7 +92,7 @@ public class OpsPortalController {
     public ApiResult<PageResult<TenantListItem>> listTenants(
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "10") int pageSize) {
         return ApiResult.ok(opsTenantAdminService.listTenants(new TenantListQuery(keyword, page, pageSize)));
     }
 
@@ -139,7 +139,7 @@ public class OpsPortalController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String roleCode,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "10") int pageSize) {
         return ApiResult.ok(opsTenantAdminService.listStaff(
                 tenantId, new StaffListQuery(keyword, status, roleCode, page, pageSize)));
     }

@@ -43,9 +43,14 @@ export type PersonaView = {
   narrative?: PersonaNarrative | null
   displayHeadline?: string
   sourceFingerprint?: string
+  narrativeFingerprint?: string | null
   generatedAt?: string | null
   dimensionsAt?: string | null
   narrativeSkippedLocked?: boolean | null
+  /** 临床维度指纹与叙事不一致：建议重新生成，GET 不自动打 LLM */
+  dimensionsStale?: boolean | null
+  /** generate/refresh 指纹命中，未调用 LLM */
+  llmSkipped?: boolean | null
 }
 
 type ApiWrap<T> = { code: number; data: T; message?: string }

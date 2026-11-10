@@ -65,7 +65,7 @@ public class OpsJobController {
     public ApiResult<PageResult<JobRunViewDto>> runs(
             @PathVariable String jobCode,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @RequestParam(defaultValue = "10") int pageSize) {
         SecurityUtils.requireContext();
         return ApiResult.ok(jobAdminService.listRuns(jobCode, page, pageSize));
     }

@@ -494,7 +494,7 @@ public class AdherenceQueryService {
         }
         PlanWindow window = resolvePlanWindow(plan, versionById, day);
         boolean planRecordActive = plan != null && StringUtils.hasText(plan.getCurrentVersionId());
-        boolean hasActivePlan = planRecordActive
+        boolean inExecutionWindow = planRecordActive
                 && CarePlanDueSupport.isWithinHorizon(day, window.planStart(), window.horizonDays());
         List<CarePlanTask> tasks = taskMapper.listActiveByPeople(tenantId, peopleId);
         LocalDate from = day.minusDays(STREAK_LOOKBACK_DAYS);
@@ -502,14 +502,26 @@ public class AdherenceQueryService {
                 checkinMapper.listByTenantPeopleIdsRange(tenantId, List.of(peopleId), from, day);
         Map<String, Map<LocalDate, Map<String, String>>> indexed = indexCheckinStatus(checkins);
         return new PersonPlanContext(
-                hasActivePlan, window, tasks, indexed.getOrDefault(peopleId, Map.of()));
+                planRecordActive,
+                inExecutionWindow,
+                window,
+                tasks,
+                indexed.getOrDefault(peopleId, Map.of()));
     }
 
     private record PersonPlanContext(
-            boolean hasActivePlan,
+            /** ACTIVE 且已发布当前版本（有方案记录，与执行窗口无关） */
+            boolean planRecordActive,
+            /** 当日落在方案执行窗口内（才算打卡/连续天） */
+            boolean inExecutionWindow,
             PlanWindow window,
             List<CarePlanTask> tasks,
-            Map<LocalDate, Map<String, String>> checkinsByDay) {}
+            Map<LocalDate, Map<String, String>> checkinsByDay) {
+        /** 兼容旧调用：窗口内才视为「执行中」 */
+        boolean hasActivePlan() {
+            return inExecutionWindow;
+        }
+    }
 
     /**
      * 单患者依从性摘要（实时）：近 7 日方案完成率百分比 + 当日用药完成率，不返回明细列表。
@@ -517,16 +529,18 @@ public class AdherenceQueryService {
     public AdherencePatientSummaryDto patientSummary(
             String tenantId, String orgId, String peopleId, LocalDate date) {
         LocalDate day = date != null ? date : LocalDate.now();
+
         // 校验患者属于当前机构宇宙
         orgWorkspaceService.getOrgPatient(orgId, peopleId);
-
         PersonPlanContext ctx = loadPersonPlan(tenantId, peopleId, day);
-        boolean hasActivePlan = ctx.hasActivePlan();
+        // Hero「有无方案」看 ACTIVE 记录；打卡指标才看执行窗口
+        boolean hasPlanRecord = ctx.planRecordActive();
+        boolean inWindow = ctx.inExecutionWindow();
 
         DayPlanStats todayPlan = DayPlanStats.empty();
         Double rate7d = null;
         int streak = 0;
-        if (hasActivePlan) {
+        if (inWindow) {
             todayPlan = calcPlanDay(
                     ctx.tasks(),
                     ctx.checkinsByDay().getOrDefault(day, Map.of()),
@@ -560,7 +574,7 @@ public class AdherenceQueryService {
         AdherenceMedMetricsDto medMetrics = calcMedMetrics(meds, takenSlots, day);
 
         AdherencePlanMetricsDto planMetrics = new AdherencePlanMetricsDto();
-        planMetrics.setHasActivePlan(hasActivePlan);
+        planMetrics.setHasActivePlan(hasPlanRecord);
         planMetrics.setDue(todayPlan.due);
         planMetrics.setDone(todayPlan.done);
         planMetrics.setSkipped(todayPlan.skipped);
@@ -573,18 +587,23 @@ public class AdherenceQueryService {
         out.setPeopleId(peopleId);
         out.setDate(day);
         out.setWindowDays(RATE_WINDOW_DAYS);
-        out.setHasActivePlan(hasActivePlan);
-        out.setStreakDays(streak);
-        out.setRate(rate7d);
-        out.setPercent(rate7d == null ? null : (int) Math.round(rate7d * 100.0d));
-        out.setPlanTodayIncomplete(todayPlan.incompleteFlag);
-        out.setMedTodayIncomplete(medMetrics.isTodayIncomplete());
+        // 有 ACTIVE 已发布方案即为 true，避免 Hero 误显「暂无进行中的方案」
+        out.setHasActivePlan(hasPlanRecord);
+        out.setStreakDays(inWindow ? streak : 0);
+        out.setRate(inWindow ? rate7d : null);
+        out.setPercent(inWindow && rate7d != null ? (int) Math.round(rate7d * 100.0d) : null);
+        out.setPlanTodayIncomplete(inWindow && todayPlan.incompleteFlag);
+        // 无执行窗口时不抬用药未完成，避免幽灵红字
+        out.setMedTodayIncomplete(inWindow && medMetrics.isTodayIncomplete());
         out.setMedPercent(
-                medMetrics.getDueDoseCount() > 0
+                inWindow && medMetrics.getDueDoseCount() > 0
                         ? (int) Math.round(
                                 100.0d * medMetrics.getTakenDoseCount() / (double) medMetrics.getDueDoseCount())
                         : null);
-        out.setRiskLevel(resolveRisk(planMetrics, medMetrics).name());
+        out.setRiskLevel(
+                inWindow
+                        ? resolveRisk(planMetrics, medMetrics).name()
+                        : AdherenceRiskLevelEnum.LOW.name());
         return out;
     }
 

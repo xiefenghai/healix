@@ -58,7 +58,7 @@ async function load() {
   if (!(await ensureOrg())) return
   loading.value = true
   try {
-    const q = new URLSearchParams({ page: String(page.value), size: '20' })
+    const q = new URLSearchParams({ page: String(page.value), size: '10' })
     if (keyword.value.trim()) q.set('keyword', keyword.value.trim())
     if (status.value) q.set('status', status.value)
     const res = await api<{ data: { total: number; items: RecipeItem[] } }>(`/api/b/v1/recipes?${q}`)
@@ -215,7 +215,7 @@ onMounted(load)
         v-model:current-page="page"
         layout="total, prev, pager, next"
         :total="total"
-        :page-size="20"
+        :page-size="10"
         @current-change="load"
       />
     </div>

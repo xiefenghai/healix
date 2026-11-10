@@ -41,7 +41,7 @@ const historyItems = ref<AssessmentSnapshot[]>([])
 const historyTotal = ref(0)
 const historyPage = ref(1)
 const historyDetail = ref<AssessmentSnapshot | null>(null)
-const pageSize = 20
+const pageSize = 10
 
 const groups = computed(() => overview.value?.groups || [])
 const pending = computed<QuestionnaireRequest | null>(() => overview.value?.pendingRequest || null)

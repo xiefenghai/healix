@@ -91,4 +91,24 @@ class CreateArchiveParserTest {
         assertEquals("13800138000", d.mobile());
         assertTrue(d.isComplete());
     }
+
+    @Test
+    void parseMobileFirstWithAgeYears() {
+        CreateArchiveDraft d = CreateArchiveParser.parse("18758222123 李默 35岁 男");
+        assertEquals("李默", d.name());
+        assertEquals("MALE", d.gender());
+        assertEquals("18758222123", d.mobile());
+        int expectYear = LocalDate.now().getYear() - 35;
+        assertEquals(LocalDate.of(expectYear, 1, 1), d.birthday());
+        assertTrue(d.isComplete());
+    }
+
+    @Test
+    void noiseName分组IsRejected() {
+        assertTrue(CreateArchiveParser.isNoiseName("分组"));
+        assertTrue(CreateArchiveParser.isNoiseName("待分组"));
+        assertTrue(CreateArchiveParser.isNoiseName("建组"));
+        CreateArchiveDraft d = CreateArchiveParser.parse("分组 男 1990-01-01 13800138000");
+        assertFalse(d.hasName());
+    }
 }

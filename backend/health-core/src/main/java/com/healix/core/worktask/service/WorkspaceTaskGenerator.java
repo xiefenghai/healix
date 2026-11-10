@@ -275,6 +275,7 @@ public class WorkspaceTaskGenerator {
                     StringUtils.hasText(doneByStaffId) ? doneByStaffId : null,
                     now);
         }
+        // 公共池「待认领」OPEN 待办 → 自动挂到新组主责健管师名下
         if (StringUtils.hasText(primaryCareManagerStaffId)) {
             taskMapper.reassignPublicToStaff(orgId, peopleId, primaryCareManagerStaffId, now);
         }
@@ -324,6 +325,35 @@ public class WorkspaceTaskGenerator {
                     null,
                     now);
         }
+    }
+
+    /**
+     * 删除健管组：患者进公共池时，未完成待办不清档、不过期，仅清空处理人进入待认领。
+     * 档案/方案等业务数据不在此处理，保持与患者绑定。
+     */
+    @Transactional
+    public void onCareTeamDeletedReleaseToPublic(String orgId, List<String> peopleIds) {
+        if (!StringUtils.hasText(orgId) || peopleIds == null || peopleIds.isEmpty()) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now(JobCronSupport.ZONE);
+        for (String peopleId : peopleIds) {
+            if (!StringUtils.hasText(peopleId)) {
+                continue;
+            }
+            taskMapper.releaseOpenToPublic(orgId, peopleId, now);
+        }
+    }
+
+    public long countOpenTasks(String orgId, List<String> peopleIds) {
+        if (!StringUtils.hasText(orgId) || peopleIds == null || peopleIds.isEmpty()) {
+            return 0L;
+        }
+        List<String> ids = peopleIds.stream().filter(StringUtils::hasText).distinct().toList();
+        if (ids.isEmpty()) {
+            return 0L;
+        }
+        return taskMapper.countOpenByPeopleIds(orgId, ids);
     }
 
     @Transactional

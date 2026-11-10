@@ -133,7 +133,6 @@ watch(
 watch(
   () => form.value.name,
   () => {
-    // 输入中清错；失焦时再做重名校验
     if (form.value.name.trim() && !isDuplicateTeamName(form.value.name)) {
       formRef.value?.clearValidate('name')
     }
@@ -174,70 +173,77 @@ async function submit() {
 </script>
 
 <template>
-  <el-drawer
+  <el-dialog
     v-model="visible"
     title="创建我的健管组"
-    size="420px"
+    width="560px"
+    align-center
     destroy-on-close
     append-to-body
-    class="create-care-team-drawer"
+    class="create-care-team-dialog healix-form-dialog"
+    modal-class="create-care-team-dialog-overlay"
+    :close-on-click-modal="true"
   >
-    <p class="hint">为团队建立服务分组。建组后，您可以随时邀请医生和健管师加入。</p>
-    <el-form
-      ref="formRef"
-      :model="form"
-      :rules="rules"
-      v-loading="loadingStaff"
-      label-position="top"
-      class="form"
-      @submit.prevent
-    >
-      <el-form-item label="健管组名称" prop="name" required>
-        <el-input
-          ref="nameInputRef"
-          v-model="form.name"
-          maxlength="40"
-          show-word-limit
-          placeholder="例如：减重管理一组"
-          @keyup.enter="submit"
-        />
-      </el-form-item>
-      <el-form-item prop="primaryCareManagerStaffId" required>
-        <template #label>
-          <span>主责健管师</span>
-          <span v-if="isPrimaryDefaultSelf" class="label-hint">（默认：当前登录账号）</span>
-        </template>
-        <el-select
-          v-model="form.primaryCareManagerStaffId"
-          filterable
-          placeholder="选择主责健管师"
-          style="width: 100%"
-        >
-          <el-option
-            v-for="s in careManagers"
-            :key="s.staffId"
-            :label="s.displayName"
-            :value="s.staffId"
+    <div class="dialog-body">
+      <p class="form-hint-main">为团队建立服务分组。建组后，您可以随时邀请医生和健管师加入。</p>
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        v-loading="loadingStaff"
+        label-position="top"
+        require-asterisk-position="left"
+        class="form"
+        @submit.prevent
+      >
+        <el-form-item label="健管组名称" prop="name" required>
+          <el-input
+            ref="nameInputRef"
+            v-model="form.name"
+            clearable
+            maxlength="40"
+            show-word-limit
+            placeholder="例如：减重管理一组"
+            @keyup.enter="submit"
           />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="主责医生（可选）">
-        <el-select
-          v-model="form.primaryDoctorStaffId"
-          clearable
-          filterable
-          placeholder="可稍后指定"
-          style="width: 100%"
-        >
-          <el-option
-            v-for="s in doctors"
-            :key="s.staffId"
-            :label="s.displayName"
-            :value="s.staffId"
-          />
-        </el-select>
-      </el-form-item>
-    </el-form>
+        </el-form-item>
+        <el-form-item prop="primaryCareManagerStaffId" required>
+          <template #label>
+            <span>主责健管师</span>
+            <span v-if="isPrimaryDefaultSelf" class="label-hint">（默认：当前登录账号）</span>
+          </template>
+          <el-select
+            v-model="form.primaryCareManagerStaffId"
+            filterable
+            placeholder="选择主责健管师"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="s in careManagers"
+              :key="s.staffId"
+              :label="s.displayName"
+              :value="s.staffId"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="主责医生（可选）">
+          <el-select
+            v-model="form.primaryDoctorStaffId"
+            clearable
+            filterable
+            placeholder="可稍后指定"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="s in doctors"
+              :key="s.staffId"
+              :label="s.displayName"
+              :value="s.staffId"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+    </div>
     <template #footer>
       <div class="footer">
         <el-button :disabled="creating" @click="visible = false">取消</el-button>
@@ -246,18 +252,22 @@ async function submit() {
         </el-button>
       </div>
     </template>
-  </el-drawer>
+  </el-dialog>
 </template>
 
 <style scoped>
-.hint {
+.dialog-body {
+  min-height: 0;
+}
+.form-hint-main {
   margin: 0 0 16px;
   font-size: 13px;
-  line-height: 1.55;
-  color: var(--ink-500, #6b7280);
+  line-height: 1.45;
+  color: #999999;
+  font-weight: 400;
 }
 .form {
-  padding-right: 4px;
+  padding-right: 2px;
 }
 .label-hint {
   margin-left: 4px;
@@ -274,17 +284,95 @@ async function submit() {
 </style>
 
 <style>
-/* append-to-body 后需非 scoped，保证底栏固定可见 */
-.create-care-team-drawer.el-drawer .el-drawer__body {
-  padding-bottom: 8px;
-  overflow-y: auto;
+/* 与患者建档弹窗同一套壳：居中白卡片 + 560 宽 + 32 内边距 */
+.el-overlay.create-care-team-dialog-overlay .el-overlay-dialog {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
 }
-.create-care-team-drawer.el-drawer .el-drawer__footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
+.create-care-team-dialog.el-dialog,
+.healix-form-dialog.el-dialog.create-care-team-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 32px)) !important;
+  max-height: 85vh;
+  height: auto !important;
+  margin: auto !important;
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 0 !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+.create-care-team-dialog .el-dialog__header {
+  flex-shrink: 0;
+  margin-right: 0;
+  padding: 32px 32px 12px !important;
+}
+.create-care-team-dialog .el-dialog__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-900, #111827);
+  line-height: 1.4;
+}
+.create-care-team-dialog .el-dialog__headerbtn {
+  top: 28px;
+  right: 24px;
+  width: 28px;
+  height: 28px;
+}
+.create-care-team-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 32px 8px !important;
+}
+.create-care-team-dialog .el-dialog__footer {
+  flex: none;
+  flex-shrink: 0;
   border-top: 1px solid var(--ink-100, #e5e7eb);
   background: #fff;
-  padding: 12px 16px;
+  padding: 16px 32px 32px !important;
+}
+.create-care-team-dialog .form .el-form-item {
+  margin-bottom: 24px;
+}
+.create-care-team-dialog .form .el-form-item__label {
+  margin-bottom: 6px !important;
+  padding: 0 !important;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-500, #6b7280);
+  line-height: 1.4;
+  height: auto !important;
+}
+.create-care-team-dialog .form .el-input__inner,
+.create-care-team-dialog .form .el-select__selected-item,
+.create-care-team-dialog .form .el-select__placeholder {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-800, #1f2937);
+}
+.create-care-team-dialog .form .el-input__wrapper,
+.create-care-team-dialog .form .el-select__wrapper {
+  min-height: 36px;
+  background-color: #fff !important;
+  box-shadow: 0 0 0 1px var(--ink-200, #e2e8f0) inset !important;
+}
+.create-care-team-dialog .form .el-input__wrapper.is-focus,
+.create-care-team-dialog .form .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--brand-500, #2c7ef8) inset !important;
+}
+/* 有字时显示极小清空按钮，与字数统计并排不抢视觉 */
+.create-care-team-dialog .form .el-input__clear {
+  font-size: 12px;
+  width: 14px;
+  height: 14px;
+  margin-right: 2px;
+  color: var(--ink-400, #9ca3af);
+}
+.create-care-team-dialog .form .el-input__clear:hover {
+  color: var(--ink-600, #4b5563);
 }
 </style>

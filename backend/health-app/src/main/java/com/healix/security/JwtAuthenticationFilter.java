@@ -30,22 +30,44 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    /** SSE / DeferredResult 的 ASYNC 二次分发跑在新线程，ThreadLocal 会丢；挂在 request 上供恢复。 */
+    private static final String REQUEST_CONTEXT_ATTR =
+            JwtAuthenticationFilter.class.getName() + ".REQUEST_CONTEXT";
+    private static final String SECURITY_CONTEXT_ATTR =
+            JwtAuthenticationFilter.class.getName() + ".SECURITY_CONTEXT";
+
     private final JwtTokenProvider jwtTokenProvider;
+
+    /**
+     * CareChat 等 SSE 会走 Tomcat ASYNC 分发；默认 OncePerRequestFilter 跳过 ASYNC，
+     * 导致 {@code SecurityUtils.requireTenantId()} 在无 RequestContext 时抛「未登录」。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
 
     @Override
     protected void doFilterInternal(
             HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+        // 线程可能复用：先清掉上一请求残留，再按本请求重建
+        clearContext();
         try {
             String header = request.getHeader(HttpHeaders.AUTHORIZATION);
             if (header != null && header.startsWith("Bearer ")) {
                 try {
-                    authenticate(header.substring(7));
+                    bindAuth(request, authenticate(header.substring(7)));
                 } catch (JwtException | IllegalArgumentException e) {
                     // 过期 / 非法 token：视为未登录，交给 Security 返回 401，避免冒泡成 500
                     log.debug("JWT rejected: {}", e.getMessage());
-                    SecurityContextHolder.clearContext();
+                    clearContext();
+                    request.removeAttribute(REQUEST_CONTEXT_ATTR);
+                    request.removeAttribute(SECURITY_CONTEXT_ATTR);
                 }
+            } else {
+                // ASYNC 二次分发：Authorization 偶发不可用时，用 REQUEST 阶段缓存的上下文
+                restoreCachedAuth(request);
             }
             filterChain.doFilter(request, response);
         } finally {
@@ -71,13 +93,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         // no-op
                     }
                 });
+                // REQUEST 线程即将归还：清 ThreadLocal，上下文已缓存在 request attribute
+                clearContext();
             } else {
                 clearContext();
             }
         }
     }
 
-    private void authenticate(String token) {
+    private AuthBinding authenticate(String token) {
         Claims claims = jwtTokenProvider.parse(token);
         String aud = jwtTokenProvider.requireAudience(claims);
         String accountId = claims.getSubject();
@@ -118,13 +142,32 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             authorities = Set.of("ROLE_OPS", "ROLE_" + roleCode);
         }
 
-        RequestContextHolder.set(ctx);
         var auth = new UsernamePasswordAuthenticationToken(
                 accountId,
                 null,
                 authorities.stream().map(SimpleGrantedAuthority::new).toList());
-        SecurityContextHolder.getContext().setAuthentication(auth);
+        SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
+        securityContext.setAuthentication(auth);
+        return new AuthBinding(ctx, securityContext);
     }
+
+    private static void bindAuth(HttpServletRequest request, AuthBinding binding) {
+        RequestContextHolder.set(binding.requestContext());
+        SecurityContextHolder.setContext(binding.securityContext());
+        request.setAttribute(REQUEST_CONTEXT_ATTR, binding.requestContext());
+        request.setAttribute(SECURITY_CONTEXT_ATTR, binding.securityContext());
+    }
+
+    private static void restoreCachedAuth(HttpServletRequest request) {
+        Object ctxAttr = request.getAttribute(REQUEST_CONTEXT_ATTR);
+        Object secAttr = request.getAttribute(SECURITY_CONTEXT_ATTR);
+        if (ctxAttr instanceof RequestContext ctx && secAttr instanceof SecurityContext securityContext) {
+            RequestContextHolder.set(ctx);
+            SecurityContextHolder.setContext(securityContext);
+        }
+    }
+
+    private record AuthBinding(RequestContext requestContext, SecurityContext securityContext) {}
 
     private static void clearContext() {
         RequestContextHolder.clear();

@@ -35,7 +35,9 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // SSE 断连后 Tomcat 用 INCLUDE 渲染 /error；ASYNC/ERROR/FORWARD 二次分发也不带 JWT
+                        // SSE 断连后 Tomcat 用 INCLUDE/ERROR 渲染 /error；FORWARD 亦无业务鉴权。
+                        // ASYNC 仍 permitAll：鉴权靠 JwtAuthenticationFilter 在 ASYNC 上重绑 RequestContext
+                        //（勿在此处要求 ROLE_*，否则 error 页二次分发易连环 401）。
                         .dispatcherTypeMatchers(
                                         DispatcherType.ASYNC,
                                         DispatcherType.ERROR,

@@ -8,6 +8,7 @@ import com.healix.agent.llm.LlmResponse;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.persona.support.PersonaTemplateSupport;
 import java.util.List;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -29,11 +30,22 @@ public class PersonaLlmGenerator {
             - narrative: 字符串，120–220 字，B 端可用高危/分层等评估用语；禁止对患者口吻、禁止编造处方剂量、禁止无依据的确诊断言
             - watchPoints: 字符串数组，1–3 条，每条≤28 字，案头盯梢点
             事实规则：
+            - 年龄一律以 dimensions.identity.age 为准（当前年−出生年），禁止自行推算或改写年龄；intakeBrief 已与该年龄对齐
+            - 若 dimensions.execution.hasActivePlan 为 true：表示已有生效管理方案，禁止写「尚无生效管理方案 / 暂无方案」
+            - 若 dimensions.execution.hasActivePlan 为 false，或 planCompletion7d / planMissStreak / medCompletion7d 为 null：表示尚无生效管理方案或暂无依从数据；禁止输出「依从性差」「连续漏项」「用药依从为 0」等评价，也勿据此写盯梢点
             - 若 dimensions.goals.fromIntake 为 true，表示首诊问卷已提交：须按已采事实写画像，禁止写「尚未完成首诊」「入组当日尚未完成首诊」等未完成表述
-            - 仅当 fromIntake 不为 true、且无可用首诊摘要时，才可写「尚未完成首诊 / 暂无评估」
-            - intakeAiSummary 若与 fromIntake 矛盾，以 fromIntake=true 为准，忽略摘要里的「未完成首诊」措辞
+            - 仅当 fromIntake 不为 true、且无可用首诊摘录时，才可写「尚未完成首诊 / 暂无评估」
+            - intakeBrief 仅为首诊摘要极短摘录；与 dimensions 冲突时以 dimensions 为准
+            - 叙事须面向健管师说人话：禁止直接输出病种代码、方案模板 key/名（如 COMPREHENSIVE、「综合管理」、DIABETES_HYPERTENSION 等）；若需提及入组/方案，可写「已纳入全维度健康管理」，或整句省略
             不要输出 Markdown 代码围栏或其它说明文字。
             """;
+
+    /** 首诊摘要与 dimensions 大量重叠，仅保留极短摘录降低 token / 幻觉。 */
+    private static final int INTAKE_BRIEF_MAX = 120;
+
+    /** 摘要里「约44岁 / 44岁 / 年龄44」等，统一改写为 identity.age。 */
+    private static final Pattern AGE_PHRASE =
+            Pattern.compile("(?:约\\s*)?(\\d{1,3})\\s*岁|年龄\\s*[：:]?\\s*(\\d{1,3})");
 
     private final LlmClient llmClient;
 
@@ -44,9 +56,11 @@ public class PersonaLlmGenerator {
         if (dimensions != null) {
             facts.set("dimensions", dimensions);
         }
-        if (StringUtils.hasText(intakeAiSummary)) {
-            String s = intakeAiSummary.trim();
-            facts.put("intakeAiSummary", s.length() > 800 ? s.substring(0, 800) : s);
+        Integer age = identityAge(dimensions);
+        // dimensions 已含血压/血糖/过敏等核心指标；长文易与年龄、依从穿帮，故截短并对齐年龄
+        String brief = intakeBrief(intakeAiSummary, age);
+        if (StringUtils.hasText(brief)) {
+            facts.put("intakeBrief", brief);
         }
         if (!llmClient.isEnabled()) {
             return template(dimensions, "AI 未启用，已生成模板摘要");
@@ -116,6 +130,48 @@ public class PersonaLlmGenerator {
         }
         String t = s.trim();
         return t.length() <= max ? t : t.substring(0, max);
+    }
+
+    /** 去掉与 dimensions 重复的长叙述，只留开头短摘录；年龄与 identity.age 对齐。 */
+    static String intakeBrief(String intakeAiSummary) {
+        return intakeBrief(intakeAiSummary, null);
+    }
+
+    static String intakeBrief(String intakeAiSummary, Integer identityAge) {
+        if (!StringUtils.hasText(intakeAiSummary)) {
+            return null;
+        }
+        String s = intakeAiSummary.trim().replaceAll("\\s+", " ");
+        if (identityAge != null && identityAge >= 0) {
+            s = alignAgePhrases(s, identityAge);
+        }
+        if (s.length() <= INTAKE_BRIEF_MAX) {
+            return s;
+        }
+        return s.substring(0, INTAKE_BRIEF_MAX);
+    }
+
+    static String alignAgePhrases(String text, int age) {
+        if (!StringUtils.hasText(text)) {
+            return text;
+        }
+        return AGE_PHRASE.matcher(text).replaceAll(mr -> {
+            if (mr.group(1) != null) {
+                return (mr.group(0) != null && mr.group(0).startsWith("约") ? "约" : "") + age + "岁";
+            }
+            return "年龄" + age;
+        });
+    }
+
+    private static Integer identityAge(JsonNode dimensions) {
+        if (dimensions == null) {
+            return null;
+        }
+        JsonNode age = dimensions.path("identity").path("age");
+        if (age == null || age.isMissingNode() || age.isNull() || !age.isNumber()) {
+            return null;
+        }
+        return age.asInt();
     }
 
     private static String extractJsonObject(String raw) {

@@ -99,6 +99,16 @@ public class AssessmentOrchestrator {
                 g.setNotApplicableReason(notApplicableReason(engine, ctx));
             }
             PeopleAssessmentLatest row = latest.get(engine.code());
+            // 已确诊切到严重分层引擎后，若尚未跑过分层，回退展示同病种患病风险评估，避免与画像标签穿帮
+            if ((row == null || !row.effective()) && diagnosed) {
+                AssessmentEngine riskEngine = registry.find(disease, AssessmentCategory.RISK);
+                if (riskEngine != null) {
+                    PeopleAssessmentLatest riskRow = latest.get(riskEngine.code());
+                    if (riskRow != null && riskRow.effective()) {
+                        row = riskRow;
+                    }
+                }
+            }
             if (row != null && row.effective() && StringUtils.hasText(row.getSnapshotId())) {
                 PeopleAssessmentSnapshot snap = snapshotMapper.findById(row.getSnapshotId());
                 if (snap != null) {

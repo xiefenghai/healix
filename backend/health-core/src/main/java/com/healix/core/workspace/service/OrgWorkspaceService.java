@@ -58,6 +58,7 @@ import com.healix.core.patient.mapper.PatientCareAssignmentMapper;
 import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.portal.enums.PortalEnum;
 import com.healix.core.workspace.domain.StaffPatientWatch;
+import com.healix.core.workspace.dto.CareTeamDeleteImpact;
 import com.healix.core.workspace.dto.CareTeamListItem;
 import com.healix.common.result.PageResult;
 import com.healix.core.workspace.dto.OrgPatientListItem;
@@ -416,13 +417,53 @@ public class OrgWorkspaceService {
         return toTeamItem(team);
     }
 
-    @Transactional
-    public void deleteCareTeam(String orgId, String teamId, String actorAccountId) {
+    /** 删除前影响预览：患者数 + 未完成待办数（档案/方案不删，仅解除组关联）。 */
+    public CareTeamDeleteImpact previewCareTeamDelete(String orgId, String teamId) {
         requireOrgWorkspaceAccess(orgId);
         CareTeam team = requireTeamInOrg(orgId, teamId);
+        List<String> patientIds = listPatientIdsInTeam(teamId);
+        long openTasks = 0L;
+        WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+        if (gen != null && !patientIds.isEmpty()) {
+            openTasks = gen.countOpenTasks(orgId, patientIds);
+        }
+        return new CareTeamDeleteImpact(
+                team.getId(),
+                team.getName(),
+                patientIds.size(),
+                (int) Math.min(openTasks, Integer.MAX_VALUE));
+    }
+
+    /**
+     * 软删除健管组：患者进公共池；未完成待办清空处理人进入待认领；档案/方案等历史数据保留。
+     *
+     * @param confirmName 须与组名完全一致（防误触）
+     */
+    @Transactional
+    public void deleteCareTeam(String orgId, String teamId, String confirmName, String actorAccountId) {
+        requireOrgWorkspaceAccess(orgId);
+        CareTeam team = requireTeamInOrg(orgId, teamId);
+        String expected = team.getName() == null ? "" : team.getName().trim();
+        if (!StringUtils.hasText(confirmName) || !expected.equals(confirmName.trim())) {
+            throw new BusinessException(400, "请输入正确的健管组名称以确认删除");
+        }
+
+        List<String> patientIds = listPatientIdsInTeam(teamId);
+        // 1) 患者解绑进公共池（软删 PATIENT 成员）；不清档案/方案
+        LocalDateTime now = LocalDateTime.now();
+        for (String peopleId : patientIds) {
+            clearCareAssignmentPrimary(team.getTenantId(), peopleId);
+        }
+        // 2) 未完成待办：清空 assignee，保持 OPEN（公共池待认领）——先于成员软删，便于按 people 更新
+        WorkspaceTaskGenerator gen = workspaceTaskGenerator.getIfAvailable();
+        if (gen != null && !patientIds.isEmpty()) {
+            gen.onCareTeamDeletedReleaseToPublic(orgId, patientIds);
+        }
+        // 3) 软删全部成员（患者 + 员工）与健管组本身；不物理删除患者档案/方案
         EntityMeta.onSoftDelete(team);
         careTeamMemberMapper.softDeleteByTeam(teamId, team.getGmtDeleted(), team.getGmtModified());
         careTeamMapper.softDelete(teamId, team.getGmtDeleted(), team.getGmtModified());
+
         auditService.record(
                 PortalEnum.B.code(),
                 actorAccountId,
@@ -432,7 +473,41 @@ public class OrgWorkspaceService {
                 "care_team",
                 String.valueOf(teamId),
                 null,
-                null);
+                AuditDetails.of(
+                        "name",
+                        expected,
+                        "patientCount",
+                        patientIds.size(),
+                        "releasedToPublic",
+                        true,
+                        "at",
+                        now.toString()));
+    }
+
+    private List<String> listPatientIdsInTeam(String teamId) {
+        List<String> ids = new ArrayList<>();
+        for (CareTeamMember member : careTeamMemberMapper.listByTeam(teamId)) {
+            if (member != null
+                    && CareTeamMemberTypeEnum.PATIENT.matches(member.getMemberType())
+                    && StringUtils.hasText(member.getPeopleId())) {
+                ids.add(member.getPeopleId());
+            }
+        }
+        return ids;
+    }
+
+    /** 解除主责健管师绑定，机构归属保留（患者仍属本机构，仅未分组）。 */
+    private void clearCareAssignmentPrimary(String tenantId, String peopleId) {
+        if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(peopleId)) {
+            return;
+        }
+        PatientCareAssignment assignment = careAssignmentMapper.find(tenantId, peopleId);
+        if (assignment == null) {
+            return;
+        }
+        assignment.setPrimaryCareManagerStaffId(null);
+        EntityMeta.onUpdate(assignment);
+        careAssignmentMapper.update(assignment);
     }
 
     @Transactional

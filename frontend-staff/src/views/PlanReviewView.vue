@@ -138,7 +138,7 @@ onMounted(load)
           </span>
         </div>
         <h2>{{ version.title || task?.summary || '管理方案' }}</h2>
-        <p class="hx-muted">{{ task?.peopleName || '患者' }} · 医生临床复核</p>
+        <p class="hx-muted">{{ task?.peopleName || '患者' }} · 医生复核</p>
       </section>
 
       <section v-if="version.exercise?.goal" class="block hx-surface">

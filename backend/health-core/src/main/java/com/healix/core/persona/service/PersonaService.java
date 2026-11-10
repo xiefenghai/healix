@@ -297,7 +297,8 @@ public class PersonaService {
         PersonaView v = new PersonaView();
         v.setPeopleId(peopleId);
         v.setDimensions(liveDimensions);
-        v.setSourceFingerprint(liveDimensions.path("sourceFingerprint").asText(null));
+        String liveFp = liveDimensions.path("sourceFingerprint").asText(null);
+        v.setSourceFingerprint(liveFp);
         if (row == null) {
             v.setPersisted(false);
             v.setStatus(null);
@@ -305,11 +306,14 @@ public class PersonaService {
             v.setDisplayHeadline(PersonaTemplateSupport.displayHeadline(liveDimensions));
             v.setGeneratedAt(null);
             v.setDimensionsAt(null);
+            v.setNarrativeFingerprint(null);
+            v.setDimensionsStale(false);
         } else {
             v.setPersisted(true);
             v.setStatus(row.getStatus());
             v.setGeneratedAt(row.getGeneratedAt());
             v.setDimensionsAt(row.getDimensionsAt());
+            v.setNarrativeFingerprint(row.getNarrativeFingerprint());
             JsonNode narrative = null;
             if (StringUtils.hasText(row.getNarrativeJson())) {
                 try {
@@ -324,6 +328,14 @@ public class PersonaService {
             } else {
                 v.setDisplayHeadline(PersonaTemplateSupport.displayHeadline(liveDimensions));
             }
+            // 有叙事且临床指纹变了 → dirty，前端提示「建议重新生成」，不自动打 LLM
+            boolean hasNarrative = narrative != null && StringUtils.hasText(narrative.path("narrative").asText(null));
+            String narrFp = row.getNarrativeFingerprint();
+            v.setDimensionsStale(
+                    hasNarrative
+                            && StringUtils.hasText(liveFp)
+                            && StringUtils.hasText(narrFp)
+                            && !liveFp.equals(narrFp));
         }
         v.setNarrativeSkippedLocked(skippedLocked);
         return v;

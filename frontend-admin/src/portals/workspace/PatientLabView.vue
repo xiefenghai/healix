@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiUpload } from '../../shared/http'
 import { LAB_PANELS } from '../../shared/lab-panels'
@@ -48,6 +48,7 @@ interface LatestLabItem extends LabItem {
 
 const props = defineProps<{ peopleId?: string; consumeOcrDraft?: boolean }>()
 const route = useRoute()
+const router = useRouter()
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 
 const loading = ref(false)
@@ -216,7 +217,8 @@ const listPanelRows = computed(() => {
     const entry = quickEntry.itemsByCode[code]
     return {
       code,
-      name: latest?.itemName || meta.name,
+      // 名称始终按 itemCode 取目录名，避免历史脏数据串台
+      name: meta.name || latest?.itemName || code,
       latest,
       entry,
       unit: entry?.unit || latest?.unit || meta.unit,
@@ -409,6 +411,30 @@ function itemAbnormal(item: LabItem) {
   return !!item.abnormalFlag && item.abnormalFlag !== 'N'
 }
 
+/** 时间轴单行视图：名称/数值/单位/参考范围全部绑定同一 itemCode，杜绝串台 */
+function toTimelineRow(item: LabItem, reportId: string, index: number) {
+  const code = item.itemCode
+  const meta = getCatalogMeta(code)
+  const unit = item.unit || meta.unit || ''
+  const refLow = item.refLow ?? meta.refLow
+  const refHigh = item.refHigh ?? meta.refHigh
+  const qualitative = item.qualitative ?? meta.qualitative
+  return {
+    key: `${reportId}-${item.id || code}-${index}`,
+    code,
+    name: meta.name || item.itemName || code,
+    valueText: itemValueText(item),
+    unit,
+    refText: refRangeText({ refLow, refHigh, qualitative }),
+    abnormal: itemAbnormal(item),
+    flag: item.abnormalFlag,
+  }
+}
+
+function timelineRowsOf(report: LabReport) {
+  return filledItems(report).map((item, index) => toTimelineRow(item, report.id, index))
+}
+
 function openDetail(row: LabReport) {
   detailRow.value = row
   detailVisible.value = true
@@ -508,17 +534,27 @@ async function onOcrFileChange(e: Event) {
   }
 }
 
+/** 消费完 OCR 意图后清掉 URL 上的 ocr=1，避免侧栏再进「化验报告」反复弹上传框 */
+function clearOcrQuery() {
+  if (route.query.ocr !== '1') return
+  const query = { ...route.query }
+  delete query.ocr
+  void router.replace({ path: route.path, query })
+}
+
 function tryOpenOcrDraft() {
   if (route.query.ocr !== '1' && !props.consumeOcrDraft) return
   const draft = loadLabOcrDraft()
   if (draft?.items?.length) {
     applyOcrDraft(draft)
     clearLabOcrDraft()
+    clearOcrQuery()
     return
   }
-  // 无图 OCR 入口：无会话草稿时直接唤起拍照
+  // 无图 OCR 入口：仅在带 ocr=1 且尚无草稿时唤起一次拍照
   if (route.query.ocr === '1') {
     ocrHint.value = '请拍照或选择检验单图片，识别后核对入库'
+    clearOcrQuery()
     nextTick(() => openOcrPicker())
   }
 }
@@ -682,7 +718,7 @@ onMounted(async () => {
 
 <template>
   <div v-loading="loading" class="lab-page">
-    <!-- 按项目浏览（最近一次） -->
+    <!-- 按项目浏览：左录入 / 右近期记录 -->
     <div v-if="mode === 'list'" class="lab-browse">
       <div class="browse-toolbar">
         <div class="browse-toolbar-left">
@@ -692,195 +728,227 @@ onMounted(async () => {
           </el-tag>
         </div>
         <div class="card-head-actions">
-          <el-button text @click="mode = 'history'">全部报告</el-button>
-          <el-button :loading="ocrLoading" @click="openOcrPicker">拍照识别</el-button>
-          <el-button type="primary" :loading="saving" :disabled="!quickEntryFilledCount" @click="saveQuick">
+          <button
+            type="button"
+            class="ocr-btn"
+            :disabled="ocrLoading || !peopleId"
+            @click="openOcrPicker"
+          >
+            <span v-if="ocrLoading" class="ocr-btn-loading">识别中…</span>
+            <span v-else>📷 上传化验单/OCR识别</span>
+          </button>
+          <el-button
+            type="primary"
+            :loading="saving"
+            :disabled="!quickEntryFilledCount"
+            @click="saveQuick"
+          >
             保存记录
           </el-button>
         </div>
       </div>
 
-      <el-card shadow="never" class="meta-card browse-meta">
-        <el-form :inline="true" label-width="72px" class="meta-form">
-          <el-form-item label="采样时间">
-            <el-date-picker
-              v-model="quickEntry.sampledAt"
-              type="datetime"
-              value-format="YYYY-MM-DDTHH:mm"
-              format="YYYY-MM-DD HH:mm"
-            />
-          </el-form-item>
-          <el-form-item label="报告时间">
-            <el-date-picker
-              v-model="quickEntry.reportedAt"
-              type="datetime"
-              value-format="YYYY-MM-DDTHH:mm"
-              format="YYYY-MM-DD HH:mm"
-            />
-          </el-form-item>
-          <el-form-item label="备注">
-            <el-input v-model="quickEntry.note" placeholder="可选" style="width: 220px" />
-          </el-form-item>
-        </el-form>
-      </el-card>
+      <div class="browse-split">
+        <section class="browse-entry">
+          <el-card shadow="never" class="meta-card browse-meta">
+            <el-form :inline="true" label-width="72px" class="meta-form">
+              <el-form-item label="采样时间">
+                <el-date-picker
+                  v-model="quickEntry.sampledAt"
+                  type="datetime"
+                  value-format="YYYY-MM-DDTHH:mm"
+                  format="YYYY-MM-DD HH:mm"
+                />
+              </el-form-item>
+              <el-form-item label="报告时间">
+                <el-date-picker
+                  v-model="quickEntry.reportedAt"
+                  type="datetime"
+                  value-format="YYYY-MM-DDTHH:mm"
+                  format="YYYY-MM-DD HH:mm"
+                />
+              </el-form-item>
+              <el-form-item label="备注">
+                <el-input v-model="quickEntry.note" placeholder="可选" style="width: 180px" />
+              </el-form-item>
+            </el-form>
+          </el-card>
 
-      <div class="editor-body browse-body">
-        <aside class="panel-side">
-          <div class="panel-side-title">实验室检查</div>
-          <button
-            v-for="panel in listPanels"
-            :key="panel.key"
-            type="button"
-            class="panel-item"
-            :class="{ active: panel.key === listActivePanel }"
-            @click="selectListPanel(panel.key)"
-          >
-            <span class="panel-label">{{ panel.label }}</span>
-            <span v-if="panel.filledCount" class="panel-badge">{{ panel.filledCount }}</span>
-          </button>
-        </aside>
+          <div class="browse-body">
+            <div class="panel-tabs" role="tablist" aria-label="实验室检查分类">
+              <button
+                v-for="panel in listPanels"
+                :key="panel.key"
+                type="button"
+                class="panel-tab"
+                :class="{ active: panel.key === listActivePanel }"
+                role="tab"
+                :aria-selected="panel.key === listActivePanel"
+                @click="selectListPanel(panel.key)"
+              >
+                <span>{{ panel.label }}</span>
+                <span v-if="panel.filledCount" class="panel-badge">{{ panel.filledCount }}</span>
+              </button>
+            </div>
 
-        <section class="panel-main">
-          <div class="panel-main-head">
-            <h3>{{ listCurrentPanel.label }}</h3>
-            <span class="panel-hint">填写本次结果，空项不会保存；可参考最近一次数据</span>
+            <section class="panel-main">
+              <div class="panel-main-head">
+                <h3>{{ listCurrentPanel.label }}</h3>
+                <span class="panel-hint">填写本次结果，空项不会保存；可参考最近一次数据</span>
+              </div>
+              <el-table
+                :data="listPanelRows"
+                stripe
+                size="small"
+                empty-text="暂无项目"
+                class="browse-table lab-item-table"
+              >
+                <el-table-column label="项目名称" min-width="120" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <span class="item-name">{{ row.name }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="本次结果" width="216" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <template v-if="row.entry">
+                      <el-input
+                        v-if="row.qualitative"
+                        v-model="row.entry.valueText"
+                        placeholder="请输入"
+                        clearable
+                        class="value-input"
+                      />
+                      <el-input-number
+                        v-else
+                        v-model="row.entry.valueNum"
+                        :precision="2"
+                        :controls="false"
+                        placeholder="请输入"
+                        class="value-input"
+                      />
+                    </template>
+                  </template>
+                </el-table-column>
+                <el-table-column label="单位" min-width="72" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <span class="unit-cell">{{ row.unit || '-' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="缩写" min-width="80" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <span class="code-cell">{{ row.code }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="参考范围" min-width="110" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <span class="ref-text">{{ refRangeText(row) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="标记" width="100" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <el-select
+                      v-if="row.entry"
+                      v-model="row.entry.abnormalFlag"
+                      clearable
+                      placeholder="自动"
+                      size="small"
+                      class="mark-select"
+                    >
+                      <el-option label="正常" value="N" />
+                      <el-option label="偏高" value="H" />
+                      <el-option label="偏低" value="L" />
+                    </el-select>
+                  </template>
+                </el-table-column>
+                <el-table-column label="最近一次" min-width="120" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <div v-if="row.latest" class="latest-cell">
+                      <span
+                        class="latest-value"
+                        :class="{ abnormal: row.latest.abnormalFlag && row.latest.abnormalFlag !== 'N' }"
+                      >
+                        {{ itemValueText(row.latest) }}
+                        <span v-if="row.latest.unit" class="latest-unit">{{ row.latest.unit }}</span>
+                      </span>
+                      <span class="latest-time">{{ formatTime(row.latest.reportedAt) }}</span>
+                    </div>
+                    <span v-else class="empty-val">暂无</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="详情" width="64" fixed="right" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <el-button
+                      v-if="row.latest?.reportId"
+                      link
+                      type="primary"
+                      @click="openLatestReport(row.latest.reportId)"
+                    >
+                      详情
+                    </el-button>
+                    <span v-else class="empty-val">-</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </section>
           </div>
-          <el-table :data="listPanelRows" stripe size="default" empty-text="暂无项目" class="browse-table lab-item-table">
-            <el-table-column label="项目名称" min-width="130" prop="name" />
-            <el-table-column label="本次结果" min-width="136">
-              <template #default="{ row }">
-                <template v-if="row.entry">
-                  <el-input
-                    v-if="row.qualitative"
-                    v-model="row.entry.valueText"
-                    placeholder="请输入"
-                    clearable
-                  />
-                  <el-input-number
-                    v-else
-                    v-model="row.entry.valueNum"
-                    :precision="2"
-                    :controls="false"
-                    placeholder="请输入"
-                    class="value-input"
-                  />
-                </template>
-              </template>
-            </el-table-column>
-            <el-table-column label="单位" width="96" align="center">
-              <template #default="{ row }">
-                <span class="unit-cell">{{ row.unit || '-' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="缩写" width="88" align="center">
-              <template #default="{ row }">
-                <span class="code-cell">{{ row.code }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="参考范围" width="108" align="center">
-              <template #default="{ row }">
-                <span class="ref-text">{{ refRangeText(row) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="标记" width="92" align="center">
-              <template #default="{ row }">
-                <el-select
-                  v-if="row.entry"
-                  v-model="row.entry.abnormalFlag"
-                  clearable
-                  placeholder="自动"
-                  size="small"
-                  class="mark-select"
-                >
-                  <el-option label="正常" value="N" />
-                  <el-option label="偏高" value="H" />
-                  <el-option label="偏低" value="L" />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column label="最近一次" min-width="130">
-              <template #default="{ row }">
-                <div v-if="row.latest" class="latest-cell">
-                  <span
-                    class="latest-value"
-                    :class="{ abnormal: row.latest.abnormalFlag && row.latest.abnormalFlag !== 'N' }"
-                  >
-                    {{ itemValueText(row.latest) }}
-                    <span v-if="row.latest.unit" class="latest-unit">{{ row.latest.unit }}</span>
-                  </span>
-                  <span class="latest-time">{{ formatTime(row.latest.reportedAt) }}</span>
+        </section>
+
+        <section class="browse-records">
+          <header class="recent-head">
+            <span class="section-title">近期记录</span>
+          </header>
+          <div class="records-scroll">
+            <el-empty v-if="!labRecordGroups.length" description="暂无检验记录" :image-size="64" />
+            <div v-else class="record-days">
+              <section v-for="group in labRecordGroups" :key="group.key" class="day-group">
+                <div class="day-head">
+                  <span v-if="group.relative" class="day-relative">{{ group.relative }}</span>
+                  <span class="day-date">{{ group.dateText }}</span>
+                  <span class="day-count">{{ group.count }} 份</span>
                 </div>
-                <span v-else class="empty-val">暂无</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="72" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  v-if="row.latest?.reportId"
-                  link
-                  type="primary"
-                  @click="openLatestReport(row.latest.reportId)"
-                >
-                  详情
-                </el-button>
-                <span v-else class="empty-val">-</span>
-              </template>
-            </el-table-column>
-          </el-table>
+                <div v-for="report in group.rows" :key="report.id" class="time-cluster">
+                  <div class="time-mark">
+                    <span class="time-clock">{{ formatTime(report.reportedAt || report.sampledAt).slice(11) || '—' }}</span>
+                    <el-tag :type="isOcrSource(report.source) ? 'warning' : undefined" size="small" effect="plain">
+                      {{ labSourceLabel(report.source) }}
+                    </el-tag>
+                    <span class="specimen">{{ report.specimenType === 'URINE' ? '尿液' : '血液' }}</span>
+                  </div>
+                  <div class="time-rows">
+                    <div
+                      v-for="row in timelineRowsOf(report)"
+                      :key="row.key"
+                      class="metric-row"
+                      :class="{ 'metric-row--abnormal': row.abnormal }"
+                    >
+                      <span class="metric-name">{{ row.name }}</span>
+                      <span class="metric-value" :class="{ 'value-abnormal': row.abnormal }">
+                        {{ row.valueText }}<span v-if="row.unit" class="metric-unit"> {{ row.unit }}</span>
+                      </span>
+                      <span class="metric-ref">{{ row.refText }}</span>
+                      <span class="metric-judge">
+                        <span
+                          v-if="row.abnormal"
+                          class="status-tag"
+                          :class="row.flag === 'L' ? 'status-tag--low' : 'status-tag--high'"
+                        >
+                          {{ flagLabel(row.flag) }}
+                        </span>
+                      </span>
+                    </div>
+                    <p v-if="report.note" class="report-note">备注：{{ report.note }}</p>
+                    <div class="metric-actions">
+                      <el-button link type="primary" @click="openDetail(report)">详情</el-button>
+                      <el-button link type="primary" @click="openEdit(report)">编辑</el-button>
+                      <el-button link type="danger" @click="removeRow(report)">删除</el-button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
         </section>
       </div>
-
-      <section class="recent-card">
-        <div class="recent-head">
-          <span class="section-title">近期记录</span>
-        </div>
-        <el-empty v-if="!labRecordGroups.length" description="暂无检验记录" :image-size="64" />
-        <div v-else class="record-days">
-          <section v-for="group in labRecordGroups" :key="group.key" class="day-group">
-            <div class="day-head">
-              <span v-if="group.relative" class="day-relative">{{ group.relative }}</span>
-              <span class="day-date">{{ group.dateText }}</span>
-              <span class="day-count">{{ group.count }} 份</span>
-            </div>
-            <div v-for="report in group.rows" :key="report.id" class="time-cluster">
-              <div class="time-mark">
-                <span class="time-clock">{{ formatTime(report.reportedAt || report.sampledAt).slice(11) || '—' }}</span>
-                <el-tag :type="isOcrSource(report.source) ? 'warning' : undefined" size="small" effect="plain">
-                  {{ labSourceLabel(report.source) }}
-                </el-tag>
-                <span class="specimen">{{ report.specimenType === 'URINE' ? '尿液' : '血液' }}</span>
-              </div>
-              <div class="time-rows">
-                <div
-                  v-for="item in filledItems(report)"
-                  :key="item.id || item.itemCode"
-                  class="metric-row"
-                  :class="{ 'metric-row--abnormal': itemAbnormal(item) }"
-                >
-                  <span class="metric-name">{{ item.itemName || item.itemCode }}</span>
-                  <span class="metric-value" :class="{ 'value-abnormal': itemAbnormal(item) }">
-                    {{ itemValueText(item) }}<span v-if="item.unit" class="metric-unit"> {{ item.unit }}</span>
-                  </span>
-                  <span class="metric-ref">{{ refRangeText(item) }}</span>
-                  <span class="metric-judge">
-                    <el-tag v-if="itemAbnormal(item)" type="danger" size="small" effect="dark">
-                      {{ flagLabel(item.abnormalFlag) }}
-                    </el-tag>
-                    <span v-else-if="item.abnormalFlag === 'N'" class="normal-mark">正常</span>
-                    <span v-else class="ref-text">—</span>
-                  </span>
-                </div>
-                <p v-if="report.note" class="report-note">备注：{{ report.note }}</p>
-                <div class="metric-actions">
-                  <el-button link type="primary" @click="openDetail(report)">详情</el-button>
-                  <el-button link type="primary" @click="openEdit(report)">编辑</el-button>
-                  <el-button link type="danger" @click="removeRow(report)">删除</el-button>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      </section>
     </div>
 
     <!-- 全部报告历史 -->
@@ -892,7 +960,15 @@ onMounted(async () => {
             <span class="section-title">全部报告</span>
           </div>
           <div class="card-head-actions">
-            <el-button :loading="ocrLoading" @click="openOcrPicker">拍照识别</el-button>
+            <button
+              type="button"
+              class="ocr-btn"
+              :disabled="ocrLoading || !peopleId"
+              @click="openOcrPicker"
+            >
+              <span v-if="ocrLoading" class="ocr-btn-loading">识别中…</span>
+              <span v-else>📷 上传化验单/OCR识别</span>
+            </button>
             <el-button type="primary" @click="openCreate">新建报告</el-button>
           </div>
         </div>
@@ -954,17 +1030,15 @@ onMounted(async () => {
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="标记" width="72">
+          <el-table-column label="标记" width="72" align="left">
             <template #default="{ row }">
-              <el-tag
-                v-if="row.abnormalFlag"
-                size="small"
-                :type="row.abnormalFlag === 'N' ? 'success' : 'danger'"
-                effect="plain"
+              <span
+                v-if="itemAbnormal(row)"
+                class="status-tag"
+                :class="row.abnormalFlag === 'L' ? 'status-tag--low' : 'status-tag--high'"
               >
                 {{ flagLabel(row.abnormalFlag) }}
-              </el-tag>
-              <span v-else>-</span>
+              </span>
             </template>
           </el-table-column>
         </el-table>
@@ -992,7 +1066,15 @@ onMounted(async () => {
           <el-tag v-if="saveSource === 'STAFF_OCR'" size="small" type="warning" effect="plain">OCR 预填</el-tag>
         </div>
         <div class="toolbar-right">
-          <el-button :loading="ocrLoading" @click="openOcrPicker">拍照识别</el-button>
+          <button
+            type="button"
+            class="ocr-btn"
+            :disabled="ocrLoading || !peopleId"
+            @click="openOcrPicker"
+          >
+            <span v-if="ocrLoading" class="ocr-btn-loading">识别中…</span>
+            <span v-else>📷 上传化验单/OCR识别</span>
+          </button>
           <el-button @click="backToList">取消</el-button>
           <el-button type="primary" :loading="saving" :disabled="ocrTimesBlocked" @click="save">保存报告</el-button>
         </div>
@@ -1033,36 +1115,48 @@ onMounted(async () => {
         </el-form>
       </el-card>
 
-      <div class="editor-body">
-        <aside class="panel-side">
-          <div class="panel-side-title">实验室检查</div>
+      <div class="browse-body">
+        <div class="panel-tabs" role="tablist" aria-label="实验室检查分类">
           <button
             v-for="panel in panels"
             :key="panel.key"
             type="button"
-            class="panel-item"
+            class="panel-tab"
             :class="{ active: panel.key === activePanel }"
+            role="tab"
+            :aria-selected="panel.key === activePanel"
             @click="selectPanel(panel.key)"
           >
-            <span class="panel-label">{{ panel.label }}</span>
+            <span>{{ panel.label }}</span>
             <span v-if="panel.filledCount" class="panel-badge">{{ panel.filledCount }}</span>
           </button>
-        </aside>
+        </div>
 
         <section class="panel-main">
           <div class="panel-main-head">
             <h3>{{ currentPanel.label }}</h3>
             <span class="panel-hint">只填本次有的项目，空项不会保存</span>
           </div>
-          <el-table :data="currentRows" stripe size="default" empty-text="暂无项目" class="entry-table lab-item-table">
-            <el-table-column label="项目名称" min-width="130" prop="itemName" />
-            <el-table-column label="数值录入" min-width="160">
+          <el-table
+            :data="currentRows"
+            stripe
+            size="small"
+            empty-text="暂无项目"
+            class="entry-table lab-item-table"
+          >
+            <el-table-column label="项目名称" min-width="140" align="left" header-align="left">
+              <template #default="{ row }">
+                <span class="item-name">{{ row.itemName }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="数值录入" width="216" align="left" header-align="left">
               <template #default="{ row }">
                 <el-input
                   v-if="row.qualitative"
                   v-model="row.valueText"
                   placeholder="请输入"
                   clearable
+                  class="value-input"
                 />
                 <el-input-number
                   v-else
@@ -1074,22 +1168,22 @@ onMounted(async () => {
                 />
               </template>
             </el-table-column>
-            <el-table-column label="单位" width="96" align="center">
+            <el-table-column label="单位" min-width="100" align="left" header-align="left">
               <template #default="{ row }">
                 <el-input v-model="row.unit" class="unit-input" />
               </template>
             </el-table-column>
-            <el-table-column label="缩写" width="88" align="center">
+            <el-table-column label="缩写" min-width="100" align="left" header-align="left">
               <template #default="{ row }">
                 <span class="code-cell">{{ row.itemCode }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="参考范围" width="108" align="center">
+            <el-table-column label="参考范围" min-width="132" align="left" header-align="left">
               <template #default="{ row }">
                 <span class="ref-text">{{ refRangeText(row) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="标记" width="92" align="center">
+            <el-table-column label="标记" width="108" align="left" header-align="left">
               <template #default="{ row }">
                 <el-select v-model="row.abnormalFlag" clearable placeholder="自动" size="small" class="mark-select">
                   <el-option label="正常" value="N" />
@@ -1098,7 +1192,7 @@ onMounted(async () => {
                 </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="最近一次" min-width="130">
+            <el-table-column label="最近一次" min-width="148" align="left" header-align="left">
               <template #default="{ row }">
                 <div v-if="editLatestByCode[row.itemCode]" class="latest-cell">
                   <span
@@ -1129,6 +1223,70 @@ onMounted(async () => {
 <style scoped>
 .lab-page {
   width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lab-page:has(.lab-editor),
+.lab-page:has(.section-card) {
+  overflow: auto;
+}
+
+.lab-browse {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.browse-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.browse-entry {
+  flex: 0 0 40%;
+  max-width: 40%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.browse-records {
+  flex: 1 1 60%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--admin-border, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: var(--admin-shadow);
+}
+
+.records-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  height: calc(100vh - 200px);
+  max-height: 100%;
+  padding: 0 10px 12px;
 }
 
 .section-card {
@@ -1156,11 +1314,11 @@ onMounted(async () => {
 }
 
 .browse-toolbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
   padding: 12px 16px;
   background: #fff;
   border: 1px solid var(--admin-border, #e2e8f0);
@@ -1175,26 +1333,23 @@ onMounted(async () => {
 }
 
 .browse-meta {
-  margin-bottom: 12px;
+  flex: 0 0 auto;
+  margin-bottom: 0;
   border-radius: var(--admin-radius, 12px);
 }
 
-.browse-table :deep(.el-input-number) {
-  width: 100%;
-}
-
 .lab-item-table :deep(.el-table__cell) {
-  padding: 14px 0;
+  padding: 6px 10px;
 }
 
 .lab-item-table :deep(.cell) {
-  padding-top: 6px;
-  padding-bottom: 6px;
-  line-height: 1.5;
+  padding: 0;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .lab-item-table :deep(.el-table__header .el-table__cell) {
-  padding: 12px 0;
+  padding: 8px 10px;
 }
 
 .lab-item-table :deep(.el-table__header .cell) {
@@ -1209,20 +1364,15 @@ onMounted(async () => {
   padding-right: 8px;
 }
 
-.unit-cell,
-.code-cell {
-  display: inline-block;
-  white-space: nowrap;
-  font-size: 13px;
-  color: var(--admin-text-secondary, #64748b);
-}
 
 .lab-item-table :deep(.unit-input) {
   width: 100%;
+  max-width: 120px;
 }
 
-.lab-item-table :deep(.unit-input .el-input__inner) {
-  text-align: center;
+.lab-item-table :deep(.unit-input .el-input__inner),
+.lab-item-table :deep(.unit-input .el-input__wrapper) {
+  text-align: left;
 }
 
 .lab-item-table :deep(.el-input),
@@ -1232,17 +1382,108 @@ onMounted(async () => {
 }
 
 .lab-item-table :deep(.mark-select) {
-  width: 80px;
+  width: 88px;
 }
 
 .ref-text {
   color: var(--admin-text-secondary, #64748b);
   font-size: 12px;
   white-space: nowrap;
+  text-align: left;
 }
 
 .browse-body {
-  min-height: 480px;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: var(--admin-radius, 12px);
+  overflow: hidden;
+  background: #fff;
+  box-shadow: var(--admin-shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.ocr-btn {
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: #e6f7ff;
+  color: var(--brand-700, #174db0);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.3;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.ocr-btn:hover:not(:disabled) {
+  background: #d6efff;
+  border-color: var(--brand-200, #bfdbfe);
+  color: var(--brand-700, #174db0);
+}
+
+.ocr-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.ocr-btn-loading {
+  letter-spacing: 0.02em;
+}
+
+.panel-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  background: #f8fafc;
+  scrollbar-width: thin;
+}
+
+.panel-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-600, #475569);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.panel-tab:hover {
+  color: var(--ink-800, #1e293b);
+  background: #fff;
+}
+
+.panel-tab.active {
+  color: var(--brand-600, #1e63d9);
+  background: #fff;
+  border-color: var(--brand-200, #bfdbfe);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.item-name {
+  font-weight: 700;
+  color: var(--ink-800, #1e293b);
 }
 
 .latest-result {
@@ -1321,37 +1562,39 @@ onMounted(async () => {
   letter-spacing: -0.01em;
 }
 
-.recent-card {
-  margin-top: 16px;
-  padding: 14px 16px 16px;
-  border: 1px solid var(--admin-border, #e5e7eb);
-  border-radius: 12px;
-  background: #fff;
-}
-
 .recent-head {
-  margin-bottom: 12px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
 }
 
 .record-days {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+  padding-top: 8px;
 }
 
 .day-group {
   border: 1px solid var(--ink-100, #f1f5f9);
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
+  background: #fff;
 }
 
 .day-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   background: #f8fafc;
   border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
 }
 
 .day-relative {
@@ -1409,11 +1652,12 @@ onMounted(async () => {
 
 .metric-row {
   display: grid;
-  grid-template-columns: minmax(96px, 1.2fr) minmax(88px, 1fr) minmax(88px, 1fr) 72px;
+  grid-template-columns: minmax(96px, 1.2fr) minmax(88px, 1fr) minmax(88px, 1fr) 56px;
   gap: 8px;
   align-items: center;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 4px 8px;
+  min-height: 28px;
+  border-radius: 6px;
   background: #f8fafc;
 }
 
@@ -1424,11 +1668,12 @@ onMounted(async () => {
 .metric-name,
 .metric-value {
   font-weight: 600;
+  font-size: 12px;
 }
 
 .metric-unit,
 .metric-ref {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
   color: #64748b;
 }
@@ -1437,13 +1682,26 @@ onMounted(async () => {
   color: #dc2626;
 }
 
-.normal-mark {
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: 5px;
-  background: #f0fdfa;
-  color: #0f766e;
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.status-tag--high {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.status-tag--low {
+  color: #b45309;
+  background: #fef3c7;
 }
 
 .report-note {
@@ -1457,13 +1715,31 @@ onMounted(async () => {
   justify-content: flex-end;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1100px) {
+  .browse-split {
+    flex-direction: column;
+  }
+
+  .browse-entry {
+    flex: 0 0 auto;
+    max-width: none;
+    max-height: 48%;
+  }
+
+  .browse-records {
+    flex: 1 1 auto;
+  }
+
+  .records-scroll {
+    height: calc(100vh - 280px);
+  }
+
   .time-cluster {
     grid-template-columns: 1fr;
   }
 
   .metric-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(88px, 1.2fr) minmax(72px, 1fr) minmax(72px, 1fr) 52px;
   }
 }
 
@@ -1514,75 +1790,22 @@ onMounted(async () => {
   margin-bottom: 0;
 }
 
-.editor-body {
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 0;
-  min-height: 420px;
-  border: 1px solid var(--admin-border, #e2e8f0);
-  border-radius: var(--admin-radius, 12px);
-  overflow: hidden;
-  background: #fff;
-  box-shadow: var(--admin-shadow);
-}
-
-.panel-side {
-  background: var(--ink-50, #f8fafc);
-  border-right: 1px solid var(--admin-border, #e2e8f0);
-  padding: 12px 0;
-  overflow-y: auto;
-  max-height: calc(100vh - 280px);
-}
-
-.panel-side-title {
-  padding: 4px 16px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-400, #94a3b8);
-}
-
-.panel-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  padding: 10px 16px;
-  cursor: pointer;
-  text-align: left;
-  font-size: 14px;
-  color: var(--admin-text, #1f2937);
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.panel-item:hover {
-  background: var(--brand-50);
-}
-
-.panel-item.active {
-  background: #fff;
-  color: var(--brand-500);
-  font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--brand-500);
-}
-
 .panel-badge {
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--rose-500);
   color: #fff;
-  font-size: 11px;
-  line-height: 18px;
+  font-size: 10px;
+  line-height: 16px;
   text-align: center;
 }
 
 .panel-main {
-  padding: 16px 20px 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 16px 16px;
   overflow: auto;
 }
 
@@ -1590,7 +1813,7 @@ onMounted(async () => {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .panel-main-head h3 {
@@ -1605,42 +1828,36 @@ onMounted(async () => {
   color: var(--admin-muted, #94a3b8);
 }
 
-.entry-table :deep(.el-input-number) {
-  width: 100%;
+.entry-table :deep(.el-input-number),
+.browse-table :deep(.el-input-number),
+.value-input {
+  width: 200px !important;
+  max-width: 200px;
 }
 
+.value-input :deep(.el-input__wrapper),
 .value-input :deep(.el-input__inner) {
   text-align: left;
 }
 
-@media (max-width: 900px) {
-  .editor-body {
-    grid-template-columns: 1fr;
-  }
+.unit-cell,
+.code-cell {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink-600, #475569);
+  text-align: left;
+}
 
-  .panel-side {
-    border-right: 0;
-    border-bottom: 1px solid var(--admin-border, #e5e7eb);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 8px;
-  }
+.time-cluster {
+  padding: 8px 12px;
+}
 
-  .panel-side-title {
-    width: 100%;
-    padding: 4px 8px 8px;
-  }
+.time-rows {
+  gap: 3px;
+}
 
-  .panel-item {
-    width: auto;
-    border-radius: 6px;
-    padding: 8px 12px;
-  }
-
-  .panel-item.active {
-    box-shadow: none;
-    background: var(--brand-50);
-  }
+.card-head-actions :deep(.el-button.is-disabled) {
+  opacity: 0.55;
 }
 </style>

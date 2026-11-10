@@ -53,6 +53,15 @@ public interface WorkspaceTaskMapper {
             @Param("toStaffId") String toStaffId,
             @Param("gmtModified") LocalDateTime gmtModified);
 
+    /** 未完成待办退回公共池：清空处理人，保持 OPEN（待认领）。 */
+    int releaseOpenToPublic(
+            @Param("orgId") String orgId,
+            @Param("peopleId") String peopleId,
+            @Param("gmtModified") LocalDateTime gmtModified);
+
+    long countOpenByPeopleIds(
+            @Param("orgId") String orgId, @Param("peopleIds") List<String> peopleIds);
+
     WorkspaceTask findById(@Param("id") String id);
 
     WorkspaceTask findOpen(
