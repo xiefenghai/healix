@@ -282,12 +282,6 @@ function sourceLabel(source?: string) {
   return formatHealthDataSource(source)
 }
 
-function sourceTagType(source?: string): 'warning' | 'info' | 'success' | undefined {
-  if (isPatientSource(source)) return 'warning'
-  if (source === 'DEVICE') return 'info'
-  return undefined
-}
-
 const form = reactive({
   recordedAt: '' as string,
   bpContext: 'CLINIC',
