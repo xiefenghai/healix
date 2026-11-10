@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiUpload } from '../../shared/http'
-import { formatHealthDataSource, isPatientSource } from '../../shared/health-data-source'
+import { formatHealthDataSource } from '../../shared/health-data-source'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import { saveLabOcrDraft, type LabOcrDraft } from '../../shared/lab-ocr'
 import {
