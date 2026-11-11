@@ -76,11 +76,10 @@ public class OcrLabHandler {
     private static String buildReply(LabOcrPrefillDto prefill) {
         int mapped = prefill.items() == null ? 0 : prefill.items().size();
         int ignored = prefill.ignoredItems() == null ? 0 : prefill.ignoredItems().size();
+        int total = mapped + ignored;
         List<String> parts = new ArrayList<>();
-        parts.add("检验单识别完成：已映射 " + mapped + " 项");
-        if (ignored > 0) {
-            parts.add("忽略未收录 " + ignored + " 项");
-        }
+        parts.add("检验单识别完成：图片共检出 " + total + " 项，成功识别 " + mapped + " 项"
+                + (ignored > 0 ? "，未收录忽略 " + ignored + " 项" : ""));
         String hint = OcrHandlerSupport.warningsHint(prefill.warnings());
         if (hint != null) {
             parts.add(hint);

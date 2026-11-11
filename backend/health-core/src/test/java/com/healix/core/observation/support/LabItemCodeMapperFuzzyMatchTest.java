@@ -53,4 +53,41 @@ class LabItemCodeMapperFuzzyMatchTest {
     void mapsHemoglobinToHgb() {
         assertEquals("HGB", mapper.map("血红蛋白").orElseThrow());
     }
+
+    @Test
+    void mapsCbcCommonNames() {
+        stubCbcCatalog();
+        assertEquals("WBC", mapper.map("白细胞计数").orElseThrow());
+        assertEquals("RBC", mapper.map("红细胞").orElseThrow());
+        assertEquals("HGB", mapper.map("血红蛋白(g/L)").orElseThrow());
+        assertEquals("PLT", mapper.map("血小板数目").orElseThrow());
+        assertEquals("NEUT_PCT", mapper.map("中性粒细胞百分比").orElseThrow());
+        assertEquals("NEUT", mapper.map("中性粒细胞计数").orElseThrow());
+        assertEquals("LYMPH_PCT", mapper.map("淋巴细胞%").orElseThrow());
+        assertEquals("MCV", mapper.map("平均红细胞体积").orElseThrow());
+        assertEquals("PCT", mapper.map("血小板压积").orElseThrow());
+    }
+
+    private void stubCbcCatalog() {
+        when(dictService.listMerged(DictService.PLATFORM_TENANT, DictTypeEnum.OPTION.name(), "labItemCode"))
+                .thenReturn(List.of(
+                        dict("WBC", "白细胞计数"),
+                        dict("RBC", "红细胞计数"),
+                        dict("HGB", "血红蛋白"),
+                        dict("PLT", "血小板计数"),
+                        dict("NEUT", "中性粒细胞计数"),
+                        dict("NEUT_PCT", "中性粒细胞百分比"),
+                        dict("LYMPH", "淋巴细胞计数"),
+                        dict("LYMPH_PCT", "淋巴细胞百分比"),
+                        dict("MCV", "平均红细胞体积"),
+                        dict("PCT", "血小板压积"),
+                        dict("HBA1C", "糖化血红蛋白")));
+    }
+
+    private static DictItemDto dict(String code, String desc) {
+        DictItemDto d = new DictItemDto();
+        d.setDictCode(code);
+        d.setDictCodeDesc(desc);
+        return d;
+    }
 }

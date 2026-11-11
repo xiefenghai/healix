@@ -396,6 +396,9 @@ public class MetricAbnormalEvaluator {
         if ("HOME".equals(ctx)) {
             return "家庭";
         }
+        if ("THIRD_PARTY".equals(ctx) || "ORG".equals(ctx) || "EXTERNAL".equals(ctx)) {
+            return "第三方机构";
+        }
         return ctx;
     }
 

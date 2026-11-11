@@ -605,7 +605,13 @@ function formatParsedValue(
   ) {
     return (
       optionMaps.bpContext?.get(value) ??
-      (value === 'HOME' ? '家庭' : value === 'CLINIC' ? '诊室' : value)
+      (value === 'HOME'
+        ? '家庭'
+        : value === 'CLINIC'
+          ? '诊室'
+          : value === 'THIRD_PARTY' || value === 'ORG' || value === 'EXTERNAL'
+            ? '第三方机构'
+            : value)
     )
   }
 

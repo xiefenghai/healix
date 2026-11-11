@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PatientMetricView from './PatientMetricView.vue'
 import PatientMetricTrendView from './PatientMetricTrendView.vue'
 import PatientLabView from './PatientLabView.vue'
 import PatientExamView from './PatientExamView.vue'
+import ObservationGlobalSearch from '../../shared/ObservationGlobalSearch.vue'
+import {
+  observationFocusQuery,
+  type ObservationFocusTarget,
+  type ObservationSearchHit,
+} from '../../shared/observation-search'
 
 const props = defineProps<{ peopleId?: string; initialSub?: string }>()
 
@@ -25,6 +31,8 @@ function initialLocalSub(): SubName {
 const localSub = ref<SubName>(initialLocalSub())
 const consumeOcrDraft = ref(false)
 const labRemountKey = ref(0)
+/** 嵌入态：搜索选中后通过 provide 下发聚焦目标 */
+const embeddedFocus = ref<(ObservationFocusTarget & { nonce: number }) | null>(null)
 
 const activeSub = computed(() => {
   if (embedded.value) return localSub.value
@@ -35,9 +43,13 @@ const activeSub = computed(() => {
   return 'metrics'
 })
 
+const showGlobalSearch = computed(
+  () => activeSub.value === 'metrics' || activeSub.value === 'labs' || activeSub.value === 'exams',
+)
+
 const SUB_NAV = [
-  { name: 'metrics' as const, label: '指标录入' },
   { name: 'trends' as const, label: '趋势分析' },
+  { name: 'metrics' as const, label: '指标录入' },
   { name: 'labs' as const, label: '化验报告' },
   { name: 'exams' as const, label: '检查记录' },
 ]
@@ -47,8 +59,11 @@ watch(
   () => {
     localSub.value = initialLocalSub()
     consumeOcrDraft.value = false
+    embeddedFocus.value = null
   },
 )
+
+provide('observationEmbeddedFocus', embeddedFocus)
 
 function switchSub(name: SubName) {
   if (embedded.value) {
@@ -61,6 +76,10 @@ function switchSub(name: SubName) {
   // 侧栏切换勿保留 ocr=1，否则化验报告页会反复自动弹上传框
   const query = { ...route.query }
   delete query.ocr
+  delete query.focusKind
+  delete query.focusCode
+  delete query.focusPanel
+  delete query.focusTs
   router.push({ path: `${base}/${name}`, query })
 }
 
@@ -69,6 +88,25 @@ function onMetricOcrReady() {
   consumeOcrDraft.value = true
   localSub.value = 'labs'
   labRemountKey.value += 1
+}
+
+function onGlobalSearchSelect(hit: ObservationSearchHit) {
+  const focus: ObservationFocusTarget = {
+    kind: hit.kind,
+    code: hit.code,
+    panel: hit.panel,
+  }
+  if (embedded.value) {
+    embeddedFocus.value = { ...focus, nonce: Date.now() }
+    localSub.value = hit.route
+    if (hit.route === 'labs') labRemountKey.value += 1
+    return
+  }
+  const base = `/workspace/patients/${peopleId.value}/observations`
+  const query = { ...route.query }
+  delete query.ocr
+  Object.assign(query, observationFocusQuery(focus))
+  router.push({ path: `${base}/${hit.route}`, query })
 }
 </script>
 
@@ -91,6 +129,9 @@ function onMetricOcrReady() {
       </nav>
 
       <div class="obs-content">
+        <header v-if="showGlobalSearch" class="obs-global-bar">
+          <ObservationGlobalSearch @select="onGlobalSearchSelect" />
+        </header>
         <div class="obs-panel">
           <template v-if="embedded">
             <PatientMetricView
@@ -200,6 +241,14 @@ function onMetricOcrReady() {
   padding: 0;
   box-sizing: border-box;
   overflow: hidden;
+  gap: 10px;
+}
+
+.obs-global-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
 }
 
 .obs-panel {
@@ -220,8 +269,28 @@ function onMetricOcrReady() {
   height: 100%;
 }
 
+</style>
+
+<style>
+/* 全局聚焦闪烁：跨子页共用 */
+.obs-focus-flash,
+.obs-focus-row > td {
+  animation: obs-focus-pulse 1.6s ease-out 1;
+}
+
+@keyframes obs-focus-pulse {
+  0% {
+    box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.55);
+    background-color: #dbeafe !important;
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 transparent;
+    background-color: transparent;
+  }
+}
+
 @media (max-width: 900px) {
-  .obs-workspace {
+  .obs-layout .obs-workspace {
     grid-template-columns: 1fr;
     gap: 12px;
   }
@@ -246,6 +315,10 @@ function onMetricOcrReady() {
 
   .nav-item.active::before {
     display: none;
+  }
+
+  .obs-global-bar {
+    max-width: none;
   }
 }
 </style>

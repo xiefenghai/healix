@@ -21,6 +21,7 @@ import {
   type ExamOcrDraft,
 } from '../../shared/exam-ocr'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
+import { flashFocusElement, useObservationFocus } from '../../shared/useObservationFocus'
 
 interface DictItem {
   dictCode: string
@@ -60,7 +61,7 @@ const saving = ref(false)
 const list = ref<ExamReport[]>([])
 const examTypes = ref<DictItem[]>([])
 
-const mode = ref<'list' | 'edit' | 'history'>('list')
+const mode = ref<'list' | 'edit'>('list')
 const editingId = ref<string | null>(null)
 const listActivePanel = ref(EXAM_PANELS[0].key)
 const activePanel = ref(EXAM_PANELS[0].key)
@@ -90,6 +91,8 @@ const quickEntry = reactive({
   examinedAt: '',
   byType: {} as Record<string, QuickExamDraft>,
 })
+const examinedAtError = ref('')
+const formExaminedAtError = ref('')
 
 function nowLocalInput() {
   const d = new Date()
@@ -105,6 +108,17 @@ function toApiDateTime(local: string) {
 function formatTime(v?: string) {
   if (!v) return '-'
   return v.replace('T', ' ').slice(0, 16)
+}
+
+/** 历史卡片短时间：MM-DD HH:mm */
+function formatCardTime(v?: string) {
+  if (!v) return '-'
+  const s = v.replace('T', ' ')
+  return s.length >= 16 ? s.slice(5, 16) : s.slice(0, 16)
+}
+
+function hasLatestValue(v: unknown) {
+  return v != null && v !== '' && v !== false
 }
 
 function examSourceLabel(source?: string) {
@@ -125,11 +139,20 @@ function ensureQuickDraft(examType: string): QuickExamDraft {
 
 function initQuickEntry() {
   quickEntry.examinedAt = nowLocalInput()
+  examinedAtError.value = ''
   const map: Record<string, QuickExamDraft> = {}
   for (const type of EXAM_PANELS.flatMap((p) => p.examTypes)) {
     map[type] = { findings: blankFindings(type), conclusion: '' }
   }
   quickEntry.byType = map
+}
+
+function clearExaminedAtError() {
+  if (quickEntry.examinedAt) examinedAtError.value = ''
+}
+
+function clearFormExaminedAtError() {
+  if (form.examinedAt) formExaminedAtError.value = ''
 }
 
 function buildLatestByType(reports: ExamReport[], excludeReportId?: string | null) {
@@ -199,8 +222,105 @@ const quickEntryFilledCount = computed(
 )
 
 const listQuickDraft = computed(() => ensureQuickDraft(listActiveExamType.value))
+
+/** 当前检查类型已填写任意测量项或结论时，保存按钮可点 */
+const canSaveQuick = computed(() =>
+  hasExamDraft(listActiveExamType.value, listQuickDraft.value.findings, listQuickDraft.value.conclusion),
+)
+
 const showExamTypeSwitch = computed(() => listCurrentPanel.value.examTypes.length > 1)
 const showEditExamTypeSwitch = computed(() => editCurrentPanel.value.examTypes.length > 1)
+
+interface HistoryDayGroup {
+  key: string
+  relative: string
+  dateText: string
+  cards: ExamReport[]
+}
+
+function reportMatchesPanel(row: ExamReport, panelKey: string) {
+  const panel = EXAM_PANELS.find((p) => p.key === panelKey)
+  return !!panel?.examTypes.includes(row.examType)
+}
+
+const historyGroups = computed((): HistoryDayGroup[] => {
+  const panelKey = listActivePanel.value
+  const matched = [...list.value]
+    .filter((row) => reportMatchesPanel(row, panelKey))
+    .sort((a, b) => (b.examinedAt || '').localeCompare(a.examinedAt || ''))
+
+  const byDay = new Map<string, ExamReport[]>()
+  for (const row of matched) {
+    const raw = row.examinedAt || ''
+    const day = raw ? raw.replace('T', ' ').slice(0, 10) : 'unknown'
+    const bucket = byDay.get(day)
+    if (bucket) bucket.push(row)
+    else byDay.set(day, [row])
+  }
+
+  const today = new Date()
+  const ymd = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  }
+  const todayKey = ymd(today)
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  const yesterdayKey = ymd(yesterday)
+  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+  return [...byDay.entries()]
+    .map(([key, cards]) => {
+      let relative = ''
+      let dateText = '时间未知'
+      if (key !== 'unknown') {
+        const [y, m, d] = key.split('-').map(Number)
+        const dt = new Date(y, (m || 1) - 1, d || 1)
+        dateText = `${m}月${d}日 ${week[dt.getDay()]}`
+        if (key === todayKey) relative = '今天'
+        else if (key === yesterdayKey) relative = '昨天'
+      }
+      return { key, relative, dateText, cards }
+    })
+    .sort((a, b) => {
+      if (a.key === 'unknown') return 1
+      if (b.key === 'unknown') return -1
+      return b.key.localeCompare(a.key)
+    })
+})
+
+const historyCardCount = computed(() =>
+  historyGroups.value.reduce((sum, group) => sum + group.cards.length, 0),
+)
+
+const historyEmptyText = computed(() => {
+  const label = listCurrentPanel.value.label.replace(/检查$/, '')
+  return `当前分类暂无${label}历史`
+})
+
+const focusExamType = ref('')
+
+useObservationFocus('exam', async (target) => {
+  mode.value = 'list'
+  const panelKey =
+    target.panel ||
+    EXAM_PANELS.find((p) => p.examTypes.includes(target.code))?.key ||
+    listActivePanel.value
+  selectListPanel(panelKey)
+  if (EXAM_PANELS.some((p) => p.examTypes.includes(target.code))) {
+    listActiveExamType.value = target.code
+  }
+  focusExamType.value = target.code
+  await nextTick()
+  await nextTick()
+  flashFocusElement(
+    document.querySelector('.exam-browse .panel-main') ||
+      document.querySelector('.exam-browse .panel-tabs'),
+  )
+  window.setTimeout(() => {
+    if (focusExamType.value === target.code) focusExamType.value = ''
+  }, 2200)
+})
 
 function selectListPanel(key: string) {
   listActivePanel.value = key
@@ -221,62 +341,6 @@ function resetFindings(type: string) {
   form.findings = blankFindings(type)
 }
 
-interface ReportDayGroup<T> {
-  key: string
-  relative: string
-  dateText: string
-  count: number
-  rows: T[]
-}
-
-function groupReportsByDay<T>(rows: T[], timeOf: (row: T) => string | undefined): ReportDayGroup<T>[] {
-  const byDay = new Map<string, T[]>()
-  for (const row of rows) {
-    const raw = timeOf(row)
-    const key = raw ? raw.replace('T', ' ').slice(0, 10) : 'unknown'
-    const bucket = byDay.get(key)
-    if (bucket) bucket.push(row)
-    else byDay.set(key, [row])
-  }
-  const today = new Date()
-  const ymd = (d: Date) => {
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-  }
-  const todayKey = ymd(today)
-  const yesterday = new Date(today)
-  yesterday.setDate(today.getDate() - 1)
-  const yesterdayKey = ymd(yesterday)
-  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-  return [...byDay.entries()]
-    .map(([key, items]) => {
-      items.sort((a, b) => (timeOf(b) || '').localeCompare(timeOf(a) || ''))
-      let relative = ''
-      let dateText = '时间未知'
-      if (key !== 'unknown') {
-        const [y, m, d] = key.split('-').map(Number)
-        const dt = new Date(y, (m || 1) - 1, d || 1)
-        dateText = `${m}月${d}日 ${week[dt.getDay()]}`
-        if (key === todayKey) relative = '今天'
-        else if (key === yesterdayKey) relative = '昨天'
-      }
-      return { key, relative, dateText, count: items.length, rows: items }
-    })
-    .sort((a, b) => {
-      if (a.key === 'unknown') return 1
-      if (b.key === 'unknown') return -1
-      return b.key.localeCompare(a.key)
-    })
-}
-
-const examRecordGroups = computed(() => groupReportsByDay(list.value, (row) => row.examinedAt))
-
-function examFindingRows(report: ExamReport) {
-  return (EXAM_FINDING_FIELDS[report.examType] || [])
-    .map((field) => ({ field, value: report.findings?.[field.key] }))
-    .filter((row) => row.value != null && row.value !== '')
-}
-
 function openDetail(row: ExamReport) {
   detailRow.value = row
   detailVisible.value = true
@@ -286,12 +350,6 @@ function editFromDetail() {
   if (!detailRow.value) return
   openEdit(detailRow.value)
   detailVisible.value = false
-}
-
-function openLatestReport(reportId?: string) {
-  if (!reportId) return
-  const row = list.value.find((r) => r.id === reportId)
-  if (row) openDetail(row)
 }
 
 const detailFindings = computed(() => {
@@ -335,6 +393,7 @@ function openCreate() {
   form.examType = listActiveExamType.value
   form.examinedAt = nowLocalInput()
   form.conclusion = ''
+  formExaminedAtError.value = ''
   resetFindings(form.examType)
   const panel = EXAM_PANELS.find((p) => p.examTypes.includes(form.examType)) || EXAM_PANELS[0]
   activePanel.value = panel.key
@@ -420,6 +479,7 @@ function openEdit(row: ExamReport) {
   form.examType = row.examType
   form.examinedAt = row.examinedAt ? row.examinedAt.slice(0, 16) : nowLocalInput()
   form.conclusion = row.conclusion || ''
+  formExaminedAtError.value = ''
   resetFindings(row.examType)
   form.findings = { ...form.findings, ...(row.findings || {}) }
   const panel = EXAM_PANELS.find((p) => p.examTypes.includes(row.examType)) || EXAM_PANELS[0]
@@ -461,6 +521,11 @@ async function savePayload(
 }
 
 async function saveQuick() {
+  if (!quickEntry.examinedAt?.trim()) {
+    examinedAtError.value = '请填写检查时间'
+    return
+  }
+  examinedAtError.value = ''
   const type = listActiveExamType.value
   const draft = ensureQuickDraft(type)
   saving.value = true
@@ -480,6 +545,11 @@ async function saveQuick() {
 }
 
 async function saveEdit() {
+  if (!form.examinedAt?.trim()) {
+    formExaminedAtError.value = '请填写检查时间'
+    return
+  }
+  formExaminedAtError.value = ''
   saving.value = true
   try {
     const ok = await savePayload(form.examType, form.examinedAt, form.conclusion, form.findings, ocrImageKey.value)
@@ -540,225 +610,252 @@ watch(
 
 <template>
   <div v-loading="loading" class="exam-page">
-    <!-- 按项目浏览 + 直接录入 -->
+    <input
+      ref="ocrFileRef"
+      class="file-input"
+      type="file"
+      accept="image/*"
+      @change="onOcrFileChange"
+    />
+
+    <!-- 左侧录入 + 右侧历史时间轴（对齐化验报告） -->
     <div v-if="mode === 'list'" class="exam-browse">
-      <div class="browse-toolbar">
+      <header class="browse-toolbar">
         <div class="browse-toolbar-left">
-          <span class="section-title">检查记录</span>
+          <h2 class="section-title">检查记录</h2>
           <el-tag v-if="quickEntryFilledCount" size="small" type="warning" effect="plain">
             待保存 {{ quickEntryFilledCount }} 项
           </el-tag>
         </div>
-        <div class="card-head-actions">
-          <el-button text @click="mode = 'history'">全部报告</el-button>
-          <el-button type="primary" :loading="saving" :disabled="!hasExamDraft(listActiveExamType, listQuickDraft.findings, listQuickDraft.conclusion)" @click="saveQuick">
-            保存记录
-          </el-button>
-        </div>
+      </header>
+
+      <div class="panel-tabs" role="tablist" aria-label="辅助检查分类">
+        <button
+          v-for="panel in listPanels"
+          :key="panel.key"
+          type="button"
+          class="panel-tab"
+          :class="{ active: panel.key === listActivePanel }"
+          role="tab"
+          :aria-selected="panel.key === listActivePanel"
+          @click="selectListPanel(panel.key)"
+        >
+          <span>{{ panel.label }}</span>
+          <span v-if="panel.filledCount" class="panel-badge">{{ panel.filledCount }}</span>
+        </button>
       </div>
 
-      <el-card shadow="never" class="meta-card browse-meta">
-        <el-form :inline="true" label-width="72px" class="meta-form">
-          <el-form-item label="检查时间">
-            <el-date-picker
-              v-model="quickEntry.examinedAt"
-              type="datetime"
-              value-format="YYYY-MM-DDTHH:mm"
-              format="YYYY-MM-DD HH:mm"
-            />
-          </el-form-item>
-        </el-form>
-      </el-card>
+      <div class="split-workspace">
+        <section class="split-left" aria-label="检查录入">
+          <div class="meta-bar">
+            <el-form :inline="true" label-width="72px" class="meta-form">
+              <el-form-item label="检查时间" required :error="examinedAtError">
+                <el-date-picker
+                  v-model="quickEntry.examinedAt"
+                  type="datetime"
+                  value-format="YYYY-MM-DDTHH:mm"
+                  format="YYYY-MM-DD HH:mm"
+                  class="meta-datetime"
+                  @change="clearExaminedAtError"
+                />
+              </el-form-item>
+            </el-form>
+            <div class="meta-bar-actions">
+              <button
+                type="button"
+                class="ocr-btn"
+                :disabled="ocrLoading || !peopleId"
+                @click="openOcrPicker"
+              >
+                <span v-if="ocrLoading" class="ocr-btn-loading">识别中…</span>
+                <span v-else>📷 上传单据/OCR识别</span>
+              </button>
+            </div>
+          </div>
 
-      <div class="editor-body browse-body">
-        <aside class="panel-side">
-          <div class="panel-side-title">辅助检查</div>
-          <button
-            v-for="panel in listPanels"
-            :key="panel.key"
-            type="button"
-            class="panel-item"
-            :class="{ active: panel.key === listActivePanel }"
-            @click="selectListPanel(panel.key)"
+          <div
+            class="panel-main"
+            :class="{ 'obs-focus-flash': focusExamType && focusExamType === listActiveExamType }"
+            data-obs-focus-exam
           >
-            <span class="panel-label">{{ panel.label }}</span>
-            <span v-if="panel.filledCount" class="panel-badge">{{ panel.filledCount }}</span>
-          </button>
-        </aside>
+            <div class="panel-main-head">
+              <div class="panel-head-left">
+                <h3>{{ listCurrentPanel.label }}</h3>
+                <el-segmented
+                  v-if="showExamTypeSwitch"
+                  v-model="listActiveExamType"
+                  :options="listCurrentPanel.examTypes.map((t) => ({ label: typeLabel(t), value: t }))"
+                  size="small"
+                />
+              </div>
+              <span class="panel-hint">空项不保存；右侧可查看历史报告</span>
+            </div>
 
-        <section class="panel-main">
-          <div class="panel-main-head">
-            <div class="panel-head-left">
-              <h3>{{ listCurrentPanel.label }}</h3>
-              <el-segmented
-                v-if="showExamTypeSwitch"
-                v-model="listActiveExamType"
-                :options="listCurrentPanel.examTypes.map((t) => ({ label: typeLabel(t), value: t }))"
+            <div class="table-wrap">
+              <el-table
+                v-if="listFieldRows.length"
+                :data="listFieldRows"
+                stripe
+                border
                 size="small"
+                show-header
+                empty-text="暂无测量项"
+                class="browse-table exam-item-table"
+                table-layout="fixed"
+                style="width: 100%"
+              >
+                <el-table-column label="测量项" min-width="132" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <span class="item-name">{{ row.field.label }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  label="本次结果"
+                  min-width="160"
+                  align="left"
+                  header-align="left"
+                  class-name="exam-col-result"
+                  label-class-name="exam-col-result"
+                >
+                  <template #default="{ row }">
+                    <div class="result-cell">
+                      <el-select
+                        v-if="row.field.type === 'select'"
+                        v-model="listQuickDraft.findings[row.field.key]"
+                        clearable
+                        placeholder="请选择"
+                        size="small"
+                        class="result-select"
+                      >
+                        <el-option
+                          v-for="opt in row.field.options || []"
+                          :key="opt"
+                          :label="optionLabel(row.field.key, opt)"
+                          :value="opt"
+                        />
+                      </el-select>
+                      <el-switch
+                        v-else-if="row.field.type === 'bool'"
+                        v-model="listQuickDraft.findings[row.field.key]"
+                      />
+                      <el-input-number
+                        v-else-if="row.field.type === 'number'"
+                        v-model="listQuickDraft.findings[row.field.key]"
+                        :precision="2"
+                        :controls="false"
+                        placeholder="请输入数值"
+                        class="value-input"
+                      />
+                      <el-input
+                        v-else
+                        v-model="listQuickDraft.findings[row.field.key]"
+                        placeholder="请输入"
+                        clearable
+                        class="value-input"
+                      />
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  label="最近测量"
+                  min-width="168"
+                  align="left"
+                  header-align="left"
+                  class-name="exam-col-latest"
+                  label-class-name="exam-col-latest"
+                >
+                  <template #default="{ row }">
+                    <div v-if="hasLatestValue(row.latestValue)" class="latest-measure">
+                      <span class="latest-measure-val">
+                        {{ formatExamFindingValue(row.field.key, row.latestValue) }}
+                      </span>
+                      <span class="latest-measure-time">{{ formatTime(row.latestAt) }}</span>
+                    </div>
+                    <span v-else class="latest-measure-empty">暂无</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="单位" width="88" align="left" header-align="left">
+                  <template #default="{ row }">
+                    <span class="unit-cell">{{ row.field.unit || '-' }}</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty v-else description="当前类型暂无测量项" :image-size="56" />
+            </div>
+
+            <div class="conclusion-block">
+              <div class="conclusion-label">检查结论</div>
+              <el-input
+                v-model="listQuickDraft.conclusion"
+                type="textarea"
+                :rows="2"
+                maxlength="1000"
+                show-word-limit
+                resize="none"
+                class="conclusion-input"
+                placeholder="可填写影像/功能学结论摘要"
               />
             </div>
-            <span class="panel-hint">填写本次结果，可参考最近一次数据</span>
           </div>
 
-          <el-table
-            v-if="listFieldRows.length"
-            :data="listFieldRows"
-            stripe
-            size="default"
-            empty-text="暂无测量项"
-            class="browse-table exam-item-table"
-          >
-            <el-table-column label="测量项" min-width="120">
-              <template #default="{ row }">
-                <span>{{ row.field.label }}</span>
-                <span v-if="row.field.unit" class="field-unit">{{ row.field.unit }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="本次结果" min-width="150">
-              <template #default="{ row }">
-                <el-select
-                  v-if="row.field.type === 'select'"
-                  v-model="listQuickDraft.findings[row.field.key]"
-                  clearable
-                  placeholder="请选择"
-                  size="small"
-                  style="width: 100%"
-                >
-                  <el-option
-                    v-for="opt in row.field.options || []"
-                    :key="opt"
-                    :label="optionLabel(row.field.key, opt)"
-                    :value="opt"
-                  />
-                </el-select>
-                <el-switch
-                  v-else-if="row.field.type === 'bool'"
-                  v-model="listQuickDraft.findings[row.field.key]"
-                />
-                <el-input-number
-                  v-else-if="row.field.type === 'number'"
-                  v-model="listQuickDraft.findings[row.field.key]"
-                  :precision="2"
-                  :controls="false"
-                  placeholder="请输入"
-                  class="value-input"
-                />
-                <el-input v-else v-model="listQuickDraft.findings[row.field.key]" placeholder="请输入" clearable />
-              </template>
-            </el-table-column>
-            <el-table-column label="标记" width="92" align="center">
-              <template #default>
-                <span class="empty-val">-</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="最近一次" min-width="130">
-              <template #default="{ row }">
-                <div v-if="row.latestValue != null && row.latestValue !== '' && row.latestValue !== false" class="latest-cell">
-                  <span class="latest-value">{{ formatExamFindingValue(row.field.key, row.latestValue) }}</span>
-                  <span class="latest-time">{{ formatTime(row.latestAt) }}</span>
-                </div>
-                <span v-else class="empty-val">暂无</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="72" fixed="right">
-              <template #default="{ row }">
-                <el-button v-if="row.reportId" link type="primary" @click="openLatestReport(row.reportId)">
-                  详情
-                </el-button>
-                <span v-else class="empty-val">-</span>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <div class="conclusion-block">
-            <div class="conclusion-label">检查结论</div>
-            <el-input
-              v-model="listQuickDraft.conclusion"
-              type="textarea"
-              :rows="2"
-              maxlength="1000"
-              show-word-limit
-              placeholder="可填写影像/功能学结论摘要"
-            />
+          <div class="left-footer">
+            <el-button
+              type="primary"
+              class="save-btn"
+              :class="{ 'is-ready': canSaveQuick }"
+              :loading="saving"
+              :disabled="!canSaveQuick"
+              @click="saveQuick"
+            >
+              保存记录
+            </el-button>
           </div>
         </section>
-      </div>
 
-      <section class="recent-card">
-        <div class="recent-head">
-          <span class="section-title">近期记录</span>
-        </div>
-        <el-empty v-if="!examRecordGroups.length" description="暂无检查记录" :image-size="64" />
-        <div v-else class="record-days">
-          <section v-for="group in examRecordGroups" :key="group.key" class="day-group">
-            <div class="day-head">
-              <span v-if="group.relative" class="day-relative">{{ group.relative }}</span>
-              <span class="day-date">{{ group.dateText }}</span>
-              <span class="day-count">{{ group.count }} 份</span>
-            </div>
-            <div v-for="report in group.rows" :key="report.id" class="time-cluster">
-              <div class="time-mark">
-                <span class="time-clock">{{ formatTime(report.examinedAt).slice(11) || '—' }}</span>
-                <el-tag size="small" effect="plain">{{ examSourceLabel(report.source) }}</el-tag>
-                <span class="specimen">{{ typeLabel(report.examType) }}</span>
-              </div>
-              <div class="time-rows">
-                <div v-for="row in examFindingRows(report)" :key="row.field.key" class="metric-row">
-                  <span class="metric-name">{{ row.field.label }}</span>
-                  <span class="metric-value">
-                    {{ formatExamFindingValue(row.field.key, row.value) }}
-                    <span v-if="row.field.unit" class="metric-unit"> {{ row.field.unit }}</span>
-                  </span>
-                </div>
-                <p v-if="report.conclusion" class="report-note">结论：{{ report.conclusion }}</p>
-                <div class="metric-actions">
-                  <el-button link type="primary" @click="openDetail(report)">详情</el-button>
-                  <el-button link type="primary" @click="openEdit(report)">编辑</el-button>
-                  <el-button link type="danger" @click="removeRow(report)">删除</el-button>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      </section>
-    </div>
-
-    <!-- 全部报告 -->
-    <el-card v-if="mode === 'history'" shadow="never" class="section-card">
-      <template #header>
-        <div class="card-head">
-          <div class="card-head-left">
-            <el-button text type="primary" @click="backToBrowse">← 返回项目视图</el-button>
-            <span class="section-title">全部报告</span>
+        <aside class="split-right" aria-label="历史记录">
+          <div class="history-head">
+            <h3>历史记录 (共 {{ historyCardCount }} 份)</h3>
+            <span class="history-hint">{{ listCurrentPanel.label }} · 按检查时间</span>
           </div>
-          <el-button type="primary" @click="openCreate">新建报告</el-button>
-        </div>
-      </template>
-      <el-table :data="list" stripe empty-text="暂无检查报告">
-        <el-table-column label="类型" width="120">
-          <template #default="{ row }">{{ typeLabel(row.examType) }}</template>
-        </el-table-column>
-        <el-table-column label="检查时间" width="150">
-          <template #default="{ row }">{{ formatTime(row.examinedAt) }}</template>
-        </el-table-column>
-        <el-table-column label="录入来源" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ examSourceLabel(row.source) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="结论" min-width="200" prop="conclusion" show-overflow-tooltip />
-        <el-table-column label="关键测量" min-width="180">
-          <template #default="{ row }">{{ findingsSummaryText(row.examType, row.findings) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeRow(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+          <div class="history-scroll">
+            <el-empty
+              v-if="!historyGroups.length"
+              :description="historyEmptyText"
+              :image-size="56"
+            />
+            <div v-else class="history-days">
+              <section v-for="group in historyGroups" :key="group.key" class="history-day">
+                <div class="history-day-head">
+                  <span v-if="group.relative" class="history-day-rel">{{ group.relative }}</span>
+                  <span class="history-day-date">{{ group.dateText }}</span>
+                  <span class="history-day-count">{{ group.cards.length }} 份</span>
+                </div>
+                <article v-for="card in group.cards" :key="card.id" class="hist-card">
+                  <header class="hist-card-head">
+                    <div class="hist-card-meta">
+                      <span class="hist-time">{{ formatCardTime(card.examinedAt) }}</span>
+                      <span class="hist-type">[{{ typeLabel(card.examType) }}]</span>
+                      <el-tag size="small" effect="plain" class="hist-source">
+                        {{ examSourceLabel(card.source) }}
+                      </el-tag>
+                    </div>
+                    <div class="hist-card-actions">
+                      <el-button link type="primary" @click="openDetail(card)">详情</el-button>
+                      <el-button link type="primary" @click="openEdit(card)">编辑</el-button>
+                      <el-button link type="danger" @click="removeRow(card)">删除</el-button>
+                    </div>
+                  </header>
+                  <p class="hist-summary" :title="findingsSummaryText(card.examType, card.findings)">
+                    {{ findingsSummaryText(card.examType, card.findings) || '无结构化测量' }}
+                  </p>
+                  <p v-if="card.conclusion" class="hist-note" :title="card.conclusion">{{ card.conclusion }}</p>
+                </article>
+              </section>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
 
     <!-- 完整编辑 -->
     <div v-if="mode === 'edit'" class="exam-editor">
@@ -768,96 +865,95 @@ watch(
           <span class="section-title">{{ editingId ? '编辑检查报告' : '新建检查报告' }}</span>
         </div>
         <div class="toolbar-right">
-          <el-button v-if="!editingId" :loading="ocrLoading" @click="openOcrPicker">拍照识别</el-button>
+          <button
+            v-if="!editingId"
+            type="button"
+            class="ocr-btn"
+            :disabled="ocrLoading || !peopleId"
+            @click="openOcrPicker"
+          >
+            <span v-if="ocrLoading" class="ocr-btn-loading">识别中…</span>
+            <span v-else>📷 上传单据/OCR识别</span>
+          </button>
           <el-button @click="backToBrowse">取消</el-button>
           <el-button type="primary" :loading="saving" @click="saveEdit">保存报告</el-button>
         </div>
       </div>
 
-      <input
-        ref="ocrFileRef"
-        class="file-input"
-        type="file"
-        accept="image/*"
-        @change="onOcrFileChange"
-      />
-
       <el-alert v-if="ocrHint" type="info" :closable="false" show-icon class="ocr-alert ai-tip">
         {{ ocrHint }}
       </el-alert>
 
-      <el-card shadow="never" class="meta-card">
+      <div class="meta-bar">
         <el-form :inline="true" label-width="72px" class="meta-form">
-          <el-form-item label="检查时间">
+          <el-form-item label="检查时间" required :error="formExaminedAtError">
             <el-date-picker
               v-model="form.examinedAt"
               type="datetime"
               value-format="YYYY-MM-DDTHH:mm"
               format="YYYY-MM-DD HH:mm"
+              class="meta-datetime"
+              @change="clearFormExaminedAtError"
             />
           </el-form-item>
         </el-form>
-      </el-card>
+      </div>
 
-      <div class="editor-body">
-        <aside class="panel-side">
-          <div class="panel-side-title">辅助检查</div>
-          <button
-            v-for="panel in editPanels"
-            :key="panel.key"
-            type="button"
-            class="panel-item"
-            :class="{ active: panel.key === activePanel }"
-            @click="selectEditPanel(panel.key)"
-          >
-            <span class="panel-label">{{ panel.label }}</span>
-          </button>
-        </aside>
+      <div class="panel-tabs" role="tablist" aria-label="辅助检查分类">
+        <button
+          v-for="panel in editPanels"
+          :key="panel.key"
+          type="button"
+          class="panel-tab"
+          :class="{ active: panel.key === activePanel }"
+          role="tab"
+          :aria-selected="panel.key === activePanel"
+          @click="selectEditPanel(panel.key)"
+        >
+          <span>{{ panel.label }}</span>
+        </button>
+      </div>
 
-        <section class="panel-main">
-          <div class="panel-main-head">
-            <div class="panel-head-left">
-              <h3>{{ editCurrentPanel.label }}</h3>
-              <el-segmented
-                v-if="showEditExamTypeSwitch"
-                v-model="form.examType"
-                :options="editCurrentPanel.examTypes.map((t) => ({ label: typeLabel(t), value: t }))"
-                size="small"
-                :disabled="!!editingId"
-              />
-              <el-tag v-else size="small" effect="plain">{{ typeLabel(form.examType) }}</el-tag>
-            </div>
+      <section class="panel-main">
+        <div class="panel-main-head">
+          <div class="panel-head-left">
+            <h3>{{ editCurrentPanel.label }}</h3>
+            <el-segmented
+              v-if="showEditExamTypeSwitch"
+              v-model="form.examType"
+              :options="editCurrentPanel.examTypes.map((t) => ({ label: typeLabel(t), value: t }))"
+              size="small"
+              :disabled="!!editingId"
+            />
+            <el-tag v-else size="small" effect="plain">{{ typeLabel(form.examType) }}</el-tag>
           </div>
+        </div>
 
-          <el-table :data="editFieldRows" stripe class="entry-table exam-item-table">
-            <el-table-column label="测量项" min-width="120">
-              <template #default="{ row }">
-                {{ row.label }}
-                <span v-if="row.unit" class="field-unit">{{ row.unit }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="最近一次" min-width="120">
-              <template #default="{ row }">
-                <div
-                  v-if="editLatestByType[form.examType]?.findings?.[row.key] != null && editLatestByType[form.examType]?.findings?.[row.key] !== '' && editLatestByType[form.examType]?.findings?.[row.key] !== false"
-                  class="latest-cell"
-                >
-                  <span class="latest-value">
-                    {{ formatExamFindingValue(row.key, editLatestByType[form.examType]?.findings?.[row.key]) }}
-                  </span>
-                  <span class="latest-time">{{ formatTime(editLatestByType[form.examType]?.examinedAt) }}</span>
-                </div>
-                <span v-else class="empty-val">暂无</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="本次结果" min-width="150">
-              <template #default="{ row }">
+        <el-table
+          :data="editFieldRows"
+          stripe
+          border
+          size="small"
+          show-header
+          class="entry-table exam-item-table"
+          table-layout="fixed"
+          style="width: 100%"
+        >
+          <el-table-column label="测量项" min-width="132" align="left" header-align="left">
+            <template #default="{ row }">
+              <span class="item-name">{{ row.label }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="本次结果" min-width="160" align="left" header-align="left">
+            <template #default="{ row }">
+              <div class="result-cell">
                 <el-select
                   v-if="row.type === 'select'"
                   v-model="form.findings[row.key]"
                   clearable
                   placeholder="请选择"
-                  style="width: 100%"
+                  size="small"
+                  class="result-select"
                 >
                   <el-option
                     v-for="opt in row.options || []"
@@ -872,19 +968,49 @@ watch(
                   v-model="form.findings[row.key]"
                   :precision="2"
                   :controls="false"
+                  placeholder="请输入数值"
                   class="value-input"
                 />
-                <el-input v-else v-model="form.findings[row.key]" />
-              </template>
-            </el-table-column>
-          </el-table>
+                <el-input v-else v-model="form.findings[row.key]" placeholder="请输入" class="value-input" />
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="最近测量" min-width="168" align="left" header-align="left">
+            <template #default="{ row }">
+              <div
+                v-if="hasLatestValue(editLatestByType[form.examType]?.findings?.[row.key])"
+                class="latest-measure"
+              >
+                <span class="latest-measure-val">
+                  {{ formatExamFindingValue(row.key, editLatestByType[form.examType]?.findings?.[row.key]) }}
+                </span>
+                <span class="latest-measure-time">
+                  {{ formatTime(editLatestByType[form.examType]?.examinedAt) }}
+                </span>
+              </div>
+              <span v-else class="latest-measure-empty">暂无</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="单位" width="88" align="left" header-align="left">
+            <template #default="{ row }">
+              <span class="unit-cell">{{ row.unit || '-' }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
 
-          <div class="conclusion-block">
-            <div class="conclusion-label">检查结论</div>
-            <el-input v-model="form.conclusion" type="textarea" :rows="3" maxlength="1000" show-word-limit />
-          </div>
-        </section>
-      </div>
+        <div class="conclusion-block">
+          <div class="conclusion-label">检查结论</div>
+          <el-input
+            v-model="form.conclusion"
+            type="textarea"
+            :rows="2"
+            maxlength="1000"
+            show-word-limit
+            resize="none"
+            class="conclusion-input"
+          />
+        </div>
+      </section>
     </div>
 
     <el-drawer v-model="detailVisible" title="检查详情" size="420px" destroy-on-close>
@@ -913,62 +1039,370 @@ watch(
 <style scoped>
 .exam-page {
   width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.section-card {
-  border-radius: var(--admin-radius, 12px);
-  overflow: hidden;
+.exam-browse {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.section-card :deep(.el-card__header) {
-  padding: 14px 18px;
-  background: #fff;
-  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+.exam-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.card-head,
 .browse-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin: 0;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: 10px;
+  flex: 0 0 auto;
 }
 
-.card-head-left,
 .browse-toolbar-left,
 .panel-head-left {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-height: 32px;
 }
 
-.browse-toolbar {
-  margin-bottom: 12px;
-  padding: 12px 16px;
-  background: #fff;
+.browse-toolbar .section-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 32px;
+  color: var(--ink-800, #1e293b);
+}
+
+.split-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.split-left {
+  flex: 6 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 78%, #f1f5f9 100%);
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+}
+
+.split-right {
+  flex: 4 1 0;
+  min-width: 280px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
   border: 1px solid var(--admin-border, #e2e8f0);
-  border-radius: var(--admin-radius, 12px);
-  box-shadow: var(--admin-shadow);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
 }
 
-.browse-meta,
-.meta-card {
-  border-radius: var(--admin-radius, 12px);
+.history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #f8fafc;
+  flex: 0 0 auto;
 }
 
-.browse-meta :deep(.el-card__body),
-.meta-card :deep(.el-card__body) {
-  padding: 12px 16px 4px;
+.history-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-800, #1e293b);
+}
+
+.history-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.history-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.history-days {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 14px;
+}
+
+.history-days::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  bottom: 10px;
+  width: 1px;
+  background: #e2e8f0;
+  pointer-events: none;
+}
+
+.history-day {
+  position: relative;
+}
+
+.history-day-head {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.history-day-head::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #94a3b8;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.history-day-rel {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand-600, #1e63d9);
+}
+
+.history-day-date {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.history-day-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.hist-card {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hist-card:last-child {
+  margin-bottom: 0;
+}
+
+.hist-card:hover {
+  border-color: #dbeafe;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+}
+
+.hist-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hist-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hist-time {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-800, #1e293b);
+}
+
+.hist-type {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.hist-source {
+  transform: scale(0.92);
+  transform-origin: left center;
+}
+
+.hist-card-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.hist-card-actions :deep(.el-button) {
+  margin: 0;
+  padding: 0 4px;
+  height: auto;
+}
+
+.hist-summary {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #475569;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.hist-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  padding: 10px 12px 2px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 10px;
+  flex: 0 0 auto;
+}
+
+.meta-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-bottom: 8px;
 }
 
 .file-input {
   display: none;
 }
 
+.ocr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 12px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: #e6f7ff;
+  color: var(--brand-700, #174db0);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.ocr-btn:hover:not(:disabled) {
+  background: #d6efff;
+  border-color: var(--brand-200, #bfdbfe);
+  color: var(--brand-700, #174db0);
+}
+
+.ocr-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.ocr-btn-loading {
+  letter-spacing: 0.02em;
+}
+
+.save-btn {
+  margin: 0;
+  padding: 0 16px;
+  height: 42px;
+  font-weight: 600;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.save-btn.is-disabled,
+.save-btn:disabled {
+  opacity: 1 !important;
+  background: #e2e8f0 !important;
+  border-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+}
+
+.save-btn.is-ready:not(.is-disabled):not(:disabled),
+.save-btn:not(.is-disabled):not(:disabled) {
+  background: #174db0 !important;
+  border-color: #174db0 !important;
+  color: #fff !important;
+  box-shadow: 0 2px 8px rgba(23, 77, 176, 0.28);
+}
+
 .ocr-alert.ai-tip {
-  margin-bottom: 12px;
-  border-radius: var(--admin-radius, 12px);
+  margin: 0;
+  border-radius: 10px;
   border: 1px solid #bfdbfe;
   background: linear-gradient(135deg, #eff6ff, #f0fdfa);
 }
@@ -978,12 +1412,66 @@ watch(
   font-size: 13px;
 }
 
-.ocr-alert.ai-tip :deep(.el-alert__icon) {
-  color: var(--violet-500);
+.meta-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0 4px;
+  margin-bottom: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.meta-form {
-  margin-bottom: 0;
+.meta-form :deep(.el-form-item) {
+  margin-right: 12px;
+  margin-bottom: 8px;
+  vertical-align: top;
+  flex: 0 0 auto;
+}
+
+.meta-form :deep(.el-form-item__label) {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 32px;
+  height: 32px;
+  padding-right: 8px;
+}
+
+.meta-form :deep(.el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before) {
+  color: #f56c6c;
+  margin-right: 2px;
+}
+
+.meta-form :deep(.el-form-item__content) {
+  line-height: 32px;
+  min-height: 32px;
+  align-items: flex-start;
+  flex-direction: column;
+  flex: none !important;
+  width: auto !important;
+}
+
+.meta-form :deep(.el-form-item__error) {
+  position: static;
+  padding-top: 2px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #f56c6c;
+}
+
+.meta-datetime.el-date-editor,
+.meta-datetime {
+  --el-date-editor-width: 200px;
+  width: 200px !important;
+  max-width: 200px !important;
+  flex: none !important;
+}
+
+.meta-datetime :deep(.el-input),
+.meta-datetime :deep(.el-input__wrapper) {
+  width: 200px !important;
 }
 
 .section-title {
@@ -993,210 +1481,107 @@ watch(
   letter-spacing: -0.01em;
 }
 
-.recent-card {
-  margin-top: 16px;
-  padding: 14px 16px 16px;
-  border: 1px solid var(--admin-border, #e5e7eb);
-  border-radius: 12px;
-  background: #fff;
-}
-
-.recent-head {
-  margin-bottom: 12px;
-}
-
-.record-days {
+.panel-tabs {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.day-group {
-  border: 1px solid var(--ink-100, #f1f5f9);
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-.day-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: #f8fafc;
-  border-bottom: 1px solid var(--ink-100, #f1f5f9);
-}
-
-.day-relative {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.day-date {
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
-}
-
-.day-count {
-  margin-left: auto;
-  font-size: 12px;
-  color: #94a3b8;
-}
-
-.time-cluster {
-  display: grid;
-  grid-template-columns: 108px 1fr;
-  gap: 8px;
-  padding: 12px 14px;
-}
-
-.time-cluster + .time-cluster {
-  border-top: 1px dashed #e8eef2;
-}
-
-.time-mark {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 6px;
-}
-
-.time-clock {
-  font-size: 15px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.specimen {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.time-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.metric-row {
-  display: grid;
-  grid-template-columns: minmax(96px, 1.2fr) minmax(120px, 2fr);
-  gap: 8px;
-  align-items: center;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.metric-name,
-.metric-value {
-  font-weight: 600;
-}
-
-.metric-unit {
-  font-size: 12px;
-  font-weight: 400;
-  color: #64748b;
-}
-
-.report-note {
-  margin: 0;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.metric-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-@media (max-width: 960px) {
-  .time-cluster {
-    grid-template-columns: 1fr;
-  }
-}
-
-.card-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.editor-body {
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 0;
-  min-height: 420px;
   border: 1px solid var(--admin-border, #e2e8f0);
-  border-radius: var(--admin-radius, 12px);
-  overflow: hidden;
-  background: #fff;
-  box-shadow: var(--admin-shadow);
+  border-radius: 10px;
+  background: #f8fafc;
+  flex: 0 0 auto;
 }
 
-.browse-body {
-  min-height: 480px;
-}
-
-.panel-side {
-  background: var(--ink-50, #f8fafc);
-  border-right: 1px solid var(--admin-border, #e2e8f0);
-  padding: 12px 0;
-  overflow-y: auto;
-  max-height: calc(100vh - 280px);
-}
-
-.panel-side-title {
-  padding: 4px 16px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-400, #94a3b8);
-}
-
-.panel-item {
-  display: flex;
+.panel-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  border: 0;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
-  padding: 10px 16px;
+  color: var(--ink-600, #475569);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  text-align: left;
-  font-size: 14px;
-  color: var(--admin-text, #1f2937);
-  transition: background 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
-.panel-item:hover {
-  background: var(--brand-50);
-}
-
-.panel-item.active {
+.panel-tab:hover {
+  color: var(--ink-800, #1e293b);
   background: #fff;
-  color: var(--brand-500);
+}
+
+.panel-tab.active {
+  color: var(--brand-600, #1e63d9);
+  background: #fff;
+  border-color: var(--brand-200, #bfdbfe);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--brand-500);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .panel-badge {
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 5px;
-  border-radius: 9px;
-  background: var(--rose-500);
+  border-radius: 8px;
+  background: var(--rose-500, #f43f5e);
   color: #fff;
-  font-size: 11px;
-  line-height: 18px;
+  font-size: 10px;
+  line-height: 16px;
   text-align: center;
 }
 
 .panel-main {
-  padding: 16px 20px 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.exam-editor .panel-main {
   overflow: auto;
+}
+
+.table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+}
+
+.left-footer {
+  flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin: 0;
+  padding: 10px 12px 2px;
+  width: 100%;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0) 0%, #f8fafc 24%, #f8fafc 100%);
+  border-top: 1px solid #eef2f7;
+  box-shadow: 0 -8px 16px -12px rgba(15, 23, 42, 0.12);
+}
+
+.left-footer .save-btn {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: 42px;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 .panel-main-head {
@@ -1204,7 +1589,8 @@ watch(
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+  flex: 0 0 auto;
   flex-wrap: wrap;
 }
 
@@ -1220,75 +1606,176 @@ watch(
   color: var(--admin-muted, #94a3b8);
 }
 
+.item-name {
+  font-weight: 700;
+  color: var(--ink-800, #1e293b);
+}
+
+.exam-item-table {
+  width: 100% !important;
+  max-width: 100%;
+}
+
+.exam-item-table :deep(.el-table__inner-wrapper),
+.exam-item-table :deep(.el-table__header),
+.exam-item-table :deep(.el-table__body) {
+  width: 100% !important;
+}
+
 .exam-item-table :deep(.el-table__cell) {
-  padding: 14px 0;
+  padding: 8px 0;
 }
 
 .exam-item-table :deep(.cell) {
-  padding-top: 6px;
-  padding-bottom: 6px;
-  line-height: 1.5;
+  padding: 6px 10px;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.browse-table.exam-item-table :deep(.exam-col-result .cell) {
+  padding-right: 20px;
+}
+
+.browse-table.exam-item-table :deep(.exam-col-latest .cell) {
+  padding-left: 8px;
 }
 
 .exam-item-table :deep(.el-table__header .cell) {
   white-space: nowrap;
   word-break: keep-all;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
 }
 
-.exam-item-table :deep(.el-input-number) {
+.exam-item-table :deep(.el-table__row) {
+  height: 52px;
+}
+
+.exam-item-table :deep(.el-table__body tr.el-table__row--striped td.el-table__cell) {
+  background: #f8fafc;
+}
+
+.exam-item-table :deep(.el-table__body tr td.el-table__cell) {
+  border-bottom-color: #eef2f7;
+}
+
+.result-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
   width: 100%;
 }
 
+.result-select {
+  width: 120px !important;
+  max-width: 120px !important;
+}
+
+.result-select :deep(.el-select__wrapper),
+.result-select :deep(.el-input),
+.result-select :deep(.el-input__wrapper) {
+  width: 120px !important;
+  max-width: 120px !important;
+}
+
+.value-input {
+  width: 120px !important;
+  max-width: 120px !important;
+  min-width: 120px !important;
+  flex: 0 0 120px;
+}
+
+.value-input :deep(.el-input__wrapper),
 .value-input :deep(.el-input__inner) {
+  text-align: left;
+  width: 120px !important;
+}
+
+.value-input :deep(.el-input__inner::placeholder),
+.value-input :deep(input::placeholder) {
+  color: #cccccc !important;
+  -webkit-text-fill-color: #cccccc;
+  opacity: 1;
+  font-size: 12px;
+}
+
+.unit-cell {
+  display: inline-block;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
   text-align: left;
 }
 
-.field-unit {
-  margin-left: 4px;
-  font-size: 12px;
-  color: var(--admin-text-secondary);
-}
-
-.latest-cell {
+.latest-measure {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
   gap: 4px;
+  min-width: 0;
+  width: 100%;
+  text-align: left;
+  line-height: 1.35;
 }
 
-.latest-value {
+.latest-measure-val {
+  display: block;
+  width: 100%;
   font-size: 13px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #64748b;
+  text-align: left;
 }
 
-.latest-time {
+.latest-measure-time {
+  display: block;
+  width: 100%;
   font-size: 12px;
-  color: var(--admin-muted, #94a3b8);
+  font-variant-numeric: tabular-nums;
+  color: #94a3b8;
+  white-space: nowrap;
+  text-align: left;
 }
 
-.empty-val {
-  color: var(--admin-muted, #94a3b8);
-  font-size: 13px;
+.latest-measure-empty {
+  display: block;
+  font-size: 12px;
+  color: #cbd5e1;
+  text-align: left;
 }
 
 .conclusion-block {
-  margin-top: 16px;
-  padding: 14px;
-  background: var(--ink-50, #f8fafc);
-  border: 1px solid var(--ink-100, #f1f5f9);
+  flex: 0 0 auto;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
   border-radius: 10px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .conclusion-label {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-700);
+  color: var(--ink-700, #334155);
 }
 
-.exam-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.conclusion-input {
+  width: 100% !important;
+}
+
+.conclusion-input :deep(.el-textarea__inner) {
+  width: 100% !important;
+  min-height: 52px !important;
+  max-height: 72px;
+  line-height: 1.45;
 }
 
 .editor-toolbar {
@@ -1297,11 +1784,10 @@ watch(
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  padding: 12px 16px;
+  padding: 10px 12px;
   background: #fff;
   border: 1px solid var(--admin-border, #e2e8f0);
-  border-radius: var(--admin-radius, 12px);
-  box-shadow: var(--admin-shadow);
+  border-radius: 10px;
 }
 
 .toolbar-left,
@@ -1309,6 +1795,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .detail-findings-title {
@@ -1325,35 +1812,15 @@ watch(
   padding: 24px 12px;
 }
 
-@media (max-width: 900px) {
-  .editor-body {
-    grid-template-columns: 1fr;
+@media (max-width: 1100px) {
+  .split-workspace {
+    flex-direction: column;
   }
 
-  .panel-side {
-    border-right: 0;
-    border-bottom: 1px solid var(--admin-border, #e5e7eb);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 8px;
-    max-height: none;
-  }
-
-  .panel-side-title {
-    width: 100%;
-    padding: 4px 8px 8px;
-  }
-
-  .panel-item {
-    width: auto;
-    border-radius: 6px;
-    padding: 8px 12px;
-  }
-
-  .panel-item.active {
-    box-shadow: none;
-    background: var(--brand-50);
+  .split-right {
+    flex: 0 0 auto;
+    max-width: none;
+    max-height: 360px;
   }
 }
 </style>

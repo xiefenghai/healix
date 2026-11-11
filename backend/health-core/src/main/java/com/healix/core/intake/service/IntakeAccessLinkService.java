@@ -273,7 +273,7 @@ public class IntakeAccessLinkService {
      *   <li>性别不明 → 用全名</li>
      * </ul>
      */
-    static String politeAddress(String rawName, String gender, LocalDate birthday) {
+    public static String politeAddress(String rawName, String gender, LocalDate birthday) {
         String name = MobileNumbers.trimName(rawName);
         if (!StringUtils.hasText(name)) {
             return "朋友";
@@ -294,7 +294,7 @@ public class IntakeAccessLinkService {
     }
 
     /** 触达话术：健管师落款 + 利益点 + 有效期前置（不含机构抬头）。 */
-    static String buildCopyText(String staffName, String address, String url, int days) {
+    public static String buildCopyText(String staffName, String address, String url, int days) {
         StringBuilder sb = new StringBuilder();
         String who = StringUtils.hasText(address) ? address.trim() : "朋友";
         sb.append(who).append("您好，");

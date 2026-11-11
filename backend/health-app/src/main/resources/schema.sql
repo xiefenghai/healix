@@ -595,6 +595,30 @@ CREATE TABLE IF NOT EXISTS lab_result_item (
     KEY idx_lab_item_report (report_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检验明细项';
 
+-- OCR 纠错 Diff：AI 初值 vs 医生终值，供未修改率 / 准确率统计
+CREATE TABLE IF NOT EXISTS lab_ocr_diff_log (
+    pk_id             BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
+    id                VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
+    tenant_id         VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    org_id            VARCHAR(32)  NULL COMMENT '工作机构业务ID',
+    people_id         VARCHAR(32)  NOT NULL COMMENT '患者业务ID',
+    report_id         VARCHAR(32)  NOT NULL COMMENT '检验报告业务ID',
+    staff_id          VARCHAR(32)  NULL COMMENT '确认员工业务ID',
+    image_key         VARCHAR(128) NULL COMMENT '原图对象键',
+    total_items       INT          NOT NULL DEFAULT 0 COMMENT '对比项目数',
+    unchanged_items   INT          NOT NULL DEFAULT 0 COMMENT '未修改项数',
+    changed_items     INT          NOT NULL DEFAULT 0 COMMENT '已修改项数',
+    diff_json         LONGTEXT     NOT NULL COMMENT '完整 Diff JSON',
+    is_deleted        TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
+    gmt_created       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    gmt_modified      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录修改时间',
+    gmt_deleted       DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
+    PRIMARY KEY (pk_id),
+    UNIQUE KEY uk_lab_ocr_diff_log_id (id),
+    KEY idx_lab_ocr_diff_report (report_id),
+    KEY idx_lab_ocr_diff_tenant_time (tenant_id, gmt_created)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检验 OCR 纠错 Diff 日志';
+
 -- =============================================================================
 -- 检查报告（患者级；B 端代录 / C 端自行上报）
 -- =============================================================================

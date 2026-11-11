@@ -58,6 +58,7 @@ import {
   type EnergyTarget,
 } from '../../shared/energy-target'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from '../../shared/CarePlanPreviewDialog.vue'
+import CarePlanPreviewContent from '../../shared/CarePlanPreviewContent.vue'
 import CarePlanBriefingDrawer, {
   type CarePlanBriefingSubmitPayload,
 } from '../../shared/CarePlanBriefingDrawer.vue'
@@ -176,6 +177,7 @@ interface CarePlanBundle {
   draft?: {
     id: string
     version: number
+    schemaVersion?: number
     source?: string
     exercise?: any
     diet?: any
@@ -366,9 +368,308 @@ const listLoading = ref(false)
 const listItems = ref<CarePlanListItem[]>([])
 const listTotal = ref(0)
 const listPage = ref(1)
-const listPageSize = ref(10)
+/** 与后端 pageListItems 上限一致；卡片流一次拉全量分层展示 */
+const listPageSize = ref(50)
 const previewVisible = ref(false)
 const previewData = ref<CarePlanPreviewData | null>(null)
+
+const activeListItems = computed(() => listItems.value.filter((r) => r.status === 'ACTIVE'))
+const draftListItems = computed(() =>
+  listItems.value.filter((r) => r.status === 'DRAFT' || r.recordType === 'DRAFT'),
+)
+/** 历史弹窗：含已生效 + 归档版本，按时间倒序 */
+const planVersionHistory = computed(() => {
+  const versions = listItems.value
+    .filter((r) => r.recordType === 'VERSION')
+    .slice()
+    .sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0
+      return tb - ta
+    })
+  const seen = new Map<string, number>()
+  return versions.map((row) => {
+    const verKey = shortVersionLabel(row)
+    const n = (seen.get(verKey) || 0) + 1
+    seen.set(verKey, n)
+    const status = String(row.status || '').toUpperCase()
+    return {
+      row,
+      ver: verKey,
+      isCurrent: status === 'ACTIVE',
+      isSecondary: n > 1,
+      changeHint: String(row.goalSummary || '').trim(),
+    }
+  })
+})
+
+const historyFilter = ref('')
+const filteredPlanVersionHistory = computed(() => {
+  const q = historyFilter.value.trim().toLowerCase()
+  if (!q) return planVersionHistory.value
+  return planVersionHistory.value.filter((item) => {
+    const hay = [
+      item.ver,
+      item.row.staffName,
+      item.row.title,
+      item.changeHint,
+      item.row.createdAt,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return hay.includes(q)
+  })
+})
+
+const historyDrawerOpen = ref(false)
+const historySelectedIds = ref<string[]>([])
+const historyFocusId = ref<string | null>(null)
+const historyPaneMode = ref<'idle' | 'preview' | 'diff'>('idle')
+const historyDetailCache = ref<Record<string, any>>({})
+const historyPaneLoading = ref(false)
+const historyDiffLeftMeta = ref<{ id: string; ver: string } | null>(null)
+const historyDiffRightMeta = ref<{ id: string; ver: string } | null>(null)
+
+const historySelectedCount = computed(() => historySelectedIds.value.length)
+const historyCanCompare = computed(() => historySelectedIds.value.length === 2)
+
+const historyFocusItem = computed(() =>
+  planVersionHistory.value.find((x) => x.row.id === historyFocusId.value) || null,
+)
+const historyFocusDetail = computed(() =>
+  historyFocusId.value ? historyDetailCache.value[historyFocusId.value] || null : null,
+)
+
+/** 卡片上的历史次数：跟当前方案自身 versionNo 解耦，避免草稿/生效共用总列表长度 */
+function planHistoryCount(row: CarePlanListItem): number {
+  const n = row.versionNo != null ? Number(row.versionNo) : NaN
+  if (Number.isFinite(n) && n > 0) return Math.floor(n)
+  const label = shortVersionLabel(row)
+  const matched = label.match(/(\d+)/)
+  if (matched) {
+    const fromLabel = Number(matched[1])
+    if (Number.isFinite(fromLabel) && fromLabel > 0) return fromLabel
+  }
+  if (row.recordType === 'VERSION' || row.status === 'ACTIVE') {
+    return planVersionHistory.value.length
+  }
+  return 0
+}
+
+function openHistoryDrawer() {
+  if (!planVersionHistory.value.length) {
+    ElMessage.info('暂无历史版本')
+    return
+  }
+  historyDrawerOpen.value = true
+}
+
+function onHistoryDrawerClosed() {
+  historyFilter.value = ''
+  historySelectedIds.value = []
+  historyPaneMode.value = 'idle'
+  historyFocusId.value = null
+  historyDiffLeftMeta.value = null
+  historyDiffRightMeta.value = null
+}
+
+function isHistorySelected(id: string) {
+  return historySelectedIds.value.includes(id)
+}
+
+function clearHistorySelection() {
+  historySelectedIds.value = []
+  if (historyPaneMode.value === 'diff') {
+    historyPaneMode.value = 'idle'
+    historyDiffLeftMeta.value = null
+    historyDiffRightMeta.value = null
+  }
+}
+
+function toggleHistorySelect(id: string, checked: boolean) {
+  if (checked) {
+    if (historySelectedIds.value.includes(id)) return
+    if (historySelectedIds.value.length >= 2) {
+      ElMessage.warning('最多只能选择 2 个版本进行对比')
+      return
+    }
+    historySelectedIds.value = [...historySelectedIds.value, id]
+    return
+  }
+  historySelectedIds.value = historySelectedIds.value.filter((x) => x !== id)
+  if (historyPaneMode.value === 'diff' && historySelectedIds.value.length < 2) {
+    historyPaneMode.value = 'idle'
+    historyDiffLeftMeta.value = null
+    historyDiffRightMeta.value = null
+  }
+}
+
+async function fetchHistoryVersionDetail(id: string) {
+  if (historyDetailCache.value[id]) return historyDetailCache.value[id]
+  const res = await api<{ data: any }>(`/api/b/v1/patients/${peopleId.value}/care-plan/versions/${id}`)
+  historyDetailCache.value = { ...historyDetailCache.value, [id]: res.data }
+  return res.data
+}
+
+function buildHistoryPreviewData(
+  item: { ver: string; row: CarePlanListItem } | null | undefined,
+  detail: any,
+): CarePlanPreviewData | null {
+  if (!item || !detail) return null
+  const row = item.row
+  return {
+    title: row.title || detail.title,
+    goalSummary: row.goalSummary || detail.exercise?.goal,
+    summary: readPlanSummary(detail),
+    rationaleOverview: readRationaleOverview(detail),
+    source: detail.source || (row.sourceMode === 'AI' ? 'AI' : row.sourceMode),
+    versionLabel: item.ver,
+    versionNo: row.versionNo,
+    status: row.status,
+    exercise: detail.exercise,
+    diet: detail.diet,
+    execution: detail.execution,
+    publishedAt: detail.publishedAt || row.createdAt,
+    peopleName: patientName.value || undefined,
+    signStatus: detail.signStatus,
+  }
+}
+
+function historyItemById(id?: string | null) {
+  if (!id) return null
+  return planVersionHistory.value.find((x) => x.row.id === id) || null
+}
+
+async function viewHistoryVersion(row: CarePlanListItem) {
+  if (!historyDrawerOpen.value) historyDrawerOpen.value = true
+  historyFocusId.value = row.id
+  historyPaneMode.value = 'preview'
+  historyPaneLoading.value = true
+  try {
+    await fetchHistoryVersionDetail(row.id)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '加载版本失败')
+    historyPaneMode.value = 'idle'
+  } finally {
+    historyPaneLoading.value = false
+  }
+}
+
+async function runHistoryCompare() {
+  if (historySelectedIds.value.length !== 2) {
+    ElMessage.warning('请勾选两个版本再对比')
+    return
+  }
+  const [idA, idB] = historySelectedIds.value
+  const metaA = planVersionHistory.value.find((x) => x.row.id === idA)
+  const metaB = planVersionHistory.value.find((x) => x.row.id === idB)
+  if (!metaA || !metaB) return
+  // 左侧较旧、右侧较新
+  const tA = metaA.row.createdAt ? new Date(metaA.row.createdAt).getTime() : 0
+  const tB = metaB.row.createdAt ? new Date(metaB.row.createdAt).getTime() : 0
+  const left = tA <= tB ? metaA : metaB
+  const right = tA <= tB ? metaB : metaA
+  historyPaneLoading.value = true
+  historyPaneMode.value = 'diff'
+  try {
+    await Promise.all([
+      fetchHistoryVersionDetail(left.row.id),
+      fetchHistoryVersionDetail(right.row.id),
+    ])
+    historyDiffLeftMeta.value = { id: left.row.id, ver: left.ver }
+    historyDiffRightMeta.value = { id: right.row.id, ver: right.ver }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '对比失败')
+    historyPaneMode.value = 'idle'
+    historyDiffLeftMeta.value = null
+    historyDiffRightMeta.value = null
+  } finally {
+    historyPaneLoading.value = false
+  }
+}
+
+/** 历史抽屉右侧：复用方案详情同一套内容组件 */
+const historyPreviewData = computed((): CarePlanPreviewData | null =>
+  buildHistoryPreviewData(historyFocusItem.value, historyFocusDetail.value),
+)
+
+const historyDiffLeftData = computed((): CarePlanPreviewData | null => {
+  const meta = historyDiffLeftMeta.value
+  const item = historyItemById(meta?.id)
+  const detail = meta?.id ? historyDetailCache.value[meta.id] : null
+  return buildHistoryPreviewData(item, detail)
+})
+
+const historyDiffRightData = computed((): CarePlanPreviewData | null => {
+  const meta = historyDiffRightMeta.value
+  const item = historyItemById(meta?.id)
+  const detail = meta?.id ? historyDetailCache.value[meta.id] : null
+  return buildHistoryPreviewData(item, detail)
+})
+
+const historyDiffLeftRestorable = computed(() =>
+  canRestoreHistoryItem(historyItemById(historyDiffLeftMeta.value?.id)),
+)
+const historyDiffRightRestorable = computed(() =>
+  canRestoreHistoryItem(historyItemById(historyDiffRightMeta.value?.id)),
+)
+
+const historyImmersiveCompare = computed(() => historyPaneMode.value === 'diff')
+const historyDrawerSize = computed(() => (historyImmersiveCompare.value ? '94%' : '70%'))
+const historyCompareTitle = computed(() => {
+  const left = historyDiffLeftMeta.value?.ver || '旧版'
+  const right = historyDiffRightMeta.value?.ver || '新版'
+  return `对比模式：旧版 ${left} vs 新版 ${right}`
+})
+
+function exitHistoryCompare() {
+  historyPaneMode.value = 'idle'
+  historyDiffLeftMeta.value = null
+  historyDiffRightMeta.value = null
+}
+
+function canRestoreHistoryItem(item: { isCurrent?: boolean; row: CarePlanListItem } | null | undefined) {
+  if (!item?.row) return false
+  if (item.isCurrent) return false
+  return String(item.row.status || '').toUpperCase() !== 'ACTIVE'
+}
+
+function historyPreviewStatusLabel(status?: string) {
+  const s = String(status || '').toUpperCase()
+  if (s === 'ACTIVE') return '已生效'
+  if (s === 'DRAFT') return '草稿'
+  return '历史版本'
+}
+
+function historyPreviewStatusType(status?: string): 'success' | 'warning' | 'info' {
+  const s = String(status || '').toUpperCase()
+  if (s === 'ACTIVE') return 'success'
+  if (s === 'DRAFT') return 'warning'
+  return 'info'
+}
+
+function historyPreviewReviewLabel(
+  item: { row: CarePlanListItem } | null | undefined,
+  detail: any,
+) {
+  const sign = String(detail?.signStatus || '').toUpperCase()
+  if (sign === 'SIGNED') return '医生已签署'
+  const source = detail?.source || item?.row?.sourceMode
+  if (isAiGeneratedCarePlanSource(source) || source === 'AI') return '健管师已审核'
+  return ''
+}
+
+function onHistoryRowMore(cmd: string | number, row: CarePlanListItem) {
+  if (cmd === 'restore') void restoreHistoryVersion(row)
+}
+
+function restoreHistoryById(id?: string | null) {
+  if (!id) return
+  const item = planVersionHistory.value.find((x) => x.row.id === id)
+  if (!item || !canRestoreHistoryItem(item)) return
+  void restoreHistoryVersion(item.row)
+}
 
 interface CheckinRow {
   id: string
@@ -686,6 +987,119 @@ const exercisePlanGlance = computed(() => {
     total: aerobicRaw + strength + stretch,
   }
 })
+
+/** 总览页三栏轻量摘要：一眼看全运动 / 饮食 / 执行 */
+const overviewDomainCards = computed(() => {
+  const goal = String(editForm.exerciseGoal || '').trim()
+  const exStats = exercisePlanGlance.value
+  const exerciseBody = goal
+    || (exStats.sessions
+      ? `共 ${exStats.sessions} 课次 · 有氧折算 ${exStats.moderateEquiv || 0} 分钟`
+      : '暂未填写运动安排')
+  const exerciseMeta = exStats.sessions
+    ? [
+        `有氧折算 ${exStats.moderateEquiv || 0}′`,
+        exStats.strength ? `力量 ${exStats.strength}′` : '',
+        `共 ${exStats.sessions} 课次`,
+      ].filter(Boolean)
+    : []
+
+  const principles = String(editForm.dietPrinciples || '')
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const dietBody =
+    (editForm.energyKcal ? `目标约 ${editForm.energyKcal} kcal/日` : '') ||
+    principles[0] ||
+    String(editForm.sampleDay.breakfast?.text || '').trim() ||
+    '暂未填写饮食安排'
+  const dietMeta = [
+    editForm.energyKcal ? `${editForm.energyKcal} kcal` : '',
+    editForm.dietRecommended.length ? `推荐 ${editForm.dietRecommended.length}` : '',
+    editForm.dietLimited.length ? `限制 ${editForm.dietLimited.length}` : '',
+  ].filter(Boolean)
+
+  const enabledTasks = (editForm.tasks || []).filter((t) => t.enabled !== false)
+  const taskTitles = enabledTasks
+    .map((t) => String(t.title || '').trim())
+    .filter(Boolean)
+    .slice(0, 2)
+  const executionBody =
+    taskTitles.join(' · ') ||
+    (editForm.horizonDays ? `执行周期 ${editForm.horizonDays} 天` : '暂未填写执行任务')
+  const executionMeta = [
+    editForm.horizonDays ? `${editForm.horizonDays} 天周期` : '',
+    `${enabledTasks.length} 项任务`,
+  ].filter(Boolean)
+
+  return [
+    {
+      key: 'exercise' as const,
+      title: '运动方案',
+      tone: 'brand',
+      body: exerciseBody,
+      meta: exerciseMeta,
+    },
+    {
+      key: 'diet' as const,
+      title: '饮食方案',
+      tone: 'teal',
+      body: dietBody,
+      meta: dietMeta,
+    },
+    {
+      key: 'execution' as const,
+      title: '执行计划',
+      tone: 'violet',
+      body: executionBody,
+      meta: executionMeta,
+    },
+  ]
+})
+
+async function openActiveVersionPreview() {
+  const versionId = bundle.value?.activeVersion?.id
+  if (!versionId || !peopleId.value) return
+  listLoading.value = true
+  try {
+    const res = await api<{
+      data: {
+        id: string
+        source?: string
+        versionLabel?: string
+        exercise?: any
+        diet?: any
+        execution?: any
+        publishedAt?: string
+        signStatus?: string
+      }
+    }>(`/api/b/v1/patients/${peopleId.value}/care-plan/versions/${versionId}`)
+    const v = res.data
+    previewData.value = {
+      title: bundle.value?.plan?.title,
+      goalSummary: bundle.value?.plan?.goalSummary || v.exercise?.goal,
+      summary: readPlanSummary(v),
+      rationaleOverview: readRationaleOverview(v),
+      source: v.source,
+      versionLabel: v.versionLabel || activeSchemaLabel.value,
+      status: 'ACTIVE',
+      exercise: v.exercise,
+      diet: v.diet,
+      execution: v.execution,
+      publishedAt: v.publishedAt,
+      signStatus: v.signStatus,
+      peopleName: patientName.value || undefined,
+      checkins: [],
+      checkinsLoading: true,
+    }
+    previewVisible.value = true
+    void loadVersionCheckins(versionId, v.publishedAt)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '打开已生效方案失败')
+  } finally {
+    listLoading.value = false
+  }
+}
 
 function dayLabel(code: string) {
   return DAY_OPTIONS.find((d) => d.value === code)?.label || code || '训练日'
@@ -1568,8 +1982,12 @@ function syncMainTabFromQuery() {
     )
     return
   }
-  if (tab === 'list' || tab === 'compose' || tab === 'checkins') {
-    mainTab.value = tab
+  if (tab === 'checkins') {
+    mainTab.value = 'checkins'
+  } else if (tab === 'compose' && isEmbedded.value) {
+    mainTab.value = 'compose'
+  } else {
+    mainTab.value = 'list'
   }
   adjustHintVisible.value = String(route.query.adjustHint || '') === '1'
 }
@@ -1652,20 +2070,47 @@ function onCheckinHistoryRangeChange() {
   loadCheckinHistory()
 }
 
-function onListPageChange(page: number) {
-  listPage.value = page
-  void loadList()
+function sourceModeTag(mode?: string) {
+  return mode === 'AI' ? '🤖 AI 起草' : '👨‍⚕️ 医生制定'
 }
 
-function sourceModeLabel(mode?: string) {
-  return mode === 'AI' ? 'AI 生成' : '健管制定'
+function shortVersionLabel(row: Pick<CarePlanListItem, 'versionLabel' | 'schemaVersion' | 'versionNo'>) {
+  // 发布序号优先，避免多条历史都显示同一产品规则版本（如全是 V6）
+  if (row.versionNo != null && Number(row.versionNo) > 0) return `v${row.versionNo}`
+  const raw = String(row.versionLabel || '').trim()
+  const matched = raw.match(/v?\d+/i)
+  if (matched) {
+    const n = matched[0].replace(/^v/i, '')
+    return `v${n}`
+  }
+  if (row.schemaVersion != null && row.schemaVersion > 0) return `v${row.schemaVersion}`
+  return 'v—'
 }
 
-function listStatusLabel(status?: string) {
-  if (status === 'DRAFT') return '草稿'
-  if (status === 'ACTIVE') return '已生效'
-  if (status === 'ARCHIVED') return '历史版本'
-  return status || '-'
+function continueDraftEdit() {
+  enterCompose()
+}
+
+async function adjustActivePlan() {
+  if (draftListItems.value.length) {
+    enterCompose()
+    return
+  }
+  saving.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan/edit`, {
+      method: 'POST',
+      body: '{}',
+    })
+    bundle.value = res.data
+    syncFormFromBundle()
+    ElMessage.success('已基于生效版创建草稿')
+    enterCompose()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '打开调整失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 function formatDateTime(iso?: string) {
@@ -1674,6 +2119,106 @@ function formatDateTime(iso?: string) {
   if (Number.isNaN(d.getTime())) return iso
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+/** 历史弹窗用：精确到分钟，去掉秒 */
+function formatDateMinute(iso?: string) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) {
+    const s = String(iso).replace('T', ' ')
+    return s.length >= 16 ? s.slice(0, 16) : s
+  }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+async function restoreHistoryVersion(row: CarePlanListItem) {
+  if (!row || String(row.status || '').toUpperCase() === 'ACTIVE') return
+  try {
+    await ElMessageBox.confirm(
+      `将以 ${shortVersionLabel(row)}（${formatDateMinute(row.createdAt)}）覆盖当前草稿并进入编辑；确认内容无误后再发布生效。是否继续？`,
+      '恢复此版本',
+      { type: 'warning', confirmButtonText: '恢复并编辑' },
+    )
+  } catch {
+    return
+  }
+  listLoading.value = true
+  saving.value = true
+  try {
+    if (!bundle.value) {
+      const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan`)
+      bundle.value = res.data
+    }
+    if (!bundle.value?.draft) {
+      if (!bundle.value?.activeVersion) {
+        ElMessage.warning('暂无已发布方案，无法从历史版本恢复为草稿')
+        return
+      }
+      const edited = await api<{ data: CarePlanBundle }>(
+        `/api/b/v1/patients/${peopleId.value}/care-plan/edit`,
+        { method: 'POST', body: '{}' },
+      )
+      bundle.value = edited.data
+    }
+    const verRes = await api<{
+      data: {
+        source?: string
+        exercise?: any
+        diet?: any
+        execution?: any
+        contextSnapshot?: any
+        safetyFlags?: any
+        title?: string
+      }
+    }>(`/api/b/v1/patients/${peopleId.value}/care-plan/versions/${row.id}`)
+    const v = verRes.data
+    const cur = bundle.value
+    if (!cur?.draft) {
+      ElMessage.error('创建草稿失败')
+      return
+    }
+    bundle.value = {
+      ...cur,
+      plan: cur.plan
+        ? {
+            ...cur.plan,
+            title: row.title || v.title || cur.plan.title,
+            goalSummary: row.goalSummary || cur.plan.goalSummary,
+          }
+        : cur.plan,
+      draft: {
+        ...cur.draft,
+        source: v.source || cur.draft.source || 'MANUAL',
+        exercise: v.exercise,
+        diet: v.diet,
+        execution: v.execution,
+        contextSnapshot: v.contextSnapshot ?? cur.draft.contextSnapshot,
+        safetyFlags: v.safetyFlags ?? cur.draft.safetyFlags,
+      },
+    }
+    syncFormFromBundle()
+    await saveDraft({ quiet: true })
+    ElMessage.success(`已恢复为 ${shortVersionLabel(row)} 的内容`)
+    historyDrawerOpen.value = false
+    enterCompose()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '恢复历史版本失败')
+  } finally {
+    saving.value = false
+    listLoading.value = false
+  }
+}
+
+function onPreviewEdit() {
+  const status = previewData.value?.status
+  previewVisible.value = false
+  if (status === 'DRAFT') {
+    continueDraftEdit()
+    return
+  }
+  void adjustActivePlan()
 }
 
 async function openListDetail(row: CarePlanListItem) {
@@ -1693,12 +2238,14 @@ async function openListDetail(row: CarePlanListItem) {
         summary: readPlanSummary(d),
         rationaleOverview: readRationaleOverview(d),
         source: d.source,
-        versionLabel: row.versionLabel,
+        versionLabel: shortVersionLabel(row),
+        versionNo: row.versionNo,
         status: row.status,
         exercise: d.exercise,
         diet: d.diet,
         execution: d.execution,
         publishedAt: row.createdAt,
+        peopleName: patientName.value || undefined,
       }
       previewVisible.value = true
     } else {
@@ -1712,13 +2259,15 @@ async function openListDetail(row: CarePlanListItem) {
         summary: readPlanSummary(v),
         rationaleOverview: readRationaleOverview(v),
         source: v.source,
-        versionLabel: row.versionLabel,
+        versionLabel: shortVersionLabel(row),
+        versionNo: row.versionNo,
         status: row.status,
         exercise: v.exercise,
         diet: v.diet,
         execution: v.execution,
         publishedAt: v.publishedAt,
         signStatus: v.signStatus,
+        peopleName: patientName.value || undefined,
         checkins: [],
         checkinsLoading: true,
       }
@@ -1802,6 +2351,7 @@ async function openVersionFromQuery() {
       execution: v.execution,
       publishedAt: v.publishedAt,
       signStatus: v.signStatus,
+      peopleName: patientName.value || undefined,
       checkins: [],
       checkinsLoading: true,
     }
@@ -1809,29 +2359,6 @@ async function openVersionFromQuery() {
     void loadVersionCheckins(versionId, v.publishedAt)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '打开方案版本失败')
-  } finally {
-    listLoading.value = false
-  }
-}
-
-async function deleteListItem(row: CarePlanListItem) {
-  try {
-    await ElMessageBox.confirm(`确认删除「${row.title}」？`, '删除方案', { type: 'warning' })
-  } catch {
-    return
-  }
-  listLoading.value = true
-  try {
-    await api(`/api/b/v1/patients/${peopleId.value}/care-plan/items/${row.id}?recordType=${row.recordType}`, {
-      method: 'DELETE',
-    })
-    ElMessage.success('已删除')
-    await loadList()
-    if (row.recordType === 'DRAFT') {
-      await load()
-    }
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '删除失败')
   } finally {
     listLoading.value = false
   }
@@ -1888,7 +2415,9 @@ async function confirmGenerate() {
   }
   if (bundle.value?.draft && generateForm.replaceDraft) {
     try {
-      await ElMessageBox.confirm('AI 生成结果将覆盖当前草稿，是否继续？', 'AI 生成方案', { type: 'warning' })
+      await ElMessageBox.confirm('AI 生成结果将覆盖当前草稿，是否继续？', '重新用 AI 生成', {
+        type: 'warning',
+      })
     } catch {
       return
     }
@@ -1931,7 +2460,7 @@ async function confirmGenerate() {
 async function createBlank() {
   try {
     if (bundle.value?.draft) {
-      await ElMessageBox.confirm('将覆盖当前草稿，是否继续？', '新建空白草稿', { type: 'warning' })
+      await ElMessageBox.confirm('将覆盖当前草稿，是否继续？', '新建空白方案', { type: 'warning' })
     }
   } catch {
     return
@@ -2190,9 +2719,19 @@ async function saveDraft(opts?: { quiet?: boolean }) {
   }
 }
 
-async function discardDraft() {
+async function discardDraft(opts?: { versionLabel?: string }) {
+  const ver = String(opts?.versionLabel || '').trim()
+  const detail = ver
+    ? `丢弃后，您对草稿 ${ver} 的所有修改将无法恢复。`
+    : '丢弃后，您对草稿的所有修改将无法恢复。'
   try {
-    await ElMessageBox.confirm('确认丢弃当前草稿？', '丢弃草稿', { type: 'warning' })
+    await ElMessageBox.confirm(detail, '确认丢弃草稿？', {
+      type: 'warning',
+      confirmButtonText: '确认丢弃',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+      distinguishCancelAndClose: true,
+    })
   } catch {
     return
   }
@@ -2211,6 +2750,10 @@ async function discardDraft() {
   } finally {
     saving.value = false
   }
+}
+
+function discardDraftFromCard(row: CarePlanListItem) {
+  void discardDraft({ versionLabel: shortVersionLabel(row) })
 }
 
 async function signActiveVersion() {
@@ -2573,9 +3116,41 @@ function statusLabel(status?: string) {
   return status || '未创建'
 }
 
-const composeStatusTag = computed(() => {
-  if (composeNeedsBootstrap.value) return '暂无草稿'
-  return statusLabel(bundle.value?.plan?.status)
+const draftSchemaLabel = computed(() => {
+  const sv = bundle.value?.draft?.schemaVersion
+  return sv && sv > 0 ? `V${sv}` : ''
+})
+
+const activeSchemaLabel = computed(() => {
+  const av = bundle.value?.activeVersion
+  if (!av) return ''
+  return av.versionLabel || `V${av.schemaVersion || av.versionNo || ''}`
+})
+
+const composePrimaryStatus = computed(() => {
+  if (composeNeedsBootstrap.value) return { kind: 'empty' as const, text: '暂无草稿' }
+  if (bundle.value?.draft) {
+    const ver = draftSchemaLabel.value
+    return { kind: 'draft' as const, text: ver ? `🟡 草稿 ${ver}` : '🟡 草稿' }
+  }
+  if (bundle.value?.activeVersion) {
+    return { kind: 'active' as const, text: `已生效 ${activeSchemaLabel.value}` }
+  }
+  return { kind: 'empty' as const, text: statusLabel(bundle.value?.plan?.status) }
+})
+
+/** 全屏制定页标题旁状态：全新方案 / 草稿编辑中 */
+const composeModeTag = computed(() => {
+  if (composeNeedsBootstrap.value || (!bundle.value?.draft && !bundle.value?.activeVersion)) {
+    return { kind: 'fresh' as const, text: '✨ 全新方案', type: 'primary' as const }
+  }
+  if (bundle.value?.draft) {
+    if (!bundle.value.activeVersion) {
+      return { kind: 'fresh' as const, text: '✨ 全新方案', type: 'primary' as const }
+    }
+    return { kind: 'draft' as const, text: '📝 草稿编辑中', type: 'warning' as const }
+  }
+  return { kind: 'active' as const, text: `已生效 ${activeSchemaLabel.value}`, type: 'success' as const }
 })
 
 const planStatus = computed(() => bundle.value?.plan?.status)
@@ -2588,6 +3163,112 @@ const canStartComm = computed(
 const canRecordComm = computed(
   () => !!bundle.value?.draft && (planStatus.value === 'REVIEWED' || planStatus.value === 'COMMUNICATING'),
 )
+
+/** 全屏主按钮：按方案流转推进，文案对齐「提交方案 / 保存并生效」 */
+const composePrimaryCta = computed(() => {
+  if (!bundle.value?.draft) {
+    if (bundle.value?.activeVersion) return { key: 'edit' as const, label: '编辑' }
+    return null
+  }
+  if (planStatus.value === 'COMMUNICATING' && bundle.value?.plan?.lastCommResult === 'ACCEPTED') {
+    return { key: 'publish' as const, label: '保存并生效' }
+  }
+  if (canReview.value) return { key: 'submit' as const, label: '提交方案' }
+  if (canStartComm.value && planStatus.value !== 'COMMUNICATING') {
+    return { key: 'comm' as const, label: '发起沟通' }
+  }
+  if (canRecordComm.value && planStatus.value === 'COMMUNICATING') {
+    return { key: 'face' as const, label: '当面沟通·已接受' }
+  }
+  return { key: 'save' as const, label: '保存草稿' }
+})
+
+const composeSidebarAlerts = computed(() => {
+  const items: Array<{ tone: 'danger' | 'warning' | 'info'; text: string }> = []
+  for (const f of hardErrorFlags.value) {
+    if (f?.message) items.push({ tone: 'danger', text: f.message })
+  }
+  if (incompleteTip.value) items.push({ tone: 'info', text: `待完善：${incompleteTip.value}` })
+  for (const sec of topWarnSections.value.slice(0, 3)) {
+    items.push({ tone: 'warning', text: sec.title })
+  }
+  return items
+})
+
+async function runComposePrimaryAction() {
+  const cta = composePrimaryCta.value
+  if (!cta) return
+  if (cta.key === 'edit') {
+    await openEdit()
+    return
+  }
+  if (cta.key === 'save') {
+    await saveDraft()
+    return
+  }
+  if (cta.key === 'submit') {
+    try {
+      await saveDraft({ quiet: true })
+    } catch {
+      return
+    }
+    await markReviewed()
+    return
+  }
+  if (cta.key === 'comm') {
+    await startCommunication()
+    return
+  }
+  if (cta.key === 'face') {
+    await faceToFaceAccept()
+    return
+  }
+  if (cta.key === 'publish') {
+    await publish()
+  }
+}
+
+function previewClientEffect() {
+  const src = bundle.value?.draft || bundle.value?.activeVersion
+  if (!src && !isDraftMode.value) {
+    ElMessage.warning('暂无可预览的方案内容')
+    return
+  }
+  previewData.value = {
+    title: editForm.title || bundle.value?.plan?.title,
+    goalSummary: editForm.goalSummary || editForm.exerciseGoal,
+    summary: editForm.planSummary || readPlanSummary(src),
+    rationaleOverview: editForm.rationaleOverview || readRationaleOverview(src),
+    source: src?.source || currentPlanSource.value,
+    versionLabel: bundle.value?.draft
+      ? draftSchemaLabel.value
+        ? `${draftSchemaLabel.value}·草稿`
+        : '草稿'
+      : activeSchemaLabel.value,
+    status: bundle.value?.draft ? 'DRAFT' : 'ACTIVE',
+    peopleName: patientName.value || undefined,
+    exercise: {
+      goal: editForm.exerciseGoal,
+      weeklyPlan: editForm.weeklyPlan,
+      precautions: lines(editForm.exercisePrecautions),
+      contraindications: lines(editForm.exerciseContraindications),
+    },
+    diet: {
+      principles: lines(editForm.dietPrinciples),
+      energyTarget: editForm.energyTarget,
+      sampleDay: editForm.sampleDay,
+      recommended: editForm.dietRecommended,
+      limited: editForm.dietLimited,
+    },
+    execution: {
+      horizonDays: editForm.horizonDays,
+      tasks: editForm.tasks,
+    },
+    publishedAt: bundle.value?.activeVersion?.publishedAt,
+    signStatus: bundle.value?.activeVersion?.signStatus,
+  }
+  previewVisible.value = true
+}
 
 /** 客户退回（需微调 / 需重做）后的草稿：应露出重新生成入口 */
 const isPostRejectDraft = computed(() => {
@@ -2615,6 +3296,10 @@ function buildRejectInstructionSeed() {
 
 function onComposeMoreCommand(cmd: string | number) {
   const c = String(cmd)
+  if (c === 'save') {
+    void saveDraft()
+    return
+  }
   if (c === 'generate') {
     openGenerateDialog({ seedFromComm: isPostRejectDraft.value })
     return
@@ -2728,24 +3413,85 @@ watch(
 
 <template>
   <div class="care-plan" :class="{ 'care-plan--fullscreen': isFullscreenCompose }">
-    <header v-if="isFullscreenCompose" class="compose-top">
-      <div class="compose-top-left">
+    <header v-if="isFullscreenCompose" class="compose-fs-header">
+      <div class="compose-fs-header-left">
         <button type="button" class="compose-back" title="关闭本页" @click="backFromCompose">
-          关闭
+          取消
         </button>
         <div class="compose-who">
-          <strong>{{ patientName || '患者' }}</strong>
-          <span class="compose-sub">制定管理方案</span>
+          <div class="compose-fs-title-row">
+            <strong>{{ patientName || '患者' }}</strong>
+            <el-tag size="small" effect="light" :type="composeModeTag.type">
+              {{ composeModeTag.text }}
+            </el-tag>
+          </div>
+          <span class="compose-sub">制定 / 编辑管理方案</span>
+          <button
+            v-if="bundle?.draft && bundle?.activeVersion"
+            type="button"
+            class="meta-base-link compose-fs-base"
+            @click="openActiveVersionPreview"
+          >
+            基于已生效版
+            <span class="meta-base-ver">{{ activeSchemaLabel }}</span>
+            修改
+          </button>
         </div>
       </div>
-      <button
-        type="button"
-        class="compose-intake-link"
-        :disabled="intakeDetailLoading"
-        @click="openIntakeDetail"
-      >
-        查看首诊问卷
-      </button>
+      <div class="compose-fs-header-actions">
+        <button
+          type="button"
+          class="compose-intake-link"
+          :disabled="intakeDetailLoading"
+          @click="openIntakeDetail"
+        >
+          首诊问卷
+        </button>
+        <template v-if="composeNeedsBootstrap">
+          <el-button :loading="saving" type="primary" @click="openGenerateDialog()">
+            ✨ 重新用 AI 生成
+          </el-button>
+          <el-button :loading="saving" @click="createBlank">📝 新建空白方案</el-button>
+        </template>
+        <template v-else>
+          <el-button plain :disabled="saving" @click="previewClientEffect">
+            预览 C 端效果
+          </el-button>
+          <el-button
+            v-if="composePrimaryCta"
+            type="primary"
+            :loading="saving"
+            @click="runComposePrimaryAction"
+          >
+            {{ composePrimaryCta.label }}
+          </el-button>
+          <el-dropdown trigger="click" @command="onComposeMoreCommand">
+            <el-button :loading="saving" class="compose-more-icon" title="更多操作">
+              ⋮
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-if="bundle?.draft" command="save">
+                  另存为草稿
+                </el-dropdown-item>
+                <el-dropdown-item command="generate">✨ 重新用 AI 生成</el-dropdown-item>
+                <el-dropdown-item command="blank">📝 新建空白方案</el-dropdown-item>
+                <el-dropdown-item v-if="canDoctorSign" command="sign" divided>
+                  医生签署
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="bundle?.draft"
+                  command="discard"
+                  divided
+                  class="compose-more-discard"
+                >
+                  废弃当前草稿
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
+      </div>
     </header>
     <el-alert
       v-if="adjustHintVisible"
@@ -2764,13 +3510,12 @@ watch(
       @tab-change="onMainTabChange"
     >
       <el-tab-pane label="管理方案列表" name="list" />
-      <el-tab-pane label="制定新的方案" name="compose" />
-      <el-tab-pane label="患者打卡" name="checkins" />
+      <el-tab-pane label="患者打卡记录" name="checkins" />
     </el-tabs>
 
     <div v-show="mainTab === 'checkins'" v-loading="checkinLoading" class="checkin-panel section-card">
       <div class="panel-head">
-        <h3 class="section-title">患者打卡</h3>
+        <h3 class="section-title">患者打卡记录</h3>
         <div class="checkin-toolbar">
           <el-date-picker
             v-model="checkinDate"
@@ -2855,109 +3600,160 @@ watch(
     <div v-show="mainTab === 'list'" v-loading="listLoading" class="list-panel section-card">
       <div class="panel-head">
         <h3 class="section-title">管理方案列表</h3>
+        <el-button type="primary" :loading="saving" @click="enterCompose()">
+          + 制定新方案
+        </el-button>
       </div>
-      <div class="panel-body">
-        <el-table v-if="listItems.length || listLoading" :data="listItems" stripe>
-          <el-table-column prop="title" label="方案标题" min-width="140" show-overflow-tooltip />
-          <el-table-column
-            prop="goalSummary"
-            label="方案摘要"
-            min-width="220"
-            show-overflow-tooltip
+      <div class="panel-body plan-flow">
+        <el-empty
+          v-if="!listLoading && activeListItems.length === 0 && draftListItems.length === 0"
+          class="page-empty"
+          description="暂无管理方案记录"
+        >
+          <el-button type="primary" :loading="saving" @click="enterCompose()">
+            + 制定新方案
+          </el-button>
+        </el-empty>
+
+        <template v-else>
+          <!-- 当前生效 -->
+          <article
+            v-for="row in activeListItems"
+            :key="`active-${row.id}`"
+            class="plan-card plan-card--active"
           >
-            <template #default="{ row }">
-              <span :class="['list-goal-summary', { 'is-empty': !row.goalSummary }]">
-                {{ row.goalSummary || '-' }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column label="制定方式" width="100">
-            <template #default="{ row }">{{ sourceModeLabel(row.sourceMode) }}</template>
-          </el-table-column>
-          <el-table-column prop="versionLabel" label="规则版本" width="110" />
-          <el-table-column prop="staffName" label="制定人" width="120" show-overflow-tooltip />
-          <el-table-column label="制定时间" width="180">
-            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-          </el-table-column>
-          <el-table-column label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : row.status === 'DRAFT' ? 'warning' : 'info'">
-                {{ listStatusLabel(row.status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="140" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="openListDetail(row)">详情</el-button>
-              <el-button v-if="row.deletable" link type="danger" @click="deleteListItem(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-if="!listLoading && listItems.length === 0" class="page-empty" description="暂无管理方案记录" />
-        <div v-if="listTotal > 0" class="list-pagination">
-          <el-pagination
-            v-model:current-page="listPage"
-            :page-size="listPageSize"
-            :total="listTotal"
-            layout="total, prev, pager, next"
-            @current-change="onListPageChange"
-          />
-        </div>
+            <header class="plan-card-head">
+              <div class="plan-card-title-row">
+                <h4 class="plan-card-title">{{ row.title || '未命名方案' }}</h4>
+                <el-tag size="small" effect="plain" class="plan-source-tag">
+                  {{ sourceModeTag(row.sourceMode) }}
+                </el-tag>
+                <button
+                  type="button"
+                  class="plan-ver-chip"
+                  title="打开历史版本"
+                  @click="openHistoryDrawer"
+                >
+                  {{ shortVersionLabel(row) }}
+                </button>
+              </div>
+              <el-tag size="small" type="success" effect="light">已生效</el-tag>
+            </header>
+            <p class="plan-card-summary" :class="{ empty: !row.goalSummary }">
+              {{ row.goalSummary || '暂无方案摘要' }}
+            </p>
+            <div class="plan-card-meta">
+              <span>制定人 {{ row.staffName || '—' }}</span>
+              <span>{{ formatDateMinute(row.createdAt) }}</span>
+            </div>
+            <footer class="plan-card-actions">
+              <button
+                v-if="planHistoryCount(row) > 0"
+                type="button"
+                class="plan-card-history-tag"
+                @click="openHistoryDrawer"
+              >
+                🕒 历史版本({{ planHistoryCount(row) }})
+              </button>
+              <el-button plain @click="openListDetail(row)">查看方案详情</el-button>
+              <el-button type="primary" :loading="saving" @click="adjustActivePlan">调整方案</el-button>
+            </footer>
+          </article>
+
+          <!-- 草稿 -->
+          <article
+            v-for="row in draftListItems"
+            :key="`draft-${row.id}`"
+            class="plan-card plan-card--draft"
+          >
+            <header class="plan-card-head">
+              <div class="plan-card-title-row">
+                <h4 class="plan-card-title">{{ row.title || '未命名草稿' }}</h4>
+                <el-tag size="small" effect="plain" class="plan-source-tag">
+                  {{ sourceModeTag(row.sourceMode) }}
+                </el-tag>
+                <button
+                  type="button"
+                  class="plan-ver-chip"
+                  title="打开历史版本"
+                  @click="openHistoryDrawer"
+                >
+                  {{ shortVersionLabel(row) }}
+                </button>
+              </div>
+              <el-tag size="small" type="warning" effect="light">草稿</el-tag>
+            </header>
+            <p class="plan-card-summary" :class="{ empty: !row.goalSummary }">
+              {{ row.goalSummary || '暂无方案摘要' }}
+            </p>
+            <div class="plan-card-meta">
+              <span>制定人 {{ row.staffName || '—' }}</span>
+              <span>{{ formatDateMinute(row.createdAt) }}</span>
+            </div>
+            <footer class="plan-card-actions">
+              <button
+                v-if="planHistoryCount(row) > 0"
+                type="button"
+                class="plan-card-history-tag"
+                @click="openHistoryDrawer"
+              >
+                🕒 历史版本({{ planHistoryCount(row) }})
+              </button>
+              <el-button
+                text
+                class="plan-card-discard"
+                :loading="saving"
+                @click="discardDraftFromCard(row)"
+              >
+                丢弃草稿
+              </el-button>
+              <el-button plain @click="openListDetail(row)">预览</el-button>
+              <el-button type="primary" @click="continueDraftEdit">继续编辑</el-button>
+            </footer>
+          </article>
+        </template>
       </div>
     </div>
 
-    <div v-show="mainTab === 'compose'" v-loading="loading" class="compose-panel">
-    <div class="toolbar section-card cp-meta">
+    <div
+      v-show="mainTab === 'compose'"
+      v-loading="loading"
+      class="compose-panel"
+      :class="{ 'compose-panel--fs': isFullscreenCompose }"
+    >
+    <div class="compose-fs-shell">
+    <div v-if="!isFullscreenCompose" class="toolbar section-card cp-meta">
       <div class="meta">
-        <el-tag size="small" effect="plain">{{ composeStatusTag }}</el-tag>
-        <span v-if="bundle?.activeVersion" class="meta-text">
-          生效版 {{ bundle.activeVersion.versionLabel || ('V' + (bundle.activeVersion.schemaVersion || 1)) }}
-        </span>
         <el-tag
-          v-if="bundle?.activeVersion?.signStatus === 'SIGNED'"
           size="small"
-          type="success"
-          effect="plain"
+          effect="light"
+          :type="
+            composePrimaryStatus.kind === 'draft'
+              ? 'warning'
+              : composePrimaryStatus.kind === 'active'
+                ? 'success'
+                : 'info'
+          "
         >
-          已医生签署
+          {{ composePrimaryStatus.text }}
         </el-tag>
-        <el-tag
-          v-else-if="bundle?.activeVersion"
-          size="small"
-          type="info"
-          effect="plain"
+        <button
+          v-if="bundle?.draft && bundle?.activeVersion"
+          type="button"
+          class="meta-base-link"
+          @click="openActiveVersionPreview"
         >
-          待医生签署
-        </el-tag>
-        <span v-if="bundle?.draft" class="meta-text draft">编辑中草稿</span>
-        <el-tooltip
-          v-if="showAiDisclaimer && bundle?.plan && !composeNeedsBootstrap"
-          placement="bottom"
-          :show-after="200"
-        >
-          <template #content>
-            <div class="ai-tip-pop">
-              {{
-                isDraftMode
-                  ? 'AI 辅助起草，待健管师确认后发布。仅供健康管理参考，不构成医学诊断或处方。'
-                  : '经健管师审核后发布，供健康管理参考，不构成医学诊断或处方。'
-              }}
-            </div>
-          </template>
-          <button type="button" class="ai-tip-chip">
-            {{ isDraftMode ? 'AI 辅助 · 待确认' : 'AI 辅助 · 已审核' }}
-          </button>
-        </el-tooltip>
-        <span v-if="bundle?.plan?.reviewedAt" class="meta-text">已审核 · {{ bundle.plan.reviewedAt }}</span>
-        <span v-if="bundle?.plan?.lastCommResult" class="meta-text">
-          沟通 {{ lastCommResultLabel(bundle.plan.lastCommResult) }}
-          <template v-if="bundle.plan.lastCommNote"> · {{ bundle.plan.lastCommNote }}</template>
-        </span>
+          基于已生效版
+          <span class="meta-base-ver">{{ activeSchemaLabel }}</span>
+          修改
+        </button>
       </div>
       <div class="actions">
         <template v-if="composeNeedsBootstrap">
-          <el-button :loading="saving" type="primary" @click="openGenerateDialog()">AI 生成方案</el-button>
-          <el-button :loading="saving" @click="createBlank">新建空白草稿</el-button>
+          <el-button :loading="saving" type="primary" @click="openGenerateDialog()">
+            ✨ 重新用 AI 生成
+          </el-button>
+          <el-button :loading="saving" @click="createBlank">📝 新建空白方案</el-button>
         </template>
         <template v-else>
           <el-button
@@ -3007,11 +3803,16 @@ watch(
             <el-button :loading="saving">更多</el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="generate">AI 生成方案</el-dropdown-item>
-                <el-dropdown-item command="blank">新建空白草稿</el-dropdown-item>
+                <el-dropdown-item command="generate">✨ 重新用 AI 生成</el-dropdown-item>
+                <el-dropdown-item command="blank">📝 新建空白方案</el-dropdown-item>
                 <el-dropdown-item v-if="canDoctorSign" command="sign" divided>医生签署</el-dropdown-item>
-                <el-dropdown-item v-if="bundle?.draft" command="discard" divided>
-                  丢弃草稿
+                <el-dropdown-item
+                  v-if="bundle?.draft"
+                  command="discard"
+                  divided
+                  class="compose-more-discard"
+                >
+                  🗑️ 废弃当前草稿
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -3132,13 +3933,20 @@ watch(
       <AllergyPanel v-if="allergyDialogOpen" :people-id="peopleId" />
     </el-dialog>
 
+    <div
+      class="compose-fs-grid"
+      :class="{ 'compose-fs-grid--split': isFullscreenCompose && bundle?.plan && !composeNeedsBootstrap }"
+    >
+    <div class="compose-fs-main">
     <el-empty
       v-if="(!bundle?.plan || composeNeedsBootstrap) && !loading"
       class="page-empty section-card"
       :description="composeNeedsBootstrap ? '草稿已丢弃，还没有可编辑的方案' : '尚未创建管理方案'"
     >
-      <el-button type="primary" :loading="saving" @click="openGenerateDialog">AI 生成方案</el-button>
-      <el-button v-if="composeNeedsBootstrap" :loading="saving" @click="createBlank">新建空白草稿</el-button>
+      <el-button type="primary" :loading="saving" @click="openGenerateDialog">✨ 重新用 AI 生成</el-button>
+      <el-button v-if="composeNeedsBootstrap" :loading="saving" @click="createBlank">
+        📝 新建空白方案
+      </el-button>
     </el-empty>
 
     <template v-else-if="bundle?.plan && !composeNeedsBootstrap">
@@ -3225,6 +4033,27 @@ watch(
             <span class="hint">当前为已发布只读内容。修改请点「编辑」开新草稿。</span>
           </el-form-item>
         </el-form>
+
+        <div class="overview-domain-grid" aria-label="方案全貌摘要">
+          <button
+            v-for="card in overviewDomainCards"
+            :key="card.key"
+            type="button"
+            class="overview-domain-card"
+            :data-tone="card.tone"
+            @click="subTab = card.key"
+          >
+            <header class="overview-domain-card-head">
+              <span class="overview-domain-card-title">{{ card.title }}</span>
+              <span class="overview-domain-card-go">查看 →</span>
+            </header>
+            <p class="overview-domain-card-body">{{ card.body }}</p>
+            <div v-if="card.meta.length" class="overview-domain-card-meta">
+              <span v-for="(m, i) in card.meta" :key="i">{{ m }}</span>
+            </div>
+          </button>
+        </div>
+
         <div
           v-if="bundle.communicationHistory && bundle.communicationHistory.length"
           class="comm-history"
@@ -4465,6 +5294,100 @@ watch(
         </div>
       </div>
     </template>
+    </div>
+
+    <aside
+      v-if="isFullscreenCompose && bundle?.plan && !composeNeedsBootstrap"
+      class="compose-fs-aside"
+    >
+      <section class="compose-aside-card">
+        <h4 class="compose-aside-title">患者摘要</h4>
+        <dl class="compose-aside-dl">
+          <div>
+            <dt>姓名</dt>
+            <dd>{{ patientName || '—' }}</dd>
+          </div>
+          <div>
+            <dt>性别</dt>
+            <dd>{{ patientGender || '—' }}</dd>
+          </div>
+          <div>
+            <dt>过敏</dt>
+            <dd>
+              <template v-if="allergySummary?.status === 'NKA'">无已知过敏</template>
+              <template v-else-if="allergySummary?.status === 'HAS'">
+                {{
+                  (allergySummary.items || [])
+                    .map((it) => it.allergenName)
+                    .filter(Boolean)
+                    .slice(0, 4)
+                    .join('、') || '有过敏史'
+                }}
+              </template>
+              <template v-else>待确认</template>
+            </dd>
+          </div>
+        </dl>
+        <button
+          type="button"
+          class="compose-aside-link"
+          :disabled="intakeDetailLoading"
+          @click="openIntakeDetail"
+        >
+          查看首诊问卷 →
+        </button>
+      </section>
+
+      <section class="compose-aside-card">
+        <h4 class="compose-aside-title">方案目标</h4>
+        <p class="compose-aside-body">
+          {{ editForm.goalSummary || editForm.exerciseGoal || '暂无目标摘要' }}
+        </p>
+      </section>
+
+      <section v-if="composeSidebarAlerts.length" class="compose-aside-card compose-aside-card--alert">
+        <h4 class="compose-aside-title">需关注</h4>
+        <ul class="compose-aside-alerts">
+          <li
+            v-for="(item, idx) in composeSidebarAlerts"
+            :key="idx"
+            class="compose-aside-alert"
+            :data-tone="item.tone"
+          >
+            {{ item.text }}
+          </li>
+        </ul>
+      </section>
+
+      <section class="compose-aside-card">
+        <h4 class="compose-aside-title">快捷操作</h4>
+        <div class="compose-aside-actions">
+          <el-button size="small" plain :loading="saving" @click="openGenerateDialog()">
+            ✨ 重新用 AI 生成
+          </el-button>
+          <el-button
+            v-if="canRecordComm && planStatus === 'COMMUNICATING'"
+            size="small"
+            plain
+            :loading="saving"
+            @click="openBriefingDrawer"
+          >
+            沟通结果
+          </el-button>
+          <el-button
+            v-if="isPostRejectDraft"
+            size="small"
+            type="warning"
+            plain
+            :loading="saving"
+            @click="openRegenFromReject"
+          >
+            按反馈修订
+          </el-button>
+        </div>
+      </section>
+    </aside>
+    </div>
 
     <el-dialog
       v-model="generateVisible"
@@ -4565,16 +5488,43 @@ watch(
     </el-dialog>
 
     <p
-      v-if="showAiDisclaimer && bundle?.plan && !composeNeedsBootstrap"
+      v-if="bundle?.plan && !composeNeedsBootstrap"
       class="compose-ai-foot"
     >
       {{
         isDraftMode
-          ? 'AI 辅助起草 · 待健管师确认 · 仅供健康管理参考，不构成医学诊断或处方'
-          : 'AI 辅助起草 · 健管师已审核 · 仅供健康管理参考，不构成医学诊断或处方'
+          ? 'AI 辅助起草 · 待健管师确认'
+          : showAiDisclaimer
+            ? 'AI 辅助起草 · 健管师已审核'
+            : '方案已发布 · 健管师已确认'
       }}
     </p>
     </div>
+    </div>
+
+    <footer
+      v-if="isFullscreenCompose && !composeNeedsBootstrap"
+      class="compose-fs-footer"
+    >
+      <el-button :disabled="saving" @click="backFromCompose">取消</el-button>
+      <div class="compose-fs-footer-right">
+        <el-button
+          v-if="bundle?.draft"
+          :loading="saving"
+          @click="saveDraft()"
+        >
+          保存草稿
+        </el-button>
+        <el-button
+          v-if="composePrimaryCta"
+          type="primary"
+          :loading="saving"
+          @click="runComposePrimaryAction"
+        >
+          {{ composePrimaryCta.label }}
+        </el-button>
+      </div>
+    </footer>
 
     <el-dialog v-model="recipePickerVisible" title="应用机构食谱" width="520px" destroy-on-close>
       <el-checkbox v-model="applyWeekWithRecipe">同时写入示例周（若食谱含 week）</el-checkbox>
@@ -4670,7 +5620,259 @@ watch(
       </template>
     </el-dialog>
 
-    <CarePlanPreviewDialog v-model="previewVisible" :data="previewData" />
+    <el-drawer
+      v-model="historyDrawerOpen"
+      direction="rtl"
+      :size="historyDrawerSize"
+      append-to-body
+      destroy-on-close
+      class="plan-history-drawer"
+      :class="{ 'is-immersive': historyImmersiveCompare }"
+      @closed="onHistoryDrawerClosed"
+    >
+      <template #header>
+        <div v-if="historyImmersiveCompare" class="phd-title phd-title--compare">
+          <button type="button" class="phd-back-btn" @click="exitHistoryCompare">
+            ← 返回列表
+          </button>
+          <strong class="phd-compare-title">{{ historyCompareTitle }}</strong>
+          <div class="phd-compare-actions">
+            <el-button
+              plain
+              size="small"
+              :loading="saving"
+              :disabled="!historyDiffLeftRestorable"
+              @click="restoreHistoryById(historyDiffLeftMeta?.id)"
+            >
+              恢复左侧版本
+            </el-button>
+            <el-button
+              type="primary"
+              plain
+              size="small"
+              :loading="saving"
+              :disabled="!historyDiffRightRestorable"
+              @click="restoreHistoryById(historyDiffRightMeta?.id)"
+            >
+              恢复右侧版本
+            </el-button>
+          </div>
+        </div>
+        <div v-else class="phd-title">
+          <strong>历史修改记录</strong>
+          <span>共 {{ planVersionHistory.length }} 次</span>
+        </div>
+      </template>
+      <div
+        v-loading="historyPaneLoading"
+        class="phd-layout"
+        :class="{ 'phd-layout--immersive': historyImmersiveCompare }"
+      >
+        <aside class="phd-list" :aria-hidden="historyImmersiveCompare">
+          <div class="phd-filter-wrap">
+            <span class="phd-filter-icon" aria-hidden="true">⌕</span>
+            <input
+              v-model="historyFilter"
+              class="plan-hist-filter phd-filter"
+              type="search"
+              placeholder="筛选版本 / 制定人 / 摘要"
+            />
+          </div>
+          <div
+            v-if="historySelectedCount > 0"
+            class="phd-select-bar"
+          >
+            <span class="phd-select-tip">已选择 {{ historySelectedCount }} 个版本</span>
+            <div class="phd-select-bar-actions">
+              <el-button text size="small" @click="clearHistorySelection">清空</el-button>
+              <el-button
+                type="primary"
+                size="small"
+                :disabled="!historyCanCompare"
+                :loading="historyPaneLoading"
+                @click="runHistoryCompare"
+              >
+                开始对比
+              </el-button>
+            </div>
+          </div>
+          <div class="phd-list-scroll">
+            <div
+              v-for="item in filteredPlanVersionHistory"
+              :key="item.row.id"
+              class="plan-hist-row phd-row"
+              :class="{
+                current: item.isCurrent,
+                secondary: item.isSecondary,
+                draftish: item.row.status === 'DRAFT',
+                focused: historyFocusId === item.row.id,
+                selected: isHistorySelected(item.row.id),
+              }"
+            >
+              <label class="phd-check" title="勾选以对比" @click.stop>
+                <input
+                  type="checkbox"
+                  class="phd-checkbox"
+                  :checked="isHistorySelected(item.row.id)"
+                  :disabled="
+                    !isHistorySelected(item.row.id) && historySelectedCount >= 2
+                  "
+                  @change="
+                    toggleHistorySelect(
+                      item.row.id,
+                      ($event.target as HTMLInputElement).checked,
+                    )
+                  "
+                />
+              </label>
+              <button type="button" class="phd-row-body" @click="viewHistoryVersion(item.row)">
+                <div class="plan-hist-main">
+                  <div class="plan-hist-top">
+                    <span class="plan-hist-ver">{{ item.ver }}</span>
+                    <el-tag v-if="item.isCurrent" size="small" type="success" effect="plain">
+                      当前
+                    </el-tag>
+                    <span class="plan-hist-staff">{{ item.row.staffName || '—' }}</span>
+                  </div>
+                  <div class="plan-hist-time">{{ formatDateMinute(item.row.createdAt) }}</div>
+                  <p v-if="item.changeHint" class="plan-hist-hint">{{ item.changeHint }}</p>
+                </div>
+              </button>
+              <div class="plan-hist-actions phd-row-actions">
+                <button
+                  type="button"
+                  class="plan-hist-link"
+                  @click.stop="viewHistoryVersion(item.row)"
+                >
+                  查看
+                </button>
+                <el-dropdown
+                  v-if="canRestoreHistoryItem(item)"
+                  trigger="click"
+                  teleported
+                  @command="(cmd: string | number) => onHistoryRowMore(cmd, item.row)"
+                >
+                  <button
+                    type="button"
+                    class="plan-hist-more"
+                    :disabled="saving || listLoading"
+                    title="更多操作"
+                    @click.stop
+                  >
+                    ⋮
+                  </button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="restore">恢复此版本</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+                <span v-else class="plan-hist-more-spacer" aria-hidden="true" />
+              </div>
+            </div>
+            <p v-if="!filteredPlanVersionHistory.length" class="plan-hist-empty">无匹配记录</p>
+          </div>
+        </aside>
+
+        <section class="phd-pane">
+          <div v-if="historyPaneMode === 'idle'" class="phd-pane-empty">
+            <div class="phd-empty-icon" aria-hidden="true">⧉</div>
+            <p>点击左侧「查看」预览单个版本，或勾选两个版本进行「差异对比」</p>
+          </div>
+
+          <div v-else-if="historyPaneMode === 'preview'" class="phd-preview">
+            <header class="phd-pane-head">
+              <div class="phd-pane-head-main">
+                <strong>{{ historyFocusItem?.ver || '版本' }} 方案详情</strong>
+                <div class="phd-pane-tags">
+                  <span v-if="historyFocusItem?.ver" class="phd-ver-chip">
+                    {{ historyFocusItem.ver }}
+                  </span>
+                  <el-tag
+                    v-if="historyFocusItem"
+                    size="small"
+                    :type="historyPreviewStatusType(historyFocusItem.row.status)"
+                    effect="plain"
+                    round
+                  >
+                    {{ historyPreviewStatusLabel(historyFocusItem.row.status) }}
+                  </el-tag>
+                  <el-tag
+                    v-if="historyPreviewReviewLabel(historyFocusItem, historyFocusDetail)"
+                    size="small"
+                    effect="plain"
+                    round
+                  >
+                    {{ historyPreviewReviewLabel(historyFocusItem, historyFocusDetail) }}
+                  </el-tag>
+                </div>
+                <span v-if="historyFocusItem" class="phd-pane-meta">
+                  {{ formatDateMinute(historyFocusItem.row.createdAt) }}
+                  · {{ historyFocusItem.row.staffName || '—' }}
+                </span>
+              </div>
+            </header>
+            <div v-if="historyPreviewData" class="phd-preview-body">
+              <CarePlanPreviewContent
+                fill-height
+                :data="historyPreviewData"
+                :reset-key="historyFocusId"
+              />
+            </div>
+            <div v-else class="phd-preview-body phd-preview-body--empty">
+              <p class="muted">正在加载方案详情…</p>
+            </div>
+            <footer
+              v-if="canRestoreHistoryItem(historyFocusItem)"
+              class="phd-preview-foot"
+            >
+              <span class="phd-preview-foot-tip">正在预览历史版本</span>
+              <el-button
+                type="primary"
+                :loading="saving"
+                @click="historyFocusItem && restoreHistoryVersion(historyFocusItem.row)"
+              >
+                恢复此版本并发布
+              </el-button>
+            </footer>
+          </div>
+
+          <div v-else-if="historyPaneMode === 'diff'" class="phd-diff">
+            <div class="phd-diff-grid">
+              <div class="phd-diff-col phd-diff-col--old">
+                <div class="phd-diff-col-head">旧版 {{ historyDiffLeftMeta?.ver || '' }}</div>
+                <div v-if="historyDiffLeftData" class="phd-diff-preview">
+                  <CarePlanPreviewContent
+                    fill-height
+                    :data="historyDiffLeftData"
+                    :reset-key="'l-' + (historyDiffLeftMeta?.id || '')"
+                  />
+                </div>
+                <p v-else class="phd-diff-empty">旧版加载中…</p>
+              </div>
+              <div class="phd-diff-col phd-diff-col--new">
+                <div class="phd-diff-col-head">新版 {{ historyDiffRightMeta?.ver || '' }}</div>
+                <div v-if="historyDiffRightData" class="phd-diff-preview">
+                  <CarePlanPreviewContent
+                    fill-height
+                    :data="historyDiffRightData"
+                    :reset-key="'r-' + (historyDiffRightMeta?.id || '')"
+                  />
+                </div>
+                <p v-else class="phd-diff-empty">新版加载中…</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </el-drawer>
+
+    <CarePlanPreviewDialog
+      v-model="previewVisible"
+      :data="previewData"
+      show-edit-actions
+      @edit="onPreviewEdit"
+    />
 
     <CarePlanBriefingDrawer
       v-model="briefingOpen"
@@ -4720,18 +5922,238 @@ watch(
   height: 100%;
   min-height: 0;
   padding: 0;
-  background: var(--ink-50, #f8fafc);
+  background: #f1f5f9;
 }
 
 .care-plan--fullscreen .adjust-hint {
   margin: 12px 16px 0;
+  flex-shrink: 0;
 }
 
-.care-plan--fullscreen .compose-panel {
+.care-plan--fullscreen .compose-panel,
+.care-plan--fullscreen .compose-panel--fs {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px 16px 24px;
+  padding: 0 16px 20px;
+}
+
+.compose-fs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--ink-200, #e2e8f0);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.compose-fs-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.compose-fs-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compose-fs-base {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.compose-fs-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.compose-more-icon {
+  min-width: 36px;
+  padding: 8px 10px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.compose-fs-shell {
+  width: 100%;
+}
+
+.care-plan--fullscreen .compose-fs-shell {
+  max-width: 72rem;
+  margin: 16px auto 0;
+  background: transparent;
+}
+
+.care-plan--fullscreen .compose-fs-main > .section-card,
+.care-plan--fullscreen .compose-fs-main > .panel.section-card {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.compose-fs-grid {
+  display: block;
+}
+
+.compose-fs-grid--split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(240px, 0.7fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.compose-fs-main {
+  min-width: 0;
+}
+
+.compose-fs-aside {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compose-aside-card {
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.compose-aside-card--alert {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.compose-aside-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.compose-aside-dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.compose-aside-dl > div {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.compose-aside-dl dt {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.compose-aside-dl dd {
+  margin: 0;
+  color: #334155;
+  word-break: break-word;
+}
+
+.compose-aside-body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #475569;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  overflow: hidden;
+}
+
+.compose-aside-link {
+  margin-top: 10px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compose-aside-link:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.compose-aside-alerts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.compose-aside-alert {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.compose-aside-alert[data-tone='danger'] { color: #b91c1c; }
+.compose-aside-alert[data-tone='warning'] { color: #b45309; }
+.compose-aside-alert[data-tone='info'] { color: #0369a1; }
+
+.compose-aside-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.compose-fs-footer {
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid #e2e8f0;
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
+}
+
+.compose-fs-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 960px) {
+  .compose-fs-grid--split {
+    grid-template-columns: 1fr;
+  }
+  .compose-fs-aside {
+    position: static;
+  }
 }
 
 .compose-intake-link {
@@ -5080,25 +6502,217 @@ watch(
   margin: 24px 0 12px;
 }
 
-.list-pagination {
+.plan-flow {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.list-goal-summary {
-  display: inline-block;
-  max-width: 100%;
+.plan-card {
+  border: 1px solid #e8edf3;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px 12px;
+}
+
+.plan-card--active {
+  border-color: #bbf7d0;
+  background: linear-gradient(180deg, #f0fdf4 0%, #fff 48%);
+  box-shadow: 0 1px 0 rgba(22, 163, 74, 0.06);
+}
+
+.plan-card--draft {
+  border: 1px dashed #fcd34d;
+  background: linear-gradient(180deg, #fffbeb 0%, #fff 48%);
+}
+
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.plan-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.plan-card-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink-800, #1e293b);
+  line-height: 1.35;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: bottom;
-  color: var(--admin-text-secondary, #4b5563);
+}
+
+.plan-source-tag {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.plan-ver-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.plan-ver-chip:hover {
+  border-color: #cbd5e1;
+  color: #475569;
+  background: #e2e8f0;
+}
+
+.plan-ver-chip--static {
   cursor: default;
 }
 
-.list-goal-summary.is-empty {
-  color: var(--admin-text-muted, #9ca3af);
+.plan-card-history-tag {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.plan-card-history-tag:hover {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.plan-card-summary {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #475569;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.plan-card-summary.empty {
+  color: #94a3b8;
+}
+
+.plan-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #a8b3c2;
+  line-height: 1.4;
+}
+
+.plan-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.plan-card-actions :deep(.el-button) {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.plan-card-actions :deep(.plan-card-discard.el-button) {
+  margin: 0;
+  padding: 0 8px;
+  color: #64748b;
+  font-weight: 600;
+  background: transparent;
+}
+
+.plan-card-actions :deep(.plan-card-discard.el-button:hover),
+.plan-card-actions :deep(.plan-card-discard.el-button:focus) {
+  color: #ef4444;
+  background: transparent;
+}
+
+.plan-card-action-muted {
+  color: #94a3b8 !important;
+}
+
+.plan-history {
+  border: 1px dashed #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.plan-history-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.plan-history-toggle:hover {
+  background: #f1f5f9;
+}
+
+.plan-history-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.plan-history-chevron {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.plan-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
 }
 
 .generate-lead {
@@ -5216,6 +6830,39 @@ watch(
 .meta-text.draft {
   color: var(--amber-500);
   font-weight: 500;
+}
+
+.meta-base-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #64748b;
+  cursor: pointer;
+  text-align: left;
+}
+
+.meta-base-link:hover {
+  color: #334155;
+}
+
+.meta-base-ver {
+  color: #2563eb;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: #93c5fd;
+}
+
+.meta-base-link:hover .meta-base-ver {
+  color: #1d4ed8;
+  text-decoration-color: #60a5fa;
+}
+
+.compose-more-discard {
+  color: #ef4444 !important;
 }
 
 .actions {
@@ -5365,6 +7012,99 @@ watch(
 
 .panel-body--overview {
   padding-top: 4px;
+}
+
+.overview-domain-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 8px 0 18px;
+}
+
+.overview-domain-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 132px;
+  padding: 14px 14px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 12px;
+  background: #fbfcfe;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.overview-domain-card:hover {
+  border-color: #cbd5e1;
+  background: #fff;
+  transform: translateY(-1px);
+}
+
+.overview-domain-card[data-tone='brand'] {
+  border-color: #dbeafe;
+  background: linear-gradient(180deg, #eff6ff 0%, #fbfcfe 55%);
+}
+
+.overview-domain-card[data-tone='teal'] {
+  border-color: #ccfbf1;
+  background: linear-gradient(180deg, #f0fdfa 0%, #fbfcfe 55%);
+}
+
+.overview-domain-card[data-tone='violet'] {
+  border-color: #ede9fe;
+  background: linear-gradient(180deg, #f5f3ff 0%, #fbfcfe 55%);
+}
+
+.overview-domain-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overview-domain-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.overview-domain-card-go {
+  font-size: 12px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.overview-domain-card:hover .overview-domain-card-go {
+  color: #64748b;
+}
+
+.overview-domain-card-body {
+  margin: 0;
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #475569;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.overview-domain-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+@media (max-width: 960px) {
+  .overview-domain-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .overview-form :deep(.el-form-item) {
@@ -7157,5 +8897,719 @@ watch(
 
 .week-meal-pick.emphasize[data-kind='veg'] {
   box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.22);
+}
+</style>
+
+<style>
+.plan-hist-filter {
+  display: block;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px 0 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #334155;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.plan-hist-filter:focus {
+  border-color: #93c5fd;
+  background: #fff;
+}
+
+.plan-hist-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 76px 10px 12px;
+  border-left: 3px solid transparent;
+  background: #fff;
+  transition: background 0.12s ease;
+  min-height: 52px;
+  box-sizing: border-box;
+}
+
+.plan-hist-row.current {
+  background: #f0fdf4;
+  border-left-color: #22c55e;
+}
+
+.plan-hist-row.draftish {
+  background: #fffbeb;
+  border-left-color: #f59e0b;
+}
+
+.plan-hist-row.secondary .plan-hist-ver {
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.plan-hist-row:hover,
+.plan-hist-row.focused {
+  background: #f8fafc;
+}
+
+.plan-hist-row.current:hover,
+.plan-hist-row.current.focused {
+  background: #ecfdf5;
+}
+
+.plan-hist-row.selected {
+  box-shadow: inset 0 0 0 1px #93c5fd;
+}
+
+.plan-hist-main {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.plan-hist-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.plan-hist-ver {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-hist-staff {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.plan-hist-time {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-hist-hint {
+  margin: 3px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #94a3b8;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow: hidden;
+}
+
+.plan-hist-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+  width: 64px;
+  overflow: visible;
+}
+
+.plan-hist-actions :deep(.el-dropdown) {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.plan-hist-link {
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 2.5em;
+  text-align: center;
+}
+
+.plan-hist-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.plan-hist-more,
+.plan-hist-more-spacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  flex-shrink: 0;
+}
+
+.plan-hist-more {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.plan-hist-more:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.plan-hist-more:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+.plan-hist-empty {
+  margin: 12px;
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.phd-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  padding-right: 28px;
+  box-sizing: border-box;
+}
+
+.phd-title strong {
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.phd-title span {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.phd-title--compare {
+  align-items: center;
+  gap: 12px;
+}
+
+.phd-back-btn {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.phd-back-btn:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.phd-compare-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.phd-compare-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.phd-layout {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.phd-list {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 36%;
+  width: 36%;
+  max-width: 420px;
+  min-width: 300px;
+  border-right: 1px solid #e2e8f0;
+  background: #fff;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  opacity: 1;
+  transition:
+    flex-basis 0.28s ease,
+    width 0.28s ease,
+    min-width 0.28s ease,
+    max-width 0.28s ease,
+    opacity 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.phd-layout--immersive .phd-list {
+  flex-basis: 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  border-right-color: transparent;
+  pointer-events: none;
+}
+
+.phd-filter-wrap {
+  position: relative;
+  margin: 12px 12px 8px;
+}
+
+.phd-filter-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.phd-filter {
+  width: 100%;
+  margin: 0;
+}
+
+.phd-select-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  box-shadow: 0 1px 0 rgba(37, 99, 235, 0.06);
+}
+
+.phd-select-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.phd-list-scroll {
+  flex: 1;
+  overflow: auto;
+  padding-bottom: 8px;
+}
+
+.phd-row {
+  align-items: center;
+}
+
+.phd-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.phd-checkbox {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.phd-row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.phd-row-actions {
+  opacity: 1;
+  flex-shrink: 0;
+}
+
+.phd-select-tip {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.phd-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: #f8fafc;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.phd-pane-empty {
+  margin: auto;
+  max-width: 320px;
+  padding: 24px 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.phd-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 12px;
+  border-radius: 14px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.phd-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.phd-pane-head-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phd-pane-head-main > strong {
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.phd-pane-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.phd-ver-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.phd-pane-meta {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.phd-pane-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.phd-preview,
+.phd-diff {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.phd-preview-body {
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  padding: 12px 14px 16px;
+  background: #fff;
+}
+
+.phd-preview-body--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+/* 绝对铺满：不依赖 flex/grid 内容高度，保证内部 preview-scroll 出现滚动条 */
+.phd-preview-body .preview-shell {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  bottom: 16px;
+  left: 14px;
+  max-height: none !important;
+  height: auto !important;
+  width: auto;
+  overflow: hidden;
+}
+
+.phd-preview-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+  box-shadow: 0 -6px 16px -12px rgba(15, 23, 42, 0.28);
+}
+
+.phd-preview-foot-tip {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.phd-diff-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+  background: #eef2f7;
+  gap: 1px;
+}
+
+.phd-diff-col {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.phd-diff-col-head {
+  flex: 0 0 auto;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.phd-diff-col--old .phd-diff-col-head {
+  color: #991b1b;
+  background: #fef2f2;
+}
+
+.phd-diff-col--new .phd-diff-col-head {
+  color: #166534;
+  background: #ecfdf5;
+}
+
+.phd-diff-preview {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 16px 20px 20px;
+  overflow: hidden;
+}
+
+.phd-diff-preview .preview-shell {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  bottom: 20px;
+  left: 20px;
+  max-height: none !important;
+  height: auto !important;
+  overflow: hidden;
+}
+
+/* 宽表可横向滚动，避免饮食示例列被挤到疯狂换行 */
+.phd-diff-preview .week-plan,
+.phd-diff-preview .week-plan-table {
+  min-width: 0;
+}
+
+.phd-diff-preview .week-plan {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 4px;
+}
+
+.phd-diff-preview .week-plan-table {
+  min-width: 720px;
+}
+
+.phd-diff-preview .preview-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.phd-diff-preview .preview-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.phd-diff-preview .preview-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.phd-diff-preview .preview-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.phd-diff-preview .preview-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.phd-diff-empty {
+  margin: 24px 12px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+@media (max-width: 960px) {
+  .phd-layout,
+  .phd-layout--immersive {
+    flex-direction: column;
+    overflow: auto;
+  }
+  .phd-list,
+  .phd-layout--immersive .phd-list {
+    flex: none;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    opacity: 1;
+    pointer-events: auto;
+    border-right: 0;
+    border-bottom: 1px solid #e2e8f0;
+    max-height: 42vh;
+  }
+  .phd-layout--immersive .phd-list {
+    display: none;
+  }
+  .phd-title--compare {
+    flex-wrap: wrap;
+  }
+  .phd-compare-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+  .phd-preview-body .preview-shell,
+  .phd-diff-preview .preview-shell {
+    position: static;
+    height: auto !important;
+    max-height: min(70vh, 640px) !important;
+  }
+  .phd-diff-grid {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .phd-diff-col {
+    min-height: 56vh;
+  }
+  .phd-diff-preview {
+    position: relative;
+  }
+}
+
+/* append-to-body：抽屉壳样式必须写在非 scoped 里 */
+.plan-history-drawer.el-drawer {
+  display: flex;
+  flex-direction: column;
+  transition: width 0.28s ease;
+}
+
+.plan-history-drawer.el-drawer .el-drawer__header {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+
+.plan-history-drawer.el-drawer .el-drawer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-history-drawer.is-immersive.el-drawer .el-drawer__header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
 }
 </style>

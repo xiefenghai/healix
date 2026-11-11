@@ -11,9 +11,8 @@ import PatientBasicInfoEditor, {
   type PatientBasicInfo,
 } from '../../shared/PatientBasicInfoEditor.vue'
 import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
-import AssessmentResultDetail from '../../shared/AssessmentResultDetail.vue'
-import AssessmentTrendChart from '../../shared/AssessmentTrendChart.vue'
-import type { AssessmentSnapshot } from '../../shared/assessment'
+import AssessmentRulesDrawer from '../../shared/AssessmentRulesDrawer.vue'
+import { assessmentTick, type AssessmentSnapshot } from '../../shared/assessment'
 import { allergyTick } from '../../shared/allergy'
 import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
@@ -392,12 +391,11 @@ const conditionTagsAlert = computed(() =>
  */
 const planExecution = computed(() => {
   const a = adherence.value
-  const rateHint = (p: number | null | undefined) =>
-    p != null ? `近7日完成率 ${p}%` : ''
   if (!a) {
     return {
       value: '—',
       hint: '依从数据加载中',
+      rateLabel: '',
       tone: 'empty' as const,
       title: '',
       percent: null as number | null,
@@ -408,6 +406,7 @@ const planExecution = computed(() => {
     return {
       value: '暂无进行中的方案',
       hint: '尚未生成生效的管理方案',
+      rateLabel: '',
       tone: 'empty' as const,
       title: '没有执行中的健康管理方案，不判断打卡或跟进',
       percent: null,
@@ -419,7 +418,7 @@ const planExecution = computed(() => {
   const medMiss = !!a.medTodayIncomplete
   const level = a.riskLevel || ''
   const pct = a.percent ?? null
-  const rate = rateHint(pct)
+  const rateLabel = pct != null ? '近7日完成率' : ''
   if (level === 'HIGH') {
     const bits: string[] = []
     if (planMiss) bits.push('今日方案未打完')
@@ -433,7 +432,8 @@ const planExecution = computed(() => {
     const actionHint = bits.join('，') || '今天没做完，或连续多天没做'
     return {
       value,
-      hint: rate ? `${actionHint} · ${rate}` : actionHint,
+      hint: actionHint,
+      rateLabel,
       tone: 'poor' as const,
       title: '需跟进：今天方案或用药没做完，或方案连续未完成达到 3 天',
       percent: pct,
@@ -442,7 +442,8 @@ const planExecution = computed(() => {
   if (level === 'MEDIUM') {
     return {
       value: '完成偏低',
-      hint: rate || '近 7 日完成率不到 60%',
+      hint: pct == null ? '近 7 日完成率不到 60%' : '',
+      rateLabel,
       tone: 'fair' as const,
       title: '今天已经做完，连续未完成也不到 3 天，但近 7 日方案完成率低于 60%',
       percent: pct,
@@ -452,6 +453,7 @@ const planExecution = computed(() => {
     return {
       value: '暂无任务',
       hint: '近 7 日没有应打卡任务',
+      rateLabel: '',
       tone: 'empty' as const,
       title: '已有生效管理方案，但这 7 天没有应完成的任务（或尚未进入打卡窗口）',
       percent: null,
@@ -459,7 +461,8 @@ const planExecution = computed(() => {
   }
   return {
     value: '执行正常',
-    hint: rate,
+    hint: '',
+    rateLabel,
     tone: 'good' as const,
     title: '今天方案和用药都已完成，连续未完成不到 3 天，近 7 日完成率不低于 60%',
     percent: pct,
@@ -798,8 +801,6 @@ function openBasis(tag: HeroTag) {
   basisOpen.value = true
 }
 
-const basisTitle = computed(() => (basisTag.value ? `${basisTag.value.text} · 评估依据` : '评估依据'))
-
 async function loadInvites() {
   if (!peopleId.value) return
   try {
@@ -944,8 +945,21 @@ function goChat() {
   void onNavClick('chat')
 }
 
+function goCarePlanCheckins() {
+  if (!peopleId.value) return
+  const base = `/workspace/patients/${peopleId.value}`
+  void router.push({
+    path: `${base}/care-plan`,
+    query: { ...route.query, mainTab: 'checkins' },
+  })
+}
+
 watch(allergyTick, () => {
   void loadCompleteness()
+})
+
+watch(assessmentTick, () => {
+  void loadAssessmentSummary()
 })
 
 watch(
@@ -1217,19 +1231,29 @@ onBeforeUnmount(() => {
                 <div class="eval-tags">
                   <button
                     type="button"
-                    class="eval-stat"
+                    class="eval-stat eval-stat--stack"
                     :class="planExecution.tone"
                     :title="planExecution.title"
                     @click="onNavClick('adherence')"
                   >
-                    <strong class="eval-stat-val">{{ planExecution.value }}</strong>
-                    <span class="eval-stat-hint">{{ planExecution.hint }}</span>
+                    <span class="eval-stat-main">
+                      <strong class="eval-stat-val">{{ planExecution.value }}</strong>
+                      <span v-if="planExecution.hint" class="eval-stat-hint">{{ planExecution.hint }}</span>
+                      <span
+                        v-if="planExecution.percent != null"
+                        class="eval-stat-rate"
+                      >
+                        <template v-if="planExecution.hint">·</template>
+                        {{ planExecution.rateLabel }}
+                        <em class="eval-stat-pct">{{ planExecution.percent }}%</em>
+                      </span>
+                    </span>
                     <span
                       v-if="planExecution.percent != null"
                       class="eval-stat-bar"
                       aria-hidden="true"
                     >
-                      <i :style="{ width: `${planExecution.percent}%` }" />
+                      <i :style="{ width: `${Math.max(0, Math.min(100, planExecution.percent))}%` }" />
                     </span>
                   </button>
                 </div>
@@ -1301,6 +1325,19 @@ onBeforeUnmount(() => {
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
             沟通
+          </button>
+          <button
+            type="button"
+            class="btn secondary"
+            :disabled="!patient"
+            title="查看患者打卡记录"
+            @click="goCarePlanCheckins"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            患者打卡
           </button>
           <button
             type="button"
@@ -1404,35 +1441,14 @@ onBeforeUnmount(() => {
       <router-view v-else />
     </div>
 
-    <el-dialog
+    <AssessmentRulesDrawer
       v-model="basisOpen"
-      :title="basisTitle"
-      width="760px"
-      append-to-body
-      class="assessment-basis-dialog"
-    >
-      <template v-if="basisTag?.snapshot">
-        <p v-if="basisTag.snapshot.advice" class="basis-advice">{{ basisTag.snapshot.advice }}</p>
-        <AssessmentTrendChart
-          v-if="basisTag.snapshot.engineCode"
-          :people-id="peopleId"
-          :engine-code="basisTag.snapshot.engineCode"
-          :current-id="basisTag.snapshot.id"
-        />
-        <div v-if="basisTag.snapshot.missing.length" class="basis-missing">
-          <div class="basis-missing-title">还缺这些数据，补齐后会重新评估</div>
-          <div v-for="m in basisTag.snapshot.missing" :key="m.field" class="basis-missing-item">
-            {{ m.label }}<span v-if="m.fillHint"> · {{ m.fillHint }}</span>
-          </div>
-        </div>
-        <AssessmentResultDetail :snapshot="basisTag.snapshot" />
-      </template>
-      <p class="basis-note">结果仅供健康管理参考，不作为诊断依据。</p>
-      <template #footer>
-        <el-button @click="basisOpen = false">关闭</el-button>
-        <el-button type="primary" @click="basisOpen = false; goAssessments()">打开疾病评估</el-button>
-      </template>
-    </el-dialog>
+      presentation="dialog"
+      :engine-code="basisTag?.snapshot?.engineCode"
+      :snapshot="basisTag?.snapshot"
+      :people-id="peopleId"
+      show-trend
+    />
 
     <ChangeCareTeamDialog
       :people-id="careTeamDialogOpen ? peopleId : null"
@@ -1814,6 +1830,22 @@ onBeforeUnmount(() => {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.eval-stat--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  border-radius: 12px;
+  padding: 8px 12px 10px;
+}
+
+.eval-stat-main {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
 .eval-stat:hover {
   border-color: rgba(44, 126, 248, 0.35);
   box-shadow: 0 2px 8px -4px rgba(15, 23, 42, 0.18);
@@ -1842,29 +1874,65 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.eval-stat-rate {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-500, #64748b);
+  line-height: 1.3;
+  font-style: normal;
+}
+
+.eval-stat-pct {
+  margin-left: 2px;
+  font-style: normal;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #ef4444;
+}
+
+.eval-stat.good .eval-stat-pct { color: #059669; }
+.eval-stat.fair .eval-stat-pct { color: #d97706; }
+.eval-stat.poor .eval-stat-pct { color: #ef4444; }
+
 .eval-stat-bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #fee2e2;
+  overflow: hidden;
+}
+
+.eval-stat:not(.eval-stat--stack) .eval-stat-bar {
   position: absolute;
   left: 10px;
   right: 10px;
   bottom: 2px;
-  display: block;
+  width: auto;
   height: 2px;
-  border-radius: 999px;
   background: rgba(15, 23, 42, 0.06);
-  overflow: hidden;
 }
 
 .eval-stat-bar i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--ink-300);
+  background: #ef4444;
+  min-width: 0;
   transition: width 240ms ease;
 }
 
 .eval-stat.good .eval-stat-val { color: #047857; }
 .eval-stat.fair .eval-stat-val { color: #92400e; }
 .eval-stat.poor .eval-stat-val { color: #b91c1c; }
+.eval-stat.poor {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+.eval-stat.fair {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
 .eval-stat.empty {
   border-color: var(--ink-100, #eef2f6);
   background: #f8fafc;
@@ -1876,8 +1944,11 @@ onBeforeUnmount(() => {
 .eval-stat.empty .eval-stat-hint {
   color: var(--ink-300, #cbd5e1);
 }
+.eval-stat.good .eval-stat-bar { background: #d1fae5; }
 .eval-stat.good .eval-stat-bar i { background: #10b981; }
+.eval-stat.fair .eval-stat-bar { background: #fef3c7; }
 .eval-stat.fair .eval-stat-bar i { background: #f59e0b; }
+.eval-stat.poor .eval-stat-bar { background: #fee2e2; }
 .eval-stat.poor .eval-stat-bar i { background: #ef4444; }
 
 .eval-block .eval-tag {
@@ -2050,33 +2121,6 @@ onBeforeUnmount(() => {
 .eval-q:hover {
   opacity: 1;
   background: rgba(15, 23, 42, 0.06);
-}
-
-.basis-advice {
-  margin: 0 0 12px;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--ink-800, #1e293b);
-}
-
-.basis-missing {
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: #f8fafc;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.basis-missing-title {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.basis-note {
-  margin: 14px 0 0;
-  font-size: 12px;
-  color: var(--ink-400, #94a3b8);
 }
 
 .eval-tag.danger {

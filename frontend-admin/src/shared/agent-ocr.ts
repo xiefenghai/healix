@@ -47,6 +47,14 @@ export interface OcrMedDraft {
   warnings?: string[]
 }
 
+/** AI 初值快照（确认入库时与终值对比写 Diff） */
+export interface OcrLabAiBaselineItem {
+  itemCode: string
+  itemName?: string
+  valueNum?: number | null
+  valueText?: string
+}
+
 export interface OcrReview {
   peopleId: string
   kind: 'LAB' | 'EXAM' | 'MED'
@@ -61,6 +69,8 @@ export interface OcrReview {
   reportId?: string
   /** 检验单：图片是否同时识别出采样时间和报告时间。缺一则不能入库。 */
   labTimesReady?: boolean
+  /** 检验 OCR 刚识别时的初值，供 lab_ocr_diff_log */
+  aiBaselineItems?: OcrLabAiBaselineItem[]
 }
 
 export const LAB_TIME_BLOCK_MESSAGE = '未识别出采样时间或报告时间，不能入库'
@@ -139,6 +149,73 @@ export function cloneLabDraft(lab: OcrLabDraft): OcrLabDraft {
   }
 }
 
+function snapshotLabAiBaseline(items: OcrLabItem[] | undefined): OcrLabAiBaselineItem[] {
+  return (items || [])
+    .filter((i) => i?.itemCode)
+    .map((i) => ({
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      valueNum: i.valueNum ?? null,
+      valueText: i.valueText || '',
+    }))
+}
+
+function sameNum(a?: number | null, b?: number | null) {
+  if (a == null && b == null) return true
+  if (a == null || b == null) return false
+  return Number(a) === Number(b)
+}
+
+function sameText(a?: string | null, b?: string | null) {
+  return String(a || '').trim() === String(b || '').trim()
+}
+
+/** 驾驶舱确认入库：AI 初值 vs 医生终值 */
+export function buildLabOcrDiffLog(
+  review: Pick<OcrReview, 'imageKey' | 'lab' | 'aiBaselineItems'>,
+):
+  | {
+      imageKey?: string
+      items: Array<{
+        itemCode: string
+        itemName?: string
+        aiValueNum?: number | null
+        aiValueText?: string | null
+        finalValueNum?: number | null
+        finalValueText?: string | null
+        changed: boolean
+      }>
+    }
+  | undefined {
+  const baseline = review.aiBaselineItems || []
+  if (!baseline.length) return undefined
+  const finalByCode = new Map((review.lab?.items || []).map((i) => [i.itemCode, i]))
+  const items = baseline.map((ai) => {
+    const fin = finalByCode.get(ai.itemCode)
+    const aiValueNum = ai.valueNum ?? null
+    const aiValueText = ai.valueText || null
+    const finalValueNum = fin?.valueNum ?? null
+    const finalValueText = fin?.valueText || null
+    const changed =
+      fin == null
+        ? true
+        : !sameNum(aiValueNum, finalValueNum) || !sameText(aiValueText, finalValueText)
+    return {
+      itemCode: ai.itemCode,
+      itemName: fin?.itemName || ai.itemName,
+      aiValueNum,
+      aiValueText,
+      finalValueNum,
+      finalValueText,
+      changed,
+    }
+  })
+  return {
+    imageKey: review.imageKey || undefined,
+    items,
+  }
+}
+
 export function cloneExamDraft(exam: OcrExamDraft): OcrExamDraft {
   return {
     examType: exam.examType ?? null,
@@ -202,6 +279,7 @@ export function buildOcrReview(
       med: kind === 'MED' && raw.med ? cloneMedDraft(raw.med as OcrMedDraft, known) : null,
       status: 'pending',
       labTimesReady: kind === 'LAB' ? !!(lab?.sampledAt && lab?.reportedAt) : undefined,
+      aiBaselineItems: kind === 'LAB' ? snapshotLabAiBaseline(lab?.items) : undefined,
     }
   }
 
@@ -220,6 +298,7 @@ export function buildOcrReview(
       exam: null,
       status: 'pending',
       labTimesReady: !!(cloned.sampledAt && cloned.reportedAt),
+      aiBaselineItems: snapshotLabAiBaseline(cloned.items),
     }
   }
   if (capability === 'OCR_EXAM') {
@@ -272,9 +351,11 @@ function readImageKey(raw: Record<string, unknown>): string | undefined {
 export function buildConfirmBody(review: OcrReview): Record<string, unknown> {
   const imageKey = review.imageKey || undefined
   if (review.kind === 'LAB') {
+    const ocrDiffLog = buildLabOcrDiffLog(review)
     return {
       kind: 'LAB',
       imageKey,
+      ocrDiffLog,
       lab: {
         specimenType: review.lab?.specimenType || undefined,
         sampledAt: toApiDateTime(review.lab?.sampledAt),

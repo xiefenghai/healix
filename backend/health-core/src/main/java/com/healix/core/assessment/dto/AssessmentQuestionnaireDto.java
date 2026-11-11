@@ -41,7 +41,20 @@ public final class AssessmentQuestionnaireDto {
     /** 不进问卷的缺失项（血压、检验等），引导去对应入口录入。 */
     public record FillHint(String field, String label, String hint, List<String> engines) {}
 
-    public record SubmitCommand(Map<String, Object> answers, List<String> confirmOverrides, String requestId) {}
+    /**
+     * @param labSampledAtByField 就地录入检验项的采样时间，键为字段编码（如 lab.CR），值为 ISO 本地时间
+     */
+    public record SubmitCommand(
+            Map<String, Object> answers,
+            List<String> confirmOverrides,
+            String requestId,
+            Map<String, String> labSampledAtByField) {
+
+        /** 兼容旧调用（无采样时间）。 */
+        public SubmitCommand(Map<String, Object> answers, List<String> confirmOverrides, String requestId) {
+            this(answers, confirmOverrides, requestId, null);
+        }
+    }
 
     public record Conflict(
             String field, String label, Object currentValue, String currentText, Object newValue, String newText) {}
@@ -50,7 +63,8 @@ public final class AssessmentQuestionnaireDto {
     public record SubmitResult(
             String status, List<Conflict> conflicts, String submissionId, AssessmentOverviewDto overview) {}
 
-    public record SendRequestCommand(List<String> fields) {}
+    /** channel：WECHAT / SMS（可选，默认走站内/微信通知通道）。 */
+    public record SendRequestCommand(List<String> fields, String channel) {}
 
     /**
      * 问卷活动时间线：健管师发送的请求 + 已提交记录。

@@ -338,8 +338,9 @@ public class AssessmentContext {
             case AssessmentFields.TC, AssessmentFields.TG, AssessmentFields.LDL_C, AssessmentFields.HDL_C ->
                     tc != null || ldlC != null || hdlC != null || tg != null;
             case AssessmentFields.URIC_ACID -> uricAcid != null;
-            case AssessmentFields.CR, AssessmentFields.EGFR, AssessmentFields.UACR ->
-                    egfr != null || uacr != null || creatinine != null;
+            case AssessmentFields.CR -> creatinine != null;
+            case AssessmentFields.EGFR -> egfr != null;
+            case AssessmentFields.UACR -> uacr != null;
             case AssessmentFields.ALT, AssessmentFields.AST -> alt != null;
             case AssessmentFields.SMOKING -> smokingStatus != null && !smokingStatus.isBlank();
             case AssessmentFields.DRINKING, AssessmentFields.DRINKING_FREQUENCY ->
@@ -399,6 +400,9 @@ public class AssessmentContext {
             case AssessmentFields.WEIGHT -> weightKg;
             case AssessmentFields.WAIST -> waistCm;
             case AssessmentFields.BODY_FAT -> bodyFat != null ? bodyFat : factNumber(AssessmentFields.BODY_FAT);
+            case AssessmentFields.CR -> creatinine;
+            case AssessmentFields.EGFR -> egfr;
+            case AssessmentFields.UACR -> uacr;
             case AssessmentFields.SMOKING -> blankToNull(smokingStatus);
             case AssessmentFields.DRINKING, AssessmentFields.DRINKING_FREQUENCY -> {
                 String s = drinkingStatus == null ? "" : drinkingStatus.toUpperCase(Locale.ROOT);

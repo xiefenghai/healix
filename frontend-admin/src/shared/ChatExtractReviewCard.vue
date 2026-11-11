@@ -61,6 +61,7 @@ const sceneOptions = [
 const bpOptions = [
   { value: 'HOME', label: '家庭自测' },
   { value: 'CLINIC', label: '诊室' },
+  { value: 'THIRD_PARTY', label: '第三方机构' },
 ]
 
 function touch() {

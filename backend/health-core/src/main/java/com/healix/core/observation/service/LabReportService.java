@@ -46,6 +46,7 @@ public class LabReportService {
     private final DictService dictService;
     private final LabItemCodeMapper labItemCodeMapper;
     private final ImageFileService imageFileService;
+    private final LabOcrDiffLogService labOcrDiffLogService;
 
     public List<LabReportViewDto> list(String tenantId, String orgId, String peopleId) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
@@ -102,6 +103,8 @@ public class LabReportService {
                 orgId,
                 "{}",
                 toRevisionJson(row, items));
+        labOcrDiffLogService.recordQuietly(
+                tenantId, orgId, peopleId, row.getId(), staffId, row.getImageKey(), cmd.ocrDiffLog());
         return toView(row, items);
     }
 
@@ -466,7 +469,8 @@ public class LabReportService {
             String note,
             String source,
             List<LabItemCommand> items,
-            String imageKey) {
+            String imageKey,
+            OcrDiffLogPayload ocrDiffLog) {
 
         public LabReportCommand(
                 String specimenType,
@@ -475,7 +479,18 @@ public class LabReportService {
                 String note,
                 String source,
                 List<LabItemCommand> items) {
-            this(specimenType, sampledAt, reportedAt, note, source, items, null);
+            this(specimenType, sampledAt, reportedAt, note, source, items, null, null);
+        }
+
+        public LabReportCommand(
+                String specimenType,
+                LocalDateTime sampledAt,
+                LocalDateTime reportedAt,
+                String note,
+                String source,
+                List<LabItemCommand> items,
+                String imageKey) {
+            this(specimenType, sampledAt, reportedAt, note, source, items, imageKey, null);
         }
     }
 
@@ -488,4 +503,16 @@ public class LabReportService {
             BigDecimal refLow,
             BigDecimal refHigh,
             String abnormalFlag) {}
+
+    /** OCR 纠错 Diff：AI 初值与医生终值。 */
+    public record OcrDiffLogPayload(String imageKey, List<OcrDiffItemPayload> items) {}
+
+    public record OcrDiffItemPayload(
+            String itemCode,
+            String itemName,
+            BigDecimal aiValueNum,
+            String aiValueText,
+            BigDecimal finalValueNum,
+            String finalValueText,
+            boolean changed) {}
 }

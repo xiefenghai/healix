@@ -137,7 +137,7 @@ function baseOption(unit: string) {
       textStyle: { color: '#64748b', fontSize: 11 },
     },
     // 压缩上下留白；底部留给 X 轴标签 + DataZoom，避免互相遮挡
-    grid: { left: 36, right: 12, top: 28, bottom: 58 },
+    grid: { left: 36, right: 28, top: 28, bottom: 58, containLabel: true },
     dataZoom: [
       { type: 'inside' as const, start: 0, end: 100 },
       {

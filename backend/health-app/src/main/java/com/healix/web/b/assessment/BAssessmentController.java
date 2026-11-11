@@ -108,7 +108,8 @@ public class BAssessmentController {
                 SecurityUtils.requireCurrentOrgId(),
                 peopleId,
                 SecurityUtils.requireStaffId(),
-                cmd == null ? null : cmd.fields()));
+                cmd == null ? null : cmd.fields(),
+                cmd == null ? null : cmd.channel()));
     }
 
     /** 评估问卷活动列表：发送记录 + 提交记录。 */

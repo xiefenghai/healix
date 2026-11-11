@@ -56,5 +56,9 @@ public class AssessmentOverviewDto {
         private LocalDateTime createdAt;
         private LocalDateTime expiresAt;
         private LocalDateTime submittedAt;
+        /** C 端填写链接（仅 sendRequest 返回） */
+        private String url;
+        /** 微信粘贴话术（含链接；仅 sendRequest 返回） */
+        private String copyText;
     }
 }

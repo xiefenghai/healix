@@ -34,7 +34,8 @@ import org.springframework.util.DigestUtils;
  * 评估重算：逐人跑全部适用引擎，维护最新结果表。
  *
  * <ul>
- *   <li>自动重算结果不变（指纹相同）只刷新「最近计算时间」，不新增快照
+ *   <li>自动 / 问卷触发：结果指纹不变时只刷新「最近计算时间」，不新增快照
+ *   <li>手动重新评估：无论指纹是否变化都落快照，便于留痕与前端刷新展示
  *   <li>不再适用的引擎（如确诊后的风险引擎）在最新表置为失效
  *   <li>统一等级升到高 / 很高、风险引擎疑似已患病 → 工作台任务
  * </ul>
@@ -84,7 +85,8 @@ public class AssessmentRecomputeService {
             AssessmentResult result = engine.evaluate(ctx);
             String fingerprint = fingerprint(engine, result);
             boolean unchanged = prev != null && prev.effective() && fingerprint.equals(prev.getFingerprint());
-            if (unchanged && source == AssessmentTriggerSource.AUTO) {
+            // 自动/问卷：指纹未变不落历史，避免刷屏；手动重评始终落快照便于留痕
+            if (unchanged && source != AssessmentTriggerSource.MANUAL) {
                 storeMapper.touchLatest(peopleId, engine.code(), startedAt);
                 continue;
             }

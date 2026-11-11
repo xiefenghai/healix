@@ -117,9 +117,10 @@ public final class AssessmentFields {
         spec(LDL_C, "低密度脂蛋白", "请在「检验报告」录入血脂四项", Audience.NONE, null, false);
         spec(HDL_C, "高密度脂蛋白", "请在「检验报告」录入血脂四项", Audience.NONE, null, false);
         spec(URIC_ACID, "尿酸", "请在「检验报告」录入尿酸", Audience.NONE, null, false);
-        spec(CR, "肾功能", "请在「检验报告」录入肌酐 / eGFR / 尿白蛋白肌酐比", Audience.NONE, null, false);
-        spec(EGFR, "eGFR", "请在「检验报告」录入肌酐 / eGFR / 尿白蛋白肌酐比", Audience.NONE, null, false);
-        spec(UACR, "尿白蛋白肌酐比", "请在「检验报告」录入肌酐 / eGFR / 尿白蛋白肌酐比", Audience.NONE, null, false);
+        // 肾功能三项：问卷「补充信息」可就地录入，提交后同步写入检验报告
+        spec(CR, "肌酐", null, Audience.PATIENT, "lab", false);
+        spec(EGFR, "eGFR", null, Audience.PATIENT, "lab", false);
+        spec(UACR, "尿白蛋白肌酐比", null, Audience.PATIENT, "lab", false);
         spec(ALT, "肝功能", "请在「检验报告」录入转氨酶", Audience.NONE, null, false);
         spec(AST, "AST", "请在「检验报告」录入转氨酶", Audience.NONE, null, false);
         spec(SMOKING, "吸烟", null, Audience.PATIENT, "lifestyle", false);

@@ -9,6 +9,8 @@ import com.healix.core.observation.dto.LabReportViewDto;
 import com.healix.core.observation.service.LabReportService;
 import com.healix.core.observation.service.LabReportService.LabItemCommand;
 import com.healix.core.observation.service.LabReportService.LabReportCommand;
+import com.healix.core.observation.service.LabReportService.OcrDiffItemPayload;
+import com.healix.core.observation.service.LabReportService.OcrDiffLogPayload;
 import com.healix.core.storage.ImageFileService;
 import com.healix.core.storage.ObjectKeys;
 import com.healix.security.SecurityUtils;
@@ -120,6 +122,21 @@ public class BLabReportController {
                         i.refHigh(),
                         i.abnormalFlag()))
                 .toList();
+        OcrDiffLogPayload diff = null;
+        if (request.ocrDiffLog() != null && request.ocrDiffLog().items() != null) {
+            List<OcrDiffItemPayload> diffItems = request.ocrDiffLog().items().stream()
+                    .filter(i -> i != null && i.itemCode() != null && !i.itemCode().isBlank())
+                    .map(i -> new OcrDiffItemPayload(
+                            i.itemCode(),
+                            i.itemName(),
+                            i.aiValueNum(),
+                            i.aiValueText(),
+                            i.finalValueNum(),
+                            i.finalValueText(),
+                            i.changed()))
+                    .toList();
+            diff = new OcrDiffLogPayload(request.ocrDiffLog().imageKey(), diffItems);
+        }
         return new LabReportCommand(
                 request.specimenType(),
                 request.sampledAt(),
@@ -127,7 +144,8 @@ public class BLabReportController {
                 request.note(),
                 request.source(),
                 items,
-                request.imageKey());
+                request.imageKey(),
+                diff);
     }
 
     public record LabReportRequest(
@@ -137,6 +155,7 @@ public class BLabReportController {
             String note,
             String source,
             String imageKey,
+            OcrDiffLogRequest ocrDiffLog,
             @NotEmpty List<LabItemRequest> items) {}
 
     public record LabItemRequest(
@@ -148,4 +167,15 @@ public class BLabReportController {
             BigDecimal refLow,
             BigDecimal refHigh,
             String abnormalFlag) {}
+
+    public record OcrDiffLogRequest(String imageKey, List<OcrDiffItemRequest> items) {}
+
+    public record OcrDiffItemRequest(
+            String itemCode,
+            String itemName,
+            BigDecimal aiValueNum,
+            String aiValueText,
+            BigDecimal finalValueNum,
+            String finalValueText,
+            boolean changed) {}
 }

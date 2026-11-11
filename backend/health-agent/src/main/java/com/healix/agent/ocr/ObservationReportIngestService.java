@@ -19,6 +19,7 @@ import com.healix.core.observation.service.ExamReportService.ExamCommand;
 import com.healix.core.observation.service.LabReportService;
 import com.healix.core.observation.service.LabReportService.LabItemCommand;
 import com.healix.core.observation.service.LabReportService.LabReportCommand;
+import com.healix.core.observation.service.LabReportService.OcrDiffLogPayload;
 import com.healix.core.medication.dto.MedOcrPrefillDto;
 import com.healix.core.medication.dto.MedOcrPrefillDto.MedOcrItemDto;
 import com.healix.core.medication.dto.MedicationViewDto;
@@ -126,7 +127,8 @@ public class ObservationReportIngestService {
         }
         String kind = cmd.kind().trim().toUpperCase(Locale.ROOT);
         if ("LAB".equals(kind)) {
-            return saveLab(tenantId, orgId, peopleId, staffId, toLabPrefill(cmd), cmd.imageKey());
+            return saveLab(
+                    tenantId, orgId, peopleId, staffId, toLabPrefill(cmd), cmd.imageKey(), cmd.ocrDiffLog());
         }
         if ("EXAM".equals(kind)) {
             return saveExam(tenantId, orgId, peopleId, staffId, toExamPrefill(cmd), cmd.imageKey());
@@ -173,7 +175,8 @@ public class ObservationReportIngestService {
             String peopleId,
             String staffId,
             LabOcrPrefillDto prefill,
-            String imageKey) {
+            String imageKey,
+            OcrDiffLogPayload ocrDiffLog) {
         if (prefill.sampledAt() == null || prefill.reportedAt() == null) {
             throw new BusinessException("未识别出采样时间或报告时间，不能入库");
         }
@@ -209,7 +212,8 @@ public class ObservationReportIngestService {
                         prefill.note(),
                         "OCR",
                         items,
-                        imageKey));
+                        imageKey,
+                        ocrDiffLog));
         return new ObservationOcrIngestDto(
                 "LAB",
                 saved.id(),
@@ -504,10 +508,20 @@ public class ObservationReportIngestService {
         MED
     }
 
-    public record ConfirmCommand(String kind, ConfirmLab lab, ConfirmExam exam, ConfirmMed med, String imageKey) {
+    public record ConfirmCommand(
+            String kind,
+            ConfirmLab lab,
+            ConfirmExam exam,
+            ConfirmMed med,
+            String imageKey,
+            OcrDiffLogPayload ocrDiffLog) {
 
         public ConfirmCommand(String kind, ConfirmLab lab, ConfirmExam exam, ConfirmMed med) {
-            this(kind, lab, exam, med, null);
+            this(kind, lab, exam, med, null, null);
+        }
+
+        public ConfirmCommand(String kind, ConfirmLab lab, ConfirmExam exam, ConfirmMed med, String imageKey) {
+            this(kind, lab, exam, med, imageKey, null);
         }
     }
 

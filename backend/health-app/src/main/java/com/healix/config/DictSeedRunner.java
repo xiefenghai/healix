@@ -258,6 +258,7 @@ public class DictSeedRunner implements ApplicationRunner {
 
         seedOptionIfAbsent("bpContext", "CLINIC", "诊室", 100);
         seedOptionIfAbsent("bpContext", "HOME", "家庭", 90);
+        seedOptionIfAbsent("bpContext", "THIRD_PARTY", "第三方机构", 80);
         seedOptionIfAbsent("mealContext", "FASTING", "空腹", 100);
         seedOptionIfAbsent("mealContext", "POSTPRANDIAL", "餐后", 90);
         seedOptionIfAbsent("mealContext", "RANDOM", "随机", 80);
@@ -296,6 +297,21 @@ public class DictSeedRunner implements ApplicationRunner {
         seedLabItem("MONO", "单核细胞计数", 730, "×10^9/L", 0.1, 0.6);
         seedLabItem("EOS", "嗜酸性粒细胞计数", 720, "×10^9/L", 0.02, 0.5);
         seedLabItem("BASO", "嗜碱性粒细胞计数", 710, "×10^9/L", 0, 0.06);
+        // 血常规：分类百分比与红细胞/血小板指数（OCR 常见项，禁止静默丢弃）
+        seedLabItem("NEUT_PCT", "中性粒细胞百分比", 709, "%", 40.0, 75.0);
+        seedLabItem("LYMPH_PCT", "淋巴细胞百分比", 708, "%", 20.0, 50.0);
+        seedLabItem("MONO_PCT", "单核细胞百分比", 707, "%", 3.0, 10.0);
+        seedLabItem("EOS_PCT", "嗜酸性粒细胞百分比", 706, "%", null, 5.0);
+        seedLabItem("BASO_PCT", "嗜碱性粒细胞百分比", 705, "%", null, 1.0);
+        seedLabItem("MCV", "平均红细胞体积", 704, "fL", 82.0, 100.0);
+        seedLabItem("MCH", "平均红细胞血红蛋白量", 703, "pg", 27.0, 34.0);
+        seedLabItem("MCHC", "平均红细胞血红蛋白浓度", 702, "g/L", 316.0, 354.0);
+        seedLabItem("RDW_CV", "红细胞分布宽度", 701, "%", 11.0, 16.0);
+        seedLabItem("RDW_SD", "红细胞分布宽度SD", 700, "fL", 39.0, 46.0);
+        seedLabItem("MPV", "平均血小板体积", 699, "fL", 6.5, 12.0);
+        seedLabItem("PDW", "血小板分布宽度", 698, "%", 9.0, 17.0);
+        seedLabItem("PCT", "血小板压积", 697, "%", 0.11, 0.28);
+        seedLabItem("P_LCR", "大血小板比率", 696, "%", 13.0, 43.0);
 
         seedLabItem("PT", "凝血酶原时间", 700, "s", 11.0, 14.0);
         seedLabItem("APTT", "活化部分凝血活酶时间", 690, "s", 25.0, 35.0);

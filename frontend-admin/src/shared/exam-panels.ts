@@ -38,13 +38,15 @@ export const EXAM_PANELS: ExamPanel[] = [
 const RHYTHM_LABELS: Record<string, string> = {
   SINUS: '窦性',
   AF: '房颤',
+  PVC: '早搏',
   OTHER: '其他',
 }
 
 const ISCHEMIA_LABELS: Record<string, string> = {
-  YES: '有',
   NO: '无',
-  NA: '未评估',
+  YES: '有',
+  SUSPECTED: '疑似',
+  NA: '未评估', // 兼容历史数据
 }
 
 const DR_GRADE_LABELS: Record<string, string> = {
@@ -83,8 +85,13 @@ export const EXAM_OPTION_LABELS: Record<string, Record<string, string>> = {
 
 export const EXAM_FINDING_FIELDS: Record<string, ExamFindingField[]> = {
   ECG: [
-    { key: 'rhythm', label: '心律', type: 'select', options: ['SINUS', 'AF', 'OTHER'] },
-    { key: 'hasIschemiaHint', label: '缺血提示', type: 'select', options: ['YES', 'NO', 'NA'] },
+    { key: 'rhythm', label: '心律', type: 'select', options: ['SINUS', 'AF', 'PVC', 'OTHER'] },
+    {
+      key: 'hasIschemiaHint',
+      label: '缺血提示',
+      type: 'select',
+      options: ['NO', 'YES', 'SUSPECTED'],
+    },
   ],
   UCG: [{ key: 'efPercent', label: 'EF', type: 'number', unit: '%' }],
   CAROTID_US: [

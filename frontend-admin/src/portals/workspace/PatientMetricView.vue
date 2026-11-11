@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as echarts from 'echarts/core'
+import { LineChart } from 'echarts/charts'
+import {
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  TitleComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { EChartsType } from 'echarts/core'
 import { api, apiUpload } from '../../shared/http'
-import { formatHealthDataSource } from '../../shared/health-data-source'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import { saveLabOcrDraft, type LabOcrDraft } from '../../shared/lab-ocr'
 import {
@@ -16,6 +26,17 @@ import {
   type AbnormalFlag,
   type MetricDictMeta,
 } from '../../shared/metric-ranges'
+import { flashFocusElement, useObservationFocus } from '../../shared/useObservationFocus'
+
+echarts.use([
+  LineChart,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  TitleComponent,
+  CanvasRenderer,
+])
 
 interface DictItem {
   dictCode: string
@@ -70,16 +91,6 @@ const DEFAULT_UNITS: Record<string, string> = {
   HEART_RATE: 'bpm',
 }
 
-const DEFAULT_METRIC_TYPES = new Set([
-  'BLOOD_PRESSURE_SYS',
-  'BLOOD_PRESSURE_DIA',
-  'BLOOD_GLUCOSE',
-  'HEIGHT',
-  'WEIGHT',
-  'WAIST',
-  'HEART_RATE',
-])
-
 const OTHER_METRIC_TYPES = new Set(['TEMPERATURE', 'STEPS', 'SLEEP_HOURS'])
 
 const LATEST_TYPE_ORDER = [
@@ -108,6 +119,17 @@ const loading = ref(false)
 const saving = ref(false)
 const ocrLoading = ref(false)
 const ocrFileInputRef = ref<HTMLInputElement | null>(null)
+const focusMetricCode = ref('')
+
+useObservationFocus('metric', async (target) => {
+  focusMetricCode.value = target.code
+  await nextTick()
+  await nextTick()
+  flashFocusElement(document.querySelector(`[data-obs-focus="${target.code}"]`))
+  window.setTimeout(() => {
+    if (focusMetricCode.value === target.code) focusMetricCode.value = ''
+  }, 2200)
+})
 
 function openOcrPicker() {
   ocrFileInputRef.value?.click()
@@ -158,16 +180,322 @@ const list = ref<Metric[]>([])
 const latest = ref<LatestSlot[]>([])
 const metricTypeOptions = ref<DictItem[]>([])
 const patientGender = ref('')
-/** 列表筛选：默认录入指标 / C端兼容其它 / 全部 */
-const listFilter = ref<'DEFAULT' | 'OTHER' | 'ALL'>('DEFAULT')
+
+/** 近期记录：时间范围（天）；0 = 全部 */
+const historyRangeDays = ref<7 | 30 | 90 | 0>(30)
+/** 近期记录：指标分组 */
+type HistoryMetricGroup = 'ALL' | 'BP' | 'GLUCOSE' | 'HEART_RATE' | 'BODY' | 'WAIST' | 'OTHER'
+const historyMetricGroup = ref<HistoryMetricGroup>('ALL')
+/** 近期记录：列表 / 趋势视图 */
+const historyViewMode = ref<'list' | 'trend'>('list')
+const trendChartRef = ref<HTMLDivElement | null>(null)
+let trendChart: EChartsType | null = null
+let trendResizeObserver: ResizeObserver | null = null
+
+const HISTORY_RANGE_OPTIONS = [
+  { value: 7, label: '近7天' },
+  { value: 30, label: '近30天' },
+  { value: 90, label: '近90天' },
+  { value: 0, label: '全部' },
+] as const
+
+const HISTORY_METRIC_GROUPS: Array<{
+  value: HistoryMetricGroup
+  label: string
+  types: string[] | null
+}> = [
+  { value: 'ALL', label: '全部指标', types: null },
+  { value: 'BP', label: '血压', types: ['BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE_DIA'] },
+  { value: 'GLUCOSE', label: '血糖', types: ['BLOOD_GLUCOSE'] },
+  { value: 'HEART_RATE', label: '心率', types: ['HEART_RATE'] },
+  { value: 'BODY', label: '身高体重', types: ['HEIGHT', 'WEIGHT'] },
+  { value: 'WAIST', label: '腰围', types: ['WAIST'] },
+  { value: 'OTHER', label: '其它', types: [...OTHER_METRIC_TYPES] },
+]
+
+const historyMetricOptions = computed(() => {
+  const present = new Set(list.value.map((m) => m.metricType))
+  return HISTORY_METRIC_GROUPS.filter((g) => {
+    if (g.value === 'ALL') return true
+    if (!g.types?.length) return false
+    // 录入分类始终展示；其它仅在有数据时出现
+    if (g.value === 'OTHER') return g.types.some((t) => present.has(t))
+    return true
+  })
+})
+
+function historyCutoffIso(days: number): string | null {
+  if (!days) return null
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() - (days - 1))
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function matchHistoryMetric(metricType: string, group: HistoryMetricGroup) {
+  const conf = HISTORY_METRIC_GROUPS.find((g) => g.value === group)
+  if (!conf || !conf.types) return true
+  return conf.types.includes(metricType)
+}
 
 const filteredList = computed(() => {
-  if (listFilter.value === 'ALL') return list.value
-  if (listFilter.value === 'OTHER') {
-    return list.value.filter((m) => OTHER_METRIC_TYPES.has(m.metricType))
-  }
-  return list.value.filter((m) => DEFAULT_METRIC_TYPES.has(m.metricType))
+  const cutoff = historyCutoffIso(historyRangeDays.value)
+  const group = historyMetricGroup.value
+  return list.value.filter((m) => {
+    if (!matchHistoryMetric(m.metricType, group)) return false
+    if (!cutoff) return true
+    const day = dayKeyOf(m.recordedAt)
+    if (!day || day === 'unknown') return false
+    return day >= cutoff
+  })
 })
+
+const historyEmptyText = computed(() => {
+  if (list.value.length === 0) return '暂无记录'
+  const rangeLabel =
+    HISTORY_RANGE_OPTIONS.find((o) => o.value === historyRangeDays.value)?.label || '该时间段'
+  const metricLabel =
+    HISTORY_METRIC_GROUPS.find((g) => g.value === historyMetricGroup.value)?.label || '指标'
+  if (historyMetricGroup.value === 'ALL') {
+    return `${rangeLabel}内暂无记录`
+  }
+  if (historyRangeDays.value === 0) {
+    return `暂无${metricLabel}记录`
+  }
+  return `该时间段内暂无${metricLabel}记录`
+})
+
+/** 趋势图聚焦分组：全部时自动落到有数据的首个分类 */
+const trendFocusGroup = computed((): HistoryMetricGroup => {
+  const g = historyMetricGroup.value
+  if (g !== 'ALL') return g
+  const rows = filteredList.value
+  const has = (types: string[]) => rows.some((m) => types.includes(m.metricType))
+  if (has(['BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE_DIA'])) return 'BP'
+  if (has(['BLOOD_GLUCOSE'])) return 'GLUCOSE'
+  if (has(['HEART_RATE'])) return 'HEART_RATE'
+  if (has(['HEIGHT', 'WEIGHT'])) return 'BODY'
+  if (has(['WAIST'])) return 'WAIST'
+  if (has([...OTHER_METRIC_TYPES])) return 'OTHER'
+  return 'ALL'
+})
+
+const trendTitle = computed(() => {
+  const range =
+    HISTORY_RANGE_OPTIONS.find((o) => o.value === historyRangeDays.value)?.label || ''
+  const metric =
+    HISTORY_METRIC_GROUPS.find((g) => g.value === trendFocusGroup.value)?.label || '指标'
+  return `${metric}趋势 · ${range}`
+})
+
+function formatTrendAxisTime(iso?: string) {
+  if (!iso) return ''
+  return iso.replace('T', ' ').slice(5, 16)
+}
+
+function sortMetricsAsc(rows: Metric[]) {
+  return [...rows].sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)))
+}
+
+function trendBaseOption(unit: string) {
+  return {
+    color: ['#ef4444', '#2c7ef8', '#00b8a9', '#8b5cf6'],
+    tooltip: {
+      trigger: 'axis' as const,
+      backgroundColor: '#0F172A',
+      borderColor: '#0F172A',
+      textStyle: { color: '#fff', fontSize: 11 },
+      valueFormatter: (v: unknown) => (v == null || v === '' ? '-' : unit ? `${v} ${unit}` : String(v)),
+    },
+    legend: {
+      top: 2,
+      right: 4,
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { color: '#64748b', fontSize: 11 },
+    },
+    grid: { left: 40, right: 28, top: 32, bottom: 58, containLabel: true },
+    dataZoom: [
+      { type: 'inside' as const, start: 0, end: 100 },
+      {
+        type: 'slider' as const,
+        height: 14,
+        bottom: 2,
+        brushSelect: false,
+        borderColor: '#E2E8F0',
+        fillerColor: 'rgba(44, 126, 248, 0.12)',
+        handleSize: 14,
+        textStyle: { color: '#94A3B8', fontSize: 10 },
+      },
+    ],
+    xAxis: {
+      type: 'category' as const,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: '#E2E8F0' } },
+      axisLabel: {
+        hideOverlap: true,
+        color: '#94A3B8',
+        fontSize: 10,
+        margin: 10,
+        showMinLabel: true,
+        showMaxLabel: true,
+      },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value' as const,
+      scale: true,
+      name: unit || undefined,
+      nameTextStyle: { padding: [0, 0, 0, 4], color: '#94A3B8', fontSize: 10 },
+      axisLabel: { color: '#94A3B8', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#F1F5F9' } },
+    },
+  }
+}
+
+function renderTrendLine(
+  unit: string,
+  categories: string[],
+  series: Array<{ name: string; data: Array<number | null> }>,
+) {
+  const el = trendChartRef.value
+  if (!el) return
+  if (!trendChart) {
+    trendChart = echarts.init(el)
+  }
+  const empty = categories.length === 0 || series.every((s) => s.data.every((v) => v == null))
+  const base = trendBaseOption(unit)
+  trendChart.setOption(
+    {
+      ...base,
+      title: empty
+        ? {
+            text: historyEmptyText.value,
+            left: 'center',
+            top: 'middle',
+            textStyle: { color: '#94a3b8', fontSize: 13, fontWeight: 400 },
+          }
+        : { show: false },
+      xAxis: { ...base.xAxis, data: categories },
+      series: series.map((s) => ({
+        name: s.name,
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        showSymbol: s.data.filter((v) => v != null).length <= 24,
+        symbolSize: 6,
+        connectNulls: false,
+        data: s.data,
+      })),
+    },
+    true,
+  )
+}
+
+function renderHistoryTrend() {
+  if (historyViewMode.value !== 'trend') return
+  const rows = sortMetricsAsc(filteredList.value)
+  const focus = trendFocusGroup.value
+  const ofType = (type: string) => rows.filter((m) => m.metricType === type)
+
+  if (focus === 'BP') {
+    const sys = ofType('BLOOD_PRESSURE_SYS')
+    const dia = ofType('BLOOD_PRESSURE_DIA')
+    const times = Array.from(new Set([...sys, ...dia].map((m) => m.recordedAt || ''))).sort()
+    const sysMap = new Map(sys.map((m) => [m.recordedAt || '', Number(m.value)]))
+    const diaMap = new Map(dia.map((m) => [m.recordedAt || '', Number(m.value)]))
+    renderTrendLine(
+      'mmHg',
+      times.map(formatTrendAxisTime),
+      [
+        { name: '收缩压', data: times.map((t) => (sysMap.has(t) ? sysMap.get(t)! : null)) },
+        { name: '舒张压', data: times.map((t) => (diaMap.has(t) ? diaMap.get(t)! : null)) },
+      ],
+    )
+    return
+  }
+
+  if (focus === 'GLUCOSE') {
+    const glucose = ofType('BLOOD_GLUCOSE')
+    renderTrendLine(
+      'mmol/L',
+      glucose.map((m) => formatTrendAxisTime(m.recordedAt)),
+      [{ name: '指尖血糖', data: glucose.map((m) => Number(m.value)) }],
+    )
+    return
+  }
+
+  if (focus === 'HEART_RATE') {
+    const hr = ofType('HEART_RATE')
+    renderTrendLine(
+      'bpm',
+      hr.map((m) => formatTrendAxisTime(m.recordedAt)),
+      [{ name: '心率', data: hr.map((m) => Number(m.value)) }],
+    )
+    return
+  }
+
+  if (focus === 'BODY') {
+    const heights = ofType('HEIGHT')
+    const weights = ofType('WEIGHT')
+    const times = Array.from(new Set([...heights, ...weights].map((m) => m.recordedAt || ''))).sort()
+    const hMap = new Map(heights.map((m) => [m.recordedAt || '', Number(m.value)]))
+    const wMap = new Map(weights.map((m) => [m.recordedAt || '', Number(m.value)]))
+    renderTrendLine(
+      '',
+      times.map(formatTrendAxisTime),
+      [
+        { name: '身高 cm', data: times.map((t) => (hMap.has(t) ? hMap.get(t)! : null)) },
+        { name: '体重 kg', data: times.map((t) => (wMap.has(t) ? wMap.get(t)! : null)) },
+      ],
+    )
+    return
+  }
+
+  if (focus === 'WAIST') {
+    const waist = ofType('WAIST')
+    renderTrendLine(
+      'cm',
+      waist.map((m) => formatTrendAxisTime(m.recordedAt)),
+      [{ name: '腰围', data: waist.map((m) => Number(m.value)) }],
+    )
+    return
+  }
+
+  if (focus === 'OTHER') {
+    const seriesTypes = [...OTHER_METRIC_TYPES].filter((t) => rows.some((m) => m.metricType === t))
+    const primary = seriesTypes[0]
+    if (!primary) {
+      renderTrendLine('', [], [{ name: '其它', data: [] }])
+      return
+    }
+    const data = ofType(primary)
+    renderTrendLine(
+      DEFAULT_UNITS[primary] || '',
+      data.map((m) => formatTrendAxisTime(m.recordedAt)),
+      [{ name: metricLabel(primary), data: data.map((m) => Number(m.value)) }],
+    )
+    return
+  }
+
+  renderTrendLine('', [], [{ name: '指标', data: [] }])
+}
+
+async function refreshTrendChart() {
+  if (historyViewMode.value !== 'trend') return
+  await nextTick()
+  renderHistoryTrend()
+  trendChart?.resize()
+}
+
+function bindTrendResize() {
+  trendResizeObserver?.disconnect()
+  if (!trendChartRef.value) return
+  trendResizeObserver = new ResizeObserver(() => trendChart?.resize())
+  trendResizeObserver.observe(trendChartRef.value)
+}
 
 interface TimeCluster {
   key: string
@@ -278,8 +606,17 @@ const recordGroups = computed((): RecordDayGroup[] => {
     })
 })
 
-function sourceLabel(source?: string) {
-  return formatHealthDataSource(source)
+/** 时间轴小标签：展示测量场景，避免与「医护代录」等来源维度混用 */
+function sceneLabel(row: Metric) {
+  const bp = String(row.extra?.bpContext || '').toUpperCase()
+  if (bp === 'HOME') return '家庭'
+  if (bp === 'CLINIC') return '诊室'
+  if (bp === 'THIRD_PARTY' || bp === 'ORG' || bp === 'EXTERNAL') return '第三方机构'
+  const meal = String(row.extra?.mealContext || '').toUpperCase()
+  if (meal === 'FASTING') return '空腹'
+  if (meal === 'POSTPRANDIAL') return '餐后'
+  if (meal === 'RANDOM') return '随机'
+  return ''
 }
 
 const form = reactive({
@@ -344,13 +681,7 @@ function rowJudge(row: Metric) {
 }
 
 function contextText(row: Metric) {
-  const bp = String(row.extra?.bpContext || '')
-  if (bp) return bp === 'HOME' ? '家庭' : '诊室'
-  const meal = String(row.extra?.mealContext || '')
-  if (meal === 'FASTING') return '空腹'
-  if (meal === 'POSTPRANDIAL') return '餐后'
-  if (meal === 'RANDOM') return '随机'
-  return ''
+  return sceneLabel(row)
 }
 
 function nowLocalInput() {
@@ -404,7 +735,7 @@ async function loadAll() {
   loading.value = true
   try {
     const [listRes, latestRes, dictRes, patientRes] = await Promise.all([
-      api<{ data: Metric[] }>(`/api/b/v1/patients/${peopleId.value}/metrics?limit=50`),
+      api<{ data: Metric[] }>(`/api/b/v1/patients/${peopleId.value}/metrics?limit=300`),
       api<{ data: LatestSlot[] }>(`/api/b/v1/patients/${peopleId.value}/metrics/latest`),
       api<{ data: DictItem[] }>('/api/b/v1/dict?dictType=OPTION&parentCode=metricType').catch(
         () => ({ data: [] as DictItem[] }),
@@ -427,6 +758,9 @@ async function loadAll() {
   }
 }
 
+const recordedAtError = ref('')
+const bpError = ref('')
+
 function resetForm() {
   form.recordedAt = nowLocalInput()
   form.bpContext = 'CLINIC'
@@ -438,19 +772,38 @@ function resetForm() {
   form.waist = null
   form.heartRate = null
   form.note = ''
+  recordedAtError.value = ''
+  bpError.value = ''
   applyHeightPrefill()
 }
 
+function clearRecordedAtError() {
+  if (form.recordedAt) recordedAtError.value = ''
+}
+
+function clearBpError() {
+  // 两项都填或都空时清除提示
+  if ((form.sys != null && form.dia != null) || (form.sys == null && form.dia == null)) {
+    bpError.value = ''
+  }
+}
+
 async function submitEntry() {
-  const recordedAt = toApiDateTime(form.recordedAt || nowLocalInput())
+  if (!form.recordedAt?.trim()) {
+    recordedAtError.value = '请填写测量时间'
+    return
+  }
+  recordedAtError.value = ''
+  const recordedAt = toApiDateTime(form.recordedAt)
   const note = form.note || undefined
   const items: Array<Record<string, unknown>> = []
 
   if (form.sys != null || form.dia != null) {
     if (form.sys == null || form.dia == null) {
-      ElMessage.warning('血压请同时填写收缩压与舒张压')
+      bpError.value = '血压请同时填写收缩压与舒张压'
       return
     }
+    bpError.value = ''
     items.push({
       metricType: 'BLOOD_PRESSURE_SYS',
       value: form.sys,
@@ -636,9 +989,28 @@ watch(peopleId, () => {
   loadAll()
 })
 
+watch([historyViewMode, historyRangeDays, historyMetricGroup, filteredList], () => {
+  void refreshTrendChart()
+})
+
+watch(historyViewMode, async (mode) => {
+  if (mode === 'trend') {
+    await nextTick()
+    bindTrendResize()
+    await refreshTrendChart()
+  }
+})
+
 onMounted(() => {
   resetForm()
   loadAll()
+})
+
+onBeforeUnmount(() => {
+  trendResizeObserver?.disconnect()
+  trendResizeObserver = null
+  trendChart?.dispose()
+  trendChart = null
 })
 </script>
 
@@ -667,7 +1039,12 @@ onMounted(() => {
 
       <el-form label-position="right" label-width="72px" class="entry-form" @keydown="onEntryKeydown">
         <div class="entry-grid">
-          <el-form-item label="血压">
+          <el-form-item
+            label="血压"
+            :error="bpError"
+            data-obs-focus="BLOOD_PRESSURE"
+            :class="{ 'obs-focus-flash': focusMetricCode === 'BLOOD_PRESSURE' }"
+          >
             <div class="input-group">
               <el-input-number
                 v-model="form.sys"
@@ -676,6 +1053,7 @@ onMounted(() => {
                 :controls="false"
                 placeholder="收缩压"
                 class="group-part"
+                @change="clearBpError"
               />
               <span class="group-divider" aria-hidden="true" />
               <el-input-number
@@ -685,12 +1063,17 @@ onMounted(() => {
                 :controls="false"
                 placeholder="舒张压"
                 class="group-part"
+                @change="clearBpError"
               />
               <span class="group-addon">mmHg</span>
             </div>
           </el-form-item>
 
-          <el-form-item label="指尖血糖">
+          <el-form-item
+            label="指尖血糖"
+            data-obs-focus="BLOOD_GLUCOSE"
+            :class="{ 'obs-focus-flash': focusMetricCode === 'BLOOD_GLUCOSE' }"
+          >
             <div class="input-group">
               <el-select v-model="form.mealContext" class="group-prefix" placeholder="场景">
                 <el-option label="空腹" value="FASTING" />
@@ -711,7 +1094,11 @@ onMounted(() => {
             </div>
           </el-form-item>
 
-          <el-form-item label="心率">
+          <el-form-item
+            label="心率"
+            data-obs-focus="HEART_RATE"
+            :class="{ 'obs-focus-flash': focusMetricCode === 'HEART_RATE' }"
+          >
             <div class="input-group input-group--simple">
               <el-input-number
                 v-model="form.heartRate"
@@ -724,7 +1111,11 @@ onMounted(() => {
             </div>
           </el-form-item>
 
-          <el-form-item label="身高">
+          <el-form-item
+            label="身高"
+            data-obs-focus="HEIGHT"
+            :class="{ 'obs-focus-flash': focusMetricCode === 'HEIGHT' }"
+          >
             <div class="input-group input-group--simple">
               <el-input-number
                 v-model="form.height"
@@ -738,7 +1129,11 @@ onMounted(() => {
             </div>
           </el-form-item>
 
-          <el-form-item label="体重">
+          <el-form-item
+            label="体重"
+            data-obs-focus="WEIGHT"
+            :class="{ 'obs-focus-flash': focusMetricCode === 'WEIGHT' }"
+          >
             <div class="input-group input-group--simple">
               <el-input-number
                 v-model="form.weight"
@@ -753,7 +1148,11 @@ onMounted(() => {
             </div>
           </el-form-item>
 
-          <el-form-item label="腰围">
+          <el-form-item
+            label="腰围"
+            data-obs-focus="WAIST"
+            :class="{ 'obs-focus-flash': focusMetricCode === 'WAIST' }"
+          >
             <div class="input-group input-group--simple">
               <el-input-number
                 v-model="form.waist"
@@ -767,7 +1166,12 @@ onMounted(() => {
             </div>
           </el-form-item>
 
-          <el-form-item label="测量时间" class="entry-meta-item">
+          <el-form-item
+            label="测量时间"
+            required
+            class="entry-meta-item"
+            :error="recordedAtError"
+          >
             <el-date-picker
               v-model="form.recordedAt"
               type="datetime"
@@ -775,16 +1179,20 @@ onMounted(() => {
               format="MM-DD HH:mm"
               placeholder="测量时间"
               class="field-fill"
+              @change="clearRecordedAtError"
             />
           </el-form-item>
 
           <el-form-item label="测量场景" class="entry-meta-item">
-            <el-select v-model="form.bpContext" class="field-fill" placeholder="血压场景">
+            <el-select v-model="form.bpContext" class="field-fill" placeholder="测量场景">
               <el-option label="诊室" value="CLINIC" />
               <el-option label="家庭" value="HOME" />
+              <el-option label="第三方机构" value="THIRD_PARTY" />
             </el-select>
           </el-form-item>
+        </div>
 
+        <div class="entry-footer">
           <el-form-item label="备注" class="entry-note">
             <el-input
               v-model="form.note"
@@ -797,12 +1205,12 @@ onMounted(() => {
               class="note-input"
             />
           </el-form-item>
-        </div>
 
-        <div class="entry-actions">
-          <el-button type="primary" class="save-btn" :loading="saving" @click="submitEntry">
-            保存录入
-          </el-button>
+          <div class="entry-actions">
+            <el-button type="primary" class="save-btn" :loading="saving" @click="submitEntry">
+              保存录入
+            </el-button>
+          </div>
         </div>
       </el-form>
     </section>
@@ -810,17 +1218,64 @@ onMounted(() => {
     <section class="records-card">
       <header class="records-card-head">
         <span class="section-title">近期记录</span>
-        <el-radio-group v-model="listFilter" size="small" class="records-filter">
-          <el-radio-button value="DEFAULT">默认</el-radio-button>
-          <el-radio-button value="OTHER">其它</el-radio-button>
-          <el-radio-button value="ALL">全部</el-radio-button>
-        </el-radio-group>
+        <div class="records-toolbar">
+          <div class="view-tabs" role="tablist" aria-label="记录视图">
+            <button
+              type="button"
+              class="view-tab"
+              :class="{ active: historyViewMode === 'list' }"
+              role="tab"
+              :aria-selected="historyViewMode === 'list'"
+              @click="historyViewMode = 'list'"
+            >
+              📄 列表
+            </button>
+            <button
+              type="button"
+              class="view-tab"
+              :class="{ active: historyViewMode === 'trend' }"
+              role="tab"
+              :aria-selected="historyViewMode === 'trend'"
+              @click="historyViewMode = 'trend'"
+            >
+              📈 趋势
+            </button>
+          </div>
+          <div class="records-filters">
+            <el-select
+              v-model="historyRangeDays"
+              size="small"
+              class="records-filter-select"
+              aria-label="时间筛选"
+            >
+              <el-option
+                v-for="opt in HISTORY_RANGE_OPTIONS"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+            <el-select
+              v-model="historyMetricGroup"
+              size="small"
+              class="records-filter-select"
+              aria-label="指标筛选"
+            >
+              <el-option
+                v-for="opt in historyMetricOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+          </div>
+        </div>
       </header>
 
-      <div class="records-scroll">
+      <div v-show="historyViewMode === 'list'" class="records-scroll">
         <div class="records-table-head">
           <span class="head-day">日期</span>
-          <span class="col-time">时间 / 来源</span>
+          <span class="col-time">时间 / 场景</span>
           <span class="col-name">指标</span>
           <span class="col-value">数值</span>
           <span class="col-status">状态</span>
@@ -828,7 +1283,12 @@ onMounted(() => {
           <span class="col-actions">操作</span>
         </div>
 
-        <el-empty v-if="!recordGroups.length" description="暂无记录" :image-size="48" />
+        <el-empty
+          v-if="!recordGroups.length"
+          :description="historyEmptyText"
+          :image-size="48"
+          class="records-empty"
+        />
         <div v-else class="day-timeline">
           <section v-for="group in recordGroups" :key="group.key" class="day-block">
             <div class="day-side">
@@ -850,7 +1310,7 @@ onMounted(() => {
                 >
                   <div class="col-time">
                     <span class="line-clock">{{ cluster.time }}</span>
-                    <span class="line-source">{{ sourceLabel(row.source) }}</span>
+                    <span v-if="sceneLabel(row)" class="line-source">{{ sceneLabel(row) }}</span>
                   </div>
                   <span class="col-name">{{ metricLabel(row.metricType) }}</span>
                   <span class="col-value" :class="{ 'value-abnormal': rowJudge(row).abnormal }">
@@ -876,6 +1336,15 @@ onMounted(() => {
           </section>
         </div>
       </div>
+
+      <div v-show="historyViewMode === 'trend'" class="trend-panel">
+        <div class="trend-panel-head">
+          <span class="trend-panel-title">{{ trendTitle }}</span>
+        </div>
+        <div class="trend-chart-wrap">
+          <div ref="trendChartRef" class="trend-chart-el" />
+        </div>
+      </div>
     </section>
 
     <el-dialog v-model="editVisible" title="更正指标" width="480px" destroy-on-close>
@@ -890,10 +1359,11 @@ onMounted(() => {
           />
           <span class="unit" style="margin-left: 8px">{{ editing.unit }}</span>
         </el-form-item>
-        <el-form-item v-if="editing.metricType?.startsWith('BLOOD_PRESSURE')" label="情境">
+        <el-form-item v-if="editing.metricType?.startsWith('BLOOD_PRESSURE')" label="场景">
           <el-select v-model="editing.bpContext">
             <el-option label="诊室" value="CLINIC" />
             <el-option label="家庭" value="HOME" />
+            <el-option label="第三方机构" value="THIRD_PARTY" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="editing.metricType === 'BLOOD_GLUCOSE'" label="餐次">
@@ -939,12 +1409,18 @@ onMounted(() => {
   max-width: 40%;
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   overscroll-behavior: contain;
-  background: #fff;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f8fafc 72%, #f1f5f9 100%);
   border-radius: 12px;
   border: 1px solid rgba(226, 232, 240, 0.7);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.03),
+    inset 0 -24px 40px -28px rgba(15, 23, 42, 0.06);
   padding: 12px 14px 14px;
   box-sizing: border-box;
 }
@@ -997,6 +1473,7 @@ onMounted(() => {
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  flex: 0 0 auto;
 }
 
 .ocr-btn {
@@ -1035,8 +1512,129 @@ onMounted(() => {
   display: none;
 }
 
-.records-filter {
+.records-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex: 0 0 auto;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.view-tabs {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+}
+
+.view-tab {
+  margin: 0;
+  padding: 0 10px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 28px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.view-tab.active {
+  background: #fff;
+  color: var(--brand-600, #1e63d9);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.view-tab:hover:not(.active) {
+  color: #334155;
+}
+
+.records-filters {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 0 0 auto;
+}
+
+.records-filter-select {
+  width: 120px;
+}
+
+.records-filter-select + .records-filter-select {
+  margin-left: 12px;
+}
+
+.records-filter-select :deep(.el-select__wrapper) {
+  min-height: 28px;
+  font-size: 12px;
+}
+
+.trend-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px 14px;
+  animation: trend-fade-in 0.2s ease;
+}
+
+@keyframes trend-fade-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.trend-panel-head {
+  flex: 0 0 auto;
+  margin-bottom: 8px;
+}
+
+.trend-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.trend-chart-wrap {
+  flex: 1 1 auto;
+  min-height: 280px;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  background: #fafbfc;
+  overflow: hidden;
+}
+
+.trend-chart-el {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+}
+
+.records-empty {
+  padding: 36px 12px 28px;
+}
+
+.records-empty :deep(.el-empty__description) {
+  margin-top: 8px;
+}
+
+.records-empty :deep(.el-empty__description p) {
+  font-size: 13px;
+  color: #94a3b8;
 }
 
 /* 日期侧栏 + 6 列表格：时间/来源 | 指标 | 数值 | 状态 | 参考 | 操作 */
@@ -1296,13 +1894,26 @@ onMounted(() => {
 
 .entry-form {
   width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex !important;
+  flex-direction: column;
+  gap: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
 }
 
 .entry-grid {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 14px;
+  align-content: start;
   align-items: start;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .entry-grid > :deep(*) {
@@ -1320,6 +1931,20 @@ onMounted(() => {
   font-size: 13px;
   color: var(--ink-500, #64748b);
   font-weight: 450;
+}
+
+.entry-form :deep(.el-form-item__error),
+.entry-meta-item :deep(.el-form-item__error) {
+  position: static;
+  padding-top: 2px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #f56c6c;
+}
+
+.entry-form :deep(.entry-meta-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before) {
+  color: #f56c6c;
+  margin-right: 2px;
 }
 
 .entry-meta-item :deep(.el-input__wrapper),
@@ -1511,26 +2136,55 @@ onMounted(() => {
 }
 
 .entry-form :deep(.entry-note .el-textarea__inner) {
-  height: 80px !important;
-  min-height: 80px !important;
-  max-height: 80px !important;
+  height: 88px !important;
+  min-height: 88px !important;
+  max-height: 88px !important;
   border-radius: 6px;
   box-shadow: none !important;
   border: 1px solid #d9d9d9;
   resize: none;
 }
 
+/* 备注 + 保存：与上方表单同宽，紧凑贴合，无底部死白 */
+.entry-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 12px;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.entry-footer > :deep(.entry-note) {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  box-sizing: border-box;
+}
+
 .entry-actions {
   display: flex;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--ink-100, #f1f5f9);
-  box-shadow: 0 -6px 12px -10px rgba(15, 23, 42, 0.12);
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 .save-btn {
-  width: 100%;
-  height: 36px;
+  width: 100% !important;
+  max-width: 100%;
+  height: 42px;
+  margin: 0 !important;
+  box-sizing: border-box;
+}
+
+.save-btn.el-button {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .metric-page :deep(.el-empty) {
@@ -1548,7 +2202,7 @@ onMounted(() => {
   }
 
   .save-btn {
-    width: 100%;
+    width: 100% !important;
   }
 }
 </style>

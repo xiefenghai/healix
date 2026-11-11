@@ -57,7 +57,11 @@ public final class LabUnits {
             return null;
         }
         String u = unit(unit);
-        if (u.contains("mg") || (!u.contains("mol") && v.compareTo(BigDecimal.valueOf(20)) < 0)) {
+        // 成人肌酐 μmol/L 通常 ≥20；1.0 这类值即使单位写成 μmol，也按 mg/dL 纠偏
+        boolean asMg = u.contains("mg")
+                || (!u.contains("mol") && v.compareTo(BigDecimal.valueOf(20)) < 0)
+                || (u.contains("mol") && v.compareTo(BigDecimal.TEN) < 0);
+        if (asMg) {
             return v.multiply(new BigDecimal("88.4")).setScale(0, RoundingMode.HALF_UP);
         }
         return v.setScale(0, RoundingMode.HALF_UP);

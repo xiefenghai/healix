@@ -19,6 +19,8 @@ import com.healix.core.cockpit.dto.CockpitSummaryDto;
 import com.healix.core.cockpit.service.CockpitService;
 import com.healix.core.observation.dto.ObservationOcrIngestDto;
 import com.healix.core.observation.dto.ObservationOcrPreviewDto;
+import com.healix.core.observation.service.LabReportService.OcrDiffItemPayload;
+import com.healix.core.observation.service.LabReportService.OcrDiffLogPayload;
 import com.healix.security.SecurityUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -181,12 +183,27 @@ public class BCockpitController {
                             .toList();
             med = new ConfirmMed(medItems);
         }
+        OcrDiffLogPayload ocrDiffLog = null;
+        if (request.ocrDiffLog() != null && request.ocrDiffLog().items() != null) {
+            List<OcrDiffItemPayload> diffItems = request.ocrDiffLog().items().stream()
+                    .filter(i -> i != null && i.itemCode() != null && !i.itemCode().isBlank())
+                    .map(i -> new OcrDiffItemPayload(
+                            i.itemCode(),
+                            i.itemName(),
+                            i.aiValueNum(),
+                            i.aiValueText(),
+                            i.finalValueNum(),
+                            i.finalValueText(),
+                            i.changed()))
+                    .toList();
+            ocrDiffLog = new OcrDiffLogPayload(request.ocrDiffLog().imageKey(), diffItems);
+        }
         return ApiResult.ok(observationReportIngestService.confirm(
                 SecurityUtils.requireTenantId(),
                 SecurityUtils.requireCurrentOrgId(),
                 peopleId,
                 SecurityUtils.requireStaffId(),
-                new ConfirmCommand(request.kind(), lab, exam, med, request.imageKey())));
+                new ConfirmCommand(request.kind(), lab, exam, med, request.imageKey(), ocrDiffLog)));
     }
 
     /** 兼容旧路径：等同 recognize（不再自动入库）。 */
@@ -206,7 +223,23 @@ public class BCockpitController {
     }
 
     public record ConfirmRequest(
-            String kind, ConfirmLabBody lab, ConfirmExamBody exam, ConfirmMedBody med, String imageKey) {}
+            String kind,
+            ConfirmLabBody lab,
+            ConfirmExamBody exam,
+            ConfirmMedBody med,
+            String imageKey,
+            OcrDiffLogBody ocrDiffLog) {}
+
+    public record OcrDiffLogBody(String imageKey, List<OcrDiffItemBody> items) {}
+
+    public record OcrDiffItemBody(
+            String itemCode,
+            String itemName,
+            BigDecimal aiValueNum,
+            String aiValueText,
+            BigDecimal finalValueNum,
+            String finalValueText,
+            boolean changed) {}
 
     public record ConfirmLabBody(
             String specimenType,

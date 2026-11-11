@@ -10,6 +10,10 @@ import com.healix.common.util.JsonUtils;
 import com.healix.common.util.SnowflakeId;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.archive.service.ArchiveOperatorContext;
+import com.healix.core.identity.domain.StaffProfile;
+import com.healix.core.identity.mapper.StaffProfileMapper;
+import com.healix.core.intake.service.IntakeAccessLinkService;
+import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.assessment.catalog.AssessmentFields;
 import com.healix.core.assessment.catalog.AssessmentFields.Audience;
 import com.healix.core.assessment.catalog.AssessmentFields.Spec;
@@ -43,6 +47,10 @@ import com.healix.core.notify.catalog.NotifyEventType;
 import com.healix.core.notify.dto.NotifyPublishCommand;
 import com.healix.core.notify.enums.NotifyAudience;
 import com.healix.core.notify.service.NotifyFacade;
+import com.healix.core.observation.enums.HealthDataSourceEnum;
+import com.healix.core.observation.service.LabReportService;
+import com.healix.core.observation.service.LabReportService.LabItemCommand;
+import com.healix.core.observation.service.LabReportService.LabReportCommand;
 import com.healix.core.observation.service.MetricService;
 import com.healix.core.observation.service.MetricService.MetricCommand;
 import com.healix.core.portal.enums.PortalEnum;
@@ -68,6 +76,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -100,9 +109,14 @@ public class AssessmentQuestionnaireService {
     private final QuestionnaireResponseMapper responseMapper;
     private final MetricService metricService;
     private final VitalService vitalService;
+    private final LabReportService labReportService;
     private final NotifyFacade notifyFacade;
     private final WorkspaceTaskGenerator taskGenerator;
     private final AuditService auditService;
+    private final StaffProfileMapper staffProfileMapper;
+
+    @Value("${healix.public.user-base-url:http://localhost:5173}")
+    private String userBaseUrl;
 
     // ------------------------------------------------------------------ 出题
 
@@ -131,7 +145,7 @@ public class AssessmentQuestionnaireService {
         }
 
         Map<String, List<Question>> bySection = new LinkedHashMap<>();
-        for (String code : List.of("body", "lifestyle", "history", "professional")) {
+        for (String code : List.of("body", "lab", "lifestyle", "history", "professional")) {
             bySection.put(code, new ArrayList<>());
         }
         List<FillHint> hints = new ArrayList<>();
@@ -163,7 +177,8 @@ public class AssessmentQuestionnaireService {
                 continue;
             }
             FieldDef def = fieldCatalog.find(code).orElse(null);
-            if (def == null || def.readOnly()) {
+            // lab.* 目录为 readOnly（主入口在检验报告）；问卷补录字段例外
+            if (def == null || (def.readOnly() && !isQuestionnaireLabField(code))) {
                 continue;
             }
             boolean has = ctx.has(code);
@@ -228,10 +243,17 @@ public class AssessmentQuestionnaireService {
     private static String sectionTitle(String code) {
         return switch (code) {
             case "body" -> "身体测量";
+            case "lab" -> "肾功能相关检验";
             case "lifestyle" -> "生活方式";
             case "history" -> "疾病与用药史";
             default -> "专业检查（健管师填写）";
         };
+    }
+
+    private static boolean isQuestionnaireLabField(String code) {
+        return AssessmentFields.CR.equals(code)
+                || AssessmentFields.EGFR.equals(code)
+                || AssessmentFields.UACR.equals(code);
     }
 
     private static String questionText(Spec spec, FieldDef def) {
@@ -311,7 +333,17 @@ public class AssessmentQuestionnaireService {
                 : ArchiveOperatorContext.people(peopleId, "ASSESSMENT_QUESTIONNAIRE");
         FieldWriteSource source = operator.toFieldSource(row.getId());
 
-        writeAnswers(tenantId, orgId, peopleId, staffId, portal, ctx, answers, source, now);
+        writeAnswers(
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                portal,
+                ctx,
+                answers,
+                source,
+                now,
+                cmd.labSampledAtByField());
 
         ObjectNode snapshot = JsonUtils.emptyObject();
         snapshot.put("questionnaire", q.key());
@@ -362,8 +394,11 @@ public class AssessmentQuestionnaireService {
             AssessmentContext ctx,
             Map<String, Object> answers,
             FieldWriteSource source,
-            LocalDateTime now) {
+            LocalDateTime now,
+            Map<String, String> labSampledAtByField) {
         Map<String, JsonNode> meta = new LinkedHashMap<>();
+        // 同一采样时间合并为一份报告；不同时间各自建报告
+        Map<LocalDateTime, List<LabItemCommand>> labBySampledAt = new LinkedHashMap<>();
         for (Map.Entry<String, Object> e : answers.entrySet()) {
             String code = e.getKey();
             Object raw = e.getValue();
@@ -380,6 +415,23 @@ public class AssessmentQuestionnaireService {
                 writeMetric(tenantId, orgId, peopleId, staffId, portal, ctx, code, raw, now);
                 continue;
             }
+            if (store == FieldStore.LAB) {
+                LabItemCommand item = toLabItem(code, raw);
+                if (item == null) {
+                    continue;
+                }
+                String sampledRaw =
+                        labSampledAtByField == null ? null : labSampledAtByField.get(code);
+                LocalDateTime sampledAt = parseLabSampledAt(sampledRaw);
+                if (sampledAt == null) {
+                    throw new BusinessException(400, AssessmentFields.labelOf(code) + " 请填写采样时间");
+                }
+                if (sampledAt.isAfter(now.plusMinutes(5))) {
+                    throw new BusinessException(400, AssessmentFields.labelOf(code) + " 采样时间不能晚于当前时间");
+                }
+                labBySampledAt.computeIfAbsent(sampledAt, k -> new ArrayList<>()).add(item);
+                continue;
+            }
             if (store != FieldStore.BASIC && store != FieldStore.DISEASE) {
                 continue;
             }
@@ -391,6 +443,66 @@ public class AssessmentQuestionnaireService {
         }
         if (!meta.isEmpty()) {
             peopleFieldService.write(tenantId, peopleId, meta, source);
+        }
+        for (Map.Entry<LocalDateTime, List<LabItemCommand>> e : labBySampledAt.entrySet()) {
+            writeLabReport(tenantId, orgId, peopleId, staffId, portal, e.getValue(), e.getKey(), now);
+        }
+    }
+
+    private static LocalDateTime parseLabSampledAt(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String s = raw.trim().replace(' ', 'T');
+        if (s.length() == 16) {
+            s = s + ":00";
+        }
+        try {
+            return LocalDateTime.parse(s);
+        } catch (Exception e) {
+            throw new BusinessException(400, "采样时间格式不正确");
+        }
+    }
+
+    private LabItemCommand toLabItem(String code, Object raw) {
+        if (!isQuestionnaireLabField(code)) {
+            return null;
+        }
+        BigDecimal value = number(raw);
+        if (value == null) {
+            return null;
+        }
+        // 就地录入始终落报告：上下文里的值可能已做单位纠偏（如肌酐 1mg/dL→88μmol/L），
+        // 若再按 sameValue 跳过，会把医生确认过的数值写不进去，重评也看不到更新。
+        FieldDef def = fieldCatalog.find(code).orElse(null);
+        String unit = def == null ? null : def.unit();
+        String itemCode = code.startsWith("lab.") ? code.substring("lab.".length()) : code;
+        return new LabItemCommand(itemCode, null, value, null, unit, null, null, null);
+    }
+
+    private void writeLabReport(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            String portal,
+            List<LabItemCommand> items,
+            LocalDateTime sampledAt,
+            LocalDateTime now) {
+        LocalDateTime reportedAt = sampledAt.isAfter(now) ? sampledAt : now;
+        LabReportCommand cmd = new LabReportCommand(
+                null,
+                sampledAt,
+                reportedAt,
+                "评估问卷补充",
+                PORTAL_B.equals(portal)
+                        ? HealthDataSourceEnum.staffManual().name()
+                        : HealthDataSourceEnum.patientManual().name(),
+                items);
+        if (PORTAL_B.equals(portal)) {
+            labReportService.create(tenantId, orgId, peopleId, staffId, cmd);
+        } else {
+            labReportService.createForPatient(tenantId, peopleId, cmd);
         }
     }
 
@@ -694,6 +806,17 @@ public class AssessmentQuestionnaireService {
     @Transactional
     public AssessmentOverviewDto.QuestionnaireRequestDto sendRequest(
             String tenantId, String orgId, String peopleId, String staffId, List<String> fields) {
+        return sendRequest(tenantId, orgId, peopleId, staffId, fields, null);
+    }
+
+    @Transactional
+    public AssessmentOverviewDto.QuestionnaireRequestDto sendRequest(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            List<String> fields,
+            String channel) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         View view = buildView(tenantId, peopleId, PORTAL_C);
         List<String> missing = view.sections().stream()
@@ -723,8 +846,58 @@ public class AssessmentQuestionnaireService {
         req.setExpiresAt(now.plusDays(REQUEST_VALID_DAYS));
         req.setGmtCreated(now);
         storeMapper.insertRequest(req);
-        publishRequest(req, false);
-        return AssessmentOrchestrator.toRequestDto(req);
+        // COPY/LINK/MANUAL：只生成专属链接，不静默推送
+        if (!isManualCopyChannel(channel)) {
+            publishRequest(req, false, channel);
+        }
+        AssessmentOverviewDto.QuestionnaireRequestDto dto = AssessmentOrchestrator.toRequestDto(req);
+        String url = buildQuestionnaireUrl();
+        dto.setUrl(url);
+        dto.setCopyText(buildQuestionnaireCopyText(tenantId, peopleId, staffId, url));
+        return dto;
+    }
+
+    private static boolean isManualCopyChannel(String channel) {
+        if (!StringUtils.hasText(channel)) {
+            return false;
+        }
+        String ch = channel.trim().toUpperCase(Locale.ROOT);
+        return "COPY".equals(ch) || "LINK".equals(ch) || "MANUAL".equals(ch);
+    }
+
+    private String buildQuestionnaireUrl() {
+        String base = userBaseUrl == null ? "" : userBaseUrl.trim();
+        while (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return base + C_LINK_PATH;
+    }
+
+    private String buildQuestionnaireCopyText(String tenantId, String peopleId, String staffId, String url) {
+        PeopleProfile people = archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
+        String address = IntakeAccessLinkService.politeAddress(
+                people.getDisplayName(), people.getGender(), people.getBirthday());
+        String staffName = "";
+        if (StringUtils.hasText(staffId)) {
+            StaffProfile staff = staffProfileMapper.findById(staffId);
+            if (staff != null && StringUtils.hasText(staff.getDisplayName())) {
+                staffName = staff.getDisplayName().trim();
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        String who = StringUtils.hasText(address) ? address.trim() : "朋友";
+        sb.append(who).append("您好，");
+        if (StringUtils.hasText(staffName)) {
+            sb.append("我是您的专属健管师").append(staffName).append("。\n");
+        } else {
+            sb.append("我是您的专属健管师。\n");
+        }
+        sb.append("为了更准确地评估您的健康风险，劳烦您花几分钟填写《极简健康评估》问卷（")
+                .append(REQUEST_VALID_DAYS)
+                .append("天内有效，信息严格保密）。\n");
+        sb.append("👉 点击填写：").append(url).append('\n');
+        sb.append("填写完成后，我会尽快为您更新评估结论。谢谢！");
+        return sb.toString();
     }
 
     public AssessmentOverviewDto.QuestionnaireRequestDto pendingForPatient(String tenantId, String peopleId) {
@@ -834,13 +1007,19 @@ public class AssessmentQuestionnaireService {
     }
 
     void publishRequest(AssessmentQuestionnaireRequest req, boolean reminder) {
+        publishRequest(req, reminder, null);
+    }
+
+    void publishRequest(AssessmentQuestionnaireRequest req, boolean reminder, String channel) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("requestId", req.getId());
         payload.put("expiresAt", req.getExpiresAt() == null ? null : req.getExpiresAt().toString());
+        String ch = StringUtils.hasText(channel) ? channel.trim().toUpperCase() : "WECHAT";
+        payload.put("channel", ch);
         notifyFacade.publish(NotifyPublishCommand.builder()
                 .tenantId(req.getTenantId())
                 .eventType(NotifyEventType.ASSESSMENT_QUESTIONNAIRE)
-                .dedupeKey(req.getId() + (reminder ? ":remind" : ":send"))
+                .dedupeKey(req.getId() + (reminder ? ":remind" : ":send") + ":" + ch)
                 .audience(NotifyAudience.C_ACCOUNT)
                 .peopleId(req.getPeopleId())
                 .orgId(req.getOrgId())

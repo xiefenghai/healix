@@ -47,13 +47,35 @@ import org.springframework.util.StringUtils;
  * 评估输入批量加载：每类数据源只取一次。
  *
  * <p>指标最新值、基础档案、病种档案、检验、近 4 周血压、近 14 天血糖、在用药品、问卷事实各一次查询。
+ *
+ * <p><b>时效口径</b>（超出则视为缺失，不参与评估、问卷可再补）：
+ *
+ * <ul>
+ *   <li>血压均值 / 单次兜底、心率：28 天
+ *   <li>点测血糖（空腹/餐后/检验 FPG）、HbA1c、糖尿病控制分层：90 天
+ *   <li>低血糖事件计数：14 天
+ *   <li>体重 / 腰围 / 体脂：180 天
+ *   <li>身高：5 年（成人变化慢）
+ *   <li>血脂 / 肾功能（CR·eGFR·UACR）/ 尿酸 / ALT：365 天（年度筛查口径）
+ * </ul>
  */
 @Component
 @RequiredArgsConstructor
 public class AssessmentContextBuilder {
 
+    /** 近 4 周血压均值窗口（产品方案已定） */
     static final int BP_WINDOW_DAYS = 28;
+    /** 糖尿病控制分层 / 点测血糖 / HbA1c */
     static final int CONTROL_WINDOW_DAYS = 90;
+    /** 低血糖事件统计 */
+    static final int HYPO_WINDOW_DAYS = 14;
+    /** 体重、腰围、体脂 */
+    static final int ANTHROPOMETRY_DAYS = 180;
+    /** 成人身高 */
+    static final int HEIGHT_DAYS = 365 * 5;
+    /** 血脂、肾功能、尿酸、转氨酶 */
+    static final int LAB_ANNUAL_DAYS = 365;
+
     private static final BigDecimal HYPO_THRESHOLD = new BigDecimal("4.0");
     private static final List<String> LAB_CODES =
             List.of("HDL_C", "TG", "TC", "LDL_C", "FPG", "UA", "HBA1C", "CR", "EGFR", "UACR", "ALT");
@@ -90,8 +112,9 @@ public class AssessmentContextBuilder {
         }
 
         MetricsLoaded metrics = loadMetrics(b, tenantId, peopleId, now);
-        LabLatestNumeric fpg = loadLabs(b, tenantId, peopleId);
+        LabLatestNumeric fpg = loadLabs(b, tenantId, peopleId, now);
         if (fpg != null
+                && within(fpg.getRecordedAt(), now, CONTROL_WINDOW_DAYS)
                 && (metrics.fasting() == null
                         || (fpg.getRecordedAt() != null
                                 && metrics.fasting().recordedAt() != null
@@ -142,11 +165,13 @@ public class AssessmentContextBuilder {
             }
         }
 
-        MetricLatestSlotDto h = latest.get(MetricTypeEnum.HEIGHT);
-        MetricLatestSlotDto w = latest.get(MetricTypeEnum.WEIGHT);
-        MetricLatestSlotDto waist = latest.get(MetricTypeEnum.WAIST);
-        MetricLatestSlotDto bodyFat = latest.get(MetricTypeEnum.BODY_FAT);
-        MetricLatestSlotDto hr = latest.get(MetricTypeEnum.HEART_RATE);
+        MetricLatestSlotDto h = fresh(latest.get(MetricTypeEnum.HEIGHT), now, HEIGHT_DAYS);
+        MetricLatestSlotDto w = fresh(latest.get(MetricTypeEnum.WEIGHT), now, ANTHROPOMETRY_DAYS);
+        MetricLatestSlotDto waist = fresh(latest.get(MetricTypeEnum.WAIST), now, ANTHROPOMETRY_DAYS);
+        MetricLatestSlotDto bodyFat = fresh(latest.get(MetricTypeEnum.BODY_FAT), now, ANTHROPOMETRY_DAYS);
+        MetricLatestSlotDto hr = fresh(latest.get(MetricTypeEnum.HEART_RATE), now, BP_WINDOW_DAYS);
+        fasting = fresh(fasting, now, CONTROL_WINDOW_DAYS);
+        post = fresh(post, now, CONTROL_WINDOW_DAYS);
         if (h != null) {
             b.heightCm(h.value()).heightRecordedAt(h.recordedAt());
         }
@@ -186,15 +211,16 @@ public class AssessmentContextBuilder {
                     .max(Comparator.naturalOrder())
                     .orElse(null));
         } else {
-            MetricLatestSlotDto s = latest.get(MetricTypeEnum.BLOOD_PRESSURE_SYS);
-            MetricLatestSlotDto d = latest.get(MetricTypeEnum.BLOOD_PRESSURE_DIA);
+            // 不足 2 次时取窗口内最新一对；过期血压不再兜底，避免十年前读数参与分层
+            MetricLatestSlotDto s = fresh(latest.get(MetricTypeEnum.BLOOD_PRESSURE_SYS), now, BP_WINDOW_DAYS);
+            MetricLatestSlotDto d = fresh(latest.get(MetricTypeEnum.BLOOD_PRESSURE_DIA), now, BP_WINDOW_DAYS);
             if (s != null && d != null) {
                 b.sbp(s.value()).dbp(d.value()).bpReadings(1).bpRecordedAt(s.recordedAt());
             }
         }
 
         List<VitalRecord> glucose14 = nonNull(vitalRecordMapper.listByRange(
-                tenantId, peopleId, MetricTypeEnum.BLOOD_GLUCOSE.name(), now.minusDays(14), now));
+                tenantId, peopleId, MetricTypeEnum.BLOOD_GLUCOSE.name(), now.minusDays(HYPO_WINDOW_DAYS), now));
         int hypo = (int) glucose14.stream().filter(r -> r.getValue().compareTo(HYPO_THRESHOLD) < 0).count();
         b.hypoEvents14d(hypo);
         return new MetricsLoaded(fasting, !glucose14.isEmpty());
@@ -227,8 +253,9 @@ public class AssessmentContextBuilder {
 
     // ---------------------------------------------------------------- 检验
 
-    /** 返回检验空腹血糖，供指标缺失时兜底。 */
-    private LabLatestNumeric loadLabs(AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId) {
+    /** 返回检验空腹血糖，供指标缺失时兜底（已按时效过滤）。 */
+    private LabLatestNumeric loadLabs(
+            AssessmentContext.AssessmentContextBuilder b, String tenantId, String peopleId, LocalDateTime now) {
         List<LabLatestNumeric> rows = labResultItemMapper.listLatestNumericByPeople(tenantId, peopleId, LAB_CODES);
         Map<String, LabLatestNumeric> byCode = new HashMap<>();
         if (rows != null) {
@@ -240,47 +267,69 @@ public class AssessmentContextBuilder {
         }
         LocalDateTime lipidAt = null;
         LabLatestNumeric r;
-        if ((r = byCode.get("TC")) != null) {
+        if ((r = freshLab(byCode.get("TC"), now, LAB_ANNUAL_DAYS)) != null) {
             b.tc(LabUnits.cholesterol(r.getValueNum(), r.getUnit()));
             lipidAt = max(lipidAt, r.getRecordedAt());
         }
-        if ((r = byCode.get("LDL_C")) != null) {
+        if ((r = freshLab(byCode.get("LDL_C"), now, LAB_ANNUAL_DAYS)) != null) {
             b.ldlC(LabUnits.cholesterol(r.getValueNum(), r.getUnit()));
             lipidAt = max(lipidAt, r.getRecordedAt());
         }
-        if ((r = byCode.get("HDL_C")) != null) {
+        if ((r = freshLab(byCode.get("HDL_C"), now, LAB_ANNUAL_DAYS)) != null) {
             b.hdlC(LabUnits.cholesterol(r.getValueNum(), r.getUnit()));
             lipidAt = max(lipidAt, r.getRecordedAt());
         }
-        if ((r = byCode.get("TG")) != null) {
+        if ((r = freshLab(byCode.get("TG"), now, LAB_ANNUAL_DAYS)) != null) {
             b.tg(LabUnits.triglyceride(r.getValueNum(), r.getUnit()));
             lipidAt = max(lipidAt, r.getRecordedAt());
         }
         b.lipidRecordedAt(lipidAt);
-        if ((r = byCode.get("UA")) != null) {
+        if ((r = freshLab(byCode.get("UA"), now, LAB_ANNUAL_DAYS)) != null) {
             b.uricAcid(LabUnits.uricAcid(r.getValueNum(), r.getUnit()));
         }
         LocalDateTime renalAt = null;
-        if ((r = byCode.get("CR")) != null) {
+        if ((r = freshLab(byCode.get("CR"), now, LAB_ANNUAL_DAYS)) != null) {
             b.creatinine(LabUnits.creatinine(r.getValueNum(), r.getUnit()));
             renalAt = max(renalAt, r.getRecordedAt());
         }
-        if ((r = byCode.get("EGFR")) != null) {
+        if ((r = freshLab(byCode.get("EGFR"), now, LAB_ANNUAL_DAYS)) != null) {
             b.egfr(r.getValueNum());
             renalAt = max(renalAt, r.getRecordedAt());
         }
-        if ((r = byCode.get("UACR")) != null) {
+        if ((r = freshLab(byCode.get("UACR"), now, LAB_ANNUAL_DAYS)) != null) {
             b.uacr(LabUnits.uacr(r.getValueNum(), r.getUnit()));
             renalAt = max(renalAt, r.getRecordedAt());
         }
         b.renalRecordedAt(renalAt);
-        if ((r = byCode.get("ALT")) != null) {
+        if ((r = freshLab(byCode.get("ALT"), now, LAB_ANNUAL_DAYS)) != null) {
             b.alt(r.getValueNum());
         }
-        if ((r = byCode.get("HBA1C")) != null) {
+        if ((r = freshLab(byCode.get("HBA1C"), now, CONTROL_WINDOW_DAYS)) != null) {
             b.hba1c(LabUnits.hba1c(r.getValueNum(), r.getUnit())).hba1cRecordedAt(r.getRecordedAt());
         }
-        return byCode.get("FPG");
+        return freshLab(byCode.get("FPG"), now, CONTROL_WINDOW_DAYS);
+    }
+
+    /** 无测量时间或超出有效期 → 不采用。 */
+    static boolean within(LocalDateTime recordedAt, LocalDateTime now, int maxAgeDays) {
+        if (recordedAt == null || now == null || maxAgeDays < 0) {
+            return false;
+        }
+        return !recordedAt.isBefore(now.minusDays(maxAgeDays));
+    }
+
+    private static MetricLatestSlotDto fresh(MetricLatestSlotDto slot, LocalDateTime now, int maxAgeDays) {
+        if (slot == null || slot.value() == null) {
+            return null;
+        }
+        return within(slot.recordedAt(), now, maxAgeDays) ? slot : null;
+    }
+
+    private static LabLatestNumeric freshLab(LabLatestNumeric row, LocalDateTime now, int maxAgeDays) {
+        if (row == null || row.getValueNum() == null) {
+            return null;
+        }
+        return within(row.getRecordedAt(), now, maxAgeDays) ? row : null;
     }
 
     private static LocalDateTime max(LocalDateTime a, LocalDateTime b) {

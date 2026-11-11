@@ -77,12 +77,28 @@ public class LabOcrRecognitionService {
                 }
                 String code = codeOpt.get();
                 if (!seenCodes.add(code)) {
+                    ignored.add(new LabOcrIgnoredItemDto(
+                            StringUtils.hasText(rawName) ? rawName.trim() : code, "DUPLICATE_CODE"));
                     continue;
                 }
                 BigDecimal valueNum = decimalOrNull(node.get("valueNum"));
                 String valueText = textOrNull(node, "valueText");
                 if (valueNum == null && !StringUtils.hasText(valueText)) {
-                    continue;
+                    // 尝试从 value 字段取数（部分模型不拆 valueNum）
+                    valueNum = decimalOrNull(node.get("value"));
+                    if (valueNum == null && !StringUtils.hasText(valueText)) {
+                        continue;
+                    }
+                }
+                RefBound ref = parseRefBound(node);
+                String flag = normalizeFlag(textOrNull(node, "abnormalFlag"));
+                if (flag == null) {
+                    flag = inferFlag(
+                            textOrNull(node, "abnormalFlag"),
+                            textOrNull(node, "flag"),
+                            valueText,
+                            textOrNull(node, "value"),
+                            rawName);
                 }
                 mappedItems.add(new LabOcrItemDto(
                         code,
@@ -90,14 +106,12 @@ public class LabOcrRecognitionService {
                         valueNum,
                         valueText,
                         textOrNull(node, "unit"),
-                        decimalOrNull(node.get("refLow")),
-                        decimalOrNull(node.get("refHigh")),
-                        normalizeFlag(textOrNull(node, "abnormalFlag"))));
+                        ref.low(),
+                        ref.high(),
+                        flag));
             }
         }
-        if (!ignored.isEmpty()) {
-            warnings.add("已忽略 " + ignored.size() + " 项未收录项目");
-        }
+        // 忽略项数量由前端根据 ignoredItems 汇总展示，避免与「未映射」提示重复
         String specimen = normalizeSpecimen(textOrNull(root, "specimenType"));
         return new LabOcrPrefillDto(
                 specimen,
@@ -130,7 +144,11 @@ public class LabOcrRecognitionService {
                   ],
                   "warnings": []
                 }
-                仅抽取常规检验项目，不要诊断结论。
+                要求：
+                1) 血常规须尽量抽全：白细胞/红细胞/血红蛋白/血小板、分类绝对值与百分比、MCV/MCH/MCHC/RDW、MPV/PDW/PCT 等；
+                2) 报告单上的 ↑↓ 或 H/L 写入 abnormalFlag（H/L/N）；
+                3) 单侧参考如 <0.06 只填 refHigh，>40 只填 refLow；
+                4) 仅抽取检验项目，不要诊断结论。
                 """;
     }
 
@@ -169,7 +187,83 @@ public class LabOcrRecognitionService {
         if ("H".equals(f) || "L".equals(f) || "N".equals(f)) {
             return f;
         }
+        if ("HIGH".equals(f) || f.contains("↑") || f.contains("⬆") || f.contains("偏高")
+                || f.contains("为 H") || f.contains("为H") || f.endsWith(" H")) {
+            return "H";
+        }
+        if ("LOW".equals(f) || f.contains("↓") || f.contains("⬇") || f.contains("偏低")
+                || f.contains("为 L") || f.contains("为L") || f.endsWith(" L")) {
+            return "L";
+        }
         return null;
+    }
+
+    /** 从 ↑↓ / 偏高偏低 等文本推断异常标记 */
+    private static String inferFlag(String... texts) {
+        if (texts == null) {
+            return null;
+        }
+        for (String raw : texts) {
+            String hit = normalizeFlag(raw);
+            if (hit != null && !"N".equals(hit)) {
+                return hit;
+            }
+            if (!StringUtils.hasText(raw)) {
+                continue;
+            }
+            String t = raw.trim();
+            // 数值后紧跟箭头：12.5↑ / 3.1↓
+            if (t.matches(".*\\d\\s*[↑⬆].*") || t.matches("(?i).*\\bH\\b.*")) {
+                return "H";
+            }
+            if (t.matches(".*\\d\\s*[↓⬇].*") || t.matches("(?i).*\\bL\\b.*")) {
+                return "L";
+            }
+        }
+        return null;
+    }
+
+    private record RefBound(BigDecimal low, BigDecimal high) {}
+
+    /**
+     * 解析参考范围：支持独立 refLow/refHigh，或 refRange 文本如 {@code 3.5-9.5}、{@code <0.06}、{@code >40}。
+     */
+    private static RefBound parseRefBound(JsonNode node) {
+        BigDecimal low = decimalOrNull(node.get("refLow"));
+        BigDecimal high = decimalOrNull(node.get("refHigh"));
+        if (low != null || high != null) {
+            return new RefBound(low, high);
+        }
+        String range = textOrNull(node, "refRange");
+        if (!StringUtils.hasText(range)) {
+            range = textOrNull(node, "reference");
+        }
+        if (!StringUtils.hasText(range)) {
+            return new RefBound(null, null);
+        }
+        String t = range.trim().replace("～", "-").replace("~", "-").replace("—", "-");
+        if (t.startsWith("<") || t.startsWith("≤") || t.startsWith("<=")) {
+            return new RefBound(null, decimalFromLoose(t.replaceAll("^[≤<]=?", "")));
+        }
+        if (t.startsWith(">") || t.startsWith("≥") || t.startsWith(">=")) {
+            return new RefBound(decimalFromLoose(t.replaceAll("^[≥>]=?", "")), null);
+        }
+        String[] parts = t.split("-");
+        if (parts.length == 2) {
+            return new RefBound(decimalFromLoose(parts[0]), decimalFromLoose(parts[1]));
+        }
+        return new RefBound(null, null);
+    }
+
+    private static BigDecimal decimalFromLoose(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        try {
+            return new BigDecimal(raw.trim().replaceAll("[^0-9.\\-]", ""));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String normalizeSpecimen(String raw) {
