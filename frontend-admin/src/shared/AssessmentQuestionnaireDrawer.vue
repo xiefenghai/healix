@@ -48,10 +48,6 @@ const showAll = ref(false)
 /** 已支持就地录入的肾功能三项，不再走冷提示 */
 const INLINE_LAB_FIELDS = new Set(['lab.CR', 'lab.EGFR', 'lab.UACR'])
 
-function isInlineLabField(field: string) {
-  return INLINE_LAB_FIELDS.has(field)
-}
-
 /** 每个检验指标各自的采样时间 */
 const labSampledAtByField = reactive<Record<string, string>>({})
 const labSampledAtErrors = reactive<Record<string, string>>({})

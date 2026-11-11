@@ -1263,12 +1263,14 @@ function normalizeFoodList(list: FoodItem[]): FoodItem[] {
     .filter((f) => f.label || f.code)
 }
 
-function readPlanSummary(src?: { contextSnapshot?: any } | null): string {
+function readPlanSummary(src?: { contextSnapshot?: any } | null | Record<string, any>): string {
   const raw = src?.contextSnapshot?.summary
   return typeof raw === 'string' ? raw.trim() : ''
 }
 
-function readRationaleOverview(src?: { contextSnapshot?: any } | null): string | undefined {
+function readRationaleOverview(
+  src?: { contextSnapshot?: any } | null | Record<string, any>,
+): string | undefined {
   const raw = src?.contextSnapshot?.rationale?.overview
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined
 }
@@ -2111,14 +2113,6 @@ async function adjustActivePlan() {
   } finally {
     saving.value = false
   }
-}
-
-function formatDateTime(iso?: string) {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 /** 历史弹窗用：精确到分钟，去掉秒 */

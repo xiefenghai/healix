@@ -237,7 +237,7 @@ function itemValueText(item?: LabItem | null) {
 }
 
 /** 最近测量时间：带年份 YYYY-MM-DD HH:mm */
-function latestMeasureTime(latest?: LabItem | null) {
+function latestMeasureTime(latest?: LatestLabItem | null) {
   if (!latest?.reportedAt) return ''
   return formatTime(latest.reportedAt)
 }
@@ -813,35 +813,11 @@ const detailItemsSorted = computed(() => {
   })
 })
 
-function openDetail(row: LabReport) {
-  detailRow.value = row
-  detailVisible.value = true
-}
-
 function editFromDetail() {
   if (!detailRow.value) return
   const real = list.value.find((r) => r.id === detailRow.value!.id) || detailRow.value
   openEdit(real)
   detailVisible.value = false
-}
-
-function openCreate() {
-  editingId.value = null
-  saveSource.value = 'STAFF'
-  ocrTimesBlocked.value = false
-  ocrHint.value = ''
-  ocrImageKey.value = ''
-  ocrBaselineByCode.value = {}
-  clearAiHighlights()
-  revokeOcrPreview()
-  form.sampledAt = nowLocalInput()
-  form.reportedAt = nowLocalInput()
-  form.note = ''
-  form.itemsByCode = buildBlankItems()
-  formTimeErrors.sampledAt = ''
-  formTimeErrors.reportedAt = ''
-  selectPanel(LAB_PANELS[0].key)
-  mode.value = 'edit'
 }
 
 function applyOcrDraft(draft: LabOcrDraft) {
@@ -1143,19 +1119,6 @@ async function save() {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
     saving.value = false
-  }
-}
-
-async function removeRow(row: LabReport) {
-  try {
-    await ElMessageBox.confirm('确认删除该检验报告？', '删除确认', { type: 'warning' })
-    await api(`/api/b/v1/patients/${peopleId.value}/lab-reports/${row.id}`, { method: 'DELETE' })
-    ElMessage.success('已删除')
-    await loadList()
-  } catch (e) {
-    if (e !== 'cancel' && e !== 'close') {
-      ElMessage.error(e instanceof Error ? e.message : '删除失败')
-    }
   }
 }
 
