@@ -2071,7 +2071,7 @@ function onCheckinHistoryRangeChange() {
 }
 
 function sourceModeTag(mode?: string) {
-  return mode === 'AI' ? '🤖 AI 起草' : '👨‍⚕️ 医生制定'
+  return mode === 'AI' ? '🤖 AI 起草' : '✍️ 人工编制'
 }
 
 function shortVersionLabel(row: Pick<CarePlanListItem, 'versionLabel' | 'schemaVersion' | 'versionNo'>) {
