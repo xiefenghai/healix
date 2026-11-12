@@ -2,8 +2,9 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import { api, hasRole } from '../../shared/http'
-import { postSse } from '../../shared/agent-stream'
+import { isAbortError, postSse } from '../../shared/agent-stream'
 import { emitAgentCarePlanUpdated, onAgentCarePlanUpdated } from '../../shared/agent-events'
 import { takeAgentDraft } from '../../shared/agent-draft-bus'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
@@ -369,14 +370,107 @@ async function loadPatientName() {
   }
 }
 
-/** 嵌套患者页点「制定」时改走全屏；嵌入/已在全屏则就地切 tab */
+/**
+ * 从列表点「制定新方案」→ 全屏 + fresh=1（自动 AI 新生成）。
+ * 已在全屏/生成完成后调用 → 只切到制定态并展示当前草稿，不再强制重跑。
+ */
 function enterCompose(query?: Record<string, string>) {
-  if (!isEmbedded.value && !isFullscreenCompose.value) {
-    goFullscreenCompose(query)
+  const fromList = !isEmbedded.value && !isFullscreenCompose.value
+  if (fromList) {
+    goFullscreenCompose({ fresh: '1', ...(query || {}) })
     return
   }
   mainTab.value = 'compose'
-  void load()
+  if (query?.fresh === '1') {
+    void bootstrapComposeEntry({ forceFresh: true })
+    return
+  }
+  if (!bundle.value) void load()
+  else syncFormFromBundle()
+}
+
+/** 全屏制定：自动生成中，禁止展示旧生效内容 */
+const composeAutoGenerating = ref(false)
+const composeGenerateProgress = ref('')
+const composeCompareOpen = ref(false)
+const composeCompareLoading = ref(false)
+const composeCompareLeft = ref<CarePlanPreviewData | null>(null)
+
+/** 沉浸式生成：步骤进度（文案匹配 SSE progress + 定时兜底推进） */
+const COMPOSE_GEN_STEPS = [
+  {
+    key: 'vitals',
+    label: '正在读取患者近7日体征与打卡数据...',
+    match: /体征|打卡|档案|读取|准备|上下文|患者/,
+  },
+  {
+    key: 'guideline',
+    label: '正在匹配高血压/糖尿病权威指南...',
+    match: /指南|高血压|糖尿病|匹配|评估/,
+  },
+  {
+    key: 'plan',
+    label: '正在规划低强度运动与饮食交换份...',
+    match: /运动|饮食|规划|热量|方案|生成中/,
+  },
+  {
+    key: 'tasks',
+    label: '正在生成 14 天执行打卡任务...',
+    match: /执行|任务|写入|草稿|完成|打卡任务/,
+  },
+] as const
+const composeGenStepIndex = ref(0)
+let composeGenStepTimer: ReturnType<typeof setInterval> | null = null
+let composeGenAbort: AbortController | null = null
+
+const composeImmersiveGenerating = computed(
+  () =>
+    isFullscreenCompose.value &&
+    (composeAutoGenerating.value || (loading.value && !bundle.value?.draft)),
+)
+
+function stopComposeGenStepTicker() {
+  if (composeGenStepTimer != null) {
+    clearInterval(composeGenStepTimer)
+    composeGenStepTimer = null
+  }
+}
+
+function startComposeGenStepTicker() {
+  composeGenStepIndex.value = 0
+  stopComposeGenStepTicker()
+  composeGenStepTimer = setInterval(() => {
+    if (composeGenStepIndex.value < COMPOSE_GEN_STEPS.length - 1) {
+      composeGenStepIndex.value += 1
+    }
+  }, 4200)
+}
+
+function advanceComposeGenStepFromProgress(msg: string) {
+  const text = String(msg || '')
+  for (let i = COMPOSE_GEN_STEPS.length - 1; i >= 0; i--) {
+    if (COMPOSE_GEN_STEPS[i]!.match.test(text)) {
+      if (i > composeGenStepIndex.value) composeGenStepIndex.value = i
+      return
+    }
+  }
+}
+
+function composeGenStepState(i: number): 'done' | 'active' | 'pending' {
+  if (i < composeGenStepIndex.value) return 'done'
+  if (i === composeGenStepIndex.value) return 'active'
+  return 'pending'
+}
+
+function cancelComposeAutoGenerate() {
+  composeGenAbort?.abort()
+  composeGenAbort = null
+  stopComposeGenStepTicker()
+  composeAutoGenerating.value = false
+  composeGenerateProgress.value = ''
+  saving.value = false
+  ElMessage.info('已取消生成')
+  backFromCompose()
 }
 
 const listLoading = ref(false)
@@ -1253,21 +1347,96 @@ function domainHighlightTitle(domain: CarePlanWarnDomain) {
   return `请重点确认 · ${label}`
 }
 
-function warnSectionCta(
-  sec: CarePlanWarnSection,
-): { kind: 'allergy'; label: string } | { kind: 'domain'; domain: CarePlanWarnDomain; label: string } | null {
-  if (sec.code === 'ALLERGY_UNKNOWN') return { kind: 'allergy', label: '立即去补采' }
-  const domain = primaryDomainForWarnSection(sec)
-  if (!domain) return null
-  const label = CARE_PLAN_WARN_DOMAIN_OPTIONS.find((d) => d.key === domain)?.label || domain
-  return { kind: 'domain', domain, label: `去核对${label}` }
+type ComposeWarnCta =
+  | { kind: 'allergy'; label: string }
+  | { kind: 'domain'; domain: CarePlanWarnDomain; label: string }
+  | { kind: 'ack'; label: string }
+
+const WARN_REVIEW_HEADLINES: Record<string, string> = {
+  ALLERGY_UNKNOWN: '过敏史未采集',
+  HIGH_ALLERGEN_FOOD_UNCHECKED: '高致敏食物待确认',
+  GUIDELINE_TARGET_CONFLICT: '与指南推荐量不一致',
+  GUIDELINE_REF_MISSING: '缺少指南依据标注',
+  GUIDELINE_REF_UNKNOWN: '指南引用需核对',
+  GUIDELINE_KB_EMPTY: '指南库为空',
+  DIET_INTOLERANCE: '饮食不耐受风险',
+  HYPOGLYCEMIA_RISK: '低血糖风险',
+  CONTEXT_INCOMPLETE: '档案上下文不完整',
+  NO_DISEASE_TAG: '病种匹配待核对',
+  MISSING_RATIONALE: '生成依据不完整',
 }
 
-function runWarnSectionCta(sec: CarePlanWarnSection) {
-  const cta = warnSectionCta(sec)
-  if (!cta) return
-  if (cta.kind === 'allergy') openAllergyCollect()
-  else jumpToHighlightDomain(cta.domain)
+const DOMAIN_CTA_LABEL: Record<CarePlanWarnDomain, string> = {
+  exercise: '去核对运动 >',
+  diet: '去核对饮食 >',
+  execution: '去核对执行 >',
+}
+
+/** 从末尾剥离一层匹配的全角括号（支持嵌套，如《指南（2020年版）》） */
+function peelTrailingFullParen(text: string): { head: string; inner: string } | null {
+  const s = text.trimEnd()
+  if (!s.endsWith('）')) return null
+  let depth = 0
+  for (let i = s.length - 1; i >= 0; i -= 1) {
+    const ch = s[i]
+    if (ch === '）') depth += 1
+    else if (ch === '（') {
+      depth -= 1
+      if (depth === 0) {
+        return {
+          head: s.slice(0, i).trim(),
+          inner: s.slice(i + 1, s.length - 1).trim(),
+        }
+      }
+    }
+  }
+  return null
+}
+
+/** 从长文中剥离《指南》出处，避免主描述被引用墙淹没 */
+function peelGuidelineRefs(text: string): { body: string; refs: string[] } {
+  const refs: string[] = []
+  let rest = String(text || '').trim()
+  if (!rest) return { body: '', refs }
+
+  rest = rest
+    .replace(/（出处[:：]([\s\S]*?)）/g, (_, raw: string) => {
+      const t = String(raw || '').trim()
+      if (t) refs.push(t)
+      return ''
+    })
+    .trim()
+
+  // 反复剥离末尾含《…》的全角括号块（含嵌套括号）
+  for (let i = 0; i < 8; i += 1) {
+    const peeled = peelTrailingFullParen(rest)
+    if (!peeled || !peeled.inner.includes('《')) break
+    refs.unshift(peeled.inner)
+    rest = peeled.head
+  }
+
+  // 残留的独立《…》片段也收到弱引用区
+  rest = rest
+    .replace(/《[^》]+》(?:（[^）]*）)?[^；、，,\s]*/g, (hit) => {
+      const t = hit.trim()
+      if (t) refs.push(t)
+      return ''
+    })
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[；;]\s*$/g, '')
+    .trim()
+
+  return { body: rest, refs: [...new Set(refs)] }
+}
+
+function warnSectionCta(sec: CarePlanWarnSection): ComposeWarnCta {
+  if (sec.code === 'ALLERGY_UNKNOWN') return { kind: 'allergy', label: '去补采 >' }
+  if (sec.code === 'HIGH_ALLERGEN_FOOD_UNCHECKED') {
+    return { kind: 'domain', domain: 'diet', label: DOMAIN_CTA_LABEL.diet }
+  }
+  const domain = primaryDomainForWarnSection(sec)
+  if (domain) return { kind: 'domain', domain, label: DOMAIN_CTA_LABEL[domain] }
+  return { kind: 'ack', label: '已核对 >' }
 }
 
 const allergyDialogOpen = ref(false)
@@ -1276,7 +1445,97 @@ const overviewTitleEditing = ref(false)
 const overviewGoalEditing = ref(false)
 /** 顶部质检黄条默认收起，把主舞台让给总览 */
 const qcWarnExpanded = ref(false)
+/** 黄灯逐条点过「去核对/补采」的 code */
+const composeWarnVisitedCodes = ref<Set<string>>(new Set())
+/** 底部「已全部知悉并核对」 */
+const composeWarnBulkAcked = ref(false)
 const overviewRationaleOpen = ref(false)
+
+type ComposeWarnReviewCard = {
+  code: string
+  index: number
+  headline: string
+  description: string
+  refs: string[]
+  cta: ComposeWarnCta
+  visited: boolean
+}
+
+function markComposeWarnVisited(code: string) {
+  if (!code) return
+  const next = new Set(composeWarnVisitedCodes.value)
+  next.add(code)
+  composeWarnVisitedCodes.value = next
+}
+
+function runWarnSectionCta(sec: CarePlanWarnSection) {
+  const cta = warnSectionCta(sec)
+  markComposeWarnVisited(sec.code)
+  if (cta.kind === 'allergy') openAllergyCollect()
+  else if (cta.kind === 'domain') jumpToHighlightDomain(cta.domain)
+}
+
+function runComposeWarnCardCta(card: ComposeWarnReviewCard) {
+  const sec = topWarnSections.value.find((s) => s.code === card.code)
+  if (sec) runWarnSectionCta(sec)
+  else markComposeWarnVisited(card.code)
+}
+
+function ackAllComposeWarns() {
+  composeWarnBulkAcked.value = true
+  composeWarnVisitedCodes.value = new Set(topWarnSections.value.map((s) => s.code))
+  ElMessage.success('已确认全部风险点，可以发布')
+}
+
+const composeWarnReviewCards = computed((): ComposeWarnReviewCard[] =>
+  topWarnSections.value.map((sec, index) => {
+    const headlineBase =
+      WARN_REVIEW_HEADLINES[sec.code] ||
+      String(sec.title || sec.tag || '需核对项').replace(/^与指南推荐量不一致.*$/, '与指南推荐量不一致')
+    const refs: string[] = []
+    const descParts: string[] = []
+
+    // 标题里若带「请确认…」长句，挪到描述
+    const titleExtra = String(sec.title || '')
+      .replace(headlineBase, '')
+      .replace(/^[，,：:\s]+/, '')
+      .trim()
+    if (titleExtra && titleExtra !== headlineBase) descParts.push(titleExtra)
+
+    for (const it of sec.items || []) {
+      const peeled = peelGuidelineRefs(String(it.action || ''))
+      if (peeled.body) descParts.push(peeled.body)
+      refs.push(...peeled.refs)
+      if (it.source) refs.push(`首诊：${it.source}${it.answer ? ` → ${it.answer}` : ''}`)
+    }
+
+    let description = [...new Set(descParts.map((s) => s.trim()).filter(Boolean))].join('；')
+    if (!description) {
+      description =
+        sec.code === 'ALLERGY_UNKNOWN'
+          ? '患者过敏史未采集，饮食建议无法排除过敏风险'
+          : '请展开核对相关方案内容后再发布'
+    }
+
+    return {
+      code: sec.code,
+      index: index + 1,
+      headline: `⚠️ ${headlineBase}`,
+      description,
+      refs: [...new Set(refs)],
+      cta: warnSectionCta(sec),
+      visited: composeWarnBulkAcked.value || composeWarnVisitedCodes.value.has(sec.code),
+    }
+  }),
+)
+
+/** 有黄灯时：全部点过 CTA，或点过底部统一确认，才允许发布 */
+const composeWarnPublishUnlocked = computed(() => {
+  const cards = composeWarnReviewCards.value
+  if (!cards.length) return true
+  if (composeWarnBulkAcked.value) return true
+  return cards.every((c) => composeWarnVisitedCodes.value.has(c.code))
+})
 
 function onOverviewRationaleToggle(e: Event) {
   const el = e.target as HTMLDetailsElement | null
@@ -1664,9 +1923,65 @@ function readRationaleOverview(
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined
 }
 
+/** 全屏制定页只吃草稿；禁止用已生效版回填编辑器（避免 V7 旧案冒充新生成） */
+function composeFormSource() {
+  const b = bundle.value
+  if (isFullscreenCompose.value) return b?.draft || null
+  return b?.draft || b?.activeVersion || null
+}
+
+function blankEditFormContent() {
+  overviewTitleEditing.value = false
+  overviewGoalEditing.value = false
+  overviewRationaleOpen.value = false
+  summaryFullEditing.value = false
+  summarySectionEditing.value = null
+  exerciseDayOpenIdx.value = 0
+  exerciseNoteEditKey.value = null
+  editForm.title = ''
+  editForm.goalSummary = ''
+  editForm.planSummary = readPlanSummary(null)
+  editForm.rationaleOverview = ''
+  editForm.exerciseGoal = ''
+  editForm.exerciseRationale = ''
+  editForm.exercisePrecautions = ''
+  editForm.exerciseContraindications = ''
+  editForm.exerciseReviewHint = ''
+  editForm.weeklyPlan = []
+  editForm.dietPrinciples = ''
+  editForm.dietRationale = ''
+  editForm.dietCalorieHint = ''
+  editForm.energyTarget = null
+  editForm.energyKcal = undefined
+  editForm.energyGoalType = 'MAINTAIN'
+  editForm.energyRateKgPerWeek = 0.5
+  editForm.syncDietGoal = true
+  editForm.dietNotes = ''
+  syncDietNoteRowsFromForm()
+  editForm.dietRecommended = []
+  editForm.dietLimited = []
+  editForm.dietAllergensAvoid = []
+  editForm.dietIntolerances = []
+  editForm.sampleDay = {
+    breakfast: { text: '', swapHint: '' },
+    lunch: { text: '', swapHint: '' },
+    dinner: { text: '', swapHint: '' },
+    snacks: { text: '', swapHint: '' },
+  }
+  editForm.sampleWeek = {}
+  editForm.horizonDays = 14
+  editForm.executionRationale = ''
+  editForm.tasks = []
+}
+
 function syncFormFromBundle() {
   const b = bundle.value
-  const src = b?.draft || b?.activeVersion
+  const src = composeFormSource()
+  if (!src) {
+    blankEditFormContent()
+    editForm.version = b?.draft?.version ?? 1
+    return
+  }
   overviewTitleEditing.value = false
   overviewGoalEditing.value = false
   overviewRationaleOpen.value = false
@@ -1822,21 +2137,31 @@ function composeLastNDaysSeries(
   return out
 }
 
-function composeSparkPath(points: Array<number | null>, w = 120, h = 36): string {
+function composeSparkGeometry(
+  points: Array<number | null>,
+  w = 120,
+  h = 36,
+): { path: string; dots: Array<{ x: number; y: number }> } {
   const vals = points.filter((p): p is number => p != null && !Number.isNaN(p))
-  if (vals.length < 2) return ''
+  if (vals.length < 2) return { path: '', dots: [] }
   const min = Math.min(...vals)
   const max = Math.max(...vals)
   const span = max - min || 1
   const step = w / Math.max(points.length - 1, 1)
   const parts: string[] = []
+  const plotted: Array<{ x: number; y: number }> = []
   points.forEach((p, i) => {
     if (p == null || Number.isNaN(p)) return
     const x = i * step
-    const y = h - ((p - min) / span) * (h - 4) - 2
+    const y = h - ((p - min) / span) * (h - 8) - 4
+    plotted.push({ x, y })
     parts.push(`${parts.length ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`)
   })
-  return parts.join(' ')
+  const dots =
+    plotted.length >= 2
+      ? [plotted[0]!, plotted[plotted.length - 1]!]
+      : plotted
+  return { path: parts.join(' '), dots }
 }
 
 function composeFindSlot(...types: string[]) {
@@ -1859,6 +2184,7 @@ const composeMetricTrendCards = computed(() => {
     tone: 'good' | 'fair' | 'poor' | 'empty'
     points: Array<number | null>
     path: string
+    dots: Array<{ x: number; y: number }>
   }> = []
   const sys = composeFindSlot('BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE', 'BP_SYS')
   const dia = composeFindSlot('BLOOD_PRESSURE_DIA', 'BP_DIA')
@@ -1888,6 +2214,7 @@ const composeMetricTrendCards = computed(() => {
       return m.value == null ? null : Number(m.value)
     },
   )
+  const bpGeo = composeSparkGeometry(bpPoints)
   cards.push({
     key: 'bp',
     label: '血压',
@@ -1895,7 +2222,8 @@ const composeMetricTrendCards = computed(() => {
     hint: composeFormatSlotTime(sys?.recordedAt || dia?.recordedAt) || '近3日',
     tone: bpTone,
     points: bpPoints,
-    path: composeSparkPath(bpPoints),
+    path: bpGeo.path,
+    dots: bpGeo.dots,
   })
 
   const gv = glucose?.value == null ? null : Number(glucose.value)
@@ -1910,6 +2238,7 @@ const composeMetricTrendCards = computed(() => {
     (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
     (m) => (m.value == null ? null : Number(m.value)),
   )
+  const gGeo = composeSparkGeometry(gPoints)
   cards.push({
     key: 'glu',
     label: '血糖',
@@ -1917,7 +2246,8 @@ const composeMetricTrendCards = computed(() => {
     hint: composeFormatSlotTime(glucose?.recordedAt) || (glucose?.unit || 'mmol/L'),
     tone: gTone,
     points: gPoints,
-    path: composeSparkPath(gPoints),
+    path: gGeo.path,
+    dots: gGeo.dots,
   })
   return cards
 })
@@ -2537,6 +2867,138 @@ async function load() {
   }
 }
 
+/** 进入全屏制定：fresh 或无草稿 → 自动 AI 生成；有草稿且非 fresh → 只展示草稿 */
+async function bootstrapComposeEntry(opts?: { forceFresh?: boolean }) {
+  if (!peopleId.value) return
+  const wantFresh = opts?.forceFresh || String(route.query.fresh || '') === '1'
+  loading.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan`)
+    bundle.value = res.data
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '加载方案失败')
+    loading.value = false
+    return
+  } finally {
+    loading.value = false
+  }
+
+  // 全屏制定绝不先回填已生效版
+  if (!bundle.value?.draft) {
+    blankEditFormContent()
+  } else if (!wantFresh) {
+    syncFormFromBundle()
+  } else {
+    blankEditFormContent()
+  }
+
+  if (wantFresh || !bundle.value?.draft) {
+    await runComposeAutoGenerate()
+    if (String(route.query.fresh || '') === '1') {
+      const q = { ...route.query }
+      delete q.fresh
+      void router.replace({ path: route.path, query: q })
+    }
+    return
+  }
+}
+
+async function runComposeAutoGenerate() {
+  if (!peopleId.value || composeAutoGenerating.value) return
+  composeAutoGenerating.value = true
+  composeGenerateProgress.value = '正在基于最新患者体征生成...'
+  composeFsFineTuning.value = false
+  blankEditFormContent()
+  saving.value = true
+  composeGenAbort?.abort()
+  composeGenAbort = new AbortController()
+  try {
+    await postSse(
+      `/api/b/v1/patients/${peopleId.value}/care-plan/generate/stream`,
+      {
+        replaceDraft: true,
+        templateKey: null,
+        instruction: null,
+        diseaseCodes: null,
+      },
+      {
+        signal: composeGenAbort.signal,
+        onProgress: (msg) => {
+          const text = msg || '正在基于最新患者体征生成...'
+          composeGenerateProgress.value = text
+          advanceComposeGenStepFromProgress(text)
+        },
+        onResult: (payload) => {
+          composeGenStepIndex.value = COMPOSE_GEN_STEPS.length - 1
+          bundle.value = payload as CarePlanBundle
+          syncFormFromBundle()
+        },
+        onError: (msg) => ElMessage.error(msg),
+      },
+    )
+    ElMessage.success('AI 方案草稿已生成，请审阅后确认')
+    refreshAfterMutation()
+  } catch (e) {
+    if (isAbortError(e)) {
+      // 用户取消：不报错
+      return
+    }
+    ElMessage.error(e instanceof Error ? e.message : '生成失败')
+  } finally {
+    stopComposeGenStepTicker()
+    composeGenAbort = null
+    composeAutoGenerating.value = false
+    composeGenerateProgress.value = ''
+    saving.value = false
+  }
+}
+
+async function openComposePrevCompare() {
+  const active = bundle.value?.activeVersion
+  if (!active?.id || !bundle.value?.draft) {
+    ElMessage.info('暂无上一版可对比（需同时有草稿与已生效方案）')
+    return
+  }
+  composeCompareOpen.value = true
+  composeCompareLoading.value = true
+  composeCompareLeft.value = null
+  try {
+    const res = await api<{
+      data: {
+        id: string
+        source?: string
+        versionLabel?: string
+        exercise?: any
+        diet?: any
+        execution?: any
+        publishedAt?: string
+        signStatus?: string
+      }
+    }>(`/api/b/v1/patients/${peopleId.value}/care-plan/versions/${active.id}`)
+    const v = res.data
+    composeCompareLeft.value = {
+      title: bundle.value?.plan?.title,
+      goalSummary: bundle.value?.plan?.goalSummary || v.exercise?.goal,
+      summary: readPlanSummary(v),
+      rationaleOverview: readRationaleOverview(v),
+      source: v.source,
+      versionLabel: v.versionLabel || activeSchemaLabel.value || '上一版',
+      status: 'ACTIVE',
+      exercise: v.exercise,
+      diet: v.diet,
+      execution: v.execution,
+      publishedAt: v.publishedAt,
+      signStatus: v.signStatus,
+      peopleName: patientName.value || undefined,
+    }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '加载上一版失败')
+    composeCompareOpen.value = false
+  } finally {
+    composeCompareLoading.value = false
+  }
+}
+
 async function loadList() {
   if (!peopleId.value) return
   listLoading.value = true
@@ -3037,7 +3499,13 @@ async function confirmGenerate() {
     )
     generateVisible.value = false
     composeFsFineTuning.value = false
-    enterCompose()
+    // 已有新草稿：进入全屏确认，勿再带 fresh 触发二次生成
+    if (!isEmbedded.value && !isFullscreenCompose.value) {
+      goFullscreenCompose()
+    } else {
+      mainTab.value = 'compose'
+      syncFormFromBundle()
+    }
     ElMessage.success('AI 方案草稿已生成，请审阅后确认')
     refreshAfterMutation()
   } catch (e) {
@@ -3065,7 +3533,11 @@ async function createBlank() {
     bundle.value = res.data
     syncFormFromBundle()
     ElMessage.success('已创建空白草稿')
-    enterCompose()
+    if (!isEmbedded.value && !isFullscreenCompose.value) {
+      goFullscreenCompose()
+    } else {
+      mainTab.value = 'compose'
+    }
     refreshAfterMutation()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
@@ -3730,23 +4202,27 @@ const composePrimaryStatus = computed(() => {
   return { kind: 'empty' as const, text: statusLabel(bundle.value?.plan?.status) }
 })
 
-/** 全屏顶栏主标题：AI 生成后的预览确认 */
+/** 全屏顶栏主标题：明确这是 AI 新成果，不是旧生效案 */
 const composeFsTitle = computed(() => {
-  if (composeNeedsBootstrap.value) return '制定管理方案'
-  if (bundle.value?.draft) return 'AI 重新生成方案预览'
-  if (bundle.value?.activeVersion) return '查看管理方案'
-  return '制定管理方案'
+  if (composeAutoGenerating.value) return 'AI 正在生成新方案…'
+  if (bundle.value?.draft) return 'AI 全新生成方案（待确认）'
+  return '制定新方案'
 })
 
-/** 全屏顶栏标签 */
+/** 全屏顶栏标签：待审核草稿（黄）；生成中用 info */
 const composeModeTag = computed(() => {
-  if (bundle.value?.draft || composeNeedsBootstrap.value) {
-    return { kind: 'ai' as const, text: '基于最新健康数据生成', type: 'primary' as const }
+  if (composeAutoGenerating.value) {
+    return { kind: 'gen' as const, text: '生成中', type: 'info' as const }
   }
-  if (bundle.value?.activeVersion) {
-    return { kind: 'active' as const, text: `已生效 ${activeSchemaLabel.value}`, type: 'success' as const }
+  if (bundle.value?.draft) {
+    return { kind: 'draft' as const, text: '待审核草稿', type: 'warning' as const }
   }
-  return { kind: 'empty' as const, text: '暂无方案', type: 'info' as const }
+  return { kind: 'empty' as const, text: '待生成', type: 'info' as const }
+})
+
+const composeComparePrevLabel = computed(() => {
+  const ver = activeSchemaLabel.value
+  return ver ? `🆚 对比上一版 ${ver}` : '🆚 对比上一版'
 })
 
 const planStatus = computed(() => bundle.value?.plan?.status)
@@ -3760,17 +4236,24 @@ const canRecordComm = computed(
   () => !!bundle.value?.draft && (planStatus.value === 'REVIEWED' || planStatus.value === 'COMMUNICATING'),
 )
 
-const composeSidebarAlerts = computed(() => {
-  const items: Array<{ tone: 'danger' | 'warning' | 'info'; text: string }> = []
-  for (const f of hardErrorFlags.value) {
-    if (f?.message) items.push({ tone: 'danger', text: f.message })
-  }
-  if (incompleteTip.value) items.push({ tone: 'info', text: `待完善：${incompleteTip.value}` })
-  for (const sec of topWarnSections.value.slice(0, 3)) {
-    items.push({ tone: 'warning', text: sec.title })
-  }
-  return items
-})
+/** 与顶部黄灯「N 处需重点核对」同源，保证数量一致 */
+const composeSidebarAlerts = computed(() =>
+  composeWarnReviewCards.value.map((card) => ({
+    tone: 'warning' as const,
+    text: `${card.index}. ${card.headline.replace(/^⚠️\s*/, '')}`,
+    code: card.code,
+  })),
+)
+
+const composeReviewWarnCount = computed(() => topWarnSections.value.length)
+
+watch(
+  () => topWarnSections.value.map((s) => s.code).join('|'),
+  () => {
+    composeWarnBulkAcked.value = false
+    composeWarnVisitedCodes.value = new Set()
+  },
+)
 
 function toggleComposeFineTune() {
   if (!bundle.value?.draft) {
@@ -3834,10 +4317,39 @@ async function saveAsNewDraft() {
   backFromCompose()
 }
 
-/** 直接发布生效：先落盘草稿，再走当面接受（含审核并发布） */
+/**
+ * 确认并发布：有黄灯警告时强制复核确认，禁止一键盲发。
+ * 复核通过后落盘草稿并直接发布生效。
+ */
 async function publishAiDraftDirectly() {
   if (!bundle.value?.draft) {
     ElMessage.warning('当前没有可发布的草稿')
+    return
+  }
+  if (errorFlags.value.length) {
+    ElMessage.error('存在 ERROR 级安全问题，请先修正后再发布')
+    return
+  }
+  const reviewN = composeReviewWarnCount.value
+  if (reviewN > 0 && !composeWarnPublishUnlocked.value) {
+    qcWarnExpanded.value = true
+    ElMessage.warning(`请先核对全部 ${reviewN} 处风险点，或点击「已全部知悉并核对」后再发布`)
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      reviewN > 0
+        ? `本方案有 ${reviewN} 处需重点核对，确认已全部查看并采纳？`
+        : '确认发布该方案并使其生效？',
+      reviewN > 0 ? '发布前强制复核' : '确认并发布',
+      {
+        type: 'warning',
+        confirmButtonText: reviewN > 0 ? '已核对，确认发布' : '确认并发布',
+        cancelButtonText: reviewN > 0 ? '返回核对' : '取消',
+        distinguishCancelAndClose: true,
+      },
+    )
+  } catch {
     return
   }
   try {
@@ -3845,31 +4357,51 @@ async function publishAiDraftDirectly() {
   } catch {
     return
   }
-  await faceToFaceAccept()
-  if (!bundle.value?.draft) {
+  const ack = warnFlags.value.map((f) => f.code)
+  saving.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(
+      `/api/b/v1/patients/${peopleId.value}/care-plan/face-to-face-accept`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          ackWarnCodes: ack,
+          title: editForm.title || undefined,
+        }),
+      },
+    )
+    bundle.value = res.data
+    syncFormFromBundle()
+    ElMessage.success(
+      patientClientLinked.value === true
+        ? '✅ 方案已生效，并已开启打卡任务'
+        : '✅ 方案已生效，后续请通过线下或人工方式跟进打卡',
+    )
+    refreshAfterMutation()
+    emitAgentCarePlanUpdated(peopleId.value)
+    emit('published')
     composeFsFineTuning.value = false
-    backFromCompose()
+    if (!bundle.value?.draft) backFromCompose()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '发布失败')
+  } finally {
+    saving.value = false
   }
 }
 
 /** 全屏确认页：从当前表单实时组装医疗级预览数据 */
-/** 全屏确认 / C 端预览：不把生成依据铺在方案正文里（依据只在编辑区折叠块） */
+/** 全屏确认：只预览草稿；生成中 / 无草稿时不回落已生效版 */
 const composeFsLivePreview = computed((): CarePlanPreviewData | null => {
-  if (!isFullscreenCompose.value) return null
-  const src = bundle.value?.draft || bundle.value?.activeVersion
-  if (!src && !bundle.value?.plan) return null
+  if (!isFullscreenCompose.value || composeAutoGenerating.value) return null
+  const src = bundle.value?.draft
+  if (!src) return null
   return {
     title: editForm.title || bundle.value?.plan?.title,
     goalSummary: editForm.goalSummary || editForm.exerciseGoal,
     summary: editForm.planSummary || readPlanSummary(src),
-    // 预览正文不塞生成依据；编辑区另有折叠块
-    source: src?.source || currentPlanSource.value,
-    versionLabel: bundle.value?.draft
-      ? draftSchemaLabel.value
-        ? `${draftSchemaLabel.value}·草稿`
-        : '草稿'
-      : activeSchemaLabel.value,
-    status: bundle.value?.draft ? 'DRAFT' : bundle.value?.plan?.status,
+    source: src.source || currentPlanSource.value,
+    versionLabel: draftSchemaLabel.value ? `${draftSchemaLabel.value}·草稿` : '草稿',
+    status: 'DRAFT',
     peopleName: patientName.value || undefined,
     exercise: {
       goal: editForm.exerciseGoal,
@@ -3894,10 +4426,10 @@ const composeFsLivePreview = computed((): CarePlanPreviewData | null => {
       horizonDays: editForm.horizonDays,
       tasks: editForm.tasks,
     },
-    publishedAt: bundle.value?.activeVersion?.publishedAt,
-    signStatus: bundle.value?.activeVersion?.signStatus,
   }
 })
+
+const composeCompareRight = computed((): CarePlanPreviewData | null => composeFsLivePreview.value)
 
 function previewClientEffect() {
   const src = bundle.value?.draft || bundle.value?.activeVersion
@@ -3992,7 +4524,15 @@ watch(peopleId, () => {
   commHistoryExpanded.value = false
   void loadPatientName()
   loadList()
-  if (mainTab.value === 'compose') load()
+  if (mainTab.value === 'compose') {
+    if (isFullscreenCompose.value) {
+      void bootstrapComposeEntry({
+        forceFresh: String(route.query.fresh || '') === '1',
+      })
+    } else {
+      void load()
+    }
+  }
   void refreshAllergySummary()
 })
 
@@ -4019,27 +4559,36 @@ watch(
   { immediate: true },
 )
 
+watch(composeImmersiveGenerating, (on) => {
+  if (on) startComposeGenStepTicker()
+  else stopComposeGenStepTicker()
+})
+
 /** 驾驶舱抽屉 / Agent 动作：优先进入可编辑草稿，而不是列表页 */
 async function preferComposeIfDraft() {
   const draftHint = takeAgentDraft(peopleId.value, 'care-plan')
-  const wantCompose = !!(draftHint?.openCompose || draftHint?.openCreate)
+  const wantCreate = !!draftHint?.openCreate
+  const wantCompose = !!(draftHint?.openCompose || wantCreate)
   const queryTab = String(route.query.mainTab || '')
 
   if (isFullscreenCompose.value) {
     mainTab.value = 'compose'
-    await load()
+    await bootstrapComposeEntry({
+      forceFresh: wantCreate || String(route.query.fresh || '') === '1',
+    })
     return
   }
 
   if (queryTab === 'compose' || wantCompose) {
     if (!isEmbedded.value) {
-      goFullscreenCompose(
-        route.query.adjustHint ? { adjustHint: String(route.query.adjustHint) } : undefined,
-      )
+      const q: Record<string, string> = {}
+      if (route.query.adjustHint) q.adjustHint = String(route.query.adjustHint)
+      if (wantCreate || queryTab === 'compose') q.fresh = '1'
+      goFullscreenCompose(q)
       return
     }
     mainTab.value = 'compose'
-    await load()
+    await bootstrapComposeEntry({ forceFresh: wantCreate })
     return
   }
   if (queryTab) return
@@ -4073,6 +4622,8 @@ onMounted(() => {
   void openVersionFromQuery().catch(() => undefined)
 })
 onUnmounted(() => {
+  composeGenAbort?.abort()
+  stopComposeGenStepTicker()
   stopAgentCarePlanListen()
 })
 
@@ -4102,81 +4653,73 @@ watch(
     :class="{
       'care-plan--fullscreen': isFullscreenCompose,
       'care-plan--fs-preview': isFullscreenCompose && !!bundle?.draft && !composeFsFineTuning,
+      'care-plan--fs-generating': composeImmersiveGenerating,
     }"
   >
     <header v-if="isFullscreenCompose" class="compose-fs-header">
-      <div class="compose-fs-header-left">
-        <div class="compose-who">
-          <div class="compose-fs-title-row">
-            <strong>{{ composeFsTitle }}</strong>
-            <el-tag size="small" effect="light" :type="composeModeTag.type">
-              {{ composeModeTag.text }}
-            </el-tag>
-          </div>
-          <span class="compose-sub">{{ patientName || '患者' }} · AI 生成结果确认</span>
-          <button
-            v-if="bundle?.draft && bundle?.activeVersion"
-            type="button"
-            class="meta-base-link compose-fs-base"
-            @click="openActiveVersionPreview"
-          >
-            对比已生效版
-            <span class="meta-base-ver">{{ activeSchemaLabel }}</span>
+      <template v-if="composeImmersiveGenerating">
+        <div class="compose-fs-header-left">
+          <button type="button" class="compose-fs-back" @click="cancelComposeAutoGenerate">
+            <el-icon :size="16"><ArrowLeft /></el-icon>
+            <span>返回</span>
           </button>
+          <strong class="compose-fs-gen-title">
+            为 {{ patientName || '患者' }} 生成新方案
+          </strong>
         </div>
-      </div>
-      <div class="compose-fs-header-actions">
-        <button
-          type="button"
-          class="compose-intake-link"
-          :disabled="intakeDetailLoading"
-          @click="openIntakeDetail"
+        <el-tag
+          class="compose-ai-thinking-tag"
+          size="default"
+          type="primary"
+          effect="light"
+          round
         >
-          首诊问卷
-        </button>
-        <template v-if="composeNeedsBootstrap">
-          <el-button :loading="saving" type="primary" @click="openGenerateDialog()">
-            ✨ 重新用 AI 生成
-          </el-button>
-          <el-button :loading="saving" @click="createBlank">📝 新建空白方案</el-button>
-        </template>
-        <template v-else>
+          AI 正在思考中...
+        </el-tag>
+      </template>
+      <template v-else>
+        <div class="compose-fs-header-left">
+          <div class="compose-who">
+            <div class="compose-fs-title-row">
+              <strong>{{ composeFsTitle }}</strong>
+              <el-tag size="small" effect="light" :type="composeModeTag.type">
+                {{ composeModeTag.text }}
+              </el-tag>
+            </div>
+            <span class="compose-sub">{{ patientName || '患者' }}</span>
+          </div>
+        </div>
+        <div class="compose-fs-header-actions">
           <el-button
-            v-if="bundle?.draft"
-            :type="composeFsFineTuning ? 'warning' : 'primary'"
+            v-if="bundle?.draft && bundle?.activeVersion"
             plain
-            :disabled="saving"
-            @click="toggleComposeFineTune"
+            class="compose-compare-ghost"
+            :disabled="saving || composeCompareLoading"
+            @click="openComposePrevCompare"
           >
-            {{ composeFsFineTuning ? '完成微调' : '编辑' }}
+            {{ composeComparePrevLabel }}
           </el-button>
-          <el-button plain :disabled="saving" @click="previewClientEffect">
-            预览 C 端效果
-          </el-button>
-          <el-dropdown trigger="click" @command="onComposeMoreCommand">
-            <el-button :loading="saving" class="compose-more-icon" title="更多操作">
-              ⋮
+          <template v-if="!bundle?.draft">
+            <el-button :loading="saving" type="primary" @click="runComposeAutoGenerate">
+              ✨ 重新用 AI 生成
             </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="generate">✨ 重新用 AI 生成</el-dropdown-item>
-                <el-dropdown-item command="blank">📝 新建空白方案</el-dropdown-item>
-                <el-dropdown-item v-if="canDoctorSign" command="sign" divided>
-                  医生签署
-                </el-dropdown-item>
-                <el-dropdown-item
-                  v-if="bundle?.draft"
-                  command="discard"
-                  divided
-                  class="compose-more-discard"
-                >
-                  放弃本次生成
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </template>
-      </div>
+            <el-button :loading="saving" @click="createBlank">📝 新建空白方案</el-button>
+          </template>
+          <template v-else>
+            <el-button
+              :type="composeFsFineTuning ? 'warning' : 'primary'"
+              plain
+              :disabled="saving"
+              @click="toggleComposeFineTune"
+            >
+              {{ composeFsFineTuning ? '完成微调' : '编辑' }}
+            </el-button>
+            <el-button plain :disabled="saving" @click="previewClientEffect">
+              预览 C 端效果
+            </el-button>
+          </template>
+        </div>
+      </template>
     </header>
     <el-alert
       v-if="adjustHintVisible"
@@ -4669,7 +5212,7 @@ watch(
       :closable="false"
       class="flag"
     />
-    <div v-if="topWarnSections.length" class="qc-fold flag">
+    <div v-if="composeWarnReviewCards.length" class="qc-fold qc-fold--warn-emphasis flag">
       <button
         type="button"
         class="qc-fold-toggle"
@@ -4677,56 +5220,52 @@ watch(
         @click="qcWarnExpanded = !qcWarnExpanded"
       >
         <span class="qc-fold-main">
-          <span class="qc-fold-icon" aria-hidden="true">!</span>
+          <span class="qc-fold-icon qc-fold-icon--sm" aria-hidden="true">⚠</span>
           <span class="qc-fold-title">
-            AI 提示：本方案有 {{ topWarnSections.length }} 处需重点核对
+            AI 提示：本方案有 {{ composeReviewWarnCount }} 处需重点核对
+            <span v-if="composeWarnPublishUnlocked" class="qc-fold-acked">· 已核对</span>
           </span>
         </span>
         <span class="qc-fold-action">{{ qcWarnExpanded ? '收起' : '展开查看' }}</span>
       </button>
       <div v-show="qcWarnExpanded" class="qc-fold-body">
-        <el-alert
-          v-for="sec in topWarnSections"
-          :key="'w-' + sec.code"
-          type="warning"
-          show-icon
-          :closable="false"
-          class="flag flag--warn-structured qc-fold-alert"
+        <article
+          v-for="card in composeWarnReviewCards"
+          :key="'w-' + card.code"
+          class="qc-warn-card"
+          :class="{ 'qc-warn-card--done': card.visited }"
         >
-          <template #title>
-            <div class="warn-flag-head">
-              <span class="warn-flag-head-title">{{ sec.title }}</span>
-              <button
-                v-if="warnSectionCta(sec)"
-                type="button"
-                class="warn-flag-cta"
-                @click.stop="runWarnSectionCta(sec)"
-              >
-                {{ warnSectionCta(sec)!.label }}
-              </button>
+          <div class="qc-warn-card-icon" aria-hidden="true">⚠</div>
+          <div class="qc-warn-card-body">
+            <h5 class="qc-warn-card-title">{{ card.index }}. {{ card.headline }}</h5>
+            <p class="qc-warn-card-desc">{{ card.description }}</p>
+            <div v-if="card.refs.length" class="qc-warn-card-refs">
+              <p v-for="(ref, rIdx) in card.refs" :key="rIdx" class="qc-warn-card-ref">{{ ref }}</p>
             </div>
-          </template>
-          <ul v-if="sec.items.length" class="warn-flag-items">
-            <li v-for="(it, idx) in sec.items" :key="idx" class="warn-flag-item">
-              <span v-if="it.severity" class="warn-flag-sev" :data-sev="it.severity">{{ it.severity }}</span>
-              <span class="warn-flag-action">{{ it.action }}</span>
-              <span v-if="it.source || it.answer" class="warn-flag-meta">
-                <button
-                  v-if="it.source"
-                  type="button"
-                  class="warn-flag-intake-link"
-                  :disabled="intakeDetailLoading"
-                  @click.stop="openIntakeDetail"
-                >
-                  来自首诊：{{ it.source }}
-                </button>
-                <template v-if="it.answer">
-                  <template v-if="it.source"> </template>答：{{ it.answer }}
-                </template>
-              </span>
-            </li>
-          </ul>
-        </el-alert>
+          </div>
+          <button
+            type="button"
+            class="qc-warn-card-cta"
+            :class="{ 'qc-warn-card-cta--done': card.visited }"
+            @click.stop="runComposeWarnCardCta(card)"
+          >
+            {{ card.cta.label }}
+          </button>
+        </article>
+        <div class="qc-warn-ack-bar">
+          <p class="qc-warn-ack-text">
+            请确认以上 {{ composeReviewWarnCount }} 个风险点已全部核对完毕。
+          </p>
+          <button
+            type="button"
+            class="qc-warn-ack-btn"
+            :class="{ 'qc-warn-ack-btn--done': composeWarnPublishUnlocked }"
+            :disabled="composeWarnPublishUnlocked"
+            @click="ackAllComposeWarns"
+          >
+            已全部知悉并核对
+          </button>
+        </div>
       </div>
     </div>
     <el-dialog
@@ -4742,12 +5281,70 @@ watch(
 
     <div
       class="compose-fs-grid"
-      :class="{ 'compose-fs-grid--split': isFullscreenCompose && bundle?.plan && !composeNeedsBootstrap }"
+      :class="{
+        'compose-fs-grid--split':
+          isFullscreenCompose && !!bundle?.draft && !composeAutoGenerating,
+      }"
     >
     <div class="compose-fs-main">
     <div class="compose-fs-main-inner">
+    <div v-if="composeImmersiveGenerating" class="compose-fs-generating">
+      <div class="compose-fs-skel" aria-hidden="true">
+        <div class="compose-fs-skel-main">
+          <div class="compose-fs-skel-block compose-fs-skel-block--banner animate-pulse" />
+          <div class="compose-fs-skel-block compose-fs-skel-block--card animate-pulse" />
+          <div class="compose-fs-skel-block compose-fs-skel-block--card animate-pulse" />
+          <div class="compose-fs-skel-block compose-fs-skel-block--wide animate-pulse" />
+        </div>
+        <div class="compose-fs-skel-aside">
+          <div class="compose-fs-skel-block compose-fs-skel-block--side animate-pulse" />
+          <div class="compose-fs-skel-block compose-fs-skel-block--side animate-pulse" />
+          <div class="compose-fs-skel-block compose-fs-skel-block--side-sm animate-pulse" />
+        </div>
+      </div>
+      <div class="compose-fs-generating-panel">
+        <ol class="compose-gen-steps">
+          <li
+            v-for="(step, i) in COMPOSE_GEN_STEPS"
+            :key="step.key"
+            class="compose-gen-step"
+            :data-state="composeGenStepState(i)"
+          >
+            <span class="compose-gen-step-icon" aria-hidden="true">
+              <template v-if="composeGenStepState(i) === 'done'">✓</template>
+              <template v-else-if="composeGenStepState(i) === 'active'">
+                <span class="compose-gen-step-spinner" />
+              </template>
+              <template v-else>○</template>
+            </span>
+            <span class="compose-gen-step-label">{{ step.label }}</span>
+          </li>
+        </ol>
+        <p v-if="composeGenerateProgress" class="compose-fs-generating-live">
+          {{ composeGenerateProgress }}
+        </p>
+        <p class="compose-fs-generating-hint">
+          🔒 已为您开启纯净模式，屏蔽历史旧版内容。
+        </p>
+        <el-button plain class="compose-gen-cancel" @click="cancelComposeAutoGenerate">
+          取消并返回
+        </el-button>
+      </div>
+    </div>
+
     <el-empty
-      v-if="(!bundle?.plan || composeNeedsBootstrap) && !loading"
+      v-else-if="isFullscreenCompose && !bundle?.draft && !loading && !composeAutoGenerating"
+      class="page-empty section-card"
+      description="尚未生成新方案草稿"
+    >
+      <el-button type="primary" :loading="saving" @click="runComposeAutoGenerate">
+        ✨ 用 AI 全新生成
+      </el-button>
+      <el-button :loading="saving" @click="createBlank">📝 新建空白方案</el-button>
+    </el-empty>
+
+    <el-empty
+      v-else-if="!isFullscreenCompose && (!bundle?.plan || composeNeedsBootstrap) && !loading"
       class="page-empty section-card"
       :description="composeNeedsBootstrap ? '草稿已丢弃，还没有可编辑的方案' : '尚未创建管理方案'"
     >
@@ -4757,17 +5354,12 @@ watch(
       </el-button>
     </el-empty>
 
-    <template v-else-if="bundle?.plan && !composeNeedsBootstrap">
-      <div v-if="isFullscreenCompose" class="compose-fs-intro">
-        <el-alert
-          class="compose-fs-ai-banner"
-          type="info"
-          show-icon
-          :closable="false"
-          title="AI 已基于患者近 7 日的打卡和最新体征为您生成了新版方案，您可以点击各模块进行微调后保存。"
-        />
-      </div>
-
+    <template
+      v-else-if="
+        (isFullscreenCompose && bundle?.draft) ||
+        (!isFullscreenCompose && bundle?.plan && !composeNeedsBootstrap)
+      "
+    >
       <div
         v-if="isFullscreenCompose && !composeFsFineTuning && composeFsLivePreview"
         class="compose-fs-preview-stack"
@@ -4775,7 +5367,7 @@ watch(
         <CarePlanPreviewContent
           :data="composeFsLivePreview"
           stacked
-          :reset-key="bundle?.draft?.id || bundle?.activeVersion?.id || 'compose-preview'"
+          :reset-key="bundle?.draft?.id || 'compose-draft-preview'"
         />
       </div>
 
@@ -6143,7 +6735,7 @@ watch(
     </div>
 
     <aside
-      v-if="isFullscreenCompose && bundle?.plan && !composeNeedsBootstrap"
+      v-if="isFullscreenCompose && bundle?.draft && !composeAutoGenerating"
       class="compose-fs-aside"
     >
       <section class="compose-aside-card">
@@ -6166,6 +6758,15 @@ watch(
             <dd>{{ formatCarePlanTemplateKey(overviewTemplateKey) }}</dd>
           </div>
         </dl>
+        <button
+          v-if="bundle?.activeVersion"
+          type="button"
+          class="compose-aside-link"
+          :disabled="composeCompareLoading"
+          @click="openComposePrevCompare"
+        >
+          {{ composeComparePrevLabel }} →
+        </button>
         <button
           type="button"
           class="compose-aside-link"
@@ -6195,10 +6796,32 @@ watch(
               class="compose-metric-spark"
               viewBox="0 0 120 36"
               width="100%"
-              height="36"
+              height="40"
               aria-hidden="true"
             >
-              <path :d="card.path" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <g class="compose-metric-spark-grid" stroke="#e2e8f0" stroke-width="1">
+                <line x1="0" y1="9" x2="120" y2="9" />
+                <line x1="0" y1="18" x2="120" y2="18" />
+                <line x1="0" y1="27" x2="120" y2="27" />
+              </g>
+              <path
+                :d="card.path"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <circle
+                v-for="(dot, di) in card.dots"
+                :key="di"
+                :cx="dot.x"
+                :cy="dot.y"
+                r="2.8"
+                fill="currentColor"
+                stroke="#fff"
+                stroke-width="1.2"
+              />
             </svg>
             <p v-else class="compose-metric-empty">近 3 日数据不足</p>
             <span class="compose-metric-hint">{{ card.hint }}</span>
@@ -6207,11 +6830,14 @@ watch(
       </section>
 
       <section v-if="composeSidebarAlerts.length" class="compose-aside-card compose-aside-card--alert">
-        <h4 class="compose-aside-title">需关注</h4>
+        <h4 class="compose-aside-title">
+          需关注
+          <span class="compose-aside-count">{{ composeReviewWarnCount }}</span>
+        </h4>
         <ul class="compose-aside-alerts">
           <li
             v-for="(item, idx) in composeSidebarAlerts"
-            :key="idx"
+            :key="item.code || idx"
             class="compose-aside-alert"
             :data-tone="item.tone"
           >
@@ -6335,39 +6961,66 @@ watch(
     </div>
     </div>
 
-    <Teleport to="body">
-      <footer
-        v-if="isFullscreenCompose && !composeNeedsBootstrap"
-        class="compose-fs-footer-fixed"
-      >
+    <footer
+      v-if="isFullscreenCompose && bundle?.draft && !composeAutoGenerating"
+      class="compose-fs-footer"
+    >
+      <div class="compose-fs-footer-left">
         <el-button plain :disabled="saving" @click="abandonAiGeneration">放弃本次生成</el-button>
-        <div class="compose-fs-footer-actions">
-          <el-button
-            v-if="bundle?.draft"
-            :loading="saving"
-            @click="saveAsNewDraft"
-          >
-            保存为草稿
-          </el-button>
-          <el-button
-            v-if="bundle?.draft"
-            type="primary"
-            :loading="saving"
-            @click="publishAiDraftDirectly"
-          >
-            确认并发布
-          </el-button>
-          <el-button
-            v-else-if="bundle?.activeVersion"
-            type="primary"
-            :loading="saving"
-            @click="openEdit"
-          >
-            编辑
-          </el-button>
+      </div>
+      <div class="compose-fs-footer-actions">
+        <el-button :loading="saving" @click="saveAsNewDraft">保存为草稿</el-button>
+        <el-button
+          type="primary"
+          :loading="saving"
+          :disabled="!composeWarnPublishUnlocked"
+          :title="
+            composeWarnPublishUnlocked
+              ? undefined
+              : `请先核对全部 ${composeReviewWarnCount} 处风险点`
+          "
+          @click="publishAiDraftDirectly"
+        >
+          确认并发布
+        </el-button>
+      </div>
+    </footer>
+
+    <el-drawer
+      v-model="composeCompareOpen"
+      size="92%"
+      direction="rtl"
+      destroy-on-close
+      class="compose-compare-drawer"
+      :title="`新旧对比 · ${composeComparePrevLabel.replace(/^🆚\s*/, '')} vs 本次 AI 草稿`"
+    >
+      <div v-loading="composeCompareLoading" class="compose-compare-body">
+        <div class="phd-diff-grid">
+          <div class="phd-diff-col phd-diff-col--old">
+            <div class="phd-diff-col-head">上一版 {{ activeSchemaLabel || '' }}（已生效）</div>
+            <div v-if="composeCompareLeft" class="phd-diff-preview">
+              <CarePlanPreviewContent
+                fill-height
+                :data="composeCompareLeft"
+                :reset-key="'cmp-old-' + (bundle?.activeVersion?.id || '')"
+              />
+            </div>
+            <p v-else class="phd-diff-empty">上一版加载中…</p>
+          </div>
+          <div class="phd-diff-col phd-diff-col--new">
+            <div class="phd-diff-col-head">本次 AI 草稿（待确认）</div>
+            <div v-if="composeCompareRight" class="phd-diff-preview">
+              <CarePlanPreviewContent
+                fill-height
+                :data="composeCompareRight"
+                :reset-key="'cmp-new-' + (bundle?.draft?.id || '')"
+              />
+            </div>
+            <p v-else class="phd-diff-empty">草稿尚未就绪</p>
+          </div>
         </div>
-      </footer>
-    </Teleport>
+      </div>
+    </el-drawer>
 
     <el-dialog v-model="recipePickerVisible" title="应用机构食谱" width="520px" destroy-on-close>
       <el-checkbox v-model="applyWeekWithRecipe">同时写入示例周（若食谱含 week）</el-checkbox>
@@ -6765,7 +7418,6 @@ watch(
   height: 100%;
   min-height: 0;
   padding: 0;
-  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   background: #fff;
   overflow: hidden;
   box-sizing: border-box;
@@ -6913,14 +7565,17 @@ watch(
   box-sizing: border-box;
 }
 
-.compose-fs-ai-banner {
-  margin-bottom: 16px;
+.care-plan--fullscreen.care-plan--fs-generating .compose-fs-main-inner {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
 }
 
-.compose-fs-ai-banner :deep(.el-alert__title) {
-  font-size: 13px;
-  line-height: 1.55;
-  font-weight: 500;
+.care-plan--fullscreen.care-plan--fs-generating .compose-fs-main {
+  display: flex;
+  flex-direction: column;
 }
 
 /* 预览确认态：隐藏行内「修改」等编辑入口，字段只读由 composeCanFineTune 控制 */
@@ -7023,16 +7678,35 @@ watch(
 }
 
 .compose-aside-card--alert {
-  border-color: #fecaca;
-  background: #fff7f7;
+  border-color: #fde68a;
+  background: #fffbeb;
+  border-left: 4px solid #f59e0b;
 }
 
 .compose-aside-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 10px;
   font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.01em;
   color: #0f172a;
+}
+
+.compose-aside-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .compose-aside-hint {
@@ -7064,13 +7738,33 @@ watch(
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .compose-aside-alert {
   font-size: 12px;
-  line-height: 1.45;
-  color: #64748b;
+  line-height: 1.5;
+  color: #92400e;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #fde68a;
+}
+
+.compose-aside-alert[data-tone='danger'] {
+  color: #b91c1c;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.compose-aside-alert[data-tone='warning'] {
+  color: #92400e;
+}
+
+.compose-aside-alert[data-tone='info'] {
+  color: #0369a1;
+  border-color: #bae6fd;
+  background: #f0f9ff;
 }
 
 .compose-aside-alert[data-tone='danger'] { color: #b91c1c; }
@@ -7126,6 +7820,12 @@ watch(
 .compose-metric-spark {
   display: block;
   color: #2563eb;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.compose-metric-spark-grid {
+  pointer-events: none;
 }
 
 .compose-metric-card[data-tone='good'] .compose-metric-spark { color: #059669; }
@@ -7146,31 +7846,288 @@ watch(
   color: #94a3b8;
 }
 
-.compose-fs-footer-fixed {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 50;
+.compose-fs-footer {
+  flex: 0 0 auto;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  height: 64px;
-  padding: 0 24px;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  min-height: 64px;
+  padding: 10px 24px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
   background: #fff;
   border-top: 1px solid #e2e8f0;
-  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.06);
+}
+
+.compose-fs-footer-left {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 0 0 auto;
 }
 
 .compose-fs-footer-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex: 1 1 auto;
   gap: 12px;
+}
+
+.compose-fs-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.compose-fs-back:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.compose-fs-gen-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.4;
+}
+
+.compose-ai-thinking-tag {
+  animation: compose-tag-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes compose-tag-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.25);
+  }
+  50% {
+    opacity: 0.82;
+    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0);
+  }
+}
+
+.compose-fs-generating {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 24px 40px;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.compose-fs-skel {
+  position: absolute;
+  inset: 20px 24px 24px;
+  display: flex;
+  gap: 16px;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.compose-fs-skel-main {
+  flex: 1 1 72%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.compose-fs-skel-aside {
+  flex: 0 0 26%;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compose-fs-skel-block {
+  border-radius: 12px;
+  background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 50%, #e2e8f0 100%);
+  background-size: 200% 100%;
+}
+
+.compose-fs-skel-block--banner {
+  height: 56px;
+}
+
+.compose-fs-skel-block--card {
+  height: 120px;
+}
+
+.compose-fs-skel-block--wide {
+  flex: 1;
+  min-height: 180px;
+}
+
+.compose-fs-skel-block--side {
+  height: 140px;
+}
+
+.compose-fs-skel-block--side-sm {
+  height: 88px;
+}
+
+.animate-pulse {
+  animation: compose-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes compose-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    background-position: 100% 0;
+  }
+  50% {
+    opacity: 0.55;
+    background-position: 0 0;
+  }
+}
+
+.compose-fs-generating-panel {
+  position: relative;
+  z-index: 2;
+  width: min(440px, 100%);
+  padding: 28px 24px 22px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(8px);
+  text-align: left;
+}
+
+.compose-gen-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.compose-gen-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #94a3b8;
+  transition: color 0.25s ease, opacity 0.25s ease;
+}
+
+.compose-gen-step[data-state='done'] {
+  color: #059669;
+}
+
+.compose-gen-step[data-state='active'] {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.compose-gen-step[data-state='pending'] {
+  opacity: 0.72;
+}
+
+.compose-gen-step-icon {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.compose-gen-step[data-state='done'] .compose-gen-step-icon {
+  color: #059669;
+  background: #ecfdf5;
+  border-radius: 999px;
+}
+
+.compose-gen-step-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #bfdbfe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: compose-spin 0.75s linear infinite;
+}
+
+@keyframes compose-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.compose-gen-step-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.compose-fs-generating-live {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px dashed #e2e8f0;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.compose-fs-generating-hint {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.compose-gen-cancel {
+  display: flex;
+  margin: 18px auto 0;
+  min-width: 132px;
+  border-style: dashed !important;
+  color: #64748b !important;
+}
+
+@media (max-width: 960px) {
+  .compose-fs-skel-aside {
+    display: none;
+  }
+}
+
+.compose-compare-ghost {
+  border-style: dashed !important;
+  color: #475569 !important;
+}
+
+.compose-compare-body {
+  height: calc(100vh - 120px);
+  min-height: 480px;
+}
+
+.compose-compare-body .phd-diff-grid {
+  height: 100%;
 }
 
 .compose-fs-preview-stack {
@@ -8410,6 +9367,19 @@ watch(
   overflow: hidden;
 }
 
+.qc-fold--warn-emphasis {
+  border: 1px solid #fbbf24;
+  border-left: 4px solid #f59e0b;
+  background: #fffbeb;
+  box-shadow: 0 1px 2px rgba(245, 158, 11, 0.12);
+}
+
+.qc-fold--warn-emphasis .qc-fold-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #92400e;
+}
+
 .qc-fold-toggle {
   display: flex;
   width: 100%;
@@ -8443,11 +9413,29 @@ watch(
   text-align: center;
 }
 
+.qc-fold-icon--sm {
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  line-height: 16px;
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fbbf24;
+  font-weight: 700;
+}
+
 .qc-fold-title {
   font-size: 13px;
   font-weight: 600;
   color: #92400e;
   line-height: 1.4;
+}
+
+.qc-fold-acked {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #15803d;
 }
 
 .qc-fold-action {
@@ -8465,14 +9453,185 @@ watch(
 }
 
 .qc-fold-body {
-  padding: 0 10px 10px;
+  padding: 0 12px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-.qc-fold-alert {
-  margin-bottom: 0 !important;
+.qc-warn-card {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  align-items: start;
+  padding: 12px 12px;
+  border-radius: 10px;
+  border: 1px solid #fde68a;
+  background: #fff;
+}
+
+.qc-warn-card--done {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.qc-warn-card-icon {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  color: #b45309;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.qc-warn-card-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qc-warn-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: #78350f;
+}
+
+.qc-warn-card-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #a16207;
+  word-break: break-word;
+}
+
+.qc-warn-card-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.qc-warn-card-ref {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.qc-warn-card-cta {
+  flex-shrink: 0;
+  align-self: center;
+  max-width: 132px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #fbbf24;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.qc-warn-card-cta:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #78350f;
+  box-shadow: 0 1px 2px rgba(245, 158, 11, 0.18);
+}
+
+.qc-warn-card-cta--done {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.qc-warn-card-cta--done:hover {
+  background: #dcfce7;
+  border-color: #4ade80;
+  color: #14532d;
+  box-shadow: none;
+}
+
+.qc-warn-ack-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-top: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed #f59e0b;
+  background: #fff7ed;
+}
+
+.qc-warn-ack-text {
+  margin: 0;
+  flex: 1;
+  min-width: 180px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.qc-warn-ack-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: none;
+  background: #f59e0b;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.qc-warn-ack-btn:hover:not(:disabled) {
+  background: #d97706;
+}
+
+.qc-warn-ack-btn--done,
+.qc-warn-ack-btn:disabled {
+  background: #86efac;
+  color: #14532d;
+  cursor: default;
+  opacity: 1;
+}
+
+@media (max-width: 900px) {
+  .qc-warn-card {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .qc-warn-card-cta {
+    grid-column: 2;
+    justify-self: start;
+    max-width: none;
+  }
 }
 
 .ai-tip-chip {

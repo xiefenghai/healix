@@ -1,0 +1,55 @@
+{
+  "code": "PSYCH_BASE",
+  "version": 3,
+  "title": "心理与情绪",
+  "script": "改变意愿、压力与情绪进食（合并为一题）、是否愿意打卡。家庭支持并入执行阻力「家人不太支持」。",
+  "items": [
+    {
+      "field": "basic.psych.readiness",
+      "label": "现在想改变生活习惯的程度？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "eq": "NOT_READY"
+          },
+          "severity": "CAUTION",
+          "planEffect": "首版方案只设 1–2 个小目标"
+        }
+      ]
+    },
+    {
+      "field": "basic.psych.stressLevel",
+      "label": "最近压力大吗？",
+      "level": "FIRST_VISIT",
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.emotionalEating",
+      "label": "压力大、心情不好或无聊时，吃东西会明显变多吗？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "WEIGHT_LOSS",
+          "DIABETES"
+        ]
+      },
+      "highlights": [
+        {
+          "when": {
+            "eq": "OFTEN"
+          },
+          "severity": "CAUTION",
+          "planEffect": "以行为替代为主，避免严格限制"
+        }
+      ],
+      "sensitive": true
+    },
+    {
+      "field": "basic.psych.willingToRecord",
+      "label": "愿意记录饮食、体重、血压或血糖吗？",
+      "level": "FIRST_VISIT"
+    }
+  ]
+}

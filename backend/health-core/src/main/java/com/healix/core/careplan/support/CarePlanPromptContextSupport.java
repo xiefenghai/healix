@@ -6,6 +6,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.people.support.DiseaseCodeLabels;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -737,6 +740,9 @@ public final class CarePlanPromptContextSupport {
         return out;
     }
 
+    /** 首诊辅路径默认有效天数：超过则降权，避免一年前答卷当现行事实。 */
+    public static final int INTAKE_FRESH_MAX_DAYS = 90;
+
     /** 从首诊 answers 抽出关键字段（带中文名），控制体量。 */
     public static ObjectNode extractIntakeKeyAnswers(JsonNode answers) {
         ObjectNode out = JsonUtils.emptyObject();
@@ -760,6 +766,67 @@ public final class CarePlanPromptContextSupport {
             }
         }
         return out;
+    }
+
+    /**
+     * 标注首诊 brief 时效。过期时把 aiSummary / keyAnswers / highlights 挪到
+     * {@code historicalReference}，顶层不再当作硬约束来源。
+     */
+    public static void applyIntakeFreshness(ObjectNode brief, LocalDateTime submittedAt) {
+        applyIntakeFreshness(brief, submittedAt, LocalDate.now());
+    }
+
+    /** @param today 可注入，便于单测 */
+    public static void applyIntakeFreshness(ObjectNode brief, LocalDateTime submittedAt, LocalDate today) {
+        if (brief == null) {
+            return;
+        }
+        Integer ageDays = null;
+        if (submittedAt != null && today != null) {
+            long days = ChronoUnit.DAYS.between(submittedAt.toLocalDate(), today);
+            ageDays = (int) Math.max(0, days);
+            brief.put("ageDays", ageDays);
+        }
+        boolean fresh = ageDays != null && ageDays <= INTAKE_FRESH_MAX_DAYS;
+        brief.put("freshness", fresh ? "FRESH" : "STALE");
+        brief.put("authoritative", fresh);
+        if (fresh) {
+            brief.put("freshnessLabel", "首诊答卷仍有效");
+            return;
+        }
+        brief.put("freshnessLabel", "首诊答卷已过期");
+        String agePart = ageDays != null ? "（距今 " + ageDays + " 天）" : "（提交时间未知）";
+        brief.put(
+                "freshnessNote",
+                "首诊提交已超过 "
+                        + INTAKE_FRESH_MAX_DAYS
+                        + " 天"
+                        + agePart
+                        + "，仅作历史参考；现行事实以档案、目标与近期指标为准，勿把旧诉求/旧高亮当作硬约束。建议安排待补或复评后再生成方案。");
+        ObjectNode hist = brief.putObject("historicalReference");
+        moveToHistorical(brief, hist, "aiSummary");
+        moveToHistorical(brief, hist, "keyAnswers");
+        moveToHistorical(brief, hist, "highlights");
+        if (hist.isEmpty()) {
+            brief.remove("historicalReference");
+        }
+    }
+
+    public static boolean isIntakeAuthoritative(JsonNode intakeBrief) {
+        if (intakeBrief == null || intakeBrief.isNull() || !intakeBrief.isObject()) {
+            return false;
+        }
+        if (intakeBrief.has("authoritative")) {
+            return intakeBrief.path("authoritative").asBoolean(false);
+        }
+        // 兼容旧快照：无 freshness 字段时仍按有效处理
+        return !"STALE".equals(intakeBrief.path("freshness").asText(""));
+    }
+
+    private static void moveToHistorical(ObjectNode brief, ObjectNode hist, String field) {
+        if (brief.has(field) && !brief.get(field).isNull()) {
+            hist.set(field, brief.remove(field));
+        }
     }
 
     private static ArrayNode careTrackLabels(JsonNode tracks) {

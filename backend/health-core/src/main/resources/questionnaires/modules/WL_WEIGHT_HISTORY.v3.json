@@ -1,0 +1,39 @@
+{
+  "code": "WL_WEIGHT_HISTORY",
+  "version": 3,
+  "title": "减重史",
+  "script": "了解减重经历与反弹原因，方案按 failReasons 落地破解。历史极值体重改面诊补。",
+  "items": [
+    {
+      "field": "basic.weightHistory.triedBefore",
+      "label": "以前减过重吗？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "eq": "MULTIPLE"
+          },
+          "severity": "CAUTION",
+          "planEffect": "体重反复的客户节奏更保守，重点防反弹"
+        }
+      ]
+    },
+    {
+      "field": "basic.weightHistory.failReasons",
+      "label": "之前没坚持下来或反弹的主要原因？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "basic.weightHistory.triedBefore",
+        "notIn": [
+          "NEVER",
+          "NONE"
+        ]
+      }
+    },
+    {
+      "field": "basic.weightHistory.recentTrend",
+      "label": "最近 3–6 个月体重有变化吗？",
+      "level": "FIRST_VISIT"
+    }
+  ]
+}

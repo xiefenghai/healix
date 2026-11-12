@@ -3,8 +3,11 @@ package com.healix.core.careplan.support;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 
 class CarePlanPromptContextSupportTest {
@@ -103,5 +106,55 @@ class CarePlanPromptContextSupportTest {
         assertThat(CarePlanPromptContextSupport.suspectMetricNote("WAIST", new BigDecimal("40"), "cm"))
                 .contains("腰围")
                 .contains("已忽略");
+    }
+
+    @Test
+    void intakeFreshnessKeepsKeyAnswersWithin90Days() {
+        ObjectNode brief = JsonUtils.emptyObject();
+        brief.put("aiSummary", "案头总结");
+        brief.set("keyAnswers", JsonUtils.emptyObject().put("goal.primaryAppeal", "控糖"));
+        brief.set("highlights", JsonUtils.mapper().createArrayNode().add("x"));
+        LocalDate today = LocalDate.of(2026, 11, 12);
+        CarePlanPromptContextSupport.applyIntakeFreshness(
+                brief, LocalDateTime.of(2026, 9, 1, 10, 0), today);
+        assertThat(brief.path("freshness").asText()).isEqualTo("FRESH");
+        assertThat(brief.path("authoritative").asBoolean()).isTrue();
+        assertThat(brief.path("ageDays").asInt()).isEqualTo(72);
+        assertThat(brief.has("aiSummary")).isTrue();
+        assertThat(brief.has("historicalReference")).isFalse();
+        assertThat(CarePlanPromptContextSupport.isIntakeAuthoritative(brief)).isTrue();
+    }
+
+    @Test
+    void intakeFreshnessDemotesYearOldAnswers() {
+        ObjectNode brief = JsonUtils.emptyObject();
+        brief.put("aiSummary", "一年前总结");
+        ObjectNode keys = JsonUtils.emptyObject();
+        keys.putObject("goal.constraints").put("display", "应酬多");
+        brief.set("keyAnswers", keys);
+        brief.set("highlights", JsonUtils.mapper().createArrayNode().addObject().put("severity", "BLOCK"));
+        LocalDate today = LocalDate.of(2026, 11, 12);
+        CarePlanPromptContextSupport.applyIntakeFreshness(
+                brief, LocalDateTime.of(2025, 11, 12, 9, 0), today);
+        assertThat(brief.path("freshness").asText()).isEqualTo("STALE");
+        assertThat(brief.path("authoritative").asBoolean()).isFalse();
+        assertThat(brief.path("ageDays").asInt()).isEqualTo(365);
+        assertThat(brief.has("aiSummary")).isFalse();
+        assertThat(brief.has("keyAnswers")).isFalse();
+        assertThat(brief.has("highlights")).isFalse();
+        assertThat(brief.path("historicalReference").path("aiSummary").asText()).isEqualTo("一年前总结");
+        assertThat(brief.path("historicalReference").has("keyAnswers")).isTrue();
+        assertThat(brief.path("freshnessNote").asText()).contains("历史参考");
+        assertThat(CarePlanPromptContextSupport.isIntakeAuthoritative(brief)).isFalse();
+    }
+
+    @Test
+    void intakeFreshnessTreatsMissingSubmittedAtAsStale() {
+        ObjectNode brief = JsonUtils.emptyObject();
+        brief.put("aiSummary", "无时间");
+        CarePlanPromptContextSupport.applyIntakeFreshness(brief, null, LocalDate.of(2026, 11, 12));
+        assertThat(brief.path("freshness").asText()).isEqualTo("STALE");
+        assertThat(brief.has("aiSummary")).isFalse();
+        assertThat(brief.path("historicalReference").path("aiSummary").asText()).isEqualTo("无时间");
     }
 }

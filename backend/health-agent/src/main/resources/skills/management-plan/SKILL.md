@@ -348,15 +348,16 @@ display_name: 管理方案生成
 - `patientContext.barrierStrategies`（及 `goals.preferences.barrierStrategies`）→ **优先**按固定 `dietNote`/`exerciseNote`/`executionHint` 落地；`constraints`/`constraintsDisplay` 仅作码表补充
 - `patientContext.safetyRedlines` → 运动/饮食禁忌最高优先级（进食障碍、关节、医嘱限制）
 - `patientContext.basicArchive.familyHistorySummary` / `earlyCvFamilyHistory` / `firstDegreeDiabetesFamilyHistory` → 家族史风险写入 `rationale` 与监测保守度
-- `patientContext.intakeBrief.keyAnswers` 里的 `medication.mealRelation`（`display` 为中文）→ 吃药和吃饭怎么配合。含「跟第一口饭一起吃」时写进用餐提醒。与 `activeMedicationDetails.timingNote` 一并使用
+- `patientContext.intakeBrief.keyAnswers` 里的 `medication.mealRelation`（`display` 为中文）→ 吃药和吃饭怎么配合。含「跟第一口饭一起吃」时写进用餐提醒。与 `activeMedicationDetails.timingNote` 一并使用（**仅** `intakeBrief.authoritative=true` 时采信答卷；过期后以用药清单 timingNote 为准）
 - `patientContext.activeMedicationDetails`（药名 + `timingNote`）→ 单药备注进 `diet.notes`；兼容旧字段 `activeMedications` 字符串列表
 - `patientContext.intakeBrief`（最近首诊/待补）与高亮：
-  - `keyAnswers`：核心诉求、管理方向、糖/压/体重目标与临床关键答（带 `label`/`display`），优先落实，**勿整段照抄**到患者正文
-  - 有 `aiSummary` 时只吸收风险/禁忌/诉求缺口，**不要**把案头总结散文再复述进患者可见 `summary`
-  - **`highlightGuidance`（优先）**：首诊「高亮追问 / 方案影响」的模型可读版；每条含 `severityLabel`（谨慎/转介/阻断）、`mustApply`（须写入运动/饮食/执行的约束）、可选 `clinicianNote`（追问话术，只吸收约束、**勿照抄**进患者正文）、`source`（题干）
+  - **时效（硬性）**：看 `freshness` / `authoritative`。`FRESH`（提交后默认 90 天内）才把 `keyAnswers` / `aiSummary` / `highlights` / `highlightGuidance` 当现行事实；`STALE` 时上述内容在 `historicalReference`，**只作历史参考**，不得当硬约束，也不得压过 `basicArchive` / `goals` / 近期指标；`rationale` 可写「首诊答卷已过期，按现行档案生成」
+  - `keyAnswers`（仅现行）：核心诉求、管理方向、糖/压/体重目标与临床关键答（带 `label`/`display`），优先落实，**勿整段照抄**到患者正文
+  - 有现行 `aiSummary` 时只吸收风险/禁忌/诉求缺口，**不要**把案头总结散文再复述进患者可见 `summary`
+  - **`highlightGuidance`（优先，仅现行）**：首诊「高亮追问 / 方案影响」的模型可读版；每条含 `severityLabel`（谨慎/转介/阻断）、`mustApply`（须写入运动/饮食/执行的约束）、可选 `clinicianNote`（追问话术，只吸收约束、**勿照抄**进患者正文）、`source`（题干）
     - `mustApply` 为硬约束：对应写进 `exercise`（强度/禁忌）、`diet`（限盐/控糖等）、`execution`（监测/用药提醒）与 `goalSummary`
     - `severityLabel=转介/阻断` → 节奏更保守；阻断减重时不得以快速减重为主叙事
-  - 兼容原始 `highlights`（`field`/`severity`/`planEffect`/`followUp`）；进食障碍 / 身材焦虑 / 运动限制 / 孕哺等 → 称重勿过度强调每日、运动避禁忌
+  - 兼容原始 `highlights`；进食障碍 / 身材焦虑 / 运动限制 / 孕哺等 → 称重勿过度强调每日、运动避禁忌（现行高亮或档案 `safetyRedlines`）
   - `rationale` 可写「依据首诊高亮…」，患者正文仍用行动化表述
 - 过敏原 → 写入 `allergensAvoid`，且不得出现在 `recommended`、`sampleDay` 与 `sampleWeek`（含 `swapHint`；以 `foodAllergyGuard` 为准）
 - 限水相关病情 → 不要生成 `WATER` 任务

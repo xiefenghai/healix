@@ -228,9 +228,7 @@ public class CarePlanSafetyService {
             return;
         }
 
-        String exerciseBlob = flattenText(exercise);
         String dietBlob = flattenText(diet);
-        String executionBlob = flattenText(execution);
         List<String> errors = new ArrayList<>();
         List<String> warns = new ArrayList<>();
 
@@ -241,19 +239,18 @@ public class CarePlanSafetyService {
             if (containsAny(dietBlob, "快速减重", "激进缺口", "极端节食", "每日热量缺口很大")) {
                 errors.add("进食障碍风险：饮食仍含激进减重/极端节食表述");
             }
-            if (FORBIDDEN_HIGH_IMPACT.matcher(exerciseBlob).find()
-                    || exerciseBlob.contains("VIGOROUS")
-                    || exerciseBlob.contains("高强度")) {
+            // 只扫周计划条目，勿把禁忌文案里的「禁止跑步」误判为执行动作
+            if (weeklyPlanHasForbiddenHighImpact(exercise) || weeklyPlanHasVigorousIntensity(exercise)) {
                 warns.add("进食障碍风险：运动强度偏高，请改为低冲击、非体重导向安排");
             }
         }
         if (codes.contains("JOINT_ISSUES") || codes.contains("EXERCISE_RESTRICTION")) {
-            if (FORBIDDEN_HIGH_IMPACT.matcher(exerciseBlob).find()) {
+            if (weeklyPlanHasForbiddenHighImpact(exercise)) {
                 errors.add(
                         (codes.contains("EXERCISE_RESTRICTION") ? "存在运动医学限制" : "存在关节问题")
                                 + "：方案仍含跑步/跳绳/负重或剧烈有氧，须改为低冲击");
             }
-            if (exerciseBlob.contains("VIGOROUS") || exerciseBlob.contains("\"intensity\":\"VIGOROUS\"")) {
+            if (weeklyPlanHasVigorousIntensity(exercise)) {
                 errors.add("运动限制红线：强度仍为 VIGOROUS，须降为 LIGHT/MODERATE");
             }
         }
@@ -334,6 +331,95 @@ public class CarePlanSafetyService {
             }
         }
         return false;
+    }
+
+    /**
+     * 高冲击动作只检查 {@code weeklyPlan[].items[]} 的 {@code type}/{@code note}。
+     * 不扫 goal / contraindications / precautions，避免「禁止跑步」被误杀。
+     * {@code WALKING/步行 + LIGHT} 一律放行（即使备注提到禁止跑步）。
+     */
+    static boolean weeklyPlanHasForbiddenHighImpact(JsonNode exercise) {
+        if (exercise == null || exercise.isNull()) {
+            return false;
+        }
+        JsonNode weekly = exercise.get("weeklyPlan");
+        if (weekly == null || !weekly.isArray()) {
+            return false;
+        }
+        for (JsonNode day : weekly) {
+            if (day == null || !day.isObject()) {
+                continue;
+            }
+            JsonNode items = day.get("items");
+            if (items == null || !items.isArray()) {
+                continue;
+            }
+            for (JsonNode item : items) {
+                if (item == null || !item.isObject()) {
+                    continue;
+                }
+                String type = item.path("type").asText("").trim();
+                String intensity = item.path("intensity").asText("").trim();
+                String note = item.path("note").asText("").trim();
+                if (isSafeLightWalking(type, intensity)) {
+                    continue;
+                }
+                String scan = (type + " " + note).trim();
+                if (!StringUtils.hasText(scan)) {
+                    continue;
+                }
+                if (FORBIDDEN_HIGH_IMPACT.matcher(scan).find()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    static boolean weeklyPlanHasVigorousIntensity(JsonNode exercise) {
+        if (exercise == null || exercise.isNull()) {
+            return false;
+        }
+        JsonNode weekly = exercise.get("weeklyPlan");
+        if (weekly == null || !weekly.isArray()) {
+            return false;
+        }
+        for (JsonNode day : weekly) {
+            if (day == null || !day.isObject()) {
+                continue;
+            }
+            JsonNode items = day.get("items");
+            if (items == null || !items.isArray()) {
+                continue;
+            }
+            for (JsonNode item : items) {
+                if (item == null || !item.isObject()) {
+                    continue;
+                }
+                String intensity = item.path("intensity").asText("").trim();
+                if ("VIGOROUS".equalsIgnoreCase(intensity) || intensity.contains("高强")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 低冲击步行：type=WALKING/WALK/步行/快走 且 intensity=LIGHT/低/轻 → 放行 */
+    static boolean isSafeLightWalking(String type, String intensity) {
+        if (!StringUtils.hasText(type) || !StringUtils.hasText(intensity)) {
+            return false;
+        }
+        String t = type.trim().toUpperCase(Locale.ROOT);
+        String i = intensity.trim().toUpperCase(Locale.ROOT);
+        boolean walk =
+                "WALKING".equals(t)
+                        || "WALK".equals(t)
+                        || type.contains("步行")
+                        || type.contains("快走")
+                        || type.contains("慢走");
+        boolean light = "LIGHT".equals(i) || intensity.contains("低") || intensity.contains("轻");
+        return walk && light;
     }
 
     /** 首诊高亮：BLOCK 不可发布；CAUTION/REFER 需确认。 */

@@ -1,0 +1,95 @@
+{
+  "code": "DM_CLINICAL",
+  "version": 3,
+  "title": "糖尿病管理",
+  "script": "专门跟您确认一下血糖这块：分型、监测习惯、近期指标和用药。定控糖节奏时会用到，也方便留意低血糖。",
+  "items": [
+    {
+      "field": "disease.diabetes.type",
+      "label": "医生说您的糖尿病是哪一种？",
+      "level": "FIRST_VISIT",
+      "sensitive": true
+    },
+    {
+      "field": "disease.diabetes.diagnosedYear",
+      "label": "大概哪一年得知患病的？（选年份）",
+      "level": "FIRST_VISIT",
+      "sensitive": true
+    },
+    {
+      "field": "disease.diabetes.chronicComplications",
+      "label": "医生有没有说过眼睛、肾脏或手脚已经受到影响？",
+      "level": "FIRST_VISIT",
+      "sensitive": true
+    },
+    {
+      "field": "disease.diabetes.hypoglycemia",
+      "label": "有没有出现过低血糖？",
+      "level": "FIRST_VISIT",
+      "sensitive": true,
+      "highlights": [
+        {
+          "when": {
+            "eq": "SEVERE"
+          },
+          "severity": "CAUTION",
+          "planEffect": "热量缺口与运动前注意防低血糖，调整前与医生沟通"
+        }
+      ]
+    },
+    {
+      "field": "disease.diabetes.monitorFreq",
+      "label": "平时测血糖频次？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "disease.diabetes.latestHba1c",
+      "label": "最近一次「糖化」大概多少？（体检单上的糖化血红蛋白）",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "op": ">=",
+            "value": 8
+          },
+          "severity": "CAUTION",
+          "planEffect": "控糖优先；若同时减重，节奏宜稳，避免激进缺口"
+        }
+      ]
+    },
+    {
+      "field": "disease.diabetes.latestFpg",
+      "label": "最近空腹血糖？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "disease.diabetes.latestPpg",
+      "label": "最近餐后 2 小时血糖？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "disease.diabetes.medAdherence",
+      "label": "降糖药 / 胰岛素吃得规律吗？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "basic.medicationFlags",
+        "intersects": [
+          "HYPOGLYCEMIC"
+        ]
+      },
+      "sensitive": true,
+      "highlights": [
+        {
+          "when": {
+            "in": [
+              "IRREGULAR",
+              "STOPPED"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "先提醒按时用药，方案不强推大幅饮食变动"
+        }
+      ]
+    }
+  ]
+}

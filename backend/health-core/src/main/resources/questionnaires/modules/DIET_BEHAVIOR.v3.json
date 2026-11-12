@@ -1,0 +1,117 @@
+{
+  "code": "DIET_BEHAVIOR",
+  "version": 3,
+  "title": "饮食行为",
+  "script": "抓住影响方案的饮食抓手：规律、晚餐点、含糖饮、口味、谁做饭。外卖频次并入「谁做饭/执行阻力」。",
+  "items": [
+    {
+      "field": "basic.diet.mealRegularity",
+      "label": "一日三餐规律吗？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.dinnerTime",
+      "label": "晚餐通常几点吃？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "in": [
+              "AFTER_21"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "晚餐偏晚，不安排刚吃完就运动；可改成睡前轻度拉伸"
+        }
+      ]
+    },
+    {
+      "field": "basic.diet.snackNight",
+      "label": "吃零食或夜宵的频率？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.diet.sugaryDrinks",
+      "label": "奶茶、可乐、果汁这类含糖饮料喝多少？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "in": [
+              "DAILY_1",
+              "DAILY_2PLUS"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "控糖 / 减重方案优先减含糖饮料"
+        }
+      ]
+    },
+    {
+      "field": "basic.diet.taste",
+      "label": "您的日常饮食更接近哪种？（可多选）",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "intersects": [
+              "SALTY"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "口味偏咸：高血压重点限盐，减重也少吃腌制食品"
+        },
+        {
+          "when": {
+            "intersects": [
+              "OILY"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "偏油或爱吃油炸：给清淡少油、少炸的替换"
+        },
+        {
+          "when": {
+            "intersects": [
+              "REFINED"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "主食以精米白面为主：控糖方案里逐步换成粗细搭配"
+        },
+        {
+          "when": {
+            "intersects": [
+              "SWEET"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "常吃甜食或含糖饮料：控糖和减重优先减这一项"
+        }
+      ]
+    },
+    {
+      "field": "basic.diet.staple",
+      "label": "主食一般吃什么？（面诊可再细问）",
+      "level": "STAFF"
+    },
+    {
+      "field": "basic.diet.cooking",
+      "label": "家里做菜常用哪些方式？（面诊可再细问）",
+      "level": "STAFF",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "HYPERTENSION",
+          "WEIGHT_LOSS",
+          "DIABETES"
+        ]
+      }
+    },
+    {
+      "field": "basic.diet.cook",
+      "label": "平时主要谁做饭？",
+      "level": "FIRST_VISIT"
+    }
+  ]
+}

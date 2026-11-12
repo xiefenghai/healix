@@ -19,14 +19,19 @@ class QuestionnaireCatalogTest {
     @Test
     void loadsWlIntake() {
         QuestionnaireDef q = catalog.latest("WL_INTAKE");
-        assertEquals(3, q.version());
+        assertEquals(4, q.version());
         assertNull(q.program());
         assertFalse(catalog.itemsOf(q).isEmpty());
         assertTrue(catalog.itemsOf(q).stream().anyMatch(i -> "REQUIRED".equals(i.level())));
-        assertTrue(catalog.module("WL_RISK_SCREEN", 2).isPresent());
-        assertTrue(catalog.module("DM_CLINICAL", 2).isPresent());
-        assertTrue(catalog.module("HTN_CLINICAL", 2).isPresent());
-        assertTrue(q.modules().stream().anyMatch(m -> "GOALS_PREFERENCE".equals(m.code()) && m.version() == 3));
+        assertTrue(catalog.module("WL_RISK_SCREEN", 3).isPresent());
+        assertTrue(catalog.module("DM_CLINICAL", 3).isPresent());
+        assertTrue(catalog.module("HTN_CLINICAL", 3).isPresent());
+        assertTrue(q.modules().stream().anyMatch(m -> "GOALS_PREFERENCE".equals(m.code()) && m.version() == 4));
+        // v4 瘦身：不再收微信号/早绝经/测量来源/外卖频次
+        assertTrue(catalog.itemsOf(q).stream().noneMatch(i -> "profile.wechatId".equals(i.field())));
+        assertTrue(catalog.itemsOf(q).stream().noneMatch(i -> "basic.women.earlyMenopause".equals(i.field())));
+        assertTrue(catalog.itemsOf(q).stream().noneMatch(i -> "measure.method".equals(i.field())));
+        assertTrue(catalog.itemsOf(q).stream().noneMatch(i -> "basic.diet.takeoutFrequency".equals(i.field())));
     }
 
     @Test
@@ -87,13 +92,14 @@ class QuestionnaireCatalogTest {
 
     @Test
     void sceneQuestionsStayOnFirstVisitAndExtremesStayWithStaff() {
-        var diet = catalog.requireModule("DIET_BEHAVIOR", 2);
+        var diet = catalog.requireModule("DIET_BEHAVIOR", 3);
         assertTrue(diet.items().stream().anyMatch(i ->
                 "basic.diet.dinnerTime".equals(i.field()) && "FIRST_VISIT".equals(i.level())));
         assertTrue(diet.items().stream().anyMatch(i ->
                 "basic.diet.staple".equals(i.field()) && "STAFF".equals(i.level())));
         assertTrue(diet.items().stream().anyMatch(i ->
                 "basic.diet.cooking".equals(i.field()) && "STAFF".equals(i.level())));
+        assertTrue(diet.items().stream().noneMatch(i -> "basic.diet.takeoutFrequency".equals(i.field())));
         assertEquals(
                 "MULTI",
                 fields.require("goal.constraints").type().name());
@@ -106,11 +112,13 @@ class QuestionnaireCatalogTest {
         assertTrue(PatientCFastFields.includes("basic.medical.exerciseRestriction"));
         assertTrue(PatientCFastFields.includes("allergy.status"));
         assertTrue(PatientCFastFields.includes("basic.medicationFlags"));
-        assertTrue(PatientCFastFields.includes("basic.diet.takeoutFrequency"));
+        assertTrue(PatientCFastFields.includes("basic.diet.cook"));
+        assertTrue(PatientCFastFields.includes("goal.constraints"));
+        assertFalse(PatientCFastFields.includes("basic.diet.takeoutFrequency"));
         assertFalse(PatientCFastFields.includes("metric.WAIST"));
         assertFalse(PatientCFastFields.includes("basic.diet.dinnerTime"));
         assertFalse(PatientCFastFields.includes("medication.mealRelation"));
-        var sleep = catalog.requireModule("SLEEP_SUBSTANCE", 2);
+        var sleep = catalog.requireModule("SLEEP_SUBSTANCE", 3);
         assertTrue(sleep.items().stream().anyMatch(i ->
                 "basic.schedule.offWork".equals(i.field())
                         && i.showIf() != null

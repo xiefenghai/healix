@@ -1,0 +1,110 @@
+{
+  "code": "SLEEP_SUBSTANCE",
+  "version": 3,
+  "title": "睡眠与烟酒",
+  "script": "作息、睡眠解乏与打鼾、烟酒状态。入睡起床/酒量烟量细项改面诊。",
+  "items": [
+    {
+      "field": "profile.workSchedule",
+      "label": "平时作息是哪种？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "in": [
+              "SHIFT",
+              "NIGHT"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "餐次、用药提醒与运动时段按班次安排"
+        }
+      ]
+    },
+    {
+      "field": "basic.schedule.offWork",
+      "label": "平时大概几点下班？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "profile.workSchedule",
+        "in": [
+          "DAY",
+          "IRREGULAR"
+        ]
+      },
+      "highlights": [
+        {
+          "when": {
+            "in": [
+              "H20_21",
+              "AFTER_21"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "下班晚，不要安排晚饭前运动，改为睡前轻度拉伸"
+        }
+      ]
+    },
+    {
+      "field": "basic.schedule.offWorkNote",
+      "label": "倒班或夜班时，大概哪些时段在上班？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "profile.workSchedule",
+        "in": [
+          "SHIFT",
+          "NIGHT"
+        ]
+      }
+    },
+    {
+      "field": "basic.lifestyle.activityLevel",
+      "label": "工作和日常活动量属于哪种？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.sleep.hours",
+      "label": "每天大概睡几个小时？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "op": "<",
+            "value": 6.0
+          },
+          "severity": "CAUTION",
+          "planEffect": "睡眠不足影响食欲、血压与控糖，方案可加入睡眠改善"
+        }
+      ]
+    },
+    {
+      "field": "basic.sleep.refreshed",
+      "label": "早上起来觉得解乏吗？",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "eq": "NO"
+          },
+          "severity": "CAUTION",
+          "planEffect": "醒后仍很累：方案提示睡眠呼吸监测，肥胖或高血压时优先"
+        }
+      ]
+    },
+    {
+      "field": "basic.sleep.disorder",
+      "label": "睡眠问题",
+      "level": "LATER"
+    },
+    {
+      "field": "basic.lifestyle.smoking.status",
+      "label": "吸烟吗？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.lifestyle.drinking.status",
+      "label": "喝酒吗？",
+      "level": "FIRST_VISIT"
+    }
+  ]
+}

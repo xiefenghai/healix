@@ -7,6 +7,7 @@ import java.util.Set;
  *
  * <p>只留「基础代谢 + 安全红线 + 粗粒度生活方式」约 15–20 题，让患者 1–2 分钟填完；
  * 腰围/血压、详细病史与习惯留给 B 端面诊或 C 端「完整补充」。
+ * <p>v4 起外卖频次并入「谁做饭 / 执行阻力」，测量来源不再单问。
  */
 public final class PatientCFastFields {
 
@@ -21,9 +22,9 @@ public final class PatientCFastFields {
             // 体测基础（腰围/血压不进极简）
             "metric.HEIGHT",
             "metric.WEIGHT",
-            "measure.method",
-            // 核心诉求
+            // 核心诉求与阻力
             "goal.primaryAppeal",
+            "goal.constraints",
             // 高危禁忌排查
             "basic.presentIllness",
             "basic.medical.exerciseRestriction",
@@ -35,7 +36,7 @@ public final class PatientCFastFields {
             "profile.workSchedule",
             "basic.lifestyle.activityLevel",
             "basic.diet.mealRegularity",
-            "basic.diet.takeoutFrequency");
+            "basic.diet.cook");
 
     public static boolean includes(String field) {
         return field != null && FIELDS.contains(field);

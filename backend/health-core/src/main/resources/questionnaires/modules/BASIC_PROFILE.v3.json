@@ -1,0 +1,39 @@
+{
+  "code": "BASIC_PROFILE",
+  "version": 3,
+  "title": "基础信息",
+  "script": "先确认基本信息（建档已有可核对即可）。微信号/职业/婚姻改由档案页补，不再占用首诊。",
+  "items": [
+    {
+      "field": "profile.displayName",
+      "label": "姓名",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "profile.gender",
+      "label": "性别",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "profile.birthday",
+      "label": "出生日期",
+      "level": "REQUIRED",
+      "highlights": [
+        {
+          "when": {
+            "computed": "年龄",
+            "op": "<",
+            "value": 18.0
+          },
+          "severity": "CAUTION",
+          "planEffect": "干预强度取保守值"
+        }
+      ]
+    },
+    {
+      "field": "profile.mobile",
+      "label": "手机号",
+      "level": "REQUIRED"
+    }
+  ]
+}

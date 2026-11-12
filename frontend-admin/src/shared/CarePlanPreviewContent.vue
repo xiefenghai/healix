@@ -11,6 +11,7 @@ import {
   InfoFilled,
 } from '@element-plus/icons-vue'
 import CarePlanAiDisclaimer from './CarePlanAiDisclaimer.vue'
+import CarePlanMealStruct from './CarePlanMealStruct.vue'
 import GuidelineRefTags from './GuidelineRefTags.vue'
 import { refsOf } from './guidelines'
 import {
@@ -221,7 +222,15 @@ const WEEK_DAY_ORDER = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const weeklyPlanTable = computed(() => {
   const plan = props.data?.exercise?.weeklyPlan
   if (!Array.isArray(plan)) return []
-  const rows: Array<{ key: string; day: string; type: string; intensity: string; duration: string; note: string }> = []
+  const rows: Array<{
+    key: string
+    day: string
+    type: string
+    intensity: string
+    intensityCode: string
+    duration: string
+    note: string
+  }> = []
   const days = plan
     .map((day) => ({ code: String(day?.day || '').toUpperCase(), items: day?.items }))
     .sort((a, b) => {
@@ -244,7 +253,7 @@ const weeklyPlanTable = computed(() => {
         mapped ||
         typeCode ||
         '运动'
-      const intensityCode = row.intensity != null ? String(row.intensity) : ''
+      const intensityCode = row.intensity != null ? String(row.intensity).trim().toUpperCase() : ''
       const intensity = formatCarePlanIntensity(intensityCode) || '—'
       const duration =
         row.durationMin != null && row.durationMin !== '' ? `${row.durationMin} 分钟` : '—'
@@ -254,6 +263,7 @@ const weeklyPlanTable = computed(() => {
         day: shown ? '' : label,
         type,
         intensity,
+        intensityCode,
         duration,
         note: note || '—',
       })
@@ -262,6 +272,14 @@ const weeklyPlanTable = computed(() => {
   }
   return rows
 })
+
+function intensityTagType(code: string): 'success' | 'warning' | 'danger' | 'info' {
+  const c = String(code || '').toUpperCase()
+  if (c === 'LIGHT') return 'success'
+  if (c === 'MODERATE') return 'warning'
+  if (c === 'VIGOROUS') return 'danger'
+  return 'info'
+}
 
 const showCheckinsSection = computed(
   () => props.data != null && (props.data.checkins !== undefined || props.data.checkinsLoading),
@@ -483,10 +501,34 @@ watch(
             </p>
             <div v-if="weeklyPlanTable.length" class="week-plan">
               <div class="info-block-title">一周计划</div>
-              <el-table :data="weeklyPlanTable" size="small" class="task-table week-plan-table">
+              <el-table
+                :data="weeklyPlanTable"
+                size="small"
+                class="task-table week-plan-table"
+                :header-cell-style="{
+                  background: '#f8fafc',
+                  color: '#334155',
+                  fontWeight: '700',
+                  borderBottom: '1px solid #e2e8f0',
+                }"
+                :row-style="{}"
+              >
                 <el-table-column prop="day" label="星期" width="72" />
                 <el-table-column prop="type" label="类型" min-width="96" />
-                <el-table-column prop="intensity" label="强度" width="72" />
+                <el-table-column label="强度" width="88">
+                  <template #default="{ row }">
+                    <el-tag
+                      v-if="row.intensity && row.intensity !== '—'"
+                      size="small"
+                      effect="light"
+                      round
+                      :type="intensityTagType(row.intensityCode)"
+                    >
+                      {{ row.intensity }}
+                    </el-tag>
+                    <span v-else>—</span>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="duration" label="时长" width="88" />
                 <el-table-column prop="note" label="备注" min-width="140" show-overflow-tooltip />
               </el-table>
@@ -598,9 +640,13 @@ watch(
 
             <div v-if="sampleDayRows.length" class="info-block info-block--diet sample-day">
               <div class="info-block-title">示例日</div>
-              <ul class="info-list">
+              <ul class="info-list sample-day-struct">
                 <li v-for="(row, i) in sampleDayRows" :key="'sd-' + i">
-                  <strong>{{ row.label }}</strong>：{{ row.text }}
+                  <strong class="sample-day-label">{{ row.label }}</strong>
+                  <CarePlanMealStruct
+                    :text="row.text"
+                    :snackish="row.label === '加餐'"
+                  />
                   <span v-if="row.swapHint" class="swap-hint">可替换：{{ row.swapHint }}</span>
                 </li>
               </ul>
@@ -610,28 +656,36 @@ watch(
               <div class="info-block-title">一周饮食示例</div>
               <el-table :data="sampleWeekTable" size="small" class="task-table week-plan-table">
                 <el-table-column prop="day" label="星期" width="72" />
-                <el-table-column label="早餐" min-width="140">
+                <el-table-column label="早餐" min-width="160">
                   <template #default="{ row }">
-                    <div>{{ row.breakfast || '—' }}</div>
-                    <div v-if="row.breakfastSwap" class="swap-hint">可替换：{{ row.breakfastSwap }}</div>
+                    <div class="preview-meal-cell">
+                      <CarePlanMealStruct :text="row.breakfast" />
+                      <div v-if="row.breakfastSwap" class="swap-hint">可替换：{{ row.breakfastSwap }}</div>
+                    </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="午餐" min-width="140">
+                <el-table-column label="午餐" min-width="160">
                   <template #default="{ row }">
-                    <div>{{ row.lunch || '—' }}</div>
-                    <div v-if="row.lunchSwap" class="swap-hint">可替换：{{ row.lunchSwap }}</div>
+                    <div class="preview-meal-cell">
+                      <CarePlanMealStruct :text="row.lunch" />
+                      <div v-if="row.lunchSwap" class="swap-hint">可替换：{{ row.lunchSwap }}</div>
+                    </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="晚餐" min-width="140">
+                <el-table-column label="晚餐" min-width="160">
                   <template #default="{ row }">
-                    <div>{{ row.dinner || '—' }}</div>
-                    <div v-if="row.dinnerSwap" class="swap-hint">可替换：{{ row.dinnerSwap }}</div>
+                    <div class="preview-meal-cell">
+                      <CarePlanMealStruct :text="row.dinner" />
+                      <div v-if="row.dinnerSwap" class="swap-hint">可替换：{{ row.dinnerSwap }}</div>
+                    </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="加餐" min-width="120">
+                <el-table-column label="加餐" min-width="140">
                   <template #default="{ row }">
-                    <div>{{ row.snacks || '—' }}</div>
-                    <div v-if="row.snacksSwap" class="swap-hint">可替换：{{ row.snacksSwap }}</div>
+                    <div class="preview-meal-cell">
+                      <CarePlanMealStruct :text="row.snacks" snackish />
+                      <div v-if="row.snacksSwap" class="swap-hint">可替换：{{ row.snacksSwap }}</div>
+                    </div>
                   </template>
                 </el-table-column>
               </el-table>
@@ -789,6 +843,16 @@ watch(
 
 .plan-sections--stacked :deep(.el-collapse-item__content) {
   padding: 4px 16px 16px;
+}
+
+.plan-sections--stacked .section-body {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.plan-sections--stacked .info-block {
+  margin-left: 0;
+  margin-right: 0;
 }
 
 .plan-sections--stacked :deep(.el-collapse-item__arrow) {
@@ -1077,7 +1141,9 @@ watch(
 }
 
 .info-block {
-  margin-top: 12px;
+  margin: 12px 0 0;
+  width: 100%;
+  box-sizing: border-box;
   padding: 10px 12px;
   border-radius: 8px;
   background: #f9fafb;
@@ -1085,21 +1151,21 @@ watch(
 }
 
 .info-block--danger {
-  background: #fef2f2;
-  border-left: 4px solid #ef4444;
+  background: #fef2f2; /* red-50 */
+  border-left: 4px solid #ef4444; /* red-500：医疗禁忌强调 */
 }
 
 .info-block--danger .info-block-title {
-  color: #b91c1c;
+  color: #991b1b;
 }
 
 .info-block--caution {
-  background: #fffbeb;
-  border-left-color: #f59e0b;
+  background: #fefce8; /* yellow-50 */
+  border-left: 4px solid #eab308;
 }
 
 .info-block--caution .info-block-title {
-  color: #b45309;
+  color: #a16207;
 }
 
 .info-block--tip {
@@ -1125,13 +1191,37 @@ watch(
 
 .swap-hint {
   display: block;
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 12px;
   color: var(--el-text-color-secondary, #6b7280);
 }
 
 .sample-day .info-list li {
   margin-bottom: 6px;
+}
+
+.sample-day-struct {
+  list-style: none;
+  padding-left: 0;
+}
+
+.sample-day-struct li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.sample-day-label {
+  font-size: 13px;
+  color: #0f766e;
+}
+
+.preview-meal-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .week-block {
@@ -1150,18 +1240,45 @@ watch(
 }
 
 .week-plan {
-  margin-top: 12px;
+  margin-top: 14px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
 
 .week-plan-table {
-  margin-top: 6px;
+  margin-top: 8px;
   min-width: 640px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.week-plan-table :deep(.el-table) {
+  --el-table-border-color: #f1f5f9;
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-row-hover-bg-color: #f8fafc;
+}
+
+.week-plan-table :deep(.el-table__inner-wrapper::before) {
+  display: none;
+}
+
+.week-plan-table :deep(.el-table__header th) {
+  background: #f8fafc !important;
+  font-weight: 700;
+  color: #334155;
+}
+
+.week-plan-table :deep(.el-table__row td) {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.week-plan-table :deep(.el-table__row:hover > td) {
+  background: #f8fafc !important;
 }
 
 .week-plan-table :deep(.el-table__cell) {
-  padding: 4px 0;
+  padding: 8px 10px;
 }
 
 .info-list {

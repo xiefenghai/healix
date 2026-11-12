@@ -52,6 +52,41 @@ class CarePlanSafetyRedlineTest {
     }
 
     @Test
+    void allowsLightWalkingEvenIfContraindicationsMentionRunning() {
+        // 禁忌写「禁止跑步/跳绳」不得误杀；周计划为 LIGHT 步行应放行
+        JsonNode exercise = JsonUtils.readTree(
+                """
+                {
+                  "goal": "术后低冲击恢复：以慢走为主",
+                  "contraindications": ["禁止跑步、跳绳、负重与剧烈有氧"],
+                  "precautions": ["若出现疼痛立即停止，勿跑步"],
+                  "weeklyPlan": [
+                    {"day":"MON","items":[{"type":"WALKING","durationMin":20,"intensity":"LIGHT","note":"平路慢走，禁止跑步跳绳"}]}
+                  ]
+                }
+                """);
+        JsonNode diet = JsonUtils.readTree("{\"principles\":[\"均衡\"],\"recommended\":[],\"sampleDay\":{}}");
+        JsonNode execution = JsonUtils.readTree(
+                "{\"horizonDays\":14,\"tasks\":[{\"code\":\"DIET_LOG\",\"title\":\"记录三餐\",\"category\":\"DIET\",\"frequency\":\"QD\",\"enabled\":true}]}");
+        JsonNode snap = JsonUtils.readTree(
+                """
+                {
+                  "safetyRedlines": [
+                    {"code":"JOINT_ISSUES"},
+                    {"code":"EXERCISE_RESTRICTION"}
+                  ],
+                  "basicArchive": {"medical": {"jointIssues": ["KNEE"], "exerciseRestriction": ["DOCTOR_LIMIT"]}}
+                }
+                """);
+
+        List<SafetyFlagDto> flags = safety.evaluate(
+                exercise, diet, execution, false, false, false, List.of(), null, snap, false);
+
+        assertThat(flags.stream().map(SafetyFlagDto::code))
+                .doesNotContain(CarePlanSafetyService.ERR_SAFETY_REDLINE);
+    }
+
+    @Test
     void blocksDailyWeighOnEatingDisorder() {
         JsonNode exercise = JsonUtils.readTree(
                 """

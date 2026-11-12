@@ -294,8 +294,9 @@ public class CarePlanContextService {
         ObjectNode intakeBrief = loadLatestIntakeBrief(tenantId, peopleId);
         if (intakeBrief != null) {
             snapshot.set("intakeBrief", intakeBrief);
+            boolean intakeOk = CarePlanPromptContextSupport.isIntakeAuthoritative(intakeBrief);
             JsonNode highlights = intakeBrief.get("highlights");
-            if (highlights != null && highlights.isArray() && !highlights.isEmpty()) {
+            if (intakeOk && highlights != null && highlights.isArray() && !highlights.isEmpty()) {
                 snapshot.set("highlights", highlights);
                 ArrayNode guidance = CarePlanPromptContextSupport.highlightGuidance(highlights);
                 if (!guidance.isEmpty()) {
@@ -304,16 +305,26 @@ public class CarePlanContextService {
                 applyHighlightHints(snapshot, highlights, goalsNode);
                 trace(tracer, "IntakeHighlights", "done", "高亮命中 " + highlights.size() + " 项");
             } else if (goalsNode != null) {
+                // 过期首诊：不把旧高亮写成称重/阻断减重等硬副作用；红线改靠档案 safetyRedlines
                 applyHighlightHints(snapshot, JsonUtils.mapper().createArrayNode(), goalsNode);
+                if (!intakeOk) {
+                    trace(
+                            tracer,
+                            "IntakeHighlights",
+                            "skipped",
+                            "首诊已过期（" + intakeBrief.path("ageDays").asText("?") + "天），高亮不作为硬约束");
+                }
             }
             String aiHint = intakeBrief.path("aiSummary").asText("");
-            trace(
-                    tracer,
-                    "IntakeBrief",
-                    "done",
-                    StringUtils.hasText(aiHint)
+            if (!StringUtils.hasText(aiHint)) {
+                aiHint = intakeBrief.path("historicalReference").path("aiSummary").asText("");
+            }
+            String briefHint = intakeOk
+                    ? (StringUtils.hasText(aiHint)
                             ? "已附首诊 AI 总结 " + Math.min(aiHint.length(), 40) + " 字…"
-                            : "已附首诊关键答卷要点");
+                            : "已附首诊关键答卷要点")
+                    : "首诊答卷已过期，仅作历史参考（现行以档案为准）";
+            trace(tracer, "IntakeBrief", "done", briefHint);
         } else if (goalsNode != null) {
             applyHighlightHints(snapshot, JsonUtils.mapper().createArrayNode(), goalsNode);
         }
@@ -409,6 +420,8 @@ public class CarePlanContextService {
 
     /**
      * 最近一次已提交首诊/待补：元数据 + AI 案头总结 + 高亮（不塞全量 answers）。
+     * 超过 {@link CarePlanPromptContextSupport#INTAKE_FRESH_MAX_DAYS} 天则降权，
+     * 总结/关键题/高亮挪入 historicalReference，避免旧答卷压过现行档案。
      */
     private ObjectNode loadLatestIntakeBrief(String tenantId, String peopleId) {
         try {
@@ -462,6 +475,7 @@ public class CarePlanContextService {
                         brief.set("highlights", highlights);
                     }
                 }
+                CarePlanPromptContextSupport.applyIntakeFreshness(brief, r.getSubmittedAt());
                 return brief;
             }
         } catch (RuntimeException e) {

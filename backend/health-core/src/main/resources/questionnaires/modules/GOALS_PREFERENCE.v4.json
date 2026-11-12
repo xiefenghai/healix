@@ -1,0 +1,211 @@
+{
+  "code": "GOALS_PREFERENCE",
+  "version": 4,
+  "title": "诉求与目标",
+  "script": "先锁定这次最想解决什么与管理方向；数字目标由健管师按需补。执行阻力会直接写进方案话术。",
+  "items": [
+    {
+      "field": "goal.primaryAppeal",
+      "label": "这次最想解决什么问题？（可多选）",
+      "level": "REQUIRED"
+    },
+    {
+      "field": "goal.careTracks",
+      "label": "本次纳入哪些管理方向？",
+      "level": "STAFF"
+    },
+    {
+      "field": "goal.appealText",
+      "label": "用一句话说说你的期望（选填）",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "goal.mode",
+      "label": "本次主目标类型",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "WEIGHT_LOSS",
+          "DIABETES",
+          "HYPERTENSION"
+        ]
+      }
+    },
+    {
+      "field": "goal.targetWeightKg",
+      "label": "希望体重到多少？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "all": [
+          {
+            "field": "goal.careTracks",
+            "intersects": [
+              "WEIGHT_LOSS"
+            ]
+          },
+          {
+            "field": "goal.mode",
+            "eq": "LOSS"
+          }
+        ]
+      },
+      "highlights": [
+        {
+          "when": {
+            "computed": "目标BMI",
+            "op": "<",
+            "value": 18.5
+          },
+          "severity": "CAUTION",
+          "planEffect": "按当前身高计算，目标体重对应 BMI < 18.5，请先补身高或上调目标体重"
+        }
+      ]
+    },
+    {
+      "field": "goal.targetDate",
+      "label": "希望多久达到体重目标？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "all": [
+          {
+            "field": "goal.careTracks",
+            "intersects": [
+              "WEIGHT_LOSS"
+            ]
+          },
+          {
+            "field": "goal.mode",
+            "eq": "LOSS"
+          }
+        ]
+      }
+    },
+    {
+      "field": "goal.targetWaistCm",
+      "label": "腰围目标（健管师选填，可不问客户）",
+      "level": "STAFF",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "WEIGHT_LOSS"
+        ]
+      }
+    },
+    {
+      "field": "goal.targetBodyFat",
+      "label": "体脂率目标（健管师选填）",
+      "level": "STAFF",
+      "showIf": {
+        "all": [
+          {
+            "field": "goal.careTracks",
+            "intersects": [
+              "WEIGHT_LOSS"
+            ]
+          },
+          {
+            "field": "goal.mode",
+            "eq": "BODY_COMPOSITION"
+          }
+        ]
+      }
+    },
+    {
+      "field": "goal.targetHba1c",
+      "label": "糖化血红蛋白目标（%）（健管师按指南选填）",
+      "level": "STAFF",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "DIABETES"
+        ]
+      }
+    },
+    {
+      "field": "goal.targetFpg",
+      "label": "空腹血糖目标（mmol/L）（健管师选填）",
+      "level": "STAFF",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "DIABETES"
+        ]
+      }
+    },
+    {
+      "field": "goal.targetBpSys",
+      "label": "收缩压目标（高压）（健管师选填）",
+      "level": "STAFF",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "HYPERTENSION"
+        ]
+      }
+    },
+    {
+      "field": "goal.targetBpDia",
+      "label": "舒张压目标（低压）（健管师选填）",
+      "level": "STAFF",
+      "showIf": {
+        "field": "goal.careTracks",
+        "intersects": [
+          "HYPERTENSION"
+        ]
+      }
+    },
+    {
+      "field": "goal.constraints",
+      "label": "执行健康计划时，您觉得最大的阻力是什么？（可多选）",
+      "level": "FIRST_VISIT",
+      "highlights": [
+        {
+          "when": {
+            "intersects": [
+              "SOCIAL"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "应酬多：方案加入应酬少饮酒和低盐点餐"
+        },
+        {
+          "when": {
+            "intersects": [
+              "TAKEOUT"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "经常外卖：给能点到的替换，不按自己做饭来写"
+        },
+        {
+          "when": {
+            "intersects": [
+              "HUNGRY"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "容易饿：避免热量压得过低，正餐留足蛋白质和蔬菜"
+        },
+        {
+          "when": {
+            "intersects": [
+              "FAMILY"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "家人不太支持：方案给一句家属能配合的做法"
+        },
+        {
+          "when": {
+            "intersects": [
+              "NO_TIME"
+            ]
+          },
+          "severity": "CAUTION",
+          "planEffect": "没时间运动：用碎片活动替代整段锻炼"
+        }
+      ]
+    }
+  ]
+}

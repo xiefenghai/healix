@@ -1,0 +1,34 @@
+{
+  "code": "EXERCISE_BEHAVIOR",
+  "version": 3,
+  "title": "运动行为",
+  "script": "运动基线与可动时段；强度/时长由方案按病种与红线开方，不再照抄自述。",
+  "items": [
+    {
+      "field": "basic.exercise.frequency",
+      "label": "平时运动（每次约 30 分钟以上）的频率？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.exercise.types",
+      "label": "一般做什么运动？",
+      "level": "FIRST_VISIT",
+      "showIf": {
+        "field": "basic.exercise.frequency",
+        "notIn": [
+          "NONE"
+        ]
+      }
+    },
+    {
+      "field": "basic.exercise.dailySteps",
+      "label": "平时一天大概走多少步？",
+      "level": "FIRST_VISIT"
+    },
+    {
+      "field": "basic.exercise.availableSlots",
+      "label": "一般什么时候有空运动？",
+      "level": "FIRST_VISIT"
+    }
+  ]
+}
