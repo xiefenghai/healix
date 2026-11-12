@@ -349,6 +349,8 @@ public class CarePlanLlmGenerator {
                 过敏史未采集时：recommended/示例餐不要默认推虾蟹贝、花生、坚果等高致敏物；优先瘦肉/禽肉/豆腐/淡水鱼。
                 diet.notes 是患者可见「执行提醒」：短句分号分隔，禁止写医嘱/处方，禁止写过敏史未采集等内部质检话术。
                 示例餐主食/加餐须写克数或标准参照（如杂粮饭约150g熟重），禁止只写「1碗/2块」；sampleWeek 早餐鸡蛋类不超过3天，与豆浆/豆制品轮换。
+                sampleDay 必须与 sampleWeek.MON 完全一致（同文案/份量/swapHint），以周一为准勿另写一套。
+                若有 instruction：其中明确的忌口、偏好或强制运动限制必须落实到 recommended/示例餐/运动安排，禁止再出现被禁项；但不得压过过敏、骨折制动、highlightGuidance.mustApply、SAFETY 指南约束。
                 若有下班时间、倒班或夜班的上班时段、晚餐时间、吃药和吃饭的配合、执行阻力（应酬/外卖/易饿/家人不支持/没时间）、早上是否解乏：按这些安排餐次和运动时段。下班晚、晚餐晚，或写了倒班/夜班时段时，不要把运动写死在傍晚；药需跟第一口饭同服时：diet.notes 写服药配合短句，并单独编 MED_REMINDER（category=MEDICATION），禁止塞进 DIET_LOG 标题；久坐/每小时起身任务 frequency 用 HABIT 而非 QD；饮水 targetMl 按 kg×30（百毫升取整，1200–3000），rationale 用大白话说明建议毫升；打鼾+晨起疲惫+超重/肥胖或糖压慢病时：diet.notes 必须写强提醒「尽快去呼吸内科/耳鼻喉科做睡眠呼吸监测（多导睡眠图）」，禁止只写「关注睡眠呼吸情况」，勿写成已确诊。
                 仅输出 JSON，不要 markdown。
 
@@ -487,6 +489,8 @@ public class CarePlanLlmGenerator {
                 请根据「修订意见」在「当前草稿」上修订，输出完整管理方案 JSON。
                 若存在 mustPreserveConstraints，必须写入新方案的 exercise 与 goalSummary，除非修订意见明确解除。
                 若有 patientContext.highlightGuidance，修订后仍须保留各条 mustApply（除非修订意见明确解除）。
+                revisionInstruction 中明确的忌口/偏好/运动限制须落实到推荐与示例餐，且不得压过过敏与安全硬约束。
+                sampleDay 必须与 sampleWeek.MON 完全一致。
                 未要求改动的字段尽量保留原意与结构。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
                 仅输出 JSON，不要 markdown。

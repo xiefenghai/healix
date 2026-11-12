@@ -7,7 +7,7 @@
     {
       "field": "basic.presentIllness",
       "label": "医生说过您有哪些疾病？",
-      "level": "FIRST_VISIT",
+      "level": "REQUIRED",
       "highlights": [
         {
           "when": {

@@ -394,6 +394,9 @@ public class CreateArchiveHandler {
         if (draft.noMobile()) {
             payload.put("noMobile", true);
         }
+        if (draft.hasHeightCm()) {
+            payload.put("heightCm", draft.heightCm());
+        }
         return payload;
     }
 
@@ -455,6 +458,9 @@ public class CreateArchiveHandler {
             }
             who.append('）');
         }
+        if (draft.hasHeightCm()) {
+            who.append("，身高").append(draft.heightCm()).append("cm");
+        }
         List<String> miss = missingFields(draft);
         if (miss.isEmpty()) {
             return "收到！已为您提取并填入右侧表单："
@@ -512,7 +518,8 @@ public class CreateArchiveHandler {
                                         parsed.gender(),
                                         parsed.birthday(),
                                         parsed.mobile(),
-                                        parsed.noMobile());
+                                        parsed.noMobile(),
+                                        parsed.heightCm());
                     }
                     merged = CreateArchiveParser.merge(merged, parsed);
                 }

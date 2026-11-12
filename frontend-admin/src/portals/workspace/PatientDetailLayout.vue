@@ -1469,11 +1469,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .patient-detail {
   width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   /* topbar 56 + content padding 20+36 */
   height: calc(100vh - 112px);
   min-height: 0;
+  overflow-x: hidden;
 }
 
 .patient-detail.embedded {
@@ -1488,7 +1490,9 @@ onBeforeUnmount(() => {
 .patient-detail-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-top: 12px;
   overscroll-behavior: contain;
 }

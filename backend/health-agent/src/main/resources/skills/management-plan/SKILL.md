@@ -59,6 +59,18 @@ display_name: 管理方案生成
 3. 结合 `instruction` 生成整包 JSON（含 rationale）；若为**修订模式**，在 `currentDraft` 上按 `revisionInstruction` 局部调整后仍输出完整 JSON
 4. 服务端 Safety 校验 → 写入 / 更新 `care_plan_draft`
 
+### `instruction` 优先级（硬性）
+
+健管师在生成时的 `instruction`、或修订时的 `revisionInstruction` 中，若**明确**提出饮食禁忌/偏好、强制替换某类食材、指定/禁止某类运动等个体要求：
+
+- **必须绝对服从**：写入 `recommended` / `limited` / `sampleDay` / `sampleWeek` / 相关 `notes` / 运动安排时落实；被禁止的食材或运动**禁止**再出现在推荐与示例中，即使 Skill 默认鼓励（如「优先淡水鱼」）
+- **不得压过**更高优先级安全约束（冲突时以安全为准，并在 `rationale` 点明）：
+  - `foodAllergyGuard`（过敏原全文禁入推荐与示例餐）
+  - 骨折 / 石膏 / 卧床 / 医嘱制动 / `mustPreserveConstraints`
+  - `highlightGuidance[].mustApply`
+  - `guidelineRecs` 中 `kind=SAFETY` 的 `constraint`
+- 例：instruction「不要鱼，换成鸡胸或豆腐」→ 示例餐与 recommended 不得出现鱼/鲈鱼等；instruction「多吃海鲜」但过敏含虾 → **仍禁虾**，改用其他安全蛋白
+
 ### 修订模式（REVISE）
 
 当用户反馈类似「把运动改成步行」「饮食少盐一点」「最近骨折了」「经常拉肚子」时：
@@ -114,10 +126,12 @@ display_name: 管理方案生成
 
 **运动安全规则**：
 
+- **`patientContext.safetyRedlines`（最高优先级）**：进食障碍（暴食/催吐史）、严重关节问题、医嘱/医生限制运动。每条含 `mustApplyExercise`，**必须**写入 `exercise.contraindications` 与 `goal`/`weeklyPlan`（强度上限、避开部位）；压过模板默认有氧/负重安排。进食障碍时禁止以每日称重+激进减脂为主叙事
 - 低血糖风险或近期血糖偏低：强度 `LIGHT`，单次 15–25 分钟，优先餐后步行，注明运动前后监测
 - 高血压：避免憋气用力、避免突然体位改变
 - 骨折、石膏、医嘱卧床：仅推荐床旁/被动活动、呼吸训练、防血栓与防压疮，**禁止**跑步、跳绳、负重训练
 - 糖尿病：优先餐后 1 小时步行；随身携带糖块
+- `basicArchive.familyHistorySummary` / `earlyCvFamilyHistory`：一级亲属早发心血管或糖尿病家族史须在 `rationale` 点明，控压/控糖与监测节奏取保守侧；**不要**据此下诊断
 
 ---
 
@@ -133,8 +147,8 @@ display_name: 管理方案生成
 | `limited` | `{code, label}` 数组，限制食物 |
 | `allergensAvoid` | `{code, label}` 数组，**必须包含 `foodAllergyGuard` 中 type=ALLERGY 的过敏原** |
 | `intolerances` | `{code, label}` 数组，`foodAllergyGuard` 中 type=INTOLERANCE 的不耐受食物 |
-| `sampleDay` | `{breakfast, lunch, dinner, snacks}` 示例日；每餐可为字符串，或 `{text, swapHint?}`（**每餐至多 1 条** `swapHint` 可替换提示） |
-| `sampleWeek` | **必填**。`{MON,TUE,WED,THU,FRI,SAT,SUN}` 每天同 `sampleDay` 结构，作为一周饮食示例。七天都要写，早餐、午餐、晚餐都要有具体菜品，加餐可空。七天不要复制同一套，主食、蛋白质和蔬菜轮换；周一可与 `sampleDay` 一致 |
+| `sampleDay` | `{breakfast, lunch, dinner, snacks}` 示例日；每餐可为字符串，或 `{text, swapHint?}`（**每餐至多 1 条** `swapHint` 可替换提示）。**硬约束**：内容必须与 `sampleWeek.MON` **完全一致**（同文案、同份量、同 swapHint）；以周示例周一为准，勿另写一套 |
+| `sampleWeek` | **必填**。`{MON,TUE,WED,THU,FRI,SAT,SUN}` 每天同 `sampleDay` 结构，作为一周饮食示例。七天都要写，早餐、午餐、晚餐都要有具体菜品，加餐可空。七天不要复制同一套，主食、蛋白质和蔬菜轮换；**先定周一，再令 `sampleDay` = `sampleWeek.MON`，再写其余六天** |
 | `notes` | 患者可见的**执行提醒**（健康建议短句，用中文分号分隔）。禁止写「医嘱」；禁止把「过敏史未采集」等内部质检话术写入 notes |
 
 **热量**（制定方案时由服务端按档案/饮食目标自动写入 `energyTarget`，健管师可随后调整；模型只写文案）：
@@ -181,6 +195,7 @@ display_name: 管理方案生成
   - `basicArchive.diet.cook=FAMILY` → `notes` **必须**加一句家属提示（如「请家人少放油盐，主食换成杂粮」）
   - `cook=EAT_OUT`/`CANTEEN` → 示例餐与 `swapHint` 偏外卖/食堂可执行（少油少糖点餐话术），不要默认「自己蒸煮」
 - **药-餐配合**：优先读 `activeMedicationDetails[]`（`name`/`timingNote`/`frequency`）；`diet.notes` 用温和「服药配合」短句写饭前/饭后/与餐同服（有 timingNote 则改写为患者可执行提醒，勿写成替医生下指令）；勿编造未在清单中的药名
+- **`barrierStrategies` / `goals.preferences.barrierStrategies`（硬映射，禁止空喊）**：服务端已按阻力码给出固定话术；命中项**必须**把对应 `dietNote` / `exerciseNote` 原文或等价可执行句写入 `diet.notes` / 运动安排 / 执行标题，**禁止**只写「应酬多所以少喝酒」这类废话。无该数组时再回退读 `constraints`/`constraintsDisplay`
 
 ---
 
@@ -235,7 +250,7 @@ display_name: 管理方案生成
     - 有 `basicArchive.diet.dinnerTime` / `dinnerTimeLabel` 为晚上 9 点以后时：不安排刚吃完晚饭就运动
 2. **饮食任务**：至少 1 条「记录三餐与加餐」，`code=DIET_LOG`，`category=DIET`（**不要**再把饮水写进 DIET）
     - **禁止**把服药写进饮食任务标题（错误例：「记录三餐与加餐，服药与第一口饭同服」）。饮食打卡只记吃了什么；服药另开任务
-    - 有 `goals.preferences.constraints` / `constraintsDisplay` 或 `basicArchive.weightHistory.failReasons` 时：执行标题/总结点出对应阻力破解（应酬多→少饮酒、低盐点餐；经常外卖→给能点到的替换；总是觉得饿→正餐留足蛋白质和蔬菜，不把热量压太低；家人不太支持→给家属一句可执行的话；没时间运动→把活动嵌进已有空档）
+    - 有 `barrierStrategies` 时：按每条 `executionHint`/`dietNote`/`exerciseNote` 写入任务标题或总结；无该数组时再按 `constraints`/`constraintsDisplay`/`failReasons` 回退（应酬多→点餐少酒；外卖→可点到的替换；易饿→正餐蛋白蔬菜；家人不支持→家属一句；没时间→碎片活动）
 2b. **用药提醒（硬拆分）**：`activeMedicationDetails` 或问卷 `medication.mealRelation` 含随餐/第一口饭同服时，**必须**另编 1 条：
     - `code=MED_REMINDER`，`category=MEDICATION`
     - 标题例：`服药提醒：阿卡波糖与第一口饭同服`（有药名写药名；无药名写「随餐药物与第一口饭同服」）
@@ -317,6 +332,7 @@ display_name: 管理方案生成
   - 含 `HYPERTENSION`：以控压为主（限盐、家庭血压、避免憋气用力）
   - 含 `WEIGHT_LOSS`：才强化减重热量、称重与体成分叙事
   - 多方向并存：综合模板下分清主次，勿把纯慢病方案写成减肥方案
+  - **`primaryAppeal` / `items` 皆空，仅有病种或空 goals**：按现患疾病设**最保守**的初步目标（如有糖→稳住空腹血糖与规律监测；有压→家庭血压与限盐；都无→作息与轻活动），**禁止**默认塞满减重+降压+控糖全套任务；`rationale.overview` **必须**提示健管师与患者确认核心诉求后再加码
 - `patientContext.goals`（`mode`/`modeLabel`、`primaryAppeal`/`primaryAppealLabels`（可多选；兼容旧字段 `primaryAppealLabel`）、目标 `items` 含体重/糖化/空腹血糖/血压、`weighFrequency` / `pace` / `lossBlocked`）
   - `lossBlocked=true` 时不得以快速减重为主叙事
   - 有 `HBA1C`/`FPG`/`BP_SYS`/`BP_DIA` 目标时，在 `goalSummary` 与监测任务中体现
@@ -329,12 +345,14 @@ display_name: 管理方案生成
   - `diet.taste` / `tasteLabels`：日常饮食更接近哪种（偏咸、偏油或油炸、精米白面、甜食）。按命中项给替换，主食和烹饪细问只在健管师补了 `staple`/`cooking` 时才用
   - `sleep.refreshed` / `refreshedLabel`：早上是否解乏。**打鼾（`disorder=SNORING`）+ 晨起疲惫（`PARTIAL`/`NO`）+ 超重/肥胖或糖/压慢病** 时，属阻塞性睡眠呼吸暂停（OSA）高危信号：`diet.notes` **必须**写强提醒「建议尽快前往呼吸内科/耳鼻喉科做睡眠呼吸监测（多导睡眠图）；打鼾严重会影响血压和血糖控制」——禁止只写「关注睡眠呼吸情况」；**不要写成已确诊 OSA**
 - `patientContext.lifestyleProfile`（`workSchedule` / `workScheduleLabel` / `scheduleHint`）→ 餐次、用药提醒与运动时段对齐班次；与上面的下班时间、倒班时段一起看
-- `patientContext.goals.preferences.constraints` 与 `constraintsDisplay` → 执行阻力多选（应酬多、经常外卖、总是觉得饿、家人不太支持、没时间运动）。写入执行与总结的可执行破解，勿空喊「要坚持」
+- `patientContext.barrierStrategies`（及 `goals.preferences.barrierStrategies`）→ **优先**按固定 `dietNote`/`exerciseNote`/`executionHint` 落地；`constraints`/`constraintsDisplay` 仅作码表补充
+- `patientContext.safetyRedlines` → 运动/饮食禁忌最高优先级（进食障碍、关节、医嘱限制）
+- `patientContext.basicArchive.familyHistorySummary` / `earlyCvFamilyHistory` / `firstDegreeDiabetesFamilyHistory` → 家族史风险写入 `rationale` 与监测保守度
 - `patientContext.intakeBrief.keyAnswers` 里的 `medication.mealRelation`（`display` 为中文）→ 吃药和吃饭怎么配合。含「跟第一口饭一起吃」时写进用餐提醒。与 `activeMedicationDetails.timingNote` 一并使用
 - `patientContext.activeMedicationDetails`（药名 + `timingNote`）→ 单药备注进 `diet.notes`；兼容旧字段 `activeMedications` 字符串列表
 - `patientContext.intakeBrief`（最近首诊/待补）与高亮：
   - `keyAnswers`：核心诉求、管理方向、糖/压/体重目标与临床关键答（带 `label`/`display`），优先落实，**勿整段照抄**到患者正文
-  - 有 `aiSummary` 时吸收要点、风险与下一步
+  - 有 `aiSummary` 时只吸收风险/禁忌/诉求缺口，**不要**把案头总结散文再复述进患者可见 `summary`
   - **`highlightGuidance`（优先）**：首诊「高亮追问 / 方案影响」的模型可读版；每条含 `severityLabel`（谨慎/转介/阻断）、`mustApply`（须写入运动/饮食/执行的约束）、可选 `clinicianNote`（追问话术，只吸收约束、**勿照抄**进患者正文）、`source`（题干）
     - `mustApply` 为硬约束：对应写进 `exercise`（强度/禁忌）、`diet`（限盐/控糖等）、`execution`（监测/用药提醒）与 `goalSummary`
     - `severityLabel=转介/阻断` → 节奏更保守；阻断减重时不得以快速减重为主叙事

@@ -7,7 +7,7 @@
     {
       "field": "allergy.status",
       "label": "有没有食物或药物过敏、不耐受？",
-      "level": "FIRST_VISIT"
+      "level": "REQUIRED"
     },
     {
       "field": "allergy.foodTags",

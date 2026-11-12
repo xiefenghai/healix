@@ -83,10 +83,15 @@ const metrics = computed(() => {
     </button>
 
     <template v-if="expanded">
-      <div v-if="preview.rationaleOverview" class="rationale">
-        <span class="rationale-label">生成依据</span>
-        <p>{{ preview.rationaleOverview }}</p>
-      </div>
+      <details v-if="preview.rationaleOverview" class="rationale-fold">
+        <summary class="rationale-fold-summary">
+          <span class="rationale-label">生成依据</span>
+          <span class="rationale-fold-hint">仅健管师 · 默认收起</span>
+        </summary>
+        <div class="rationale">
+          <p>{{ preview.rationaleOverview }}</p>
+        </div>
+      </details>
 
       <section v-if="preview.weeklyDays.length" class="block">
         <div class="block-head">
@@ -293,6 +298,29 @@ const metrics = computed(() => {
 
 .plan-toggle:hover {
   text-decoration: underline;
+}
+
+.rationale-fold {
+  margin-bottom: 10px;
+}
+
+.rationale-fold-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #64748b;
+  user-select: none;
+}
+
+.rationale-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.rationale-fold-hint {
+  color: #94a3b8;
 }
 
 .rationale {

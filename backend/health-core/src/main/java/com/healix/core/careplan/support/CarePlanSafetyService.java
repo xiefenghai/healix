@@ -30,6 +30,7 @@ public class CarePlanSafetyService {
     public static final String ERR_ALLERGEN = "DIET_ALLERGEN_CONFLICT";
     public static final String ERR_INCOMPLETE = "PLAN_INCOMPLETE";
     public static final String ERR_HIGHLIGHT_BLOCK = "HIGHLIGHT_BLOCK";
+    public static final String ERR_SAFETY_REDLINE = "SAFETY_REDLINE";
     public static final String WARN_CONTEXT = "CONTEXT_INCOMPLETE";
     public static final String WARN_NO_DISEASE = "NO_DISEASE_TAG";
     public static final String WARN_MISSING_RATIONALE = CarePlanRationaleSupport.WARN_MISSING;
@@ -39,9 +40,14 @@ public class CarePlanSafetyService {
     /** 过敏史未采时，推荐/示例含虾蟹花生等常见高致敏物 */
     public static final String WARN_HIGH_ALLERGEN_FOOD = "HIGH_ALLERGEN_FOOD_UNCHECKED";
     public static final String WARN_HIGHLIGHT = "HIGHLIGHT_CAUTION";
+    public static final String WARN_SAFETY_REDLINE = "SAFETY_REDLINE_CAUTION";
 
     private static final java.util.regex.Pattern HIGH_ALLERGEN_FOOD =
             java.util.regex.Pattern.compile("虾|蟹|贝|海鲜|花生|腰果|杏仁|坚果|芒果|芝麻");
+
+    /** 关节/医嘱限制场景禁止出现的高强度表述 */
+    private static final java.util.regex.Pattern FORBIDDEN_HIGH_IMPACT =
+            java.util.regex.Pattern.compile("跑步|跳绳|负重深蹲|负重训练|剧烈有氧|冲刺跑|HIIT|\\bRUN\\b|\\bVIGOROUS\\b");
 
     /** 仅首诊高亮相关 flag（打开方案页刷新提示文案用）。 */
     public List<SafetyFlagDto> highlightFlags(JsonNode contextSnapshot) {
@@ -178,7 +184,156 @@ public class CarePlanSafetyService {
                     "存在低血糖相关风险信号，请审阅运动强度与注意事项"));
         }
         addHighlightFlags(flags, contextSnapshot);
+        addSafetyRedlineFlags(flags, exercise, diet, execution, contextSnapshot);
         return flags;
+    }
+
+    /**
+     * 进食障碍 / 关节问题 / 医嘱限运：服务端硬校验，不单靠 Prompt。
+     * 违反最高优先级红线 → ERROR（不可发布）；次级冲突 → WARN（需确认）。
+     */
+    private void addSafetyRedlineFlags(
+            List<SafetyFlagDto> flags,
+            JsonNode exercise,
+            JsonNode diet,
+            JsonNode execution,
+            JsonNode contextSnapshot) {
+        if (contextSnapshot == null || contextSnapshot.isNull()) {
+            return;
+        }
+        Set<String> codes = new LinkedHashSet<>();
+        JsonNode redlines = contextSnapshot.get("safetyRedlines");
+        if (redlines != null && redlines.isArray()) {
+            for (JsonNode r : redlines) {
+                String c = r.path("code").asText("").trim().toUpperCase(Locale.ROOT);
+                if (StringUtils.hasText(c)) {
+                    codes.add(c);
+                }
+            }
+        }
+        // 旧快照无 safetyRedlines 时，从档案摘要兜底
+        JsonNode psych = contextSnapshot.path("basicArchive").path("psych");
+        String ed = psych.path("eatingDisorderHistory").asText("").trim().toUpperCase(Locale.ROOT);
+        if ("YES".equals(ed) || "UNSURE".equals(ed)) {
+            codes.add("EATING_DISORDER");
+        }
+        JsonNode medical = contextSnapshot.path("basicArchive").path("medical");
+        if (hasMeaningfulCodes(medical.path("jointIssues"))) {
+            codes.add("JOINT_ISSUES");
+        }
+        if (hasMeaningfulCodes(medical.path("exerciseRestriction"))) {
+            codes.add("EXERCISE_RESTRICTION");
+        }
+        if (codes.isEmpty()) {
+            return;
+        }
+
+        String exerciseBlob = flattenText(exercise);
+        String dietBlob = flattenText(diet);
+        String executionBlob = flattenText(execution);
+        List<String> errors = new ArrayList<>();
+        List<String> warns = new ArrayList<>();
+
+        if (codes.contains("EATING_DISORDER")) {
+            if (hasDailyWeighTask(execution)) {
+                errors.add("进食障碍风险：执行计划仍含每日称重，须改为每周 1 次");
+            }
+            if (containsAny(dietBlob, "快速减重", "激进缺口", "极端节食", "每日热量缺口很大")) {
+                errors.add("进食障碍风险：饮食仍含激进减重/极端节食表述");
+            }
+            if (FORBIDDEN_HIGH_IMPACT.matcher(exerciseBlob).find()
+                    || exerciseBlob.contains("VIGOROUS")
+                    || exerciseBlob.contains("高强度")) {
+                warns.add("进食障碍风险：运动强度偏高，请改为低冲击、非体重导向安排");
+            }
+        }
+        if (codes.contains("JOINT_ISSUES") || codes.contains("EXERCISE_RESTRICTION")) {
+            if (FORBIDDEN_HIGH_IMPACT.matcher(exerciseBlob).find()) {
+                errors.add(
+                        (codes.contains("EXERCISE_RESTRICTION") ? "存在运动医学限制" : "存在关节问题")
+                                + "：方案仍含跑步/跳绳/负重或剧烈有氧，须改为低冲击");
+            }
+            if (exerciseBlob.contains("VIGOROUS") || exerciseBlob.contains("\"intensity\":\"VIGOROUS\"")) {
+                errors.add("运动限制红线：强度仍为 VIGOROUS，须降为 LIGHT/MODERATE");
+            }
+        }
+        if (codes.contains("EXERCISE_RESTRICTION")
+                && !StringUtils.hasText(exercise.path("contraindications").toString().replaceAll("[\\[\\]\\s\"]", ""))) {
+            warns.add("有医嘱/医生限制运动，但 exercise.contraindications 为空，请补写禁忌");
+        }
+
+        if (!errors.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.ERROR.name(),
+                    ERR_SAFETY_REDLINE,
+                    "安全红线未落实，不能发布：\n" + String.join("\n", errors)));
+        }
+        if (!warns.isEmpty()) {
+            flags.add(new SafetyFlagDto(
+                    CarePlanSafetyLevelEnum.WARN.name(),
+                    WARN_SAFETY_REDLINE,
+                    "安全红线需确认：\n" + String.join("\n", warns)));
+        }
+    }
+
+    private static boolean hasMeaningfulCodes(JsonNode arr) {
+        if (arr == null || !arr.isArray()) {
+            return false;
+        }
+        for (JsonNode n : arr) {
+            if (n == null || !n.isTextual()) {
+                continue;
+            }
+            String c = n.asText("").trim();
+            if (StringUtils.hasText(c) && !"NONE".equalsIgnoreCase(c)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasDailyWeighTask(JsonNode execution) {
+        JsonNode tasks = execution == null ? null : execution.get("tasks");
+        if (tasks == null || !tasks.isArray()) {
+            return false;
+        }
+        for (JsonNode t : tasks) {
+            if (t == null || !t.path("enabled").asBoolean(true)) {
+                continue;
+            }
+            String code = t.path("code").asText("");
+            String ref = t.path("relatedRef").asText("");
+            String title = t.path("title").asText("");
+            boolean weigh = "WEIGHT_LOG".equalsIgnoreCase(code)
+                    || "WEIGHT".equalsIgnoreCase(ref)
+                    || title.contains("称体重")
+                    || title.contains("称重")
+                    || (title.contains("体重") && (title.contains("记录") || title.contains("称")));
+            if (!weigh) {
+                continue;
+            }
+            String freq = t.path("frequency").asText("").trim().toUpperCase(Locale.ROOT);
+            if ("QD".equals(freq) || "BID".equals(freq) || "TID".equals(freq) || title.contains("每日") || title.contains("每天")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String flattenText(JsonNode node) {
+        return node == null || node.isNull() ? "" : node.toString();
+    }
+
+    private static boolean containsAny(String haystack, String... needles) {
+        if (!StringUtils.hasText(haystack) || needles == null) {
+            return false;
+        }
+        for (String n : needles) {
+            if (StringUtils.hasText(n) && haystack.contains(n)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 首诊高亮：BLOCK 不可发布；CAUTION/REFER 需确认。 */

@@ -1233,6 +1233,15 @@ const incompleteRequiredModules = computed(() => {
   return rows
 })
 const showAiSummaryBlocks = computed(() => hasParsedIntakeAiSummary(aiSummaryParsed.value))
+/** 已提交后的案头总结默认收起，作历史快照；避免与后续管理方案 rationale/summary 重复铺开 */
+const aiSummaryCollapsedByDefault = computed(() => status.value === 'SUBMITTED' && showAiSummaryBlocks.value)
+const aiSummarySnapshotOpen = ref(false)
+watch(
+  () => status.value,
+  (s) => {
+    if (s === 'SUBMITTED') aiSummarySnapshotOpen.value = false
+  },
+)
 
 /** 正式首诊须有总结正文；待补问卷仍可选 */
 const canSubmit = computed(
@@ -2591,8 +2600,20 @@ onBeforeUnmount(() => {
               </span>
               <span v-if="aiSummaryMeta?.note" class="ai-meta">{{ aiSummaryMeta.note }}</span>
             </div>
+            <details
+              v-if="showAiSummaryBlocks && aiSummaryCollapsedByDefault"
+              class="ai-summary-snapshot"
+              :open="aiSummarySnapshotOpen"
+              @toggle="aiSummarySnapshotOpen = ($event.target as HTMLDetailsElement).open"
+            >
+              <summary class="ai-summary-snapshot-summary">
+                <span>案头快照（历史留痕）</span>
+                <span class="ai-summary-snapshot-hint">已提交 · 生成方案后默认收起，避免与方案依据重复阅读</span>
+              </summary>
+              <IntakeAiSummaryBlocks class="ai-summary-blocks" :parsed="aiSummaryParsed" />
+            </details>
             <IntakeAiSummaryBlocks
-              v-if="showAiSummaryBlocks"
+              v-else-if="showAiSummaryBlocks"
               class="ai-summary-blocks"
               :parsed="aiSummaryParsed"
             />
@@ -3971,6 +3992,37 @@ onBeforeUnmount(() => {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.ai-summary-snapshot {
+  margin-top: 10px;
+}
+
+.ai-summary-snapshot-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f766e;
+  user-select: none;
+}
+
+.ai-summary-snapshot-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-summary-snapshot-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
+}
+
+.ai-summary-snapshot[open] .ai-summary-blocks {
+  border-top-color: rgba(15, 118, 110, 0.18);
 }
 
 .ai-empty-hint {

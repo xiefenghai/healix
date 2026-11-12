@@ -77,7 +77,7 @@ const hideCrumbs = computed(() => isOrgPicker.value)
 const pageTitle = computed(() => {
   if (/\/workspace\/intake-responses\//.test(route.path)) return '首诊详情'
   if (isIntakeWorkspace.value) return '首诊问卷'
-  if (isCarePlanComposeWorkspace.value) return '制定管理方案'
+  if (isCarePlanComposeWorkspace.value) return 'AI 重新生成方案预览'
   if (route.path.startsWith('/workspace/cockpit')) return '智能驾驶舱'
   if (route.path.startsWith('/workspace/tasks')) return '工作台任务'
   if (route.path.startsWith('/workspace/care-chat')) return '患者沟通'

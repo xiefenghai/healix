@@ -18,6 +18,8 @@ public final class CarePlanExecutionTaskNormalizer {
     public static final String MED_REMINDER_CODE = "MED_REMINDER";
     public static final String MED_CATEGORY = "MEDICATION";
     public static final String HABIT_FREQUENCY = "HABIT";
+    public static final String SLEEP_LOG_CODE = "SLEEP_LOG";
+    public static final String MOOD_LOG_CODE = "MOOD_LOG";
 
     private CarePlanExecutionTaskNormalizer() {}
 
@@ -25,14 +27,64 @@ public final class CarePlanExecutionTaskNormalizer {
         if (!(execution instanceof ObjectNode exec)) {
             return;
         }
+        ArrayNode tasks;
         JsonNode tasksNode = exec.get("tasks");
-        if (!(tasksNode instanceof ArrayNode tasks) || tasks.isEmpty()) {
-            return;
+        if (tasksNode instanceof ArrayNode arr) {
+            tasks = arr;
+        } else {
+            tasks = exec.putArray("tasks");
         }
-        splitDietAndMedication(tasks, contextSnapshot);
-        ensureMealMedicationReminder(tasks, contextSnapshot);
-        normalizeSedentaryBreaks(tasks);
-        normalizeWaterTasks(tasks, contextSnapshot);
+        if (!tasks.isEmpty()) {
+            splitDietAndMedication(tasks, contextSnapshot);
+            ensureMealMedicationReminder(tasks, contextSnapshot);
+            normalizeSedentaryBreaks(tasks);
+            normalizeWaterTasks(tasks, contextSnapshot);
+        }
+        ensureSleepAndMoodLogs(tasks);
+    }
+
+    /** Skill 要求每日睡眠/心情记录；模型漏写时服务端补默认任务。 */
+    static void ensureSleepAndMoodLogs(ArrayNode tasks) {
+        if (!hasTaskCode(tasks, SLEEP_LOG_CODE) && !hasCategory(tasks, "SLEEP")) {
+            ObjectNode sleep = JsonUtils.emptyObject();
+            sleep.put("code", SLEEP_LOG_CODE);
+            sleep.put("title", "记录昨夜睡眠");
+            sleep.put("category", "SLEEP");
+            sleep.put("frequency", "QD");
+            sleep.put("timeSlot", "MORNING");
+            sleep.put("enabled", true);
+            sleep.put("rationale", "便于回顾睡眠时长与质量，配合作息调整");
+            tasks.add(sleep);
+        }
+        if (!hasTaskCode(tasks, MOOD_LOG_CODE) && !hasCategory(tasks, "MOOD")) {
+            ObjectNode mood = JsonUtils.emptyObject();
+            mood.put("code", MOOD_LOG_CODE);
+            mood.put("title", "记录今日心情");
+            mood.put("category", "MOOD");
+            mood.put("frequency", "QD");
+            mood.put("timeSlot", "EVENING");
+            mood.put("enabled", true);
+            mood.put("rationale", "便于关注情绪波动，必要时调整节奏");
+            tasks.add(mood);
+        }
+    }
+
+    private static boolean hasTaskCode(ArrayNode tasks, String code) {
+        for (JsonNode n : tasks) {
+            if (n != null && code.equalsIgnoreCase(n.path("code").asText(""))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasCategory(ArrayNode tasks, String category) {
+        for (JsonNode n : tasks) {
+            if (n != null && category.equalsIgnoreCase(n.path("category").asText(""))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 饮食任务标题里夹带服药 → 拆成纯饮食 + 用药提醒。 */

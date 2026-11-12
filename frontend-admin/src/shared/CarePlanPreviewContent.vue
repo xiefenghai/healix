@@ -96,12 +96,27 @@ const props = withDefaults(
     fillHeight?: boolean
     /** 切换数据时重置折叠与滚动 */
     resetKey?: string | number | null
+    /** 全屏确认页：去掉顶栏 Tab，章节全部展开为卡片平铺 */
+    stacked?: boolean
+    /**
+     * 是否展示「生成依据」（仅健管师审阅用）。
+     * 默认关闭：方案详情/C 端预览只看 goalSummary + 方案总结，避免与首诊案头总结重复扫读。
+     */
+    showStaffRationale?: boolean
   }>(),
-  { fillHeight: false, resetKey: null },
+  { fillHeight: false, resetKey: null, stacked: false, showStaffRationale: false },
 )
 
+const STACKED_SECTIONS = ['summary', 'exercise', 'diet', 'execution', 'checkins']
+
 const previewScrollEl = ref<HTMLElement | null>(null)
-const activeSections = ref<string[]>(['summary'])
+const DEFAULT_SECTION = 'summary'
+/**
+ * 用数组 v-model（与项目内 AssessmentRulesDrawer 一致）。
+ * Element Plus accordion 的 string v-model 在弹窗销毁重建时偶发全收起，故手风琴自行约束。
+ */
+const activeSections = ref<string[]>([DEFAULT_SECTION])
+const activeSection = computed(() => activeSections.value[0] || DEFAULT_SECTION)
 
 const displayVersion = computed(() => {
   const d = props.data
@@ -263,13 +278,56 @@ const anchorItems = computed(() => {
   return items
 })
 
-async function scrollToSection(name: string) {
-  if (!activeSections.value.includes(name)) {
-    activeSections.value = [...activeSections.value, name]
-  }
+function openSection(name: string) {
+  activeSections.value = [name]
+}
+
+function scrollToSection(name: string) {
+  const root = previewScrollEl.value
+  if (!root) return
+  const el =
+    (root.querySelector(`#preview-sec-${name}`) as HTMLElement | null) ||
+    (root.querySelector(`.sec-item-${name}`) as HTMLElement | null)
+  if (!el) return
+  const rootRect = root.getBoundingClientRect()
+  const elRect = el.getBoundingClientRect()
+  const top = root.scrollTop + (elRect.top - rootRect.top) - 12
+  root.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+}
+
+/** Tab / 程序切换：手风琴只开一个，并滚到对应面板 */
+async function selectSection(name: string) {
+  openSection(name)
   await nextTick()
-  const el = previewScrollEl.value?.querySelector(`.sec-item-${name}`) as HTMLElement | null
-  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  window.setTimeout(() => scrollToSection(name), 120)
+}
+
+/** 点击折叠头：强制手风琴（一次只开一个），并禁止全部收起；stacked 模式允许多开 */
+function onCollapseChange(val: string | number | Array<string | number>) {
+  if (props.stacked) {
+    const list = (Array.isArray(val) ? val : [val]).map((v) => String(v ?? '')).filter(Boolean)
+    activeSections.value = list.length ? list : [...STACKED_SECTIONS]
+    return
+  }
+  const list = (Array.isArray(val) ? val : [val]).map((v) => String(v ?? '')).filter(Boolean)
+  if (list.length === 0) {
+    // 不允许五条横杠空屏：至少保持当前/默认展开
+    openSection(activeSection.value || DEFAULT_SECTION)
+    return
+  }
+  openSection(list[list.length - 1])
+}
+
+function ensureStackedOpen() {
+  if (!props.stacked) return
+  activeSections.value = [...STACKED_SECTIONS]
+}
+
+function resetToSummary() {
+  openSection(DEFAULT_SECTION)
+  nextTick(() => {
+    if (previewScrollEl.value) previewScrollEl.value.scrollTop = 0
+  })
 }
 
 function checkinStatusLabel(status?: string) {
@@ -299,42 +357,52 @@ function formatDateTime(iso?: string) {
 watch(
   () => props.resetKey,
   () => {
-    activeSections.value = ['summary']
-    nextTick(() => {
-      if (previewScrollEl.value) previewScrollEl.value.scrollTop = 0
-    })
+    if (props.stacked) ensureStackedOpen()
+    else resetToSummary()
   },
+  { immediate: true },
+)
+
+watch(
+  () => props.stacked,
+  (v) => {
+    if (v) ensureStackedOpen()
+  },
+  { immediate: true },
 )
 
 watch(
   () => props.data,
-  () => {
-    // 首次有数据时滚回顶部
+  (d) => {
+    if (!d) return
+    if (props.stacked) ensureStackedOpen()
+    else if (!activeSections.value.length) openSection(DEFAULT_SECTION)
     nextTick(() => {
       if (previewScrollEl.value) previewScrollEl.value.scrollTop = 0
     })
   },
-  { once: true },
+  { immediate: true },
 )
 </script>
 
 <template>
-  <div v-if="data" class="preview-shell" :class="{ fill: fillHeight }">
-        <nav class="preview-nav" aria-label="方案章节导航">
+  <div v-if="data" class="preview-shell" :class="{ fill: fillHeight, stacked }">
+        <nav v-if="!stacked" class="preview-nav" aria-label="方案章节导航">
           <button
             v-for="item in anchorItems"
             :key="item.key"
             type="button"
             class="preview-nav-btn"
-            :class="{ active: activeSections.includes(item.key) }"
-            @click="scrollToSection(item.key)"
+            :class="{ active: activeSection === item.key }"
+            @click="selectSection(item.key)"
           >
             {{ item.label }}
           </button>
         </nav>
 
         <div ref="previewScrollEl" class="preview-scroll">
-      <div class="summary-card">
+      <div class="preview-canvas">
+      <div class="summary-header">
         <h3 class="plan-title">{{ data.title || '管理方案' }}</h3>
         <div class="plan-meta">
           <span v-if="displayVersion" class="meta-item">
@@ -347,22 +415,38 @@ watch(
           </span>
         </div>
         <p v-if="data.goalSummary" class="goal-summary">{{ data.goalSummary }}</p>
-        <p v-if="data.rationaleOverview" class="rationale-line">
-          <span class="rationale-label">生成依据</span>{{ data.rationaleOverview }}
-        </p>
+        <details
+          v-if="showStaffRationale && data.rationaleOverview"
+          class="staff-rationale-details"
+        >
+          <summary class="staff-rationale-summary">
+            <span class="rationale-label">生成依据</span>
+            <span class="staff-rationale-hint">仅健管师 · 默认收起</span>
+          </summary>
+          <p class="rationale-line rationale-line--staff">{{ data.rationaleOverview }}</p>
+        </details>
       </div>
 
-      <CarePlanAiDisclaimer v-if="isAiSource" :pending="data.status === 'DRAFT'" class="ai-disclaimer-block" />
+      <CarePlanAiDisclaimer
+        v-if="isAiSource && !stacked"
+        :pending="data.status === 'DRAFT'"
+        class="ai-disclaimer-block"
+      />
 
-      <el-collapse v-model="activeSections" class="plan-sections">
-        <el-collapse-item name="summary" class="sec-item-summary">
+      <el-collapse
+        v-model="activeSections"
+        class="plan-sections"
+        :class="{ 'plan-sections--stacked': stacked }"
+        @change="onCollapseChange"
+      >
+        <el-collapse-item :name="DEFAULT_SECTION" class="sec-item-summary">
           <template #title>
             <div class="section-head section-head--summary">
               <span class="section-icon"><el-icon><Document /></el-icon></span>
               <span class="section-name">方案总结</span>
             </div>
           </template>
-          <div class="section-body">
+          <div id="preview-sec-summary" class="section-body">
             <p v-if="data.summary" class="section-lead">{{ data.summary }}</p>
             <p v-else class="section-lead muted">（未填写）</p>
           </div>
@@ -375,7 +459,7 @@ watch(
               <span class="section-name">运动方案</span>
             </div>
           </template>
-          <div class="section-body">
+          <div id="preview-sec-exercise" class="section-body">
             <p class="section-lead">{{ data.exercise?.goal || '（未填写）' }}</p>
             <p v-if="data.exercise?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.exercise.rationale }}
@@ -417,7 +501,7 @@ watch(
               <span class="section-name">饮食方案</span>
             </div>
           </template>
-          <div class="section-body">
+          <div id="preview-sec-diet" class="section-body">
             <p v-if="data.diet?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.diet.rationale }}
             </p>
@@ -565,7 +649,7 @@ watch(
               </span>
             </div>
           </template>
-          <div class="section-body">
+          <div id="preview-sec-execution" class="section-body">
             <p v-if="data.execution?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.execution.rationale }}
             </p>
@@ -598,7 +682,11 @@ watch(
           </div>
         </el-collapse-item>
 
-        <el-collapse-item v-if="showCheckinsSection" name="checkins" class="sec-item-checkins">
+        <el-collapse-item
+          v-if="showCheckinsSection"
+          name="checkins"
+          class="sec-item-checkins"
+        >
           <template #title>
             <div class="section-head section-head--checkins">
               <span class="section-icon"><el-icon><CircleCheck /></el-icon></span>
@@ -608,7 +696,7 @@ watch(
               </span>
             </div>
           </template>
-          <div v-loading="data.checkinsLoading" class="section-body">
+          <div id="preview-sec-checkins" v-loading="data.checkinsLoading" class="section-body">
             <el-table
               v-if="data.checkins?.length"
               :data="data.checkins"
@@ -639,6 +727,7 @@ watch(
           </div>
         </el-collapse-item>
       </el-collapse>
+      </div>
         </div>
   </div>
 </template>
@@ -652,6 +741,58 @@ watch(
   max-height: min(68vh, 720px);
   /* 必须裁剪：否则 flex 子项按内容撑开，内部 overflow:auto 永远不出现滚动条 */
   overflow: hidden;
+}
+
+.preview-shell.stacked {
+  max-height: none;
+  height: auto;
+  overflow: visible;
+}
+
+.preview-shell.stacked .preview-scroll {
+  overflow: visible;
+  height: auto;
+  flex: none;
+  padding-right: 0;
+  scrollbar-gutter: auto;
+}
+
+.preview-shell.stacked .summary-header {
+  padding: 12px 16px 16px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.plan-sections--stacked :deep(.el-collapse-item) {
+  margin-bottom: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.plan-sections--stacked :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 48px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-bottom: 0;
+  line-height: 1.4;
+}
+
+.plan-sections--stacked :deep(.el-collapse-item__wrap) {
+  background: #fff;
+  border-bottom: 0;
+}
+
+.plan-sections--stacked :deep(.el-collapse-item__content) {
+  padding: 4px 16px 16px;
+}
+
+.plan-sections--stacked :deep(.el-collapse-item__arrow) {
+  display: none;
 }
 
 .preview-nav {
@@ -701,18 +842,20 @@ watch(
   scrollbar-gutter: stable;
 }
 
+.preview-canvas {
+  width: 100%;
+}
 
 .ai-source-tag {
   border: none;
   background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
 }
 
-.summary-card {
-  padding: 16px 18px;
-  margin-bottom: 14px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-  border: 1px solid var(--admin-border, #e5e7eb);
+/* 标题区贴白底，不再套大卡片边框 */
+.summary-header {
+  width: 100%;
+  padding: 4px 2px 16px;
+  margin-bottom: 8px;
 }
 
 .plan-title {
@@ -742,33 +885,61 @@ watch(
   margin: 0;
   padding-top: 10px;
   border-top: 1px dashed var(--admin-border, #e5e7eb);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.75;
   color: var(--admin-text-secondary, #4b5563);
   white-space: pre-wrap;
 }
 
+.staff-rationale-details {
+  margin-top: 10px;
+}
+
+.staff-rationale-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--admin-text-secondary, #6b7280);
+  user-select: none;
+}
+
+.staff-rationale-summary::-webkit-details-marker {
+  display: none;
+}
+
+.staff-rationale-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
 .rationale-line {
-  margin: 8px 0 0;
-  padding: 8px 10px;
+  margin: 12px 0 0;
+  padding: 12px 14px;
   border-radius: 8px;
   border: 1px solid #e8edf4;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-  font-size: 12px;
-  line-height: 1.55;
-  color: #64748b;
+  background: #f8fafc;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #475569;
+}
+
+.rationale-line--staff {
+  margin-top: 8px;
 }
 
 .rationale-label {
   display: inline-flex;
   align-items: center;
-  height: 18px;
-  margin-right: 6px;
-  padding: 0 6px;
+  height: 20px;
+  margin-right: 8px;
+  padding: 0 7px;
   border-radius: 4px;
   background: #e2e8f0;
   color: #475569;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   vertical-align: 1px;
 }
@@ -795,6 +966,12 @@ watch(
   border: none;
   background: #fafbfc;
   line-height: 1.4;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.plan-sections :deep(.el-collapse-item__header:hover) {
+  background: #f8fafc;
 }
 
 .plan-sections :deep(.el-collapse-item__wrap) {
@@ -864,13 +1041,13 @@ watch(
 }
 
 .section-body {
-  padding: 14px 16px 16px;
+  padding: 14px 16px 18px;
 }
 
 .section-lead {
   margin: 0 0 12px;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.75;
   white-space: pre-wrap;
   color: var(--admin-text, #374151);
 }

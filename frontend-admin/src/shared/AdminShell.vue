@@ -204,6 +204,8 @@ function onSwitchOrg() {
 <style scoped>
 .shell {
   min-height: 100vh;
+  max-width: 100%;
+  overflow-x: hidden;
   background: var(--admin-bg);
 }
 
@@ -467,6 +469,8 @@ function onSwitchOrg() {
 .content {
   padding: 20px 28px 36px;
   min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .content.flush {

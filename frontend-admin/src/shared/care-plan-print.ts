@@ -677,7 +677,7 @@ const OSA_PRINT_HINT =
 function ensureOsaNoteLines(plan: PrintableCarePlan, notes: string[]): string[] {
   const hasStrong = notes.some((n) => n.includes('睡眠呼吸监测') || n.includes('多导睡眠'))
   if (hasStrong) return notes.filter((n) => !/关注睡眠呼吸|留意睡眠呼吸|注意睡眠呼吸/.test(n))
-  const blob = [plan.summary, plan.rationaleOverview, plan.goalSummary, plan.diet?.notes]
+  const blob = [plan.summary, plan.goalSummary, plan.diet?.notes]
     .map((s) => String(s || ''))
     .join(' ')
   const snore = /打鼾|打呼噜|SNORING/.test(blob)
@@ -1164,7 +1164,6 @@ export function buildCarePlanPrintHtml(plan: PrintableCarePlan): string {
     <h1><span class="mark">${esc(title)}</span></h1>
     ${meta ? `<p class="meta">${esc(meta)}</p>` : ''}
     ${plan.goalSummary ? `<p class="goal">${esc(plan.goalSummary)}</p>` : ''}
-    ${rationaleHtml(plan.rationaleOverview, patient, '生成依据')}
   </header>
   ${ai}
   ${summaryCard}

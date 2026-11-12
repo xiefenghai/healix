@@ -40,6 +40,18 @@ const canContinueDraft = computed(
 
 const isAiSource = computed(() => isAiGeneratedCarePlanSource(props.data?.source))
 
+const footerVersion = computed(() => {
+  const d = props.data
+  if (!d) return ''
+  const n = d.versionNo != null ? Number(d.versionNo) : NaN
+  if (Number.isFinite(n) && n > 0) return `V${Math.floor(n)}`
+  const raw = String(d.versionLabel || '').trim()
+  if (!raw) return ''
+  const matched = raw.match(/v?\d+/i)
+  if (matched) return `V${matched[0].replace(/^v/i, '')}`
+  return raw
+})
+
 async function exportPdf() {
   if (!props.data || props.data.checkinsLoading) return
   exporting.value = true
@@ -101,7 +113,7 @@ function statusTagType(status?: string): 'success' | 'warning' | 'info' {
 <template>
   <el-dialog
     v-model="visible"
-    width="min(1200px, 96vw)"
+    width="min(1280px, 96vw)"
     align-center
     destroy-on-close
     class="care-plan-preview-dialog"
@@ -130,25 +142,26 @@ function statusTagType(status?: string): 'success' | 'warning' | 'info' {
     <CarePlanPreviewContent
       v-if="data"
       fill-height
+      show-staff-rationale
       :data="data"
       :reset-key="contentResetKey"
     />
 
     <template #footer>
       <div class="dialog-footer">
-        <div class="dialog-footer-left">
+        <span v-if="footerVersion" class="footer-version">方案版本 {{ footerVersion }}</span>
+        <div class="dialog-footer-actions">
+          <el-button
+            plain
+            :loading="exporting"
+            :disabled="!data || !!data.checkinsLoading"
+            @click="exportPdf"
+          >
+            导出 PDF
+          </el-button>
           <el-button v-if="canContinueDraft" type="primary" @click="requestEdit">继续编辑</el-button>
-          <el-button v-else-if="canEditActive" plain @click="requestEdit">编辑此方案</el-button>
+          <el-button v-else-if="canEditActive" type="primary" @click="requestEdit">编辑此方案</el-button>
         </div>
-        <el-button
-          type="primary"
-          plain
-          :loading="exporting"
-          :disabled="!data || !!data.checkinsLoading"
-          @click="exportPdf"
-        >
-          导出 PDF
-        </el-button>
       </div>
     </template>
   </el-dialog>
@@ -202,20 +215,38 @@ function statusTagType(status?: string): 'success' | 'warning' | 'info' {
 .dialog-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-end;
+  gap: 16px;
+  width: 100%;
 }
 
-.dialog-footer-left {
+.footer-version {
+  margin-right: auto;
+  font-size: 13px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.dialog-footer-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  gap: 12px;
   min-width: 0;
 }
 </style>
 
 <style>
+.care-plan-preview-dialog.el-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: min(90vh, 900px);
+  margin-top: 5vh !important;
+  margin-bottom: 5vh !important;
+}
+
 .care-plan-preview-dialog .el-dialog__header {
+  flex: 0 0 auto;
   margin-right: 0;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--admin-border, #e5e7eb);
@@ -239,7 +270,13 @@ function statusTagType(status?: string): 'success' | 'warning' | 'info' {
 }
 
 .care-plan-preview-dialog .el-dialog__footer {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
+  margin-top: 0;
+  padding: 12px 20px 16px;
+  background: #fff;
   border-top: 1px solid var(--admin-border, #e5e7eb);
-  padding-top: 12px;
+  box-shadow: 0 -6px 16px rgba(15, 23, 42, 0.06);
 }
 </style>

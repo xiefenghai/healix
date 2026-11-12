@@ -17,6 +17,7 @@ import com.healix.core.careplan.support.CarePlanDiseaseTags;
 import com.healix.core.careplan.support.CarePlanDiseaseTags.Flags;
 import com.healix.core.careplan.support.CarePlanRationaleSupport;
 import com.healix.core.careplan.support.CarePlanExecutionTaskNormalizer;
+import com.healix.core.careplan.support.CarePlanSampleDaySync;
 import com.healix.core.careplan.support.CarePlanWeighTaskNormalizer;
 import com.healix.core.careplan.support.MetricTaskRules;
 import com.healix.core.water.support.WaterIntakeRules;
@@ -297,6 +298,7 @@ public class CarePlanTemplateRegistry {
         CarePlanAllergenGuard.sanitize(diet, all);
         CarePlanDiabetesDietGuard.sanitize(diet, key);
         CarePlanDietNotesGuard.sanitize(diet);
+        CarePlanSampleDaySync.syncFromMonday(diet);
         return diet;
     }
 

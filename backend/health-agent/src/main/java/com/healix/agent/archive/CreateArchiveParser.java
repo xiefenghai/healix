@@ -30,8 +30,13 @@ public final class CreateArchiveParser {
      */
     private static final Pattern LABELED_FIELD =
             Pattern.compile(
-                    "(?:\\d+[\\.．、\\)]\\s*)?(姓名|患者|客户|性别|出生日期|出生|生日|年龄|手机号|手机|电话|联系电话)\\s*[:：]\\s*"
-                            + "(.+?)(?=(?:\\s*\\d+[\\.．、\\)]\\s*)?(?:姓名|患者|客户|性别|出生日期|出生|生日|年龄|手机号|手机|电话|联系电话)\\s*[:：]|$)");
+                    "(?:\\d+[\\.．、\\)]\\s*)?(姓名|患者|客户|性别|出生日期|出生|生日|年龄|身高|手机号|手机|电话|联系电话)\\s*[:：]\\s*"
+                            + "(.+?)(?=(?:\\s*\\d+[\\.．、\\)]\\s*)?(?:姓名|患者|客户|性别|出生日期|出生|生日|年龄|身高|手机号|手机|电话|联系电话)\\s*[:：]|$)");
+    /** 「身高170」「身高 170cm」「170厘米」 */
+    private static final Pattern HEIGHT_LABELED =
+            Pattern.compile("身高\\s*[:：]?\\s*(\\d{2,3}(?:\\.\\d)?)\\s*(?:cm|CM|厘米)?");
+    private static final Pattern HEIGHT_UNIT =
+            Pattern.compile("(?<!\\d)(1\\d{2}|2[0-2]\\d)(?:\\.\\d)?\\s*(?:cm|CM|厘米)\\b");
     private static final Pattern NAME_LABELED =
             Pattern.compile(
                     "(?:姓名|患者|客户|叫|建档)\\s*[:：]?\\s*([\\u4e00-\\u9fa5·]{2,8})",
@@ -58,7 +63,7 @@ public final class CreateArchiveParser {
     public static CreateArchiveDraft parse(String message) {
         String text = message == null ? "" : message.trim();
         if (!StringUtils.hasText(text)) {
-            return new CreateArchiveDraft(null, null, null, null, false);
+            return new CreateArchiveDraft(null, null, null, null, false, null);
         }
         LabeledFields labeled = extractLabeled(text);
         boolean noMobile = text.contains("暂无") && (text.contains("电话") || text.contains("手机"));
@@ -93,20 +98,57 @@ public final class CreateArchiveParser {
         if (name == null) {
             name = parseName(text);
         }
-        return new CreateArchiveDraft(name, gender, birthday, mobile, noMobile);
+        Integer heightCm = null;
+        if (StringUtils.hasText(labeled.height) && !isPlaceholder(labeled.height)) {
+            heightCm = parseHeightCm(labeled.height);
+        }
+        if (heightCm == null) {
+            heightCm = parseHeightCm(text);
+        }
+        return new CreateArchiveDraft(name, gender, birthday, mobile, noMobile, heightCm);
     }
 
     /** 多轮补全：后一轮有值则覆盖前一轮。 */
     public static CreateArchiveDraft merge(CreateArchiveDraft base, CreateArchiveDraft overlay) {
-        CreateArchiveDraft a = base == null ? new CreateArchiveDraft(null, null, null, null, false) : base;
+        CreateArchiveDraft a = base == null ? new CreateArchiveDraft(null, null, null, null, false, null) : base;
         CreateArchiveDraft b =
-                overlay == null ? new CreateArchiveDraft(null, null, null, null, false) : overlay;
+                overlay == null ? new CreateArchiveDraft(null, null, null, null, false, null) : overlay;
         return new CreateArchiveDraft(
                 b.hasName() ? b.name() : a.name(),
                 b.hasGender() ? b.gender() : a.gender(),
                 b.hasBirthday() ? b.birthday() : a.birthday(),
                 b.hasMobile() ? b.mobile() : a.mobile(),
-                b.noMobile() || a.noMobile());
+                b.noMobile() || a.noMobile(),
+                b.hasHeightCm() ? b.heightCm() : a.heightCm());
+    }
+
+    /** 解析身高厘米；合法区间 100–230。 */
+    static Integer parseHeightCm(String text) {
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        Matcher labeled = HEIGHT_LABELED.matcher(text);
+        if (labeled.find()) {
+            return toHeightCm(labeled.group(1));
+        }
+        Matcher unit = HEIGHT_UNIT.matcher(text);
+        if (unit.find()) {
+            return toHeightCm(unit.group(1));
+        }
+        return null;
+    }
+
+    private static Integer toHeightCm(String raw) {
+        try {
+            double v = Double.parseDouble(raw.trim());
+            int cm = (int) Math.round(v);
+            if (cm < 100 || cm > 230) {
+                return null;
+            }
+            return cm;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     static String parseGender(String text) {
@@ -279,6 +321,11 @@ public final class CreateArchiveParser {
                         out.age = value;
                     }
                 }
+                case "身高" -> {
+                    if (!StringUtils.hasText(out.height)) {
+                        out.height = value;
+                    }
+                }
                 case "手机号", "手机", "电话", "联系电话" -> {
                     if (!StringUtils.hasText(out.mobile)) {
                         out.mobile = value;
@@ -370,6 +417,7 @@ public final class CreateArchiveParser {
         String gender;
         String birthday;
         String age;
+        String height;
         String mobile;
     }
 }

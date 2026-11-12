@@ -45,6 +45,7 @@ import com.healix.core.careplan.support.CarePlanOsaHintSupport;
 import com.healix.core.careplan.support.CarePlanContextService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.support.CarePlanExecutionTaskNormalizer;
+import com.healix.core.careplan.support.CarePlanSampleDaySync;
 import com.healix.core.careplan.support.CarePlanWeighTaskNormalizer;
 import com.healix.core.followup.catalog.FollowupType;
 import com.healix.core.followup.domain.FollowupRecord;
@@ -317,6 +318,7 @@ public class CarePlanService {
             log.info("[CarePlan] diabetes porridge sanitized peopleId={} items={}", peopleId, porridgeFixed);
         }
         CarePlanDietNotesGuard.sanitize(generated.diet());
+        CarePlanSampleDaySync.syncFromMonday(generated.diet());
         CarePlanOsaHintSupport.apply(
                 generated.diet(), asObjectNode(generated.exercise()), generated.contextSnapshot());
         energyTargetService.applyFresh(tenantId, peopleId, generated.diet());
@@ -470,6 +472,7 @@ public class CarePlanService {
                     CarePlanTemplateKeyEnum.parseOrNull(snapForDiet.path("templateKey").asText(null));
             CarePlanDiabetesDietGuard.sanitize(dietNorm, snapForDiet, dietTemplateKey, ctx.diseaseCodes());
             CarePlanDietNotesGuard.sanitize(dietNorm);
+            CarePlanSampleDaySync.syncFromMonday(dietNorm);
             energyTargetService.apply(tenantId, peopleId, dietNorm);
         }
         ObjectNode executionNorm = CarePlanRationaleSupport.clearIfContentChanged(
@@ -870,6 +873,7 @@ public class CarePlanService {
         if (diet != null) {
             CarePlanAllergenGuard.enforce(diet, ctx.foodAllergens());
             CarePlanDietNotesGuard.sanitize(diet);
+            CarePlanSampleDaySync.syncFromMonday(diet);
             energyTargetService.onPublish(tenantId, peopleId, staffId, diet, syncDietGoal);
             draft.setDietJson(JsonUtils.toJson(diet));
         }

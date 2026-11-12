@@ -312,6 +312,7 @@ const isFullscreenCompose = computed(() =>
 )
 const patientName = ref('')
 const patientGender = ref('')
+const patientMobile = ref('')
 const patientClientLinked = ref<boolean | null>(null)
 
 const loading = ref(false)
@@ -320,6 +321,13 @@ const bundle = ref<CarePlanBundle | null>(null)
 const mainTab = ref<'list' | 'compose' | 'checkins'>('list')
 const subTab = ref<'overview' | 'summary' | 'exercise' | 'diet' | 'execution'>('overview')
 const adjustHintVisible = ref(false)
+
+/** 全屏制定页不展示「总览」Tab；query 落到 overview 时改去方案总结 */
+function normalizeComposeSubTab() {
+  if (isFullscreenCompose.value && subTab.value === 'overview') {
+    subTab.value = 'summary'
+  }
+}
 
 function composePath() {
   return `/workspace/patients/${peopleId.value}/care-plan/compose`
@@ -339,17 +347,24 @@ async function loadPatientName() {
   if (!peopleId.value) return
   try {
     const res = await api<{
-      data: { displayName?: string; gender?: string; clientLinked?: boolean | null }
+      data: {
+        displayName?: string
+        gender?: string
+        mobile?: string | null
+        clientLinked?: boolean | null
+      }
     }>(`/api/b/v1/patients/${peopleId.value}`)
     const name = String(res.data?.displayName || '').trim()
     // 绝不用 peopleId 冒充姓名（解读话术会变成「2E先生您好」）
     patientName.value = name
     patientGender.value = String(res.data?.gender || '').trim()
+    patientMobile.value = String(res.data?.mobile || '').replace(/\s+/g, '')
     patientClientLinked.value =
       typeof res.data?.clientLinked === 'boolean' ? res.data.clientLinked : null
   } catch {
     patientName.value = ''
     patientGender.value = ''
+    patientMobile.value = ''
     patientClientLinked.value = null
   }
 }
@@ -377,6 +392,373 @@ const activeListItems = computed(() => listItems.value.filter((r) => r.status ==
 const draftListItems = computed(() =>
   listItems.value.filter((r) => r.status === 'DRAFT' || r.recordType === 'DRAFT'),
 )
+
+const listAssistLoading = ref(false)
+const listAssistNudging = ref(false)
+
+interface ListAssistRiskItem {
+  key: string
+  title: string
+  advice: string
+  tone: 'danger' | 'warning'
+}
+
+interface AssessmentOverviewLite {
+  groups?: Array<{
+    diseaseCode: string
+    diseaseLabel: string
+    category: 'RISK' | 'SEVERITY'
+    applicable: boolean
+    latest?: {
+      status?: string
+      levelLabel?: string | null
+      tone?: string | null
+      advice?: string | null
+    } | null
+  }>
+}
+
+interface ListAssistDayPoint {
+  date: string
+  label: string
+  /** 0–100；无应打任务为 null */
+  ratePct: number | null
+  due: number
+  done: number
+}
+
+const listAssistRisks = ref<ListAssistRiskItem[]>([])
+const listAssistTrendDays = ref<ListAssistDayPoint[]>([])
+const listAssistRate7d = ref<number | null>(null)
+const listAssistStreakDays = ref(0)
+const listAssistHasActivePlan = ref(false)
+
+/** 已生效且无草稿：下方用趋势/风险/待办填补留白（低执行率场景重点展示） */
+const showListAssistPanels = computed(
+  () => activeListItems.value.length > 0 && draftListItems.value.length === 0,
+)
+
+/** 窗口内真正有排期任务的天数（方案刚生效时常 < 7） */
+const listAssistDueDays = computed(
+  () => listAssistTrendDays.value.filter((d) => d.due > 0).length,
+)
+
+/**
+ * 角标窗口文案：不足 7 个执行日时不写「近7日」，避免刚发布就被当成周完成率。
+ * - 0 天：累计中
+ * - 1–6 天：近 N 日（按生效后实际有任务的天数）
+ * - ≥7 天：近7日
+ */
+const listAssistWindowLabel = computed(() => {
+  const n = listAssistDueDays.value
+  if (n <= 0) return '累计中'
+  if (n < 7) return `近${n}日`
+  return '近7日'
+})
+
+/** 角标 / 提示：优先接口 rate7d（仅统计窗口内 due>0 的任务），缺失时回退柱图日均值 */
+const listAssistChartAvgRate = computed(() => {
+  if (listAssistRate7d.value != null) return listAssistRate7d.value
+  const rates = listAssistTrendDays.value
+    .map((d) => d.ratePct)
+    .filter((n): n is number => n != null)
+  if (!rates.length) return null
+  return rates.reduce((a, b) => a + b, 0) / rates.length / 100
+})
+
+const listAssistTrendHint = computed(() => {
+  const streak = listAssistStreakDays.value
+  const rate = listAssistChartAvgRate.value
+  const dueDays = listAssistDueDays.value
+  if (!listAssistHasActivePlan.value) {
+    return '暂无生效方案或方案尚未进入执行窗口。'
+  }
+  if (dueDays === 0) {
+    return '方案刚生效，近 7 日尚无排期任务；执行数据将随打卡逐步累计。'
+  }
+  // 样本过少：只提示观察，不按「周完成率偏低」惊吓
+  if (dueDays < 3) {
+    if (rate == null) {
+      return `方案生效仅 ${dueDays} 天，尚未形成可判断趋势，请关注首次打卡。`
+    }
+    return `方案生效仅 ${dueDays} 天，当前完成率 ${Math.round(rate * 100)}%，样本尚少，持续观察即可。`
+  }
+  if (streak >= 3) return '连续 3 天未完成打卡，建议电话随访沟通。'
+  if (rate != null && rate < 0.4) {
+    return dueDays < 7
+      ? `生效后 ${dueDays} 日执行率偏低，建议催办打卡并确认障碍。`
+      : '近 7 日执行率偏低，建议催办打卡并电话确认障碍。'
+  }
+  if (rate != null && rate < 0.6) {
+    return dueDays < 7
+      ? `生效后 ${dueDays} 日完成率不足 60%，建议加强跟进。`
+      : '近 7 日完成率不足 60%，建议加强跟进与用药核对。'
+  }
+  if (rate == null) {
+    return '已有排期任务但尚无打卡记录，可提醒患者开始执行。'
+  }
+  return dueDays < 7
+    ? `生效后 ${dueDays} 日执行平稳，可结合风险预警做随访。`
+    : '近期执行平稳，可结合风险预警做个性化随访。'
+})
+
+const listAssistRateLabel = computed(() => {
+  const rate = listAssistChartAvgRate.value
+  if (rate != null) return `${Math.round(rate * 100)}%`
+  if (!listAssistHasActivePlan.value) return '—'
+  if (listAssistDueDays.value === 0) return '—'
+  return '待打卡'
+})
+
+function assessmentTagTextLite(
+  diseaseCode: string,
+  diseaseLabel: string,
+  category: 'RISK' | 'SEVERITY',
+  levelLabel: string,
+) {
+  if (category === 'SEVERITY') {
+    if (diseaseCode === 'diabetes') return `血糖${levelLabel}`
+    if (diseaseCode === 'obesity') return `肥胖分层${levelLabel}`
+    return `${diseaseLabel}${levelLabel}`
+  }
+  if (diseaseCode === 'obesity') {
+    const text = levelLabel.replace(/（.*）/, '')
+    if (text === '正常' || text === '偏瘦' || text === '超重') return `体重${text}`
+    return text
+  }
+  return `${diseaseLabel}${levelLabel}`
+}
+
+/** 风险建议必须短到一行完整显示，禁止省略号 */
+function oneLineRiskAdvice(title: string): string {
+  if (/高血压|很高危/.test(title)) return '心血管风险高，建议安排复诊'
+  if (/红标|血糖/.test(title)) return '血糖控制不稳，请核对用药'
+  if (/超重|肥胖|体重/.test(title)) return '体重超标，请核对饮食运动'
+  if (/高危/.test(title)) return '风险偏高，建议加强监测'
+  return '建议结合方案重点随访'
+}
+
+function shortTrendDate(iso?: string) {
+  if (!iso) return '—'
+  const m = iso.slice(5, 10)
+  return m.replace('-', '/')
+}
+
+/** 灰槽固定高度（px）；柱高相对窗口内最高日完成率 */
+const TREND_SLOT_PX = 100
+
+const listAssistTrendMax = computed(() => {
+  const rates = listAssistTrendDays.value
+    .map((d) => d.ratePct)
+    .filter((n): n is number => n != null && n > 0)
+  if (!rates.length) return 100
+  return Math.max(...rates)
+})
+
+/** 相对最高值的柱高（px）：窗口最高日→100px，其一半→50px；0/无任务→不渲染柱 */
+function trendBarHeightPx(ratePct: number | null) {
+  if (ratePct == null || ratePct <= 0) return 0
+  const max = listAssistTrendMax.value
+  if (!max || max <= 0) return 0
+  return Math.round((ratePct / max) * TREND_SLOT_PX)
+}
+
+function trendBarTone(ratePct: number | null) {
+  if (ratePct == null) return 'empty'
+  if (ratePct <= 0) return 'zero'
+  if (ratePct < 40) return 'poor'
+  if (ratePct < 60) return 'fair'
+  return 'good'
+}
+
+function trendBarPctLabel(ratePct: number | null) {
+  if (ratePct == null) return '—'
+  return `${ratePct}%`
+}
+
+/** 无数据时仍铺满 7 日空槽，避免图表塌成空白 */
+function emptyTrendDays(): ListAssistDayPoint[] {
+  const today = new Date()
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(today)
+    d.setDate(today.getDate() - (6 - i))
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const iso = `${y}-${m}-${day}`
+    return { date: iso, label: shortTrendDate(iso), ratePct: null, due: 0, done: 0 }
+  })
+}
+
+/** 仅展示当前生效方案近 7 日真实打卡，不再用演示数据填充 */
+async function loadListAssistTrend() {
+  if (!peopleId.value) {
+    listAssistTrendDays.value = emptyTrendDays()
+    listAssistRate7d.value = null
+    listAssistStreakDays.value = 0
+    listAssistHasActivePlan.value = false
+    return
+  }
+  try {
+    const res = await api<{
+      data: {
+        plan?: { hasActivePlan?: boolean; streakDays?: number; rate7d?: number | null }
+        days?: Array<{
+          date: string
+          planDue?: number
+          planDone?: number
+          planDoneRate?: number | null
+        }>
+      }
+    }>(`/api/b/v1/patients/${peopleId.value}/adherence?days=7`)
+    const data = res.data
+    listAssistHasActivePlan.value = !!data?.plan?.hasActivePlan
+    listAssistStreakDays.value = Number(data?.plan?.streakDays) || 0
+    listAssistRate7d.value =
+      data?.plan?.rate7d == null || Number.isNaN(Number(data.plan.rate7d))
+        ? null
+        : Number(data.plan.rate7d)
+    const days = Array.isArray(data?.days) ? data.days.slice(-7) : []
+    listAssistTrendDays.value = days.length
+      ? days.map((d) => {
+          const due = Number(d.planDue) || 0
+          const done = Number(d.planDone) || 0
+          let ratePct: number | null = null
+          if (due > 0) {
+            if (d.planDoneRate != null && !Number.isNaN(Number(d.planDoneRate))) {
+              ratePct = Math.round(Number(d.planDoneRate) * 100)
+            } else {
+              ratePct = Math.round((done / due) * 100)
+            }
+          }
+          return {
+            date: d.date,
+            label: shortTrendDate(d.date),
+            ratePct,
+            due,
+            done,
+          }
+        })
+      : emptyTrendDays()
+  } catch {
+    listAssistTrendDays.value = emptyTrendDays()
+    listAssistRate7d.value = null
+    listAssistStreakDays.value = 0
+    listAssistHasActivePlan.value = false
+  }
+}
+
+async function loadListAssistRisks() {
+  if (!peopleId.value) {
+    listAssistRisks.value = []
+    return
+  }
+  try {
+    const res = await api<{ data: AssessmentOverviewLite }>(
+      `/api/b/v1/patients/${peopleId.value}/assessments`,
+    )
+    const items: ListAssistRiskItem[] = []
+    for (const g of res.data?.groups || []) {
+      if (!g.applicable) continue
+      const snap = g.latest
+      if (!snap || snap.status !== 'COMPLETE' || !snap.levelLabel) continue
+      const tone = snap.tone === 'danger' || snap.tone === 'warning' ? snap.tone : null
+      if (!tone) continue
+      const title = assessmentTagTextLite(g.diseaseCode, g.diseaseLabel, g.category, snap.levelLabel)
+      if (
+        !/很高危|红标|超重|肥胖|高危|极高|重度|严重/.test(title) &&
+        tone !== 'danger'
+      ) {
+        continue
+      }
+      items.push({
+        key: `${g.category}-${g.diseaseCode}`,
+        title,
+        advice: oneLineRiskAdvice(title),
+        tone,
+      })
+    }
+    items.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === 'danger' ? -1 : 1))
+    listAssistRisks.value = items.slice(0, 3)
+  } catch {
+    listAssistRisks.value = []
+  }
+}
+
+async function loadListAssistDashboard() {
+  if (!peopleId.value) return
+  listAssistLoading.value = true
+  try {
+    await Promise.all([loadListAssistTrend(), loadListAssistRisks()])
+  } finally {
+    listAssistLoading.value = false
+  }
+}
+
+function callPatientPhone() {
+  const mobile = patientMobile.value.trim()
+  if (!mobile) {
+    ElMessage.warning('档案中暂无患者手机号')
+    return
+  }
+  window.location.href = `tel:${mobile}`
+}
+
+async function nudgePatientCheckin() {
+  if (!peopleId.value || listAssistNudging.value) return
+  listAssistNudging.value = true
+  try {
+    const res = await api<{ data: { sent?: boolean; message?: string; reason?: string } }>(
+      `/api/b/v1/adherence/patients/${peopleId.value}/nudge`,
+      { method: 'POST' },
+    )
+    if (res.data?.sent) {
+      ElMessage.success(res.data.message || '已发送催办提醒')
+    } else {
+      ElMessage.warning(res.data?.message || '未发送催办（患者可能未激活）')
+    }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '催办失败')
+  } finally {
+    listAssistNudging.value = false
+  }
+}
+
+function goLatestHealthReport() {
+  if (!peopleId.value) return
+  void router.push({
+    path: `/workspace/patients/${peopleId.value}/health-reports`,
+    query: { ...route.query },
+  })
+}
+
+function goHandleRisk() {
+  if (!peopleId.value) return
+  void router.push({
+    path: `/workspace/patients/${peopleId.value}/assessments`,
+    query: { ...route.query },
+  })
+}
+
+function onActivePlanCardClick(row: CarePlanListItem, e: MouseEvent) {
+  const t = e.target as HTMLElement | null
+  if (t?.closest('button, .el-button, a, input, textarea')) return
+  void openListDetail(row)
+}
+
+function applySubTabFromQuery() {
+  const raw = String(route.query.subTab || '').trim()
+  if (
+    raw === 'overview' ||
+    raw === 'summary' ||
+    raw === 'exercise' ||
+    raw === 'diet' ||
+    raw === 'execution'
+  ) {
+    subTab.value = raw
+  }
+  normalizeComposeSubTab()
+}
 /** 历史弹窗：含已生效 + 归档版本，按时间倒序 */
 const planVersionHistory = computed(() => {
   const versions = listItems.value
@@ -818,6 +1200,13 @@ const recipeLoading = ref(false)
 const applyWeekWithRecipe = ref(true)
 
 const isDraftMode = computed(() => !!bundle.value?.draft)
+/** 全屏预览确认：默认只读，点「编辑」后才可微调字段 */
+const composeFsFineTuning = ref(false)
+const composeCanFineTune = computed(() => {
+  if (!bundle.value?.draft) return false
+  if (isFullscreenCompose.value) return composeFsFineTuning.value
+  return true
+})
 /** 有方案壳但无草稿、无生效版（常见于丢弃未发布草稿后）→ 引导重新生成 */
 const composeNeedsBootstrap = computed(
   () => !!bundle.value?.plan && !bundle.value.draft && !bundle.value.activeVersion,
@@ -1380,6 +1769,200 @@ function sampleWeekMealText(day: string, slot: (typeof SAMPLE_MEAL_SLOTS)[number
 const allergySummary = ref<AllergySummary | null>(null)
 const sampleDayEstimate = ref<MealDayEstimate | null>(null)
 let estimateTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 全屏侧栏：血压/血糖近 3 日趋势 */
+interface ComposeMetricRow {
+  metricType: string
+  value?: number | null
+  unit?: string | null
+  recordedAt?: string | null
+  extra?: Record<string, unknown> | null
+}
+interface ComposeLatestSlot {
+  metricType?: string
+  value?: number | null
+  unit?: string | null
+  recordedAt?: string | null
+  extra?: Record<string, unknown> | null
+}
+const composeLatestSlots = ref<ComposeLatestSlot[]>([])
+const composeRecentMetrics = ref<ComposeMetricRow[]>([])
+const composeMetricsLoading = ref(false)
+
+function composeIsoDay(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function composeLastNDaysSeries(
+  days: number,
+  predicate: (m: ComposeMetricRow) => boolean,
+  pick: (m: ComposeMetricRow) => number | null,
+): Array<number | null> {
+  const best = new Map<string, { at: string; v: number }>()
+  for (const m of composeRecentMetrics.value) {
+    if (!predicate(m) || !m.recordedAt) continue
+    const v = pick(m)
+    if (v == null || Number.isNaN(v)) continue
+    const day = String(m.recordedAt).slice(0, 10)
+    const at = String(m.recordedAt)
+    const cur = best.get(day)
+    if (!cur || at > cur.at) best.set(day, { at, v })
+  }
+  const out: Array<number | null> = []
+  const base = new Date()
+  base.setHours(0, 0, 0, 0)
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(base)
+    d.setDate(base.getDate() - i)
+    out.push(best.get(composeIsoDay(d))?.v ?? null)
+  }
+  return out
+}
+
+function composeSparkPath(points: Array<number | null>, w = 120, h = 36): string {
+  const vals = points.filter((p): p is number => p != null && !Number.isNaN(p))
+  if (vals.length < 2) return ''
+  const min = Math.min(...vals)
+  const max = Math.max(...vals)
+  const span = max - min || 1
+  const step = w / Math.max(points.length - 1, 1)
+  const parts: string[] = []
+  points.forEach((p, i) => {
+    if (p == null || Number.isNaN(p)) return
+    const x = i * step
+    const y = h - ((p - min) / span) * (h - 4) - 2
+    parts.push(`${parts.length ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`)
+  })
+  return parts.join(' ')
+}
+
+function composeFindSlot(...types: string[]) {
+  const set = new Set(types.map((t) => t.toUpperCase()))
+  return composeLatestSlots.value.find((s) => set.has(String(s.metricType || '').toUpperCase()))
+}
+
+function composeFormatSlotTime(at?: string | null) {
+  if (!at) return ''
+  const s = String(at)
+  return s.length >= 16 ? s.slice(5, 16).replace('T', ' ') : s
+}
+
+const composeMetricTrendCards = computed(() => {
+  const cards: Array<{
+    key: string
+    label: string
+    display: string
+    hint: string
+    tone: 'good' | 'fair' | 'poor' | 'empty'
+    points: Array<number | null>
+    path: string
+  }> = []
+  const sys = composeFindSlot('BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE', 'BP_SYS')
+  const dia = composeFindSlot('BLOOD_PRESSURE_DIA', 'BP_DIA')
+  const glucose = composeFindSlot('BLOOD_GLUCOSE', 'GLUCOSE')
+
+  const sysV = sys?.value ?? (sys?.extra?.sys != null ? Number(sys.extra.sys) : null)
+  const diaV = dia?.value ?? (sys?.extra?.dia != null ? Number(sys.extra.dia) : null)
+  let bpDisplay = '暂无'
+  let bpTone: 'good' | 'fair' | 'poor' | 'empty' = 'empty'
+  if (sysV != null && diaV != null) {
+    bpDisplay = `${sysV}/${diaV}`
+    if (sysV >= 140 || diaV >= 90) bpTone = 'poor'
+    else if (sysV >= 130 || diaV >= 85) bpTone = 'fair'
+    else bpTone = 'good'
+  } else if (sysV != null) {
+    bpDisplay = String(sysV)
+    bpTone = sysV >= 140 ? 'poor' : sysV >= 130 ? 'fair' : 'good'
+  }
+  const bpPoints = composeLastNDaysSeries(
+    3,
+    (m) =>
+      m.metricType === 'BLOOD_PRESSURE_SYS' ||
+      m.metricType === 'BLOOD_PRESSURE' ||
+      m.metricType === 'BP_SYS',
+    (m) => {
+      if (m.extra?.sys != null) return Number(m.extra.sys)
+      return m.value == null ? null : Number(m.value)
+    },
+  )
+  cards.push({
+    key: 'bp',
+    label: '血压',
+    display: bpDisplay,
+    hint: composeFormatSlotTime(sys?.recordedAt || dia?.recordedAt) || '近3日',
+    tone: bpTone,
+    points: bpPoints,
+    path: composeSparkPath(bpPoints),
+  })
+
+  const gv = glucose?.value == null ? null : Number(glucose.value)
+  let gTone: 'good' | 'fair' | 'poor' | 'empty' = 'empty'
+  if (gv != null) {
+    if (gv >= 11.1 || gv < 3.9) gTone = 'poor'
+    else if (gv >= 7.0) gTone = 'fair'
+    else gTone = 'good'
+  }
+  const gPoints = composeLastNDaysSeries(
+    3,
+    (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
+    (m) => (m.value == null ? null : Number(m.value)),
+  )
+  cards.push({
+    key: 'glu',
+    label: '血糖',
+    display: gv == null ? '暂无' : String(gv),
+    hint: composeFormatSlotTime(glucose?.recordedAt) || (glucose?.unit || 'mmol/L'),
+    tone: gTone,
+    points: gPoints,
+    path: composeSparkPath(gPoints),
+  })
+  return cards
+})
+
+async function loadComposeMetricTrends() {
+  if (!peopleId.value || !isFullscreenCompose.value) return
+  composeMetricsLoading.value = true
+  try {
+    const to = new Date()
+    const from = new Date()
+    from.setHours(0, 0, 0, 0)
+    from.setDate(from.getDate() - 2)
+    const qs = new URLSearchParams({
+      from: from.toISOString().slice(0, 19),
+      to: to.toISOString().slice(0, 19),
+      limit: '100',
+    })
+    const [latestRes, histRes] = await Promise.all([
+      api<{ data: ComposeLatestSlot[] }>(`/api/b/v1/patients/${peopleId.value}/metrics/latest`),
+      api<{ data: ComposeMetricRow[] }>(`/api/b/v1/patients/${peopleId.value}/metrics?${qs}`),
+    ])
+    composeLatestSlots.value = latestRes.data || []
+    composeRecentMetrics.value = histRes.data || []
+  } catch {
+    composeLatestSlots.value = []
+    composeRecentMetrics.value = []
+  } finally {
+    composeMetricsLoading.value = false
+  }
+}
+
+const composeAllergyLabel = computed(() => {
+  const s = allergySummary.value
+  if (s?.status === 'NKA') return '无已知过敏'
+  if (s?.status === 'HAS') {
+    return (
+      (s.items || [])
+        .map((it) => it.allergenName)
+        .filter(Boolean)
+        .slice(0, 4)
+        .join('、') || '有过敏史'
+    )
+  }
+  return '待确认'
+})
 
 const allergyUnknown = computed(() => {
   const st = allergySummary.value?.status
@@ -1963,6 +2546,19 @@ async function loadList() {
     )
     listTotal.value = res.data.total
     listItems.value = res.data.items || []
+    const hasActive = (res.data.items || []).some((r) => r.status === 'ACTIVE')
+    const hasDraft = (res.data.items || []).some(
+      (r) => r.status === 'DRAFT' || r.recordType === 'DRAFT',
+    )
+    if (hasActive && !hasDraft) {
+      void loadListAssistDashboard()
+    } else {
+      listAssistTrendDays.value = []
+      listAssistRisks.value = []
+      listAssistRate7d.value = null
+      listAssistStreakDays.value = 0
+      listAssistHasActivePlan.value = false
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载方案列表失败')
   } finally {
@@ -2440,8 +3036,9 @@ async function confirmGenerate() {
       },
     )
     generateVisible.value = false
+    composeFsFineTuning.value = false
     enterCompose()
-    ElMessage.success('AI 方案草稿已生成，请审阅后发布')
+    ElMessage.success('AI 方案草稿已生成，请审阅后确认')
     refreshAfterMutation()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '生成失败')
@@ -3133,18 +3730,23 @@ const composePrimaryStatus = computed(() => {
   return { kind: 'empty' as const, text: statusLabel(bundle.value?.plan?.status) }
 })
 
-/** 全屏制定页标题旁状态：全新方案 / 草稿编辑中 */
+/** 全屏顶栏主标题：AI 生成后的预览确认 */
+const composeFsTitle = computed(() => {
+  if (composeNeedsBootstrap.value) return '制定管理方案'
+  if (bundle.value?.draft) return 'AI 重新生成方案预览'
+  if (bundle.value?.activeVersion) return '查看管理方案'
+  return '制定管理方案'
+})
+
+/** 全屏顶栏标签 */
 const composeModeTag = computed(() => {
-  if (composeNeedsBootstrap.value || (!bundle.value?.draft && !bundle.value?.activeVersion)) {
-    return { kind: 'fresh' as const, text: '✨ 全新方案', type: 'primary' as const }
+  if (bundle.value?.draft || composeNeedsBootstrap.value) {
+    return { kind: 'ai' as const, text: '基于最新健康数据生成', type: 'primary' as const }
   }
-  if (bundle.value?.draft) {
-    if (!bundle.value.activeVersion) {
-      return { kind: 'fresh' as const, text: '✨ 全新方案', type: 'primary' as const }
-    }
-    return { kind: 'draft' as const, text: '📝 草稿编辑中', type: 'warning' as const }
+  if (bundle.value?.activeVersion) {
+    return { kind: 'active' as const, text: `已生效 ${activeSchemaLabel.value}`, type: 'success' as const }
   }
-  return { kind: 'active' as const, text: `已生效 ${activeSchemaLabel.value}`, type: 'success' as const }
+  return { kind: 'empty' as const, text: '暂无方案', type: 'info' as const }
 })
 
 const planStatus = computed(() => bundle.value?.plan?.status)
@@ -3158,25 +3760,6 @@ const canRecordComm = computed(
   () => !!bundle.value?.draft && (planStatus.value === 'REVIEWED' || planStatus.value === 'COMMUNICATING'),
 )
 
-/** 全屏主按钮：按方案流转推进，文案对齐「提交方案 / 保存并生效」 */
-const composePrimaryCta = computed(() => {
-  if (!bundle.value?.draft) {
-    if (bundle.value?.activeVersion) return { key: 'edit' as const, label: '编辑' }
-    return null
-  }
-  if (planStatus.value === 'COMMUNICATING' && bundle.value?.plan?.lastCommResult === 'ACCEPTED') {
-    return { key: 'publish' as const, label: '保存并生效' }
-  }
-  if (canReview.value) return { key: 'submit' as const, label: '提交方案' }
-  if (canStartComm.value && planStatus.value !== 'COMMUNICATING') {
-    return { key: 'comm' as const, label: '发起沟通' }
-  }
-  if (canRecordComm.value && planStatus.value === 'COMMUNICATING') {
-    return { key: 'face' as const, label: '当面沟通·已接受' }
-  }
-  return { key: 'save' as const, label: '保存草稿' }
-})
-
 const composeSidebarAlerts = computed(() => {
   const items: Array<{ tone: 'danger' | 'warning' | 'info'; text: string }> = []
   for (const f of hardErrorFlags.value) {
@@ -3189,38 +3772,132 @@ const composeSidebarAlerts = computed(() => {
   return items
 })
 
-async function runComposePrimaryAction() {
-  const cta = composePrimaryCta.value
-  if (!cta) return
-  if (cta.key === 'edit') {
-    await openEdit()
+function toggleComposeFineTune() {
+  if (!bundle.value?.draft) {
+    void openEdit()
     return
   }
-  if (cta.key === 'save') {
-    await saveDraft()
-    return
-  }
-  if (cta.key === 'submit') {
-    try {
-      await saveDraft({ quiet: true })
-    } catch {
-      return
-    }
-    await markReviewed()
-    return
-  }
-  if (cta.key === 'comm') {
-    await startCommunication()
-    return
-  }
-  if (cta.key === 'face') {
-    await faceToFaceAccept()
-    return
-  }
-  if (cta.key === 'publish') {
-    await publish()
+  composeFsFineTuning.value = !composeFsFineTuning.value
+  if (composeFsFineTuning.value) {
+    if (subTab.value === 'overview') subTab.value = 'summary'
+    ElMessage.info('已进入微调模式，改完后请保存为草稿或确认并发布')
   }
 }
+
+/** 放弃本次 AI 生成：丢弃草稿并返回列表 */
+async function abandonAiGeneration() {
+  if (!bundle.value?.draft) {
+    backFromCompose()
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '将丢弃本次 AI 生成的草稿，已生效方案不受影响。是否继续？',
+      '放弃本次生成',
+      {
+        type: 'warning',
+        confirmButtonText: '放弃生成',
+        cancelButtonText: '继续审阅',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  saving.value = true
+  try {
+    const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan/draft`, {
+      method: 'DELETE',
+    })
+    bundle.value = res.data
+    syncFormFromBundle()
+    composeFsFineTuning.value = false
+    ElMessage.success('已放弃本次生成')
+    refreshAfterMutation()
+    backFromCompose()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '放弃失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 保存为新草稿并返回列表 */
+async function saveAsNewDraft() {
+  try {
+    await saveDraft({ quiet: true })
+  } catch {
+    return
+  }
+  ElMessage.success('已保存为草稿')
+  composeFsFineTuning.value = false
+  backFromCompose()
+}
+
+/** 直接发布生效：先落盘草稿，再走当面接受（含审核并发布） */
+async function publishAiDraftDirectly() {
+  if (!bundle.value?.draft) {
+    ElMessage.warning('当前没有可发布的草稿')
+    return
+  }
+  try {
+    await saveDraft({ quiet: true })
+  } catch {
+    return
+  }
+  await faceToFaceAccept()
+  if (!bundle.value?.draft) {
+    composeFsFineTuning.value = false
+    backFromCompose()
+  }
+}
+
+/** 全屏确认页：从当前表单实时组装医疗级预览数据 */
+/** 全屏确认 / C 端预览：不把生成依据铺在方案正文里（依据只在编辑区折叠块） */
+const composeFsLivePreview = computed((): CarePlanPreviewData | null => {
+  if (!isFullscreenCompose.value) return null
+  const src = bundle.value?.draft || bundle.value?.activeVersion
+  if (!src && !bundle.value?.plan) return null
+  return {
+    title: editForm.title || bundle.value?.plan?.title,
+    goalSummary: editForm.goalSummary || editForm.exerciseGoal,
+    summary: editForm.planSummary || readPlanSummary(src),
+    // 预览正文不塞生成依据；编辑区另有折叠块
+    source: src?.source || currentPlanSource.value,
+    versionLabel: bundle.value?.draft
+      ? draftSchemaLabel.value
+        ? `${draftSchemaLabel.value}·草稿`
+        : '草稿'
+      : activeSchemaLabel.value,
+    status: bundle.value?.draft ? 'DRAFT' : bundle.value?.plan?.status,
+    peopleName: patientName.value || undefined,
+    exercise: {
+      goal: editForm.exerciseGoal,
+      weeklyPlan: editForm.weeklyPlan,
+      precautions: lines(editForm.exercisePrecautions),
+      contraindications: lines(editForm.exerciseContraindications),
+      reviewHint: editForm.exerciseReviewHint || undefined,
+    },
+    diet: {
+      principles: lines(editForm.dietPrinciples),
+      calorieHint: editForm.dietCalorieHint || undefined,
+      energyTarget: editForm.energyTarget,
+      notes: editForm.dietNotes || undefined,
+      sampleDay: editForm.sampleDay,
+      sampleWeek: editForm.sampleWeek as unknown as Record<string, unknown>,
+      recommended: editForm.dietRecommended,
+      limited: editForm.dietLimited,
+      allergensAvoid: editForm.dietAllergensAvoid,
+      intolerances: editForm.dietIntolerances,
+    },
+    execution: {
+      horizonDays: editForm.horizonDays,
+      tasks: editForm.tasks,
+    },
+    publishedAt: bundle.value?.activeVersion?.publishedAt,
+    signStatus: bundle.value?.activeVersion?.signStatus,
+  }
+})
 
 function previewClientEffect() {
   const src = bundle.value?.draft || bundle.value?.activeVersion
@@ -3228,11 +3905,10 @@ function previewClientEffect() {
     ElMessage.warning('暂无可预览的方案内容')
     return
   }
-  previewData.value = {
+  previewData.value = composeFsLivePreview.value || {
     title: editForm.title || bundle.value?.plan?.title,
     goalSummary: editForm.goalSummary || editForm.exerciseGoal,
     summary: editForm.planSummary || readPlanSummary(src),
-    rationaleOverview: editForm.rationaleOverview || readRationaleOverview(src),
     source: src?.source || currentPlanSource.value,
     versionLabel: bundle.value?.draft
       ? draftSchemaLabel.value
@@ -3307,7 +3983,8 @@ function onComposeMoreCommand(cmd: string | number) {
     return
   }
   if (c === 'discard') {
-    void discardDraft()
+    if (isFullscreenCompose.value) void abandonAiGeneration()
+    else void discardDraft()
   }
 }
 
@@ -3324,11 +4001,23 @@ watch(allergyTick, () => {
 })
 
 watch(subTab, (t) => {
+  normalizeComposeSubTab()
   if (t === 'diet') {
     void refreshAllergySummary()
     scheduleSampleDayEstimate()
   }
 })
+
+watch(
+  () => [isFullscreenCompose.value, peopleId.value, mainTab.value] as const,
+  ([fs]) => {
+    if (fs) {
+      normalizeComposeSubTab()
+      void loadComposeMetricTrends()
+    }
+  },
+  { immediate: true },
+)
 
 /** 驾驶舱抽屉 / Agent 动作：优先进入可编辑草稿，而不是列表页 */
 async function preferComposeIfDraft() {
@@ -3364,6 +4053,7 @@ async function preferComposeIfDraft() {
 
 onMounted(() => {
   syncMainTabFromQuery()
+  applySubTabFromQuery()
   void loadPatientName()
   if (!isFullscreenCompose.value) {
     void loadList()
@@ -3378,6 +4068,7 @@ onMounted(() => {
       void loadDailyCheckin()
       void loadCheckinHistory()
     }
+    applySubTabFromQuery()
   })
   void openVersionFromQuery().catch(() => undefined)
 })
@@ -3406,29 +4097,31 @@ watch(
 </script>
 
 <template>
-  <div class="care-plan" :class="{ 'care-plan--fullscreen': isFullscreenCompose }">
+  <div
+    class="care-plan"
+    :class="{
+      'care-plan--fullscreen': isFullscreenCompose,
+      'care-plan--fs-preview': isFullscreenCompose && !!bundle?.draft && !composeFsFineTuning,
+    }"
+  >
     <header v-if="isFullscreenCompose" class="compose-fs-header">
       <div class="compose-fs-header-left">
-        <button type="button" class="compose-back" title="关闭本页" @click="backFromCompose">
-          取消
-        </button>
         <div class="compose-who">
           <div class="compose-fs-title-row">
-            <strong>{{ patientName || '患者' }}</strong>
+            <strong>{{ composeFsTitle }}</strong>
             <el-tag size="small" effect="light" :type="composeModeTag.type">
               {{ composeModeTag.text }}
             </el-tag>
           </div>
-          <span class="compose-sub">制定 / 编辑管理方案</span>
+          <span class="compose-sub">{{ patientName || '患者' }} · AI 生成结果确认</span>
           <button
             v-if="bundle?.draft && bundle?.activeVersion"
             type="button"
             class="meta-base-link compose-fs-base"
             @click="openActiveVersionPreview"
           >
-            基于已生效版
+            对比已生效版
             <span class="meta-base-ver">{{ activeSchemaLabel }}</span>
-            修改
           </button>
         </div>
       </div>
@@ -3448,16 +4141,17 @@ watch(
           <el-button :loading="saving" @click="createBlank">📝 新建空白方案</el-button>
         </template>
         <template v-else>
+          <el-button
+            v-if="bundle?.draft"
+            :type="composeFsFineTuning ? 'warning' : 'primary'"
+            plain
+            :disabled="saving"
+            @click="toggleComposeFineTune"
+          >
+            {{ composeFsFineTuning ? '完成微调' : '编辑' }}
+          </el-button>
           <el-button plain :disabled="saving" @click="previewClientEffect">
             预览 C 端效果
-          </el-button>
-          <el-button
-            v-if="composePrimaryCta"
-            type="primary"
-            :loading="saving"
-            @click="runComposePrimaryAction"
-          >
-            {{ composePrimaryCta.label }}
           </el-button>
           <el-dropdown trigger="click" @command="onComposeMoreCommand">
             <el-button :loading="saving" class="compose-more-icon" title="更多操作">
@@ -3465,9 +4159,6 @@ watch(
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item v-if="bundle?.draft" command="save">
-                  另存为草稿
-                </el-dropdown-item>
                 <el-dropdown-item command="generate">✨ 重新用 AI 生成</el-dropdown-item>
                 <el-dropdown-item command="blank">📝 新建空白方案</el-dropdown-item>
                 <el-dropdown-item v-if="canDoctorSign" command="sign" divided>
@@ -3479,7 +4170,7 @@ watch(
                   divided
                   class="compose-more-discard"
                 >
-                  废弃当前草稿
+                  放弃本次生成
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -3503,7 +4194,7 @@ watch(
       class="main-tabs hx-pill-tabs"
       @tab-change="onMainTabChange"
     >
-      <el-tab-pane label="管理方案列表" name="list" />
+      <el-tab-pane label="当前生效方案" name="list" />
       <el-tab-pane label="患者打卡记录" name="checkins" />
     </el-tabs>
 
@@ -3591,14 +4282,14 @@ watch(
       </div>
     </div>
 
-    <div v-show="mainTab === 'list'" v-loading="listLoading" class="list-panel section-card">
-      <div class="panel-head">
-        <h3 class="section-title">管理方案列表</h3>
+    <div v-show="mainTab === 'list'" v-loading="listLoading" class="list-shell">
+      <div class="list-shell-head">
+        <h3 class="section-title">当前生效方案</h3>
         <el-button type="primary" :loading="saving" @click="enterCompose()">
           + 制定新方案
         </el-button>
       </div>
-      <div class="panel-body plan-flow">
+      <div class="list-shell-body plan-flow">
         <el-empty
           v-if="!listLoading && activeListItems.length === 0 && draftListItems.length === 0"
           class="page-empty"
@@ -3610,11 +4301,16 @@ watch(
         </el-empty>
 
         <template v-else>
-          <!-- 当前生效 -->
+          <!-- 当前生效：不再包 el-tooltip，避免「点击查看方案详情」残影常驻顶栏 -->
           <article
             v-for="row in activeListItems"
             :key="`active-${row.id}`"
-            class="plan-card plan-card--active"
+            class="plan-card plan-card--active plan-card--clickable"
+            role="button"
+            tabindex="0"
+            title="点击查看方案详情"
+            @click="onActivePlanCardClick(row, $event)"
+            @keydown.enter.prevent="openListDetail(row)"
           >
             <header class="plan-card-head">
               <div class="plan-card-title-row">
@@ -3625,8 +4321,7 @@ watch(
                 <button
                   type="button"
                   class="plan-ver-chip"
-                  title="打开历史版本"
-                  @click="openHistoryDrawer"
+                  @click.stop="openHistoryDrawer"
                 >
                   {{ shortVersionLabel(row) }}
                 </button>
@@ -3636,21 +4331,25 @@ watch(
             <p class="plan-card-summary" :class="{ empty: !row.goalSummary }">
               {{ row.goalSummary || '暂无方案摘要' }}
             </p>
-            <div class="plan-card-meta">
-              <span>制定人 {{ row.staffName || '—' }}</span>
-              <span>{{ formatDateMinute(row.createdAt) }}</span>
-            </div>
-            <footer class="plan-card-actions">
-              <button
-                v-if="planHistoryCount(row) > 0"
-                type="button"
-                class="plan-card-history-tag"
-                @click="openHistoryDrawer"
-              >
-                🕒 历史版本({{ planHistoryCount(row) }})
-              </button>
-              <el-button plain @click="openListDetail(row)">查看方案详情</el-button>
-              <el-button type="primary" :loading="saving" @click="adjustActivePlan">调整方案</el-button>
+            <footer class="plan-card-actions" @click.stop>
+              <div class="plan-card-meta">
+                <span>制定人 {{ row.staffName || '—' }}</span>
+                <span>{{ formatDateMinute(row.createdAt) }}</span>
+                <button
+                  v-if="planHistoryCount(row) > 0"
+                  type="button"
+                  class="plan-card-history-link"
+                  @click="openHistoryDrawer"
+                >
+                  🕒 查看 {{ planHistoryCount(row) }} 个历史迭代版本 ›
+                </button>
+              </div>
+              <div class="plan-card-actions-right">
+                <el-button plain @click="openListDetail(row)">查看方案详情</el-button>
+                <el-button type="primary" :loading="saving" @click="adjustActivePlan">
+                  调整方案
+                </el-button>
+              </div>
             </footer>
           </article>
 
@@ -3666,12 +4365,7 @@ watch(
                 <el-tag size="small" effect="plain" class="plan-source-tag">
                   {{ sourceModeTag(row.sourceMode) }}
                 </el-tag>
-                <button
-                  type="button"
-                  class="plan-ver-chip"
-                  title="打开历史版本"
-                  @click="openHistoryDrawer"
-                >
+                <button type="button" class="plan-ver-chip" @click="openHistoryDrawer">
                   {{ shortVersionLabel(row) }}
                 </button>
               </div>
@@ -3680,31 +4374,150 @@ watch(
             <p class="plan-card-summary" :class="{ empty: !row.goalSummary }">
               {{ row.goalSummary || '暂无方案摘要' }}
             </p>
-            <div class="plan-card-meta">
-              <span>制定人 {{ row.staffName || '—' }}</span>
-              <span>{{ formatDateMinute(row.createdAt) }}</span>
-            </div>
             <footer class="plan-card-actions">
-              <button
-                v-if="planHistoryCount(row) > 0"
-                type="button"
-                class="plan-card-history-tag"
-                @click="openHistoryDrawer"
-              >
-                🕒 历史版本({{ planHistoryCount(row) }})
-              </button>
-              <el-button
-                text
-                class="plan-card-discard"
-                :loading="saving"
-                @click="discardDraftFromCard(row)"
-              >
-                丢弃草稿
-              </el-button>
-              <el-button plain @click="openListDetail(row)">预览</el-button>
-              <el-button type="primary" @click="continueDraftEdit">继续编辑</el-button>
+              <div class="plan-card-meta">
+                <span>制定人 {{ row.staffName || '—' }}</span>
+                <span>{{ formatDateMinute(row.createdAt) }}</span>
+                <button
+                  v-if="planHistoryCount(row) > 0"
+                  type="button"
+                  class="plan-card-history-link"
+                  @click="openHistoryDrawer"
+                >
+                  🕒 查看 {{ planHistoryCount(row) }} 个历史迭代版本 ›
+                </button>
+              </div>
+              <div class="plan-card-actions-right">
+                <el-button
+                  text
+                  class="plan-card-discard"
+                  :loading="saving"
+                  @click="discardDraftFromCard(row)"
+                >
+                  丢弃草稿
+                </el-button>
+                <el-button plain @click="openListDetail(row)">预览</el-button>
+                <el-button type="primary" @click="continueDraftEdit">继续编辑</el-button>
+              </div>
             </footer>
           </article>
+
+          <!-- 已生效无草稿：趋势 + 风险双栏，下方医生待办 -->
+          <div v-if="showListAssistPanels" v-loading="listAssistLoading" class="list-assist-wrap">
+            <div class="list-assist-grid">
+              <section class="list-assist-card" aria-label="近7日任务执行趋势">
+                <header class="list-assist-head list-assist-head--row">
+                  <div>
+                    <h4 class="list-assist-title">📈 近 7 日任务执行趋势</h4>
+                    <p class="list-assist-sub">当前生效方案 · 打卡完成率（按日）</p>
+                  </div>
+                  <div
+                    class="list-assist-rate-chip"
+                    :class="
+                      trendBarTone(
+                        listAssistChartAvgRate == null
+                          ? null
+                          : Math.round(listAssistChartAvgRate * 100),
+                      )
+                    "
+                  >
+                    <span>{{ listAssistWindowLabel }}</span>
+                    <strong>{{ listAssistRateLabel }}</strong>
+                  </div>
+                </header>
+                <div
+                  class="list-assist-chart"
+                  role="img"
+                  :aria-label="`${listAssistWindowLabel}执行率 ${listAssistRateLabel}`"
+                >
+                  <el-tooltip
+                    v-for="day in listAssistTrendDays"
+                    :key="day.date"
+                    effect="light"
+                    placement="top"
+                    :show-after="300"
+                    popper-class="hx-light-tooltip"
+                    :content="
+                      day.due <= 0
+                        ? `${day.date} 方案未生效/无排期`
+                        : day.ratePct == null
+                          ? `${day.date} 待打卡（0/${day.due}）`
+                          : `${day.date} ${day.ratePct}%（${day.done}/${day.due}）`
+                    "
+                  >
+                    <div class="list-assist-chart-col">
+                      <span class="list-assist-chart-pct">{{ trendBarPctLabel(day.ratePct) }}</span>
+                      <div class="list-assist-chart-slot">
+                        <div
+                          v-if="day.ratePct != null && day.ratePct > 0"
+                          class="list-assist-chart-bar"
+                          :style="{ height: `${trendBarHeightPx(day.ratePct)}px` }"
+                        />
+                      </div>
+                      <span class="list-assist-chart-label">{{ day.label }}</span>
+                    </div>
+                  </el-tooltip>
+                </div>
+                <p class="list-assist-trend-hint">{{ listAssistTrendHint }}</p>
+              </section>
+
+              <section
+                class="list-assist-card"
+                :class="{ 'list-assist-card--muted': !listAssistLoading && !listAssistRisks.length }"
+                aria-label="核心风险预警"
+              >
+                <header class="list-assist-head">
+                  <h4 class="list-assist-title">⚠️ 核心风险预警</h4>
+                  <p class="list-assist-sub">来自患者评估标签，请优先干预。</p>
+                </header>
+                <ul v-if="listAssistRisks.length" class="list-assist-risk-list">
+                  <li
+                    v-for="item in listAssistRisks"
+                    :key="item.key"
+                    class="list-assist-risk-item"
+                    :class="item.tone"
+                  >
+                    <div class="list-assist-risk-row">
+                      <strong class="list-assist-risk-name">{{ item.title }}</strong>
+                      <button type="button" class="list-assist-risk-action" @click="goHandleRisk">
+                        立即处理
+                      </button>
+                    </div>
+                    <p class="list-assist-risk-advice">{{ item.advice }}</p>
+                  </li>
+                </ul>
+                <p v-else-if="!listAssistLoading" class="list-assist-risk-empty">
+                  暂无高危评估标签；仍建议结合执行趋势做随访。
+                </p>
+              </section>
+            </div>
+
+            <section class="list-assist-todo" aria-label="医生待办">
+              <header class="list-assist-todo-head">
+                <h4 class="list-assist-title">📋 医生待办</h4>
+                <p class="list-assist-sub">快捷干预，减少切换成本</p>
+              </header>
+              <div class="list-assist-todo-actions">
+                <button type="button" class="list-assist-todo-btn" @click="callPatientPhone">
+                  <span aria-hidden="true">📞</span>
+                  <span>呼叫患者</span>
+                </button>
+                <button
+                  type="button"
+                  class="list-assist-todo-btn"
+                  :disabled="listAssistNudging"
+                  @click="nudgePatientCheckin"
+                >
+                  <span aria-hidden="true">🔔</span>
+                  <span>{{ listAssistNudging ? '催办中…' : '一键催办打卡' }}</span>
+                </button>
+                <button type="button" class="list-assist-todo-btn" @click="goLatestHealthReport">
+                  <span aria-hidden="true">📄</span>
+                  <span>查看最新管理报告</span>
+                </button>
+              </div>
+            </section>
+          </div>
         </template>
       </div>
     </div>
@@ -3932,6 +4745,7 @@ watch(
       :class="{ 'compose-fs-grid--split': isFullscreenCompose && bundle?.plan && !composeNeedsBootstrap }"
     >
     <div class="compose-fs-main">
+    <div class="compose-fs-main-inner">
     <el-empty
       v-if="(!bundle?.plan || composeNeedsBootstrap) && !loading"
       class="page-empty section-card"
@@ -3944,15 +4758,51 @@ watch(
     </el-empty>
 
     <template v-else-if="bundle?.plan && !composeNeedsBootstrap">
-      <el-tabs v-model="subTab" class="sub-tabs hx-pill-tabs">
+      <div v-if="isFullscreenCompose" class="compose-fs-intro">
+        <el-alert
+          class="compose-fs-ai-banner"
+          type="info"
+          show-icon
+          :closable="false"
+          title="AI 已基于患者近 7 日的打卡和最新体征为您生成了新版方案，您可以点击各模块进行微调后保存。"
+        />
+      </div>
+
+      <div
+        v-if="isFullscreenCompose && !composeFsFineTuning && composeFsLivePreview"
+        class="compose-fs-preview-stack"
+      >
+        <CarePlanPreviewContent
+          :data="composeFsLivePreview"
+          stacked
+          :reset-key="bundle?.draft?.id || bundle?.activeVersion?.id || 'compose-preview'"
+        />
+      </div>
+
+      <template v-if="!isFullscreenCompose || composeFsFineTuning">
+      <el-tabs v-if="!isFullscreenCompose" v-model="subTab" class="sub-tabs hx-pill-tabs">
         <el-tab-pane label="总览" name="overview" />
         <el-tab-pane label="方案总结" name="summary" />
         <el-tab-pane label="运动方案" name="exercise" />
         <el-tab-pane label="饮食方案" name="diet" />
         <el-tab-pane label="执行计划" name="execution" />
       </el-tabs>
+      <div v-if="isFullscreenCompose && composeFsFineTuning" class="compose-fs-finetune-hint">
+        <el-alert
+          type="warning"
+          show-icon
+          :closable="false"
+          title="微调模式：可修改下方各模块后，点底部「保存为草稿」或「确认并发布」。"
+        />
+        <el-tabs v-model="subTab" class="sub-tabs hx-pill-tabs">
+          <el-tab-pane label="方案总结" name="summary" />
+          <el-tab-pane label="运动方案" name="exercise" />
+          <el-tab-pane label="饮食方案" name="diet" />
+          <el-tab-pane label="执行计划" name="execution" />
+        </el-tabs>
+      </div>
 
-      <div v-show="subTab === 'overview'" class="panel panel--fluid section-card panel--overview">
+      <div v-show="subTab === 'overview' && !isFullscreenCompose" class="panel panel--fluid section-card panel--overview">
         <div class="panel-head panel-head--compact">
           <h3 class="section-title">方案总览</h3>
           <span v-if="overviewTemplateKey" class="overview-template-chip">
@@ -3964,7 +4814,7 @@ watch(
           <el-form-item label="标题">
             <div v-if="!overviewTitleEditing" class="overview-title-read">
               <h4 class="overview-title-text">{{ editForm.title || '未命名方案' }}</h4>
-              <div v-if="isDraftMode" class="overview-title-actions">
+              <div v-if="composeCanFineTune" class="overview-title-actions">
                 <button type="button" class="overview-edit-btn" @click="overviewTitleEditing = true">
                   修改
                 </button>
@@ -3989,7 +4839,7 @@ watch(
               />
               <p v-else class="overview-goal-empty">暂无目标摘要</p>
               <button
-                v-if="isDraftMode"
+                v-if="composeCanFineTune"
                 type="button"
                 class="overview-edit-btn"
                 @click="overviewGoalEditing = true"
@@ -4007,7 +4857,7 @@ watch(
                 <el-button type="primary" size="small" @click="overviewGoalEditing = false">完成</el-button>
               </div>
             </template>
-            <div v-if="isDraftMode" class="goal-quick-tags">
+            <div v-if="composeCanFineTune" class="goal-quick-tags">
               <span class="goal-quick-label">快捷替换</span>
               <button
                 v-for="tag in GOAL_QUICK_TAGS"
@@ -4094,9 +4944,9 @@ watch(
           </p>
         </div>
         <details
-          v-if="isDraftMode || editForm.rationaleOverview"
+          v-if="composeCanFineTune || editForm.rationaleOverview"
           class="rationale-details"
-          :open="overviewRationaleOpen || (isDraftMode && !editForm.rationaleOverview)"
+          :open="overviewRationaleOpen || (composeCanFineTune && !editForm.rationaleOverview)"
           @toggle="onOverviewRationaleToggle"
         >
           <summary class="rationale-summary">
@@ -4110,18 +4960,18 @@ watch(
               <el-tag size="small" type="info" effect="plain">生成于依据库上线前</el-tag>
             </el-tooltip>
             <span class="rationale-summary-hint">
-              {{ overviewRationaleOpen || (isDraftMode && !editForm.rationaleOverview) ? '收起' : '展开' }}
+              {{ overviewRationaleOpen || (composeCanFineTune && !editForm.rationaleOverview) ? '收起' : '展开' }}
             </span>
           </summary>
           <div class="rationale-details-body">
             <el-input
               v-model="editForm.rationaleOverview"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 6 }"
               placeholder="为何推荐该方案类型（档案病种、评估等）"
               class="rationale-input"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
           </div>
         </details>
@@ -4135,7 +4985,7 @@ watch(
             方案总结
           </h3>
           <button
-            v-if="isDraftMode && planSummaryStructured && !summaryFullEditing"
+            v-if="composeCanFineTune && planSummaryStructured && !summaryFullEditing"
             type="button"
             class="overview-edit-btn"
             @click="beginSummaryFullEdit"
@@ -4144,7 +4994,7 @@ watch(
           </button>
         </div>
         <div class="panel-body">
-          <template v-if="summaryFullEditing || (isDraftMode && !planSummaryStructured)">
+          <template v-if="summaryFullEditing || (composeCanFineTune && !planSummaryStructured)">
             <el-input
               v-model="editForm.planSummary"
               type="textarea"
@@ -4166,7 +5016,7 @@ watch(
                 <span class="summary-sec-tag" :data-k="sec.key">{{ sec.tag }}</span>
                 <strong class="summary-sec-label">{{ sec.label }}</strong>
                 <button
-                  v-if="isDraftMode"
+                  v-if="composeCanFineTune"
                   type="button"
                   class="overview-edit-btn"
                   @click="beginSummarySectionEdit(sec.key)"
@@ -4269,14 +5119,14 @@ watch(
           <el-form-item label="运动目标">
             <el-input
               v-model="editForm.exerciseGoal"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="carePlanTextareaAutosize"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
           </el-form-item>
           <div
-            v-if="isDraftMode || editForm.exerciseRationale || exerciseRefs.length"
+            v-if="composeCanFineTune || editForm.exerciseRationale || exerciseRefs.length"
             class="rationale-box rationale-box--inline"
           >
             <div class="rationale-box-head">
@@ -4284,37 +5134,37 @@ watch(
             </div>
             <el-input
               v-model="editForm.exerciseRationale"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="{ minRows: 1, maxRows: 4 }"
               placeholder="本块运动安排的推荐理由"
               class="rationale-input"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
             <GuidelineRefTags :refs="exerciseRefs" />
           </div>
           <el-form-item label="禁忌">
             <el-input
               v-model="editForm.exerciseContraindications"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="carePlanTextareaAutosizeLg"
               placeholder="每行一条"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
           </el-form-item>
           <el-form-item label="注意事项">
             <el-input
               v-model="editForm.exercisePrecautions"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="carePlanTextareaAutosizeLg"
               placeholder="每行一条"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
           </el-form-item>
           <el-form-item label="复盘提示">
-            <el-input v-model="editForm.exerciseReviewHint" :disabled="!isDraftMode" />
+            <el-input v-model="editForm.exerciseReviewHint" :disabled="!composeCanFineTune" />
           </el-form-item>
           <el-form-item label="周计划">
             <div class="block week-accordion">
@@ -4340,7 +5190,7 @@ watch(
                 </button>
                 <div v-show="exerciseDayOpenIdx === di" class="week-acc-body">
                   <div class="week-head">
-                    <el-select v-model="day.day" :disabled="!isDraftMode" style="width: 110px">
+                    <el-select v-model="day.day" :disabled="!composeCanFineTune" style="width: 110px">
                       <el-option
                         v-for="opt in DAY_OPTIONS"
                         :key="opt.value"
@@ -4349,7 +5199,7 @@ watch(
                       />
                     </el-select>
                     <el-button
-                      v-if="isDraftMode"
+                      v-if="composeCanFineTune"
                       text
                       type="danger"
                       @click="removeWeeklyDay(di)"
@@ -4362,7 +5212,7 @@ watch(
                       <template #default="{ row }">
                         <el-select
                           v-model="row.type"
-                          :disabled="!isDraftMode"
+                          :disabled="!composeCanFineTune"
                           filterable
                           allow-create
                           default-first-option
@@ -4381,7 +5231,7 @@ watch(
                       <template #default="{ row }">
                         <el-input-number
                           v-model="row.durationMin"
-                          :disabled="!isDraftMode"
+                          :disabled="!composeCanFineTune"
                           :min="5"
                           :max="180"
                           controls-position="right"
@@ -4390,7 +5240,7 @@ watch(
                     </el-table-column>
                     <el-table-column label="强度" width="100">
                       <template #default="{ row }">
-                        <el-select v-model="row.intensity" :disabled="!isDraftMode">
+                        <el-select v-model="row.intensity" :disabled="!composeCanFineTune">
                           <el-option
                             v-for="opt in CARE_PLAN_INTENSITY_OPTIONS"
                             :key="opt.value"
@@ -4403,7 +5253,7 @@ watch(
                     <el-table-column label="备注" min-width="160">
                       <template #default="{ row, $index }">
                         <el-input
-                          v-if="isDraftMode && exerciseNoteEditKey === noteEditKey(di, $index)"
+                          v-if="composeCanFineTune && exerciseNoteEditKey === noteEditKey(di, $index)"
                           v-model="row.note"
                           type="textarea"
                           :autosize="{ minRows: 2, maxRows: 5 }"
@@ -4414,14 +5264,14 @@ watch(
                           v-else
                           type="button"
                           class="week-note-read"
-                          :class="{ empty: !row.note, editable: isDraftMode }"
+                          :class="{ empty: !row.note, editable: composeCanFineTune }"
                           @click="beginNoteEdit(di, $index)"
                         >
-                          {{ row.note || (isDraftMode ? '点击添加备注' : '—') }}
+                          {{ row.note || (composeCanFineTune ? '点击添加备注' : '—') }}
                         </button>
                       </template>
                     </el-table-column>
-                    <el-table-column v-if="isDraftMode" label="" width="52">
+                    <el-table-column v-if="composeCanFineTune" label="" width="52">
                       <template #default="{ $index }">
                         <el-button
                           text
@@ -4435,7 +5285,7 @@ watch(
                     </el-table-column>
                   </el-table>
                   <el-button
-                    v-if="isDraftMode"
+                    v-if="composeCanFineTune"
                     size="small"
                     class="mt8"
                     @click="addWeeklyItem(di)"
@@ -4444,7 +5294,7 @@ watch(
                   </el-button>
                 </div>
               </div>
-              <el-button v-if="isDraftMode" size="small" @click="addWeeklyDay">添加训练日</el-button>
+              <el-button v-if="composeCanFineTune" size="small" @click="addWeeklyDay">添加训练日</el-button>
             </div>
           </el-form-item>
         </el-form>
@@ -4458,7 +5308,7 @@ watch(
             饮食方案
           </h3>
           <el-button
-            v-if="isDraftMode"
+            v-if="composeCanFineTune"
             size="small"
             :loading="saving"
             @click="openRecipePicker"
@@ -4562,7 +5412,7 @@ watch(
                     ≈ {{ slotEstimateKcal(sampleDayEstimate, slot.key) }} kcal
                   </span>
                   <button
-                    v-if="isDraftMode"
+                    v-if="composeCanFineTune"
                     type="button"
                     class="diet-meal-edit-btn"
                     @click="openSampleDayMealEdit(slot.key)"
@@ -4574,8 +5424,8 @@ watch(
               <div
                 v-if="sampleDayMealParts(slot.key).length"
                 class="meal-struct"
-                :class="{ interactive: isDraftMode }"
-                @click="isDraftMode && openSampleDayMealEdit(slot.key)"
+                :class="{ interactive: composeCanFineTune }"
+                @click="composeCanFineTune && openSampleDayMealEdit(slot.key)"
               >
                 <div
                   v-for="(part, pi) in sampleDayMealParts(slot.key)"
@@ -4609,10 +5459,10 @@ watch(
               <p
                 v-else
                 class="diet-meal-card-empty"
-                :class="{ clickable: isDraftMode }"
-                @click="isDraftMode && openSampleDayMealEdit(slot.key)"
+                :class="{ clickable: composeCanFineTune }"
+                @click="composeCanFineTune && openSampleDayMealEdit(slot.key)"
               >
-                {{ isDraftMode ? '点击添加本餐' : '暂无示例' }}
+                {{ composeCanFineTune ? '点击添加本餐' : '暂无示例' }}
               </p>
               <div
                 v-if="isUsefulSampleDaySwapHint(slot.key)"
@@ -4629,15 +5479,15 @@ watch(
           <el-form-item label="原则">
             <el-input
               v-model="editForm.dietPrinciples"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="carePlanTextareaAutosizeLg"
               placeholder="每行一条"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
           </el-form-item>
           <div
-            v-if="isDraftMode || editForm.dietRationale || dietRefs.length"
+            v-if="composeCanFineTune || editForm.dietRationale || dietRefs.length"
             class="rationale-box rationale-box--inline"
           >
             <div class="rationale-box-head">
@@ -4645,18 +5495,18 @@ watch(
             </div>
             <el-input
               v-model="editForm.dietRationale"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="{ minRows: 1, maxRows: 4 }"
               placeholder="本块饮食安排的推荐理由"
               class="rationale-input"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
             <GuidelineRefTags :refs="dietRefs" />
           </div>
           <el-form-item label="每日热量">
             <div class="energy-box">
-              <div v-if="isDraftMode" class="energy-row energy-row--goal">
+              <div v-if="composeCanFineTune" class="energy-row energy-row--goal">
                 <el-radio-group
                   v-model="editForm.energyGoalType"
                   size="small"
@@ -4692,7 +5542,7 @@ watch(
                   :min="800"
                   :max="5000"
                   :step="50"
-                  :disabled="!isDraftMode || energyPreviewing"
+                  :disabled="!composeCanFineTune || energyPreviewing"
                   controls-position="right"
                   placeholder="未设置"
                 />
@@ -4721,7 +5571,7 @@ watch(
                   制定方案时未能写入热量。档案齐全时可点「按档案估算」，或直接填写千卡。
                 </p>
                 <el-button
-                  v-if="isDraftMode"
+                  v-if="composeCanFineTune"
                   size="small"
                   type="primary"
                   plain
@@ -4731,13 +5581,13 @@ watch(
                   按档案估算
                 </el-button>
               </div>
-              <el-checkbox v-if="isDraftMode && energyNeedsSync" v-model="editForm.syncDietGoal">
+              <el-checkbox v-if="composeCanFineTune && energyNeedsSync" v-model="editForm.syncDietGoal">
                 将每日 {{ editForm.energyKcal || editForm.energyTarget?.energyKcal || '—' }} 千卡作为患者执行目标（患者端只读）
               </el-checkbox>
             </div>
           </el-form-item>
           <el-form-item label="热量提示">
-            <el-input v-model="editForm.dietCalorieHint" :disabled="!isDraftMode" />
+            <el-input v-model="editForm.dietCalorieHint" :disabled="!composeCanFineTune" />
           </el-form-item>
           <el-form-item label="推荐食物">
             <div class="food-tag-grouped">
@@ -4760,7 +5610,7 @@ watch(
                       ]"
                       effect="plain"
                       round
-                      :closable="isDraftMode"
+                      :closable="composeCanFineTune"
                       :title="
                         recommendedChipAllergenHit(chip)
                           ? '与过敏回避冲突：' + recommendedChipAllergenHit(chip)
@@ -4781,7 +5631,7 @@ watch(
                 </div>
               </div>
               <span v-if="!editForm.dietRecommended.length" class="food-cloud-empty">暂无推荐</span>
-              <div v-if="isDraftMode" class="food-tag-add food-tag-add--block">
+              <div v-if="composeCanFineTune" class="food-tag-add food-tag-add--block">
                 <el-input
                   v-model="foodTagDraft.recommended"
                   size="small"
@@ -4809,13 +5659,13 @@ watch(
                 class="food-cloud-tag food-cloud-tag--limit"
                 effect="plain"
                 round
-                :closable="isDraftMode"
+                :closable="composeCanFineTune"
                 @close="editForm.dietLimited.splice(i, 1)"
               >
                 {{ f.label || '未命名' }}
               </el-tag>
               <span v-if="!editForm.dietLimited.length" class="food-cloud-empty">暂无限制</span>
-              <div v-if="isDraftMode" class="food-tag-add food-tag-add--block">
+              <div v-if="composeCanFineTune" class="food-tag-add food-tag-add--block">
                 <el-input
                   v-model="foodTagDraft.limited"
                   size="small"
@@ -4843,7 +5693,7 @@ watch(
                 class="food-cloud-tag food-cloud-tag--allergen"
                 effect="plain"
                 round
-                :closable="isDraftMode && f.source !== 'ARCHIVE'"
+                :closable="composeCanFineTune && f.source !== 'ARCHIVE'"
                 @close="editForm.dietAllergensAvoid.splice(i, 1)"
               >
                 {{ f.label || '未命名' }}
@@ -4891,7 +5741,7 @@ watch(
               <div class="sample-week-toolbar">
                 <div class="sample-week-toolbar-left">
                   <el-button
-                    v-if="isDraftMode"
+                    v-if="composeCanFineTune"
                     size="small"
                     @click="syncSampleWeekFromDay"
                   >
@@ -4902,7 +5752,7 @@ watch(
                   </span>
                 </div>
                 <el-button
-                  v-if="isDraftMode"
+                  v-if="composeCanFineTune"
                   size="small"
                   type="primary"
                   plain
@@ -4943,7 +5793,7 @@ watch(
                     </div>
                   </template>
                   <template #default="{ row }">
-                    <div class="week-meal-cell" :class="{ editable: isDraftMode }">
+                    <div class="week-meal-cell" :class="{ editable: composeCanFineTune }">
                       <div class="week-meal-body">
                         <div
                           v-if="sampleWeekMealParts(row.value, slot.key).length"
@@ -4958,15 +5808,15 @@ watch(
                               hit: !!part.allergenHit,
                               warn: !!part.highRisk && !part.allergenHit,
                               snackish: slot.key === 'snacks',
-                              interactive: isDraftMode,
+                              interactive: composeCanFineTune,
                             }"
                           >
                             <span class="meal-struct-lab">{{ MEAL_PART_LABELS[part.kind] }}</span>
                             <span
                               class="meal-struct-txt"
-                              :class="{ clickable: isDraftMode }"
-                              :title="isDraftMode ? '点击修改本餐' : undefined"
-                              @click="isDraftMode && openWeekMealEdit(row.value, slot.key)"
+                              :class="{ clickable: composeCanFineTune }"
+                              :title="composeCanFineTune ? '点击修改本餐' : undefined"
+                              @click="composeCanFineTune && openWeekMealEdit(row.value, slot.key)"
                             >{{ part.text }}</span>
                             <el-tooltip
                               v-if="part.allergenHit"
@@ -4984,7 +5834,7 @@ watch(
                             </el-tooltip>
                           </div>
                           <button
-                            v-if="isDraftMode && sampleWeekMealParts(row.value, slot.key).some((p) => p.allergenHit)"
+                            v-if="composeCanFineTune && sampleWeekMealParts(row.value, slot.key).some((p) => p.allergenHit)"
                             type="button"
                             class="meal-swap-allergen"
                             @click="swapAllergenInWeekCell(row.value, slot.key)"
@@ -4995,7 +5845,7 @@ watch(
                         <p v-else class="week-meal-empty">
                           暂无
                           <button
-                            v-if="isDraftMode"
+                            v-if="composeCanFineTune"
                             type="button"
                             class="meal-empty-add"
                             @click="openWeekMealEdit(row.value, slot.key)"
@@ -5045,11 +5895,11 @@ watch(
               >
                 <el-checkbox
                   v-model="row.checked"
-                  :disabled="!isDraftMode"
+                  :disabled="!composeCanFineTune"
                   @change="syncDietNotesFromRows"
                 />
                 <el-input
-                  v-if="isDraftMode"
+                  v-if="composeCanFineTune"
                   v-model="row.text"
                   size="small"
                   placeholder="健康建议，如：进餐顺序：…"
@@ -5057,7 +5907,7 @@ watch(
                 />
                 <span v-else class="diet-note-text" :class="{ off: !row.checked }">{{ row.text }}</span>
                 <el-button
-                  v-if="isDraftMode && !row.preset"
+                  v-if="composeCanFineTune && !row.preset"
                   text
                   type="danger"
                   @click="removeDietNoteRow(idx)"
@@ -5065,7 +5915,7 @@ watch(
                   删
                 </el-button>
               </label>
-              <el-button v-if="isDraftMode" size="small" @click="addDietNoteRow">
+              <el-button v-if="composeCanFineTune" size="small" @click="addDietNoteRow">
                 + 添加自定义提醒
               </el-button>
             </div>
@@ -5084,7 +5934,7 @@ watch(
             <span class="exec-horizon-label">周期</span>
             <el-input-number
               v-model="editForm.horizonDays"
-              :disabled="!isDraftMode"
+              :disabled="!composeCanFineTune"
               :min="1"
               :max="90"
               size="small"
@@ -5128,7 +5978,7 @@ watch(
         </el-alert>
         <el-form label-width="0" class="exec-form">
           <div
-            v-if="isDraftMode || editForm.executionRationale || executionRefs.length"
+            v-if="composeCanFineTune || editForm.executionRationale || executionRefs.length"
             class="rationale-box rationale-box--inline"
           >
             <div class="rationale-box-head">
@@ -5136,12 +5986,12 @@ watch(
             </div>
             <el-input
               v-model="editForm.executionRationale"
-              :readonly="!isDraftMode"
+              :readonly="!composeCanFineTune"
               type="textarea"
               :autosize="{ minRows: 1, maxRows: 4 }"
               placeholder="执行任务清单的推荐理由"
               class="rationale-input"
-              :class="{ 'textarea-readonly': !isDraftMode }"
+              :class="{ 'textarea-readonly': !composeCanFineTune }"
             />
             <GuidelineRefTags :refs="executionRefs" />
           </div>
@@ -5149,7 +5999,7 @@ watch(
             <div class="block block--fluid">
               <div class="exec-tasks-head">
                 <span class="exec-tasks-title">任务清单</span>
-                <el-button v-if="isDraftMode" type="primary" plain size="small" @click="addTask">
+                <el-button v-if="composeCanFineTune" type="primary" plain size="small" @click="addTask">
                   添加任务
                 </el-button>
               </div>
@@ -5163,7 +6013,7 @@ watch(
                   <div class="exec-task-card-top">
                     <el-switch
                       v-model="row.enabled"
-                      :disabled="!isDraftMode"
+                      :disabled="!composeCanFineTune"
                       inline-prompt
                       active-text="开"
                       inactive-text="关"
@@ -5171,11 +6021,11 @@ watch(
                     <el-input
                       v-model="row.title"
                       class="exec-task-title-input"
-                      :disabled="!isDraftMode"
+                      :disabled="!composeCanFineTune"
                       placeholder="任务标题"
                     />
                     <button
-                      v-if="isDraftMode"
+                      v-if="composeCanFineTune"
                       type="button"
                       class="exec-task-del"
                       title="删除任务"
@@ -5197,7 +6047,7 @@ watch(
                     <el-select
                       v-model="row.category"
                       size="small"
-                      :disabled="!isDraftMode"
+                      :disabled="!composeCanFineTune"
                       class="exec-meta-select"
                       @change="onTaskCategoryChange(row)"
                     >
@@ -5211,7 +6061,7 @@ watch(
                     <el-input-number
                       v-if="row.category === 'WATER' || row.code === 'WATER_LOG'"
                       v-model="row.targetMl"
-                      :disabled="!isDraftMode"
+                      :disabled="!composeCanFineTune"
                       :min="500"
                       :max="3000"
                       :step="100"
@@ -5223,7 +6073,7 @@ watch(
                     <el-select
                       v-model="row.frequency"
                       size="small"
-                      :disabled="!isDraftMode"
+                      :disabled="!composeCanFineTune"
                       filterable
                       allow-create
                       class="exec-meta-select"
@@ -5238,7 +6088,7 @@ watch(
                     <el-select
                       v-model="row.timeSlot"
                       size="small"
-                      :disabled="!isDraftMode"
+                      :disabled="!composeCanFineTune"
                       filterable
                       allow-create
                       class="exec-meta-select"
@@ -5287,7 +6137,9 @@ watch(
         </el-form>
         </div>
       </div>
+      </template>
     </template>
+    </div>
     </div>
 
     <aside
@@ -5307,19 +6159,11 @@ watch(
           </div>
           <div>
             <dt>过敏</dt>
-            <dd>
-              <template v-if="allergySummary?.status === 'NKA'">无已知过敏</template>
-              <template v-else-if="allergySummary?.status === 'HAS'">
-                {{
-                  (allergySummary.items || [])
-                    .map((it) => it.allergenName)
-                    .filter(Boolean)
-                    .slice(0, 4)
-                    .join('、') || '有过敏史'
-                }}
-              </template>
-              <template v-else>待确认</template>
-            </dd>
+            <dd>{{ composeAllergyLabel }}</dd>
+          </div>
+          <div v-if="overviewTemplateKey">
+            <dt>模板</dt>
+            <dd>{{ formatCarePlanTemplateKey(overviewTemplateKey) }}</dd>
           </div>
         </dl>
         <button
@@ -5332,11 +6176,34 @@ watch(
         </button>
       </section>
 
-      <section class="compose-aside-card">
-        <h4 class="compose-aside-title">方案目标</h4>
-        <p class="compose-aside-body">
-          {{ editForm.goalSummary || editForm.exerciseGoal || '暂无目标摘要' }}
-        </p>
+      <section class="compose-aside-card compose-aside-card--flush">
+        <h4 class="compose-aside-title">核心指标趋势</h4>
+        <p class="compose-aside-hint">近 3 日 · 确认方案时抬头看数据</p>
+        <div v-loading="composeMetricsLoading" class="compose-metric-trends">
+          <div
+            v-for="card in composeMetricTrendCards"
+            :key="card.key"
+            class="compose-metric-card"
+            :data-tone="card.tone"
+          >
+            <div class="compose-metric-card-head">
+              <span class="compose-metric-label">{{ card.label }}</span>
+              <strong class="compose-metric-value">{{ card.display }}</strong>
+            </div>
+            <svg
+              v-if="card.path"
+              class="compose-metric-spark"
+              viewBox="0 0 120 36"
+              width="100%"
+              height="36"
+              aria-hidden="true"
+            >
+              <path :d="card.path" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <p v-else class="compose-metric-empty">近 3 日数据不足</p>
+            <span class="compose-metric-hint">{{ card.hint }}</span>
+          </div>
+        </div>
       </section>
 
       <section v-if="composeSidebarAlerts.length" class="compose-aside-card compose-aside-card--alert">
@@ -5351,34 +6218,6 @@ watch(
             {{ item.text }}
           </li>
         </ul>
-      </section>
-
-      <section class="compose-aside-card">
-        <h4 class="compose-aside-title">快捷操作</h4>
-        <div class="compose-aside-actions">
-          <el-button size="small" plain :loading="saving" @click="openGenerateDialog()">
-            ✨ 重新用 AI 生成
-          </el-button>
-          <el-button
-            v-if="canRecordComm && planStatus === 'COMMUNICATING'"
-            size="small"
-            plain
-            :loading="saving"
-            @click="openBriefingDrawer"
-          >
-            沟通结果
-          </el-button>
-          <el-button
-            v-if="isPostRejectDraft"
-            size="small"
-            type="warning"
-            plain
-            :loading="saving"
-            @click="openRegenFromReject"
-          >
-            按反馈修订
-          </el-button>
-        </div>
       </section>
     </aside>
     </div>
@@ -5482,7 +6321,7 @@ watch(
     </el-dialog>
 
     <p
-      v-if="bundle?.plan && !composeNeedsBootstrap"
+      v-if="bundle?.plan && !composeNeedsBootstrap && !isFullscreenCompose"
       class="compose-ai-foot"
     >
       {{
@@ -5496,29 +6335,39 @@ watch(
     </div>
     </div>
 
-    <footer
-      v-if="isFullscreenCompose && !composeNeedsBootstrap"
-      class="compose-fs-footer"
-    >
-      <el-button :disabled="saving" @click="backFromCompose">取消</el-button>
-      <div class="compose-fs-footer-right">
-        <el-button
-          v-if="bundle?.draft"
-          :loading="saving"
-          @click="saveDraft()"
-        >
-          保存草稿
-        </el-button>
-        <el-button
-          v-if="composePrimaryCta"
-          type="primary"
-          :loading="saving"
-          @click="runComposePrimaryAction"
-        >
-          {{ composePrimaryCta.label }}
-        </el-button>
-      </div>
-    </footer>
+    <Teleport to="body">
+      <footer
+        v-if="isFullscreenCompose && !composeNeedsBootstrap"
+        class="compose-fs-footer-fixed"
+      >
+        <el-button plain :disabled="saving" @click="abandonAiGeneration">放弃本次生成</el-button>
+        <div class="compose-fs-footer-actions">
+          <el-button
+            v-if="bundle?.draft"
+            :loading="saving"
+            @click="saveAsNewDraft"
+          >
+            保存为草稿
+          </el-button>
+          <el-button
+            v-if="bundle?.draft"
+            type="primary"
+            :loading="saving"
+            @click="publishAiDraftDirectly"
+          >
+            确认并发布
+          </el-button>
+          <el-button
+            v-else-if="bundle?.activeVersion"
+            type="primary"
+            :loading="saving"
+            @click="openEdit"
+          >
+            编辑
+          </el-button>
+        </div>
+      </footer>
+    </Teleport>
 
     <el-dialog v-model="recipePickerVisible" title="应用机构食谱" width="520px" destroy-on-close>
       <el-checkbox v-model="applyWeekWithRecipe">同时写入示例周（若食谱含 week）</el-checkbox>
@@ -5916,11 +6765,15 @@ watch(
   height: 100%;
   min-height: 0;
   padding: 0;
-  background: #f1f5f9;
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  background: #fff;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .care-plan--fullscreen .adjust-hint {
-  margin: 12px 16px 0;
+  margin: 0;
+  border-radius: 0;
   flex-shrink: 0;
 }
 
@@ -5928,8 +6781,10 @@ watch(
 .care-plan--fullscreen .compose-panel--fs {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 0 16px 20px;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .compose-fs-header {
@@ -5938,12 +6793,10 @@ watch(
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 10px 16px;
+  padding: 12px 20px;
   background: #fff;
   border-bottom: 1px solid var(--ink-200, #e2e8f0);
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
   z-index: 20;
 }
 
@@ -5989,45 +6842,184 @@ watch(
 }
 
 .care-plan--fullscreen .compose-fs-shell {
-  max-width: 72rem;
-  margin: 16px auto 0;
-  background: transparent;
+  flex: 1;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  overflow: hidden;
 }
 
-.care-plan--fullscreen .compose-fs-main > .section-card,
-.care-plan--fullscreen .compose-fs-main > .panel.section-card {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+.care-plan--fullscreen .compose-fs-shell > .flag,
+.care-plan--fullscreen .compose-fs-shell > .reject-regen-alert {
+  flex-shrink: 0;
+  margin: 12px 20px 0;
 }
 
 .compose-fs-grid {
   display: block;
 }
 
+.care-plan--fullscreen .compose-fs-grid {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.care-plan--fullscreen .compose-fs-grid--split {
+  flex-direction: row;
+  align-items: stretch;
+}
+
 .compose-fs-grid--split {
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(240px, 0.7fr);
-  gap: 14px;
-  align-items: start;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .compose-fs-main {
   min-width: 0;
 }
 
+.care-plan--fullscreen .compose-fs-main {
+  flex: 1;
+  width: 100%;
+  background: #fff;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.care-plan--fullscreen .compose-fs-grid--split .compose-fs-main {
+  flex: 1 1 72%;
+  width: 72%;
+  max-width: 72%;
+}
+
+.compose-fs-main-inner {
+  width: 100%;
+}
+
+.care-plan--fullscreen .compose-fs-main-inner {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 20px 28px 32px;
+  box-sizing: border-box;
+}
+
+.compose-fs-ai-banner {
+  margin-bottom: 16px;
+}
+
+.compose-fs-ai-banner :deep(.el-alert__title) {
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 500;
+}
+
+/* 预览确认态：隐藏行内「修改」等编辑入口，字段只读由 composeCanFineTune 控制 */
+.care-plan--fs-preview .compose-fs-main-inner .overview-edit-btn,
+.care-plan--fs-preview .compose-fs-main-inner .title-polish,
+.care-plan--fs-preview .compose-fs-main-inner .goal-quick-tags {
+  display: none !important;
+}
+
+.care-plan--fullscreen .compose-fs-main .section-card,
+.care-plan--fullscreen .compose-fs-main .panel.section-card {
+  box-shadow: none;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.compose-fs-intro {
+  margin-bottom: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.compose-fs-patient {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.compose-fs-patient-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.compose-fs-patient-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.compose-fs-patient-chip[data-tone='danger'] {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.compose-fs-patient-chip[data-tone='ok'] {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.compose-fs-patient-chip[data-tone='warn'] {
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.compose-fs-intro-form :deep(.el-form-item) {
+  margin-bottom: 12px;
+}
+
 .compose-fs-aside {
-  position: sticky;
-  top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+}
+
+.care-plan--fullscreen .compose-fs-aside {
+  flex: 0 0 28%;
+  width: 28%;
+  max-width: 28%;
+  position: static;
+  background: #f1f5f9;
+  border-left: 1px solid #e2e8f0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  box-sizing: border-box;
 }
 
 .compose-aside-card {
-  padding: 12px 14px;
+  padding: 14px 16px;
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border-radius: 14px;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+.compose-aside-card--flush {
+  background: #fff;
 }
 
 .compose-aside-card--alert {
@@ -6036,52 +7028,21 @@ watch(
 }
 
 .compose-aside-title {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #334155;
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: #0f172a;
 }
 
-.compose-aside-dl {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.compose-aside-dl > div {
-  display: grid;
-  grid-template-columns: 48px 1fr;
-  gap: 8px;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.compose-aside-dl dt {
+.compose-aside-hint {
+  margin: -4px 0 10px;
+  font-size: 11px;
   color: #94a3b8;
-  font-weight: 600;
-}
-
-.compose-aside-dl dd {
-  margin: 0;
-  color: #334155;
-  word-break: break-word;
-}
-
-.compose-aside-body {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.55;
-  color: #475569;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
-  line-clamp: 5;
-  overflow: hidden;
 }
 
 .compose-aside-link {
-  margin-top: 10px;
+  margin-top: 0;
   border: 0;
   background: transparent;
   padding: 0;
@@ -6089,6 +7050,7 @@ watch(
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  text-align: left;
 }
 
 .compose-aside-link:disabled {
@@ -6122,31 +7084,149 @@ watch(
   gap: 8px;
 }
 
-.compose-fs-footer {
-  z-index: 25;
+.compose-metric-trends {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 48px;
+}
+
+.compose-metric-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.compose-metric-card[data-tone='good'] { border-color: #a7f3d0; }
+.compose-metric-card[data-tone='fair'] { border-color: #fde68a; }
+.compose-metric-card[data-tone='poor'] { border-color: #fecaca; }
+
+.compose-metric-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.compose-metric-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.compose-metric-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-metric-spark {
+  display: block;
+  color: #2563eb;
+}
+
+.compose-metric-card[data-tone='good'] .compose-metric-spark { color: #059669; }
+.compose-metric-card[data-tone='fair'] .compose-metric-spark { color: #d97706; }
+.compose-metric-card[data-tone='poor'] .compose-metric-spark { color: #dc2626; }
+.compose-metric-card[data-tone='empty'] .compose-metric-spark { color: #cbd5e1; }
+
+.compose-metric-empty {
+  margin: 4px 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.compose-metric-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.compose-fs-footer-fixed {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  flex-shrink: 0;
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
-  background: rgba(255, 255, 255, 0.98);
+  gap: 16px;
+  width: 100%;
+  height: 64px;
+  padding: 0 24px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+  background: #fff;
   border-top: 1px solid #e2e8f0;
-  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08);
 }
 
-.compose-fs-footer-right {
+.compose-fs-footer-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.compose-fs-preview-stack {
+  margin-top: 4px;
+}
+
+.compose-fs-finetune-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.compose-aside-dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.compose-aside-dl > div {
+  display: grid;
+  grid-template-columns: 48px 1fr;
   gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.compose-aside-dl dt {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.compose-aside-dl dd {
+  margin: 0;
+  color: #334155;
+  word-break: break-word;
 }
 
 @media (max-width: 960px) {
   .compose-fs-grid--split {
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
-  .compose-fs-aside {
-    position: static;
+  .care-plan--fullscreen .compose-fs-main,
+  .care-plan--fullscreen .compose-fs-aside {
+    flex: none;
+    width: 100%;
+    max-width: none;
+  }
+  .care-plan--fullscreen .compose-fs-aside {
+    border-left: 0;
+    border-top: 1px solid #e2e8f0;
+    max-height: 40vh;
+  }
+  .care-plan--fullscreen .compose-fs-grid {
+    overflow-y: auto;
   }
 }
 
@@ -6468,6 +7548,39 @@ watch(
   width: 100%;
 }
 
+/* 管理方案列表：占满可用宽度，禁止负 margin 撑出横向滚动条 */
+.list-shell {
+  width: 100%;
+  max-width: 100%;
+  margin: 2px 0 0;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  padding: 16px 20px 18px;
+  overflow-x: hidden;
+}
+
+.list-shell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.list-shell-head .section-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.list-shell-body {
+  width: 100%;
+}
+
 .checkin-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -6499,7 +7612,381 @@ watch(
 .plan-flow {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+}
+
+.list-assist-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.list-assist-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  align-items: stretch;
+}
+
+@media (min-width: 1100px) {
+  .list-assist-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.list-assist-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.list-assist-card--muted {
+  background: #fff;
+}
+
+.list-assist-head {
+  margin-bottom: 8px;
+}
+
+.list-assist-head--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.list-assist-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.list-assist-sub {
+  display: none; /* 压缩垂直高度，一屏露出待办 */
+}
+
+.list-assist-rate-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  line-height: 1.2;
+}
+
+.list-assist-rate-chip span {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.list-assist-rate-chip strong {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.list-assist-rate-chip.poor,
+.list-assist-rate-chip.zero {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.list-assist-rate-chip.poor strong,
+.list-assist-rate-chip.zero strong {
+  color: #be123c;
+}
+
+.list-assist-rate-chip.fair {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.list-assist-rate-chip.fair strong {
+  color: #c2410c;
+}
+
+.list-assist-rate-chip.good {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.list-assist-rate-chip.good strong {
+  color: #15803d;
+}
+
+/* 图表：约 100px，兼顾可读与一屏高度 */
+.list-assist-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 1;
+}
+
+.list-assist-chart-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.list-assist-chart-pct {
+  flex-shrink: 0;
+  height: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+}
+
+.list-assist-chart-slot {
+  position: relative;
+  width: 28px;
+  height: 100px;
+  display: block;
+  padding: 0;
+  margin: 0;
+  background: #f1f5f9;
+  border-radius: 4px 4px 0 0;
+  overflow: hidden;
+}
+
+.list-assist-chart-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-height: 0 !important;
+  border-radius: 2px 2px 0 0;
+  background: linear-gradient(180deg, #f87171 0%, #ef4444 100%);
+  box-shadow: 0 1px 2px rgba(239, 68, 68, 0.28);
+  transition: height 0.2s ease;
+  box-sizing: border-box;
+}
+
+.list-assist-chart-label {
+  flex-shrink: 0;
+  height: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 12px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.list-assist-trend-hint {
+  margin: 8px 0 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.list-assist-risk-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.list-assist-risk-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #ef4444;
+  background: #fff5f5;
+}
+
+.list-assist-risk-item.warning {
+  border-color: #ffedd5;
+  border-left-color: #f97316;
+  background: #fffaf5;
+}
+
+.list-assist-risk-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.list-assist-risk-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #9f1239;
+  line-height: 1.35;
+}
+
+.list-assist-risk-item.warning .list-assist-risk-name {
+  color: #c2410c;
+}
+
+.list-assist-risk-action {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 999px;
+  background: #ffe4e6;
+  color: #be123c;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.list-assist-risk-item.warning .list-assist-risk-action {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.list-assist-risk-action:hover {
+  filter: brightness(0.97);
+}
+
+.list-assist-risk-advice {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-assist-risk-empty {
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.list-assist-todo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.list-assist-todo-head {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 100px;
+  margin: 0;
+}
+
+.list-assist-todo-head .list-assist-title {
+  margin: 0;
+}
+
+.list-assist-todo-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  flex: 1;
+  min-width: min(100%, 420px);
+}
+
+@media (max-width: 720px) {
+  .list-assist-todo-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 待办按钮：强制 h-12，杜绝被全局 button 压扁 */
+.list-assist-todo-btn {
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  width: 100%;
+  height: 48px !important;
+  min-height: 48px !important;
+  max-height: none !important;
+  padding: 12px 14px !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 10px !important;
+  background: #fff !important;
+  color: #1e293b !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.list-assist-todo-btn > span {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.2 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+}
+
+.list-assist-todo-btn > span[aria-hidden='true'] {
+  font-size: 16px !important;
+  line-height: 1 !important;
+}
+
+.list-assist-todo-btn:hover:not(:disabled) {
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
+  color: #1d4ed8 !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.14) !important;
+}
+
+.list-assist-todo-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .plan-card {
@@ -6507,12 +7994,32 @@ watch(
   border-radius: 12px;
   background: #fff;
   padding: 14px 16px 12px;
+  /* 标题 → 摘要 → 元数据+操作：紧凑垂直流，不人为撑高 */
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
 .plan-card--active {
   border-color: #bbf7d0;
   background: linear-gradient(180deg, #f0fdf4 0%, #fff 48%);
   box-shadow: 0 1px 0 rgba(22, 163, 74, 0.06);
+}
+
+.plan-card--clickable {
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.plan-card--clickable:hover {
+  border-color: #86efac;
+  box-shadow: 0 8px 20px rgba(22, 163, 74, 0.12), 0 1px 0 rgba(22, 163, 74, 0.08);
+  transform: translateY(-1px);
+}
+
+.plan-card--clickable:focus-visible {
+  outline: 2px solid #22c55e;
+  outline-offset: 2px;
 }
 
 .plan-card--draft {
@@ -6538,8 +8045,8 @@ watch(
 
 .plan-card-title {
   margin: 0;
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--ink-800, #1e293b);
   line-height: 1.35;
   min-width: 0;
@@ -6581,32 +8088,30 @@ watch(
   cursor: default;
 }
 
-.plan-card-history-tag {
-  margin-right: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #f1f5f9;
-  color: #64748b;
+/* 历史版本：弱文字链，跟在制定人/时间后，不占按钮位 */
+.plan-card-history-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
   font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
+  font-weight: 500;
+  line-height: inherit;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+  transition: color 0.15s ease;
 }
 
-.plan-card-history-tag:hover {
-  background: #e2e8f0;
-  border-color: #cbd5e1;
-  color: #334155;
+.plan-card-history-link:hover {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .plan-card-summary {
-  margin: 0 0 16px;
+  margin: 0 0 8px;
   font-size: 13px;
   line-height: 1.55;
   color: #475569;
@@ -6623,30 +8128,45 @@ watch(
 }
 
 .plan-card-meta {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 4px 10px;
+  margin-right: auto;
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 12px;
-  color: #a8b3c2;
-  line-height: 1.4;
+  color: #94a3b8;
+  line-height: 1.35;
 }
 
 .plan-card-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
-  padding-top: 2px;
+  gap: 8px 12px;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.plan-card-actions-right {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .plan-card-actions :deep(.el-button) {
-  height: 32px;
-  min-height: 32px;
+  height: 34px;
+  min-height: 34px;
   padding: 0 14px;
   border-radius: 8px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .plan-card-actions :deep(.plan-card-discard.el-button) {
@@ -9605,5 +11125,24 @@ watch(
   padding-bottom: 12px;
   border-bottom: 1px solid #e2e8f0;
   background: #f8fafc;
+}
+
+/* Element Plus light Tooltip：白底深字，避免原生 title 黑影；不压住图表 */
+.hx-light-tooltip.el-popper {
+  z-index: 2800 !important;
+  max-width: 280px;
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  color: #334155 !important;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08) !important;
+}
+
+.hx-light-tooltip.el-popper .el-popper__arrow::before {
+  border: 1px solid #e2e8f0 !important;
+  background: #fff !important;
 }
 </style>

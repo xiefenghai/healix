@@ -497,6 +497,16 @@ function archivePresetFromPayload(payload?: Record<string, unknown> | null): Cre
     out.birthday = payload.birthday.trim().slice(0, 10)
   }
   if (typeof payload.mobile === 'string' && payload.mobile.trim()) out.mobile = payload.mobile.trim()
+  const rawHeight = payload.heightCm
+  const heightCm =
+    typeof rawHeight === 'number'
+      ? rawHeight
+      : typeof rawHeight === 'string'
+        ? Number(rawHeight.trim())
+        : NaN
+  if (Number.isFinite(heightCm) && heightCm >= 100 && heightCm <= 230) {
+    out.heightCm = Math.round(heightCm)
+  }
   return Object.keys(out).length ? out : null
 }
 const joinPeopleName = ref<string | null>(null)

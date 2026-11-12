@@ -23,12 +23,17 @@ class CarePlanPromptContextSupportTest {
                 """
                 {
                   "presentIllness": ["NONE", "DIABETES", "HYPERTENSION"],
+                  "familyHistoryStatus": "has",
+                  "familyHistoryItems": [
+                    {"kinshipLevel":"1","member":"FATHER","diseases":["FH_EARLY_MI","FH_HYPERTENSION"]},
+                    {"kinshipLevel":"1","member":"MOTHER","diseases":["FH_DIABETES"]}
+                  ],
                   "diet": {"type": "OTHER", "habit": "FAIR", "preference": "火锅", "note": "111",
                     "restriction": ["NO_SEAFOOD", "NONE"], "sugaryDrinks": "DAILY_1"},
                   "exercise": {"type": "打游戏", "frequency": "NONE", "intensity": "MODERATE", "durationMin": 0},
                   "lifestyle": {"activityLevel": "SEDENTARY", "smoking": {"status": "NEVER"}},
                   "sleep": {"hours": 6, "lateNight": "MOST_DAYS"},
-                  "psych": {"stressLevel": "HIGH", "bodyAnxiety": "SEVERE"},
+                  "psych": {"stressLevel": "HIGH", "bodyAnxiety": "SEVERE", "eatingDisorderHistory": "YES"},
                   "medical": {"exerciseRestriction": ["DOCTOR_LIMIT", "NONE"], "jointIssues": ["KNEE"]},
                   "women": {"reproductiveStatus": "NONE"},
                   "weightHistory": {"triedBefore": "MULTIPLE", "expectedPace": "ASAP"},
@@ -38,6 +43,10 @@ class CarePlanPromptContextSupportTest {
         JsonNode basic = CarePlanPromptContextSupport.summarizeBasicArchive(content);
         assertThat(basic.path("presentIllness").toString()).doesNotContain("NONE");
         assertThat(basic.path("presentIllnessLabels").toString()).contains("糖尿病", "高血压");
+        assertThat(basic.path("familyHistoryStatus").asText()).isEqualTo("has");
+        assertThat(basic.path("familyHistorySummary").asText()).contains("父").contains("早发心梗").contains("母").contains("糖尿病");
+        assertThat(basic.path("earlyCvFamilyHistory").asBoolean()).isTrue();
+        assertThat(basic.path("firstDegreeDiabetesFamilyHistory").asBoolean()).isTrue();
         assertThat(basic.path("diet").path("typeLabel").asText()).isEqualTo("其他");
         assertThat(basic.path("diet").path("habitLabel").asText()).isEqualTo("一般");
         assertThat(basic.path("diet").path("sugaryDrinksLabel").asText()).contains("每天");
@@ -54,6 +63,15 @@ class CarePlanPromptContextSupportTest {
         assertThat(basic.path("women").path("reproductiveStatusLabel").asText()).isEqualTo("都没有");
         assertThat(basic.path("weightHistory").path("triedBeforeLabel").asText()).contains("多次");
         assertThat(basic.path("medicationFlagsLabels").toString()).contains("降压");
+
+        JsonNode redlines = CarePlanPromptContextSupport.safetyRedlines(content);
+        assertThat(redlines.toString()).contains("EATING_DISORDER", "JOINT_ISSUES", "EXERCISE_RESTRICTION");
+
+        JsonNode barriers = CarePlanPromptContextSupport.barrierStrategies(
+                JsonUtils.readTree("[\"SOCIAL\",\"TAKEOUT\",\"NONE\"]"));
+        assertThat(barriers).hasSize(2);
+        assertThat(barriers.get(0).path("dietNote").asText()).contains("清蒸鱼");
+        assertThat(barriers.get(1).path("dietNote").asText()).contains("外卖");
     }
 
     @Test

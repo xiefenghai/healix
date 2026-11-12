@@ -111,4 +111,24 @@ class CreateArchiveParserTest {
         CreateArchiveDraft d = CreateArchiveParser.parse("分组 男 1990-01-01 13800138000");
         assertFalse(d.hasName());
     }
+
+    @Test
+    void parseOptionalHeightCm() {
+        CreateArchiveDraft d =
+                CreateArchiveParser.parse("建档 李敏 女 1990-05-01 13800138000 身高170cm");
+        assertEquals(170, d.heightCm());
+        assertTrue(d.hasHeightCm());
+        assertTrue(d.isComplete());
+
+        CreateArchiveDraft labeled =
+                CreateArchiveParser.parse("姓名：王芳\n性别：女\n出生：1992-11-02\n手机：13700001111\n身高：165");
+        assertEquals(165, labeled.heightCm());
+
+        CreateArchiveDraft merged =
+                CreateArchiveParser.merge(
+                        CreateArchiveParser.parse("建档 王芳 女 1992-11-02 13700001111"),
+                        CreateArchiveParser.parse("身高 168 厘米"));
+        assertEquals(168, merged.heightCm());
+        assertEquals("王芳", merged.name());
+    }
 }

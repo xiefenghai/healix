@@ -21,6 +21,19 @@ public final class CarePlanWeighTaskNormalizer {
         if (goals != null && "WEEKLY".equalsIgnoreCase(goals.path("weighFrequency").asText(""))) {
             return true;
         }
+        JsonNode redlines = contextSnapshot.get("safetyRedlines");
+        if (redlines != null && redlines.isArray()) {
+            for (JsonNode r : redlines) {
+                String code = r.path("code").asText("");
+                if ("EATING_DISORDER".equalsIgnoreCase(code)) {
+                    return true;
+                }
+            }
+        }
+        JsonNode ed = contextSnapshot.path("basicArchive").path("psych").path("eatingDisorderHistory");
+        if ("YES".equalsIgnoreCase(ed.asText("")) || "UNSURE".equalsIgnoreCase(ed.asText(""))) {
+            return true;
+        }
         JsonNode highlights = contextSnapshot.get("highlights");
         if (highlights != null && highlights.isArray()) {
             for (JsonNode h : highlights) {

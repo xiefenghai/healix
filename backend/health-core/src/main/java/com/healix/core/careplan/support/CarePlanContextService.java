@@ -108,6 +108,10 @@ public class CarePlanContextService {
         } else {
             JsonNode content = JsonUtils.readTree(basic.getContentJson());
             snapshot.set("basicArchive", CarePlanPromptContextSupport.summarizeBasicArchive(content));
+            ArrayNode redlines = CarePlanPromptContextSupport.safetyRedlines(content);
+            if (!redlines.isEmpty()) {
+                snapshot.set("safetyRedlines", redlines);
+            }
             JsonNode present = content.get("presentIllness");
             if (present != null && present.isArray()) {
                 for (JsonNode n : present) {
@@ -277,6 +281,10 @@ public class CarePlanContextService {
         ObjectNode goalsNode = CarePlanPromptContextSupport.enrichGoalsForPrompt(loadGoals(tenantId, peopleId));
         if (goalsNode != null) {
             snapshot.set("goals", goalsNode);
+            JsonNode strategies = goalsNode.path("preferences").path("barrierStrategies");
+            if (strategies instanceof ArrayNode arr && !arr.isEmpty()) {
+                snapshot.set("barrierStrategies", arr);
+            }
             String trackHint = goalsNode.path("careTracksLabels").isArray() && !goalsNode.path("careTracksLabels").isEmpty()
                     ? "方向 " + goalsNode.path("careTracksLabels").toString()
                     : "目标模式 " + goalsNode.path("mode").asText("-");
@@ -376,10 +384,15 @@ public class CarePlanContextService {
             if (StringUtils.hasText(goal.getPreferencesJson())) {
                 JsonNode prefs = JsonUtils.readTree(goal.getPreferencesJson());
                 if (prefs instanceof ObjectNode obj) {
+                    JsonNode constraints = obj.get("constraints");
                     String barriers = CarePlanPromptContextSupport.formatAnswerDisplay(
-                            "goal.constraints", obj.get("constraints"));
+                            "goal.constraints", constraints);
                     if (StringUtils.hasText(barriers)) {
                         obj.put("constraintsDisplay", barriers);
+                    }
+                    ArrayNode strategies = CarePlanPromptContextSupport.barrierStrategies(constraints);
+                    if (!strategies.isEmpty()) {
+                        obj.set("barrierStrategies", strategies);
                     }
                 }
                 node.set("preferences", prefs);

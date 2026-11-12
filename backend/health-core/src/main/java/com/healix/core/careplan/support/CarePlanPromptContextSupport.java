@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.healix.common.util.JsonUtils;
 import com.healix.core.people.support.DiseaseCodeLabels;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.springframework.util.StringUtils;
@@ -196,9 +198,296 @@ public final class CarePlanPromptContextSupport {
 
         copyEnrichedArray(o, content, "medicationFlags");
         copyEnrichedArray(o, content, "supplements");
+        copyFamilyHistory(o, content);
 
         return o;
     }
+
+    /**
+     * 家族史进方案 Prompt：状态 + 一级亲属早发心血管/糖尿病等摘要，避免只问不传。
+     */
+    static void copyFamilyHistory(ObjectNode dest, JsonNode content) {
+        if (content == null || !content.isObject()) {
+            return;
+        }
+        String status = text(content, "familyHistoryStatus");
+        if (StringUtils.hasText(status)) {
+            dest.put("familyHistoryStatus", status);
+            String statusLabel =
+                    switch (status.trim().toLowerCase(Locale.ROOT)) {
+                        case "none" -> "无家族史";
+                        case "has" -> "有家族史";
+                        default -> status;
+                    };
+            dest.put("familyHistoryStatusLabel", statusLabel);
+        }
+        String freeText = text(content, "familyHistory");
+        if (StringUtils.hasText(freeText)) {
+            dest.put("familyHistory", truncate(freeText));
+        }
+
+        JsonNode items = content.get("familyHistoryItems");
+        if (items == null || !items.isArray() || items.isEmpty()) {
+            if ("none".equalsIgnoreCase(status)) {
+                dest.put("familyHistorySummary", "已确认无一级亲属慢病家族史");
+            }
+            return;
+        }
+
+        ArrayNode outItems = dest.putArray("familyHistoryItems");
+        List<String> summaryParts = new ArrayList<>();
+        boolean earlyCv = false;
+        boolean firstDegreeDiabetes = false;
+        int n = 0;
+        for (JsonNode item : items) {
+            if (item == null || !item.isObject() || n >= MAX_ARRAY_ITEMS) {
+                continue;
+            }
+            String kinship = item.path("kinshipLevel").asText("1").trim();
+            String member = item.path("member").asText("").trim();
+            JsonNode diseases = item.path("diseases");
+            if (!diseases.isArray() || diseases.isEmpty()) {
+                continue;
+            }
+            ObjectNode row = outItems.addObject();
+            row.put("kinshipLevel", kinship);
+            if (StringUtils.hasText(member)) {
+                row.put("member", member);
+                String memberLabel = FAMILY_MEMBER_LABELS.getOrDefault(member, member);
+                row.put("memberLabel", memberLabel);
+            }
+            ArrayNode codes = row.putArray("diseases");
+            ArrayNode labels = row.putArray("diseaseLabels");
+            List<String> diseaseLabels = new ArrayList<>();
+            for (JsonNode d : diseases) {
+                if (d == null || !d.isTextual()) {
+                    continue;
+                }
+                String code = d.asText().trim().toUpperCase(Locale.ROOT);
+                if (!StringUtils.hasText(code) || "NONE".equals(code) || "UNKNOWN".equals(code)) {
+                    continue;
+                }
+                codes.add(code);
+                String label = FAMILY_DISEASE_LABELS.getOrDefault(code, code);
+                labels.add(label);
+                diseaseLabels.add(label);
+                if ("1".equals(kinship)) {
+                    if ("FH_EARLY_MI".equals(code) || "FH_CHD".equals(code) || "FH_STROKE".equals(code)) {
+                        earlyCv = true;
+                    }
+                    if ("FH_DIABETES".equals(code)) {
+                        firstDegreeDiabetes = true;
+                    }
+                }
+            }
+            if (codes.isEmpty()) {
+                outItems.remove(outItems.size() - 1);
+                continue;
+            }
+            String memberLabel = row.path("memberLabel").asText(
+                    FAMILY_MEMBER_LABELS.getOrDefault(member, StringUtils.hasText(member) ? member : "亲属"));
+            summaryParts.add(memberLabel + "·" + String.join("、", diseaseLabels));
+            n++;
+        }
+        if (!summaryParts.isEmpty()) {
+            dest.put("familyHistorySummary", String.join("；", summaryParts));
+        } else if ("none".equalsIgnoreCase(status)) {
+            dest.put("familyHistorySummary", "已确认无一级亲属慢病家族史");
+        }
+        if (earlyCv) {
+            dest.put("earlyCvFamilyHistory", true);
+        }
+        if (firstDegreeDiabetes) {
+            dest.put("firstDegreeDiabetesFamilyHistory", true);
+        }
+        JsonNode earlyFlag = content.get("earlyCvFamilyHistory");
+        if (earlyFlag != null && earlyFlag.isBoolean() && earlyFlag.asBoolean()) {
+            dest.put("earlyCvFamilyHistory", true);
+        }
+    }
+
+    /**
+     * 执行阻力 → 固定应对话术（写死策略，禁止模型空喊「要坚持」）。
+     */
+    public static ArrayNode barrierStrategies(JsonNode constraints) {
+        ArrayNode out = JsonUtils.mapper().createArrayNode();
+        if (constraints == null || constraints.isNull()) {
+            return out;
+        }
+        List<String> codes = new ArrayList<>();
+        if (constraints.isArray()) {
+            for (JsonNode n : constraints) {
+                if (n != null && n.isTextual() && StringUtils.hasText(n.asText())) {
+                    codes.add(n.asText().trim().toUpperCase(Locale.ROOT));
+                }
+            }
+        } else if (constraints.isTextual() && StringUtils.hasText(constraints.asText())) {
+            codes.add(constraints.asText().trim().toUpperCase(Locale.ROOT));
+        }
+        for (String code : codes) {
+            if ("NONE".equals(code)) {
+                continue;
+            }
+            BarrierStrategy s = BARRIER_STRATEGIES.get(code);
+            if (s == null) {
+                continue;
+            }
+            ObjectNode row = out.addObject();
+            row.put("code", code);
+            row.put("label", s.label());
+            row.put("dietNote", s.dietNote());
+            row.put("exerciseNote", s.exerciseNote());
+            row.put("executionHint", s.executionHint());
+        }
+        return out;
+    }
+
+    /**
+     * 红线禁忌：进食障碍 / 严重关节问题 / 医嘱限制运动 → 方案运动禁忌最高优先级。
+     */
+    public static ArrayNode safetyRedlines(JsonNode content) {
+        ArrayNode out = JsonUtils.mapper().createArrayNode();
+        if (content == null || !content.isObject()) {
+            return out;
+        }
+        JsonNode psych = content.path("psych");
+        String ed = psych.path("eatingDisorderHistory").asText("").trim().toUpperCase(Locale.ROOT);
+        if ("YES".equals(ed) || "UNSURE".equals(ed)) {
+            ObjectNode row = out.addObject();
+            row.put("code", "EATING_DISORDER");
+            row.put("priority", "HIGHEST");
+            row.put("source", "basic.psych.eatingDisorderHistory");
+            row.put("answer", ed);
+            row.put(
+                    "mustApplyExercise",
+                    "禁止高强度运动处方；不设激进减重；称重改为每周；contraindications 须含「进食障碍风险：避免以体重为唯一目标的训练」");
+            row.put(
+                    "mustApplyDiet",
+                    "不设热量缺口；避免极端节食话术；rationale 提示健管师考虑转介");
+        }
+
+        JsonNode medical = content.path("medical");
+        JsonNode joints = medical.path("jointIssues");
+        if (joints.isArray()) {
+            List<String> jointCodes = new ArrayList<>();
+            List<String> jointLabels = new ArrayList<>();
+            for (JsonNode j : joints) {
+                if (j == null || !j.isTextual()) {
+                    continue;
+                }
+                String c = j.asText().trim().toUpperCase(Locale.ROOT);
+                if (!StringUtils.hasText(c) || "NONE".equals(c)) {
+                    continue;
+                }
+                jointCodes.add(c);
+                String label = enumLabel("jointIssues", c);
+                jointLabels.add(StringUtils.hasText(label) ? label : c);
+            }
+            if (!jointCodes.isEmpty()) {
+                ObjectNode row = out.addObject();
+                row.put("code", "JOINT_ISSUES");
+                row.put("priority", "HIGHEST");
+                row.put("source", "basic.medical.jointIssues");
+                row.put("answer", String.join("、", jointLabels));
+                row.put(
+                        "mustApplyExercise",
+                        "以低冲击为主（快走、骑车、游泳），避开受伤部位；contraindications 须含「"
+                                + String.join("、", jointLabels)
+                                + "疼痛/损伤时强行负重或跑跳」");
+                row.put("mustApplyDiet", "");
+            }
+        }
+
+        JsonNode restrictions = medical.path("exerciseRestriction");
+        if (restrictions.isArray()) {
+            List<String> codes = new ArrayList<>();
+            List<String> labels = new ArrayList<>();
+            for (JsonNode r : restrictions) {
+                if (r == null || !r.isTextual()) {
+                    continue;
+                }
+                String c = r.asText().trim().toUpperCase(Locale.ROOT);
+                if (!StringUtils.hasText(c) || "NONE".equals(c)) {
+                    continue;
+                }
+                codes.add(c);
+                String label = enumLabel("exerciseRestriction", c);
+                labels.add(StringUtils.hasText(label) ? label : c);
+            }
+            if (!codes.isEmpty()) {
+                ObjectNode row = out.addObject();
+                row.put("code", "EXERCISE_RESTRICTION");
+                row.put("priority", "HIGHEST");
+                row.put("source", "basic.medical.exerciseRestriction");
+                row.put("answer", String.join("、", labels));
+                row.put(
+                        "mustApplyExercise",
+                        "存在运动医学限制（"
+                                + String.join("、", labels)
+                                + "）：强度上限 LIGHT；禁止跑步/负重/剧烈有氧；contraindications 必须写入上述限制原文意");
+                row.put("mustApplyDiet", "");
+            }
+        }
+        return out;
+    }
+
+    private record BarrierStrategy(String label, String dietNote, String exerciseNote, String executionHint) {}
+
+    private static final Map<String, BarrierStrategy> BARRIER_STRATEGIES = Map.of(
+            "SOCIAL",
+            new BarrierStrategy(
+                    "应酬多",
+                    "应酬时优先点清蒸鱼、白灼虾，少喝浓汤，尽量用茶水代替酒水；能拒则拒第二轮酒",
+                    "",
+                    "执行与总结点出应酬场景的可执行点餐/少酒动作"),
+            "TAKEOUT",
+            new BarrierStrategy(
+                    "经常外卖",
+                    "点外卖时选清蒸/白灼/少油菜品，主食换成杂粮饭或全麦，酱料另上、少浇；不要按「自己蒸煮」写示例餐",
+                    "",
+                    "示例餐与 swapHint 偏外卖可执行替换"),
+            "HUNGRY",
+            new BarrierStrategy(
+                    "总是觉得饿",
+                    "正餐留足蛋白质和蔬菜，避免热量压得过低；两餐间可安排约100g无糖酸奶或一小把原味坚果",
+                    "",
+                    "禁止极端缺口；称重与饥饱反馈写进复评"),
+            "FAMILY",
+            new BarrierStrategy(
+                    "家人不太支持",
+                    "请家人少放油盐，主食换成杂粮；一起吃饭时先协商一盘清口菜",
+                    "",
+                    "notes 给一句家属能配合的做法"),
+            "NO_TIME",
+            new BarrierStrategy(
+                    "没时间运动",
+                    "",
+                    "用碎片活动替代整段锻炼：通勤多走一站、饭后快走10–15分钟、久坐每小时起身2分钟",
+                    "运动任务嵌进已有空档，勿默认每天整段1小时"));
+
+    private static final Map<String, String> FAMILY_MEMBER_LABELS = parsePairs(
+            "FATHER=父",
+            "MOTHER=母",
+            "SON=子",
+            "DAUGHTER=女",
+            "BROTHER=兄/弟",
+            "SISTER=姐/妹",
+            "UNSPECIFIED=一级亲属",
+            "P_GRANDFATHER=祖父",
+            "P_GRANDMOTHER=祖母",
+            "M_GRANDFATHER=外祖父",
+            "M_GRANDMOTHER=外祖母");
+
+    private static final Map<String, String> FAMILY_DISEASE_LABELS = parsePairs(
+            "FH_DIABETES=糖尿病",
+            "FH_HYPERTENSION=高血压",
+            "FH_CHD=冠心病",
+            "FH_STROKE=脑卒中",
+            "FH_EARLY_MI=早发心梗",
+            "FH_HYPERLIPIDEMIA=高脂血症",
+            "FH_THYROID=甲状腺疾病",
+            "FH_GOUT=痛风",
+            "FH_CKD=慢性肾病");
 
     /**
      * 首诊高亮 → 模型可读约束列表（方案影响 + 追问话术）。

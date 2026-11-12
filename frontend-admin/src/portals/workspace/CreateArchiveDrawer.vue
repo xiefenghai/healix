@@ -16,6 +16,8 @@ export interface CreateArchivePreset {
   gender?: string | null
   birthday?: string | null
   mobile?: string | null
+  /** 选填身高 cm */
+  heightCm?: number | string | null
 }
 
 export interface CreateArchiveResult {
@@ -142,6 +144,8 @@ function emptyForm() {
     gender: '',
     birthday: '' as string,
     mobile: '',
+    /** 选填；有值则建档后写入 HEIGHT 指标，便于 BMI/热量估算 */
+    heightCm: '' as string,
     identityType: 'ID_CARD',
     identityValue: '',
   }
@@ -567,6 +571,13 @@ function applyPreset() {
     }
     if (p.birthday?.trim()) next.birthday = p.birthday.trim().slice(0, 10)
     if (p.mobile?.trim()) next.mobile = p.mobile.trim()
+    const h =
+      typeof p.heightCm === 'number'
+        ? p.heightCm
+        : typeof p.heightCm === 'string'
+          ? Number(String(p.heightCm).trim())
+          : NaN
+    if (Number.isFinite(h) && h >= 100 && h <= 230) next.heightCm = String(Math.round(h))
   }
   form.value = next
   showIdentity.value = false
@@ -951,6 +962,7 @@ async function createArchive(
       visible.value = false
       return
     }
+    await saveOptionalHeight(peopleId, f.heightCm)
     if (birthdayEstimated.value) markBirthdayEstimated(peopleId)
     createdPeopleId.value = peopleId
     createdDisplayName.value = displayName
@@ -993,6 +1005,34 @@ function duplicateLabel(d: DuplicateCandidate) {
   if (d.mobileMasked) parts.push(d.mobileMasked)
   if (d.hasIdentity) parts.push('已登记证件')
   return parts.filter(Boolean).join(' · ')
+}
+
+/** 建档可选身高：写入体征，不阻断建档主流程 */
+async function saveOptionalHeight(peopleId: string, raw: string) {
+  const text = String(raw || '').trim()
+  if (!text) return
+  const value = Number(text)
+  if (!Number.isFinite(value) || value < 100 || value > 230) {
+    ElMessage.warning('身高未写入：请填写 100–230 cm 的有效数值')
+    return
+  }
+  try {
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const recordedAt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+    await api(`/api/b/v1/patients/${peopleId}/metrics`, {
+      method: 'POST',
+      body: JSON.stringify({
+        metricType: 'HEIGHT',
+        value,
+        unit: 'cm',
+        recordedAt,
+        note: '建档时录入',
+      }),
+    })
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '身高写入失败，可稍后在指标页补录')
+  }
 }
 </script>
 
@@ -1136,6 +1176,20 @@ function duplicateLabel(d: DuplicateCandidate) {
           </div>
           <el-form-item label="联系电话（患者本人）" prop="mobile" required class="field-mobile">
             <el-input v-model="form.mobile" maxlength="11" placeholder="请输入手机号" />
+          </el-form-item>
+          <el-form-item label="身高（选填）" prop="heightCm" class="field-height">
+            <el-input
+              v-model="form.heightCm"
+              inputmode="decimal"
+              maxlength="5"
+              placeholder="如 170，单位 cm"
+              :disabled="submitting"
+            >
+              <template #suffix>
+                <span class="age-suffix">cm</span>
+              </template>
+            </el-input>
+            <div class="form-tip">有身高后可提前算 BMI / 热量；问卷体测仍会再采一次</div>
           </el-form-item>
 
           <el-button
