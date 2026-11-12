@@ -256,7 +256,7 @@ public class CarePlanSafetyService {
         }
         if (codes.contains("EXERCISE_RESTRICTION")
                 && !StringUtils.hasText(exercise.path("contraindications").toString().replaceAll("[\\[\\]\\s\"]", ""))) {
-            warns.add("有医嘱/医生限制运动，但 exercise.contraindications 为空，请补写禁忌");
+            warns.add("有医生限制运动，但 exercise.contraindications 为空，请补写禁忌");
         }
 
         if (!errors.isEmpty()) {
