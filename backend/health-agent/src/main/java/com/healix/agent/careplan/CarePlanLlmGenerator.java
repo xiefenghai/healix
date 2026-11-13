@@ -340,14 +340,14 @@ public class CarePlanLlmGenerator {
                 请根据以下输入生成完整管理方案 JSON。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。
                 goalSummary 须写具体目标（周期+数字：体重/血压/血糖/腰围等），禁止与「综合管理方案」类短标题同义复读口号。
-                减重数字必须自洽：若写「N个月减重Mkg」或「N个月内从Akg降至Bkg」，文中每周速度须≈总减重量/(N×4.3)kg（可四舍五入到0.1）；例：6个月从80kg降至60kg（减20kg）→每周约0.8kg，禁止写成每周0.5kg。calorieHint 中的每周速度须与 goalSummary 同一套数字，勿与 energyTarget.rateKgPerWeek 各写一套互相矛盾。
+                减重数字必须自洽：若写「N个月减重Mkg」或「N个月内从Akg降至Bkg」，文中每周速度须≈总减重量/(N×4.3)kg（可四舍五入到0.1）；例：6个月从80kg降至60kg（减20kg）→每周约0.8kg，禁止写成每周0.5kg。calorieHint 中的每周速度须与 goalSummary 同一套数字，勿与 energyTarget.rateKgPerWeek 各写一套互相矛盾。summary 与 calorieHint 中的千卡数字必须且只能引用 patientContext.energyTarget.energyKcal，禁止自行估算或编造。
                 叙事与监测须对齐 patientContext.goals.careTracks（及 diabetesClinical / hypertensionClinical）；
                 无减重方向时不要写成减肥方案。
                 若有 patientContext.highlightGuidance，须把每条 mustApply 落实到运动/饮食/执行（clinicianNote 只吸收约束，勿照抄进患者正文）。
                 有食物过敏时 sampleDay 早午晚每餐须给安全 swapHint（过敏平替）；有 lifestyleProfile/cook/availableSlots/constraints/用药 timingNote 时须落实到 notes、timeSlot 与家属一句提示。
                 糖尿病（含 T1/T2、胰岛素或降糖药）：示例餐禁止粥类主食（小米粥/杂粮粥/白米粥等），尤其晚餐；改用杂粮饭、荞麦面、全麦馒头；limited 须含「熬煮软烂的粥类（相对杂粮饭升糖更快…）」并温和提示少选软烂粥——固态杂粮饭可推荐，勿与粥类限制混淆。
                 过敏史未采集时：recommended/示例餐不要默认推虾蟹贝、花生、坚果等高致敏物；优先瘦肉/禽肉/豆腐/淡水鱼。
-                diet.notes 是患者可见「执行提醒」：短句分号分隔，禁止写医嘱/处方，禁止写过敏史未采集等内部质检话术。
+                diet.notes 是患者可见「执行提醒」：短句分号分隔，禁止写医嘱/处方，禁止写过敏史未采集等内部质检话术。principles 与 notes 禁止重复：principles 写宏观营养框架（低盐控糖粗细搭配少粥等），notes 写具体场景动作（火锅点法、外卖话术、进餐顺序、服药配合）；原则里已写少喝粥/慎火锅时，notes 至多一句带过，勿再展开。
                 示例餐主食/加餐须写克数或标准参照（如杂粮饭约150g熟重），禁止只写「1碗/2块」；sampleWeek 早餐鸡蛋类不超过3天，与豆浆/豆制品轮换。
                 sampleDay 必须与 sampleWeek.MON 完全一致（同文案/份量/swapHint），以周一为准勿另写一套。
                 若有 instruction：其中明确的忌口、偏好或强制运动限制必须落实到 recommended/示例餐/运动安排，禁止再出现被禁项；但不得压过过敏、骨折制动、highlightGuidance.mustApply、SAFETY 指南约束。

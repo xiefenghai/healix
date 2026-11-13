@@ -33,6 +33,17 @@ class EnergyTargetCalculatorTest {
     }
 
     @Test
+    void losePointFiveKgCreatesRoughly550Deficit() {
+        var maintain = EnergyTargetCalculator.calculate(new EnergyTargetCalculator.Input(
+                "MALE", 40, 175, 86, ActivityLevelEnum.LIGHT, DietGoalTypeEnum.MAINTAIN, 0,
+                CarePlanTemplateKeyEnum.GENERAL));
+        var lose = EnergyTargetCalculator.calculate(new EnergyTargetCalculator.Input(
+                "MALE", 40, 175, 86, ActivityLevelEnum.LIGHT, DietGoalTypeEnum.LOSE, 0.5,
+                CarePlanTemplateKeyEnum.GENERAL));
+        assertEquals(550, maintain.energyKcal() - lose.energyKcal());
+    }
+
+    @Test
     void planLimitedCodesMapToFoodTags() {
         assertTrue(DietContextLoader.foodTagsFor("REFINED_SUGAR", "精制糖及含糖饮料、甜点").contains("SUGARY_DRINK"));
         assertTrue(DietContextLoader.foodTagsFor("PICKLED_FOOD", "腌制、酱制食品").contains("PICKLED"));

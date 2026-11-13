@@ -321,7 +321,8 @@ public class CarePlanService {
         CarePlanSampleDaySync.syncFromMonday(generated.diet());
         CarePlanOsaHintSupport.apply(
                 generated.diet(), asObjectNode(generated.exercise()), generated.contextSnapshot());
-        energyTargetService.applyFresh(tenantId, peopleId, generated.diet());
+        energyTargetService.applyFresh(
+                tenantId, peopleId, generated.diet(), asObjectNode(generated.contextSnapshot()));
         CarePlanRationaleSupport.scrubGuidelineCodesInPlan(
                 generated.exercise(), generated.diet(), generated.execution(), generated.contextSnapshot());
         CarePlanWeighTaskNormalizer.normalize(generated.execution(), generated.contextSnapshot());

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { api, hasRole } from '../../shared/http'
+import { formatGender } from '../../shared/enums'
 import { isAbortError, postSse } from '../../shared/agent-stream'
 import { emitAgentCarePlanUpdated, onAgentCarePlanUpdated } from '../../shared/agent-events'
 import { takeAgentDraft } from '../../shared/agent-draft-bus'
@@ -12,7 +13,7 @@ import CarePlanEnergyRing from '../../shared/CarePlanEnergyRing.vue'
 import AllergyPanel from './AllergyPanel.vue'
 import PatientIntakeDetailView from './PatientIntakeDetailView.vue'
 import { allergyTick, fetchAllergySummary, type AllergySummary } from '../../shared/allergy'
-import { getIntakeStatus } from '../../shared/intake'
+import { ageYearsFromBirthday, getIntakeStatus } from '../../shared/intake'
 import {
   highlightPlanSummaryHtml,
   joinPlanSummarySections,
@@ -63,6 +64,12 @@ import CarePlanPreviewContent from '../../shared/CarePlanPreviewContent.vue'
 import CarePlanBriefingDrawer, {
   type CarePlanBriefingSubmitPayload,
 } from '../../shared/CarePlanBriefingDrawer.vue'
+import CarePlanReviseCopilotPanel, {
+  type ReviseChatMessage,
+} from '../../shared/CarePlanReviseCopilotPanel.vue'
+import ComposeMetricMiniChart, {
+  type ComposeMiniSeries,
+} from '../../shared/ComposeMetricMiniChart.vue'
 import GuidelineRefTags from '../../shared/GuidelineRefTags.vue'
 import {
   generatedBeforeLibrary,
@@ -313,8 +320,62 @@ const isFullscreenCompose = computed(() =>
 )
 const patientName = ref('')
 const patientGender = ref('')
+const patientBirthday = ref('')
+const patientDiseaseLabels = ref<string[]>([])
 const patientMobile = ref('')
 const patientClientLinked = ref<boolean | null>(null)
+
+const patientAgeLabel = computed(() => {
+  const age = ageYearsFromBirthday(patientBirthday.value)
+  return age != null ? `${age}岁` : '—'
+})
+
+const patientGenderLabel = computed(() =>
+  patientGender.value ? formatGender(patientGender.value) || '—' : '—',
+)
+
+type DiseaseTagTone = 'diabetes' | 'hypertension' | 'obesity' | 'lipid' | 'neutral'
+
+function diseaseTagTone(label: string, code?: string): DiseaseTagTone {
+  const c = String(code || '').toLowerCase()
+  const l = String(label || '')
+  if (
+    c.includes('diabetes') ||
+    c === 'dm' ||
+    c === 't2dm' ||
+    c === 't1dm' ||
+    l.includes('糖尿')
+  ) {
+    return 'diabetes'
+  }
+  if (c.includes('hypertension') || c === 'htn' || l.includes('高血压')) {
+    return 'hypertension'
+  }
+  if (c.includes('obesity') || l.includes('肥胖')) return 'obesity'
+  if (c.includes('lipid') || c.includes('hyperlipidemia') || l.includes('血脂') || l.includes('高脂')) {
+    return 'lipid'
+  }
+  return 'neutral'
+}
+
+/** 优先档案病种；草稿/生效方案快照作兜底 */
+const patientDiseaseTags = computed(() => {
+  const snap = (bundle.value?.draft?.contextSnapshot ||
+    bundle.value?.activeVersion?.contextSnapshot ||
+    null) as { diseaseLabels?: unknown; diseaseCodes?: unknown } | null
+  const fromProfile = patientDiseaseLabels.value.map((x) => String(x || '').trim()).filter(Boolean)
+  const fromSnap = Array.isArray(snap?.diseaseLabels)
+    ? snap!.diseaseLabels.map((x) => String(x || '').trim()).filter(Boolean)
+    : []
+  const labels = fromProfile.length ? fromProfile : fromSnap
+  const codes = Array.isArray(snap?.diseaseCodes)
+    ? snap!.diseaseCodes.map((x) => String(x || '').trim()).filter(Boolean)
+    : []
+  return labels.map((label, i) => ({
+    label,
+    tone: diseaseTagTone(label, codes[i]),
+  }))
+})
 
 const loading = ref(false)
 const saving = ref(false)
@@ -351,6 +412,8 @@ async function loadPatientName() {
       data: {
         displayName?: string
         gender?: string
+        birthday?: string | null
+        diseaseLabels?: string[] | null
         mobile?: string | null
         clientLinked?: boolean | null
       }
@@ -359,12 +422,18 @@ async function loadPatientName() {
     // 绝不用 peopleId 冒充姓名（解读话术会变成「2E先生您好」）
     patientName.value = name
     patientGender.value = String(res.data?.gender || '').trim()
+    patientBirthday.value = String(res.data?.birthday || '').trim().slice(0, 10)
+    patientDiseaseLabels.value = Array.isArray(res.data?.diseaseLabels)
+      ? res.data.diseaseLabels.map((x) => String(x || '').trim()).filter(Boolean)
+      : []
     patientMobile.value = String(res.data?.mobile || '').replace(/\s+/g, '')
     patientClientLinked.value =
       typeof res.data?.clientLinked === 'boolean' ? res.data.clientLinked : null
   } catch {
     patientName.value = ''
     patientGender.value = ''
+    patientBirthday.value = ''
+    patientDiseaseLabels.value = []
     patientMobile.value = ''
     patientClientLinked.value = null
   }
@@ -1296,6 +1365,268 @@ const applyWeekWithRecipe = ref(true)
 const isDraftMode = computed(() => !!bundle.value?.draft)
 /** 全屏预览确认：默认只读，点「编辑」后才可微调字段 */
 const composeFsFineTuning = ref(false)
+
+/** AI 局部修订 Copilot（嵌在右侧边栏底部） */
+const reviseCopilotSending = ref(false)
+const reviseCopilotProgress = ref('')
+const reviseCopilotMessages = ref<ReviseChatMessage[]>([])
+const reviseAiHighlightSections = ref<string[]>([])
+const reviseCopilotPanelRef = ref<{ focusInput?: () => void | Promise<void> } | null>(null)
+let reviseHighlightTimer: ReturnType<typeof setTimeout> | null = null
+let reviseMsgSeq = 0
+
+const REVISE_WELCOME =
+  '你好，我可以按你的意见局部修订当前草稿（如饮食/运动），请直接描述要改什么。'
+
+function pushReviseMessage(
+  role: ReviseChatMessage['role'],
+  content: string,
+  tone?: ReviseChatMessage['tone'],
+) {
+  reviseMsgSeq += 1
+  reviseCopilotMessages.value.push({
+    id: `rev-${Date.now()}-${reviseMsgSeq}`,
+    role,
+    content,
+    tone,
+    at: Date.now(),
+  })
+}
+
+function ensureReviseWelcome() {
+  if (!reviseCopilotMessages.value.length) {
+    pushReviseMessage('assistant', REVISE_WELCOME, 'muted')
+  }
+}
+
+watch(
+  () => !!bundle.value?.draft && isFullscreenCompose.value && !composeAutoGenerating.value,
+  (show) => {
+    if (show) ensureReviseWelcome()
+  },
+  { immediate: true },
+)
+
+function flashReviseHighlights(sections: string[]) {
+  if (reviseHighlightTimer) clearTimeout(reviseHighlightTimer)
+  reviseAiHighlightSections.value = sections
+  if (!sections.length) return
+  reviseHighlightTimer = setTimeout(() => {
+    reviseAiHighlightSections.value = []
+    reviseHighlightTimer = null
+  }, 8000)
+}
+
+function snapshotCurrentDraftForRevise() {
+  const payload = buildPayload()
+  return {
+    exercise: payload.exercise,
+    diet: payload.diet,
+    execution: payload.execution,
+    title: payload.title,
+    goalSummary: payload.goalSummary,
+    summary: payload.summary,
+    rationaleOverview: payload.rationaleOverview,
+  }
+}
+
+function detectReviseChangedSections(
+  before: Record<string, unknown>,
+  after: { exercise?: unknown; diet?: unknown; execution?: unknown; contextSnapshot?: unknown },
+): string[] {
+  const changed: string[] = []
+  const beforeSummary = String(before.summary || '')
+  const afterSummary = String(
+    (after.contextSnapshot as { summary?: string } | undefined)?.summary || before.summary || '',
+  )
+  if (JSON.stringify(before.exercise ?? null) !== JSON.stringify(after.exercise ?? null)) {
+    changed.push('exercise')
+  }
+  if (JSON.stringify(before.diet ?? null) !== JSON.stringify(after.diet ?? null)) {
+    changed.push('diet')
+  }
+  if (JSON.stringify(before.execution ?? null) !== JSON.stringify(after.execution ?? null)) {
+    changed.push('execution')
+  }
+  if (beforeSummary !== afterSummary || String(before.goalSummary || '') !== String(
+    (after as { goalSummary?: string }).goalSummary || before.goalSummary || '',
+  )) {
+    // goal/summary 变化归入方案总结高亮
+    if (!changed.includes('summary')) changed.unshift('summary')
+  }
+  return changed
+}
+
+function summarizeReviseChanges(
+  instruction: string,
+  sections: string[],
+  before: Record<string, unknown>,
+  afterDraft: NonNullable<CarePlanBundle['draft']>,
+): string {
+  const bits: string[] = []
+  if (sections.includes('diet')) {
+    const bDiet = (before.diet || {}) as Record<string, unknown>
+    const aDiet = (afterDraft.diet || {}) as Record<string, unknown>
+    const bText = JSON.stringify(bDiet)
+    const aText = JSON.stringify(aDiet)
+    if (/鱼|三文鱼|带鱼|鲈鱼/.test(instruction) || (/鱼/.test(bText) && !/鱼/.test(aText))) {
+      bits.push('已调整示例餐中的鱼类蛋白，替换为其他优质蛋白')
+    } else {
+      bits.push('已更新饮食相关内容（原则/示例餐/提醒等）')
+    }
+  }
+  if (sections.includes('exercise')) {
+    const sumDur = (ex: unknown) => {
+      let total = 0
+      const plan = (ex as { weeklyPlan?: Array<{ items?: Array<{ durationMin?: number }> }> } | null)
+        ?.weeklyPlan
+      if (!Array.isArray(plan)) return total
+      for (const day of plan) {
+        for (const it of day.items || []) total += Number(it.durationMin || 0)
+      }
+      return total
+    }
+    const beforeMin = sumDur(before.exercise)
+    const afterMin = sumDur(afterDraft.exercise)
+    if (beforeMin > 0 && afterMin > 0 && afterMin < beforeMin) {
+      bits.push(`已将一周运动总时长由约 ${beforeMin} 分钟调整为约 ${afterMin} 分钟`)
+    } else {
+      bits.push('已调整运动安排')
+    }
+  }
+  if (sections.includes('execution')) bits.push('已同步执行计划任务')
+  if (sections.includes('summary') && !bits.length) bits.push('已更新方案总结/目标表述')
+  if (!bits.length) bits.push('已按你的意见完成局部修订，请在左侧核对')
+  return bits.join('；') + '。'
+}
+
+function findReviseSafetyBlock(
+  beforeFlags: SafetyFlag[],
+  afterFlags: SafetyFlag[],
+): SafetyFlag | null {
+  const beforeKeys = new Set(
+    beforeFlags
+      .filter((f) => f.level === 'ERROR')
+      .map((f) => `${f.code}::${f.message || ''}`),
+  )
+  // 仅拦截本次修订新引入的 ERROR，避免历史红线反复误拦
+  const newErrors = afterFlags.filter(
+    (f) => f.level === 'ERROR' && !beforeKeys.has(`${f.code}::${f.message || ''}`),
+  )
+  if (!newErrors.length) return null
+  const exerciseHit = newErrors.find((f) =>
+    /EXERCISE|运动|骨折|关节|限制|VIGOROUS|跑步|高强度/i.test(`${f.code} ${f.message}`),
+  )
+  return exerciseHit || newErrors[0] || null
+}
+
+async function restoreDraftSnapshot(snapshot: ReturnType<typeof snapshotCurrentDraftForRevise>) {
+  const version = bundle.value?.draft?.version
+  if (version == null) return
+  const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan/draft`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      version,
+      exercise: snapshot.exercise,
+      diet: snapshot.diet,
+      execution: snapshot.execution,
+      title: snapshot.title,
+      goalSummary: snapshot.goalSummary,
+      summary: snapshot.summary,
+      rationaleOverview: snapshot.rationaleOverview,
+    }),
+  })
+  bundle.value = res.data
+  syncFormFromBundle()
+}
+
+async function sendReviseInstruction(instruction: string) {
+  const text = instruction.trim()
+  if (!text || reviseCopilotSending.value) return
+  if (!bundle.value?.draft) {
+    ElMessage.warning('请先进入草稿')
+    return
+  }
+  pushReviseMessage('user', text)
+  reviseCopilotSending.value = true
+  reviseCopilotProgress.value = '保存当前草稿…'
+  const beforeSnapshot = snapshotCurrentDraftForRevise()
+  const beforeFlags = [...(bundle.value.draft.safetyFlags || [])]
+  try {
+    await saveDraft({ quiet: true })
+    const currentDraft = snapshotCurrentDraftForRevise()
+    reviseCopilotProgress.value = 'AI 正在按你的意见修订…'
+    let resultBundle: CarePlanBundle | null = null
+    let streamError = ''
+    await postSse(
+      `/api/b/v1/patients/${peopleId.value}/care-plan/revise/stream`,
+      {
+        instruction: text,
+        revisionInstruction: text,
+        currentDraft,
+      },
+      {
+        onProgress: (msg) => {
+          reviseCopilotProgress.value = msg
+        },
+        onResult: (payload) => {
+          resultBundle = payload as CarePlanBundle
+        },
+        onError: (msg) => {
+          streamError = msg
+        },
+      },
+    )
+    if (streamError) {
+      pushReviseMessage('assistant', `修改失败：${streamError}`, 'danger')
+      return
+    }
+    if (!resultBundle?.draft) {
+      pushReviseMessage('assistant', '修改失败：未返回有效草稿，请重试或改用手工编辑。', 'danger')
+      return
+    }
+    const afterDraft = resultBundle.draft
+    const block = findReviseSafetyBlock(beforeFlags, afterDraft.safetyFlags || [])
+    if (block) {
+      reviseCopilotProgress.value = '检测到安全红线，正在回滚…'
+      try {
+        await restoreDraftSnapshot(beforeSnapshot)
+      } catch {
+        // 回滚失败时仍提示拦截，保留服务端结果供健管师查看
+      }
+      const isExercise =
+        /EXERCISE|运动|骨折|关节|限制|VIGOROUS|跑步|高强度/i.test(`${block.code} ${block.message}`)
+      pushReviseMessage(
+        'assistant',
+        isExercise
+          ? '修改失败：触发了运动安全红线，请重新指示。'
+          : `修改失败：触发了安全红线（${block.message || block.code}），请重新指示。`,
+        'danger',
+      )
+      flashReviseHighlights([])
+      return
+    }
+    bundle.value = resultBundle
+    syncFormFromBundle()
+    const changed = detectReviseChangedSections(beforeSnapshot, afterDraft)
+    const summary = summarizeReviseChanges(text, changed, beforeSnapshot, afterDraft)
+    pushReviseMessage('assistant', summary, 'success')
+    flashReviseHighlights(changed.length ? changed : ['diet'])
+    scheduleSampleDayEstimate()
+    refreshAfterMutation()
+  } catch (e) {
+    if (!isAbortError(e)) {
+      pushReviseMessage(
+        'assistant',
+        `修改失败：${e instanceof Error ? e.message : '修订请求异常'}`,
+        'danger',
+      )
+    }
+  } finally {
+    reviseCopilotSending.value = false
+    reviseCopilotProgress.value = ''
+  }
+}
 const composeCanFineTune = computed(() => {
   if (!bundle.value?.draft) return false
   if (isFullscreenCompose.value) return composeFsFineTuning.value
@@ -1339,7 +1670,33 @@ const highlightByDomain = computed(() =>
 )
 
 function jumpToHighlightDomain(domain: CarePlanWarnDomain) {
-  subTab.value = domain
+  if (composeFsFineTuning.value || !isFullscreenCompose.value) {
+    subTab.value = domain
+    return
+  }
+  // 全屏预览态：平滑滚到左侧对应章节
+  void nextTick(() => {
+    const root =
+      (document.querySelector('.compose-fs-main-inner .preview-scroll') as HTMLElement | null) ||
+      (document.querySelector('.compose-fs-main-inner') as HTMLElement | null)
+    const el =
+      (document.querySelector(`#preview-sec-${domain}`) as HTMLElement | null) ||
+      (document.querySelector(`.sec-item-${domain}`) as HTMLElement | null)
+    if (!el) {
+      subTab.value = domain
+      return
+    }
+    if (root) {
+      const rootRect = root.getBoundingClientRect()
+      const elRect = el.getBoundingClientRect()
+      root.scrollTo({
+        top: Math.max(0, root.scrollTop + (elRect.top - rootRect.top) - 16),
+        behavior: 'smooth',
+      })
+    } else {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  })
 }
 
 function domainHighlightTitle(domain: CarePlanWarnDomain) {
@@ -1364,6 +1721,21 @@ const WARN_REVIEW_HEADLINES: Record<string, string> = {
   CONTEXT_INCOMPLETE: '档案上下文不完整',
   NO_DISEASE_TAG: '病种匹配待核对',
   MISSING_RATIONALE: '生成依据不完整',
+}
+
+/** 侧栏「需关注」副文案：信息降噪，标题外再给一句可读解释 */
+const WARN_REVIEW_HINTS: Record<string, string> = {
+  MISSING_RATIONALE: 'AI 未能提取到足够的家族史或近期体检数据。',
+  GUIDELINE_TARGET_CONFLICT: '本方案运动量低于指南标准，或为术后限制下的个体化安排。',
+  GUIDELINE_REF_MISSING: '部分建议未匹配到特定指南库，请人工复核。',
+  GUIDELINE_REF_UNKNOWN: '引用编码可能过期或写错，请对照指南库核对。',
+  GUIDELINE_KB_EMPTY: '当前租户指南库为空，依据校验已跳过。',
+  ALLERGY_UNKNOWN: '过敏史未采集，饮食建议无法排除过敏风险。',
+  HIGH_ALLERGEN_FOOD_UNCHECKED: '示例餐含常见高致敏食材，请确认患者可耐受。',
+  CONTEXT_INCOMPLETE: '档案或缺项较多，方案建议可能不够个体化。',
+  HYPOGLYCEMIA_RISK: '存在低血糖相关信号，请核对运动强度与注意事项。',
+  DIET_INTOLERANCE: '存在饮食不耐受记录，请核对示例餐是否已避开。',
+  NO_DISEASE_TAG: '病种标签不完整，模板匹配可能偏差。',
 }
 
 const DOMAIN_CTA_LABEL: Record<CarePlanWarnDomain, string> = {
@@ -1443,12 +1815,8 @@ const allergyDialogOpen = ref(false)
 const allergyTickAtOpen = ref(0)
 const overviewTitleEditing = ref(false)
 const overviewGoalEditing = ref(false)
-/** 顶部质检黄条默认收起，把主舞台让给总览 */
-const qcWarnExpanded = ref(false)
 /** 黄灯逐条点过「去核对/补采」的 code */
 const composeWarnVisitedCodes = ref<Set<string>>(new Set())
-/** 底部「已全部知悉并核对」 */
-const composeWarnBulkAcked = ref(false)
 const overviewRationaleOpen = ref(false)
 
 type ComposeWarnReviewCard = {
@@ -1481,12 +1849,6 @@ function runComposeWarnCardCta(card: ComposeWarnReviewCard) {
   else markComposeWarnVisited(card.code)
 }
 
-function ackAllComposeWarns() {
-  composeWarnBulkAcked.value = true
-  composeWarnVisitedCodes.value = new Set(topWarnSections.value.map((s) => s.code))
-  ElMessage.success('已确认全部风险点，可以发布')
-}
-
 const composeWarnReviewCards = computed((): ComposeWarnReviewCard[] =>
   topWarnSections.value.map((sec, index) => {
     const headlineBase =
@@ -1510,32 +1872,24 @@ const composeWarnReviewCards = computed((): ComposeWarnReviewCard[] =>
     }
 
     let description = [...new Set(descParts.map((s) => s.trim()).filter(Boolean))].join('；')
+    const hint = WARN_REVIEW_HINTS[sec.code] || ''
     if (!description) {
-      description =
-        sec.code === 'ALLERGY_UNKNOWN'
-          ? '患者过敏史未采集，饮食建议无法排除过敏风险'
-          : '请展开核对相关方案内容后再发布'
+      description = hint || '请展开核对相关方案内容后再发布'
+    } else if (hint && description.length < 12) {
+      description = hint
     }
 
     return {
       code: sec.code,
       index: index + 1,
-      headline: `⚠️ ${headlineBase}`,
+      headline: headlineBase,
       description,
       refs: [...new Set(refs)],
       cta: warnSectionCta(sec),
-      visited: composeWarnBulkAcked.value || composeWarnVisitedCodes.value.has(sec.code),
+      visited: composeWarnVisitedCodes.value.has(sec.code),
     }
   }),
 )
-
-/** 有黄灯时：全部点过 CTA，或点过底部统一确认，才允许发布 */
-const composeWarnPublishUnlocked = computed(() => {
-  const cards = composeWarnReviewCards.value
-  if (!cards.length) return true
-  if (composeWarnBulkAcked.value) return true
-  return cards.every((c) => composeWarnVisitedCodes.value.has(c.code))
-})
 
 function onOverviewRationaleToggle(e: Event) {
   const el = e.target as HTMLDetailsElement | null
@@ -2104,6 +2458,28 @@ const composeLatestSlots = ref<ComposeLatestSlot[]>([])
 const composeRecentMetrics = ref<ComposeMetricRow[]>([])
 const composeMetricsLoading = ref(false)
 
+type ComposeMetricTrendCard = {
+  key: string
+  label: string
+  display: string
+  hint: string
+  /** 最新测量时间，如 11-18 06:00；用于卡片新鲜度提示 */
+  latestAt: string
+  tone: 'good' | 'fair' | 'poor' | 'empty'
+  categories: string[]
+  series: ComposeMiniSeries[]
+  unit: string
+  precision: number
+  mocked: boolean
+  /** 正常范围（图表浅绿基准带） */
+  normalRange?: { min: number; max: number } | null
+}
+
+type ComposeDaySeries = {
+  values: Array<number | null>
+  times: Array<string | null>
+}
+
 function composeIsoDay(d: Date) {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -2111,11 +2487,26 @@ function composeIsoDay(d: Date) {
   return `${y}-${m}-${day}`
 }
 
+function composeLastNDayLabels(days: number): string[] {
+  const labels: string[] = []
+  const base = new Date()
+  base.setHours(0, 0, 0, 0)
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(base)
+    d.setDate(base.getDate() - i)
+    // X 轴极简：仅 MM/DD，不含时分
+    labels.push(
+      `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
+    )
+  }
+  return labels
+}
+
 function composeLastNDaysSeries(
   days: number,
   predicate: (m: ComposeMetricRow) => boolean,
   pick: (m: ComposeMetricRow) => number | null,
-): Array<number | null> {
+): ComposeDaySeries {
   const best = new Map<string, { at: string; v: number }>()
   for (const m of composeRecentMetrics.value) {
     if (!predicate(m) || !m.recordedAt) continue
@@ -2126,43 +2517,53 @@ function composeLastNDaysSeries(
     const cur = best.get(day)
     if (!cur || at > cur.at) best.set(day, { at, v })
   }
-  const out: Array<number | null> = []
+  const values: Array<number | null> = []
+  const times: Array<string | null> = []
   const base = new Date()
   base.setHours(0, 0, 0, 0)
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(base)
     d.setDate(base.getDate() - i)
-    out.push(best.get(composeIsoDay(d))?.v ?? null)
+    const hit = best.get(composeIsoDay(d))
+    values.push(hit?.v ?? null)
+    times.push(hit?.at ?? null)
   }
-  return out
+  return { values, times }
 }
 
-function composeSparkGeometry(
-  points: Array<number | null>,
-  w = 120,
-  h = 36,
-): { path: string; dots: Array<{ x: number; y: number }> } {
-  const vals = points.filter((p): p is number => p != null && !Number.isNaN(p))
-  if (vals.length < 2) return { path: '', dots: [] }
-  const min = Math.min(...vals)
-  const max = Math.max(...vals)
-  const span = max - min || 1
-  const step = w / Math.max(points.length - 1, 1)
-  const parts: string[] = []
-  const plotted: Array<{ x: number; y: number }> = []
-  points.forEach((p, i) => {
-    if (p == null || Number.isNaN(p)) return
-    const x = i * step
-    const y = h - ((p - min) / span) * (h - 8) - 4
-    plotted.push({ x, y })
-    parts.push(`${parts.length ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`)
-  })
-  const dots =
-    plotted.length >= 2
-      ? [plotted[0]!, plotted[plotted.length - 1]!]
-      : plotted
-  return { path: parts.join(' '), dots }
+/** 近 N 日序列全空时，把最新一次读数落到对应日（或末日），避免有读数却空白图 */
+function composeInjectLatestPoint(
+  series: ComposeDaySeries | Array<number | null>,
+  latest: number | null | undefined,
+  recordedAt?: string | null,
+): ComposeDaySeries {
+  const values = Array.isArray(series) ? [...series] : [...series.values]
+  const times = Array.isArray(series)
+    ? values.map(() => null as string | null)
+    : [...series.times]
+  if (latest == null || Number.isNaN(Number(latest))) return { values, times }
+  if (values.some((p) => p != null)) return { values, times }
+  const day = recordedAt ? String(recordedAt).slice(0, 10) : ''
+  let idx = values.length - 1
+  if (day) {
+    const base = new Date()
+    base.setHours(0, 0, 0, 0)
+    for (let i = 0; i < values.length; i++) {
+      const d = new Date(base)
+      d.setDate(base.getDate() - (values.length - 1 - i))
+      if (composeIsoDay(d) === day) {
+        idx = i
+        break
+      }
+    }
+  }
+  values[idx] = Number(latest)
+  times[idx] = recordedAt ? String(recordedAt) : times[idx]
+  return { values, times }
 }
+
+const COMPOSE_TREND_DAYS = 5
+const COMPOSE_TREND_LABELS = computed(() => composeLastNDayLabels(COMPOSE_TREND_DAYS))
 
 function composeFindSlot(...types: string[]) {
   const set = new Set(types.map((t) => t.toUpperCase()))
@@ -2175,17 +2576,109 @@ function composeFormatSlotTime(at?: string | null) {
   return s.length >= 16 ? s.slice(5, 16).replace('T', ' ') : s
 }
 
-const composeMetricTrendCards = computed(() => {
-  const cards: Array<{
-    key: string
-    label: string
-    display: string
-    hint: string
-    tone: 'good' | 'fair' | 'poor' | 'empty'
-    points: Array<number | null>
-    path: string
-    dots: Array<{ x: number; y: number }>
-  }> = []
+/** 卡片/Tooltip 用：11-18 06:00 */
+function composeFormatFreshAt(at?: string | null) {
+  if (!at) return ''
+  const s = String(at).replace('T', ' ')
+  // 2025-11-18 06:00:00 → 11-18 06:00
+  if (s.length >= 16) return `${s.slice(5, 10)} ${s.slice(11, 16)}`
+  if (s.length >= 10) return s.slice(5, 10)
+  return s
+}
+
+function composeToneColor(tone: 'good' | 'fair' | 'poor' | 'empty') {
+  if (tone === 'poor') return '#b91c1c'
+  if (tone === 'fair') return '#b45309'
+  if (tone === 'good') return '#047857'
+  return '#475569'
+}
+
+/** 按日取最近身高（cm），再与体重算 BMI */
+function composeBmiSeries(
+  days: number,
+): {
+  values: Array<number | null>
+  times: Array<string | null>
+  latest: number | null
+  at?: string | null
+} {
+  const heights = composeRecentMetrics.value
+    .filter((m) => String(m.metricType || '').toUpperCase() === 'HEIGHT' && m.recordedAt)
+    .map((m) => ({
+      day: String(m.recordedAt).slice(0, 10),
+      at: String(m.recordedAt),
+      v: Number(m.value),
+    }))
+    .filter((x) => Number.isFinite(x.v) && x.v > 0)
+    .sort((a, b) => (a.at < b.at ? -1 : 1))
+  const latestHeightSlot = composeFindSlot('HEIGHT')
+  const fallbackHeight =
+    latestHeightSlot?.value != null && Number(latestHeightSlot.value) > 0
+      ? Number(latestHeightSlot.value)
+      : heights.length
+        ? heights[heights.length - 1]!.v
+        : null
+
+  const weightSeries = composeLastNDaysSeries(
+    days,
+    (m) => String(m.metricType || '').toUpperCase() === 'WEIGHT',
+    (m) => (m.value == null ? null : Number(m.value)),
+  )
+  const weightSlot = composeFindSlot('WEIGHT')
+  const weightInjected = composeInjectLatestPoint(
+    weightSeries,
+    weightSlot?.value == null ? null : Number(weightSlot.value),
+    weightSlot?.recordedAt,
+  )
+
+  const base = new Date()
+  base.setHours(0, 0, 0, 0)
+  const out: Array<number | null> = []
+  const times: Array<string | null> = []
+  for (let i = 0; i < days; i++) {
+    const d = new Date(base)
+    d.setDate(base.getDate() - (days - 1 - i))
+    const day = composeIsoDay(d)
+    const w = weightInjected.values[i]
+    if (w == null || !Number.isFinite(w) || w <= 0) {
+      out.push(null)
+      times.push(null)
+      continue
+    }
+    let h = fallbackHeight
+    for (const row of heights) {
+      if (row.day <= day) h = row.v
+    }
+    if (h == null || h <= 0) {
+      out.push(null)
+      times.push(null)
+      continue
+    }
+    const m = h / 100
+    out.push(Number((w / (m * m)).toFixed(1)))
+    times.push(weightInjected.times[i] ?? null)
+  }
+  const latest =
+    [...out].reverse().find((v) => v != null) ??
+    (fallbackHeight && weightSlot?.value
+      ? Number(
+          (
+            Number(weightSlot.value) /
+            Math.pow(fallbackHeight / 100, 2)
+          ).toFixed(1),
+        )
+      : null)
+  return {
+    values: out,
+    times,
+    latest,
+    at: weightSlot?.recordedAt || latestHeightSlot?.recordedAt,
+  }
+}
+
+const composeMetricTrendCards = computed((): ComposeMetricTrendCard[] => {
+  const cards: ComposeMetricTrendCard[] = []
+  const cats = COMPOSE_TREND_LABELS.value
   const sys = composeFindSlot('BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE', 'BP_SYS')
   const dia = composeFindSlot('BLOOD_PRESSURE_DIA', 'BP_DIA')
   const glucose = composeFindSlot('BLOOD_GLUCOSE', 'GLUCOSE')
@@ -2203,27 +2696,66 @@ const composeMetricTrendCards = computed(() => {
     bpDisplay = String(sysV)
     bpTone = sysV >= 140 ? 'poor' : sysV >= 130 ? 'fair' : 'good'
   }
-  const bpPoints = composeLastNDaysSeries(
-    3,
-    (m) =>
-      m.metricType === 'BLOOD_PRESSURE_SYS' ||
-      m.metricType === 'BLOOD_PRESSURE' ||
-      m.metricType === 'BP_SYS',
-    (m) => {
-      if (m.extra?.sys != null) return Number(m.extra.sys)
-      return m.value == null ? null : Number(m.value)
-    },
+
+  const sysRaw = composeInjectLatestPoint(
+    composeLastNDaysSeries(
+      COMPOSE_TREND_DAYS,
+      (m) =>
+        m.metricType === 'BLOOD_PRESSURE_SYS' ||
+        m.metricType === 'BLOOD_PRESSURE' ||
+        m.metricType === 'BP_SYS',
+      (m) => {
+        if (m.extra?.sys != null) return Number(m.extra.sys)
+        return m.value == null ? null : Number(m.value)
+      },
+    ),
+    sysV,
+    sys?.recordedAt || dia?.recordedAt,
   )
-  const bpGeo = composeSparkGeometry(bpPoints)
+  const diaRaw = composeInjectLatestPoint(
+    composeLastNDaysSeries(
+      COMPOSE_TREND_DAYS,
+      (m) =>
+        m.metricType === 'BLOOD_PRESSURE_DIA' ||
+        m.metricType === 'BP_DIA' ||
+        m.metricType === 'BLOOD_PRESSURE',
+      (m) => {
+        if (m.extra?.dia != null) return Number(m.extra.dia)
+        if (m.metricType === 'BLOOD_PRESSURE') return null
+        return m.value == null ? null : Number(m.value)
+      },
+    ),
+    diaV,
+    dia?.recordedAt || sys?.recordedAt,
+  )
   cards.push({
     key: 'bp',
     label: '血压',
     display: bpDisplay,
-    hint: composeFormatSlotTime(sys?.recordedAt || dia?.recordedAt) || '近3日',
+    hint: composeFormatSlotTime(sys?.recordedAt || dia?.recordedAt) || '近5日',
+    latestAt: composeFormatFreshAt(sys?.recordedAt || dia?.recordedAt),
     tone: bpTone,
-    points: bpPoints,
-    path: bpGeo.path,
-    dots: bpGeo.dots,
+    categories: cats,
+    series: [
+      {
+        name: '收缩压',
+        data: sysRaw.values,
+        times: sysRaw.times,
+        color: '#b91c1c',
+        area: false,
+      },
+      {
+        name: '舒张压',
+        data: diaRaw.values,
+        times: diaRaw.times,
+        color: '#1d4ed8',
+        area: false,
+      },
+    ],
+    unit: 'mmHg',
+    precision: 0,
+    mocked: false,
+    normalRange: { min: 90, max: 140 },
   })
 
   const gv = glucose?.value == null ? null : Number(glucose.value)
@@ -2233,24 +2765,93 @@ const composeMetricTrendCards = computed(() => {
     else if (gv >= 7.0) gTone = 'fair'
     else gTone = 'good'
   }
-  const gPoints = composeLastNDaysSeries(
-    3,
-    (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
-    (m) => (m.value == null ? null : Number(m.value)),
+  const gRaw = composeInjectLatestPoint(
+    composeLastNDaysSeries(
+      COMPOSE_TREND_DAYS,
+      (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
+      (m) => (m.value == null ? null : Number(m.value)),
+    ),
+    gv,
+    glucose?.recordedAt,
   )
-  const gGeo = composeSparkGeometry(gPoints)
   cards.push({
     key: 'glu',
     label: '血糖',
     display: gv == null ? '暂无' : String(gv),
     hint: composeFormatSlotTime(glucose?.recordedAt) || (glucose?.unit || 'mmol/L'),
+    latestAt: composeFormatFreshAt(glucose?.recordedAt),
     tone: gTone,
-    points: gPoints,
-    path: gGeo.path,
-    dots: gGeo.dots,
+    categories: cats,
+    series: [
+      {
+        name: '血糖',
+        data: gRaw.values,
+        times: gRaw.times,
+        color: composeToneColor(gTone),
+        area: true,
+      },
+    ],
+    unit: 'mmol/L',
+    precision: 1,
+    mocked: false,
+    normalRange: { min: 4, max: 7 },
+  })
+
+  const bmiPack = composeBmiSeries(COMPOSE_TREND_DAYS)
+  const bmiSeries = composeInjectLatestPoint(
+    { values: bmiPack.values, times: bmiPack.times },
+    bmiPack.latest,
+    bmiPack.at,
+  )
+  let bmiTone: 'good' | 'fair' | 'poor' | 'empty' = 'empty'
+  if (bmiPack.latest != null) {
+    if (bmiPack.latest >= 28 || bmiPack.latest < 18.5) bmiTone = 'poor'
+    else if (bmiPack.latest >= 24) bmiTone = 'fair'
+    else bmiTone = 'good'
+  }
+  cards.push({
+    key: 'bmi',
+    label: 'BMI',
+    display: bmiPack.latest == null ? '暂无' : String(bmiPack.latest),
+    hint: composeFormatSlotTime(bmiPack.at) || '由身高+体重推算',
+    latestAt: composeFormatFreshAt(bmiPack.at),
+    tone: bmiTone,
+    categories: cats,
+    series: [
+      {
+        name: 'BMI',
+        data: bmiSeries.values,
+        times: bmiSeries.times,
+        color: composeToneColor(bmiTone),
+        area: true,
+      },
+    ],
+    unit: '',
+    precision: 1,
+    mocked: false,
+    normalRange: { min: 18.5, max: 24 },
   })
   return cards
 })
+
+const composeMetricDetailOpen = ref(false)
+const composeMetricDetailKey = ref<string | null>(null)
+
+const composeMetricDetailCard = computed((): ComposeMetricTrendCard | null => {
+  const key = composeMetricDetailKey.value
+  if (!key) return null
+  return composeMetricTrendCards.value.find((c) => c.key === key) || null
+})
+
+function openComposeMetricDetail(card: ComposeMetricTrendCard) {
+  composeMetricDetailKey.value = card.key
+  composeMetricDetailOpen.value = true
+}
+
+function closeComposeMetricDetail() {
+  composeMetricDetailOpen.value = false
+  composeMetricDetailKey.value = null
+}
 
 async function loadComposeMetricTrends() {
   if (!peopleId.value || !isFullscreenCompose.value) return
@@ -2259,7 +2860,7 @@ async function loadComposeMetricTrends() {
     const to = new Date()
     const from = new Date()
     from.setHours(0, 0, 0, 0)
-    from.setDate(from.getDate() - 2)
+    from.setDate(from.getDate() - (COMPOSE_TREND_DAYS - 1))
     const qs = new URLSearchParams({
       from: from.toISOString().slice(0, 19),
       to: to.toISOString().slice(0, 19),
@@ -2293,6 +2894,9 @@ const composeAllergyLabel = computed(() => {
   }
   return '待确认'
 })
+
+/** 有具体过敏原时加强警示 */
+const composeAllergyAlert = computed(() => allergySummary.value?.status === 'HAS')
 
 const allergyUnknown = computed(() => {
   const st = allergySummary.value?.status
@@ -4237,20 +4841,21 @@ const canRecordComm = computed(
 )
 
 /** 与顶部黄灯「N 处需重点核对」同源，保证数量一致 */
-const composeSidebarAlerts = computed(() =>
-  composeWarnReviewCards.value.map((card) => ({
-    tone: 'warning' as const,
-    text: `${card.index}. ${card.headline.replace(/^⚠️\s*/, '')}`,
-    code: card.code,
-  })),
-)
+const composeSidebarAlerts = computed(() => composeWarnReviewCards.value)
 
 const composeReviewWarnCount = computed(() => topWarnSections.value.length)
+
+/** 侧栏「需关注」默认展开；条目多时可收起 */
+const asideWarnExpanded = ref(true)
+
+function asideWarnCtaLabel(card: ComposeWarnReviewCard) {
+  if (card.cta.kind === 'allergy') return '去补采 >'
+  return '去核对 >'
+}
 
 watch(
   () => topWarnSections.value.map((s) => s.code).join('|'),
   () => {
-    composeWarnBulkAcked.value = false
     composeWarnVisitedCodes.value = new Set()
   },
 )
@@ -4317,9 +4922,15 @@ async function saveAsNewDraft() {
   backFromCompose()
 }
 
+/** 黄灯风险示例文案，供强行发布确认框引用 */
+function composeWarnForceExample(): string {
+  const first = composeWarnReviewCards.value[0]
+  if (!first) return '风险点待核对'
+  return first.headline.replace(/^⚠️\s*/, '') || first.description || '风险点待核对'
+}
+
 /**
- * 确认并发布：有黄灯警告时强制复核确认，禁止一键盲发。
- * 复核通过后落盘草稿并直接发布生效。
+ * 确认并发布：有黄灯时弹出强行发布二次确认，禁止一键盲发。
  */
 async function publishAiDraftDirectly() {
   if (!bundle.value?.draft) {
@@ -4331,24 +4942,28 @@ async function publishAiDraftDirectly() {
     return
   }
   const reviewN = composeReviewWarnCount.value
-  if (reviewN > 0 && !composeWarnPublishUnlocked.value) {
-    qcWarnExpanded.value = true
-    ElMessage.warning(`请先核对全部 ${reviewN} 处风险点，或点击「已全部知悉并核对」后再发布`)
-    return
-  }
   try {
-    await ElMessageBox.confirm(
-      reviewN > 0
-        ? `本方案有 ${reviewN} 处需重点核对，确认已全部查看并采纳？`
-        : '确认发布该方案并使其生效？',
-      reviewN > 0 ? '发布前强制复核' : '确认并发布',
-      {
+    if (reviewN > 0) {
+      asideWarnExpanded.value = true
+      await ElMessageBox.confirm(
+        `当前方案仍存在 ${reviewN} 处需重点核对的风险（如：${composeWarnForceExample()}）。请确认是否已人工评估并强行发布？`,
+        '发布前风险确认',
+        {
+          type: 'warning',
+          confirmButtonText: '确认强行发布',
+          cancelButtonText: '取消，返回核对',
+          confirmButtonClass: 'el-button--danger',
+          distinguishCancelAndClose: true,
+        },
+      )
+    } else {
+      await ElMessageBox.confirm('确认发布该方案并使其生效？', '确认并发布', {
         type: 'warning',
-        confirmButtonText: reviewN > 0 ? '已核对，确认发布' : '确认并发布',
-        cancelButtonText: reviewN > 0 ? '返回核对' : '取消',
+        confirmButtonText: '确认并发布',
+        cancelButtonText: '取消',
         distinguishCancelAndClose: true,
-      },
-    )
+      })
+    }
   } catch {
     return
   }
@@ -4625,6 +5240,7 @@ onUnmounted(() => {
   composeGenAbort?.abort()
   stopComposeGenStepTicker()
   stopAgentCarePlanListen()
+  if (reviseHighlightTimer) clearTimeout(reviseHighlightTimer)
 })
 
 watch(
@@ -4693,7 +5309,7 @@ watch(
           <el-button
             v-if="bundle?.draft && bundle?.activeVersion"
             plain
-            class="compose-compare-ghost"
+            class="compose-fs-ghost-btn"
             :disabled="saving || composeCompareLoading"
             @click="openComposePrevCompare"
           >
@@ -4707,14 +5323,20 @@ watch(
           </template>
           <template v-else>
             <el-button
-              :type="composeFsFineTuning ? 'warning' : 'primary'"
               plain
-              :disabled="saving"
+              class="compose-fs-ghost-btn"
+              :class="{ 'is-active-edit': composeFsFineTuning }"
+              :disabled="saving || reviseCopilotSending"
               @click="toggleComposeFineTune"
             >
               {{ composeFsFineTuning ? '完成微调' : '编辑' }}
             </el-button>
-            <el-button plain :disabled="saving" @click="previewClientEffect">
+            <el-button
+              plain
+              class="compose-fs-ghost-btn"
+              :disabled="saving"
+              @click="previewClientEffect"
+            >
               预览 C 端效果
             </el-button>
           </template>
@@ -5212,62 +5834,6 @@ watch(
       :closable="false"
       class="flag"
     />
-    <div v-if="composeWarnReviewCards.length" class="qc-fold qc-fold--warn-emphasis flag">
-      <button
-        type="button"
-        class="qc-fold-toggle"
-        :aria-expanded="qcWarnExpanded"
-        @click="qcWarnExpanded = !qcWarnExpanded"
-      >
-        <span class="qc-fold-main">
-          <span class="qc-fold-icon qc-fold-icon--sm" aria-hidden="true">⚠</span>
-          <span class="qc-fold-title">
-            AI 提示：本方案有 {{ composeReviewWarnCount }} 处需重点核对
-            <span v-if="composeWarnPublishUnlocked" class="qc-fold-acked">· 已核对</span>
-          </span>
-        </span>
-        <span class="qc-fold-action">{{ qcWarnExpanded ? '收起' : '展开查看' }}</span>
-      </button>
-      <div v-show="qcWarnExpanded" class="qc-fold-body">
-        <article
-          v-for="card in composeWarnReviewCards"
-          :key="'w-' + card.code"
-          class="qc-warn-card"
-          :class="{ 'qc-warn-card--done': card.visited }"
-        >
-          <div class="qc-warn-card-icon" aria-hidden="true">⚠</div>
-          <div class="qc-warn-card-body">
-            <h5 class="qc-warn-card-title">{{ card.index }}. {{ card.headline }}</h5>
-            <p class="qc-warn-card-desc">{{ card.description }}</p>
-            <div v-if="card.refs.length" class="qc-warn-card-refs">
-              <p v-for="(ref, rIdx) in card.refs" :key="rIdx" class="qc-warn-card-ref">{{ ref }}</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            class="qc-warn-card-cta"
-            :class="{ 'qc-warn-card-cta--done': card.visited }"
-            @click.stop="runComposeWarnCardCta(card)"
-          >
-            {{ card.cta.label }}
-          </button>
-        </article>
-        <div class="qc-warn-ack-bar">
-          <p class="qc-warn-ack-text">
-            请确认以上 {{ composeReviewWarnCount }} 个风险点已全部核对完毕。
-          </p>
-          <button
-            type="button"
-            class="qc-warn-ack-btn"
-            :class="{ 'qc-warn-ack-btn--done': composeWarnPublishUnlocked }"
-            :disabled="composeWarnPublishUnlocked"
-            @click="ackAllComposeWarns"
-          >
-            已全部知悉并核对
-          </button>
-        </div>
-      </div>
-    </div>
     <el-dialog
       v-model="allergyDialogOpen"
       title="补采过敏史"
@@ -5278,6 +5844,39 @@ watch(
     >
       <AllergyPanel v-if="allergyDialogOpen" :people-id="peopleId" />
     </el-dialog>
+    <el-dialog
+      v-model="composeMetricDetailOpen"
+      :title="composeMetricDetailCard ? `${composeMetricDetailCard.label}趋势` : '指标趋势'"
+      width="560px"
+      destroy-on-close
+      append-to-body
+      class="compose-metric-detail-dialog"
+      @closed="closeComposeMetricDetail"
+    >
+      <div v-if="composeMetricDetailCard" class="compose-metric-detail">
+        <div class="compose-metric-detail-head">
+          <strong class="compose-metric-detail-value">{{ composeMetricDetailCard.display }}</strong>
+          <span class="compose-metric-detail-unit">
+            {{ composeMetricDetailCard.unit || '近5日' }}
+            <template v-if="composeMetricDetailCard.latestAt">
+              · 最新测量：{{ composeMetricDetailCard.latestAt }}
+            </template>
+            <template v-else-if="composeMetricDetailCard.hint">
+              · {{ composeMetricDetailCard.hint }}
+            </template>
+          </span>
+        </div>
+        <div class="compose-metric-detail-chart">
+          <ComposeMetricMiniChart
+            :categories="composeMetricDetailCard.categories"
+            :series="composeMetricDetailCard.series"
+            :unit="composeMetricDetailCard.unit"
+            :precision="composeMetricDetailCard.precision"
+            :normal-range="composeMetricDetailCard.normalRange"
+          />
+        </div>
+      </div>
+    </el-dialog>
 
     <div
       class="compose-fs-grid"
@@ -5286,7 +5885,7 @@ watch(
           isFullscreenCompose && !!bundle?.draft && !composeAutoGenerating,
       }"
     >
-    <div class="compose-fs-main">
+    <div class="compose-fs-main" v-loading="reviseCopilotSending" element-loading-text="AI 正在修订方案…">
     <div class="compose-fs-main-inner">
     <div v-if="composeImmersiveGenerating" class="compose-fs-generating">
       <div class="compose-fs-skel" aria-hidden="true">
@@ -5368,6 +5967,7 @@ watch(
           :data="composeFsLivePreview"
           stacked
           :reset-key="bundle?.draft?.id || 'compose-draft-preview'"
+          :ai-highlight-sections="reviseAiHighlightSections"
         />
       </div>
 
@@ -5570,7 +6170,11 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'summary'" class="panel panel--fluid section-card">
+      <div
+        v-show="subTab === 'summary'"
+        class="panel panel--fluid section-card"
+        :class="{ 'panel-ai-updated': reviseAiHighlightSections.includes('summary') }"
+      >
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--brand">总</span>
@@ -5645,7 +6249,11 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'exercise'" class="panel panel--fluid section-card">
+      <div
+        v-show="subTab === 'exercise'"
+        class="panel panel--fluid section-card"
+        :class="{ 'panel-ai-updated': reviseAiHighlightSections.includes('exercise') }"
+      >
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--brand">运</span>
@@ -5893,7 +6501,11 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'diet'" class="panel panel--fluid section-card">
+      <div
+        v-show="subTab === 'diet'"
+        class="panel panel--fluid section-card"
+        :class="{ 'panel-ai-updated': reviseAiHighlightSections.includes('diet') }"
+      >
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--teal">食</span>
@@ -6516,7 +7128,11 @@ watch(
         </div>
       </div>
 
-      <div v-show="subTab === 'execution'" class="panel panel--fluid section-card">
+      <div
+        v-show="subTab === 'execution'"
+        class="panel panel--fluid section-card"
+        :class="{ 'panel-ai-updated': reviseAiHighlightSections.includes('execution') }"
+      >
         <div class="panel-head">
           <h3 class="section-title">
             <span class="section-ic section-ic--violet">执</span>
@@ -6738,113 +7354,133 @@ watch(
       v-if="isFullscreenCompose && bundle?.draft && !composeAutoGenerating"
       class="compose-fs-aside"
     >
-      <section class="compose-aside-card">
-        <h4 class="compose-aside-title">患者摘要</h4>
-        <dl class="compose-aside-dl">
-          <div>
-            <dt>姓名</dt>
-            <dd>{{ patientName || '—' }}</dd>
+      <div class="compose-aside-scroll">
+        <section class="compose-aside-card">
+          <h4 class="compose-aside-title">患者摘要</h4>
+          <div class="compose-aside-identity">
+            <strong class="compose-aside-name">{{ patientName || '—' }}</strong>
+            <span class="compose-aside-id-sep" aria-hidden="true">·</span>
+            <span class="compose-aside-id-meta">{{ patientGenderLabel }}</span>
+            <span class="compose-aside-id-sep" aria-hidden="true">·</span>
+            <span class="compose-aside-id-meta">{{ patientAgeLabel }}</span>
           </div>
-          <div>
-            <dt>性别</dt>
-            <dd>{{ patientGender || '—' }}</dd>
-          </div>
-          <div>
-            <dt>过敏</dt>
-            <dd>{{ composeAllergyLabel }}</dd>
-          </div>
-          <div v-if="overviewTemplateKey">
-            <dt>模板</dt>
-            <dd>{{ formatCarePlanTemplateKey(overviewTemplateKey) }}</dd>
-          </div>
-        </dl>
-        <button
-          v-if="bundle?.activeVersion"
-          type="button"
-          class="compose-aside-link"
-          :disabled="composeCompareLoading"
-          @click="openComposePrevCompare"
-        >
-          {{ composeComparePrevLabel }} →
-        </button>
-        <button
-          type="button"
-          class="compose-aside-link"
-          :disabled="intakeDetailLoading"
-          @click="openIntakeDetail"
-        >
-          查看首诊问卷 →
-        </button>
-      </section>
-
-      <section class="compose-aside-card compose-aside-card--flush">
-        <h4 class="compose-aside-title">核心指标趋势</h4>
-        <p class="compose-aside-hint">近 3 日 · 确认方案时抬头看数据</p>
-        <div v-loading="composeMetricsLoading" class="compose-metric-trends">
-          <div
-            v-for="card in composeMetricTrendCards"
-            :key="card.key"
-            class="compose-metric-card"
-            :data-tone="card.tone"
-          >
-            <div class="compose-metric-card-head">
-              <span class="compose-metric-label">{{ card.label }}</span>
-              <strong class="compose-metric-value">{{ card.display }}</strong>
+          <dl class="compose-aside-kv">
+            <div class="compose-aside-kv-row">
+              <dt>病种</dt>
+              <dd>
+                <div v-if="patientDiseaseTags.length" class="compose-aside-disease-tags">
+                  <span
+                    v-for="tag in patientDiseaseTags"
+                    :key="tag.label"
+                    class="compose-aside-disease-tag"
+                    :data-tone="tag.tone"
+                  >{{ tag.label }}</span>
+                </div>
+                <span v-else class="compose-aside-kv-empty">—</span>
+              </dd>
             </div>
-            <svg
-              v-if="card.path"
-              class="compose-metric-spark"
-              viewBox="0 0 120 36"
-              width="100%"
-              height="40"
-              aria-hidden="true"
-            >
-              <g class="compose-metric-spark-grid" stroke="#e2e8f0" stroke-width="1">
-                <line x1="0" y1="9" x2="120" y2="9" />
-                <line x1="0" y1="18" x2="120" y2="18" />
-                <line x1="0" y1="27" x2="120" y2="27" />
-              </g>
-              <path
-                :d="card.path"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <circle
-                v-for="(dot, di) in card.dots"
-                :key="di"
-                :cx="dot.x"
-                :cy="dot.y"
-                r="2.8"
-                fill="currentColor"
-                stroke="#fff"
-                stroke-width="1.2"
-              />
-            </svg>
-            <p v-else class="compose-metric-empty">近 3 日数据不足</p>
-            <span class="compose-metric-hint">{{ card.hint }}</span>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="composeSidebarAlerts.length" class="compose-aside-card compose-aside-card--alert">
-        <h4 class="compose-aside-title">
-          需关注
-          <span class="compose-aside-count">{{ composeReviewWarnCount }}</span>
-        </h4>
-        <ul class="compose-aside-alerts">
-          <li
-            v-for="(item, idx) in composeSidebarAlerts"
-            :key="item.code || idx"
-            class="compose-aside-alert"
-            :data-tone="item.tone"
+            <div class="compose-aside-kv-row">
+              <dt>过敏</dt>
+              <dd :class="{ 'is-alert': composeAllergyAlert }">
+                <span v-if="composeAllergyAlert" class="compose-aside-allergy-warn" aria-hidden="true">⚠</span>
+                <span>{{ composeAllergyLabel }}</span>
+              </dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            class="compose-aside-intake-btn"
+            :disabled="intakeDetailLoading"
+            @click="openIntakeDetail"
           >
-            {{ item.text }}
-          </li>
-        </ul>
-      </section>
+            查看首诊问卷 →
+          </button>
+        </section>
+
+        <section class="compose-aside-card compose-aside-card--flush compose-aside-card--metrics">
+          <div class="compose-aside-metrics-head">
+            <h4 class="compose-aside-title">核心指标趋势</h4>
+            <span class="compose-aside-hint compose-aside-hint--inline">近5日 · 点击放大</span>
+          </div>
+          <div v-loading="composeMetricsLoading" class="compose-metric-trends compose-metric-trends--row">
+            <button
+              v-for="card in composeMetricTrendCards"
+              :key="card.key"
+              type="button"
+              class="compose-metric-card compose-metric-card--tile"
+              :data-tone="card.tone"
+              @click="openComposeMetricDetail(card)"
+            >
+              <div class="compose-metric-card-head compose-metric-card-head--tile">
+                <span class="compose-metric-label">{{ card.label }}</span>
+                <div class="compose-metric-value-wrap">
+                  <strong class="compose-metric-value">{{ card.display }}</strong>
+                  <span v-if="card.latestAt" class="compose-metric-fresh">
+                    最新测量：{{ card.latestAt }}
+                  </span>
+                </div>
+              </div>
+              <ComposeMetricMiniChart
+                spark
+                :categories="card.categories"
+                :series="card.series"
+                :unit="card.unit"
+                :precision="card.precision"
+                :normal-range="card.normalRange"
+              />
+            </button>
+          </div>
+        </section>
+
+        <section v-if="composeSidebarAlerts.length" class="compose-aside-card compose-aside-card--alert">
+          <button
+            type="button"
+            class="compose-aside-warn-toggle"
+            :aria-expanded="asideWarnExpanded"
+            @click="asideWarnExpanded = !asideWarnExpanded"
+          >
+            <h4 class="compose-aside-title compose-aside-title--warn">
+              需关注
+              <span class="compose-aside-count">{{ composeReviewWarnCount }}</span>
+            </h4>
+            <span class="compose-aside-warn-action">{{ asideWarnExpanded ? '收起' : '展开' }}</span>
+          </button>
+          <ul v-show="asideWarnExpanded" class="compose-aside-alerts">
+            <li
+              v-for="card in composeSidebarAlerts"
+              :key="card.code"
+              class="compose-aside-alert"
+              :class="{ 'compose-aside-alert--done': card.visited }"
+            >
+              <div class="compose-aside-alert-main">
+                <p class="compose-aside-alert-title">
+                  {{ card.index }}. {{ card.headline }}
+                </p>
+                <p v-if="card.description" class="compose-aside-alert-desc">
+                  {{ card.description }}
+                </p>
+              </div>
+              <button
+                type="button"
+                class="compose-aside-alert-cta"
+                @click.stop="runComposeWarnCardCta(card)"
+              >
+                {{ asideWarnCtaLabel(card) }}
+              </button>
+            </li>
+          </ul>
+        </section>
+
+        <section class="compose-aside-card compose-aside-card--copilot">
+          <CarePlanReviseCopilotPanel
+            ref="reviseCopilotPanelRef"
+            :messages="reviseCopilotMessages"
+            :sending="reviseCopilotSending"
+            :progress="reviseCopilotProgress"
+            @send="sendReviseInstruction"
+          />
+        </section>
+      </div>
     </aside>
     </div>
 
@@ -6958,33 +7594,44 @@ watch(
             : '方案已发布 · 健管师已确认'
       }}
     </p>
-    </div>
-    </div>
 
     <footer
       v-if="isFullscreenCompose && bundle?.draft && !composeAutoGenerating"
       class="compose-fs-footer"
     >
-      <div class="compose-fs-footer-left">
-        <el-button plain :disabled="saving" @click="abandonAiGeneration">放弃本次生成</el-button>
-      </div>
-      <div class="compose-fs-footer-actions">
-        <el-button :loading="saving" @click="saveAsNewDraft">保存为草稿</el-button>
-        <el-button
-          type="primary"
-          :loading="saving"
-          :disabled="!composeWarnPublishUnlocked"
-          :title="
-            composeWarnPublishUnlocked
-              ? undefined
-              : `请先核对全部 ${composeReviewWarnCount} 处风险点`
-          "
-          @click="publishAiDraftDirectly"
-        >
-          确认并发布
-        </el-button>
+      <div class="compose-fs-footer-inner">
+        <div class="compose-fs-footer-left">
+          <el-button
+            text
+            class="compose-fs-btn-abandon"
+            :disabled="saving"
+            @click="abandonAiGeneration"
+          >
+            放弃本次生成
+          </el-button>
+        </div>
+        <div class="compose-fs-footer-actions">
+          <el-button
+            plain
+            class="compose-fs-btn-draft"
+            :loading="saving"
+            @click="saveAsNewDraft"
+          >
+            保存为草稿
+          </el-button>
+          <el-button
+            type="primary"
+            class="compose-fs-btn-publish"
+            :loading="saving"
+            @click="publishAiDraftDirectly"
+          >
+            确认并发布
+          </el-button>
+        </div>
       </div>
     </footer>
+    </div>
+    </div>
 
     <el-drawer
       v-model="composeCompareOpen"
@@ -7472,6 +8119,25 @@ watch(
   font-size: 12px;
 }
 
+.panel-ai-updated {
+  background: rgba(240, 253, 244, 0.55) !important;
+  box-shadow: inset 0 0 0 1px #bbf7d0;
+  transition: background 0.35s ease;
+}
+
+.panel-ai-updated::before {
+  content: 'AI 已更新';
+  display: inline-block;
+  margin: 12px 16px 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+}
+
 .compose-fs-header-actions {
   display: flex;
   align-items: center;
@@ -7648,7 +8314,10 @@ watch(
 .compose-fs-aside {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 .care-plan--fullscreen .compose-fs-aside {
@@ -7658,19 +8327,70 @@ watch(
   position: static;
   background: #f1f5f9;
   border-left: 1px solid #e2e8f0;
+  overflow: hidden;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.compose-aside-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
   padding: 16px;
   box-sizing: border-box;
 }
 
+.compose-aside-scroll > .compose-aside-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  box-sizing: border-box;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
 .compose-aside-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 14px 16px;
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  box-sizing: border-box;
+}
+
+.compose-aside-card--copilot {
+  flex: 1 1 auto;
+  flex-shrink: 1;
+  min-height: 300px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.compose-aside-card--copilot :deep(.revise-panel) {
+  flex: 1 1 auto;
+  min-height: 300px;
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: none;
+  background: transparent;
 }
 
 .compose-aside-card--flush {
@@ -7678,9 +8398,12 @@ watch(
 }
 
 .compose-aside-card--alert {
-  border-color: #fde68a;
+  border: 1px solid #fde68a;
   background: #fffbeb;
-  border-left: 4px solid #f59e0b;
+  /* 左侧强调用 inset，避免 4px border 造成外缘视觉错位 */
+  box-shadow:
+    inset 3px 0 0 #f59e0b,
+    0 4px 14px rgba(15, 23, 42, 0.06);
 }
 
 .compose-aside-title {
@@ -7715,67 +8438,177 @@ watch(
   color: #94a3b8;
 }
 
-.compose-aside-link {
-  margin-top: 0;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: #2563eb;
-  font-size: 12px;
+.compose-aside-intake-btn {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 2px;
+  padding: 7px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
   font-weight: 600;
+  line-height: 1.3;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   cursor: pointer;
-  text-align: left;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.compose-aside-link:disabled {
+.compose-aside-intake-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.12);
+}
+
+.compose-aside-intake-btn:disabled {
   opacity: 0.6;
   cursor: wait;
 }
 
-.compose-aside-alerts {
+.compose-aside-warn-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.compose-aside-title--warn {
+  margin: 0;
+}
+
+.compose-aside-warn-action {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b45309;
+}
+
+.compose-aside-alerts {
+  margin: 10px 0 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .compose-aside-alert {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.compose-aside-alert + .compose-aside-alert {
+  padding-top: 10px;
+  border-top: 1px solid rgba(245, 158, 11, 0.22);
+}
+
+.compose-aside-alert-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.compose-aside-alert-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: #92400e;
+}
+
+.compose-aside-alert-desc {
+  margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.5;
+  color: #64748b;
+}
+
+.compose-aside-alert-cta {
+  flex-shrink: 0;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #92400e;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #fff;
-  border: 1px solid #fde68a;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  opacity: 0.85;
 }
 
-.compose-aside-alert[data-tone='danger'] {
-  color: #b91c1c;
-  border-color: #fecaca;
-  background: #fef2f2;
+.compose-aside-alert-cta:hover {
+  color: #78350f;
+  text-decoration: underline;
+  opacity: 1;
 }
 
-.compose-aside-alert[data-tone='warning'] {
-  color: #92400e;
+.compose-aside-alert--done .compose-aside-alert-title {
+  color: #a16207;
 }
 
-.compose-aside-alert[data-tone='info'] {
-  color: #0369a1;
-  border-color: #bae6fd;
-  background: #f0f9ff;
+.compose-aside-alert--done .compose-aside-alert-cta {
+  color: #a8a29e;
+  opacity: 0.75;
 }
-
-.compose-aside-alert[data-tone='danger'] { color: #b91c1c; }
-.compose-aside-alert[data-tone='warning'] { color: #b45309; }
-.compose-aside-alert[data-tone='info'] { color: #0369a1; }
 
 .compose-aside-actions {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
+}
+
+.compose-aside-card--metrics {
+  width: 100%;
+  max-width: 100%;
+  padding-bottom: 10px;
+  box-sizing: border-box;
+}
+
+.compose-aside-card--metrics .compose-metric-trends {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.compose-aside-metrics-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.compose-aside-metrics-head .compose-aside-title {
+  margin: 0;
+}
+
+.compose-aside-hint--inline {
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .compose-metric-trends {
@@ -7785,6 +8618,13 @@ watch(
   min-height: 48px;
 }
 
+.compose-metric-trends--row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+
 .compose-metric-card {
   padding: 10px 12px;
   border-radius: 10px;
@@ -7792,9 +8632,56 @@ watch(
   border: 1px solid #e2e8f0;
 }
 
+.compose-metric-card--tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 108px;
+  padding: 8px 8px 6px;
+  margin: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  box-shadow: none;
+  outline: none;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.compose-metric-card--tile:hover {
+  border-color: #cbd5e1;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.compose-metric-card--tile:focus {
+  outline: none;
+  border-color: #e2e8f0;
+  box-shadow: none;
+}
+
+.compose-metric-card--tile:focus-visible {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.35);
+}
+
 .compose-metric-card[data-tone='good'] { border-color: #a7f3d0; }
 .compose-metric-card[data-tone='fair'] { border-color: #fde68a; }
 .compose-metric-card[data-tone='poor'] { border-color: #fecaca; }
+
+/* 小卡默认中性边框，避免常驻彩框像「脏高亮」；色调留给数值本身 */
+.compose-metric-card--tile[data-tone='good'],
+.compose-metric-card--tile[data-tone='fair'],
+.compose-metric-card--tile[data-tone='poor'],
+.compose-metric-card--tile[data-tone='empty'] {
+  border-color: #e2e8f0;
+}
 
 .compose-metric-card-head {
   display: flex;
@@ -7804,10 +8691,31 @@ watch(
   margin-bottom: 6px;
 }
 
+.compose-metric-card-head--tile {
+  margin-bottom: 0;
+  gap: 4px;
+  min-height: 28px;
+  align-items: flex-start;
+}
+
+.compose-metric-value-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: 0;
+  margin-left: auto;
+  text-align: right;
+}
+
 .compose-metric-label {
   font-size: 12px;
   font-weight: 600;
   color: #64748b;
+}
+
+.compose-metric-card--tile .compose-metric-label {
+  font-size: 11px;
 }
 
 .compose-metric-value {
@@ -7815,28 +8723,57 @@ watch(
   font-weight: 700;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
+  margin-left: auto;
 }
 
-.compose-metric-spark {
+.compose-metric-card--tile .compose-metric-value {
+  font-size: 12px;
+  margin-left: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-metric-fresh {
   display: block;
-  color: #2563eb;
-  background: #f8fafc;
-  border-radius: 6px;
+  max-width: 100%;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.compose-metric-spark-grid {
-  pointer-events: none;
+.compose-metric-card--tile :deep(.compose-mini-chart.is-spark) {
+  height: 64px;
+  min-height: 64px;
+  max-height: 64px;
 }
 
-.compose-metric-card[data-tone='good'] .compose-metric-spark { color: #059669; }
-.compose-metric-card[data-tone='fair'] .compose-metric-spark { color: #d97706; }
-.compose-metric-card[data-tone='poor'] .compose-metric-spark { color: #dc2626; }
-.compose-metric-card[data-tone='empty'] .compose-metric-spark { color: #cbd5e1; }
+.compose-metric-mock {
+  font-size: 10px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.compose-metric-mock--tile {
+  align-self: flex-start;
+  margin-top: 0;
+  line-height: 1;
+}
 
 .compose-metric-empty {
-  margin: 4px 0;
+  margin: 8px 0 4px;
   font-size: 12px;
   color: #94a3b8;
+}
+
+.compose-metric-empty--tile {
+  margin: 6px 0 2px;
+  font-size: 11px;
 }
 
 .compose-metric-hint {
@@ -7846,9 +8783,46 @@ watch(
   color: #94a3b8;
 }
 
+.compose-metric-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compose-metric-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
+.compose-metric-detail-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.compose-metric-detail-unit {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.compose-metric-detail-chart :deep(.compose-mini-chart) {
+  height: 220px;
+}
+
 .compose-fs-footer {
   flex: 0 0 auto;
-  z-index: 20;
+  z-index: 40;
+  width: 100%;
+  box-sizing: border-box;
+  background: #fff;
+  border-top: 1px solid #e2e8f0;
+  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.06);
+}
+
+.compose-fs-footer-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7858,9 +8832,6 @@ watch(
   padding: 10px 24px;
   padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
-  background: #fff;
-  border-top: 1px solid #e2e8f0;
-  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.06);
 }
 
 .compose-fs-footer-left {
@@ -7874,8 +8845,50 @@ watch(
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   gap: 12px;
+}
+
+.compose-fs-btn-abandon {
+  color: #dc2626 !important;
+  font-weight: 600;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+
+.compose-fs-btn-abandon:hover:not(:disabled) {
+  color: #b91c1c !important;
+  background: #fef2f2 !important;
+}
+
+.compose-fs-btn-draft {
+  background: #fff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+  font-weight: 600;
+}
+
+.compose-fs-btn-draft:hover:not(:disabled) {
+  border-color: #94a3b8 !important;
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.compose-fs-btn-publish {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  font-weight: 700;
+  min-width: 112px;
+  box-shadow: 0 1px 2px rgba(29, 78, 216, 0.25);
+}
+
+.compose-fs-btn-publish:hover:not(:disabled) {
+  background: #1e40af !important;
+  border-color: #1e40af !important;
+}
+
+.care-plan--fullscreen .compose-fs-shell > .compose-fs-footer {
+  margin-top: auto;
 }
 
 .compose-fs-back {
@@ -8116,9 +9129,23 @@ watch(
   }
 }
 
-.compose-compare-ghost {
-  border-style: dashed !important;
+.compose-fs-ghost-btn {
+  background: #fff !important;
+  border: 1px solid #e2e8f0 !important;
   color: #475569 !important;
+  font-weight: 600;
+}
+
+.compose-fs-ghost-btn:hover:not(:disabled) {
+  background: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+
+.compose-fs-ghost-btn.is-active-edit {
+  border-color: #fdba74 !important;
+  color: #c2410c !important;
+  background: #fff7ed !important;
 }
 
 .compose-compare-body {
@@ -8141,30 +9168,135 @@ watch(
   margin-bottom: 8px;
 }
 
-.compose-aside-dl {
-  margin: 0;
+/* 患者摘要：姓名+性别+年龄一行；病种 Tag；过敏警示 */
+.compose-aside-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 10px;
+  min-width: 0;
+}
+
+.compose-aside-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.3;
+}
+
+.compose-aside-id-sep {
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1;
+  user-select: none;
+}
+
+.compose-aside-id-meta {
+  font-size: 13px;
+  font-weight: 500;
+  color: #475569;
+  line-height: 1.3;
+}
+
+.compose-aside-kv {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.compose-aside-kv-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.compose-aside-kv-row dt {
+  flex: 0 0 2.5rem;
+  width: 2.5rem;
+  margin: 0;
+  padding: 0;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.6;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.compose-aside-kv-row dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: calc(100% - 2.5rem - 10px);
+  margin: 0;
+  padding: 0;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.compose-aside-kv-empty {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.compose-aside-disease-tags {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
-.compose-aside-dl > div {
-  display: grid;
-  grid-template-columns: 48px 1fr;
-  gap: 8px;
+.compose-aside-disease-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
   font-size: 12px;
-  line-height: 1.45;
-}
-
-.compose-aside-dl dt {
-  color: #94a3b8;
   font-weight: 600;
+  line-height: 1.5;
+  background: #f1f5f9;
+  color: #475569;
 }
 
-.compose-aside-dl dd {
-  margin: 0;
-  color: #334155;
-  word-break: break-word;
+.compose-aside-disease-tag[data-tone='diabetes'] {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.compose-aside-disease-tag[data-tone='hypertension'] {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.compose-aside-disease-tag[data-tone='obesity'] {
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.compose-aside-disease-tag[data-tone='lipid'] {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.compose-aside-kv-row dd.is-alert {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.compose-aside-allergy-warn {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1;
 }
 
 @media (max-width: 960px) {
@@ -8180,7 +9312,14 @@ watch(
   .care-plan--fullscreen .compose-fs-aside {
     border-left: 0;
     border-top: 1px solid #e2e8f0;
-    max-height: 40vh;
+    max-height: none;
+    overflow: visible;
+  }
+  .compose-aside-scroll {
+    max-height: none;
+  }
+  .compose-aside-card--copilot {
+    min-height: 280px;
   }
   .care-plan--fullscreen .compose-fs-grid {
     overflow-y: auto;
@@ -9357,281 +10496,6 @@ watch(
   font-size: 13px;
   line-height: 1.5;
   color: var(--admin-text, #334155);
-}
-
-.qc-fold {
-  margin-bottom: 10px;
-  border: 1px solid #fde68a;
-  background: #fffbeb;
-  border-radius: var(--admin-radius, 12px);
-  overflow: hidden;
-}
-
-.qc-fold--warn-emphasis {
-  border: 1px solid #fbbf24;
-  border-left: 4px solid #f59e0b;
-  background: #fffbeb;
-  box-shadow: 0 1px 2px rgba(245, 158, 11, 0.12);
-}
-
-.qc-fold--warn-emphasis .qc-fold-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: #92400e;
-}
-
-.qc-fold-toggle {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-}
-
-.qc-fold-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.qc-fold-icon {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #f59e0b;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 18px;
-  text-align: center;
-}
-
-.qc-fold-icon--sm {
-  width: 16px;
-  height: 16px;
-  font-size: 10px;
-  line-height: 16px;
-  background: #fef3c7;
-  color: #b45309;
-  border: 1px solid #fbbf24;
-  font-weight: 700;
-}
-
-.qc-fold-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #92400e;
-  line-height: 1.4;
-}
-
-.qc-fold-acked {
-  margin-left: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #15803d;
-}
-
-.qc-fold-action {
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: #b45309;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: #fbbf24;
-}
-
-.qc-fold-toggle:hover .qc-fold-action {
-  color: #92400e;
-}
-
-.qc-fold-body {
-  padding: 0 12px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.qc-warn-card {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  gap: 10px 12px;
-  align-items: start;
-  padding: 12px 12px;
-  border-radius: 10px;
-  border: 1px solid #fde68a;
-  background: #fff;
-}
-
-.qc-warn-card--done {
-  border-color: #fcd34d;
-  background: #fffbeb;
-}
-
-.qc-warn-card-icon {
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
-  border-radius: 999px;
-  background: #fef3c7;
-  border: 1px solid #fbbf24;
-  color: #b45309;
-  font-size: 11px;
-  line-height: 16px;
-  text-align: center;
-  font-weight: 700;
-}
-
-.qc-warn-card-body {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.qc-warn-card-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.45;
-  color: #78350f;
-}
-
-.qc-warn-card-desc {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.55;
-  color: #a16207;
-  word-break: break-word;
-}
-
-.qc-warn-card-refs {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.qc-warn-card-ref {
-  margin: 0;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  color: #94a3b8;
-  font-size: 11px;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.qc-warn-card-cta {
-  flex-shrink: 0;
-  align-self: center;
-  max-width: 132px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid #fbbf24;
-  background: #fffbeb;
-  color: #92400e;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.3;
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.qc-warn-card-cta:hover {
-  background: #fef3c7;
-  border-color: #f59e0b;
-  color: #78350f;
-  box-shadow: 0 1px 2px rgba(245, 158, 11, 0.18);
-}
-
-.qc-warn-card-cta--done {
-  background: #f0fdf4;
-  border-color: #86efac;
-  color: #166534;
-}
-
-.qc-warn-card-cta--done:hover {
-  background: #dcfce7;
-  border-color: #4ade80;
-  color: #14532d;
-  box-shadow: none;
-}
-
-.qc-warn-ack-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 16px;
-  margin-top: 2px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px dashed #f59e0b;
-  background: #fff7ed;
-}
-
-.qc-warn-ack-text {
-  margin: 0;
-  flex: 1;
-  min-width: 180px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #92400e;
-  font-weight: 600;
-}
-
-.qc-warn-ack-btn {
-  flex-shrink: 0;
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: none;
-  background: #f59e0b;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    opacity 0.15s ease;
-}
-
-.qc-warn-ack-btn:hover:not(:disabled) {
-  background: #d97706;
-}
-
-.qc-warn-ack-btn--done,
-.qc-warn-ack-btn:disabled {
-  background: #86efac;
-  color: #14532d;
-  cursor: default;
-  opacity: 1;
-}
-
-@media (max-width: 900px) {
-  .qc-warn-card {
-    grid-template-columns: 18px minmax(0, 1fr);
-  }
-
-  .qc-warn-card-cta {
-    grid-column: 2;
-    justify-self: start;
-    max-width: none;
-  }
 }
 
 .ai-tip-chip {

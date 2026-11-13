@@ -130,7 +130,7 @@ public class BCarePlanController {
             @PathVariable String peopleId,
             @RequestBody(required = false) ReviseRequest request,
             HttpServletResponse response) {
-        ReviseRequest req = request == null ? new ReviseRequest(null) : request;
+        ReviseRequest req = request == null ? new ReviseRequest(null, null, null) : request;
         String tenantId = SecurityUtils.requireTenantId();
         String orgId = SecurityUtils.requireCurrentOrgId();
         String staffId = SecurityUtils.requireStaffId();
@@ -141,7 +141,7 @@ public class BCarePlanController {
             try {
                 var sink = AgentSseSupport.sseSink(emitter, response);
                 CarePlanBundleDto bundle = carePlanAgentService.reviseStream(
-                        tenantId, orgId, peopleId, staffId, req.instruction(), sink);
+                        tenantId, orgId, peopleId, staffId, req.resolvedInstruction(), sink);
                 sink.accept(AgentStreamEvent.result(bundle));
                 sink.accept(AgentStreamEvent.done());
                 emitter.complete();
@@ -365,7 +365,21 @@ public class BCarePlanController {
     public record GenerateRequest(
             String instruction, String templateKey, List<String> diseaseCodes, Boolean replaceDraft) {}
 
-    public record ReviseRequest(String instruction) {}
+    /**
+     * 局部修订：以服务端当前草稿为准；{@code currentDraft} 预留给前端对齐展示态（暂不覆盖库内草稿）。
+     * {@code revisionInstruction} 与 {@code instruction} 二选一即可。
+     */
+    public record ReviseRequest(String instruction, String revisionInstruction, JsonNode currentDraft) {
+        String resolvedInstruction() {
+            if (instruction != null && !instruction.isBlank()) {
+                return instruction.trim();
+            }
+            if (revisionInstruction != null && !revisionInstruction.isBlank()) {
+                return revisionInstruction.trim();
+            }
+            return null;
+        }
+    }
 
     public record UpdateDraftRequest(
             @NotNull Integer version,

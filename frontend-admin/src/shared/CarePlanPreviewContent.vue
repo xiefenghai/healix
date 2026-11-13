@@ -104,9 +104,21 @@ const props = withDefaults(
      * 默认关闭：方案详情/C 端预览只看 goalSummary + 方案总结，避免与首诊案头总结重复扫读。
      */
     showStaffRationale?: boolean
+    /** AI 局部修订后短暂高亮的章节：summary / exercise / diet / execution */
+    aiHighlightSections?: string[]
   }>(),
-  { fillHeight: false, resetKey: null, stacked: false, showStaffRationale: false },
+  {
+    fillHeight: false,
+    resetKey: null,
+    stacked: false,
+    showStaffRationale: false,
+    aiHighlightSections: () => [],
+  },
 )
+
+function isAiHighlighted(section: string) {
+  return (props.aiHighlightSections || []).includes(section)
+}
 
 const STACKED_SECTIONS = ['summary', 'exercise', 'diet', 'execution', 'checkins']
 
@@ -273,12 +285,12 @@ const weeklyPlanTable = computed(() => {
   return rows
 })
 
-function intensityTagType(code: string): 'success' | 'warning' | 'danger' | 'info' {
+function intensityBadgeLevel(code: string): 'light' | 'moderate' | 'vigorous' | 'other' {
   const c = String(code || '').toUpperCase()
-  if (c === 'LIGHT') return 'success'
-  if (c === 'MODERATE') return 'warning'
-  if (c === 'VIGOROUS') return 'danger'
-  return 'info'
+  if (c === 'LIGHT') return 'light'
+  if (c === 'MODERATE') return 'moderate'
+  if (c === 'VIGOROUS') return 'vigorous'
+  return 'other'
 }
 
 const showCheckinsSection = computed(
@@ -457,11 +469,16 @@ watch(
         :class="{ 'plan-sections--stacked': stacked }"
         @change="onCollapseChange"
       >
-        <el-collapse-item :name="DEFAULT_SECTION" class="sec-item-summary">
+        <el-collapse-item
+          :name="DEFAULT_SECTION"
+          class="sec-item-summary"
+          :class="{ 'sec-ai-updated': isAiHighlighted('summary') }"
+        >
           <template #title>
             <div class="section-head section-head--summary">
               <span class="section-icon"><el-icon><Document /></el-icon></span>
               <span class="section-name">方案总结</span>
+              <span v-if="isAiHighlighted('summary')" class="sec-ai-badge">AI 已更新</span>
             </div>
           </template>
           <div id="preview-sec-summary" class="section-body">
@@ -470,11 +487,16 @@ watch(
           </div>
         </el-collapse-item>
 
-        <el-collapse-item name="exercise" class="sec-item-exercise">
+        <el-collapse-item
+          name="exercise"
+          class="sec-item-exercise"
+          :class="{ 'sec-ai-updated': isAiHighlighted('exercise') }"
+        >
           <template #title>
             <div class="section-head section-head--exercise">
               <span class="section-icon"><el-icon><Basketball /></el-icon></span>
               <span class="section-name">运动方案</span>
+              <span v-if="isAiHighlighted('exercise')" class="sec-ai-badge">AI 已更新</span>
             </div>
           </template>
           <div id="preview-sec-exercise" class="section-body">
@@ -517,15 +539,13 @@ watch(
                 <el-table-column prop="type" label="类型" min-width="96" />
                 <el-table-column label="强度" width="88">
                   <template #default="{ row }">
-                    <el-tag
+                    <span
                       v-if="row.intensity && row.intensity !== '—'"
-                      size="small"
-                      effect="light"
-                      round
-                      :type="intensityTagType(row.intensityCode)"
+                      class="intensity-badge"
+                      :data-level="intensityBadgeLevel(row.intensityCode)"
                     >
                       {{ row.intensity }}
-                    </el-tag>
+                    </span>
                     <span v-else>—</span>
                   </template>
                 </el-table-column>
@@ -536,11 +556,16 @@ watch(
           </div>
         </el-collapse-item>
 
-        <el-collapse-item name="diet" class="sec-item-diet">
+        <el-collapse-item
+          name="diet"
+          class="sec-item-diet"
+          :class="{ 'sec-ai-updated': isAiHighlighted('diet') }"
+        >
           <template #title>
             <div class="section-head section-head--diet">
               <span class="section-icon"><el-icon><Dish /></el-icon></span>
               <span class="section-name">饮食方案</span>
+              <span v-if="isAiHighlighted('diet')" class="sec-ai-badge">AI 已更新</span>
             </div>
           </template>
           <div id="preview-sec-diet" class="section-body">
@@ -693,12 +718,17 @@ watch(
           </div>
         </el-collapse-item>
 
-        <el-collapse-item name="execution" class="sec-item-execution">
+        <el-collapse-item
+          name="execution"
+          class="sec-item-execution"
+          :class="{ 'sec-ai-updated': isAiHighlighted('execution') }"
+        >
           <template #title>
             <div class="section-head section-head--execution">
               <span class="section-icon"><el-icon><Calendar /></el-icon></span>
               <span class="section-name">执行计划</span>
-              <span v-if="data.execution?.horizonDays" class="section-badge">
+              <span v-if="isAiHighlighted('execution')" class="sec-ai-badge">AI 已更新</span>
+              <span v-else-if="data.execution?.horizonDays" class="section-badge">
                 {{ data.execution.horizonDays }} 天
               </span>
             </div>
@@ -1046,6 +1076,28 @@ watch(
   padding: 0;
 }
 
+.sec-ai-updated {
+  background: rgba(240, 253, 244, 0.55);
+  border-radius: 12px;
+  transition: background 0.35s ease;
+}
+
+.sec-ai-updated :deep(.el-collapse-item__header),
+.sec-ai-updated :deep(.el-collapse-item__wrap) {
+  background: transparent;
+}
+
+.sec-ai-badge {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -1270,7 +1322,7 @@ watch(
 }
 
 .week-plan-table :deep(.el-table__row td) {
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9 !important;
 }
 
 .week-plan-table :deep(.el-table__row:hover > td) {
@@ -1278,7 +1330,48 @@ watch(
 }
 
 .week-plan-table :deep(.el-table__cell) {
-  padding: 8px 10px;
+  padding: 16px 12px !important;
+  vertical-align: middle;
+}
+
+.week-plan-table :deep(.el-table__header .el-table__cell) {
+  padding: 12px !important;
+}
+
+.intensity-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.intensity-badge[data-level='light'] {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+
+.intensity-badge[data-level='moderate'] {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+
+.intensity-badge[data-level='vigorous'] {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.intensity-badge[data-level='other'] {
+  background: #f8fafc;
+  color: #475569;
+  border-color: #e2e8f0;
 }
 
 .info-list {

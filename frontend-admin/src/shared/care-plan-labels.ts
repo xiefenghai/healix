@@ -65,6 +65,9 @@ export const CARE_PLAN_EXERCISE_TYPE_OPTIONS = [
   { value: 'SHUTTLECOCK', label: '踢毽子' },
   { value: 'BED_EXERCISE', label: '床旁活动' },
   { value: 'SEATED_ACTIVITY', label: '坐位活动' },
+  { value: 'SEATED_EXERCISE', label: '坐姿运动' },
+  { value: 'SEATED_WORKOUT', label: '坐姿运动' },
+  { value: 'CHAIR_EXERCISE', label: '坐姿运动' },
   { value: 'BED_MOBILITY', label: '床上活动' },
   { value: 'ANKLE_PUMP', label: '踝泵' },
   { value: 'BEDSIDE_ANKLE_PUMP', label: '床旁踝泵' },
@@ -76,6 +79,9 @@ export const CARE_PLAN_EXERCISE_TYPE_OPTIONS = [
   { value: 'BREATHING_TRAINING', label: '呼吸训练' },
   { value: 'LIGHT_INDOOR_ACTIVITY', label: '室内轻活动' },
   { value: 'INDOOR_WALKING', label: '室内步行' },
+  { value: 'INDOOR_STEPPING', label: '室内踏步' },
+  { value: 'STEPPING', label: '踏步' },
+  { value: 'MARCHING_IN_PLACE', label: '原地踏步' },
   { value: 'SLOW_WALKING', label: '慢走' },
   { value: 'LIGHT_WALKING', label: '慢走' },
   { value: 'LIGHT_ACTIVITY', label: '轻度活动' },
@@ -176,7 +182,50 @@ export function formatCarePlanTaskCategory(code?: string | null): string {
 }
 
 export function formatCarePlanExerciseType(code?: string | null): string {
-  return lookup(EXERCISE_TYPE_LABELS, code)
+  if (!code) return ''
+  const raw = String(code).trim()
+  const mapped = EXERCISE_TYPE_LABELS[raw] || EXERCISE_TYPE_LABELS[raw.toUpperCase()]
+  if (mapped) return mapped
+  // 未知枚举：尽量把 SNAKE_CASE 转成可读短语，避免表格直接露英文码
+  if (/^[A-Z][A-Z0-9_]*$/.test(raw)) {
+    const wordZh: Record<string, string> = {
+      indoor: '室内',
+      outdoor: '户外',
+      seated: '坐姿',
+      sitting: '坐姿',
+      chair: '坐姿',
+      stepping: '踏步',
+      walking: '步行',
+      exercise: '运动',
+      workout: '运动',
+      activity: '活动',
+      training: '训练',
+      breathing: '呼吸',
+      strength: '力量',
+      stretch: '拉伸',
+      stretching: '拉伸',
+      light: '轻度',
+      moderate: '中等',
+      bedside: '床旁',
+      bed: '床上',
+      ankle: '踝',
+      pump: '泵',
+      upper: '上肢',
+      limb: '肢体',
+      rom: '活动度',
+      balance: '平衡',
+      marching: '踏步',
+      place: '原地',
+    }
+    const phrase = raw
+      .toLowerCase()
+      .split('_')
+      .filter((w) => w && w !== 'in' && w !== 'of')
+      .map((w) => wordZh[w] ?? w)
+      .join('')
+    if (phrase && phrase !== raw.toLowerCase().replace(/_/g, '')) return phrase
+  }
+  return raw
 }
 
 export function formatCarePlanIntensity(code?: string | null): string {

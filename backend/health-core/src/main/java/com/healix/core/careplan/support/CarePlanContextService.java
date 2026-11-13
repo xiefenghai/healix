@@ -239,19 +239,6 @@ public class CarePlanContextService {
         List<LabBrief> labs = loadRecentLabs(tenantId, peopleId, snapshot);
         trace(tracer, "LabReport", "done", labs.isEmpty() ? "无检验报告" : labs.size() + " 份报告");
 
-        trace(tracer, "DietGoal", "running", "读取饮食热量目标");
-        ObjectNode energyTarget = energyTargetService.promptContext(tenantId, peopleId);
-        if (energyTarget != null) {
-            snapshot.set("energyTarget", energyTarget);
-        }
-        trace(
-                tracer,
-                "DietGoal",
-                "done",
-                energyTarget != null && energyTarget.path("available").asBoolean()
-                        ? "每日 " + energyTarget.path("energyKcal").asInt() + " 千卡"
-                        : "暂无热量目标");
-
         trace(tracer, "Assessment", "running", "读取疾病评估结果");
         try {
             ArrayNode assessments = assessmentPromptContext.summarize(tenantId, peopleId);
@@ -328,6 +315,20 @@ public class CarePlanContextService {
         } else if (goalsNode != null) {
             applyHighlightHints(snapshot, JsonUtils.mapper().createArrayNode(), goalsNode);
         }
+
+        // 热量目标放在 goals / latestMetrics / 高亮改写之后，减重意图才能覆盖过期的「维持」饮食目标
+        trace(tracer, "DietGoal", "running", "读取饮食热量目标");
+        ObjectNode energyTarget = energyTargetService.promptContext(tenantId, peopleId, snapshot);
+        if (energyTarget != null) {
+            snapshot.set("energyTarget", energyTarget);
+        }
+        trace(
+                tracer,
+                "DietGoal",
+                "done",
+                energyTarget != null && energyTarget.path("available").asBoolean()
+                        ? "每日 " + energyTarget.path("energyKcal").asInt() + " 千卡"
+                        : "暂无热量目标");
 
         List<String> diseaseList = new ArrayList<>(diseases);
         GuidelineMatch guidelines = GuidelineMatch.DISABLED;
