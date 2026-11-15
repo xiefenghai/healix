@@ -50,7 +50,7 @@ const emit = defineEmits<{
   'send-intake': [peopleIds: string[]]
   /** 切入单人服务 */
   focus: [peopleId: string]
-  /** 存量批量跟进提示 */
+  /** 存量批量管理提示 */
   'batch-follow': [peopleIds: string[]]
   /** 存量批量生成管理方案 */
   'batch-plan': [peopleIds: string[]]
@@ -511,7 +511,7 @@ async function confirmTransfer() {
 <template>
   <el-drawer
     v-model="visible"
-    title="批量跟进工作台"
+    title="批量管理工作台"
     size="92%"
     append-to-body
     destroy-on-close

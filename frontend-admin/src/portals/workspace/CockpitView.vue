@@ -2992,7 +2992,7 @@ const pendingIntakeBatch = ref<{
 } | null>(null)
 const intakeBatchSendOpen = ref(false)
 
-/** 批量跟进工作台 */
+/** 批量管理工作台 */
 const batchServeWorkbenchOpen = ref(false)
 const batchServeInitialFilter = ref<'all' | 'stock' | null>(null)
 
@@ -3161,7 +3161,7 @@ function onBatchServeFocus(peopleId: string) {
   void selectPatient(peopleId, { autoAsk: true, reason: '批量工作台切入' })
 }
 
-/** 存量批量跟进：写入会话引导，并打开工作台中第一位患者 */
+/** 存量批量管理：写入会话引导，并打开工作台中第一位患者 */
 function onBatchServeFollow(peopleIds: string[]) {
   const ids = [...new Set(peopleIds.filter(Boolean))]
   if (!ids.length) return
@@ -3195,7 +3195,7 @@ function onBatchServeFollow(peopleIds: string[]) {
     at: nowClock(),
   })
   cacheOrgSession()
-  void selectPatient(ids[0]!, { autoAsk: true, reason: '存量批量跟进' })
+  void selectPatient(ids[0]!, { autoAsk: true, reason: '存量批量管理' })
   void scrollToBottom()
 }
 
@@ -3608,7 +3608,7 @@ async function onUnassignedBatchAssigned(payload: {
       summaryBoard +
       (remain > 0 ? `还剩 ${remain} 位未分组。` : '') +
       (bulk
-        ? '\n\n请用下方批量入口处理，避免逐个点开。也可打开「批量跟进工作台」多选后统一发卷。'
+        ? '\n\n请用下方批量入口处理，避免逐个点开。也可打开「批量管理工作台」多选后统一发卷。'
         : '接下来您可以直接切入服务，或批量发首诊问卷链接。'),
     actions,
     at: nowClock(),
@@ -5034,7 +5034,7 @@ type QuickChip = {
   enabled?: boolean
 }
 
-/** 机构会话：简报 / 批量跟进 / 运营统计（占位） */
+/** 机构会话：简报 / 批量管理 / 运营统计（占位） */
 const orgCapabilityChips = computed((): QuickChip[] => {
   const patientTotal = summary.value.orgPatientCount || 0
   return [
@@ -5047,11 +5047,11 @@ const orgCapabilityChips = computed((): QuickChip[] => {
     },
     {
       code: 'BATCH_SERVE',
-      label: '📦 批量跟进',
+      label: '📦 批量管理',
       hint:
         patientTotal <= 0
-          ? '系统内暂无患者，请先建档后再批量跟进'
-          : '打开批量跟进工作台，拉取全员或公共池',
+          ? '系统内暂无患者，请先建档后再批量管理'
+          : '打开批量管理工作台，拉取全员或公共池',
       needsPatient: false,
       enabled: true,
     },
@@ -5200,7 +5200,7 @@ function isQuickChipLocked(cap: { code: string; needsPatient?: boolean; enabled?
 
 function quickChipLockHint(cap: { code: string; hint?: string }) {
   if (cap.code === 'BATCH_SERVE' && (summary.value.orgPatientCount || 0) <= 0) {
-    return '系统内暂无患者，请先建档后再批量跟进'
+    return '系统内暂无患者，请先建档后再批量管理'
   }
   if (cap.code === 'OPS_STATS') return '即将上线'
   if (isQuickChipLockedByNoTeam(cap.code)) {
@@ -5241,10 +5241,10 @@ function openOrgBriefingFromChip() {
   }
 }
 
-/** 机构批量跟进：优先拉最大健管组花名册；无组则走公共池分配面板 */
+/** 机构批量管理：优先拉最大健管组花名册；无组则走公共池分配面板 */
 function openOrgBatchFollowFromChip() {
   if ((summary.value.orgPatientCount || 0) <= 0) {
-    ElMessage.info('系统内暂无患者，请先建档后再批量跟进')
+    ElMessage.info('系统内暂无患者，请先建档后再批量管理')
     return
   }
   const teams = minePatientGroups.value.filter(
