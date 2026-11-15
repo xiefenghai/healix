@@ -20,7 +20,6 @@ interface Medication {
   source?: string
   verified?: boolean | null
   allergyConflict?: string | null
-  openFeedbackCount?: number
 }
 
 const route = useRoute()
@@ -99,12 +98,11 @@ onMounted(load)
           <template v-if="m.stopDate"> ~ {{ sliceDate(m.stopDate) }}</template>
         </p>
         <p v-if="m.remark" class="meta hx-muted">{{ m.remark }}</p>
-        <div v-if="m.source === 'PATIENT' || m.allergyConflict || m.openFeedbackCount" class="flags">
+        <div v-if="m.source === 'PATIENT' || m.allergyConflict" class="flags">
           <span v-if="m.source === 'PATIENT'" class="hx-chip" :class="{ warn: !m.verified }">
             {{ m.verified ? '自添加·已核对' : '自添加·待核对' }}
           </span>
           <span v-if="m.allergyConflict" class="hx-chip warn">过敏冲突：{{ m.allergyConflict }}</span>
-          <span v-if="m.openFeedbackCount" class="hx-chip warn">待处理反馈 {{ m.openFeedbackCount }}</span>
           <van-button
             v-if="m.source === 'PATIENT' && !m.verified"
             size="mini"

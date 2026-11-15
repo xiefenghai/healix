@@ -133,6 +133,8 @@ public class BAgentController {
         List<AgentAction> actions = toActions(req.actions());
         if ("receipt".equalsIgnoreCase(req.kind())) {
             conversationService.appendReceipt(sessionId, req.content());
+        } else if ("guide".equalsIgnoreCase(req.kind())) {
+            conversationService.appendGuide(sessionId, req.content(), actions);
         } else {
             conversationService.appendSystem(sessionId, req.content(), actions);
         }
@@ -269,7 +271,7 @@ public class BAgentController {
             String peopleId,
             String sessionId,
             @NotBlank String content,
-            /** briefing | receipt */
+            /** briefing | receipt | guide */
             String kind,
             List<ActionBody> actions) {}
 

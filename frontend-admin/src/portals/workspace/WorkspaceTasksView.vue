@@ -60,7 +60,6 @@ const TASK_TYPES = [
   { value: 'EXERCISE_ALERT', label: '运动不适' },
   { value: 'FOLLOW_UP', label: '随访' },
   { value: 'REPORT_REVIEW', label: '报告审阅' },
-  { value: 'MED_FEEDBACK', label: '用药反馈' },
   { value: 'MED_VERIFY', label: '用药核对' },
   { value: 'ASSESSMENT_ESCALATION', label: '评估升级' },
   { value: 'ASSESSMENT_SUSPECTED', label: '疑似患病' },
@@ -217,13 +216,6 @@ function formatTime(v?: string) {
   return s.length >= 16 ? s.slice(0, 16) : s
 }
 
-/** 到期列紧凑：`MM-DD HH:mm` */
-function formatDueShort(v?: string) {
-  if (!v) return '-'
-  const s = String(v).replace('T', ' ')
-  return s.length >= 16 ? s.slice(5, 16) : s.slice(0, 16)
-}
-
 /**
  * 解析到期时间戳。兼容 string / number / Jackson 数组 `[y,m,d,h,mi,s]`。
  * 无时区按本地时间。`currentTime > expireTime` → 逾期。
@@ -290,12 +282,12 @@ function isDueOverdue(row: WorkspaceTaskItem) {
 function dueTimeStyle(row: WorkspaceTaskItem): Record<string, string> {
   const tone = dueTone(row)
   if (tone === 'overdue') {
-    return { color: '#F56C6C', fontWeight: '700', fontSize: '12px' }
+    return { color: '#EF4444', fontWeight: '600', fontSize: '12px' }
   }
   if (tone === 'soon') {
-    return { color: '#E6A23C', fontWeight: '700', fontSize: '12px' }
+    return { color: '#D97706', fontWeight: '600', fontSize: '12px' }
   }
-  return { color: '#909399', fontWeight: '500', fontSize: '12px' }
+  return { color: '#6B7280', fontWeight: '500', fontSize: '12px' }
 }
 
 function dueCellClass(row: WorkspaceTaskItem) {
@@ -303,14 +295,14 @@ function dueCellClass(row: WorkspaceTaskItem) {
   return tone ? `is-${tone}` : ''
 }
 
-/** 类型标签色系：按业务线区分胶囊样式 */
+/** 类型标签：弱化色系（浅底深字），报告蓝 / 方案紫 / 评估橙 */
 function taskTypeTone(taskType?: string): string {
   switch (taskType) {
     case 'TEAM_ASSIGN':
       return 'assign'
     case 'PLAN_CREATE':
-    case 'PLAN_NUDGE':
       return 'plan'
+    case 'PLAN_NUDGE':
     case 'FOLLOW_UP':
       return 'followup'
     case 'REPORT_REVIEW':
@@ -325,6 +317,7 @@ function taskTypeTone(taskType?: string): string {
       return 'assess'
     case 'QUESTIONNAIRE_EXPIRED':
     case 'ARCHIVE_SELF_REPORT':
+    case 'PROFILE_LINK':
       return 'intake'
     default:
       return 'default'
@@ -1299,18 +1292,18 @@ onUnmounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="处理人" width="88" show-overflow-tooltip>
+        <el-table-column v-if="pool === 'DONE'" label="处理人" width="96" show-overflow-tooltip>
           <template #default="{ row }">{{ row.doneByName || '-' }}</template>
         </el-table-column>
         <el-table-column
           v-if="pool === 'MINE' || pool === 'ALL'"
           label="归属人"
-          width="88"
+          width="96"
           show-overflow-tooltip
         >
           <template #default="{ row }">{{ row.assigneeName || '-' }}</template>
         </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" label="处理人" width="88" show-overflow-tooltip>
+        <el-table-column v-if="pool === 'ALL'" label="处理人" width="96" show-overflow-tooltip>
           <template #default="{ row }">
             {{
               row.status === 'DONE' || row.status === 'CANCELLED' || row.status === 'EXPIRED'
@@ -1319,53 +1312,72 @@ onUnmounted(() => {
             }}
           </template>
         </el-table-column>
-        <el-table-column label="生成时间" width="152" class-name="col-time">
+        <el-table-column
+          label="生成时间"
+          width="148"
+          align="left"
+          header-align="left"
+          class-name="col-time"
+        >
           <template #default="{ row }">
             <span class="time-cell" :title="formatTime(row.openedAt)">{{ formatTime(row.openedAt) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="到期" width="168" class-name="col-due">
+        <el-table-column
+          label="到期"
+          width="220"
+          align="left"
+          header-align="left"
+          class-name="col-due"
+        >
           <template #default="{ row }">
             <div class="due-cell" :class="dueCellClass(row)">
-              <i v-if="isDueOverdue(row)" class="due-dot" aria-hidden="true" />
-              <span class="due-time" :style="dueTimeStyle(row)">{{ formatDueShort(row.dueAt) }}</span>
+              <span class="due-time" :style="dueTimeStyle(row)">{{ formatTime(row.dueAt) }}</span>
               <span v-if="isDueOverdue(row)" class="due-mark">已逾期</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="完成时间" width="152" class-name="col-time">
+        <el-table-column
+          v-if="pool === 'DONE'"
+          label="完成时间"
+          width="148"
+          align="left"
+          header-align="left"
+          class-name="col-time"
+        >
           <template #default="{ row }">
             <span class="time-cell">{{ formatTime(row.doneAt) }}</span>
           </template>
         </el-table-column>
         <el-table-column
           label="操作"
-          :width="isAdmin ? 220 : 168"
+          :width="pool === 'PUBLIC' ? 168 : isAdmin ? 300 : 280"
           align="right"
+          header-align="right"
           class-name="col-actions"
         >
           <template #default="{ row }">
             <div class="row-actions">
               <el-button
                 v-if="canClaim(row)"
-                type="primary"
                 size="small"
+                class="action-primary"
                 @click="claim(row)"
               >
                 领取
               </el-button>
               <el-button
                 v-if="canForm(row)"
-                type="primary"
                 size="small"
+                class="action-primary"
                 @click="openFormTask(row)"
               >
                 处理
               </el-button>
               <el-button
                 v-if="canProcess(row)"
-                type="primary"
                 size="small"
+                class="action-primary"
                 @click="processTask(row)"
               >
                 处理
@@ -1619,25 +1631,33 @@ onUnmounted(() => {
 }
 
 .summary-row {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex !important;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  width: 100%;
+  grid-template-columns: none !important;
 }
 .summary-row--compact {
-  gap: 8px !important;
+  gap: 16px !important;
   margin-bottom: 0 !important;
 }
 .workspace-tasks:has(.tone-violet) .summary-row {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: none !important;
 }
 
 .summary-card--compact {
-  padding: 8px 12px !important;
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  padding: 12px 14px !important;
   box-shadow: none !important;
+  box-sizing: border-box;
 }
 .summary-card--compact:hover {
   transform: none !important;
 }
 .summary-card--compact .summary-label {
-  margin: 0 0 2px !important;
+  margin: 0 0 4px !important;
   font-size: 12px;
   line-height: 1.2;
 }
@@ -1649,8 +1669,10 @@ onUnmounted(() => {
 }
 .summary-card--compact .summary-value {
   margin: 0 !important;
-  font-size: 20px !important;
-  line-height: 1.15;
+  font-size: 28px !important;
+  font-weight: 800 !important;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
 }
 .summary-card--compact .summary-hint {
   margin: 0 !important;
@@ -1740,6 +1762,7 @@ onUnmounted(() => {
 
 .list-card {
   flex: none;
+  width: 100%;
   height: auto;
   margin-bottom: 40px;
   background: #fff;
@@ -1792,108 +1815,95 @@ onUnmounted(() => {
   color: var(--ink-400);
 }
 
-/* 类型胶囊：按业务线区分色系 */
+/* 类型胶囊：浅底深字、无边框；按文案自适应宽度，避免被裁切成纯色字 */
 .type-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  min-width: 80px;
-  max-width: 80px;
   box-sizing: border-box;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.35;
   text-align: center;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border: 1px solid transparent;
+  border: none;
+}
+/* 报告审阅：浅蓝底 + 深蓝字 */
+.type-pill.tone-report {
+  color: #1e40af;
+  background: #dbeafe;
+}
+/* 制定方案：浅紫底 + 深紫字 */
+.type-pill.tone-plan {
+  color: #5b21b6;
+  background: #ede9fe;
+}
+/* 评估升级：浅橙底 + 深橙字 */
+.type-pill.tone-assess {
+  color: #9a3412;
+  background: #ffedd5;
 }
 .type-pill.tone-assign {
-  color: #0f766e;
-  background: #ecfdf5;
-  border-color: #99f6e4;
-}
-.type-pill.tone-plan {
-  color: #1d4ed8;
-  background: #eff6ff;
-  border-color: #bfdbfe;
+  color: #115e59;
+  background: #ccfbf1;
 }
 .type-pill.tone-followup {
   color: #5b21b6;
-  background: #f5f3ff;
-  border-color: #ddd6fe;
-}
-.type-pill.tone-report {
-  color: #b45309;
-  background: #fffbeb;
-  border-color: #fde68a;
+  background: #ede9fe;
 }
 .type-pill.tone-alert {
-  color: #b91c1c;
-  background: #fef2f2;
-  border-color: #fecaca;
-}
-.type-pill.tone-assess {
-  color: #c2410c;
-  background: #fff7ed;
-  border-color: #fed7aa;
+  color: #991b1b;
+  background: #fecaca;
 }
 .type-pill.tone-intake {
-  color: #0369a1;
-  background: #f0f9ff;
-  border-color: #bae6fd;
+  color: #075985;
+  background: #bae6fd;
 }
 .type-pill.tone-default {
-  color: #475569;
-  background: #f8fafc;
-  border-color: #e2e8f0;
+  color: #334155;
+  background: #e2e8f0;
 }
 
 .due-cell {
   display: inline-flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 5px;
+  gap: 0;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
   max-width: 100%;
 }
 .due-time {
+  flex-shrink: 0;
   white-space: nowrap;
 }
-.due-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #f56c6c;
-  flex-shrink: 0;
-}
 .due-cell.is-overdue .due-time {
-  color: #f56c6c !important;
-  font-weight: 700 !important;
+  color: #ef4444 !important;
+  font-weight: 600 !important;
 }
 .due-cell.is-soon .due-time {
-  color: #e6a23c !important;
-  font-weight: 700 !important;
+  color: #d97706 !important;
+  font-weight: 600 !important;
 }
 .due-cell.is-normal .due-time {
-  color: #909399 !important;
+  color: #6b7280 !important;
   font-weight: 500 !important;
 }
 .due-mark {
   display: inline-flex;
   align-items: center;
-  padding: 0 4px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 700;
-  color: #f56c6c;
-  background: #fef0f0;
-  border: 1px solid #fde2e2;
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #ef4444;
+  background: #fef2f2;
+  border: none;
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -1925,21 +1935,42 @@ onUnmounted(() => {
 }
 
 .row-actions {
-  display: inline-flex;
+  display: flex;
   flex-wrap: nowrap;
   justify-content: flex-end;
   align-items: center;
-  gap: 0;
+  gap: 16px;
   white-space: nowrap;
   width: 100%;
+  min-height: 28px;
+  box-sizing: border-box;
 }
 
 .row-actions :deep(.el-button + .el-button) {
-  margin-left: 0;
+  margin-left: 0 !important;
 }
 
-.row-actions :deep(.el-button--primary) {
-  margin-right: 4px;
+.row-actions :deep(.el-button) {
+  margin: 0 !important;
+  flex-shrink: 0;
+}
+
+.row-actions :deep(.el-button.action-primary) {
+  height: 28px !important;
+  padding: 0 12px !important;
+  border: 1px solid #bfdbfe !important;
+  border-radius: 6px !important;
+  background: #eff6ff !important;
+  color: #2563eb !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 26px !important;
+}
+.row-actions :deep(.el-button.action-primary:hover),
+.row-actions :deep(.el-button.action-primary:focus) {
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+  color: #1d4ed8 !important;
 }
 
 .action-link {
@@ -1947,21 +1978,27 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   padding: 0;
-  margin-left: 12px;
-  color: #666;
-  font-size: 14px;
-  line-height: 1.2;
+  margin: 0;
+  color: #6b7280 !important;
+  font-size: 13px;
+  line-height: 28px;
+  height: 28px;
   cursor: pointer;
   font-weight: 500;
+  flex-shrink: 0;
+  text-decoration: none;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 .action-link:hover {
-  color: var(--el-color-primary, #409eff);
+  color: var(--el-color-primary, #409eff) !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .action-link--danger {
-  color: #f56c6c;
+  color: #9ca3af !important;
 }
 .action-link--danger:hover {
-  color: #dd6161;
+  color: #ef4444 !important;
 }
 
 .assessment-task-body {
@@ -2034,16 +2071,17 @@ onUnmounted(() => {
   align-items: center;
   justify-content: flex-end;
   margin-top: 12px;
-  padding: 0 4px 12px;
+  padding: 0 0 12px;
   min-height: 36px;
 }
 .list-pagination-bar {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   flex-wrap: wrap;
   row-gap: 6px;
+  gap: 8px;
 }
 .list-pagination-bar :deep(.el-pagination__total) {
   margin-right: auto;
@@ -2061,6 +2099,7 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--ink-500, #64748b);
   line-height: 28px;
+  padding: 0;
 }
 
 .list-card :deep(.tasks-table) {
@@ -2073,35 +2112,55 @@ onUnmounted(() => {
 .list-card :deep(.tasks-table table) {
   width: 100% !important;
 }
+.list-card :deep(.tasks-table table) {
+  table-layout: fixed !important;
+}
 .list-card :deep(.tasks-table .el-table__header th.el-table__cell) {
   background: var(--el-table-header-bg-color, var(--ink-50));
   color: var(--el-table-header-text-color, var(--ink-500)) !important;
   font-size: 12px;
   font-weight: 600;
+  padding: 12px 8px !important;
 }
 .list-card :deep(.tasks-table .el-table__body td.el-table__cell) {
   font-size: 13px;
+  padding: 12px 8px !important;
+  border-bottom: 1px solid #f3f4f6 !important;
 }
-.list-card :deep(.col-actions .cell) {
-  text-align: right;
+/* 任务列：左侧多留一点，标签不贴边 */
+.list-card :deep(th.col-task.el-table__cell),
+.list-card :deep(td.col-task.el-table__cell) {
+  padding-left: 20px !important;
 }
-/* 防止 el-table 默认省略把时间裁成 11-10... */
+.list-card :deep(.col-task .cell) {
+  padding-left: 0;
+}
+/* 时间列：表头与数据统一左对齐，避免宽列里内容“悬空” */
 .list-card :deep(.col-time .cell),
 .list-card :deep(.col-due .cell) {
+  text-align: left !important;
+  justify-content: flex-start !important;
   overflow: visible !important;
 }
-
-@media (max-width: 1280px) {
-  .summary-row,
-  .workspace-tasks:has(.tone-violet) .summary-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.list-card :deep(.col-actions .cell) {
+  display: flex !important;
+  justify-content: flex-end;
+  align-items: center;
+  text-align: right;
+  padding-left: 8px !important;
+  padding-right: 12px !important;
+}
+.list-card :deep(th.col-actions .cell) {
+  justify-content: flex-end;
+  text-align: right !important;
 }
 
 @media (max-width: 960px) {
-  .summary-row,
-  .workspace-tasks:has(.tone-violet) .summary-row {
-    grid-template-columns: 1fr;
+  .summary-row {
+    flex-wrap: wrap;
+  }
+  .summary-card--compact {
+    flex: 1 1 calc(50% - 8px);
   }
   .list-head-top {
     flex-wrap: wrap;

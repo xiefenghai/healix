@@ -44,6 +44,14 @@ export const CARE_PLAN_EXERCISE_TYPE_OPTIONS = [
   { value: 'PILATES', label: '普拉提' },
   { value: 'STRETCHING', label: '拉伸/柔韧' },
   { value: 'STRETCH', label: '拉伸' },
+  { value: 'RELAXATION', label: '放松' },
+  { value: 'RELAX', label: '放松' },
+  { value: 'MEDITATION', label: '冥想放松' },
+  { value: 'MINDFULNESS', label: '正念放松' },
+  { value: 'COOL_DOWN', label: '放松整理' },
+  { value: 'COOLDOWN', label: '放松整理' },
+  { value: 'FLEXIBILITY', label: '拉伸/柔韧' },
+  { value: 'MOBILITY', label: '活动度练习' },
   { value: 'STRENGTH', label: '力量训练' },
   { value: 'SEATED_STRENGTH', label: '坐姿力量' },
   { value: 'RESISTANCE', label: '抗阻训练' },
@@ -204,6 +212,15 @@ export function formatCarePlanExerciseType(code?: string | null): string {
       strength: '力量',
       stretch: '拉伸',
       stretching: '拉伸',
+      relaxation: '放松',
+      relax: '放松',
+      relaxing: '放松',
+      meditation: '冥想',
+      mindfulness: '正念',
+      cool: '整理',
+      cooldown: '放松整理',
+      flexibility: '柔韧',
+      mobility: '活动度',
       light: '轻度',
       moderate: '中等',
       bedside: '床旁',
@@ -266,6 +283,14 @@ const STRETCH_TYPES = new Set([
   'UPPER_LIMB_ROM',
   'BEDSIDE_UPPER_LIMB',
   'POSITION_CHANGE',
+  'RELAXATION',
+  'RELAX',
+  'MEDITATION',
+  'MINDFULNESS',
+  'COOL_DOWN',
+  'COOLDOWN',
+  'FLEXIBILITY',
+  'MOBILITY',
 ])
 
 export function carePlanExerciseKind(type?: string | null): CarePlanExerciseKind {
@@ -274,7 +299,12 @@ export function carePlanExerciseKind(type?: string | null): CarePlanExerciseKind
     .toUpperCase()
   if (!t) return 'aerobic'
   if (STRENGTH_TYPES.has(t) || /STRENGTH|RESIST|力量|抗阻/.test(t)) return 'strength'
-  if (STRETCH_TYPES.has(t) || /STRETCH|YOGA|拉伸|柔韧|太极|八段锦/.test(t)) return 'stretch'
+  if (
+    STRETCH_TYPES.has(t) ||
+    /STRETCH|YOGA|RELAX|MEDITAT|MINDFUL|FLEXIB|MOBILITY|拉伸|柔韧|放松|太极|八段锦/.test(t)
+  ) {
+    return 'stretch'
+  }
   return 'aerobic'
 }
 

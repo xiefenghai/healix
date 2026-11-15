@@ -315,24 +315,22 @@ watch(keyword, () => {
       </button>
     </div>
 
-    <el-card shadow="never" class="filter-card">
-      <div class="toolbar">
-        <el-input
-          v-model="keyword"
-          placeholder="搜索健管组名称"
-          clearable
-          class="toolbar-search"
-        />
-        <el-select
-          v-model="doctorFilter"
-          class="toolbar-filter"
-          placeholder="筛选"
-        >
-          <el-option value="all" label="全部健管组" />
-          <el-option value="unbound" label="仅看未绑医生" />
-        </el-select>
-      </div>
-    </el-card>
+    <div class="toolbar">
+      <el-input
+        v-model="keyword"
+        placeholder="搜索健管组名称"
+        clearable
+        class="toolbar-search"
+      />
+      <el-select
+        v-model="doctorFilter"
+        class="toolbar-filter"
+        placeholder="筛选"
+      >
+        <el-option value="all" label="全部健管组" />
+        <el-option value="unbound" label="仅看未绑医生" />
+      </el-select>
+    </div>
 
     <div v-loading="loading" class="team-grid">
       <article
@@ -342,13 +340,10 @@ watch(keyword, () => {
         @click="openDetail(row)"
       >
         <div class="team-head">
-          <div class="team-title">
-            <div class="team-name">{{ row.name }}</div>
-            <div class="team-meta">创建于 {{ formatDate(row.createdAt) }}</div>
-          </div>
+          <div class="team-name">{{ row.name }}</div>
           <div class="head-actions" @click.stop>
             <el-dropdown trigger="click" @command="(cmd: string) => onCardCommand(cmd, row)">
-              <button type="button" class="more-btn" aria-label="更多操作">···</button>
+              <button type="button" class="more-btn" aria-label="更多操作">⋯</button>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="detail">查看详情</el-dropdown-item>
@@ -361,45 +356,41 @@ watch(keyword, () => {
             </el-dropdown>
           </div>
         </div>
+        <div class="team-meta">创建于 {{ formatDate(row.createdAt) }}</div>
 
         <div class="collab-row">
-          <div class="avatar-stack">
+          <div
+            class="lead-avatar"
+            :style="avatarStyle(row.primaryCareManagerName)"
+            :title="row.primaryCareManagerName || '主责健管师'"
+          >
+            {{ avatarChar(row.primaryCareManagerName) }}
+          </div>
+          <span class="name">{{ row.primaryCareManagerName || '未指定' }}</span>
+          <span class="role-chip">主责</span>
+          <template v-if="hasDoctor(row)">
+            <span class="dot">·</span>
             <div
-              class="lead-avatar"
-              :style="avatarStyle(row.primaryCareManagerName)"
-              :title="row.primaryCareManagerName || '主责健管师'"
-            >
-              {{ avatarChar(row.primaryCareManagerName) }}
-            </div>
-            <div
-              v-if="hasDoctor(row)"
-              class="lead-avatar"
+              class="lead-avatar sm"
               :style="avatarStyle(row.primaryDoctorName || undefined)"
               :title="row.primaryDoctorName || '主责医生'"
             >
               {{ avatarChar(row.primaryDoctorName || undefined) }}
             </div>
-          </div>
-          <div class="collab-text">
-            <span class="label">主责</span>
-            <span class="name">{{ row.primaryCareManagerName || '未指定' }}</span>
-            <template v-if="hasDoctor(row)">
-              <span class="dot">·</span>
-              <span class="name">{{ row.primaryDoctorName }}</span>
-            </template>
-            <template v-else>
-              <span class="dot">·</span>
-              <span class="muted">暂无医生</span>
-            </template>
-          </div>
+            <span class="name">{{ row.primaryDoctorName }}</span>
+            <span class="role-chip muted">医生</span>
+          </template>
+          <template v-else>
+            <span class="dot">·</span>
+            <span class="no-doctor">暂无医生</span>
+          </template>
         </div>
 
         <div class="team-tags">
-          <span class="tag">{{ row.memberCount ?? 0 }} 位患者</span>
+          <span class="tag tag-patients">{{ row.memberCount ?? 0 }} 位患者</span>
         </div>
 
         <div class="team-foot">
-          <span class="foot-hint">点击查看详情</span>
           <span class="foot-link">查看详情 →</span>
         </div>
       </article>
@@ -501,13 +492,6 @@ watch(keyword, () => {
   font-weight: 600;
 }
 
-.cm-default-hint {
-  margin-left: 4px;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--ink-400, #9ca3af);
-}
-
 .create-care-team-form :deep(.el-form-item) {
   margin-bottom: 18px;
 }
@@ -532,15 +516,15 @@ watch(keyword, () => {
 .summary-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .stat-card {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 16px 18px;
+  gap: 10px;
+  padding: 10px 14px;
   background: var(--admin-card);
   border: 1px solid var(--ink-200);
   border-radius: var(--admin-radius);
@@ -564,13 +548,13 @@ watch(keyword, () => {
 }
 
 .stat-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 11px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -606,10 +590,10 @@ watch(keyword, () => {
 }
 
 .stat-val {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--ink-900);
-  margin-top: 2px;
+  margin-top: 1px;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
@@ -617,51 +601,54 @@ watch(keyword, () => {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
+  margin-bottom: 14px;
 }
 
 .toolbar-search {
-  width: 300px;
+  width: 280px;
   max-width: 100%;
-  flex: 0 1 300px;
+  flex: 0 0 280px;
 }
 
 .toolbar-filter {
   width: 160px;
+  flex: 0 0 160px;
 }
 
 .team-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 350px));
+  gap: 20px;
+  justify-content: start;
   min-height: 120px;
 }
 
 .empty-span {
   grid-column: 1 / -1;
-  padding: 48px 0;
+  padding: 40px 0;
 }
 
 .team-card {
+  width: 100%;
+  max-width: 350px;
   background: #fff;
-  border: 1px solid var(--ink-200);
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
-  padding: 16px 16px 14px;
+  padding: 14px 16px 0;
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   transition:
-    border-color 180ms,
-    box-shadow 180ms,
-    transform 180ms;
+    border-color 180ms ease,
+    box-shadow 180ms ease;
 }
 
 .team-card:hover {
-  border-color: var(--brand-500);
-  box-shadow: 0 4px 16px -4px rgba(44, 126, 248, 0.12);
-  transform: translateY(-2px);
+  border-color: var(--brand-500, #2c7ef8);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .team-card:hover .foot-link {
@@ -675,12 +662,9 @@ watch(keyword, () => {
   gap: 8px;
 }
 
-.team-title {
-  min-width: 0;
-}
-
 .team-name {
-  font-size: 16px;
+  min-width: 0;
+  font-size: 15px;
   font-weight: 700;
   color: var(--ink-900);
   line-height: 1.35;
@@ -688,15 +672,17 @@ watch(keyword, () => {
 }
 
 .team-meta {
-  margin-top: 4px;
+  margin-top: -4px;
   font-size: 12px;
-  color: var(--ink-400);
+  color: var(--ink-400, #9ca3af);
+  line-height: 1.4;
 }
 
 .head-actions {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  margin: -4px -6px 0 0;
 }
 
 .more-btn {
@@ -707,13 +693,12 @@ watch(keyword, () => {
   background: transparent;
   color: var(--ink-400);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1;
-  letter-spacing: 1px;
 }
 
 .more-btn:hover {
-  background: var(--ink-100);
+  background: #f3f4f6;
   color: var(--ink-700);
 }
 
@@ -724,60 +709,59 @@ watch(keyword, () => {
 .collab-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px;
   min-width: 0;
-}
-
-.avatar-stack {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.avatar-stack .lead-avatar + .lead-avatar {
-  margin-left: -8px;
+  font-size: 13px;
+  line-height: 1.3;
 }
 
 .lead-avatar {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   color: #fff;
   font-size: 11px;
   font-weight: 600;
-  border: 2px solid #fff;
-  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
-.collab-text {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 1.35;
-  color: var(--ink-700);
+.lead-avatar.sm {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
 }
 
-.collab-text .label {
-  color: var(--ink-500);
-  font-size: 12px;
-}
-
-.collab-text .name {
+.collab-row .name {
   font-weight: 600;
   color: var(--ink-800);
 }
 
-.collab-text .dot {
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.role-chip.muted {
+  color: var(--ink-500);
+  background: #f3f4f6;
+}
+
+.collab-row .dot {
   color: var(--ink-300);
 }
 
-.collab-text .muted {
-  color: var(--ink-400);
+.no-doctor {
+  color: var(--ink-400, #9ca3af);
   font-size: 12px;
 }
 
@@ -787,30 +771,28 @@ watch(keyword, () => {
   gap: 6px;
 }
 
-.tag {
+.tag-patients {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
-  background: var(--ink-50, #f8fafc);
-  color: var(--ink-700);
-  border: 1px solid var(--ink-100);
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .team-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-top: auto;
-  padding-top: 2px;
+  margin-left: -16px;
+  margin-right: -16px;
+  padding: 10px 16px;
+  border-top: 1px solid #f3f4f6;
   font-size: 12px;
-}
-
-.foot-hint {
-  color: var(--ink-300);
 }
 
 .foot-link {
@@ -823,19 +805,23 @@ watch(keyword, () => {
   .summary-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .team-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
-@media (max-width: 960px) {
-  .summary-row,
-  .team-grid {
+@media (max-width: 720px) {
+  .summary-row {
     grid-template-columns: 1fr;
   }
 
-  .toolbar-search {
+  .team-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-card {
+    max-width: none;
+  }
+
+  .toolbar-search,
+  .toolbar-filter {
     flex: 1 1 100%;
     width: 100%;
   }

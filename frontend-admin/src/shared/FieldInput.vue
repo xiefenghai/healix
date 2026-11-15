@@ -237,20 +237,38 @@ function onDateInput(e: Event) {
 .fi-btns {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 .fi-btn {
-  border: 1px solid #d1d5db;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid #e5e7eb;
   background: #fff;
   border-radius: 6px;
-  padding: 6px 12px;
+  color: #4b5563;
   cursor: pointer;
   font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.fi-btn:hover {
+  border-color: #d1d5db;
+  color: #1f2937;
 }
 .fi-btn.on {
   border-color: #2563eb;
   background: #eff6ff;
-  color: #1d4ed8;
+  color: #2563eb;
 }
 .fi-num {
   display: flex;
@@ -279,12 +297,14 @@ function onDateInput(e: Event) {
 /* 档案页：与 archive-row 同构（左标签 + 右控件 + 底部分隔线） */
 .fi--row {
   display: grid;
-  grid-template-columns: minmax(88px, 112px) minmax(0, 1fr);
-  gap: 10px 16px;
-  padding: 12px 0;
+  grid-template-columns: 180px minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 0;
+  align-items: center;
+  padding: 16px 0;
   border: none;
   border-radius: 0;
-  border-bottom: 1px solid var(--admin-border, #e5e7eb);
+  border-bottom: 1px solid #f3f4f6;
   background: transparent;
   box-shadow: none;
 }
@@ -298,30 +318,74 @@ function onDateInput(e: Event) {
   border-radius: 6px;
 }
 .fi--row .fi-head {
+  box-sizing: border-box;
+  width: 180px;
+  max-width: 180px;
   margin-bottom: 0;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: flex-end;
+  justify-content: center;
   gap: 2px;
-  padding-top: 2px;
+  padding: 0;
 }
 .fi--row .fi-label {
+  display: block;
+  width: 100%;
   font-size: 14px;
   font-weight: 500;
   color: var(--admin-text-secondary, #64748b);
   line-height: 32px;
+  text-align: right;
+  white-space: nowrap;
+}
+.fi--row .fi-hint {
+  text-align: right;
 }
 .fi--row .fi-restore {
   margin-left: 0;
 }
 .fi--row .fi-body {
   min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.fi--row .fi-btns {
+  gap: 10px;
 }
 .fi--row .fi-btn {
-  border-radius: 4px;
-  padding: 8px 15px;
-  line-height: 1;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border-color: #e5e7eb;
+  color: #4b5563;
+  background: #fff;
+}
+.fi--row .fi-btn.on {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
 }
 .fi--row:last-child {
   border-bottom: none;
+  padding-bottom: 8px;
+}
+
+@media (max-width: 720px) {
+  .fi--row {
+    grid-template-columns: 1fr;
+    column-gap: 0;
+    align-items: start;
+  }
+  .fi--row .fi-head {
+    width: auto;
+    max-width: none;
+    align-items: flex-start;
+  }
+  .fi--row .fi-label {
+    text-align: left;
+    white-space: normal;
+    line-height: 1.4;
+  }
 }
 </style>

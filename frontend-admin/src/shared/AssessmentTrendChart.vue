@@ -7,6 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsType } from 'echarts/core'
 import { api } from './http'
 import { type AssessmentSnapshot, formatDateTime } from './assessment'
+import { useEchartsHost } from './useEchartsHost'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -34,7 +35,7 @@ const truncated = ref(false)
 const points = ref<Point[]>([])
 const chartRef = ref<HTMLDivElement | null>(null)
 let chart: EChartsType | null = null
-let resizeObserver: ResizeObserver | null = null
+const { observe } = useEchartsHost(() => chart, chartRef)
 
 const caption = computed(() => {
   if (loading.value) return '加载中'
@@ -160,16 +161,11 @@ watch(
 )
 
 watch(chartRef, (el) => {
-  resizeObserver?.disconnect()
-  resizeObserver = null
-  if (!el) return
-  resizeObserver = new ResizeObserver(() => chart?.resize())
-  resizeObserver.observe(el)
+  observe(el)
   render()
 })
 
 onBeforeUnmount(() => {
-  resizeObserver?.disconnect()
   chart?.dispose()
   chart = null
 })
@@ -181,7 +177,7 @@ onBeforeUnmount(() => {
       <span>变化趋势</span>
       <span class="trend-caption">{{ caption }}</span>
     </div>
-    <div v-if="points.length" ref="chartRef" class="trend-chart" />
+    <div v-if="points.length" ref="chartRef" class="chart-frame chart-frame--sm trend-chart" />
   </section>
 </template>
 
@@ -201,8 +197,5 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 400;
   color: var(--el-text-color-secondary, #64748b);
-}
-.trend-chart {
-  height: 200px;
 }
 </style>

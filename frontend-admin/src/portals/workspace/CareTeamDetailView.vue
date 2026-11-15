@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatRole, StaffRole } from '../../shared/enums'
-import { TABLE_COL } from '../../shared/table-columns'
 import DeleteCareTeamDialog, { type DeleteCareTeamTarget } from './DeleteCareTeamDialog.vue'
 
 interface CareTeamListItem {
@@ -52,6 +51,7 @@ const unassignedPatients = computed(() => allPatients.value.filter((p) => !p.car
 
 const members = ref<CareTeamMember[]>([])
 const membersLoading = ref(false)
+const patientKeyword = ref('')
 const renaming = ref(false)
 const renameName = ref('')
 const primarySaving = ref(false)
@@ -82,9 +82,24 @@ const patientNameMap = computed(() => {
   return map
 })
 
-function formatTime(iso: string) {
-  if (!iso) return '-'
-  return new Date(iso).toLocaleString('zh-CN')
+const staffMembers = computed(() => members.value.filter((m) => m.memberType === 'STAFF'))
+
+const patientMembers = computed(() => {
+  const rows = members.value.filter((m) => m.memberType === 'PATIENT')
+  const q = patientKeyword.value.trim().toLowerCase()
+  if (!q) return rows
+  return rows.filter((m) => memberLabel(m).toLowerCase().includes(q))
+})
+
+function formatJoinedParts(iso: string) {
+  if (!iso) return { date: '-', time: '' }
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return { date: '-', time: '' }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return {
+    date: `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+  }
 }
 
 function memberLabel(m: CareTeamMember) {
@@ -292,7 +307,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-loading="pageLoading">
+  <div v-loading="pageLoading" class="team-detail">
     <div class="page-title">
       <div>
         <div class="crumb">
@@ -301,28 +316,41 @@ onMounted(async () => {
           <span>{{ current?.name || '详情' }}</span>
         </div>
         <h1>健管组详情</h1>
-        <p>当前机构：{{ getCurrentOrgName() || '-' }} · 编码 {{ current?.teamCode || '-' }}</p>
+        <p>当前机构：{{ getCurrentOrgName() || '-' }}</p>
       </div>
       <div class="actions">
-        <el-button @click="router.push('/workspace/care-teams')">返回列表</el-button>
-        <el-button type="danger" plain @click="deleteTeam">删除健管组</el-button>
+        <el-button class="btn-back" @click="router.push('/workspace/care-teams')">返回列表</el-button>
+        <el-button class="btn-delete" @click="deleteTeam">删除健管组</el-button>
       </div>
     </div>
 
     <template v-if="current">
-      <el-card shadow="never" class="block">
+      <section class="block">
         <h3>基本信息</h3>
-        <div class="row">
-          <el-input v-model="renameName" style="max-width: 360px" />
-          <el-button type="primary" :loading="renaming" @click="saveRename">保存名称</el-button>
+        <div class="name-row">
+          <el-input
+            v-model="renameName"
+            class="name-input"
+            maxlength="40"
+            show-word-limit
+            placeholder="健管组名称"
+            @keyup.enter="saveRename"
+          />
+          <el-button class="btn-secondary" :loading="renaming" @click="saveRename">保存名称</el-button>
         </div>
-      </el-card>
+      </section>
 
-      <el-card shadow="never" class="block">
+      <section class="block">
         <h3>主责设置</h3>
-        <el-form label-width="100px" style="max-width: 480px">
-          <el-form-item label="主责健管师">
-            <el-select v-model="primaryForm.primaryCareManagerStaffId" filterable style="width: 100%">
+        <div class="primary-row">
+          <div class="primary-field">
+            <label class="field-label">主责健管师</label>
+            <el-select
+              v-model="primaryForm.primaryCareManagerStaffId"
+              filterable
+              class="primary-select"
+              placeholder="选择主责健管师"
+            >
               <el-option
                 v-for="s in careManagers"
                 :key="s.staffId"
@@ -330,9 +358,16 @@ onMounted(async () => {
                 :value="s.staffId"
               />
             </el-select>
-          </el-form-item>
-          <el-form-item label="主责医生">
-            <el-select v-model="primaryForm.primaryDoctorStaffId" clearable filterable style="width: 100%">
+          </div>
+          <div class="primary-field">
+            <label class="field-label">主责医生</label>
+            <el-select
+              v-model="primaryForm.primaryDoctorStaffId"
+              clearable
+              filterable
+              class="primary-select"
+              placeholder="可稍后指定"
+            >
               <el-option
                 v-for="s in doctors"
                 :key="s.staffId"
@@ -340,53 +375,165 @@ onMounted(async () => {
                 :value="s.staffId"
               />
             </el-select>
-          </el-form-item>
-        </el-form>
-        <el-button type="primary" :loading="primarySaving" @click="savePrimary">保存主责</el-button>
-      </el-card>
+          </div>
+          <div class="primary-action">
+            <el-button type="primary" :loading="primarySaving" @click="savePrimary">保存主责</el-button>
+          </div>
+        </div>
+      </section>
 
-      <el-card shadow="never" class="block">
+      <section class="block">
         <h3>成员（{{ members.length }}）</h3>
-        <el-table v-loading="membersLoading" :data="members" stripe>
-          <el-table-column label="类型" width="90">
-            <template #default="{ row }">{{ memberTypeLabel(row) }}</template>
-          </el-table-column>
-          <el-table-column label="姓名" min-width="140">
-            <template #default="{ row }">{{ memberLabel(row) }}</template>
-          </el-table-column>
-          <el-table-column label="加入时间" v-bind="TABLE_COL.datetime">
-            <template #default="{ row }">{{ formatTime(row.joinedAt) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="90" align="right" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="danger" @click="removeMember(row)">移除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+        <div v-loading="membersLoading" class="members-split">
+          <div class="member-col">
+            <div class="col-head">
+              <div class="col-title">健管师 · {{ staffMembers.length }}</div>
+            </div>
+            <div class="table-wrap">
+              <el-table
+                :data="staffMembers"
+                class="members-table"
+                stripe
+                empty-text="暂无健管师"
+              >
+                <el-table-column label="岗位" width="80" align="center" header-align="center">
+                  <template #default="{ row }">
+                    <span class="type-pill staff">{{ memberTypeLabel(row) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  label="姓名"
+                  min-width="72"
+                  align="left"
+                  header-align="left"
+                  show-overflow-tooltip
+                >
+                  <template #default="{ row }">{{ memberLabel(row) }}</template>
+                </el-table-column>
+                <el-table-column
+                  label="加入时间"
+                  width="180"
+                  align="right"
+                  header-align="right"
+                  class-name="col-joined"
+                >
+                  <template #default="{ row }">
+                    <div class="joined-at">
+                      <span class="joined-date">{{ formatJoinedParts(row.joinedAt).date }}</span>
+                      <span class="joined-time">{{ formatJoinedParts(row.joinedAt).time }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  label="操作"
+                  width="60"
+                  align="center"
+                  header-align="center"
+                  class-name="col-action"
+                >
+                  <template #default="{ row }">
+                    <button type="button" class="remove-btn" @click="removeMember(row)">移除</button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="add-row">
+              <el-select
+                v-model="addStaffId"
+                clearable
+                filterable
+                placeholder="添加健管师"
+                class="add-select"
+              >
+                <el-option
+                  v-for="s in careManagers"
+                  :key="s.staffId"
+                  :label="s.displayName"
+                  :value="s.staffId"
+                />
+              </el-select>
+              <el-button class="btn-secondary" :loading="addingMember" @click="addStaffMember">
+                添加
+              </el-button>
+            </div>
+          </div>
 
-        <div class="add-row">
-          <el-select v-model="addStaffId" clearable filterable placeholder="添加健管师" style="width: 260px">
-            <el-option
-              v-for="s in careManagers"
-              :key="s.staffId"
-              :label="s.displayName"
-              :value="s.staffId"
-            />
-          </el-select>
-          <el-button :loading="addingMember" @click="addStaffMember">添加健管师</el-button>
+          <div class="member-col">
+            <div class="col-head">
+              <div class="col-title">患者 · {{ patientMembers.length }}</div>
+              <el-input
+                v-model="patientKeyword"
+                clearable
+                class="patient-search"
+                placeholder="搜索患者"
+              />
+            </div>
+            <div class="table-wrap table-wrap--scroll">
+              <el-table
+                :data="patientMembers"
+                class="members-table"
+                stripe
+                empty-text="暂无患者"
+                :max-height="480"
+              >
+                <el-table-column
+                  label="姓名"
+                  min-width="72"
+                  align="left"
+                  header-align="left"
+                  show-overflow-tooltip
+                >
+                  <template #default="{ row }">{{ memberLabel(row) }}</template>
+                </el-table-column>
+                <el-table-column
+                  label="加入时间"
+                  width="180"
+                  align="right"
+                  header-align="right"
+                  class-name="col-joined"
+                >
+                  <template #default="{ row }">
+                    <div class="joined-at">
+                      <span class="joined-date">{{ formatJoinedParts(row.joinedAt).date }}</span>
+                      <span class="joined-time">{{ formatJoinedParts(row.joinedAt).time }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  label="操作"
+                  width="60"
+                  align="center"
+                  header-align="center"
+                  class-name="col-action"
+                >
+                  <template #default="{ row }">
+                    <button type="button" class="remove-btn" @click="removeMember(row)">移除</button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="add-row">
+              <el-select
+                v-model="addPatientId"
+                clearable
+                filterable
+                placeholder="添加未入组患者"
+                class="add-select"
+              >
+                <el-option
+                  v-for="p in unassignedPatients"
+                  :key="p.peopleId"
+                  :label="p.displayName"
+                  :value="p.peopleId"
+                />
+              </el-select>
+              <el-button class="btn-secondary" :loading="addingMember" @click="addPatientMember">
+                入组
+              </el-button>
+            </div>
+          </div>
         </div>
-        <div class="add-row">
-          <el-select v-model="addPatientId" clearable filterable placeholder="添加未入组患者" style="width: 260px">
-            <el-option
-              v-for="p in unassignedPatients"
-              :key="p.peopleId"
-              :label="p.displayName"
-              :value="p.peopleId"
-            />
-          </el-select>
-          <el-button :loading="addingMember" @click="addPatientMember">患者入组</el-button>
-        </div>
-      </el-card>
+      </section>
     </template>
 
     <DeleteCareTeamDialog
@@ -398,11 +545,370 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.crumb { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--admin-muted); }
-.sep { margin: 0 2px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.block { margin-bottom: 16px; }
-.block h3 { margin: 0 0 12px; font-size: 14px; }
-.row { display: flex; gap: 8px; align-items: center; }
-.add-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.team-detail {
+  width: 100%;
+}
+
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--admin-muted);
+}
+
+.sep {
+  margin: 0 2px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn-back {
+  height: 32px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #374151;
+}
+
+.btn-back:hover {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.btn-delete {
+  height: 32px;
+  border: none;
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.btn-delete:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.btn-secondary {
+  height: 32px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.btn-secondary:hover {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.block {
+  margin-bottom: 16px;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.block h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink-900, #111827);
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.name-input {
+  width: 100%;
+  max-width: 400px;
+}
+
+.primary-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.primary-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-600, #4b5563);
+  line-height: 1.2;
+}
+
+.primary-select {
+  width: 240px;
+}
+
+.primary-select :deep(.el-select__wrapper) {
+  min-height: 36px;
+  height: 36px;
+}
+
+.primary-action {
+  display: flex;
+  align-items: center;
+  height: 36px;
+}
+
+.primary-action :deep(.el-button) {
+  height: 36px;
+  padding: 0 18px;
+}
+
+.members-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.35fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.member-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  min-height: 32px;
+}
+
+.col-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-800, #1f2937);
+}
+
+.patient-search {
+  width: 200px;
+  flex-shrink: 0;
+}
+
+.patient-search :deep(.el-input__wrapper) {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  box-shadow: none !important;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  transition:
+    border-color 140ms,
+    box-shadow 140ms;
+}
+
+.patient-search :deep(.el-input__wrapper:hover) {
+  border-color: #d1d5db;
+  box-shadow: none !important;
+}
+
+.patient-search :deep(.el-input__wrapper.is-focus),
+.patient-search :deep(.el-input__wrapper:focus-within) {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
+}
+
+.patient-search :deep(.el-input__inner) {
+  height: 30px;
+  line-height: 30px;
+}
+
+.table-wrap {
+  min-width: 0;
+}
+
+.table-wrap--scroll {
+  padding-bottom: 4px;
+}
+
+.members-table {
+  width: 100%;
+  --el-table-row-hover-bg-color: #f3f4f6;
+  --el-table-striped-bg-color: #f9fafb;
+  --el-table-border-color: #f3f4f6;
+}
+
+/* 去掉 el-table 底部那根异常粗线 */
+.members-table :deep(.el-table__inner-wrapper::before),
+.members-table :deep(.el-table__border-left-patch),
+.members-table :deep(.el-table--border::after) {
+  display: none !important;
+}
+
+.members-table :deep(.el-table__header th) {
+  height: 40px;
+  background: #f9fafb !important;
+  color: #6b7280;
+  font-weight: 600;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.members-table :deep(.el-table__header .cell) {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.35;
+}
+
+.members-table :deep(.el-table__body .cell) {
+  line-height: 1.35;
+}
+
+.members-table :deep(.el-table__cell) {
+  padding: 8px 8px;
+}
+
+.members-table :deep(.el-table__body tr:last-child td) {
+  border-bottom: none;
+}
+
+.members-table :deep(.col-joined .cell) {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+}
+
+.members-table :deep(.col-action) {
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+
+.members-table :deep(.col-action .cell) {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+  padding: 0 !important;
+  text-align: center;
+}
+
+.members-table :deep(.el-table__body-wrapper) {
+  padding-bottom: 8px;
+}
+
+.joined-at {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.joined-date {
+  font-size: 13px;
+  color: var(--ink-700, #374151);
+  white-space: nowrap;
+}
+
+.joined-time {
+  font-size: 12px;
+  color: var(--ink-400, #9ca3af);
+  white-space: nowrap;
+}
+
+.type-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.type-pill.staff {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.remove-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: #9ca3af;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 140ms;
+}
+
+.remove-btn:hover {
+  color: #dc2626;
+}
+
+.add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 24px;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+}
+
+.add-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.add-select :deep(.el-select__wrapper) {
+  width: 100%;
+}
+
+@media (max-width: 960px) {
+  .members-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .name-input,
+  .primary-select,
+  .patient-search,
+  .add-select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .primary-action {
+    width: 100%;
+    height: auto;
+  }
+
+  .primary-action :deep(.el-button) {
+    width: 100%;
+  }
+}
 </style>

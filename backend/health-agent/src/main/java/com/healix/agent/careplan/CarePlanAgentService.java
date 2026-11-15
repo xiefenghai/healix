@@ -255,7 +255,13 @@ public class CarePlanAgentService {
         }
         LlmPlanResult r = llmResult.get();
         guardAllergens(ctx, r.plan().diet(), sink);
-        keepEnergyTarget(draft.getDiet(), r.plan().diet());
+        // 仅保留健管师手改热量；其余交给 updateDraft 按总结减重意图对齐 energyTarget
+        preservePlanEditEnergyOnly(draft.getDiet(), r.plan().diet());
+        // 明确「不要打卡 / 不要运动计划」时服务端硬落实，避免模型软化 + 默认任务回填
+        com.healix.core.careplan.support.CarePlanRevisionIntent.apply(
+                instruction, r.plan().exercise(), r.plan().diet(), r.plan().execution());
+        com.healix.core.careplan.support.CarePlanRevisionIntent.preserveOmitDefaultCheckins(
+                draft.getExecution(), r.plan().execution(), instruction);
         logEntity.setDraftReply("LLM_REVISE");
         if (r.llmResponse() != null) {
             logEntity.setPromptTokens(r.llmResponse().promptTokens());
@@ -463,16 +469,16 @@ public class CarePlanAgentService {
         return bundle;
     }
 
-    /** 修订不改热量目标：沿用草稿里的（含健管师手改值），保存时再按饮食目标刷新。 */
-    private static void keepEnergyTarget(JsonNode currentDiet, ObjectNode revisedDiet) {
+    /** 修订时只保留健管师手改热量；其它来源交给落库时按总结意图重算，避免「总结减重、卡片维持」。 */
+    private static void preservePlanEditEnergyOnly(JsonNode currentDiet, ObjectNode revisedDiet) {
         if (revisedDiet == null) {
             return;
         }
         JsonNode target = currentDiet == null ? null : currentDiet.get(CarePlanEnergyTargetService.FIELD);
-        if (target != null && target.isObject()) {
+        if (target != null
+                && target.isObject()
+                && CarePlanEnergyTargetService.SOURCE_PLAN_EDIT.equals(target.path("source").asText())) {
             revisedDiet.set(CarePlanEnergyTargetService.FIELD, target.deepCopy());
-        } else {
-            revisedDiet.remove(CarePlanEnergyTargetService.FIELD);
         }
     }
 

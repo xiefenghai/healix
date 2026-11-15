@@ -45,6 +45,7 @@ import com.healix.core.careplan.support.CarePlanOsaHintSupport;
 import com.healix.core.careplan.support.CarePlanContextService;
 import com.healix.core.careplan.support.CarePlanContextService.CarePlanContext;
 import com.healix.core.careplan.support.CarePlanExecutionTaskNormalizer;
+import com.healix.core.careplan.support.CarePlanExerciseTypeNormalizer;
 import com.healix.core.careplan.support.CarePlanSampleDaySync;
 import com.healix.core.careplan.support.CarePlanWeighTaskNormalizer;
 import com.healix.core.followup.catalog.FollowupType;
@@ -321,12 +322,26 @@ public class CarePlanService {
         CarePlanSampleDaySync.syncFromMonday(generated.diet());
         CarePlanOsaHintSupport.apply(
                 generated.diet(), asObjectNode(generated.exercise()), generated.contextSnapshot());
-        energyTargetService.applyFresh(
-                tenantId, peopleId, generated.diet(), asObjectNode(generated.contextSnapshot()));
+        ObjectNode genSnap = asObjectNode(generated.contextSnapshot());
+        String goal = StringUtils.hasText(goalSummaryOverride)
+                ? goalSummaryOverride
+                : generated.exercise().path("goal").asText(null);
+        if (genSnap != null && StringUtils.hasText(goal)) {
+            genSnap.put("goalSummary", goal);
+        }
+        energyTargetService.applyFresh(tenantId, peopleId, generated.diet(), genSnap);
+        // 热量最终为维持时，弱化总结/目标中的减重措辞，避免与卡片矛盾
+        if (genSnap != null
+                && generated.diet() != null
+                && "MAINTAIN".equalsIgnoreCase(generated.diet().path("energyTarget").path("goalType").asText())) {
+            CarePlanEnergyTargetService.sanitizeLoseNarrative(genSnap);
+            goal = CarePlanEnergyTargetService.sanitizeLoseNarrativeText(goal);
+        }
+        CarePlanExerciseTypeNormalizer.normalize(asObjectNode(generated.exercise()));
         CarePlanRationaleSupport.scrubGuidelineCodesInPlan(
-                generated.exercise(), generated.diet(), generated.execution(), generated.contextSnapshot());
-        CarePlanWeighTaskNormalizer.normalize(generated.execution(), generated.contextSnapshot());
-        CarePlanExecutionTaskNormalizer.normalize(generated.execution(), generated.contextSnapshot());
+                generated.exercise(), generated.diet(), generated.execution(), genSnap);
+        CarePlanWeighTaskNormalizer.normalize(generated.execution(), genSnap);
+        CarePlanExecutionTaskNormalizer.normalize(generated.execution(), genSnap);
         List<SafetyFlagDto> flags = safetyService.evaluate(
                 generated.exercise(),
                 generated.diet(),
@@ -336,7 +351,7 @@ public class CarePlanService {
                 generated.hypoglycemiaRisk(),
                 allergens,
                 allergyQueryService.status(tenantId, peopleId),
-                generated.contextSnapshot(),
+                genSnap,
                 true);
         flags.addAll(GuidelineCheck.apply(
                 generated.exercise(), generated.diet(), generated.execution(), generated.guidelines(), true));
@@ -354,14 +369,11 @@ public class CarePlanService {
                 JsonUtils.toJson(generated.diet()),
                 JsonUtils.toJson(generated.execution()),
                 safetyService.toFlagsJson(flags),
-                JsonUtils.toJson(generated.contextSnapshot()),
+                JsonUtils.toJson(genSnap == null ? generated.contextSnapshot() : genSnap),
                 plan.getCurrentVersionId(),
                 generationLogId);
         draftMapper.insert(draft);
         plan.setDiseaseTagsJson(JsonUtils.toJson(generated.diseaseTags()));
-        String goal = StringUtils.hasText(goalSummaryOverride)
-                ? goalSummaryOverride
-                : generated.exercise().path("goal").asText(null);
         plan.setGoalSummary(goal);
         plan.setTitle(buildDefaultTitle(generated.templateKey(), goal));
         resetReviewIfNeeded(plan);
@@ -465,26 +477,28 @@ public class CarePlanService {
                 exercise == null ? JsonUtils.emptyObject() : exercise);
         ObjectNode dietNorm = CarePlanRationaleSupport.clearIfContentChanged(
                 JsonUtils.readTree(draft.getDietJson()), diet == null ? JsonUtils.emptyObject() : diet);
-        if (dietNorm != null) {
-            CarePlanAllergenGuard.enforce(dietNorm, ctx.foodAllergens());
-            ObjectNode snapForDiet = asObjectNode(JsonUtils.readTree(
-                    draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
-            CarePlanTemplateKeyEnum dietTemplateKey =
-                    CarePlanTemplateKeyEnum.parseOrNull(snapForDiet.path("templateKey").asText(null));
-            CarePlanDiabetesDietGuard.sanitize(dietNorm, snapForDiet, dietTemplateKey, ctx.diseaseCodes());
-            CarePlanDietNotesGuard.sanitize(dietNorm);
-            CarePlanSampleDaySync.syncFromMonday(dietNorm);
-            energyTargetService.apply(tenantId, peopleId, dietNorm);
-        }
         ObjectNode executionNorm = CarePlanRationaleSupport.clearIfContentChanged(
                 JsonUtils.readTree(draft.getExecutionJson()),
                 com.healix.core.water.support.WaterTaskMigration.normalizeExecution(execution));
+        // 先合并总结，再算热量：AI 修订写了「减重」时才能对齐 energyTarget
         if (planSummary != null || rationaleOverview != null) {
             draft.setContextSnapshotJson(mergeSnapshotFields(
                     draft.getContextSnapshotJson(), planSummary, rationaleOverview));
         }
         ObjectNode snapshotNode = asObjectNode(JsonUtils.readTree(
                 draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
+        String alignedGoalSummary = goalSummary;
+        if (dietNorm != null) {
+            CarePlanAllergenGuard.enforce(dietNorm, ctx.foodAllergens());
+            CarePlanTemplateKeyEnum dietTemplateKey =
+                    CarePlanTemplateKeyEnum.parseOrNull(snapshotNode.path("templateKey").asText(null));
+            CarePlanDiabetesDietGuard.sanitize(dietNorm, snapshotNode, dietTemplateKey, ctx.diseaseCodes());
+            CarePlanDietNotesGuard.sanitize(dietNorm);
+            CarePlanSampleDaySync.syncFromMonday(dietNorm);
+            alignedGoalSummary = energyTargetService.applyAfterMutation(
+                    tenantId, peopleId, dietNorm, snapshotNode, goalSummary);
+        }
+        CarePlanExerciseTypeNormalizer.normalize(exerciseNorm);
         CarePlanRationaleSupport.scrubGuidelineCodesInPlan(exerciseNorm, dietNorm, executionNorm, snapshotNode);
         // 用最新首诊高亮（含答卷摘要）覆盖快照，避免旧草稿缺 answerDisplay
         mergeLiveHighlights(snapshotNode, ctx);
@@ -527,8 +541,8 @@ public class CarePlanService {
         if (StringUtils.hasText(title)) {
             plan.setTitle(title);
         }
-        if (goalSummary != null) {
-            plan.setGoalSummary(goalSummary);
+        if (alignedGoalSummary != null) {
+            plan.setGoalSummary(alignedGoalSummary);
         }
         resetReviewIfNeeded(plan);
         plan.setUpdatedByStaffId(staffId);
@@ -882,6 +896,7 @@ public class CarePlanService {
                 draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
         mergeLiveHighlights(publishSnapshot, ctx);
         CarePlanOsaHintSupport.apply(diet, exercise, publishSnapshot);
+        CarePlanExerciseTypeNormalizer.normalize(exercise);
         if (diet != null) {
             draft.setDietJson(JsonUtils.toJson(diet));
         }

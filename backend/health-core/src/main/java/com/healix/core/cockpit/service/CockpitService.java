@@ -1490,6 +1490,13 @@ public class CockpitService {
         if (b.contains("METRIC_ALERT")) {
             return "指标异常待跟进";
         }
+        // 交卷待确认须压过打卡/制定方案，避免左栏副文案与角标互相打架
+        if (b.contains("INTAKE_REVIEW")
+                || (card.getTaskTypeLabels() != null
+                        && card.getTaskTypeLabels().stream()
+                                .anyMatch(WorkspaceTaskLabels::isIntakeReviewLabel))) {
+            return WorkspaceTaskLabels.INTAKE_REVIEW_LABEL;
+        }
         if (b.contains("PLAN_NUDGE")) {
             return "打卡跟进";
         }
@@ -1501,11 +1508,6 @@ public class CockpitService {
         }
         if (card.getTaskTypeLabels().contains(WorkspaceTaskLabels.PLAN_RENEW_LABEL)) {
             return WorkspaceTaskLabels.PLAN_RENEW_LABEL;
-        }
-        if (b.contains("INTAKE_REVIEW")
-                || (card.getTaskTypeLabels() != null
-                        && card.getTaskTypeLabels().contains(WorkspaceTaskLabels.INTAKE_REVIEW_LABEL))) {
-            return WorkspaceTaskLabels.INTAKE_REVIEW_LABEL;
         }
         if (b.contains("PLAN_CREATE")) {
             return "待制定方案";

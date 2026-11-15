@@ -27,6 +27,7 @@ import {
   type CarePlanChatPreview,
 } from './agent-care-plan'
 import { setAgentDraft } from './agent-draft-bus'
+import { pushCarePlanCompose } from './care-plan-compose-nav'
 import { formatAssistantPlainHtml } from './agent-plain-text'
 import { callApiDoneLabel, runAgentCallApi } from './agent-call-api'
 import { resolveStickyCapabilityHint } from './agent-sticky'
@@ -580,9 +581,12 @@ function runAction(action: AgentAction) {
     const target = sheetModeToPath(peopleId, action.path)
     drawerVisible.value = false
     if (openCompose && peopleId) {
-      router.push(`/workspace/patients/${peopleId}/care-plan/compose`)
+      void pushCarePlanCompose(router, peopleId, {
+        entry: action.payload?.openCreate ? 'fresh' : 'continue',
+        fresh: !!action.payload?.openCreate,
+      })
     } else {
-      router.push(target)
+      void router.push(target)
     }
     return
   }
@@ -768,7 +772,7 @@ function openCarePlanEditor() {
   if (!peopleId) return
   setAgentDraft({ peopleId, mode: 'care-plan', openCompose: true })
   drawerVisible.value = false
-  router.push(`/workspace/patients/${peopleId}/care-plan/compose`)
+  void pushCarePlanCompose(router, peopleId, { entry: 'continue' })
 }
 
 async function openCarePlanPreview() {

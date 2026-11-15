@@ -25,7 +25,8 @@ class ExerciseSupportTest {
     private final ExerciseTaskTargetResolver resolver = new ExerciseTaskTargetResolver(catalog);
 
     private static ExercisePlan plan(CarePlanTemplateKeyEnum disease) {
-        return new ExercisePlan(PlanState.NONE, null, 0, List.of(), 150, List.of(), List.of(), disease, false);
+        return new ExercisePlan(
+                PlanState.NONE, null, 0, List.of(), 150, null, List.of(), List.of(), null, disease, false);
     }
 
     @Test

@@ -12,9 +12,13 @@ public class ExerciseTodayDto {
     private LocalDate date;
     /** ACTIVE / EXPIRED / NONE */
     private String planState;
+    /** 运动目标摘要（与管理方案 exercise.goal 对齐） */
+    private String goal;
     private List<TaskItem> tasks;
     private List<String> contraindications;
     private List<String> precautions;
+    /** 复评提示（与管理方案 exercise.reviewHint 对齐） */
+    private String reviewHint;
     private List<ExerciseSessionDto> sessions;
 
     @Getter

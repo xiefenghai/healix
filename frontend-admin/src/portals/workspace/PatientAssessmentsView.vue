@@ -260,27 +260,28 @@ onMounted(() => {
   <div v-loading="loading" class="panel">
     <section class="shell-card">
       <div class="head">
-        <div>
+        <div class="head-title">
           <h3>评估记录</h3>
+          <p
+            v-if="requestText"
+            class="request-status"
+            :class="{
+              'is-warning': pending?.status === 'EXPIRED',
+              'is-success': pending?.status === 'SUBMITTED',
+            }"
+          >
+            {{ requestText }}
+          </p>
         </div>
         <div class="head-actions">
           <el-button @click="openRules()">评估规则</el-button>
-        <el-button @click="openSendDialog">
-          {{ pending?.status === 'PENDING' ? '重新发送问卷' : '发问卷给患者' }}
-        </el-button>
+          <el-button @click="openSendDialog">
+            {{ pending?.status === 'PENDING' ? '重新发送问卷' : '发问卷给患者' }}
+          </el-button>
           <el-button @click="openQuestionnaire()">填写评估问卷</el-button>
           <el-button type="primary" :loading="running" @click="runManual">重新评估</el-button>
         </div>
       </div>
-
-      <el-alert
-        v-if="requestText"
-        :type="pending?.status === 'EXPIRED' ? 'warning' : pending?.status === 'SUBMITTED' ? 'success' : 'info'"
-        :closable="false"
-        show-icon
-        :title="requestText"
-        class="info-alert"
-      />
 
       <div v-if="needsAttention.length" class="attention">
         <div v-for="g in needsAttention" :key="g.diseaseCode" class="attention-row">
@@ -472,15 +473,35 @@ onMounted(() => {
 .head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   margin-bottom: 14px;
 }
+.head-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
 .head h3 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
   color: var(--ink-800, #1e293b);
+  white-space: nowrap;
+}
+.request-status {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--el-color-info);
+}
+.request-status.is-warning {
+  color: var(--el-color-warning);
+}
+.request-status.is-success {
+  color: var(--el-color-success);
 }
 .hint {
   margin: 0;
@@ -493,12 +514,10 @@ onMounted(() => {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 .head-actions .el-button + .el-button {
   margin-left: 0;
-}
-.info-alert {
-  margin-bottom: 12px;
 }
 .attention {
   display: flex;

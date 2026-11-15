@@ -523,26 +523,41 @@ onMounted(() => void load())
 
 .ag-status {
   flex-shrink: 0;
-  height: 32px;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 4px 20px;
+  width: 100%;
+  min-height: 32px;
+  height: auto;
 }
 
 .ag-status :deep(.el-radio) {
   height: 32px;
-  margin-right: 16px;
+  margin-right: 0;
   align-items: center;
 }
 
+.ag-status :deep(.el-radio__input) {
+  align-self: center;
+}
+
+.ag-status :deep(.el-radio__label) {
+  padding-left: 8px;
+  line-height: 32px;
+}
+
 .ag-status-hint {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
+  padding: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--admin-muted, #64748b);
+  color: #9ca3af;
 }
 
 .ag-body {
   min-height: 40px;
-  margin-top: 12px;
+  margin-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 16px;

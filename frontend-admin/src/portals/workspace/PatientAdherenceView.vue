@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart } from 'echarts/charts'
 import {
@@ -122,11 +123,11 @@ let resizeObserver: ResizeObserver | null = null
 
 const followupTag = computed(() => {
   const d = detail.value
-  if (!d) return { text: '—', hint: '', type: 'info' as const }
+  if (!d) return { text: '—', hint: '', tone: 'neutral' as const }
   const plan = d.plan
   const med = d.med
   if (!plan?.hasActivePlan) {
-    return { text: '暂无方案', hint: '还没有执行中的管理方案', type: 'info' as const }
+    return { text: '暂无方案', hint: '还没有执行中的管理方案', tone: 'neutral' as const }
   }
   const streak = plan.streakDays || 0
   const planMiss = !!plan.todayIncomplete
@@ -137,20 +138,26 @@ const followupTag = computed(() => {
     if (medMiss) bits.push('今日用药还没打卡')
     if (streak >= 3) bits.push(`方案已连续 ${streak} 天未完成`)
     let text = '需跟进'
-    if (streak >= 3) text = `连续${streak}天`
-    else if (planMiss && medMiss) text = '今日未完成'
+    let tone: 'soft' | 'alert' = 'soft'
+    if (streak >= 3) {
+      text = `连续${streak}天`
+      tone = 'alert'
+    } else if (planMiss && medMiss) text = '今日未完成'
     else if (planMiss) text = '方案未完成'
     else if (medMiss) text = '用药未打卡'
-    return { text, hint: bits.join('，'), type: 'danger' as const }
+    return { text, hint: bits.join('，'), tone }
   }
   if (d.riskLevel === 'MEDIUM') {
-    return { text: '完成偏低', hint: '近 7 日完成率不到 60%', type: 'warning' as const }
+    return { text: '完成偏低', hint: '近 7 日完成率不到 60%，一起加油', tone: 'soft' as const }
   }
   if (plan.rate7d == null) {
-    return { text: '暂无任务', hint: '近 7 日没有应打卡任务', type: 'info' as const }
+    return { text: '暂无任务', hint: '近 7 日没有应打卡任务', tone: 'neutral' as const }
   }
-  return { text: '执行正常', hint: '今天已完成', type: 'success' as const }
+  return { text: '执行正常', hint: '今天已完成，继续保持', tone: 'good' as const }
 })
+
+const planToday = computed(() => planTodayParts(detail.value?.plan))
+const medToday = computed(() => medTodayParts(detail.value?.med))
 
 function formatPct(rate?: number | null) {
   return formatPlanRatePct(rate)
@@ -160,21 +167,22 @@ function rateCellClass(rate?: number | null) {
   return `rate-cell rate-${planRateBand(rate)}`
 }
 
-function formatPlanToday(plan?: PlanMetrics) {
-  if (!plan?.hasActivePlan) return '无方案'
-  if (plan.due === 0) return '今日无任务'
-  const base = `${plan.done}/${plan.due}`
-  if (plan.todayIncomplete) return `${base} 未完成`
-  if (plan.skipped > 0 && plan.done === 0) return `${base} 已跳过`
-  return `${base} 已完成`
+function planTodayParts(plan?: PlanMetrics) {
+  if (!plan?.hasActivePlan) return { main: '无方案', suffix: '', incomplete: false }
+  if (plan.due === 0) return { main: '今日无任务', suffix: '', incomplete: false }
+  const main = `${plan.done}/${plan.due}`
+  if (plan.todayIncomplete) return { main, suffix: '未完成', incomplete: true }
+  if (plan.skipped > 0 && plan.done === 0) return { main, suffix: '已跳过', incomplete: false }
+  return { main, suffix: '已完成', incomplete: false }
 }
 
-function formatMedToday(med?: MedMetrics) {
-  if (!med || med.activeCount === 0) return '无在用药'
-  // 只有按需服药（PRN）时应服次数为 0：无固定医嘱次数，不判漏服
-  if (!med.dueDoseCount) return `${med.activeCount} 种按需`
-  const base = `${med.takenDoseCount}/${med.dueDoseCount} 次`
-  return med.todayIncomplete ? `${base} 未完成` : `${base} 已完成`
+function medTodayParts(med?: MedMetrics) {
+  if (!med || med.activeCount === 0) return { main: '无在用药', suffix: '', incomplete: false }
+  if (!med.dueDoseCount) return { main: `${med.activeCount} 种按需`, suffix: '', incomplete: false }
+  const main = `${med.takenDoseCount}/${med.dueDoseCount} 次`
+  return med.todayIncomplete
+    ? { main, suffix: '未完成', incomplete: true }
+    : { main, suffix: '已完成', incomplete: false }
 }
 
 function statusLabel(status?: string) {
@@ -188,7 +196,7 @@ function statusTagType(status?: string) {
   if (status === 'DONE' || status === 'TAKEN') return 'success'
   if (status === 'PARTIAL') return 'warning'
   if (status === 'SKIPPED') return 'info'
-  return 'warning'
+  return 'info'
 }
 
 function shortDate(iso?: string) {
@@ -322,16 +330,17 @@ onBeforeUnmount(() => {
         value-format="YYYY-MM-DD"
         placeholder="查询日"
         :clearable="false"
+        class="toolbar-date"
       />
-      <el-radio-group v-model="windowDays" size="default">
+      <el-radio-group v-model="windowDays" size="small" class="window-seg">
         <el-radio-button :label="7">近7天</el-radio-button>
         <el-radio-button :label="14">近14天</el-radio-button>
         <el-radio-button :label="30">近30天</el-radio-button>
       </el-radio-group>
-      <el-button @click="load">刷新</el-button>
+      <el-button class="toolbar-refresh" :icon="Refresh" circle @click="load" />
       <div class="toolbar-links">
-        <el-button link type="primary" @click="openCarePlan">方案打卡</el-button>
-        <el-button link type="primary" @click="openMedications">用药管理</el-button>
+        <button type="button" class="toolbar-link" @click="openCarePlan">方案打卡</button>
+        <button type="button" class="toolbar-link" @click="openMedications">用药管理</button>
       </div>
     </div>
 
@@ -339,33 +348,48 @@ onBeforeUnmount(() => {
       <div class="summary-card">
         <div class="summary-label">执行跟进</div>
         <div class="summary-value">
-          <el-tag :type="followupTag.type" effect="light" size="large">
-            {{ followupTag.text }}
-          </el-tag>
+          <span class="follow-pill" :data-tone="followupTag.tone">{{ followupTag.text }}</span>
         </div>
         <div v-if="followupTag.hint" class="summary-hint">{{ followupTag.hint }}</div>
       </div>
       <div class="summary-card">
         <div class="summary-label">方案今日</div>
-        <div class="summary-value" :class="{ warn: detail?.plan?.todayIncomplete }">
-          {{ formatPlanToday(detail?.plan) }}
+        <div class="summary-value">
+          <b>{{ planToday.main }}</b>
+          <em v-if="planToday.suffix" class="value-suffix">{{ planToday.suffix }}</em>
         </div>
-        <div class="summary-hint">连续未执行 {{ detail?.plan?.streakDays ?? 0 }} 天</div>
+        <div class="summary-hint">
+          连续未执行 {{ detail?.plan?.streakDays ?? 0 }} 天
+          <span v-if="planToday.incomplete" class="cheer">· 加油</span>
+        </div>
       </div>
       <div class="summary-card">
         <div class="summary-label">用药今日</div>
-        <div class="summary-value" :class="{ warn: detail?.med?.todayIncomplete }">
-          {{ formatMedToday(detail?.med) }}
+        <div class="summary-value">
+          <b>{{ medToday.main }}</b>
+          <em v-if="medToday.suffix" class="value-suffix">{{ medToday.suffix }}</em>
         </div>
-        <div class="summary-hint">在用药 {{ detail?.med?.activeCount ?? 0 }} 种</div>
+        <div class="summary-hint">
+          在用药 {{ detail?.med?.activeCount ?? 0 }} 种
+          <span v-if="medToday.incomplete" class="cheer">· 加油</span>
+        </div>
       </div>
       <div class="summary-card">
         <div class="summary-label">近7日方案任务完成率</div>
         <div :class="rateCellClass(detail?.plan?.rate7d)">
           <span class="rate-pct rate-pct-lg">{{ formatPct(detail?.plan?.rate7d) }}</span>
-          <div v-if="detail?.plan?.rate7d != null" class="rate-track rate-track-lg" aria-hidden="true">
-            <i class="rate-fill" :style="{ width: `${planRateBarWidth(detail?.plan?.rate7d)}%` }" />
+          <div class="rate-track rate-track-lg" aria-hidden="true">
+            <i
+              class="rate-fill"
+              :style="{ width: `${planRateBarWidth(detail?.plan?.rate7d)}%` }"
+            />
           </div>
+          <span
+            v-if="detail?.plan?.rate7d != null && detail.plan.rate7d < 0.6"
+            class="cheer cheer--inline"
+          >
+            慢慢来，一点点会更好
+          </span>
         </div>
         <div class="summary-hint">{{ PLAN_RATE_COLUMN_HINT }}</div>
       </div>
@@ -490,14 +514,46 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 14px;
+}
+
+.toolbar-date {
+  width: 150px;
+}
+
+.window-seg :deep(.el-radio-button__inner) {
+  padding: 8px 12px;
+}
+
+.toolbar-refresh {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-color: #e5e7eb;
+  color: #6b7280;
+  background: #f9fafb;
 }
 
 .toolbar-links {
   margin-left: auto;
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toolbar-link:hover {
+  color: #6b7280;
+  text-decoration: underline;
 }
 
 .summary-row {
@@ -505,42 +561,99 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 14px;
+  align-items: stretch;
 }
 
 .summary-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 128px;
   padding: 14px 16px;
-  border: 1px solid var(--el-border-color-light);
+  border: 1px solid #eef2f6;
   border-radius: 10px;
-  background: var(--el-bg-color);
+  background: #fff;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .summary-label {
   font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: #9ca3af;
   margin-bottom: 8px;
 }
 
 .summary-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
   font-size: 20px;
   font-weight: 600;
   line-height: 1.3;
+  color: #111827;
 }
 
-.summary-value.warn,
+.summary-value b {
+  font-weight: 700;
+  color: #111827;
+}
+
+.value-suffix {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 500;
+  color: #9ca3af;
+}
+
+.follow-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.follow-pill[data-tone='good'] {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.follow-pill[data-tone='soft'] {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.follow-pill[data-tone='alert'] {
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.follow-pill[data-tone='neutral'] {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 .warn {
-  color: var(--el-color-danger);
+  color: #c2410c;
 }
 
 .rate-cell {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .rate-pct {
   font-variant-numeric: tabular-nums;
-  font-weight: 650;
+  font-weight: 700;
   line-height: 1.2;
+  color: #111827;
 }
 
 .rate-pct-lg {
@@ -550,7 +663,7 @@ onBeforeUnmount(() => {
 .rate-track {
   height: 4px;
   border-radius: 999px;
-  background: var(--el-fill-color);
+  background: #ecfdf5;
   overflow: hidden;
   max-width: 120px;
 }
@@ -558,6 +671,7 @@ onBeforeUnmount(() => {
 .rate-track-lg {
   height: 6px;
   max-width: 160px;
+  background: #ecfdf5;
 }
 
 .rate-fill {
@@ -569,33 +683,46 @@ onBeforeUnmount(() => {
 
 .rate-good .rate-pct,
 .rate-good .rate-fill {
-  color: var(--el-color-success);
+  color: #059669;
 }
 
 .rate-fair .rate-pct,
 .rate-fair .rate-fill {
-  color: var(--el-color-primary);
+  color: #2563eb;
 }
 
 .rate-concern .rate-pct,
 .rate-concern .rate-fill {
-  color: var(--el-color-warning);
+  color: #d97706;
 }
 
 .rate-poor .rate-pct,
 .rate-poor .rate-fill {
-  color: var(--el-color-danger);
+  color: #ea580c;
 }
 
 .rate-empty .rate-pct {
-  color: var(--el-text-color-secondary);
+  color: #9ca3af;
   font-weight: 500;
 }
 
-.summary-hint {
-  margin-top: 6px;
+.cheer {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.cheer--inline {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #94a3b8;
+}
+
+.summary-hint {
+  margin-top: auto;
+  padding-top: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #9ca3af;
+  word-break: break-word;
 }
 
 .block-card {

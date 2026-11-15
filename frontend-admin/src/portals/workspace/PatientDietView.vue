@@ -172,6 +172,8 @@ let draftSeq = 0
 
 const commentDraft = reactive<Record<string, string>>({})
 const commentSaving = ref<string | null>(null)
+/** 展开点评编辑的餐次 id */
+const commentEditingId = ref<string | null>(null)
 
 const goal = computed(() => status.value?.goal ?? null)
 
@@ -197,13 +199,18 @@ const summaryRows = computed(() => {
   return rows
 })
 
-const maxKcal = computed(() =>
-  Math.max(
-    goal.value?.energyKcal ?? 0,
-    ...summary.value.map((s) => s.intake.energyKcal),
-    1,
-  ),
-)
+/** 图表纵轴上限：目标的 1.25 倍与最大日摄入取较大，保证目标线不贴顶、柱高可对比 */
+const chartMaxKcal = computed(() => {
+  const target = goal.value?.energyKcal ?? 0
+  const peak = Math.max(0, ...summary.value.map((s) => s.intake.energyKcal || 0))
+  return Math.max(target * 1.25, peak, 1)
+})
+
+const targetLinePct = computed(() => {
+  const target = goal.value?.energyKcal
+  if (!target || target <= 0) return null
+  return Math.min(100, Math.round((target / chartMaxKcal.value) * 100))
+})
 
 const loggedDays = computed(() => summary.value.filter((s) => s.mealCount > 0).length)
 const completeDays = computed(() => summary.value.filter((s) => s.threeMealsComplete).length)
@@ -213,14 +220,35 @@ const avgKcal = computed(() => {
   return Math.round(logged.reduce((s, x) => s + x.intake.energyKcal, 0) / logged.length)
 })
 
-function barHeight(kcal: number) {
-  return `${Math.max(2, Math.round((kcal / maxKcal.value) * 100))}%`
+const dayIntakePct = computed(() => {
+  const intake = day.value?.intake.energyKcal ?? 0
+  const target = day.value?.goal?.energyKcal ?? goal.value?.energyKcal
+  if (!target || target <= 0) return 0
+  return Math.min(100, Math.round((intake / target) * 100))
+})
+
+function barHeightPct(kcal: number) {
+  if (!kcal || kcal <= 0) return 0
+  return Math.max(4, Math.min(100, Math.round((kcal / chartMaxKcal.value) * 100)))
 }
 
 function barTone(s: DaySummary) {
-  if (s.redMeals) return 'red'
-  if (s.targetKcal && s.intake.energyKcal > s.targetKcal * 1.1) return 'over'
+  const intake = s.intake.energyKcal || 0
+  const target = s.targetKcal ?? goal.value?.energyKcal ?? null
+  if (s.redMeals) return 'danger'
+  if (target && intake > target) return 'over'
+  if (target && intake > 0 && intake < target * 0.5) return 'low'
+  if (intake <= 0) return 'empty'
   return 'ok'
+}
+
+function barTooltip(row: DaySummary | { date: string; empty: true }) {
+  if ('empty' in row) return `${row.date.slice(5)}：无记录`
+  const intake = Math.round(row.intake.energyKcal || 0)
+  const target = row.targetKcal ?? goal.value?.energyKcal
+  const meals = `${row.mealCount} 餐`
+  if (target) return `${intake} kcal / 目标 ${target} · ${meals}`
+  return `${intake} kcal · ${meals}`
 }
 
 function flagType(level: string) {
@@ -363,6 +391,16 @@ async function clearOverride() {
   }
 }
 
+function openCommentEditor(m: Meal) {
+  commentDraft[m.id] = m.staffComment || commentDraft[m.id] || ''
+  commentEditingId.value = m.id
+}
+
+function cancelCommentEditor(m: Meal) {
+  commentDraft[m.id] = m.staffComment || ''
+  if (commentEditingId.value === m.id) commentEditingId.value = null
+}
+
 async function saveComment(m: Meal) {
   commentSaving.value = m.id
   try {
@@ -371,6 +409,7 @@ async function saveComment(m: Meal) {
       body: JSON.stringify({ comment: commentDraft[m.id] || '' }),
     })
     ElMessage.success(commentDraft[m.id]?.trim() ? '点评已发送' : '点评已清除')
+    commentEditingId.value = null
     await loadDay()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
@@ -508,26 +547,46 @@ onMounted(() => {
         </div>
       </template>
 
-      <div v-if="goal" class="goal-grid">
-        <div class="goal-main">
-          <div class="kcal"><strong>{{ goal.energyKcal ?? '-' }}</strong> kcal/日</div>
-          <div class="goal-tags">
-            <el-tag :type="goal.source === 'STAFF' ? 'warning' : 'info'" size="small">
-              {{ goal.source === 'STAFF' ? '医护设定（患者不可改）' : '患者自助' }}
-            </el-tag>
-            <el-tag size="small" effect="plain">{{ GOAL_TYPE_LABELS[goal.goalType] || goal.goalType }}</el-tag>
-            <el-tag v-if="goal.goalType !== 'MAINTAIN' && goal.rateKgPerWeek" size="small" effect="plain">
-              {{ goal.rateKgPerWeek }} kg/周
-            </el-tag>
-            <el-tag size="small" effect="plain">{{ ACTIVITY_LABELS[goal.activityLevel] || goal.activityLevel }}</el-tag>
-            <el-tag v-if="goal.floorApplied" size="small" type="danger" effect="plain">已触发安全下限</el-tag>
+      <div v-if="goal" class="goal-panel">
+        <div class="goal-top">
+          <div class="goal-main">
+            <div class="kcal">
+              <strong>{{ goal.energyKcal ?? '-' }}</strong>
+              <span>kcal/日</span>
+            </div>
+            <div class="goal-tags">
+              <span
+                class="source-pill"
+                :class="goal.source === 'STAFF' ? 'source-pill--staff' : 'source-pill--self'"
+              >
+                {{ goal.source === 'STAFF' ? '医护设定（患者不可改）' : '患者自助' }}
+              </span>
+              <el-tag size="small" effect="plain">{{ GOAL_TYPE_LABELS[goal.goalType] || goal.goalType }}</el-tag>
+              <el-tag v-if="goal.goalType !== 'MAINTAIN' && goal.rateKgPerWeek" size="small" effect="plain">
+                {{ goal.rateKgPerWeek }} kg/周
+              </el-tag>
+              <el-tag size="small" effect="plain">{{ ACTIVITY_LABELS[goal.activityLevel] || goal.activityLevel }}</el-tag>
+              <el-tag v-if="goal.floorApplied" size="small" type="danger" effect="plain">已触发安全下限</el-tag>
+            </div>
           </div>
-        </div>
-        <div class="goal-macros">
-          <div><span>碳水</span><strong>{{ goal.carbG }}g</strong></div>
-          <div><span>蛋白质</span><strong>{{ goal.proteinG }}g</strong></div>
-          <div><span>脂肪</span><strong>{{ goal.fatG }}g</strong></div>
-          <div><span>钠</span><strong>≤{{ goal.sodiumMg }}mg</strong></div>
+          <div class="goal-macros">
+            <div class="macro-card">
+              <span>碳水</span>
+              <strong>{{ goal.carbG ?? '—' }}g</strong>
+            </div>
+            <div class="macro-card">
+              <span>蛋白质</span>
+              <strong>{{ goal.proteinG ?? '—' }}g</strong>
+            </div>
+            <div class="macro-card">
+              <span>脂肪</span>
+              <strong>{{ goal.fatG ?? '—' }}g</strong>
+            </div>
+            <div class="macro-card">
+              <span>钠</span>
+              <strong>≤{{ goal.sodiumMg ?? '—' }}mg</strong>
+            </div>
+          </div>
         </div>
         <div class="goal-basis">
           <span>口径：{{ goal.diseaseLabel }}</span>
@@ -536,7 +595,7 @@ onMounted(() => {
           <span v-if="goal.note">备注：{{ goal.note }}</span>
         </div>
       </div>
-      <el-empty v-else :image-size="60" description="尚未设定热量目标（患者可在 C 端自助计算，或由医护设定）" />
+      <el-empty v-else :image-size="72" description="尚未设定热量目标（患者可在 C 端自助计算，或由医护设定）" />
     </el-card>
 
     <el-card shadow="never" class="section-card">
@@ -550,36 +609,59 @@ onMounted(() => {
           </div>
         </div>
       </template>
-      <div class="bars">
-        <div
-          v-for="row in summaryRows"
-          :key="row.date"
-          class="bar-col"
-          :class="{ active: row.date === selectedDate }"
-          @click="selectedDate = row.date"
-        >
-          <div class="bar-area">
-            <div
-              v-if="goal?.energyKcal"
-              class="target-line"
-              :style="{ bottom: barHeight(goal.energyKcal) }"
-            />
-            <div
-              v-if="!('empty' in row)"
-              class="bar"
-              :class="barTone(row)"
-              :style="{ height: barHeight(row.intake.energyKcal) }"
-              :title="`${Math.round(row.intake.energyKcal)} kcal · ${row.mealCount} 餐`"
-            />
+      <div class="chart">
+        <div class="chart-plot">
+          <div
+            v-if="targetLinePct != null"
+            class="target-line"
+            :style="{ bottom: `${targetLinePct}%` }"
+          >
+            <span class="target-line-label">目标 {{ goal?.energyKcal }}</span>
           </div>
-          <div class="bar-label">{{ row.date.slice(5) }}</div>
-          <div class="bar-dot" :class="{ on: !('empty' in row) && row.threeMealsComplete }" />
+          <el-tooltip
+            v-for="row in summaryRows"
+            :key="row.date"
+            :content="barTooltip(row)"
+            placement="top"
+            :show-after="120"
+          >
+            <div
+              class="bar-col"
+              :class="{ active: row.date === selectedDate }"
+              @click="selectedDate = row.date"
+            >
+              <div class="bar-area">
+                <div
+                  v-if="!('empty' in row) && row.intake.energyKcal > 0"
+                  class="bar"
+                  :class="barTone(row)"
+                  :style="{ height: `${barHeightPct(row.intake.energyKcal)}%` }"
+                />
+                <div v-else class="bar bar-empty" />
+              </div>
+            </div>
+          </el-tooltip>
+        </div>
+        <div class="chart-axis">
+          <button
+            v-for="row in summaryRows"
+            :key="`${row.date}-axis`"
+            type="button"
+            class="axis-cell"
+            :class="{ active: row.date === selectedDate }"
+            @click="selectedDate = row.date"
+          >
+            <div class="bar-label">{{ row.date.slice(5) }}</div>
+            <div class="bar-dot" :class="{ on: !('empty' in row) && row.threeMealsComplete }" />
+          </button>
         </div>
       </div>
-      <p class="legend">柱高为当日摄入；虚线为目标；底部绿点表示三餐完整；红色柱表示有需关注的餐次。点击切换下方明细。</p>
+      <p class="legend">
+        柱高为当日摄入；橙色虚线为目标热量；绿点表示三餐完整；浅灰=显著偏低（&lt;50%），蓝绿=正常，橙/红=超标或需关注。点击切换下方明细。
+      </p>
     </el-card>
 
-    <el-card v-loading="loadingDay" shadow="never" class="section-card">
+    <el-card v-loading="loadingDay" shadow="never" class="section-card section-card--diet-day">
       <template #header>
         <div class="card-head">
           <span class="section-title">饮食明细</span>
@@ -598,89 +680,158 @@ onMounted(() => {
       </template>
 
       <template v-if="day">
-        <div class="day-summary">
-          <div>
-            摄入 <strong>{{ r0(day.intake.energyKcal) }}</strong>
-            <template v-if="day.goal?.energyKcal"> / {{ day.goal.energyKcal }}</template> kcal
-          </div>
-          <div>碳水 {{ r0(day.intake.carbG) }}g · 蛋白 {{ r0(day.intake.proteinG) }}g · 脂肪 {{ r0(day.intake.fatG) }}g · 钠 {{ r0(day.intake.sodiumMg) }}mg</div>
-          <el-tag :type="day.threeMealsComplete ? 'success' : 'info'" size="small">
-            {{ day.threeMealsComplete ? '三餐已记录' : `已记录 ${day.mainMealsLogged.length}/3 正餐` }}
-          </el-tag>
-        </div>
-        <div v-if="day.dayFlags.length" class="flags">
-          <el-alert
-            v-for="f in day.dayFlags"
-            :key="f.code"
-            :title="f.message"
-            :type="flagType(f.level)"
-            :closable="false"
-            show-icon
-          />
-        </div>
-
-        <el-empty v-if="!day.meals.length" :image-size="60" description="当天没有饮食记录" />
-
-        <div v-for="m in day.meals" :key="m.id" class="meal">
-          <div class="meal-head">
-            <strong>{{ MEAL_LABELS[m.mealType] || m.mealType }}</strong>
-            <span class="kcal-sm">{{ r0(m.nutrients.energyKcal) }} kcal</span>
-            <el-tag size="small" :type="m.qualityLevel === 'RED' ? 'danger' : m.qualityLevel === 'YELLOW' ? 'warning' : 'success'">
-              {{ qualityText(m.qualityLevel) }}
-            </el-tag>
-            <el-tag size="small" effect="plain">{{ SOURCE_LABELS[m.source || ''] || m.source }}</el-tag>
-            <span v-if="m.estimatedKcalRatio" class="muted">估算占比 {{ Math.round(m.estimatedKcalRatio * 100) }}%</span>
-            <span class="meal-actions">
-              <template v-if="m.recordedByStaff && canProxy">
-                <el-button size="small" type="primary" link @click="openMealDialog(m)">编辑</el-button>
-                <el-button size="small" type="danger" link @click="removeMeal(m)">删除</el-button>
+        <div class="day-progress-card">
+          <div class="day-progress-top">
+            <div class="day-progress-kcal">
+              摄入 <strong>{{ r0(day.intake.energyKcal) }}</strong>
+              <template v-if="day.goal?.energyKcal || goal?.energyKcal">
+                / {{ day.goal?.energyKcal || goal?.energyKcal }}
               </template>
-              <span v-else-if="!m.recordedByStaff" class="muted">患者自录，仅可点评</span>
+              kcal
+            </div>
+            <div class="day-progress-top-right">
+              <span class="day-progress-pct">今日进度 {{ dayIntakePct }}%</span>
+              <el-tag :type="day.threeMealsComplete ? 'success' : 'info'" size="small">
+                {{ day.threeMealsComplete ? '三餐已记录' : `已记录 ${day.mainMealsLogged.length}/3 正餐` }}
+              </el-tag>
+            </div>
+          </div>
+          <div class="day-progress-bar" aria-hidden="true">
+            <i :style="{ width: `${dayIntakePct}%` }" />
+          </div>
+          <div class="day-progress-meta">
+            <span>
+              碳水 {{ r0(day.intake.carbG) }}g · 蛋白 {{ r0(day.intake.proteinG) }}g · 脂肪
+              {{ r0(day.intake.fatG) }}g · 钠 {{ r0(day.intake.sodiumMg) }}mg
             </span>
           </div>
-          <el-table :data="m.items" size="small" class="items-table">
-            <el-table-column label="食物" min-width="140">
-              <template #default="{ row }">
-                {{ row.foodName }}
-                <el-tag v-if="row.precisionLevel === 'C'" size="small" type="warning" effect="plain">估算</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="份量" min-width="130">
-              <template #default="{ row }">{{ amountText(row) }}</template>
-            </el-table-column>
-            <el-table-column label="热量" width="80" align="right">
-              <template #default="{ row }">{{ r0(row.energyKcal) }}</template>
-            </el-table-column>
-            <el-table-column label="碳水" width="70" align="right">
-              <template #default="{ row }">{{ r0(row.carbG) }}g</template>
-            </el-table-column>
-            <el-table-column label="蛋白" width="70" align="right">
-              <template #default="{ row }">{{ r0(row.proteinG) }}g</template>
-            </el-table-column>
-            <el-table-column label="脂肪" width="70" align="right">
-              <template #default="{ row }">{{ r0(row.fatG) }}g</template>
-            </el-table-column>
-            <el-table-column label="钠" width="80" align="right">
-              <template #default="{ row }">{{ r0(row.sodiumMg) }}mg</template>
-            </el-table-column>
-          </el-table>
-          <div v-if="m.flags.length" class="meal-flags">
-            <el-tag v-for="f in m.flags" :key="f.code" :type="flagType(f.level)" size="small" effect="light">
-              {{ f.message }}
-            </el-tag>
+          <div v-if="day.dayFlags.length" class="day-progress-flags">
+            <div v-for="f in day.dayFlags" :key="f.code" class="day-flag-chip">
+              <el-alert
+                class="day-flag-alert"
+                :title="f.message"
+                :type="flagType(f.level)"
+                :closable="false"
+                show-icon
+              />
+            </div>
           </div>
-          <p v-if="m.note" class="muted">{{ m.recordedByStaff ? '代录备注' : '患者备注' }}：{{ m.note }}</p>
-          <div class="comment-row">
-            <el-input
-              v-model="commentDraft[m.id]"
-              maxlength="500"
-              placeholder="给患者的饮食点评（患者端可见）"
-              size="small"
-              clearable
-            />
-            <el-button size="small" type="primary" :loading="commentSaving === m.id" @click="saveComment(m)">
-              {{ m.staffComment ? '更新点评' : '发送点评' }}
-            </el-button>
+        </div>
+
+        <div v-if="!day.meals.length" class="diet-empty">
+          <div class="diet-empty-icon" aria-hidden="true">🍽</div>
+          <p class="diet-empty-title">当天没有饮食记录</p>
+          <p class="diet-empty-desc">记录后可对照热量目标查看摄入进度</p>
+          <el-button v-if="canProxy" type="primary" @click="openMealDialog()">+ 记录饮食</el-button>
+        </div>
+
+        <div v-else class="meal-grid">
+          <div v-for="m in day.meals" :key="m.id" class="meal-card">
+            <div class="meal-head">
+              <div class="meal-head-main">
+                <strong>{{ MEAL_LABELS[m.mealType] || m.mealType }}</strong>
+                <span class="kcal-sm">{{ r0(m.nutrients.energyKcal) }} kcal</span>
+                <el-tag
+                  size="small"
+                  :type="m.qualityLevel === 'RED' ? 'danger' : m.qualityLevel === 'YELLOW' ? 'warning' : 'success'"
+                >
+                  {{ qualityText(m.qualityLevel) }}
+                </el-tag>
+                <el-tag size="small" effect="plain">{{ SOURCE_LABELS[m.source || ''] || m.source }}</el-tag>
+                <span v-if="m.estimatedKcalRatio" class="muted meal-est">
+                  估算占比 {{ Math.round(m.estimatedKcalRatio * 100) }}%
+                </span>
+              </div>
+              <div class="meal-head-aside">
+                <template v-if="m.recordedByStaff && canProxy">
+                  <el-button size="small" type="primary" link @click="openMealDialog(m)">编辑</el-button>
+                  <el-button size="small" type="danger" link @click="removeMeal(m)">删除</el-button>
+                </template>
+                <span v-else-if="!m.recordedByStaff" class="meal-hint">患者自录，仅可点评</span>
+              </div>
+            </div>
+
+            <div class="meal-card-body">
+              <div class="items-table-wrap">
+                <el-table :data="m.items" size="small" class="items-table" table-layout="fixed">
+                  <el-table-column label="食物" min-width="96">
+                    <template #default="{ row }">
+                      <span class="food-cell">
+                        {{ row.foodName }}
+                        <el-tag v-if="row.precisionLevel === 'C'" size="small" type="warning" effect="plain">估算</el-tag>
+                      </span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="份量" width="112" align="center" header-align="center">
+                    <template #default="{ row }">{{ amountText(row) }}</template>
+                  </el-table-column>
+                  <el-table-column label="热量" width="56" align="center" header-align="center">
+                    <template #default="{ row }">{{ r0(row.energyKcal) }}</template>
+                  </el-table-column>
+                  <el-table-column label="碳水" width="52" align="center" header-align="center">
+                    <template #default="{ row }">{{ r0(row.carbG) }}g</template>
+                  </el-table-column>
+                  <el-table-column label="蛋白" width="52" align="center" header-align="center">
+                    <template #default="{ row }">{{ r0(row.proteinG) }}g</template>
+                  </el-table-column>
+                  <el-table-column label="脂肪" width="52" align="center" header-align="center">
+                    <template #default="{ row }">{{ r0(row.fatG) }}g</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+
+              <div v-if="m.flags.length" class="meal-flags">
+                <span
+                  v-for="f in m.flags"
+                  :key="f.code"
+                  class="advice-tag"
+                  :class="`advice-tag--${(f.level || 'INFO').toLowerCase()}`"
+                >
+                  {{ f.message }}
+                </span>
+              </div>
+              <p v-if="m.note" class="meal-note">{{ m.recordedByStaff ? '代录备注' : '患者备注' }}：{{ m.note }}</p>
+            </div>
+
+            <div class="comment-block">
+              <div v-if="m.staffComment && commentEditingId !== m.id" class="comment-view">
+                <div class="comment-view-head">
+                  <span class="comment-view-label">饮食点评</span>
+                  <button type="button" class="comment-edit-btn" @click="openCommentEditor(m)">编辑</button>
+                </div>
+                <p class="comment-view-text">{{ m.staffComment }}</p>
+              </div>
+              <button
+                v-else-if="commentEditingId !== m.id"
+                type="button"
+                class="comment-add-btn"
+                @click="openCommentEditor(m)"
+              >
+                + 添加饮食点评
+              </button>
+              <div v-else class="comment-editor">
+                <el-input
+                  v-model="commentDraft[m.id]"
+                  type="textarea"
+                  :rows="2"
+                  maxlength="500"
+                  show-word-limit
+                  placeholder="给患者的饮食点评（患者端可见）"
+                  size="small"
+                />
+                <div class="comment-editor-actions">
+                  <el-button size="small" @click="cancelCommentEditor(m)">取消</el-button>
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :loading="commentSaving === m.id"
+                    @click="saveComment(m)"
+                  >
+                    {{ m.staffComment ? '更新点评' : '发送点评' }}
+                  </el-button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -821,9 +972,24 @@ onMounted(() => {
   gap: 16px;
   width: 100%;
 }
+.section-card {
+  margin-bottom: 0;
+  border: 1px solid #eef2f6;
+  border-radius: 12px;
+}
 .section-card :deep(.el-card__header) {
-  padding: 14px 20px;
-  background: #f8fafc;
+  padding: 16px 24px 12px;
+  background: transparent;
+  border-bottom: none;
+}
+.section-card :deep(.el-card__body) {
+  padding: 8px 24px 24px;
+}
+.section-card--diet-day :deep(.el-card__header) {
+  padding: 14px 16px 8px;
+}
+.section-card--diet-day :deep(.el-card__body) {
+  padding: 4px 16px 16px;
 }
 .card-head {
   display: flex;
@@ -834,8 +1000,8 @@ onMounted(() => {
 }
 .section-title {
   font-size: 15px;
-  font-weight: 600;
-  color: var(--admin-text);
+  font-weight: 700;
+  color: var(--admin-text, #1e293b);
 }
 .head-actions {
   display: flex;
@@ -846,44 +1012,113 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.goal-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1fr);
-  gap: 12px 24px;
+.goal-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.goal-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+}
+.goal-main {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.kcal {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1;
 }
 .kcal strong {
-  font-size: 28px;
+  font-size: 36px;
   font-weight: 700;
-  color: #2b9e9e;
+  line-height: 1;
+  color: #0f766e;
+  letter-spacing: -0.02em;
+}
+.kcal span {
+  font-size: 13px;
+  font-weight: 500;
+  color: #94a3b8;
 }
 .goal-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  max-width: 420px;
+}
+.goal-tags :deep(.el-tag) {
+  height: 22px;
+  padding: 0 8px;
+  line-height: 20px;
+}
+.source-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+.source-pill--staff {
+  color: #b45309;
+  background: #fef3c7;
+}
+.source-pill--self {
+  color: #0369a1;
+  background: #e0f2fe;
 }
 .goal-macros {
   display: flex;
-  gap: 24px;
-  align-items: center;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 12px;
 }
-.goal-macros div {
+.macro-card {
   display: flex;
   flex-direction: column;
-  font-size: 12px;
-  color: #8a94a6;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 140px;
+  min-width: 120px;
+  padding: 12px 16px;
+  border: 1px solid #f1f5f9;
+  border-radius: 10px;
+  background: #f8fafc;
 }
-.goal-macros strong {
-  font-size: 16px;
-  color: var(--admin-text);
+.macro-card span {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.2;
+}
+.macro-card strong {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.2;
 }
 .goal-basis {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 8px 16px;
+  margin-top: 16px;
   font-size: 12px;
-  color: #8a94a6;
+  line-height: 1.5;
+  color: #9ca3af;
 }
 
 .stats {
@@ -895,51 +1130,110 @@ onMounted(() => {
 .stats strong {
   color: var(--admin-text);
 }
-.bars {
+.chart {
   display: flex;
+  flex-direction: column;
   gap: 6px;
+}
+.chart-plot {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
   height: 160px;
 }
-.bar-col {
-  flex: 1;
+.chart-axis {
+  display: flex;
+  gap: 4px;
+}
+.axis-cell {
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  cursor: pointer;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 0;
+  border: none;
   border-radius: 6px;
-  padding: 4px 0;
+  background: transparent;
+  cursor: pointer;
+}
+.axis-cell.active {
+  background: #f0fdfa;
+}
+.bar-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  cursor: pointer;
+  border-radius: 8px;
 }
 .bar-col.active {
-  background: #eef8f8;
+  background: #f0fdfa;
 }
 .bar-area {
   position: relative;
-  flex: 1;
-  width: 60%;
   display: flex;
   align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 .target-line {
   position: absolute;
-  left: -4px;
-  right: -4px;
-  border-top: 1px dashed #f5a623;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  border-top: 1.5px dashed #f59e0b;
+  pointer-events: none;
+}
+.target-line-label {
+  position: absolute;
+  top: -16px;
+  right: 0;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: #d97706;
+  background: #fff;
 }
 .bar {
-  width: 100%;
-  border-radius: 4px 4px 0 0;
-  background: #5cb8b8;
+  width: 20px;
+  max-width: 70%;
+  border-radius: 4px;
+  background: #14b8a6;
+  transition:
+    height 0.15s ease,
+    background 0.15s ease;
+}
+.bar.ok {
+  background: #14b8a6;
+}
+.bar.low {
+  background: #cbd5e1;
 }
 .bar.over {
-  background: #f5a623;
+  background: #f59e0b;
 }
-.bar.red {
-  background: #e8743b;
+.bar.danger {
+  background: #ef4444;
+}
+.bar-empty {
+  width: 20px;
+  max-width: 70%;
+  height: 3px !important;
+  border-radius: 2px;
+  background: #e2e8f0;
 }
 .bar-label {
-  margin-top: 4px;
   font-size: 11px;
   color: #8a94a6;
+  white-space: nowrap;
 }
 .bar-dot {
   width: 6px;
@@ -949,54 +1243,387 @@ onMounted(() => {
   background: transparent;
 }
 .bar-dot.on {
-  background: #2a9b6f;
+  background: #10b981;
 }
 .legend {
-  margin: 8px 0 0;
+  margin: 12px 0 0;
   font-size: 12px;
+  line-height: 1.5;
   color: #8a94a6;
 }
 
-.day-summary {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-  font-size: 13px;
-}
-.day-summary strong {
-  font-size: 18px;
-}
-.flags {
+.day-progress-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
+  width: 100%;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #eef2f6;
+  border-radius: 12px;
+  background: #f8fafc;
+  box-sizing: border-box;
 }
-.meal {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid #eef2f6;
+.day-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.day-progress-top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.day-progress-pct {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f766e;
+}
+.day-progress-kcal {
+  font-size: 13px;
+  color: #64748b;
+}
+.day-progress-kcal strong {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.day-progress-bar {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+.day-progress-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0d9488, #0f766e);
+  transition: width 0.2s ease;
+}
+.day-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.day-progress-flags {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 2px;
+  width: 100%;
+}
+.day-flag-chip {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+}
+.day-flag-chip :deep(.el-alert),
+.day-flag-chip :deep(.day-flag-alert) {
+  width: fit-content !important;
+  max-width: 100%;
+  display: inline-flex !important;
+  align-items: center;
+  padding: 6px 12px;
+  box-sizing: border-box;
+}
+.day-flag-chip :deep(.el-alert__content) {
+  flex: 0 1 auto;
+  width: auto !important;
+  min-width: 0;
+  padding: 0;
+}
+.day-flag-chip :deep(.el-alert__title) {
+  white-space: normal;
+  line-height: 1.4;
+}
+.diet-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 220px;
+  padding: 32px 16px;
+  text-align: center;
+}
+.diet-empty-icon {
+  font-size: 48px;
+  line-height: 1;
+  opacity: 0.85;
+}
+.diet-empty-title {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #334155;
+}
+.diet-empty-desc {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+@media (max-width: 900px) {
+  .goal-top {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+  .goal-macros {
+    justify-content: flex-start;
+  }
+  .macro-card {
+    width: calc(50% - 6px);
+    min-width: 0;
+  }
+  .meal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.meal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+  align-items: stretch;
+}
+.meal-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  padding: 16px 16px 12px;
+  border: 1px solid #f3f4f6;
+  border-radius: 8px;
+  background: #fff;
+  box-sizing: border-box;
+}
+.meal-card-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 .meal-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  min-height: 24px;
+  flex-shrink: 0;
+}
+.meal-head-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.meal-head-aside {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+  margin-left: auto;
+}
+.meal-head :deep(.el-tag) {
+  height: 20px;
+  padding: 0 6px;
+  line-height: 18px;
+  flex-shrink: 0;
 }
 .kcal-sm {
   font-weight: 600;
+  white-space: nowrap;
+}
+.meal-est {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.meal-hint {
+  font-size: 11px;
+  line-height: 1.2;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+.meal-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+.items-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.items-table {
+  width: 100% !important;
+  min-width: 420px;
+  --el-table-row-hover-bg-color: #f8fafc;
+}
+.items-table :deep(.el-table__inner-wrapper) {
+  width: 100% !important;
+}
+.items-table :deep(.el-table__header th),
+.items-table :deep(.el-table__body td) {
+  height: 34px;
+  padding: 4px 6px !important;
+}
+.items-table :deep(.el-table__header .cell),
+.items-table :deep(.el-table__body .cell) {
+  line-height: 1.2;
+  padding: 0 2px;
+  white-space: nowrap !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: keep-all;
+}
+.items-table :deep(.el-table__header th.el-table__cell) {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  background: #f8fafc;
+}
+/* 去掉 Element Plus 右侧滚动条占位空白 */
+.items-table :deep(.el-table__header .el-table__cell.gutter),
+.items-table :deep(.el-table__body .el-table__cell.gutter),
+.items-table :deep(col[name='gutter']) {
+  display: none !important;
+  width: 0 !important;
+}
+.food-cell {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px 6px;
+  max-width: 100%;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.food-cell :deep(.el-tag) {
+  height: 18px;
+  padding: 0 4px;
+  line-height: 16px;
+  font-size: 11px;
+  flex-shrink: 0;
 }
 .meal-flags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 6px 8px;
   margin-top: 8px;
+  flex-shrink: 0;
 }
-.comment-row {
+.advice-tag {
+  box-sizing: border-box;
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
+}
+.advice-tag--red {
+  color: #7c2d12;
+  background: #fff7ed;
+}
+.advice-tag--yellow {
+  color: #78350f;
+  background: #fffbeb;
+}
+.advice-tag--info {
+  color: #064e3b;
+  background: #f0fdf4;
+}
+.comment-block {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 12px;
+}
+.comment-add-btn {
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.comment-add-btn:hover {
+  color: #2563eb;
+  background: #f3f4f6;
+  text-decoration: none;
+}
+.comment-view {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f1f5f9;
+}
+.comment-view-head {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  margin-top: 10px;
+  margin-bottom: 4px;
+}
+.comment-view-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+.comment-edit-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12px;
+  cursor: pointer;
+}
+.comment-edit-btn:hover {
+  text-decoration: underline;
+}
+.comment-view-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.comment-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.comment-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .inline {
   display: flex;
@@ -1016,12 +1643,6 @@ onMounted(() => {
 }
 .preview .error {
   color: #e11d48;
-}
-.meal-actions {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 .draft-list {
   display: flex;

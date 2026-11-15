@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../shared/http'
 import {
@@ -18,11 +18,6 @@ import {
   serializePastHistory,
   type PastHistoryStructured,
 } from '../../shared/past-history-options'
-import {
-  formatRevisionBizLabel,
-  formatRevisionOperatorLabel,
-  summarizeRevisionChanges,
-} from '../../shared/archive-revision-labels'
 import {
   setBasicArchiveDirty,
   setBasicArchiveLeaveConfirm,
@@ -45,8 +40,14 @@ import {
   smokingShowsDetail,
   smokingShowsQuitYear,
   drinkingShowsDetail,
+  exerciseShowsDetail,
 } from '../../shared/lifestyle-options'
 import FieldInput from '../../shared/FieldInput.vue'
+import {
+  PRESENT_ILLNESS_PRIMARY,
+  PRESENT_ILLNESS_SHORT_LABEL,
+  presentIllnessDisplayLabel,
+} from '../../shared/intake'
 import {
   PSYCH_FIELDS,
   WEIGHT_HISTORY_FIELDS,
@@ -77,38 +78,17 @@ interface DiseaseArchiveView {
   contentJson: Record<string, unknown>
 }
 
-interface RevisionItem {
-  fieldPath: string
-  oldValue?: string
-  newValue?: string
-  oldDisplay?: string
-  newDisplay?: string
-}
-
-interface RevisionBatch {
-  batchId: string
-  operatorType: string
-  operatorId: string
-  operatorName?: string
-  operatorRoleCode?: string
-  bizType?: string
-  bizKey?: string
-  gmtCreated?: string
-  items?: RevisionItem[]
-}
-
 const props = withDefaults(
   defineProps<{
     /** 随访等场景传入；不传则走路由 params */
     peopleId?: string
-    /** 嵌入随访表单：隐藏修订栏，由父级统一保存 */
+    /** 嵌入随访表单：由父级统一保存 */
     embedded?: boolean
   }>(),
   { embedded: false },
 )
 
 const route = useRoute()
-const router = useRouter()
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
 const isEmbedded = computed(() => !!props.embedded)
 
@@ -117,6 +97,15 @@ const DISEASE_SYMPTOM_NONE = 'NONE'
 const DISEASE_SYMPTOM_OTHER = 'OTHER'
 const DISEASE_COMPLICATION_OTHER = 'OTHER'
 const DIABETES_COMPLICATION_HYPOGLYCEMIA = 'HYPOGLYCEMIA'
+
+/** 病种档案 code → 现有疾病字典 code（仅补齐勾选，不因取消勾选删除病种档案） */
+const DISEASE_ARCHIVE_TO_PRESENT: Record<string, string> = {
+  diabetes: 'DIABETES',
+  hypertension: 'HYPERTENSION',
+  obesity: 'OBESITY',
+}
+
+const illnessPickerOpen = ref(false)
 
 /** 左侧主导航：基础档案 | 病种档案 */
 const activeTab = ref<'basic' | 'disease'>('basic')
@@ -270,6 +259,7 @@ function emptyHypertensionForm(): DiseaseFormState {
     symptomsOther: '',
     emergencyComplications: [],
     emergencyComplicationsOther: '',
+    remark: '',
   }
 }
 
@@ -303,8 +293,6 @@ const diseaseForms = reactive<Record<string, DiseaseFormState>>({
   obesity: emptyObesityForm(),
 })
 
-const revisions = ref<RevisionBatch[]>([])
-
 const showDiabetesHypoglycemiaFields = computed(() =>
   (diseaseForms.diabetes.emergencyComplications ?? []).includes(DIABETES_COMPLICATION_HYPOGLYCEMIA),
 )
@@ -312,6 +300,32 @@ const showDiabetesHypoglycemiaFields = computed(() =>
 const showDiabetesSymptomsOther = computed(() =>
   (diseaseForms.diabetes.symptoms ?? []).includes(DISEASE_SYMPTOM_OTHER),
 )
+
+const diabetesSymptomsNoneSelected = computed(() =>
+  (diseaseForms.diabetes.symptoms ?? []).includes(DISEASE_SYMPTOM_NONE),
+)
+
+/** 过长症状文案精简展示（完整文案放 title） */
+const DIABETES_SYMPTOM_SHORT_LABEL: Record<string, string> = {
+  RECURRENT_BOILS_SLOW_HEALING: '反复生疖 / 伤口难愈',
+  LOWER_LIMB_NEUROPATHY: '下肢麻木 / 烧灼 / 踩棉感',
+}
+
+function diabetesSymptomLabel(o: DictItem) {
+  return DIABETES_SYMPTOM_SHORT_LABEL[o.dictCode] || o.dictCodeDesc
+}
+
+const diabetesSymptomOptionsSorted = computed(() => {
+  const list = [...diabetesSymptomOptions.value]
+  list.sort((a, b) => {
+    if (a.dictCode === DISEASE_SYMPTOM_NONE) return -1
+    if (b.dictCode === DISEASE_SYMPTOM_NONE) return 1
+    if (a.dictCode === DISEASE_SYMPTOM_OTHER) return 1
+    if (b.dictCode === DISEASE_SYMPTOM_OTHER) return -1
+    return 0
+  })
+  return list
+})
 
 const showObesitySecondaryCause = computed(
   () => diseaseForms.obesity.obesityType === 'SECONDARY',
@@ -337,6 +351,41 @@ const showHypertensionEmergencyOther = computed(() =>
   (diseaseForms.hypertension.emergencyComplications ?? []).includes(DISEASE_COMPLICATION_OTHER),
 )
 
+const hypertensionSymptomsNoneSelected = computed(() =>
+  (diseaseForms.hypertension.symptoms ?? []).includes(DISEASE_SYMPTOM_NONE),
+)
+
+const HYPERTENSION_SYMPTOM_SHORT_LABEL: Record<string, string> = {
+  EPISTAXIS: '鼻衄不止',
+  BLURRED_VISION_TINNITUS: '眼花耳鸣',
+}
+
+const HYPERTENSION_EMERGENCY_SHORT_LABEL: Record<string, string> = {
+  AHF: '急性心衰(AHF)',
+  ACS: '急性冠脉综合征(ACS)',
+  HYPERTENSIVE_CRISIS: '高血压危象',
+}
+
+function hypertensionSymptomLabel(o: DictItem) {
+  return HYPERTENSION_SYMPTOM_SHORT_LABEL[o.dictCode] || o.dictCodeDesc
+}
+
+function hypertensionEmergencyLabel(o: DictItem) {
+  return HYPERTENSION_EMERGENCY_SHORT_LABEL[o.dictCode] || o.dictCodeDesc
+}
+
+const hypertensionSymptomOptionsSorted = computed(() => {
+  const list = [...hypertensionSymptomOptions.value]
+  list.sort((a, b) => {
+    if (a.dictCode === DISEASE_SYMPTOM_NONE) return -1
+    if (b.dictCode === DISEASE_SYMPTOM_NONE) return 1
+    if (a.dictCode === DISEASE_SYMPTOM_OTHER) return 1
+    if (b.dictCode === DISEASE_SYMPTOM_OTHER) return -1
+    return 0
+  })
+  return list
+})
+
 const enabledDiseases = computed(() =>
   diseases.value.filter((d) => enabledDiseaseCodes.value.includes(d.dictCode)),
 )
@@ -353,6 +402,80 @@ function normalizePresentIllness(codes: string[]): string[] {
   if (!codes.includes(PRESENT_ILLNESS_NONE)) return codes
   const diseases = codes.filter((c) => c !== PRESENT_ILLNESS_NONE)
   return diseases.length > 0 ? diseases : [PRESENT_ILLNESS_NONE]
+}
+
+function illnessLabel(code: string) {
+  const fromDict = illnessOptions.value.find((o) => o.dictCode === code)?.dictCodeDesc
+  return presentIllnessDisplayLabel(code, fromDict || PRESENT_ILLNESS_SHORT_LABEL[code] || code)
+}
+
+/** 已选疾病 Tag（不含「无」） */
+const selectedIllnessTags = computed(() =>
+  form.presentIllness
+    .filter((c) => c !== PRESENT_ILLNESS_NONE)
+    .map((code) => ({ code, label: illnessLabel(code) })),
+)
+
+/** 多选面板内疾病项（不含「无」；「无」单独置顶） */
+const illnessPickerDiseaseOptions = computed(() => {
+  const selected = new Set(form.presentIllness)
+  const primary = new Set<string>(PRESENT_ILLNESS_PRIMARY as unknown as string[])
+  const list = illnessOptions.value.filter((o) => o.dictCode !== PRESENT_ILLNESS_NONE)
+  list.sort((a, b) => {
+    const as = selected.has(a.dictCode) || primary.has(a.dictCode) ? 0 : 1
+    const bs = selected.has(b.dictCode) || primary.has(b.dictCode) ? 0 : 1
+    if (as !== bs) return as - bs
+    return 0
+  })
+  return list
+})
+
+const illnessPickerNoneChecked = computed(() =>
+  form.presentIllness.includes(PRESENT_ILLNESS_NONE),
+)
+
+const illnessPickerDiseaseCodes = computed({
+  get: () => form.presentIllness.filter((c) => c !== PRESENT_ILLNESS_NONE),
+  set: (codes: string[]) => {
+    form.presentIllness = normalizePresentIllness(codes)
+  },
+})
+
+function onIllnessPickerNoneChange(checked: boolean | string | number) {
+  if (checked === true || checked === 'true') {
+    form.presentIllness = [PRESENT_ILLNESS_NONE]
+    form.presentIllnessOther = ''
+  } else {
+    form.presentIllness = form.presentIllness.filter((c) => c !== PRESENT_ILLNESS_NONE)
+  }
+}
+
+/**
+ * 病种档案已建档时，补齐「现有疾病」勾选，避免头图有糖尿病而表单未勾选。
+ * 只做加法，不会因取消勾选现有疾病而删除病种档案。
+ */
+function mergePresentIllnessFromDiseaseArchives() {
+  const extras = enabledDiseaseCodes.value
+    .map((c) => DISEASE_ARCHIVE_TO_PRESENT[c])
+    .filter((c): c is string => !!c)
+  if (!extras.length) return false
+  const next = new Set(form.presentIllness.filter((c) => c !== PRESENT_ILLNESS_NONE))
+  let changed = false
+  for (const code of extras) {
+    if (!next.has(code)) {
+      next.add(code)
+      changed = true
+    }
+  }
+  if (!changed) return false
+  form.presentIllness = normalizePresentIllness([...next])
+  return true
+}
+
+function removePresentIllness(code: string) {
+  form.presentIllness = normalizePresentIllness(
+    form.presentIllness.filter((c) => c !== code),
+  )
 }
 
 watch(
@@ -884,7 +1007,6 @@ async function confirmAddDisease() {
         },
       )
       state.version = res.data.version
-      if (!isEmbedded.value) await loadRevisions()
     } catch (e) {
       ElMessage.error(e instanceof Error ? e.message : '创建病种档案失败')
       return
@@ -895,6 +1017,8 @@ async function confirmAddDisease() {
   if (!enabledDiseaseCodes.value.includes(code)) {
     enabledDiseaseCodes.value = [...enabledDiseaseCodes.value, code]
   }
+  // 添加病种档案后补齐「现有疾病」勾选（只加不删）
+  mergePresentIllnessFromDiseaseArchives()
   addDiseaseVisible.value = false
   await selectArchiveSection('disease')
   activeTab.value = 'disease'
@@ -955,6 +1079,7 @@ async function loadDisease(code: string) {
     diseaseForms[code].emergencyComplicationsOther = String(
       content.emergencyComplicationsOther ?? '',
     )
+    diseaseForms[code].remark = String(content.remark ?? '')
   } else if (code === 'obesity') {
     diseaseForms[code].obesityType = String(content.obesityType ?? '')
     diseaseForms[code].secondaryCause = String(content.secondaryCause ?? '')
@@ -1021,6 +1146,7 @@ function buildDiseaseContentJson(code: string): Record<string, unknown> {
       emergencyComplicationsOther: emergency.includes(DISEASE_COMPLICATION_OTHER)
         ? state.emergencyComplicationsOther?.trim() || undefined
         : undefined,
+      remark: state.remark?.trim() || undefined,
     }
   }
   if (code === 'obesity') {
@@ -1048,13 +1174,6 @@ function buildDiseaseContentJson(code: string): Record<string, unknown> {
     }
   }
   return { diagnosisDate: state.diagnosisDate || undefined }
-}
-
-async function loadRevisions() {
-  const res = await api<{ data: RevisionBatch[] }>(
-    `/api/b/v1/patients/${peopleId.value}/archive/revisions`,
-  )
-  revisions.value = res.data ?? []
 }
 
 async function loadPatientGender() {
@@ -1098,7 +1217,6 @@ async function saveBasic() {
     await persistBasic()
     ElMessage.success('基础档案已保存')
     if (!isEmbedded.value) {
-      await loadRevisions()
       requestArchiveCompletenessRefresh()
     }
   } catch (e) {
@@ -1119,7 +1237,6 @@ async function saveDisease(code: string) {
     await persistDisease(code)
     ElMessage.success('病种档案已保存')
     if (!isEmbedded.value) {
-      await loadRevisions()
       requestArchiveCompletenessRefresh()
     }
   } catch (e) {
@@ -1153,18 +1270,6 @@ defineExpose({
   ready: computed(() => basicSnapshotReady.value && !loading.value),
   saving,
 })
-
-function formatDateTime(iso?: string) {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '-'
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
-function goRevisionsPage() {
-  router.push({ path: `/workspace/patients/${peopleId.value}/revisions`, query: route.query })
-}
 
 function onBeforeUnload(e: BeforeUnloadEvent) {
   if (!basicDirty.value) return
@@ -1201,12 +1306,12 @@ async function bootstrapArchive() {
     await loadDicts()
     await loadBasic()
     await loadEnabledDiseases()
+    // 病种档案 → 现有疾病补齐后重打快照，避免一进页就「有未保存」
+    mergePresentIllnessFromDiseaseArchives()
+    markBasicSaved()
     await loadPatientGender()
     if (basicSubTab.value === 'women' && !showWomenHealthTab.value) {
       basicSubTab.value = 'health'
-    }
-    if (!isEmbedded.value) {
-      await loadRevisions()
     }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
@@ -1299,29 +1404,88 @@ onBeforeUnmount(() => {
           <div class="archive-row">
             <label class="row-label">现有疾病</label>
             <div class="row-body">
-              <el-checkbox-group v-model="form.presentIllness" class="illness-grid">
-                <el-checkbox
-                  v-for="o in illnessOptions"
-                  :key="o.dictCode"
-                  :value="o.dictCode"
-                  class="illness-check"
+              <div class="illness-picker">
+                <div class="illness-tags">
+                  <el-tag
+                    v-if="form.presentIllness.includes(PRESENT_ILLNESS_NONE) && !selectedIllnessTags.length"
+                    type="info"
+                    effect="plain"
+                    class="illness-tag"
+                  >
+                    无现有疾病
+                  </el-tag>
+                  <el-tag
+                    v-for="tag in selectedIllnessTags"
+                    :key="tag.code"
+                    closable
+                    effect="plain"
+                    class="illness-tag"
+                    @close="removePresentIllness(tag.code)"
+                  >
+                    {{ tag.label }}
+                  </el-tag>
+                  <el-popover
+                    v-model:visible="illnessPickerOpen"
+                    placement="bottom-start"
+                    :width="520"
+                    trigger="click"
+                    teleported
+                    :popper-options="{ strategy: 'fixed' }"
+                    popper-class="illness-picker-popper"
+                  >
+                    <template #reference>
+                      <el-button size="small" class="illness-add-btn">
+                        + {{ selectedIllnessTags.length ? '添加 / 调整' : '选择疾病' }}
+                      </el-button>
+                    </template>
+                    <div class="illness-picker-panel">
+                      <div class="illness-picker-sticky">
+                        <el-checkbox
+                          class="illness-check illness-check--none"
+                          :model-value="illnessPickerNoneChecked"
+                          @change="onIllnessPickerNoneChange"
+                        >
+                          无
+                        </el-checkbox>
+                        <div class="illness-picker-divider" role="separator" />
+                      </div>
+                      <div class="illness-picker-scroll">
+                        <el-checkbox-group
+                          v-model="illnessPickerDiseaseCodes"
+                          class="illness-grid illness-grid--picker"
+                        >
+                          <el-checkbox
+                            v-for="o in illnessPickerDiseaseOptions"
+                            :key="o.dictCode"
+                            :value="o.dictCode"
+                            class="illness-check"
+                          >
+                            {{ illnessLabel(o.dictCode) }}
+                          </el-checkbox>
+                        </el-checkbox-group>
+                      </div>
+                    </div>
+                  </el-popover>
+                </div>
+                <p
+                  class="archive-field-hint"
+                  :class="{ 'archive-field-hint--dimmed': illnessPickerOpen }"
                 >
-                  {{ o.dictCodeDesc }}
-                </el-checkbox>
-              </el-checkbox-group>
-              <el-input
-                v-model="form.presentIllnessOther"
-                type="textarea"
-                :rows="2"
-                maxlength="200"
-                show-word-limit
-                placeholder="其他可输入"
-                class="illness-other"
-              />
+                  已建病种档案会自动勾选对应疾病；取消勾选不会删除病种档案。
+                </p>
+                <el-input
+                  v-model="form.presentIllnessOther"
+                  maxlength="200"
+                  show-word-limit
+                  placeholder="其他可输入（选填）"
+                  class="illness-other illness-other--line"
+                  :class="{ 'illness-other--dimmed': illnessPickerOpen }"
+                />
+              </div>
             </div>
           </div>
 
-          <div class="archive-row">
+          <div class="archive-row archive-row--radio">
             <label class="row-label">家族史</label>
             <div class="row-body">
               <FamilyHistoryEditor
@@ -1331,14 +1495,14 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="archive-row">
+          <div class="archive-row archive-row--radio">
             <label class="row-label">既往史</label>
             <div class="row-body">
               <PastHistoryEditor v-model="pastHistoryStructured" :illness-options="illnessOptions" />
             </div>
           </div>
 
-          <div v-if="peopleId" class="archive-row">
+          <div v-if="peopleId" class="archive-row archive-row--radio">
             <label class="row-label">过敏史</label>
             <div class="row-body">
               <AllergyPanel :people-id="peopleId" />
@@ -1348,11 +1512,9 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-show="activeTab === 'basic' && basicSubTab === 'lifestyle'" class="archive-panel">
-        <el-card shadow="never" class="section-card">
-          <p class="section-hint section-hint--block">患者可在 C 端自行更新；操作者见修订历史</p>
-
-          <div class="archive-row">
-            <label class="row-label">吸烟</label>
+        <el-card shadow="never" class="section-card lifestyle-card">
+          <div class="archive-row archive-row--lifestyle">
+            <label class="row-label row-label--section">吸烟</label>
             <div class="row-body lifestyle-fields">
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">吸烟状态</span>
@@ -1373,65 +1535,81 @@ onBeforeUnmount(() => {
                 v-if="smokingShowsDetail(form.lifestyle.smoking.status)"
                 class="lifestyle-field lifestyle-field--inline"
               >
-                <span class="lifestyle-field-label">每日支数</span>
-                <div class="lifestyle-field-body field-pair">
-                  <el-input-number
-                    v-model="form.lifestyle.smoking.cigarettesPerDay"
-                    :min="0"
-                    :max="100"
-                    controls-position="right"
-                  />
-                  <span class="unit">支/天</span>
+                <div class="lifestyle-pair">
+                  <span class="lifestyle-field-label">每日支数</span>
+                  <div class="lifestyle-field-body field-pair">
+                    <el-input-number
+                      v-model="form.lifestyle.smoking.cigarettesPerDay"
+                      class="lifestyle-num"
+                      :min="0"
+                      :max="100"
+                      :controls="false"
+                    />
+                    <span class="unit">支/天</span>
+                  </div>
                 </div>
-                <span class="lifestyle-field-label">烟龄</span>
-                <div class="lifestyle-field-body field-pair">
-                  <el-input-number
-                    v-model="form.lifestyle.smoking.years"
-                    :min="0"
-                    :max="80"
-                    controls-position="right"
-                  />
-                  <span class="unit">年</span>
+                <div class="lifestyle-pair">
+                  <span class="lifestyle-field-label">烟龄</span>
+                  <div class="lifestyle-field-body field-pair">
+                    <el-input-number
+                      v-model="form.lifestyle.smoking.years"
+                      class="lifestyle-num"
+                      :min="0"
+                      :max="80"
+                      :controls="false"
+                    />
+                    <span class="unit">年</span>
+                  </div>
                 </div>
               </div>
               <div
                 v-if="smokingShowsQuitYear(form.lifestyle.smoking.status)"
                 class="lifestyle-field lifestyle-field--inline"
               >
-                <span class="lifestyle-field-label">戒烟年份</span>
-                <div class="lifestyle-field-body">
-                  <el-date-picker
-                    v-model="form.lifestyle.smoking.quitYear"
-                    type="year"
-                    value-format="YYYY"
-                    format="YYYY"
-                    placeholder="选择年份"
-                    clearable
-                    style="width: 160px"
-                  />
+                <div class="lifestyle-pair">
+                  <span class="lifestyle-field-label">戒烟年份</span>
+                  <div class="lifestyle-field-body">
+                    <el-date-picker
+                      v-model="form.lifestyle.smoking.quitYear"
+                      type="year"
+                      value-format="YYYY"
+                      format="YYYY"
+                      placeholder="选择年份"
+                      clearable
+                      style="width: 140px"
+                    />
+                  </div>
                 </div>
-                <span class="lifestyle-field-label">既往烟龄</span>
-                <div class="lifestyle-field-body field-pair">
-                  <el-input-number
-                    v-model="form.lifestyle.smoking.years"
-                    :min="0"
-                    :max="80"
-                    controls-position="right"
-                  />
-                  <span class="unit">年</span>
+                <div class="lifestyle-pair">
+                  <span class="lifestyle-field-label">既往烟龄</span>
+                  <div class="lifestyle-field-body field-pair">
+                    <el-input-number
+                      v-model="form.lifestyle.smoking.years"
+                      class="lifestyle-num"
+                      :min="0"
+                      :max="80"
+                      :controls="false"
+                    />
+                    <span class="unit">年</span>
+                  </div>
                 </div>
               </div>
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">备注</span>
                 <div class="lifestyle-field-body">
-                  <el-input v-model="form.lifestyle.smoking.note" clearable placeholder="吸烟补充说明" />
+                  <el-input
+                    v-model="form.lifestyle.smoking.note"
+                    class="lifestyle-note"
+                    clearable
+                    placeholder="吸烟补充说明"
+                  />
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="archive-row">
-            <label class="row-label">饮酒</label>
+          <div class="archive-row archive-row--lifestyle">
+            <label class="row-label row-label--section">饮酒</label>
             <div class="row-body lifestyle-fields">
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">饮酒状态</span>
@@ -1465,37 +1643,46 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="lifestyle-field lifestyle-field--inline">
-                  <span class="lifestyle-field-label">酒类</span>
-                  <div class="lifestyle-field-body">
-                    <el-input
-                      v-model="form.lifestyle.drinking.type"
-                      placeholder="如：白酒、啤酒、红酒"
-                      clearable
-                      style="max-width: 220px"
-                    />
+                  <div class="lifestyle-pair">
+                    <span class="lifestyle-field-label">酒类</span>
+                    <div class="lifestyle-field-body">
+                      <el-input
+                        v-model="form.lifestyle.drinking.type"
+                        class="lifestyle-input-sm"
+                        placeholder="如：白酒、啤酒、红酒"
+                        clearable
+                      />
+                    </div>
                   </div>
-                  <span class="lifestyle-field-label">日均量</span>
-                  <div class="lifestyle-field-body">
-                    <el-input
-                      v-model="form.lifestyle.drinking.amountPerDay"
-                      placeholder="如：1两、1瓶"
-                      clearable
-                      style="max-width: 180px"
-                    />
+                  <div class="lifestyle-pair">
+                    <span class="lifestyle-field-label">日均量</span>
+                    <div class="lifestyle-field-body">
+                      <el-input
+                        v-model="form.lifestyle.drinking.amountPerDay"
+                        class="lifestyle-input-sm"
+                        placeholder="如：1两、1瓶"
+                        clearable
+                      />
+                    </div>
                   </div>
                 </div>
               </template>
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">备注</span>
                 <div class="lifestyle-field-body">
-                  <el-input v-model="form.lifestyle.drinking.note" clearable placeholder="饮酒补充说明" />
+                  <el-input
+                    v-model="form.lifestyle.drinking.note"
+                    class="lifestyle-note"
+                    clearable
+                    placeholder="饮酒补充说明"
+                  />
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="archive-row">
-            <label class="row-label">运动</label>
+          <div class="archive-row archive-row--lifestyle">
+            <label class="row-label row-label--section">运动</label>
             <div class="row-body lifestyle-fields">
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">频率</span>
@@ -1512,48 +1699,64 @@ onBeforeUnmount(() => {
                   </el-radio-group>
                 </div>
               </div>
-              <div class="lifestyle-field">
-                <span class="lifestyle-field-label">强度</span>
-                <div class="lifestyle-field-body">
-                  <el-radio-group v-model="form.exercise.intensity" class="option-radio">
-                    <el-radio
-                      v-for="o in exerciseIntensityOptions"
-                      :key="o.dictCode"
-                      :value="o.dictCode"
-                      border
-                    >
-                      {{ o.dictCodeDesc }}
-                    </el-radio>
-                  </el-radio-group>
+              <template v-if="exerciseShowsDetail(form.exercise.frequency)">
+                <div class="lifestyle-field">
+                  <span class="lifestyle-field-label">强度</span>
+                  <div class="lifestyle-field-body">
+                    <el-radio-group v-model="form.exercise.intensity" class="option-radio">
+                      <el-radio
+                        v-for="o in exerciseIntensityOptions"
+                        :key="o.dictCode"
+                        :value="o.dictCode"
+                        border
+                      >
+                        {{ o.dictCodeDesc }}
+                      </el-radio>
+                    </el-radio-group>
+                  </div>
                 </div>
-              </div>
-              <div class="lifestyle-field lifestyle-field--inline">
-                <span class="lifestyle-field-label">时长</span>
-                <div class="lifestyle-field-body field-pair">
-                  <el-input-number v-model="form.exercise.durationMin" :min="0" controls-position="right" />
-                  <span class="unit">分钟/次</span>
+                <div class="lifestyle-field lifestyle-field--inline">
+                  <div class="lifestyle-pair">
+                    <span class="lifestyle-field-label">时长</span>
+                    <div class="lifestyle-field-body field-pair">
+                      <el-input-number
+                        v-model="form.exercise.durationMin"
+                        class="lifestyle-num"
+                        :min="0"
+                        :controls="false"
+                      />
+                      <span class="unit">分钟/次</span>
+                    </div>
+                  </div>
+                  <div class="lifestyle-pair">
+                    <span class="lifestyle-field-label">类型</span>
+                    <div class="lifestyle-field-body">
+                      <el-input
+                        v-model="form.exercise.type"
+                        class="lifestyle-input-sm"
+                        placeholder="如：步行、游泳"
+                        clearable
+                      />
+                    </div>
+                  </div>
                 </div>
-                <span class="lifestyle-field-label">类型</span>
-                <div class="lifestyle-field-body">
-                  <el-input
-                    v-model="form.exercise.type"
-                    placeholder="如：步行、游泳"
-                    clearable
-                    style="max-width: 200px"
-                  />
-                </div>
-              </div>
+              </template>
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">备注</span>
                 <div class="lifestyle-field-body">
-                  <el-input v-model="form.exercise.note" clearable placeholder="运动补充说明" />
+                  <el-input
+                    v-model="form.exercise.note"
+                    class="lifestyle-note"
+                    clearable
+                    placeholder="运动补充说明"
+                  />
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="archive-row">
-            <label class="row-label">饮食</label>
+          <div class="archive-row archive-row--lifestyle">
+            <label class="row-label row-label--section">饮食</label>
             <div class="row-body lifestyle-fields">
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">饮食习惯</span>
@@ -1603,20 +1806,25 @@ onBeforeUnmount(() => {
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">饮食偏好</span>
                 <div class="lifestyle-field-body">
-                  <el-input v-model="form.diet.preference" placeholder="如：低盐低糖、忌辛辣" clearable />
+                  <el-input
+                    v-model="form.diet.preference"
+                    class="lifestyle-note"
+                    placeholder="如：低盐低糖、忌辛辣"
+                    clearable
+                  />
                 </div>
               </div>
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">备注</span>
                 <div class="lifestyle-field-body">
-                  <el-input v-model="form.diet.note" clearable />
+                  <el-input v-model="form.diet.note" class="lifestyle-note" clearable />
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="archive-row">
-            <label class="row-label">睡眠</label>
+          <div class="archive-row archive-row--lifestyle">
+            <label class="row-label row-label--section">睡眠</label>
             <div class="row-body lifestyle-fields">
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">质量</span>
@@ -1638,10 +1846,11 @@ onBeforeUnmount(() => {
                 <div class="lifestyle-field-body field-pair">
                   <el-input-number
                     v-model="form.sleep.hours"
+                    class="lifestyle-num"
                     :min="0"
                     :max="24"
                     :step="0.5"
-                    controls-position="right"
+                    :controls="false"
                   />
                   <span class="unit">小时/天</span>
                 </div>
@@ -1664,17 +1873,18 @@ onBeforeUnmount(() => {
               <div class="lifestyle-field">
                 <span class="lifestyle-field-label">备注</span>
                 <div class="lifestyle-field-body">
-                  <el-input v-model="form.sleep.note" clearable />
+                  <el-input v-model="form.sleep.note" class="lifestyle-note" clearable />
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="archive-row">
-            <label class="row-label">其他</label>
+          <div class="archive-row archive-row--lifestyle">
+            <label class="row-label row-label--section">其他</label>
             <div class="row-body">
               <el-input
                 v-model="form.lifestyle.note"
+                class="lifestyle-note lifestyle-note--area"
                 type="textarea"
                 :rows="2"
                 maxlength="200"
@@ -1689,7 +1899,10 @@ onBeforeUnmount(() => {
 
         <div v-show="activeTab === 'basic' && basicSubTab === 'psych'" class="archive-panel">
         <el-card shadow="never" class="section-card">
-          <p class="section-hint section-hint--block">敏感信息；按角色在接口层脱敏</p>
+          <p class="section-hint section-hint--block section-hint--info">
+            <span class="section-hint-icon" aria-hidden="true">ℹ️</span>
+            <span>敏感信息；按角色在接口层脱敏</span>
+          </p>
           <div class="extra-fields extra-fields--rows">
             <FieldInput
               v-for="f in PSYCH_FIELDS"
@@ -1792,12 +2005,17 @@ onBeforeUnmount(() => {
                         class="illness-grid illness-grid--3col"
                       >
                         <el-checkbox
-                          v-for="o in diabetesSymptomOptions"
+                          v-for="o in diabetesSymptomOptionsSorted"
                           :key="o.dictCode"
                           :value="o.dictCode"
                           class="illness-check"
+                          :class="{ 'illness-check--tail': o.dictCode === DISEASE_SYMPTOM_OTHER }"
+                          :disabled="
+                            diabetesSymptomsNoneSelected && o.dictCode !== DISEASE_SYMPTOM_NONE
+                          "
+                          :title="o.dictCodeDesc"
                         >
-                          {{ o.dictCodeDesc }}
+                          {{ diabetesSymptomLabel(o) }}
                         </el-checkbox>
                       </el-checkbox-group>
                       <el-input
@@ -1818,7 +2036,7 @@ onBeforeUnmount(() => {
                     <div class="row-body">
                       <el-checkbox-group
                         v-model="diseaseForms.diabetes.emergencyComplications"
-                        class="illness-grid"
+                        class="illness-grid illness-grid--h-check"
                       >
                         <el-checkbox
                           v-for="o in diabetesEmergencyOptions"
@@ -1850,19 +2068,20 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                         <div class="archive-row compact nested">
-                          <label class="row-label">近一个月发生过低血糖</label>
+                          <label class="row-label">近月低血糖</label>
                           <div class="row-body field-pair">
                             <el-input-number
                               v-model="diseaseForms.diabetes.hypoglycemiaCountLastMonth"
                               :min="0"
                               :precision="0"
-                              controls-position="right"
+                              :controls="false"
+                              class="lifestyle-num"
                             />
                             <span class="unit">次</span>
                           </div>
                         </div>
                         <div class="archive-row compact nested">
-                          <label class="row-label">发生低血糖时如何处理</label>
+                          <label class="row-label">低血糖处理</label>
                           <div class="row-body">
                             <el-input
                               v-model="diseaseForms.diabetes.hypoglycemiaHandling"
@@ -1879,11 +2098,19 @@ onBeforeUnmount(() => {
 
                   <div class="archive-row">
                     <label class="row-label">终末期慢性病</label>
-                    <div class="row-body">
-                      <el-checkbox v-model="diseaseForms.diabetes.endStageChronicDisease">
-                        存在终末期慢性疾病（心衰3–4期 / 氧依赖肺病 / 透析肾病 / 不可控转移癌）
+                    <div class="row-body end-stage-body">
+                      <el-checkbox
+                        v-model="diseaseForms.diabetes.endStageChronicDisease"
+                        class="end-stage-check"
+                      >
+                        <span class="end-stage-main">存在终末期慢性疾病</span>
+                        <span class="end-stage-sub">
+                          （心衰3–4期 / 氧依赖肺病 / 透析肾病 / 不可控转移癌）
+                        </span>
                       </el-checkbox>
-                      <p class="field-hint">用于血糖控制分标目标值分组（≥65岁进第③组）</p>
+                      <p class="field-hint end-stage-hint">
+                        用于血糖控制分标目标值分组（≥65岁进第③组）
+                      </p>
                     </div>
                   </div>
 
@@ -1892,6 +2119,7 @@ onBeforeUnmount(() => {
                     <div class="row-body">
                       <el-input
                         v-model="diseaseForms.diabetes.remark"
+                        class="disease-remark"
                         type="textarea"
                         :rows="3"
                         maxlength="500"
@@ -1903,7 +2131,7 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="d.dictCode === 'hypertension'">
-                  <div class="disease-pair">
+                  <div class="disease-pair disease-pair--compact">
                     <div class="archive-row compact disease-pair-item">
                       <label class="row-label">高血压类型</label>
                       <div class="row-body">
@@ -1911,7 +2139,7 @@ onBeforeUnmount(() => {
                           v-model="diseaseForms.hypertension.hypertensionType"
                           clearable
                           placeholder="请选择"
-                          class="disease-select"
+                          class="disease-select disease-select--fixed"
                         >
                           <el-option
                             v-for="o in hypertensionTypeOptions"
@@ -1930,13 +2158,13 @@ onBeforeUnmount(() => {
                           type="date"
                           value-format="YYYY-MM-DD"
                           placeholder="选择日期"
-                          class="disease-select"
+                          class="disease-select disease-select--fixed"
                         />
                       </div>
                     </div>
                   </div>
 
-                  <div class="disease-pair">
+                  <div class="disease-pair disease-pair--compact">
                     <div class="archive-row compact disease-pair-item">
                       <label class="row-label">高血压分级</label>
                       <div class="row-body">
@@ -1944,7 +2172,7 @@ onBeforeUnmount(() => {
                           v-model="diseaseForms.hypertension.hypertensionGrade"
                           clearable
                           placeholder="请选择"
-                          class="disease-select"
+                          class="disease-select disease-select--fixed"
                         >
                           <el-option
                             v-for="o in hypertensionGradeOptions"
@@ -1956,13 +2184,13 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="archive-row compact disease-pair-item">
-                      <label class="row-label">高血压心血管风险分层</label>
+                      <label class="row-label">心血管风险</label>
                       <div class="row-body">
                         <el-select
                           v-model="diseaseForms.hypertension.cvRiskStratification"
                           clearable
                           placeholder="请选择"
-                          class="disease-select"
+                          class="disease-select disease-select--fixed"
                         >
                           <el-option
                             v-for="o in hypertensionCvRiskOptions"
@@ -1975,30 +2203,34 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <div class="archive-row compact">
+                  <div class="archive-row">
                     <label class="row-label">既往最高血压</label>
-                    <div class="row-body disease-bp-row">
-                      <div class="field-pair">
-                        <span class="bp-sub-label">收缩压</span>
-                        <el-input-number
-                          v-model="diseaseForms.hypertension.highestSystolic"
-                          :min="0"
-                          :max="300"
-                          :precision="0"
-                          controls-position="right"
-                        />
-                        <span class="unit">mmHg</span>
-                      </div>
-                      <div class="field-pair">
-                        <span class="bp-sub-label">舒张压</span>
-                        <el-input-number
-                          v-model="diseaseForms.hypertension.highestDiastolic"
-                          :min="0"
-                          :max="200"
-                          :precision="0"
-                          controls-position="right"
-                        />
-                        <span class="unit">mmHg</span>
+                    <div class="row-body">
+                      <div class="disease-bp-row">
+                        <div class="disease-bp-pair">
+                          <span class="bp-sub-label">收缩压</span>
+                          <el-input-number
+                            v-model="diseaseForms.hypertension.highestSystolic"
+                            class="disease-bp-num"
+                            :min="0"
+                            :max="300"
+                            :precision="0"
+                            :controls="false"
+                          />
+                          <span class="unit">mmHg</span>
+                        </div>
+                        <div class="disease-bp-pair">
+                          <span class="bp-sub-label">舒张压</span>
+                          <el-input-number
+                            v-model="diseaseForms.hypertension.highestDiastolic"
+                            class="disease-bp-num"
+                            :min="0"
+                            :max="200"
+                            :precision="0"
+                            :controls="false"
+                          />
+                          <span class="unit">mmHg</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2008,15 +2240,20 @@ onBeforeUnmount(() => {
                     <div class="row-body">
                       <el-checkbox-group
                         v-model="diseaseForms.hypertension.symptoms"
-                        class="illness-grid"
+                        class="illness-grid illness-grid--3col"
                       >
                         <el-checkbox
-                          v-for="o in hypertensionSymptomOptions"
+                          v-for="o in hypertensionSymptomOptionsSorted"
                           :key="o.dictCode"
                           :value="o.dictCode"
                           class="illness-check"
+                          :class="{ 'illness-check--tail': o.dictCode === DISEASE_SYMPTOM_OTHER }"
+                          :disabled="
+                            hypertensionSymptomsNoneSelected && o.dictCode !== DISEASE_SYMPTOM_NONE
+                          "
+                          :title="o.dictCodeDesc"
                         >
-                          {{ o.dictCodeDesc }}
+                          {{ hypertensionSymptomLabel(o) }}
                         </el-checkbox>
                       </el-checkbox-group>
                       <el-input
@@ -2037,15 +2274,16 @@ onBeforeUnmount(() => {
                     <div class="row-body">
                       <el-checkbox-group
                         v-model="diseaseForms.hypertension.emergencyComplications"
-                        class="illness-grid"
+                        class="illness-grid illness-grid--h-check"
                       >
                         <el-checkbox
                           v-for="o in hypertensionEmergencyOptions"
                           :key="o.dictCode"
                           :value="o.dictCode"
                           class="illness-check"
+                          :title="o.dictCodeDesc"
                         >
-                          {{ o.dictCodeDesc }}
+                          {{ hypertensionEmergencyLabel(o) }}
                         </el-checkbox>
                       </el-checkbox-group>
                       <el-input
@@ -2057,6 +2295,21 @@ onBeforeUnmount(() => {
                         show-word-limit
                         placeholder="请填写其它紧急并发症"
                         class="illness-other"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="archive-row">
+                    <label class="row-label">备注</label>
+                    <div class="row-body">
+                      <el-input
+                        v-model="diseaseForms.hypertension.remark"
+                        class="disease-remark"
+                        type="textarea"
+                        :rows="3"
+                        maxlength="500"
+                        show-word-limit
+                        placeholder="请输入内容"
                       />
                     </div>
                   </div>
@@ -2321,47 +2574,28 @@ onBeforeUnmount(() => {
           v-if="!isEmbedded && activeTab === 'basic' && basicSnapshotReady"
           class="basic-save-dock"
         >
-          <span v-if="basicDirty" class="basic-save-dock-status basic-save-dock-status--dirty">
-            有未保存的修改
+          <span
+            class="basic-save-dock-status"
+            :class="{
+              'basic-save-dock-status--dirty': basicDirty,
+              'basic-save-dock-status--saved': !basicDirty,
+            }"
+          >
+            <span v-if="!basicDirty" class="basic-save-dock-check" aria-hidden="true">✔</span>
+            {{ basicDirty ? '有未保存的修改' : '已保存' }}
           </span>
-          <span v-else class="basic-save-dock-status">已保存</span>
-          <el-button type="primary" :loading="saving" @click="saveBasic">保存基础档案</el-button>
+          <el-button
+            class="basic-save-dock-btn"
+            type="primary"
+            :loading="saving"
+            @click="saveBasic"
+          >
+            保存基础档案
+          </el-button>
         </div>
       </div>
     </div>
       </div>
-
-      <aside v-if="!isEmbedded" class="archive-aside">
-        <el-card shadow="never" class="summary-card">
-          <template #header>
-            <span class="section-title">修订摘要</span>
-          </template>
-          <p class="summary-desc">医生 / 健管师对患者的管理路径（档案、用药等）</p>
-          <el-empty v-if="!revisions.length" description="暂无修订记录" :image-size="64" />
-          <ul v-else class="summary-list">
-            <li v-for="b in revisions" :key="b.batchId" class="summary-item" @click="goRevisionsPage">
-              <div class="summary-time">{{ formatDateTime(b.gmtCreated) }}</div>
-              <div class="summary-actor">
-                <span class="summary-role">{{ formatRevisionOperatorLabel(b.operatorType, b.operatorRoleCode) }}</span>
-                <span v-if="b.operatorName" class="summary-name">{{ b.operatorName }}</span>
-              </div>
-              <div class="summary-action">{{
-                summarizeRevisionChanges(b.items, b.bizType, b.bizKey)
-              }}</div>
-              <div class="summary-biz">{{ formatRevisionBizLabel(b.bizType, b.bizKey) }}</div>
-            </li>
-          </ul>
-          <el-button
-            v-if="revisions.length"
-            class="summary-more"
-            text
-            type="primary"
-            @click="goRevisionsPage"
-          >
-            查看完整修订历史 →
-          </el-button>
-        </el-card>
-      </aside>
     </div>
 
     <el-dialog v-model="addDiseaseVisible" title="添加病种" width="420px" destroy-on-close>
@@ -2465,12 +2699,18 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 
+.nav-group + .nav-group {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #f3f4f6;
+}
+
 .nav-group-title {
-  padding: 4px 12px 8px;
+  padding: 2px 12px 10px;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--ink-700, #334155);
+  color: #111827;
   line-height: 1.3;
 }
 
@@ -2540,30 +2780,37 @@ onBeforeUnmount(() => {
 
 .archive-panel {
   min-width: 0;
+  width: 100%;
+  max-width: none;
   padding-bottom: 8px;
 }
 
 .basic-save-dock {
   flex: 0 0 auto;
   position: sticky;
-  bottom: 16px;
-  z-index: 10;
+  bottom: 0;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: auto;
-  padding: 12px 16px;
+  margin-top: 8px;
+  padding: 12px 24px;
   width: 100%;
   box-sizing: border-box;
-  border-radius: 8px;
-  border: 1px solid var(--admin-border);
-  background: #fff;
-  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.08);
+  border-radius: 10px 10px 0 0;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-bottom: none;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.1);
 }
 
 .basic-save-dock-status {
   margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   color: var(--admin-muted);
   white-space: nowrap;
@@ -2572,6 +2819,29 @@ onBeforeUnmount(() => {
 .basic-save-dock-status--dirty {
   color: #b45309;
   font-weight: 500;
+}
+
+.basic-save-dock-status--saved {
+  color: #10b981;
+  font-weight: 500;
+}
+
+.basic-save-dock-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  line-height: 1;
+  color: #10b981;
+}
+
+.basic-save-dock-btn {
+  height: 32px;
+  padding: 0 20px;
+  margin-left: auto;
+  font-size: 13px;
 }
 
 /* 病种内多病种切换：轻量胶囊，避免再与主导航冲突 */
@@ -2627,6 +2897,24 @@ onBeforeUnmount(() => {
   margin: 0 0 12px;
 }
 
+.section-hint--info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #9ca3af;
+}
+
+.section-hint-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
 .disease-tabs-bar {
   position: relative;
 }
@@ -2640,112 +2928,11 @@ onBeforeUnmount(() => {
 }
 
 .archive-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 20px;
-  align-items: start;
+  display: block;
 }
 
 .archive-main {
   min-width: 0;
-}
-
-.archive-aside {
-  position: sticky;
-  top: 0;
-  align-self: start;
-}
-
-.summary-card :deep(.el-card__header) {
-  padding: 14px 16px;
-  background: #f8fafc;
-}
-
-.summary-card :deep(.el-card__body) {
-  padding: 12px 16px 16px;
-}
-
-.summary-desc {
-  margin: 0 0 12px;
-  font-size: 12px;
-  color: var(--admin-muted);
-  line-height: 1.5;
-}
-
-.summary-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: min(52vh, 480px);
-  overflow-y: auto;
-}
-
-.summary-item {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--admin-border);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.summary-item:first-child {
-  padding-top: 4px;
-}
-
-.summary-item:last-child {
-  border-bottom: none;
-  padding-bottom: 4px;
-}
-
-.summary-item:hover {
-  background: #f8fafc;
-  margin: 0 -8px;
-  padding-left: 8px;
-  padding-right: 8px;
-  border-radius: 8px;
-}
-
-.summary-time {
-  font-size: 12px;
-  color: var(--admin-muted);
-  margin-bottom: 6px;
-}
-
-.summary-actor {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 6px;
-  font-size: 13px;
-  line-height: 1.45;
-  margin-bottom: 4px;
-}
-
-.summary-role {
-  color: var(--admin-text-secondary);
-  font-weight: 500;
-}
-
-.summary-name {
-  color: var(--admin-text);
-  font-weight: 600;
-}
-
-.summary-action {
-  font-size: 13px;
-  color: var(--admin-text);
-  line-height: 1.45;
-}
-
-.summary-biz {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--admin-primary);
-}
-
-.summary-more {
-  width: 100%;
-  margin-top: 8px;
-  justify-content: center;
 }
 
 .section-card {
@@ -2792,8 +2979,16 @@ onBeforeUnmount(() => {
   color: var(--admin-muted, #64748b);
 }
 
+.section-card {
+  width: 100%;
+  max-width: none;
+}
+
 .section-card :deep(.el-card__body) {
-  padding: 0;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 16px 20px 8px;
 }
 
 .disease-card.section-card {
@@ -2813,35 +3008,224 @@ onBeforeUnmount(() => {
 
 .archive-row {
   display: grid;
-  grid-template-columns: minmax(88px, 112px) minmax(0, 1fr);
-  gap: 10px 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--admin-border);
+  grid-template-columns: 120px minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 0;
+  width: 100%;
+  padding: 16px 0;
+  margin: 0;
+  border-bottom: 1px solid #f3f4f6;
   align-items: flex-start;
+  box-sizing: border-box;
+}
+
+/* Radio 行：Label 与首行 Radio（32px）顶齐，展开标签后仍贴住首行 */
+.archive-row--radio {
+  align-items: flex-start;
+}
+
+.archive-row--radio .row-label {
+  box-sizing: border-box;
+  height: 32px;
+  line-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.archive-row:first-child {
+  padding-top: 0;
 }
 
 .archive-row:last-child {
   border-bottom: none;
+  padding-bottom: 4px;
 }
 
 .archive-row.compact {
-  padding: 12px 0;
+  padding: 16px 0;
 }
 
 .row-label {
+  box-sizing: border-box;
+  width: 120px;
+  max-width: 120px;
+  padding-right: 0;
   font-size: 14px;
   color: var(--admin-text-secondary);
   font-weight: 500;
   line-height: 32px;
-  padding-top: 2px;
+  text-align: right;
+  white-space: nowrap;
+  align-self: start;
 }
 
 .row-label.sub {
-  margin-left: 8px;
+  margin-left: 0;
 }
 
 .row-body {
   min-width: 0;
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.row-body > :deep(.fh-editor),
+.row-body > :deep(.ph-editor),
+.row-body > :deep(.ag-block) {
+  width: 100%;
+  max-width: none;
+}
+
+.row-body :deep(.el-radio-group) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+  width: 100%;
+  min-height: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+}
+
+.row-body :deep(.el-radio) {
+  height: 32px;
+  margin-right: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  align-items: center;
+}
+
+.row-body :deep(.el-radio__input) {
+  align-self: center;
+}
+
+.row-body :deep(.el-radio__label) {
+  padding-left: 8px;
+  line-height: 32px;
+}
+
+.illness-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-items: stretch;
+  width: 100%;
+  max-width: none;
+}
+
+.illness-picker .illness-tags {
+  margin-bottom: 8px;
+}
+
+.archive-field-hint {
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9ca3af;
+  transition: opacity 0.15s ease;
+}
+
+.archive-field-hint--dimmed {
+  opacity: 0.35;
+}
+
+.illness-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+}
+
+.illness-tag {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  height: 32px !important;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 12px;
+  line-height: 30px;
+  vertical-align: middle;
+}
+
+.illness-add-btn {
+  box-sizing: border-box;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 14px !important;
+  border-radius: 999px !important;
+  border-style: dashed !important;
+  border-color: #d1d5db !important;
+  color: #6b7280 !important;
+  background: #fff !important;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1 !important;
+  vertical-align: middle;
+}
+
+.illness-add-btn:hover {
+  color: #2563eb !important;
+  border-color: #93c5fd !important;
+  background: #eff6ff !important;
+}
+
+.illness-picker-panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 480px;
+  max-height: 360px;
+  padding: 0;
+}
+
+.illness-picker-sticky {
+  flex: 0 0 auto;
+  background: #fff;
+  z-index: 2;
+}
+
+.illness-picker-divider {
+  height: 1px;
+  margin: 10px 0 12px;
+  background: #f3f4f6;
+}
+
+.illness-picker-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 2px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.illness-check--none {
+  display: inline-flex !important;
+  align-items: center;
+  height: 28px;
+  margin: 0 !important;
+}
+
+.illness-check--none :deep(.el-checkbox__label) {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--admin-text-secondary, #64748b);
+  line-height: 22px;
+  padding-left: 8px;
 }
 
 .illness-grid {
@@ -2850,24 +3234,165 @@ onBeforeUnmount(() => {
   gap: 8px 14px;
 }
 
-.illness-grid--3col {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+.illness-grid--picker {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
   align-items: start;
+  width: 100%;
+  margin: 0;
+}
+
+.illness-grid--picker .illness-check {
+  display: flex !important;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100% !important;
+  min-width: 0;
+  min-height: 32px;
+  height: auto;
+  margin: 0 !important;
+  padding: 0;
+  white-space: normal;
+}
+
+.illness-grid--picker .illness-check :deep(.el-checkbox__input) {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-top: 0 !important;
+  line-height: 1;
+}
+
+.illness-grid--picker .illness-check :deep(.el-checkbox__inner) {
+  vertical-align: middle;
+}
+
+.illness-grid--picker .illness-check :deep(.el-checkbox__label) {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  padding-left: 8px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.illness-grid--3col {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 24px;
+  align-items: stretch;
+  width: 100%;
 }
 
 .illness-grid--3col .illness-check {
+  display: flex !important;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100% !important;
+  min-width: 0;
+  min-height: 32px;
+  height: auto;
+  margin: 0 !important;
+  white-space: normal;
+}
+
+.illness-grid--3col .illness-check :deep(.el-checkbox__input) {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-top: 0;
+}
+
+.illness-grid--3col .illness-check :deep(.el-checkbox__label) {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 6px;
+  white-space: normal;
+  line-height: 1.35;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.illness-grid--3col .illness-check--tail {
+  grid-column: 1 / -1;
+}
+
+.illness-grid--h-check {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  width: 100%;
+}
+
+.illness-grid--h-check .illness-check {
+  display: inline-flex !important;
+  align-items: center;
+  width: auto !important;
+  margin: 0 !important;
+  height: 32px;
+}
+
+.illness-grid--h-check .illness-check :deep(.el-checkbox__input) {
+  align-self: center;
+}
+
+.illness-grid--h-check .illness-check :deep(.el-checkbox__label) {
+  padding-left: 6px;
+  line-height: 32px;
+  white-space: nowrap;
+}
+
+.end-stage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.end-stage-check {
   align-items: flex-start;
   height: auto;
   white-space: normal;
   margin-right: 0;
-  width: 100%;
 }
 
-.illness-grid--3col .illness-check :deep(.el-checkbox__label) {
+.end-stage-check :deep(.el-checkbox__label) {
   white-space: normal;
   line-height: 1.45;
-  word-break: break-word;
+  padding-left: 8px;
+}
+
+.end-stage-main {
+  font-size: 13px;
+  color: var(--admin-text, #1e293b);
+}
+
+.end-stage-sub {
+  display: inline;
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b7280;
+  line-height: 1.45;
+}
+
+.end-stage-hint {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #9ca3af;
+}
+
+.disease-remark {
+  width: 100%;
+  max-width: 640px;
+}
+
+.disease-remark :deep(.el-textarea__inner) {
+  min-height: 80px !important;
+  height: 80px;
+  resize: vertical;
 }
 
 .illness-check {
@@ -2882,7 +3407,63 @@ onBeforeUnmount(() => {
 }
 
 .illness-other {
-  margin-top: 16px;
+  display: block;
+  width: 100% !important;
+  max-width: none !important;
+  margin-top: 0;
+  transition: opacity 0.15s ease;
+}
+
+/* 健康信息「其他可输入」：单行 */
+.illness-other--line :deep(.el-input__wrapper) {
+  width: 100%;
+  max-width: none;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: none !important;
+}
+
+.illness-other--line :deep(.el-input__wrapper:hover),
+.illness-other--line :deep(.el-input__wrapper.is-focus) {
+  border-color: #d1d5db;
+  box-shadow: none !important;
+}
+
+.illness-other--line :deep(.el-input__inner) {
+  height: 34px;
+  line-height: 34px;
+  font-size: 13px;
+  color: var(--admin-text, #1e293b);
+}
+
+.illness-other--line :deep(.el-input__inner::placeholder) {
+  font-size: 13px;
+  color: #c0c4cc;
+}
+
+.illness-other--line :deep(.el-input__count) {
+  color: #d1d5db;
+  font-size: 11px;
+  background: transparent;
+}
+
+/* 病种档案等仍用 textarea */
+.illness-other:not(.illness-other--line) :deep(.el-textarea__inner) {
+  min-height: 60px !important;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.illness-other--dimmed {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
 }
 
 .tag-select {
@@ -2899,29 +3480,48 @@ onBeforeUnmount(() => {
   color: var(--admin-primary-hover);
 }
 
+.lifestyle-card .row-label--section {
+  font-weight: 700;
+  color: #111827;
+}
+
 .lifestyle-fields {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .lifestyle-field {
   display: grid;
-  grid-template-columns: minmax(72px, 88px) minmax(0, 1fr);
-  gap: 8px 12px;
-  align-items: flex-start;
+  grid-template-columns: 100px minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 0;
+  align-items: center;
 }
 
 .lifestyle-field--inline {
-  grid-template-columns: minmax(72px, 88px) minmax(0, max-content) minmax(72px, 88px) minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 32px;
+}
+
+.lifestyle-pair {
+  display: grid;
+  grid-template-columns: 100px max-content;
+  column-gap: 24px;
   align-items: center;
 }
 
 .lifestyle-field-label {
+  box-sizing: border-box;
+  width: 100px;
+  max-width: 100px;
   font-size: 13px;
   color: var(--admin-text-secondary);
   font-weight: 500;
   line-height: 32px;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -2932,41 +3532,89 @@ onBeforeUnmount(() => {
 .option-radio {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 16px;
 }
 
 .option-radio :deep(.el-radio) {
   margin-right: 0;
 }
 
+.option-radio :deep(.el-radio.is-bordered) {
+  margin: 0;
+}
+
 .field-pair {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
 .unit {
   font-size: 13px;
-  color: var(--admin-muted);
+  color: #9ca3af;
   white-space: nowrap;
+  line-height: 32px;
+}
+
+.lifestyle-num {
+  width: 112px;
+}
+
+.lifestyle-num :deep(.el-input__wrapper) {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.lifestyle-num :deep(input[type='number']) {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.lifestyle-num :deep(input[type='number']::-webkit-outer-spin-button),
+.lifestyle-num :deep(input[type='number']::-webkit-inner-spin-button) {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.lifestyle-input-sm {
+  width: 180px;
+  max-width: 100%;
+}
+
+.lifestyle-note {
+  width: 100%;
+  max-width: 600px;
+}
+
+.lifestyle-note--area {
+  max-width: 600px;
 }
 
 .save-bar {
   position: sticky;
   bottom: 0;
-  z-index: 10;
+  z-index: 30;
   margin-top: 16px;
-  padding: 16px;
+  padding: 12px 20px;
   display: flex;
   justify-content: flex-end;
   background: #fff;
-  border-top: 1px solid #eee;
-  box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.04);
+  border-top: 1px solid #f3f4f6;
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
 }
 
 .save-bar--disease {
   flex: 0 0 auto;
   margin-top: auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  width: 100%;
+  box-sizing: border-box;
+  background: #fff;
+  border-top: 1px solid #f3f4f6;
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
 }
 
 .disease-grid {
@@ -2983,17 +3631,29 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
-.disease-card--wide .archive-row {
-  grid-template-columns: minmax(112px, 168px) minmax(0, 1fr);
+.disease-card--wide .archive-row,
+.disease-card .archive-row {
+  grid-template-columns: 120px minmax(0, 1fr);
+  column-gap: 24px;
 }
 
 .disease-card .archive-row {
-  border-bottom: 1px solid var(--admin-border);
-  padding-bottom: 12px;
+  border-bottom: 1px solid #f3f4f6;
+  padding: 16px 0;
+  align-items: start;
+}
+
+.disease-card .archive-row .row-label {
+  width: 120px;
+  max-width: 120px;
+  text-align: right;
+  white-space: nowrap;
+  line-height: 32px;
 }
 
 .disease-card .archive-row:last-of-type {
   border-bottom: none;
+  padding-bottom: 8px;
 }
 
 .disease-pair {
@@ -3015,8 +3675,8 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   width: auto;
   max-width: 100%;
-  grid-template-columns: auto minmax(0, max-content);
-  gap: 8px 12px;
+  grid-template-columns: 120px max-content;
+  column-gap: 16px;
   padding: 10px 0;
 }
 
@@ -3040,15 +3700,47 @@ onBeforeUnmount(() => {
 
 .disease-bp-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px 28px;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-start;
+  gap: 24px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.disease-bp-pair {
+  display: inline-flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.disease-bp-num {
+  width: 80px !important;
+  flex-shrink: 0;
+}
+
+.disease-bp-num :deep(.el-input__wrapper) {
+  width: 80px;
+  height: 32px;
+  min-height: 32px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.disease-bp-num :deep(.el-input__inner) {
+  height: 30px;
+  line-height: 30px;
+  text-align: left;
 }
 
 .bp-sub-label {
   font-size: 13px;
   color: var(--admin-text-secondary);
   white-space: nowrap;
+  line-height: 32px;
 }
 
 .nested-fields {
@@ -3062,7 +3754,8 @@ onBeforeUnmount(() => {
 .nested-fields .archive-row.nested {
   border-bottom: none;
   padding: 10px 0;
-  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
+  grid-template-columns: 120px minmax(0, 1fr);
+  column-gap: 16px;
 }
 
 .symptom-block {
@@ -3098,21 +3791,9 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1100px) {
-  .archive-body {
-    grid-template-columns: 1fr;
-  }
-
-  .archive-aside {
-    position: static;
-  }
-
   .archive-workspace {
     grid-template-columns: 168px minmax(0, 1fr);
     gap: 12px;
-  }
-
-  .summary-list {
-    max-height: none;
   }
 
   .hero-body {
@@ -3151,6 +3832,15 @@ onBeforeUnmount(() => {
 
   .archive-row {
     grid-template-columns: 1fr;
+    column-gap: 0;
+  }
+
+  .row-label {
+    width: auto;
+    max-width: none;
+    text-align: left;
+    line-height: 1.4;
+    padding-top: 0;
   }
   .disease-pair {
     grid-template-columns: 1fr;
@@ -3167,13 +3857,26 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
     gap: 10px;
   }
-  .lifestyle-field,
-  .lifestyle-field--inline {
+  .lifestyle-field {
     grid-template-columns: 1fr;
+    column-gap: 0;
   }
-  .row-label {
-    line-height: 1.4;
-    padding-top: 0;
+
+  .lifestyle-field-label {
+    width: auto;
+    max-width: none;
+    text-align: left;
+  }
+
+  .lifestyle-pair {
+    grid-template-columns: 1fr;
+    column-gap: 0;
+    width: 100%;
+  }
+
+  .lifestyle-field--inline {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
@@ -3181,5 +3884,46 @@ onBeforeUnmount(() => {
   .illness-grid--3col {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+</style>
+
+<!-- Popover 挂到 body，需非 scoped 才能作用到 popper 外壳 -->
+<style>
+.illness-picker-popper.el-popper {
+  z-index: 9999 !important;
+  min-width: 520px;
+  max-width: 560px;
+  padding: 16px !important;
+  overflow: hidden !important;
+  background: #fff !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+}
+
+.illness-picker-popper .el-popper__arrow::before {
+  background: #fff !important;
+  border: 1px solid #e5e7eb;
+}
+
+/* 穿透 EP 默认 checkbox 间距，保证两列 Grid 绝对对齐 */
+.illness-picker-popper .illness-grid--picker.el-checkbox-group {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.illness-picker-popper .illness-grid--picker .el-checkbox {
+  display: flex !important;
+  align-items: center;
+  width: 100% !important;
+  margin: 0 !important;
+  height: auto;
+  min-height: 32px;
+}
+
+.illness-picker-popper .illness-picker-scroll {
+  padding-bottom: 16px;
 }
 </style>

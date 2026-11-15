@@ -4,21 +4,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api } from '../api/http'
 import { loadDictOptions, toLabelMap } from '../shared/dict'
-import MedicationFeedbackSheet from '../shared/MedicationFeedbackSheet.vue'
 import MedicationFormSheet from '../shared/MedicationFormSheet.vue'
 import {
   formatDose,
   MED_DOSE_UNIT_LABELS,
-  MED_FEEDBACK_KIND_LABELS,
   MED_FREQUENCY_LABELS,
-  MED_SEVERITY_LABELS,
   MED_STOP_REASONS,
   MED_TIME_SLOT_LABELS,
   MED_USAGE_LABELS,
   medLabel,
   medSourceLabel,
-  type FeedbackMode,
-  type MedicationFeedback,
   type MedicationView,
 } from '../shared/medication-labels'
 
@@ -28,10 +23,7 @@ const id = String(route.params.id || '')
 
 const loading = ref(true)
 const med = ref<MedicationView | null>(null)
-const feedback = ref<MedicationFeedback[]>([])
 const showEdit = ref(false)
-const showFeedback = ref(false)
-const feedbackMode = ref<FeedbackMode>('ADVERSE')
 const maps = ref({
   usage: {} as Record<string, string>,
   frequency: {} as Record<string, string>,
@@ -68,15 +60,13 @@ onMounted(load)
 
 async function load() {
   try {
-    const [m, f, usage, frequency, doseUnit] = await Promise.all([
+    const [m, usage, frequency, doseUnit] = await Promise.all([
       api<{ data: MedicationView }>(`/api/c/v1/me/medications/${id}`),
-      api<{ data: MedicationFeedback[] }>(`/api/c/v1/me/medications/${id}/feedback`).catch(() => ({ data: [] })),
       loadDictOptions('medicationUsage').catch(() => []),
       loadDictOptions('medicationFrequency').catch(() => []),
       loadDictOptions('doseUnit').catch(() => []),
     ])
     med.value = m.data
-    feedback.value = f.data || []
     maps.value = { usage: toLabelMap(usage), frequency: toLabelMap(frequency), doseUnit: toLabelMap(doseUnit) }
   } catch (e) {
     showToast(e instanceof Error ? e.message : '加载失败')
@@ -85,9 +75,26 @@ async function load() {
   }
 }
 
-function openFeedback(mode: FeedbackMode) {
-  feedbackMode.value = mode
-  showFeedback.value = true
+async function stopMed() {
+  try {
+    await showConfirmDialog({
+      title: '确认停用这个药？',
+      message: '停用后将不再提醒服药。',
+      confirmButtonText: '停用',
+    })
+  } catch {
+    return
+  }
+  try {
+    await api(`/api/c/v1/me/medications/${id}/stop`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'OTHER', note: null }),
+    })
+    showToast({ type: 'success', message: '已停用' })
+    await load()
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : '停用失败')
+  }
 }
 
 async function remove() {
@@ -103,22 +110,6 @@ async function remove() {
   } catch (e) {
     showToast(e instanceof Error ? e.message : '删除失败')
   }
-}
-
-function feedbackTitle(f: MedicationFeedback) {
-  return f.kindLabel || MED_FEEDBACK_KIND_LABELS[f.kind] || f.kind
-}
-
-function feedbackBody(f: MedicationFeedback) {
-  const parts: string[] = []
-  if (f.symptomLabels?.length) parts.push(f.symptomLabels.join('、'))
-  if (f.severity) parts.push(MED_SEVERITY_LABELS[f.severity] || f.severity)
-  if (f.content) parts.push(f.content)
-  return parts.join(' · ')
-}
-
-function fmtTime(dt?: string | null) {
-  return dt ? dt.replace('T', ' ').slice(0, 16) : ''
 }
 </script>
 
@@ -140,9 +131,8 @@ function fmtTime(dt?: string | null) {
           <span v-if="!active" class="badge muted">已停用</span>
         </div>
         <p v-if="med.allergyConflict" class="conflict">
-          <van-icon name="warning-o" /> 档案记录你对【{{ med.allergyConflict }}】过敏，已通知健管师，建议先咨询再服用。
+          <van-icon name="warning-o" /> 档案记录你对【{{ med.allergyConflict }}】过敏，建议先咨询再服用。
         </p>
-        <p v-if="med.hasAdverseReaction" class="adverse">你曾上报过这个药的不适</p>
         <dl class="rows">
           <template v-for="[k, v] in rows" :key="k">
             <dt>{{ k }}</dt>
@@ -155,29 +145,7 @@ function fmtTime(dt?: string | null) {
       </section>
 
       <section v-if="active" class="actions">
-        <van-button round plain type="primary" @click="openFeedback('ADVERSE')">报告不适</van-button>
-        <van-button v-if="!med.patientEditable" round plain type="primary" @click="openFeedback('ADJUST')">
-          申请调整
-        </van-button>
-        <van-button round plain type="danger" @click="openFeedback('STOP')">我已停药</van-button>
-      </section>
-
-      <section class="card">
-        <p class="sec-title">反馈与健管师回复</p>
-        <van-empty v-if="!feedback.length" image-size="56" description="还没有反馈" />
-        <div v-for="f in feedback" :key="f.id" class="fb">
-          <div class="fb-head">
-            <strong>{{ feedbackTitle(f) }}</strong>
-            <span class="fb-status" :class="{ done: f.status === 'HANDLED' }">
-              {{ f.status === 'HANDLED' ? '已回复' : '待处理' }}
-            </span>
-            <span class="fb-time">{{ fmtTime(f.gmtCreated) }}</span>
-          </div>
-          <p v-if="feedbackBody(f)" class="fb-body">{{ feedbackBody(f) }}</p>
-          <p v-if="f.reply" class="fb-reply">
-            <b>{{ f.handledByName || '健管师' }}：</b>{{ f.reply }}
-          </p>
-        </div>
+        <van-button round plain type="danger" @click="stopMed">我已停药</van-button>
       </section>
 
       <div v-if="med.patientEditable" class="danger-zone">
@@ -186,7 +154,6 @@ function fmtTime(dt?: string | null) {
     </template>
 
     <MedicationFormSheet v-model:show="showEdit" :med="med" @saved="load" />
-    <MedicationFeedbackSheet v-model:show="showFeedback" :mode="feedbackMode" :med="med" @done="load" />
   </div>
 </template>
 
@@ -256,11 +223,6 @@ function fmtTime(dt?: string | null) {
   font-size: 13px;
   line-height: 1.6;
 }
-.adverse {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--hx-danger-text);
-}
 .rows {
   display: grid;
   grid-template-columns: 72px 1fr;
@@ -288,52 +250,6 @@ function fmtTime(dt?: string | null) {
 }
 .actions :deep(.van-button) {
   flex: 1;
-}
-.sec-title {
-  margin: 0 0 8px;
-  font-weight: 800;
-}
-.fb {
-  padding: 10px 0;
-  border-top: 1px solid var(--hx-n-100);
-}
-.fb:first-of-type {
-  border-top: 0;
-}
-.fb-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-}
-.fb-status {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  color: var(--hx-warn-text);
-  background: var(--hx-orange-soft, var(--hx-warn-bg));
-}
-.fb-status.done {
-  color: var(--hx-teal-700);
-  background: var(--hx-teal-light);
-}
-.fb-time {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--hx-muted);
-}
-.fb-body {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: var(--hx-text);
-}
-.fb-reply {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--hx-teal-50);
-  font-size: 13px;
-  line-height: 1.6;
 }
 .danger-zone {
   margin: 20px 16px 0;

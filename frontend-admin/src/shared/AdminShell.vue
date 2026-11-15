@@ -13,6 +13,12 @@ export type ShellMenuItem = {
   group?: string
 }
 
+export type ShellCrumbItem = {
+  label: string
+  /** 有 to 时可点击跳转 */
+  to?: string
+}
+
 const props = withDefaults(
   defineProps<{
     title: string
@@ -22,6 +28,8 @@ const props = withDefaults(
     hideTopbar?: boolean
     /** 选机构等页：隐藏左侧面包屑与机构切换，只保留用户菜单 */
     hideCrumbs?: boolean
+    /** 多级面包屑；不传则仅展示 title */
+    crumbItems?: ShellCrumbItem[]
     orgSwitchable?: boolean
     flushContent?: boolean
   }>(),
@@ -29,6 +37,7 @@ const props = withDefaults(
     flushContent: false,
     hideTopbar: false,
     hideCrumbs: false,
+    crumbItems: () => [],
   },
 )
 
@@ -87,8 +96,24 @@ function onSwitchOrg() {
       <div class="left">
         <div v-if="!hideCrumbs" class="crumbs">
           <span class="crumb-muted">机构工作台</span>
-          <span class="crumb-sep">/</span>
-          <strong>{{ title }}</strong>
+          <template v-if="crumbItems.length">
+            <template v-for="(item, idx) in crumbItems" :key="`${item.label}-${idx}`">
+              <span class="crumb-sep">/</span>
+              <button
+                v-if="item.to"
+                type="button"
+                class="crumb-link"
+                @click="router.push(item.to)"
+              >
+                {{ item.label }}
+              </button>
+              <strong v-else>{{ item.label }}</strong>
+            </template>
+          </template>
+          <template v-else>
+            <span class="crumb-sep">/</span>
+            <strong>{{ title }}</strong>
+          </template>
         </div>
         <div v-if="slots.chips" class="chip-slot">
           <slot name="chips" />
@@ -195,7 +220,14 @@ function onSwitchOrg() {
         </button>
       </aside>
       <main class="content" :class="{ flush: flushContent }">
-        <slot />
+        <div v-if="flushContent" class="flush-slot">
+          <slot />
+        </div>
+        <div v-else class="page-scroll">
+          <div class="content-container">
+            <slot />
+          </div>
+        </div>
       </main>
     </div>
   </div>
@@ -203,31 +235,34 @@ function onSwitchOrg() {
 
 <style scoped>
 .shell {
-  min-height: 100vh;
+  height: 100vh;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: var(--admin-bg);
 }
 
 .shell.no-topbar .body {
-  min-height: 100vh;
-  height: 100vh;
+  min-height: 0;
+  height: 100%;
+  flex: 1;
 }
 
 .shell.no-topbar .content.flush {
-  height: 100vh;
+  height: 100%;
 }
 
 .topbar {
-  height: 56px;
+  height: var(--layout-topbar-h, 56px);
+  flex: 0 0 auto;
   padding: 0 20px;
   display: flex;
   align-items: center;
   gap: 14px;
   background: var(--admin-topbar-bg);
   border-bottom: 1px solid var(--admin-topbar-border);
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 20;
 }
 
@@ -253,6 +288,19 @@ function onSwitchOrg() {
 
 .crumb-sep {
   opacity: 0.45;
+}
+
+.crumb-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ink-500);
+  cursor: pointer;
+}
+
+.crumb-link:hover {
+  color: var(--brand-600, #2563eb);
 }
 
 .crumbs strong {
@@ -357,7 +405,9 @@ function onSwitchOrg() {
 .body {
   display: grid;
   grid-template-columns: auto 1fr;
-  min-height: calc(100vh - 56px);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .body.no-sider {
@@ -366,6 +416,8 @@ function onSwitchOrg() {
 
 .sider {
   width: 228px;
+  min-height: 0;
+  overflow: hidden;
   background:
     radial-gradient(120% 60% at 0% 0%, rgba(44, 126, 248, 0.18), transparent 55%),
     linear-gradient(180deg, #0b1220 0%, #101826 48%, #0f172a 100%);
@@ -467,16 +519,35 @@ function onSwitchOrg() {
 }
 
 .content {
-  padding: 20px 28px 36px;
   min-width: 0;
   max-width: 100%;
-  overflow-x: hidden;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .content.flush {
   padding: 0;
+}
+
+.page-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--layout-page-pad-y, 24px) var(--layout-page-pad-x, 28px) 36px;
+}
+
+.flush-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
   overflow: hidden;
-  height: calc(100vh - 56px);
+  display: flex;
+  flex-direction: column;
 }
 
 .collapse-btn {

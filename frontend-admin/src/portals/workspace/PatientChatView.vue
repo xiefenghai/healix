@@ -370,44 +370,42 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="insight-row">
-        <div class="tags-block">
-          <span class="block-label" :class="{ alert: assessmentAlert }">
-            <i v-if="assessmentAlert" class="alert-dot" aria-hidden="true" />
-            评估
-          </span>
-          <div v-if="assessmentTags.length" class="tag-list">
-            <span
-              v-for="t in assessmentTags"
-              :key="t.engineCode"
-              class="eval-chip"
-              :class="t.tone"
-              :title="t.title || t.text"
-            >{{ t.text }}</span>
-          </div>
-          <span v-else class="muted">暂无</span>
+      <div v-if="assessmentTags.length || assessmentAlert" class="tags-block">
+        <span class="block-label" :class="{ alert: assessmentAlert }">
+          <i v-if="assessmentAlert" class="alert-dot" aria-hidden="true" />
+          评估
+        </span>
+        <div v-if="assessmentTags.length" class="tag-list">
+          <span
+            v-for="t in assessmentTags"
+            :key="t.engineCode"
+            class="eval-chip"
+            :class="t.tone"
+            :title="t.title || t.text"
+          >{{ t.text }}</span>
         </div>
-
-        <div class="metric-list">
-          <div class="metric-pill" :class="archiveTone" :title="archiveHint">
-            <span class="metric-k">档案</span>
-            <span class="metric-v">{{ archivePercentLabel }}</span>
-            <span class="metric-track" aria-hidden="true">
-              <i :style="{ width: `${archivePercent ?? 0}%` }" />
-            </span>
-          </div>
-          <div class="metric-pill" :class="adherenceTone">
-            <span class="metric-k">依从</span>
-            <span class="metric-v" :class="{ bad: focus?.planRate7d != null && focus.planRate7d < 0.7 }">
-              {{ planRateLabel }}
-            </span>
-            <span class="metric-track" aria-hidden="true">
-              <i :style="{ width: `${planRatePct}%` }" />
-            </span>
-          </div>
-        </div>
+        <span v-else class="muted">暂无</span>
       </div>
     </header>
+
+    <div class="metric-strip" aria-label="关键指标">
+      <div class="metric-pill" :class="archiveTone" :title="archiveHint">
+        <span class="metric-k">档案</span>
+        <span class="metric-v">{{ archivePercentLabel }}</span>
+        <span class="metric-track" aria-hidden="true">
+          <i :style="{ width: `${archivePercent ?? 0}%` }" />
+        </span>
+      </div>
+      <div class="metric-pill" :class="adherenceTone">
+        <span class="metric-k">依从</span>
+        <span class="metric-v" :class="{ bad: focus?.planRate7d != null && focus.planRate7d < 0.7 }">
+          {{ planRateLabel }}
+        </span>
+        <span class="metric-track" aria-hidden="true">
+          <i :style="{ width: `${planRatePct}%` }" />
+        </span>
+      </div>
+    </div>
 
     <div ref="listRef" class="chat-list">
       <el-empty v-if="!loading && !messages.length" description="暂无消息，发送第一条沟通吧" />
@@ -437,24 +435,34 @@ onBeforeUnmount(() => {
         show-icon
         class="block-tip"
       />
-      <el-input
-        v-model="draft"
-        type="textarea"
-        :rows="3"
-        maxlength="2000"
-        show-word-limit
-        :disabled="!canSend"
-        placeholder="输入沟通内容，Enter 发送，Shift+Enter 换行"
-        @keydown="onKeydown"
-      />
-      <div class="composer-foot">
-        <span class="disclaimer">
-          沟通内容仅供健康管理联络，不构成诊断或处方；紧急情况请拨打当地急救电话或线下就诊。
-        </span>
-        <el-button type="primary" :disabled="!canSend || !draft.trim()" :loading="sending" @click="send">
-          发送
-        </el-button>
+      <div class="composer-box">
+        <el-input
+          v-model="draft"
+          type="textarea"
+          :rows="2"
+          maxlength="2000"
+          :disabled="!canSend"
+          resize="none"
+          placeholder="输入沟通内容，Enter 发送，Shift+Enter 换行"
+          @keydown="onKeydown"
+        />
+        <div class="composer-toolbar">
+          <span class="word-count">{{ draft.length }} / 2000</span>
+          <el-button
+            type="primary"
+            size="small"
+            class="send-btn"
+            :disabled="!canSend || !draft.trim()"
+            :loading="sending"
+            @click="send"
+          >
+            发送
+          </el-button>
+        </div>
       </div>
+      <p class="disclaimer">
+        沟通内容仅供健康管理联络，不构成诊断或处方；紧急情况请拨打当地急救电话或线下就诊。
+      </p>
     </div>
   </div>
 </template>
@@ -466,7 +474,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   height: 100%;
-  background: #fff;
+  background: #f9fafb;
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   overflow: hidden;
@@ -572,24 +580,15 @@ onBeforeUnmount(() => {
   border-color: #bfdbfe;
 }
 
-.insight-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 14px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--ink-50, #f1f5f9);
-}
-
 .tags-block {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 8px;
   min-width: 0;
-  flex: 1 1 200px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ink-50, #f1f5f9);
 }
 
 .block-label {
@@ -665,34 +664,40 @@ onBeforeUnmount(() => {
   color: var(--ink-400);
 }
 
-.metric-list {
+.metric-strip {
   display: flex;
-  gap: 8px;
   flex-shrink: 0;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--ink-100);
 }
 
 .metric-pill {
-  min-width: 92px;
-  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 160px;
+  padding: 8px 10px;
   border-radius: 8px;
-  background: var(--ink-50, #f8fafc);
-  border: 1px solid var(--ink-100);
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
 }
 
 .metric-k {
-  display: block;
-  font-size: 10.5px;
-  color: var(--ink-400);
+  font-size: 11px;
+  color: #9ca3af;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .metric-v {
-  display: block;
-  margin-top: 1px;
   font-size: 14px;
   font-weight: 700;
   color: var(--ink-800);
   line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .metric-v.bad {
@@ -701,10 +706,11 @@ onBeforeUnmount(() => {
 
 .metric-track {
   display: block;
-  margin-top: 5px;
-  height: 3px;
+  flex: 1;
+  min-width: 36px;
+  height: 4px;
   border-radius: 999px;
-  background: var(--ink-100);
+  background: #e5e7eb;
   overflow: hidden;
 }
 
@@ -740,7 +746,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   padding: 16px 18px;
-  background: #f5f7fb;
+  background: #f9fafb;
 }
 
 .bubble-row {
@@ -753,7 +759,7 @@ onBeforeUnmount(() => {
 }
 
 .bubble {
-  max-width: min(72%, 520px);
+  max-width: 60%;
   padding: 9px 12px;
   border-radius: 14px;
   background: #fff;
@@ -784,7 +790,7 @@ onBeforeUnmount(() => {
 
 .composer {
   flex-shrink: 0;
-  padding: 12px 16px 14px;
+  padding: 10px 16px 12px;
   border-top: 1px solid var(--ink-100);
   background: #fff;
 }
@@ -793,18 +799,54 @@ onBeforeUnmount(() => {
   margin-bottom: 8px;
 }
 
-.composer-foot {
+.composer-box {
+  position: relative;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.composer-box:focus-within {
+  border-color: #93c5fd;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.composer-box :deep(.el-textarea__inner) {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  padding: 10px 12px 4px !important;
+  min-height: 56px !important;
+  font-size: 13.5px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.composer-toolbar {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-end;
   gap: 12px;
-  margin-top: 8px;
+  padding: 4px 10px 8px;
+}
+
+.word-count {
+  font-size: 12px;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+}
+
+.send-btn {
+  min-width: 64px;
 }
 
 .disclaimer {
-  flex: 1;
-  font-size: 11.5px;
+  margin: 8px 0 0;
+  font-size: 11px;
   line-height: 1.45;
-  color: var(--ink-400);
+  color: #9ca3af;
 }
 </style>

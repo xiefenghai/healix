@@ -2,6 +2,7 @@ package com.healix.web.b.careplan;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.agent.careplan.CarePlanAgentService;
+import com.healix.agent.llm.LlmClient.ChatTurn;
 import com.healix.agent.stream.AgentStreamEvent;
 import com.healix.common.result.ApiResult;
 import com.healix.common.result.PageResult;
@@ -130,7 +131,7 @@ public class BCarePlanController {
             @PathVariable String peopleId,
             @RequestBody(required = false) ReviseRequest request,
             HttpServletResponse response) {
-        ReviseRequest req = request == null ? new ReviseRequest(null, null, null) : request;
+        ReviseRequest req = request == null ? new ReviseRequest(null, null, null, null) : request;
         String tenantId = SecurityUtils.requireTenantId();
         String orgId = SecurityUtils.requireCurrentOrgId();
         String staffId = SecurityUtils.requireStaffId();
@@ -141,7 +142,13 @@ public class BCarePlanController {
             try {
                 var sink = AgentSseSupport.sseSink(emitter, response);
                 CarePlanBundleDto bundle = carePlanAgentService.reviseStream(
-                        tenantId, orgId, peopleId, staffId, req.resolvedInstruction(), sink);
+                        tenantId,
+                        orgId,
+                        peopleId,
+                        staffId,
+                        req.resolvedInstruction(),
+                        sink,
+                        req.toChatHistory());
                 sink.accept(AgentStreamEvent.result(bundle));
                 sink.accept(AgentStreamEvent.done());
                 emitter.complete();
@@ -368,8 +375,13 @@ public class BCarePlanController {
     /**
      * 局部修订：以服务端当前草稿为准；{@code currentDraft} 预留给前端对齐展示态（暂不覆盖库内草稿）。
      * {@code revisionInstruction} 与 {@code instruction} 二选一即可。
+     * {@code history} 为助手会话上文（不含本轮 instruction），用于多轮忌口/取消类约束延续。
      */
-    public record ReviseRequest(String instruction, String revisionInstruction, JsonNode currentDraft) {
+    public record ReviseRequest(
+            String instruction,
+            String revisionInstruction,
+            JsonNode currentDraft,
+            List<ReviseHistoryTurn> history) {
         String resolvedInstruction() {
             if (instruction != null && !instruction.isBlank()) {
                 return instruction.trim();
@@ -379,7 +391,22 @@ public class BCarePlanController {
             }
             return null;
         }
+
+        List<ChatTurn> toChatHistory() {
+            if (history == null || history.isEmpty()) {
+                return List.of();
+            }
+            return history.stream()
+                    .filter(t -> t != null)
+                    .map(t -> new ChatTurn(
+                            t.user() == null ? "" : t.user().trim(),
+                            t.assistant() == null ? "" : t.assistant().trim()))
+                    .filter(t -> !t.user().isBlank() || !t.assistant().isBlank())
+                    .toList();
+        }
     }
+
+    public record ReviseHistoryTurn(String user, String assistant) {}
 
     public record UpdateDraftRequest(
             @NotNull Integer version,

@@ -128,22 +128,105 @@ function maxOf(...groups: Array<number | number[]>) {
     if (Array.isArray(g)) flat.push(...g)
     else flat.push(g)
   }
-  return Math.max(1, ...flat)
+  return Math.max(1, ...flat.filter((n) => n > 0))
 }
+
+type SparkPoint = {
+  date: string
+  value: number
+  label: string
+  isToday: boolean
+  hasData: boolean
+}
+
+function last7Dates(end: string) {
+  return Array.from({ length: 7 }, (_, i) => addDays(end, -(6 - i)))
+}
+
+function barHeightPct(value: number, max: number, hasData: boolean) {
+  if (!hasData || value <= 0) return 0
+  // 按真实比例映射，最低约 12%，避免 1/5 分时柱子过矮
+  return Math.max(12, Math.min(100, Math.round((value / Math.max(max, 1)) * 100)))
+}
+
+const waterSpark = computed<SparkPoint[]>(() => {
+  const end = selectedDate.value
+  const byDate = new Map((water.value?.trend || []).map((t) => [String(t.date).slice(0, 10), t]))
+  return last7Dates(end).map((date) => {
+    const t = byDate.get(date)
+    const value = t?.intakeMl || 0
+    return {
+      date,
+      value,
+      label: `${date.slice(5)}：${value} ml`,
+      isToday: date === end,
+      hasData: value > 0,
+    }
+  })
+})
+
+const sleepSpark = computed<SparkPoint[]>(() => {
+  const end = selectedDate.value
+  const byDate = new Map((sleep.value?.trend || []).map((t) => [String(t.date).slice(0, 10), t]))
+  return last7Dates(end).map((date) => {
+    const t = byDate.get(date)
+    const value = t?.durationMin || 0
+    return {
+      date,
+      value,
+      label: `${date.slice(5)}：${hoursText(value || null)} 小时`,
+      isToday: date === end,
+      hasData: value > 0,
+    }
+  })
+})
+
+const moodSpark = computed<SparkPoint[]>(() => {
+  const end = selectedDate.value
+  const byDate = new Map((mood.value?.trend || []).map((t) => [String(t.date).slice(0, 10), t]))
+  return last7Dates(end).map((date) => {
+    const t = byDate.get(date)
+    const value = t?.score || 0
+    const name = value ? MOOD_LABELS[value] || '' : '未记'
+    return {
+      date,
+      value,
+      label: `${date.slice(5)}：${value ? `${value} 分（${name}）` : '未记'}`,
+      isToday: date === end,
+      hasData: value > 0,
+    }
+  })
+})
 
 const waterMax = computed(() =>
   maxOf(
-    (water.value?.trend || []).map((t) => t.intakeMl),
+    waterSpark.value.map((t) => t.value),
     water.value?.targetMl || 0,
   ),
 )
-const sleepMax = computed(() =>
-  maxOf(
-    (sleep.value?.trend || []).map((t) => t.durationMin || 0),
-    480,
-  ),
-)
+const sleepMax = computed(() => maxOf(sleepSpark.value.map((t) => t.value), 480))
 const moodMax = computed(() => 5)
+
+function checkinTone(status?: string | null, taskPresent?: boolean) {
+  if (!taskPresent) return 'muted'
+  if (status === 'DONE') return 'done'
+  if (status === 'SKIPPED' || status === 'MISSED') return 'warn'
+  return 'pending'
+}
+
+/** 心情柱：浅蓝→琥珀，避免医疗场景的大面积红色 */
+function moodBarColor(score: number, isToday: boolean) {
+  const stops = [
+    ['#bfdbfe', '#93c5fd'],
+    ['#93c5fd', '#60a5fa'],
+    ['#7dd3fc', '#38bdf8'],
+    ['#fde68a', '#fbbf24'],
+    ['#fdba74', '#f97316'],
+  ]
+  const pair = stops[Math.max(0, Math.min(4, (score || 1) - 1))]
+  if (isToday) return `linear-gradient(180deg, ${pair[0]} 0%, ${pair[1]} 100%)`
+  return `linear-gradient(180deg, #e2e8f0 0%, #cbd5e1 100%)`
+}
 
 async function load() {
   if (!peopleId.value) return
@@ -375,44 +458,63 @@ onMounted(load)
           <div class="card-head">
             <span>饮水</span>
             <div class="head-right">
-              <el-tag size="small" :type="water?.reached ? 'success' : 'info'">
+              <span
+                class="status-pill"
+                :data-tone="checkinTone(water?.checkinStatus, water?.taskPresent)"
+              >
                 {{ checkinText(water?.checkinStatus, water?.taskPresent) }}
-              </el-tag>
-              <el-button v-if="canProxy" size="small" type="primary" link @click="openWater()">代录</el-button>
+              </span>
+              <button v-if="canProxy" type="button" class="proxy-link" @click="openWater()">代录</button>
             </div>
           </div>
         </template>
-        <div class="hero">
-          <strong>{{ water?.intakeMl ?? 0 }}</strong>
-          <span v-if="water?.targetMl"> / {{ water.targetMl }} ml</span>
-          <span v-else> ml</span>
-        </div>
-        <p class="meta">
-          近 14 日有记日均
-          <b>{{ water?.avgIntakeMl14d ?? '—' }}</b> ml · 达标
-          <b>{{ water?.reachedDays14d ?? 0 }}</b> 天
-        </p>
-        <div v-if="water?.trend?.length" class="trend water">
-          <i
-            v-for="t in water.trend"
-            :key="t.date"
-            :class="{ on: t.reached, soft: t.intakeMl > 0 && !t.reached }"
-            :style="{ height: Math.max(6, (t.intakeMl / waterMax) * 100) + '%' }"
-            :title="`${t.date}: ${t.intakeMl} ml`"
-          />
-        </div>
-        <el-empty v-if="!water?.entries?.length" :image-size="48" description="当日无饮水记录" />
-        <div v-else class="rows">
-          <div v-for="e in water.entries" :key="e.id" class="row">
-            <span>+{{ e.amountMl }} ml</span>
-            <span class="row-right">
-              <span class="muted">{{ e.createdAt?.slice(11) || '' }}</span>
-              <el-tag v-if="e.recordedByStaff" size="small" type="warning" effect="plain">代录</el-tag>
-              <template v-if="e.recordedByStaff && canProxy">
-                <el-button size="small" type="primary" link @click="openWater(e)">编辑</el-button>
-                <el-button size="small" type="danger" link @click="removeWater(e)">删除</el-button>
-              </template>
-            </span>
+        <div class="card-body">
+          <div class="hero">
+            <strong>{{ water?.intakeMl ?? 0 }}</strong>
+            <span v-if="water?.targetMl"> / {{ water.targetMl }} <em>ml</em></span>
+            <span v-else> <em>ml</em></span>
+          </div>
+          <p class="meta">
+            近 14 日有记日均
+            <b class="meta-num">{{ water?.avgIntakeMl14d ?? '—' }}</b>
+            <em class="meta-unit">ml</em>
+            ·
+            <em class="meta-label">达标</em>
+            <b class="meta-num">{{ water?.reachedDays14d ?? 0 }}</b>
+            <em class="meta-unit">天</em>
+          </p>
+          <div class="spark">
+            <div
+              v-if="waterSpark.some((t) => t.hasData)"
+              class="spark-bars"
+              aria-label="近7日饮水趋势"
+            >
+              <div v-for="t in waterSpark" :key="t.date" class="spark-slot" :title="t.label">
+                <div class="spark-track">
+                  <span
+                    v-if="t.hasData"
+                    class="spark-bar"
+                    :class="t.isToday ? 'spark-bar--today' : 'spark-bar--hist'"
+                    :style="{ height: `${barHeightPct(t.value, waterMax, true)}%` }"
+                  />
+                </div>
+                <i class="spark-dot" :class="{ 'spark-dot--on': t.hasData }" aria-hidden="true" />
+              </div>
+            </div>
+            <p v-if="!water?.entries?.length" class="empty-inline">当日无饮水记录</p>
+          </div>
+          <div v-if="water?.entries?.length" class="rows">
+            <div v-for="e in water.entries" :key="e.id" class="row">
+              <span>+{{ e.amountMl }} ml</span>
+              <span class="row-right">
+                <span class="muted">{{ e.createdAt?.slice(11) || '' }}</span>
+                <el-tag v-if="e.recordedByStaff" size="small" type="warning" effect="plain">代录</el-tag>
+                <template v-if="e.recordedByStaff && canProxy">
+                  <el-button size="small" type="primary" link @click="openWater(e)">编辑</el-button>
+                  <el-button size="small" type="danger" link @click="removeWater(e)">删除</el-button>
+                </template>
+              </span>
+            </div>
           </div>
         </div>
       </el-card>
@@ -422,48 +524,73 @@ onMounted(load)
           <div class="card-head">
             <span>睡眠</span>
             <div class="head-right">
-              <el-tag size="small" :type="sleep?.logged ? 'success' : 'info'">
+              <span
+                class="status-pill"
+                :data-tone="checkinTone(sleep?.checkinStatus, sleep?.taskPresent)"
+              >
                 {{ checkinText(sleep?.checkinStatus, sleep?.taskPresent) }}
-              </el-tag>
-              <el-button v-if="canProxy" size="small" type="primary" link @click="openSleep()">代录</el-button>
+              </span>
+              <button v-if="canProxy" type="button" class="proxy-link" @click="openSleep()">代录</button>
             </div>
           </div>
         </template>
-        <div class="hero">
-          <strong>{{ hoursText(sleep?.logged ? sleep.durationMin : sleep?.avgDurationMin14d) }}</strong>
-          <span> 小时</span>
-        </div>
-        <p class="meta">
-          <template v-if="sleep?.logged">
-            合计 {{ hoursText(sleep.durationMin) }} 小时 · 质量
-            {{ QUALITY_LABELS[sleep.quality || ''] || sleep.quality || '—' }}
-          </template>
-          <template v-else>当日未记 · 近 14 日均 {{ hoursText(sleep?.avgDurationMin14d) }} 小时</template>
-        </p>
-        <div v-if="sleep?.trend?.length" class="trend sleep">
-          <i
-            v-for="t in sleep.trend"
-            :key="t.date"
-            :style="{ height: Math.max(6, ((t.durationMin || 0) / sleepMax) * 100) + '%' }"
-            :title="`${t.date}: ${hoursText(t.durationMin)}h`"
-          />
-        </div>
-        <div v-if="sleep?.segments?.length" class="seg-list">
-          <div v-for="s in sleep.segments" :key="s.id" class="seg-row">
-            <span>{{ s.segment === 'NAP' ? '午睡' : '主睡眠' }}</span>
-            <strong>{{ hoursText(s.durationMin) }}h</strong>
-            <em v-if="s.bedtime || s.wakeTime">{{ s.bedtime || '—' }}–{{ s.wakeTime || '—' }}</em>
-            <span class="row-right">
-              <el-tag v-if="s.recordedByStaff" size="small" type="warning" effect="plain">代录</el-tag>
-              <template v-if="s.recordedByStaff && canProxy">
-                <el-button size="small" type="primary" link @click="openSleep(s)">编辑</el-button>
-                <el-button size="small" type="danger" link @click="removeSleep(s)">删除</el-button>
-              </template>
-            </span>
+        <div class="card-body">
+          <div class="hero">
+            <strong>{{ hoursText(sleep?.logged ? sleep.durationMin : sleep?.avgDurationMin14d) }}</strong>
+            <span> <em>小时</em></span>
           </div>
+          <p class="meta">
+            <template v-if="sleep?.logged">
+              合计
+              <b class="meta-num">{{ hoursText(sleep.durationMin) }}</b>
+              <em class="meta-unit">小时</em>
+              ·
+              <em class="meta-label">质量</em>
+              <b class="meta-num">{{ QUALITY_LABELS[sleep.quality || ''] || sleep.quality || '—' }}</b>
+            </template>
+            <template v-else>
+              <em class="meta-label">当日未记</em>
+              · 近 14 日均
+              <b class="meta-num">{{ hoursText(sleep?.avgDurationMin14d) }}</b>
+              <em class="meta-unit">小时</em>
+            </template>
+          </p>
+          <div class="spark">
+            <div
+              v-if="sleepSpark.some((t) => t.hasData)"
+              class="spark-bars"
+              aria-label="近7日睡眠趋势"
+            >
+              <div v-for="t in sleepSpark" :key="t.date" class="spark-slot" :title="t.label">
+                <div class="spark-track">
+                  <span
+                    v-if="t.hasData"
+                    class="spark-bar"
+                    :class="t.isToday ? 'spark-bar--today' : 'spark-bar--hist'"
+                    :style="{ height: `${barHeightPct(t.value, sleepMax, true)}%` }"
+                  />
+                </div>
+                <i class="spark-dot" :class="{ 'spark-dot--on': t.hasData }" aria-hidden="true" />
+              </div>
+            </div>
+            <p v-if="!sleep?.logged" class="empty-inline">当日无睡眠记录</p>
+          </div>
+          <div v-if="sleep?.segments?.length" class="seg-list">
+            <div v-for="s in sleep.segments" :key="s.id" class="seg-row">
+              <span>{{ s.segment === 'NAP' ? '午睡' : '主睡眠' }}</span>
+              <strong>{{ hoursText(s.durationMin) }}h</strong>
+              <em v-if="s.bedtime || s.wakeTime">{{ s.bedtime || '—' }}–{{ s.wakeTime || '—' }}</em>
+              <span class="row-right">
+                <el-tag v-if="s.recordedByStaff" size="small" type="warning" effect="plain">代录</el-tag>
+                <template v-if="s.recordedByStaff && canProxy">
+                  <el-button size="small" type="primary" link @click="openSleep(s)">编辑</el-button>
+                  <el-button size="small" type="danger" link @click="removeSleep(s)">删除</el-button>
+                </template>
+              </span>
+            </div>
+          </div>
+          <p v-if="sleep?.note" class="note">备注：{{ sleep.note }}</p>
         </div>
-        <p v-if="sleep?.note" class="note">备注：{{ sleep.note }}</p>
-        <el-empty v-else-if="!sleep?.logged" :image-size="48" description="当日无睡眠记录" />
       </el-card>
 
       <el-card shadow="never" class="block">
@@ -471,41 +598,67 @@ onMounted(load)
           <div class="card-head">
             <span>心情</span>
             <div class="head-right">
-              <el-tag size="small" :type="mood?.logged ? 'success' : 'info'">
+              <span
+                class="status-pill"
+                :data-tone="checkinTone(mood?.checkinStatus, mood?.taskPresent)"
+              >
                 {{ checkinText(mood?.checkinStatus, mood?.taskPresent) }}
-              </el-tag>
+              </span>
               <template v-if="canProxy">
-                <el-button v-if="!mood?.logged" size="small" type="primary" link @click="openMood()">代录</el-button>
+                <button v-if="!mood?.logged" type="button" class="proxy-link" @click="openMood()">代录</button>
                 <template v-else-if="mood.recordedByStaff">
-                  <el-button size="small" type="primary" link @click="openMood()">编辑</el-button>
-                  <el-button size="small" type="danger" link @click="removeMood()">删除</el-button>
+                  <button type="button" class="proxy-link" @click="openMood()">编辑</button>
+                  <button type="button" class="proxy-link proxy-link--danger" @click="removeMood()">删除</button>
                 </template>
               </template>
             </div>
           </div>
         </template>
-        <div class="hero">
-          <strong>{{ mood?.logged ? mood.score ?? '—' : mood?.avgScore14d ?? '—' }}</strong>
-          <span> / 5</span>
+        <div class="card-body">
+          <div class="hero">
+            <strong>{{ mood?.logged ? mood.score ?? '—' : mood?.avgScore14d ?? '—' }}</strong>
+            <span> / 5</span>
+          </div>
+          <p class="meta">
+            <template v-if="mood?.logged">
+              <el-tag v-if="mood.recordedByStaff" size="small" type="warning" effect="plain">代录</el-tag>
+              <b class="meta-num">{{ mood.label || '已记' }}</b>
+              <template v-if="mood.tags?.length">
+                · <em class="meta-label">{{ mood.tags.join('、') }}</em>
+              </template>
+            </template>
+            <template v-else>
+              <em class="meta-label">当日未记</em>
+              · 近 14 日均
+              <b class="meta-num">{{ mood?.avgScore14d ?? '—' }}</b>
+              <em class="meta-unit">分</em>
+            </template>
+          </p>
+          <div class="spark">
+            <div
+              v-if="moodSpark.some((t) => t.hasData)"
+              class="spark-bars"
+              aria-label="近7日心情趋势"
+            >
+              <div v-for="t in moodSpark" :key="t.date" class="spark-slot" :title="t.label">
+                <div class="spark-track">
+                  <span
+                    v-if="t.hasData"
+                    class="spark-bar spark-bar--mood"
+                    :class="t.isToday ? 'spark-bar--today' : 'spark-bar--hist'"
+                    :style="{
+                      height: `${barHeightPct(t.value, moodMax, true)}%`,
+                      background: moodBarColor(t.value, t.isToday),
+                    }"
+                  />
+                </div>
+                <i class="spark-dot" :class="{ 'spark-dot--on': t.hasData }" aria-hidden="true" />
+              </div>
+            </div>
+            <p v-if="!mood?.logged" class="empty-inline">当日无心情记录</p>
+          </div>
+          <p v-if="mood?.note" class="note">备注：{{ mood.note }}</p>
         </div>
-        <p class="meta">
-          <template v-if="mood?.logged">
-            <el-tag v-if="mood.recordedByStaff" size="small" type="warning" effect="plain">代录</el-tag>
-            {{ mood.label || '已记' }}
-            <template v-if="mood.tags?.length"> · {{ mood.tags.join('、') }}</template>
-          </template>
-          <template v-else>当日未记 · 近 14 日均 {{ mood?.avgScore14d ?? '—' }} 分</template>
-        </p>
-        <div v-if="mood?.trend?.length" class="trend mood">
-          <i
-            v-for="t in mood.trend"
-            :key="t.date"
-            :style="{ height: Math.max(6, ((t.score || 0) / moodMax) * 100) + '%' }"
-            :title="`${t.date}: ${t.score ?? '—'}`"
-          />
-        </div>
-        <p v-if="mood?.note" class="note">备注：{{ mood.note }}</p>
-        <el-empty v-else-if="!mood?.logged" :image-size="48" description="当日无心情记录" />
       </el-card>
     </div>
 
@@ -616,63 +769,189 @@ onMounted(load)
 }
 .block {
   border-radius: 12px;
+  border: 1px solid #eef2f6;
+}
+.block :deep(.el-card__header) {
+  padding: 12px 16px 8px;
+  border-bottom: none;
+}
+.block :deep(.el-card__body) {
+  padding: 0 16px 14px;
+}
+.card-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .card-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 28px;
+  font-size: 14px;
   font-weight: 700;
+  color: #0f172a;
+  line-height: 28px;
+}
+.head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 28px;
+  line-height: 28px;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 28px;
+}
+.status-pill[data-tone='done'] {
+  color: #059669;
+}
+.status-pill[data-tone='warn'] {
+  color: #c2410c;
+}
+.status-pill[data-tone='muted'],
+.status-pill[data-tone='pending'] {
+  color: #9ca3af;
+}
+.proxy-link {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 28px;
+  cursor: pointer;
+}
+.proxy-link:hover {
+  text-decoration: underline;
+}
+.proxy-link--danger {
+  color: #dc2626;
 }
 .hero {
   display: flex;
   align-items: baseline;
   gap: 4px;
-  color: var(--el-text-color-regular);
+  min-height: 36px;
+  color: #64748b;
 }
 .hero strong {
-  font-size: 36px;
+  font-size: 32px;
   font-weight: 800;
-  color: var(--el-text-color-primary);
+  color: #0f172a;
   letter-spacing: -0.02em;
   line-height: 1;
 }
+.hero em {
+  font-style: normal;
+  font-size: 12px;
+  color: #9ca3af;
+}
 .meta {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-.meta b {
-  color: var(--el-text-color-primary);
-}
-.trend {
   display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  height: 56px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 20px;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #9ca3af;
+  text-align: left;
+}
+.meta-num {
+  font-size: 14px;
+  font-weight: 700;
+  color: #374151;
+}
+.meta-unit,
+.meta-label {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9ca3af;
+}
+.spark {
   margin-top: 12px;
 }
-.trend i {
-  flex: 1;
-  min-height: 6px;
-  border-radius: 3px 3px 0 0;
+.spark-bars {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 6px;
+  height: 56px;
+  width: 100%;
+}
+.spark-slot {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 36px;
+  height: 100%;
+}
+.spark-track {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+}
+.spark-bar {
   display: block;
-  background: #dbe4ea;
+  width: 12px;
+  border-radius: 4px 4px 2px 2px;
+  transition: height 0.15s ease;
 }
-.trend.water i.soft {
-  background: #7ec8e3;
+.spark-bar--hist {
+  background: #94a3b8;
 }
-.trend.water i.on {
-  background: #0e9f83;
+.spark-bar--today {
+  background: #0d9488;
 }
-.trend.sleep i {
-  background: #34d399;
+.spark-dot {
+  display: block;
+  width: 4px;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  flex-shrink: 0;
 }
-.trend.mood i {
-  background: #f0a0b8;
+.spark-dot--on {
+  background: #94a3b8;
+}
+.empty-inline {
+  margin: 10px 0 0;
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #9ca3af;
+  text-align: center;
 }
 .rows {
-  margin-top: 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  margin-top: 10px;
+  border-top: 1px solid #f3f4f6;
 }
 .row {
   display: flex;
@@ -715,11 +994,6 @@ onMounted(load)
 .seg-row em {
   font-style: normal;
   color: var(--el-text-color-secondary);
-}
-.head-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 .row-right {
   display: inline-flex;

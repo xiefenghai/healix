@@ -98,6 +98,70 @@ function formatTime(v?: string) {
   return String(v).replace('T', ' ').slice(0, 16)
 }
 
+function cardTitle(row: FollowupItem) {
+  return (
+    row.followupTypeLabel ||
+    formatFollowupType(row.followupType) ||
+    row.title ||
+    row.recordTypeLabel ||
+    formatFollowupRecordType(row.recordType) ||
+    '随访'
+  )
+}
+
+/** 电话 / 面对面等：标题旁小图标 */
+function methodIcon(channel?: string) {
+  switch (channel) {
+    case 'PHONE':
+      return '📞'
+    case 'SMS':
+      return '📱'
+    case 'FACE_TO_FACE':
+    case 'CLINIC':
+    case 'HOME':
+      return '💬'
+    case 'ONLINE':
+    case 'WECHAT':
+      return '💬'
+    default:
+      return '📋'
+  }
+}
+
+/** 状态类提示（尚未完成等）：浅灰辅文，不进正文摘要 */
+function cardStatusHint(row: FollowupItem) {
+  const title = cardTitle(row)
+  const raw = String(row.summary || '').trim()
+  if (!raw) return ''
+  if (raw === `${title}（未完成）` || raw === `${title}(未完成)` || raw === '尚未完成') {
+    return '尚未完成'
+  }
+  if (raw === `${title}（定期排期）` || raw === '定期排期') return '定期排期'
+  return ''
+}
+
+/**
+ * 沟通摘要：去掉与标题重复的文案；状态提示不算摘要。
+ */
+function cardSummary(row: FollowupItem) {
+  if (cardStatusHint(row)) return ''
+  const title = cardTitle(row)
+  const raw = String(row.summary || '').trim()
+  if (!raw) return ''
+  if (raw === title) return ''
+  if (raw.startsWith(`${title} · `)) return raw.slice(title.length + 3).trim()
+  if (raw.startsWith(`${title}·`)) return raw.slice(title.length + 1).trim()
+  if (raw.replace(/\s/g, '') === title.replace(/\s/g, '')) return ''
+  return raw
+}
+
+function statusTone(status?: string) {
+  if (status === 'DONE') return 'done'
+  if (status === 'OPEN') return 'open'
+  if (status === 'CANCELLED') return 'cancelled'
+  return 'default'
+}
+
 async function load() {
   if (!peopleId()) return
   loading.value = true
@@ -446,50 +510,76 @@ onMounted(async () => {
       <el-button type="primary" @click="openCreate">新建随访</el-button>
     </div>
 
-    <el-timeline v-if="items.length">
+    <el-timeline v-if="items.length" class="fu-timeline">
       <el-timeline-item
         v-for="row in items"
         :key="row.id"
         :timestamp="formatTime(row.completedAt || row.plannedAt || row.gmtCreated)"
         placement="top"
-        :type="row.status === 'DONE' ? 'success' : row.status === 'OPEN' ? 'warning' : 'info'"
+        color="#D1D5DB"
       >
-        <div class="card">
-          <div class="card-top">
-            <strong>{{ row.followupTypeLabel || formatFollowupType(row.followupType) || row.recordTypeLabel || formatFollowupRecordType(row.recordType) }}</strong>
-            <el-tag size="small" effect="plain">{{ formatFollowupStatus(row.status) }}</el-tag>
+        <div
+          class="card"
+          role="button"
+          tabindex="0"
+          @click="openDetail(row)"
+          @keydown.enter.prevent="openDetail(row)"
+          @keydown.space.prevent="openDetail(row)"
+        >
+          <div class="card-main">
+            <div class="card-title-row">
+              <span class="method-ico" :title="formatFollowupMethod(row.contactChannel) || '随访'">
+                {{ methodIcon(row.contactChannel) }}
+              </span>
+              <strong class="card-title">{{ cardTitle(row) }}</strong>
+              <span v-if="cardStatusHint(row)" class="status-hint">{{ cardStatusHint(row) }}</span>
+            </div>
+            <div class="meta">
+              <span v-if="row.completedByName">{{ row.completedByName }}</span>
+              <span v-if="row.contactChannel">{{ formatFollowupMethod(row.contactChannel) }}</span>
+            </div>
+            <p v-if="cardSummary(row)" class="summary-text">{{ cardSummary(row) }}</p>
+            <div
+              v-if="
+                row.status === 'OPEN' &&
+                (row.followupType === 'ONBOARDING' || row.recordType === 'PERIODIC')
+              "
+              class="actions"
+              @click.stop
+            >
+              <el-button
+                v-if="row.followupType === 'ONBOARDING'"
+                link
+                type="primary"
+                @click="goIntake(row)"
+              >
+                开始首诊
+              </el-button>
+              <el-button
+                v-if="row.recordType === 'PERIODIC' && row.followupType !== 'ONBOARDING'"
+                link
+                type="primary"
+                @click="openComplete(row)"
+              >
+                处理
+              </el-button>
+              <el-button
+                v-if="row.recordType === 'PERIODIC'"
+                link
+                type="danger"
+                @click="cancelRow(row)"
+              >
+                取消
+              </el-button>
+            </div>
           </div>
-          <p class="summary">{{ row.summary || row.title || '-' }}</p>
-          <div class="meta">
-            <span v-if="row.contactChannel">{{ formatFollowupMethod(row.contactChannel) }}</span>
-            <span v-if="row.completedByName">{{ row.completedByName }}</span>
-          </div>
-          <div class="actions">
-            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button
-              v-if="row.status === 'OPEN' && row.followupType === 'ONBOARDING'"
-              link
-              type="primary"
-              @click="goIntake(row)"
-            >
-              开始首诊
-            </el-button>
-            <el-button
-              v-if="row.status === 'OPEN' && row.recordType === 'PERIODIC' && row.followupType !== 'ONBOARDING'"
-              link
-              type="primary"
-              @click="openComplete(row)"
-            >
-              处理
-            </el-button>
-            <el-button
-              v-if="row.status === 'OPEN' && row.recordType === 'PERIODIC'"
-              link
-              type="danger"
-              @click="cancelRow(row)"
-            >
-              取消
-            </el-button>
+          <div class="card-aside">
+            <span class="status-pill" :data-tone="statusTone(row.status)">
+              {{ formatFollowupStatus(row.status) }}
+            </span>
+            <button type="button" class="detail-link" @click.stop="openDetail(row)">
+              详情<span class="detail-chevron">›</span>
+            </button>
           </div>
         </div>
       </el-timeline-item>
@@ -702,31 +792,180 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--el-text-color-secondary);
 }
+.fu-timeline {
+  width: 100%;
+  padding-left: 2px;
+}
+.fu-timeline :deep(.el-timeline-item__wrapper) {
+  padding-left: 22px;
+}
+.fu-timeline :deep(.el-timeline-item__tail) {
+  border-left: 1px dashed #E5E7EB;
+}
+.fu-timeline :deep(.el-timeline-item__node) {
+  width: 10px;
+  height: 10px;
+  left: 0;
+  background-color: #E5E7EB !important;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #D1D5DB;
+  box-sizing: content-box;
+}
+.fu-timeline :deep(.el-timeline-item:first-child .el-timeline-item__node) {
+  background-color: var(--el-color-primary) !important;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--el-color-primary) 35%, #fff);
+}
+.fu-timeline :deep(.el-timeline-item__timestamp) {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4B5563;
+  padding-top: 0;
+}
+.fu-timeline :deep(.el-timeline-item__timestamp.is-top) {
+  margin-bottom: 6px;
+}
+
 .card {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
   background: var(--el-fill-color-blank);
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
 }
-.card-top {
+.card:hover {
+  border-color: #cbd5e1;
+  background: #fafbfc;
+}
+.card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--el-color-primary) 45%, transparent);
+  outline-offset: 2px;
+}
+.card-main {
+  flex: 1;
+  min-width: 0;
+}
+.card-title-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
-.summary {
-  margin: 8px 0 4px;
-  font-size: 13px;
-  line-height: 1.5;
+.method-ico {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+.card-title {
+  flex-shrink: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-hint {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9ca3af;
+  line-height: 1.35;
 }
 .meta {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 6px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #9ca3af;
+  line-height: 1.4;
+  min-height: 17px;
+}
+.meta > span + span::before {
+  content: '·';
+  margin-right: 10px;
+  color: #d1d5db;
+}
+.summary-text {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #4b5563;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.card-aside {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  align-self: center;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.status-pill[data-tone='done'] {
+  background: #ecfdf5;
+  color: #059669;
+}
+.status-pill[data-tone='open'] {
+  background: #fff7ed;
+  color: #c2410c;
+}
+.status-pill[data-tone='cancelled'] {
+  background: #f3f4f6;
+  color: #9ca3af;
+}
+.detail-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  color: #9ca3af;
+  cursor: pointer;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.detail-link:hover {
+  color: var(--el-color-primary);
+}
+.detail-chevron {
+  font-size: 15px;
+  line-height: 1;
+  margin-left: 1px;
 }
 .actions {
-  margin-top: 6px;
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
 }
 .form-row {
   display: grid;

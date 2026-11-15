@@ -175,6 +175,16 @@ public class CareChatFacade {
         return threadMapper.sumStaffUnreadByOrg(tenantId, orgId);
     }
 
+    /** 单患者会话上健管侧未读数；无线程则 0（不自动建会话）。 */
+    public int staffUnreadForPeople(String tenantId, String orgId, String peopleId) {
+        archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
+        CareChatThread thread = threadMapper.findByOrgPeople(tenantId, orgId, peopleId);
+        if (thread == null || thread.getStaffUnreadCount() == null) {
+            return 0;
+        }
+        return Math.max(0, thread.getStaffUnreadCount());
+    }
+
     /** 机构沟通收件箱：患者按健管组分组，附带健管侧未读。 */
     public CareChatInboxDto inboxForStaff(String tenantId, String orgId) {
         List<OrgPatientListItem> patients = orgWorkspaceService.listOrgPatients(orgId, null, null, null);

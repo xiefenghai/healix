@@ -274,7 +274,7 @@ function confirmDialog() {
         >
           {{ tag.label }}
         </el-tag>
-        <el-button class="ph-add" circle type="primary" plain @click="openDialog">+</el-button>
+        <button type="button" class="ph-add" aria-label="添加既往史" @click="openDialog">+</button>
       </div>
       <p v-if="!displayTags.length" class="ph-hint">点击 + 添加既往史条目</p>
     </div>
@@ -447,11 +447,34 @@ function confirmDialog() {
 }
 
 .ph-status {
-  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+  width: 100%;
+  min-height: 32px;
+  height: auto;
+  margin-bottom: 0;
+}
+
+.ph-status :deep(.el-radio) {
+  height: 32px;
+  margin-right: 0;
+  align-items: center;
+}
+
+.ph-status :deep(.el-radio__input) {
+  align-self: center;
+}
+
+.ph-status :deep(.el-radio__label) {
+  padding-left: 8px;
+  line-height: 32px;
 }
 
 .ph-body {
-  min-height: 40px;
+  min-height: 32px;
+  margin-top: 8px;
 }
 
 .ph-tags {
@@ -462,12 +485,14 @@ function confirmDialog() {
 }
 
 .ph-tag {
+  box-sizing: border-box;
   max-width: 100%;
+  min-height: 32px;
   height: auto;
+  margin: 0;
+  padding: 0 10px;
+  line-height: 30px;
   white-space: normal;
-  line-height: 1.45;
-  padding-top: 6px;
-  padding-bottom: 6px;
 }
 
 .ph-tag :deep(.el-tag__content) {
@@ -475,13 +500,40 @@ function confirmDialog() {
 }
 
 .ph-add {
+  box-sizing: border-box;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+  color: #6b7280;
+  background: #fff;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.ph-add:hover {
+  color: #2563eb;
+  border-color: #93c5fd;
+  background: #eff6ff;
 }
 
 .ph-hint {
   margin: 8px 0 0;
-  font-size: 13px;
-  color: var(--admin-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9ca3af;
 }
 
 .ph-unsaved-hint {

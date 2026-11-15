@@ -11,6 +11,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsType } from 'echarts/core'
+import { useEchartsHost } from './useEchartsHost'
 
 echarts.use([
   LineChart,
@@ -22,22 +23,25 @@ echarts.use([
   CanvasRenderer,
 ])
 
-export interface ComposeMiniSeries {
+export interface MetricSparklineSeries {
   name: string
   data: Array<number | null>
   color: string
-  /** 是否画面积（多系列时通常只给第一条） */
+  /** 是否画面积（多系列时通常只给第一条；panel 默认极淡） */
   area?: boolean
   /** 与 data 对齐的精确测量时间（ISO），供 Tooltip 使用 */
   times?: Array<string | null>
 }
+
+/** @deprecated 使用 MetricSparklineSeries */
+export type ComposeMiniSeries = MetricSparklineSeries
 
 const props = withDefaults(
   defineProps<{
     categories: string[]
     /** 单系列兼容；优先使用 series */
     values?: Array<number | null>
-    series?: ComposeMiniSeries[]
+    series?: MetricSparklineSeries[]
     color?: string
     unit?: string
     precision?: number
@@ -45,8 +49,12 @@ const props = withDefaults(
     compact?: boolean
     /** 三列小卡：几乎无轴，只看走势 */
     spark?: boolean
+    /** 指标趋势大图：无滚动条、MM/DD 轴、基准带、描边点 */
+    panel?: boolean
     /** 正常范围浅绿带 */
     normalRange?: { min: number; max: number } | null
+    /** 无数据文案 */
+    emptyText?: string
   }>(),
   {
     values: () => [],
@@ -56,19 +64,21 @@ const props = withDefaults(
     precision: 0,
     compact: false,
     spark: false,
+    panel: false,
     normalRange: null,
+    emptyText: '',
   },
 )
 
 const elRef = ref<HTMLDivElement | null>(null)
 let chart: EChartsType | null = null
-let ro: ResizeObserver | null = null
+const { observe } = useEchartsHost(() => chart, elRef)
 
-/** 小卡统一绘图区；左右留白保证首尾 MM/DD 不被裁切 */
+/** 小卡：左右留边，避免端点圆/虚线贴边被裁 */
 const SPARK_GRID = {
-  left: 14,
-  right: 14,
-  top: 6,
+  left: 10,
+  right: 10,
+  top: 8,
   bottom: 16,
   containLabel: false,
 } as const
@@ -87,16 +97,26 @@ function formatFreshAt(at?: string | null) {
   return s
 }
 
-function resolvedSeries(): ComposeMiniSeries[] {
+function resolvedSeries(): MetricSparklineSeries[] {
   if (props.series?.length) return props.series
   return [
     {
       name: '',
       data: props.values || [],
       color: props.color,
-      area: true,
+      // spark 微图可淡面积；panel 大图默认不铺面积
+      area: props.panel ? false : true,
     },
   ]
+}
+
+function toMmDd(raw: string) {
+  const s = String(raw || '')
+  if (/^\d{2}\/\d{2}$/.test(s)) return s
+  if (/^\d{2}-\d{2}/.test(s)) return s.slice(0, 5).replace('-', '/')
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return `${s.slice(5, 7)}/${s.slice(8, 10)}`
+  if (s.length >= 5) return s.slice(0, 5).replace('-', '/')
+  return s
 }
 
 function hexToRgba(hex: string, alpha: number) {
@@ -129,8 +149,12 @@ function render() {
   const empty = !cats.length || !nums.length
   const multi = seriesList.length > 1
   const spark = props.spark
+  const panel = props.panel
   const compact = props.compact || spark
   const band = props.normalRange
+  const emptyLabel =
+    props.emptyText ||
+    (spark ? '近几日暂无测量' : panel ? '暂无数据' : '近几日暂无测量记录')
 
   let yMin: number | undefined
   let yMax: number | undefined
@@ -163,24 +187,32 @@ function render() {
       animationDuration: 220,
       grid: spark
         ? { ...SPARK_GRID }
-        : {
-            left: compact ? 22 : 28,
-            right: compact ? 4 : 8,
-            top: multi ? (compact ? 16 : 22) : compact ? 6 : 10,
-            bottom: compact ? 18 : 22,
-            containLabel: false,
-          },
+        : panel
+          ? {
+              left: 12,
+              right: 16,
+              top: multi ? 28 : 16,
+              bottom: 28,
+              containLabel: true,
+            }
+          : {
+              left: compact ? 22 : 28,
+              right: compact ? 4 : 8,
+              top: multi ? (compact ? 16 : 22) : compact ? 6 : 10,
+              bottom: compact ? 18 : 22,
+              containLabel: false,
+            },
       legend: multi && !spark
         ? {
             top: 0,
             right: 0,
-            itemWidth: compact ? 8 : 10,
-            itemHeight: compact ? 4 : 6,
-            itemGap: compact ? 6 : 10,
+            itemWidth: compact || panel ? 8 : 10,
+            itemHeight: compact || panel ? 4 : 6,
+            itemGap: compact || panel ? 8 : 10,
             icon: 'circle',
             textStyle: {
               color: '#64748b',
-              fontSize: compact ? 9 : 10,
+              fontSize: compact || panel ? 10 : 11,
             },
           }
         : { show: false },
@@ -189,7 +221,7 @@ function render() {
         // 限制在图表容器内，左右贴边时自动内收，不溢出白色卡片
         confine: true,
         appendToBody: false,
-        className: 'compose-metric-tooltip',
+        className: 'metric-sparkline-tooltip',
         backgroundColor: 'rgba(15, 23, 42, 0.92)',
         borderWidth: 0,
         padding: [8, 10, 10, 10],
@@ -244,7 +276,9 @@ function render() {
             const di = p.dataIndex ?? 0
             const s = seriesList[si]
             const at = s?.times?.[di]
-            const timeStr = formatFreshAt(at) || String(cats[di] || '').replace(/\//g, '-')
+            const timeStr =
+              formatFreshAt(at) ||
+              (panel ? formatFreshAt(String(cats[di] || '')) : String(cats[di] || '').replace(/\//g, '-'))
             const name = p.seriesName || s?.name || '读数'
             const unit = props.unit ? ` ${props.unit}` : ''
             const color = s?.color || (typeof p.color === 'string' ? p.color : '#94a3b8')
@@ -257,15 +291,15 @@ function render() {
           }
           if (!rows.length) return '未测'
           const title = rows.find((r) => r.timeStr)?.timeStr || rows[0]!.timeStr
-          const titleHtml = `<div class="cmt-title">${title}</div>`
+          const titleHtml = `<div class="mst-title">${title}</div>`
           const bodyHtml = rows
             .map(
               (r) =>
-                `<div class="cmt-row"><span class="cmt-dot" style="background:${r.color}"></span><span>${r.text}</span></div>`,
+                `<div class="mst-row"><span class="mst-dot" style="background:${r.color}"></span><span>${r.text}</span></div>`,
             )
             .join('')
           // 箭头放进内容里，避免 ::after 在 tooltip 隐藏/裁切后残留在图表底部
-          return `${titleHtml}${bodyHtml}<div class="cmt-arrow"></div>`
+          return `${titleHtml}${bodyHtml}<div class="mst-arrow"></div>`
         },
       },
       xAxis: {
@@ -281,21 +315,16 @@ function render() {
         axisLabel: {
           show: true,
           color: '#94a3b8',
-          fontSize: spark ? 10 : compact ? 10 : 11,
-          margin: spark ? 4 : 6,
-          // 小卡只标首尾日期，避免 5 个标签挤成截断
+          fontSize: spark ? 10 : panel ? 10 : compact ? 10 : 11,
+          margin: spark ? 4 : panel ? 8 : 6,
+          // 小卡只标首尾日期；大图全标但重叠自动隐藏，统一 MM/DD
           interval: spark
             ? (index: number) => index === 0 || index === cats.length - 1
-            : 0,
-          hideOverlap: !spark,
-          alignMinLabel: spark ? 'left' : undefined,
-          alignMaxLabel: spark ? 'right' : undefined,
-          formatter: (v: string) => {
-            const s = String(v || '')
-            if (/^\d{2}\/\d{2}$/.test(s)) return s
-            if (/^\d{2}-\d{2}/.test(s)) return s.slice(0, 5).replace('-', '/')
-            return s.slice(0, 5)
-          },
+            : 'auto',
+          hideOverlap: true,
+          alignMinLabel: spark || panel ? 'left' : undefined,
+          alignMaxLabel: spark || panel ? 'right' : undefined,
+          formatter: (v: string) => toMmDd(v),
         },
         splitLine: { show: false },
       },
@@ -303,19 +332,24 @@ function render() {
         type: 'value',
         min: yMin,
         max: yMax,
-        splitNumber: spark ? 2 : compact ? 2 : 3,
+        scale: panel,
+        splitNumber: spark ? 2 : panel ? 4 : compact ? 2 : 3,
+        name: panel && props.unit ? props.unit : undefined,
+        nameTextStyle: panel
+          ? { color: '#94a3b8', fontSize: 10, padding: [0, 0, 0, 4] }
+          : undefined,
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: {
           show: !spark,
           color: '#94a3b8',
-          fontSize: compact ? 9 : 10,
+          fontSize: compact || panel ? 10 : 10,
           margin: compact ? 2 : 4,
           formatter: (v: number) => formatTick(v),
         },
         splitLine: {
           show: !spark,
-          lineStyle: { color: '#e2e8f0', type: 'solid', width: 1 },
+          lineStyle: { color: panel ? '#f1f5f9' : '#e2e8f0', type: 'solid', width: 1 },
         },
       },
       series: empty
@@ -331,15 +365,20 @@ function render() {
               pointOnly && firstIdx != null
                 ? { index: firstIdx, value: Number(s.data[firstIdx]) }
                 : null
-            const lineW = spark ? 1.7 : compact ? 1.8 : 2.2
-            const endDot = spark ? 7 : 8
-            const midDot = spark ? 5 : 6
+            const lineW = spark ? 1.7 : panel ? 1.8 : compact ? 1.8 : 2.0
+            const endDot = spark ? 7 : panel ? 7 : 8
+            const midDot = spark ? 5 : panel ? 5 : 6
+            const wantArea =
+              !pointOnly &&
+              (s.area === true || (!panel && !multi && idx === 0 && s.area !== false))
+            const areaAlpha = panel ? 0.04 : multi ? 0.06 : spark ? 0.1 : 0.08
 
             return {
               name: s.name || undefined,
               type: 'line',
+              // 卡片已 overflow:hidden；关 clip 以免裁掉端点圆与竖虚线
               clip: false,
-              connectNulls: twoPoints,
+              connectNulls: realN >= 2,
               data: s.data.map((v, i) => {
                 if (v == null || Number.isNaN(Number(v))) return null
                 const isEnd = i === firstIdx || i === lastIdx
@@ -356,7 +395,8 @@ function render() {
                 }
               }),
               smooth: realN >= 3,
-              showSymbol: true,
+              // 大图点过多时只保留线，端点仍由 data 项 symbolSize 控制
+              showSymbol: !panel || realN <= 28 || pointOnly,
               symbol: 'circle',
               lineStyle: {
                 width: pointOnly ? 0 : lineW,
@@ -368,7 +408,7 @@ function render() {
                 ...endpointStyle,
               },
               endLabel:
-                !spark && multi && lastIdx != null
+                !spark && !panel && multi && lastIdx != null
                   ? {
                       show: true,
                       formatter: s.name || '',
@@ -386,27 +426,25 @@ function render() {
                   shadowColor: 'rgba(15, 23, 42, 0.28)',
                 },
               },
-              areaStyle:
-                !pointOnly && (s.area === true || (!multi && idx === 0))
-                  ? { color: hexToRgba(s.color, multi ? 0.06 : spark ? 0.1 : 0.12) }
-                  : undefined,
+              areaStyle: wantArea ? { color: hexToRgba(s.color, areaAlpha) } : undefined,
               markLine:
                 pointOnly && single
                   ? {
                       silent: true,
                       symbol: 'none',
                       animation: false,
+                      z: 5,
                       lineStyle: {
                         type: 'dashed',
-                        color: '#cbd5e1',
-                        width: 1,
-                        opacity: 0.9,
+                        color: '#94a3b8',
+                        width: 1.2,
+                        opacity: 1,
                       },
                       label: { show: false },
                       data: [
                         [
-                          { coord: [cats[single.index], single.value] },
-                          { coord: [cats[single.index], axisFloor] },
+                          { coord: [single.index, single.value] },
+                          { coord: [single.index, axisFloor] },
                         ],
                       ],
                     }
@@ -435,7 +473,7 @@ function render() {
               left: 'center',
               top: 'middle',
               style: {
-                text: spark ? '近5日暂无测量' : '近5日暂无测量记录',
+                text: emptyLabel,
                 fill: '#94a3b8',
                 fontSize: spark ? 10 : compact ? 11 : 12,
                 fontWeight: 500,
@@ -450,10 +488,7 @@ function render() {
 
 onMounted(() => {
   render()
-  if (elRef.value) {
-    ro = new ResizeObserver(() => chart?.resize())
-    ro.observe(elRef.value)
-  }
+  observe(elRef.value)
 })
 
 watch(
@@ -467,15 +502,15 @@ watch(
       props.precision,
       props.compact,
       props.spark,
+      props.panel,
       props.normalRange,
+      props.emptyText,
     ] as const,
   () => render(),
   { deep: true },
 )
 
 onBeforeUnmount(() => {
-  ro?.disconnect()
-  ro = null
   chart?.dispose()
   chart = null
 })
@@ -484,47 +519,55 @@ onBeforeUnmount(() => {
 <template>
   <div
     ref="elRef"
-    class="compose-mini-chart"
-    :class="{ 'is-compact': compact && !spark, 'is-spark': spark }"
+    class="metric-sparkline-chart"
+    :class="{
+      'is-compact': compact && !spark && !panel,
+      'is-spark': spark,
+      'is-panel': panel,
+    }"
   />
 </template>
 
 <style scoped>
-.compose-mini-chart {
+.metric-sparkline-chart {
   width: 100%;
   height: 118px;
   display: block;
   flex: 0 0 auto;
 }
 
-.compose-mini-chart.is-compact {
+.metric-sparkline-chart.is-compact {
   height: 68px;
 }
 
-/* 含 MM/DD 轴标签的统一高度 */
-.compose-mini-chart.is-spark {
-  height: 64px;
-  min-height: 64px;
-  max-height: 64px;
+/* 含 MM/DD 轴标签；高度由外层 .trend-card-chart 撑开 */
+.metric-sparkline-chart.is-spark {
+  height: 68px;
+  min-height: 68px;
+  background: #ffffff;
+}
+
+.metric-sparkline-chart.is-panel {
+  height: 220px;
+  min-height: 200px;
 }
 </style>
 
-<!-- tooltip 可能挂在图表内，用全局类名控制气泡样式 -->
+<!-- tooltip 挂在图表内，用全局类名控制气泡样式 -->
 <style>
-.compose-metric-tooltip {
+.metric-sparkline-tooltip {
   border-radius: 8px !important;
   overflow: visible !important;
 }
 
-/* 清除旧版 ::after 箭头，避免热更新后残留在图表底部 */
-.compose-metric-tooltip::before,
-.compose-metric-tooltip::after {
+.metric-sparkline-tooltip::before,
+.metric-sparkline-tooltip::after {
   content: none !important;
   display: none !important;
   border: 0 !important;
 }
 
-.compose-metric-tooltip .cmt-title {
+.metric-sparkline-tooltip .mst-title {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -532,7 +575,7 @@ onBeforeUnmount(() => {
   color: #f8fafc;
 }
 
-.compose-metric-tooltip .cmt-row {
+.metric-sparkline-tooltip .mst-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -541,7 +584,7 @@ onBeforeUnmount(() => {
   color: #e2e8f0;
 }
 
-.compose-metric-tooltip .cmt-dot {
+.metric-sparkline-tooltip .mst-dot {
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
@@ -549,7 +592,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
-.compose-metric-tooltip .cmt-arrow {
+.metric-sparkline-tooltip .mst-arrow {
   position: absolute;
   left: 50%;
   bottom: -6px;
@@ -562,7 +605,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.compose-metric-tooltip.is-below .cmt-arrow {
+.metric-sparkline-tooltip.is-below .mst-arrow {
   bottom: auto;
   top: -6px;
   border-top: none;

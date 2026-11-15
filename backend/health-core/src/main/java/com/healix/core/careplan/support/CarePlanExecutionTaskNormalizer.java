@@ -34,13 +34,23 @@ public final class CarePlanExecutionTaskNormalizer {
         } else {
             tasks = exec.putArray("tasks");
         }
+        int cap = CarePlanRevisionIntent.taskCap(exec);
         if (!tasks.isEmpty()) {
             splitDietAndMedication(tasks, contextSnapshot);
-            ensureMealMedicationReminder(tasks, contextSnapshot);
+            // 有任务上限且已满时，不再强行补用药提醒，避免「只要 2～3 项」又被撑破
+            if (cap <= 0 || tasks.size() < cap) {
+                ensureMealMedicationReminder(tasks, contextSnapshot);
+            }
             normalizeSedentaryBreaks(tasks);
             normalizeWaterTasks(tasks, contextSnapshot);
         }
-        ensureSleepAndMoodLogs(tasks);
+        // 修订意见明确「不要打卡」或已设任务上限时跳过睡眠/心情默认补全
+        if (!CarePlanRevisionIntent.omitDefaultCheckins(exec) && cap <= 0) {
+            ensureSleepAndMoodLogs(tasks);
+        }
+        if (cap > 0) {
+            CarePlanRevisionIntent.trimTasksToCap(exec, cap);
+        }
     }
 
     /** Skill 要求每日睡眠/心情记录；模型漏写时服务端补默认任务。 */

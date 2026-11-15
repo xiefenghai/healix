@@ -1,29 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts/core'
-import { LineChart } from 'echarts/charts'
-import {
-  GridComponent,
-  LegendComponent,
-  TooltipComponent,
-  DataZoomComponent,
-  TitleComponent,
-} from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
-import type { EChartsType } from 'echarts/core'
 import { api } from '../../shared/http'
-
-echarts.use([
-  LineChart,
-  GridComponent,
-  LegendComponent,
-  TooltipComponent,
-  DataZoomComponent,
-  TitleComponent,
-  CanvasRenderer,
-])
+import MetricSparklineChart, {
+  type MetricSparklineSeries,
+} from '../../shared/MetricSparklineChart.vue'
+import { DEFAULT_METRIC_REFS } from '../../shared/metric-ranges'
 
 interface Metric {
   id: string
@@ -36,6 +19,16 @@ interface Metric {
 
 type RangeKey = '30' | '90' | '180' | '365'
 
+interface TrendPanel {
+  key: string
+  title: string
+  unit: string
+  precision: number
+  categories: string[]
+  series: MetricSparklineSeries[]
+  normalRange: { min: number; max: number } | null
+}
+
 const props = defineProps<{ peopleId?: string }>()
 const route = useRoute()
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
@@ -43,14 +36,6 @@ const peopleId = computed(() => String(props.peopleId || route.params.peopleId |
 const loading = ref(false)
 const rangeDays = ref<RangeKey>('90')
 const metrics = ref<Metric[]>([])
-
-const bpRef = ref<HTMLDivElement | null>(null)
-const glucoseRef = ref<HTMLDivElement | null>(null)
-const hrRef = ref<HTMLDivElement | null>(null)
-const bmiRef = ref<HTMLDivElement | null>(null)
-
-const charts: EChartsType[] = []
-let resizeObserver: ResizeObserver | null = null
 
 function rangeBounds(): { from: string; to: string } {
   const toDate = new Date()
@@ -72,10 +57,11 @@ function filterByRange(rows: Metric[]): Metric[] {
   })
 }
 
-function formatAxisTime(iso?: string) {
+function toMmDd(iso?: string) {
   if (!iso) return ''
-  const s = iso.replace('T', ' ')
-  return s.slice(5, 16)
+  const s = String(iso).replace('T', ' ')
+  if (s.length >= 10) return `${s.slice(5, 7)}/${s.slice(8, 10)}`
+  return s
 }
 
 function sortAsc(rows: Metric[]) {
@@ -102,7 +88,7 @@ function buildBmiSeries(): Array<{ time: string; value: number }> {
     if (heightCm == null) {
       const atOrBefore = heights.filter((h) => String(h.recordedAt) <= String(w.recordedAt))
       const pick = atOrBefore.length ? atOrBefore[atOrBefore.length - 1] : heights[0]
-      heightCm = Number(pick.value)
+      heightCm = Number(pick!.value)
     }
     if (!heightCm || heightCm <= 0) continue
     const m = heightCm / 100
@@ -113,149 +99,114 @@ function buildBmiSeries(): Array<{ time: string; value: number }> {
   return out
 }
 
-function formatTooltipValue(v: unknown, unit: string) {
-  if (v == null || v === '') return '-'
-  return unit ? `${v} ${unit}` : String(v)
-}
-
-function baseOption(unit: string) {
-  return {
-    color: ['#ef4444', '#2c7ef8', '#00b8a9', '#8b5cf6'],
-    tooltip: {
-      trigger: 'axis' as const,
-      backgroundColor: '#0F172A',
-      borderColor: '#0F172A',
-      textStyle: { color: '#fff', fontSize: 11 },
-      valueFormatter: (v: unknown) => formatTooltipValue(v, unit),
-    },
-    legend: {
-      top: 2,
-      right: 4,
-      icon: 'circle',
-      itemWidth: 10,
-      itemHeight: 10,
-      textStyle: { color: '#64748b', fontSize: 11 },
-    },
-    // 压缩上下留白；底部留给 X 轴标签 + DataZoom，避免互相遮挡
-    grid: { left: 36, right: 28, top: 28, bottom: 58, containLabel: true },
-    dataZoom: [
-      { type: 'inside' as const, start: 0, end: 100 },
-      {
-        type: 'slider' as const,
-        height: 14,
-        bottom: 2,
-        brushSelect: false,
-        borderColor: '#E2E8F0',
-        fillerColor: 'rgba(44, 126, 248, 0.12)',
-        handleSize: 14,
-        textStyle: { color: '#94A3B8', fontSize: 10 },
-      },
-    ],
-    xAxis: {
-      type: 'category' as const,
-      boundaryGap: false,
-      axisLine: { lineStyle: { color: '#E2E8F0' } },
-      axisLabel: {
-        hideOverlap: true,
-        color: '#94A3B8',
-        fontSize: 10,
-        margin: 10,
-        showMinLabel: true,
-        showMaxLabel: true,
-      },
-      axisTick: { show: false },
-    },
-    yAxis: {
-      type: 'value' as const,
-      scale: true,
-      name: unit || undefined,
-      nameTextStyle: { padding: [0, 0, 0, 4], color: '#94A3B8', fontSize: 10 },
-      axisLabel: { color: '#94A3B8', fontSize: 10 },
-      splitLine: { lineStyle: { color: '#F1F5F9' } },
-    },
+function refBand(type: string): { min: number; max: number } | null {
+  const meta = DEFAULT_METRIC_REFS[type]
+  if (!meta) return null
+  if (meta.refLow != null && meta.refHigh != null) {
+    return { min: Number(meta.refLow), max: Number(meta.refHigh) }
   }
+  return null
 }
 
-function renderLine(
-  el: HTMLDivElement | null,
-  unit: string,
-  categories: string[],
-  series: Array<{ name: string; data: Array<number | null> }>,
-) {
-  if (!el) return
-  let chart = echarts.getInstanceByDom(el) as EChartsType | undefined
-  if (!chart) {
-    chart = echarts.init(el)
-    charts.push(chart)
-  }
-  const empty = categories.length === 0 || series.every((s) => s.data.every((v) => v == null))
-  chart.setOption(
-    {
-      ...baseOption(unit),
-      title: empty
-        ? {
-            text: '暂无数据',
-            left: 'center',
-            top: 'middle',
-            textStyle: { color: '#94a3b8', fontSize: 14, fontWeight: 400 },
-          }
-        : { show: false },
-      xAxis: {
-        ...baseOption(unit).xAxis,
-        data: categories,
-      },
-      series: series.map((s) => ({
-        name: s.name,
-        type: 'line',
-        smooth: true,
-        symbol: 'circle',
-        showSymbol: s.data.filter((v) => v != null).length <= 24,
-        symbolSize: 6,
-        connectNulls: false,
-        data: s.data,
-      })),
-    },
-    true,
-  )
-}
-
-function renderAll() {
+const trendPanels = computed((): TrendPanel[] => {
   const bpSys = ofType('BLOOD_PRESSURE_SYS')
   const bpDia = ofType('BLOOD_PRESSURE_DIA')
   const bpTimes = Array.from(
-    new Set([...bpSys, ...bpDia].map((m) => m.recordedAt || '')),
+    new Set([...bpSys, ...bpDia].map((m) => m.recordedAt || '').filter(Boolean)),
   ).sort()
   const sysMap = new Map(bpSys.map((m) => [m.recordedAt || '', Number(m.value)]))
   const diaMap = new Map(bpDia.map((m) => [m.recordedAt || '', Number(m.value)]))
-  renderLine(bpRef.value, 'mmHg', bpTimes.map(formatAxisTime), [
-    { name: '收缩压', data: bpTimes.map((t) => (sysMap.has(t) ? sysMap.get(t)! : null)) },
-    { name: '舒张压', data: bpTimes.map((t) => (diaMap.has(t) ? diaMap.get(t)! : null)) },
-  ])
 
   const glucose = ofType('BLOOD_GLUCOSE')
-  renderLine(
-    glucoseRef.value,
-    'mmol/L',
-    glucose.map((m) => formatAxisTime(m.recordedAt)),
-    [{ name: '指尖血糖', data: glucose.map((m) => Number(m.value)) }],
-  )
-
   const hr = ofType('HEART_RATE')
-  renderLine(
-    hrRef.value,
-    'bpm',
-    hr.map((m) => formatAxisTime(m.recordedAt)),
-    [{ name: '心率', data: hr.map((m) => Number(m.value)) }],
-  )
-
   const bmi = buildBmiSeries()
-  renderLine(
-    bmiRef.value,
-    '',
-    bmi.map((p) => formatAxisTime(p.time)),
-    [{ name: 'BMI', data: bmi.map((p) => p.value) }],
-  )
-}
+
+  const gluBand = (() => {
+    const byMeal = DEFAULT_METRIC_REFS.BLOOD_GLUCOSE?.refByMeal?.FASTING
+    if (byMeal?.refLow != null && byMeal?.refHigh != null) {
+      return { min: Number(byMeal.refLow), max: Number(byMeal.refHigh) }
+    }
+    return { min: 3.9, max: 6.1 }
+  })()
+
+  return [
+    {
+      key: 'bp',
+      title: '血压趋势 · 收缩压 / 舒张压',
+      unit: 'mmHg',
+      precision: 0,
+      categories: bpTimes.map(toMmDd),
+      series: [
+        {
+          name: '收缩压',
+          data: bpTimes.map((t) => (sysMap.has(t) ? sysMap.get(t)! : null)),
+          times: bpTimes,
+          color: '#b91c1c',
+          area: false,
+        },
+        {
+          name: '舒张压',
+          data: bpTimes.map((t) => (diaMap.has(t) ? diaMap.get(t)! : null)),
+          times: bpTimes,
+          color: '#1d4ed8',
+          area: false,
+        },
+      ],
+      normalRange: { min: 90, max: 140 },
+    },
+    {
+      key: 'glu',
+      title: '血糖趋势 · 指尖血糖',
+      unit: 'mmol/L',
+      precision: 1,
+      categories: glucose.map((m) => toMmDd(m.recordedAt)),
+      series: [
+        {
+          name: '指尖血糖',
+          data: glucose.map((m) => Number(m.value)),
+          times: glucose.map((m) => m.recordedAt || null),
+          color: '#b91c1c',
+          area: false,
+        },
+      ],
+      normalRange: gluBand,
+    },
+    {
+      key: 'hr',
+      title: '心率趋势',
+      unit: 'bpm',
+      precision: 0,
+      categories: hr.map((m) => toMmDd(m.recordedAt)),
+      series: [
+        {
+          name: '心率',
+          data: hr.map((m) => Number(m.value)),
+          times: hr.map((m) => m.recordedAt || null),
+          color: '#b91c1c',
+          area: false,
+        },
+      ],
+      normalRange: refBand('HEART_RATE'),
+    },
+    {
+      key: 'bmi',
+      title: 'BMI · 由身高+体重推算',
+      unit: '',
+      precision: 1,
+      categories: bmi.map((p) => toMmDd(p.time)),
+      series: [
+        {
+          name: 'BMI',
+          data: bmi.map((p) => p.value),
+          times: bmi.map((p) => p.time || null),
+          color: '#b91c1c',
+          area: false,
+        },
+      ],
+      normalRange: refBand('BMI'),
+    },
+  ]
+})
 
 async function loadTrends() {
   if (!peopleId.value) return
@@ -271,8 +222,6 @@ async function loadTrends() {
       `/api/b/v1/patients/${peopleId.value}/metrics?${qs.toString()}`,
     )
     metrics.value = filterByRange(res.data ?? [])
-    await nextTick()
-    renderAll()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载趋势失败')
   } finally {
@@ -284,30 +233,15 @@ function onRangeChange(val: string | number | boolean | undefined) {
   if (val === '30' || val === '90' || val === '180' || val === '365') {
     rangeDays.value = val
   }
-  loadTrends()
+  void loadTrends()
 }
 
-function bindResize() {
-  resizeObserver?.disconnect()
-  resizeObserver = new ResizeObserver(() => {
-    charts.forEach((c) => c.resize())
-  })
-  ;[bpRef, glucoseRef, hrRef, bmiRef].forEach((r) => {
-    if (r.value) resizeObserver?.observe(r.value)
-  })
-}
-
-watch(peopleId, () => loadTrends())
-
-onMounted(async () => {
-  await loadTrends()
-  bindResize()
+watch(peopleId, () => {
+  void loadTrends()
 })
 
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect()
-  charts.forEach((c) => c.dispose())
-  charts.length = 0
+onMounted(() => {
+  void loadTrends()
 })
 </script>
 
@@ -324,36 +258,20 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="chart-grid">
-      <div class="chart-card section-card">
+      <div v-for="panel in trendPanels" :key="panel.key" class="chart-card section-card">
         <div class="panel-head">
-          <h3 class="chart-title">血压趋势 · 收缩压 / 舒张压</h3>
+          <h3 class="chart-title">{{ panel.title }}</h3>
         </div>
         <div class="chart-body">
-          <div ref="bpRef" class="chart-el" />
-        </div>
-      </div>
-      <div class="chart-card section-card">
-        <div class="panel-head">
-          <h3 class="chart-title">血糖趋势 · 指尖血糖</h3>
-        </div>
-        <div class="chart-body">
-          <div ref="glucoseRef" class="chart-el" />
-        </div>
-      </div>
-      <div class="chart-card section-card">
-        <div class="panel-head">
-          <h3 class="chart-title">心率趋势</h3>
-        </div>
-        <div class="chart-body">
-          <div ref="hrRef" class="chart-el" />
-        </div>
-      </div>
-      <div class="chart-card section-card">
-        <div class="panel-head">
-          <h3 class="chart-title">BMI · 由身高+体重推算</h3>
-        </div>
-        <div class="chart-body">
-          <div ref="bmiRef" class="chart-el" />
+          <MetricSparklineChart
+            panel
+            :categories="panel.categories"
+            :series="panel.series"
+            :unit="panel.unit"
+            :precision="panel.precision"
+            :normal-range="panel.normalRange"
+            empty-text="暂无数据"
+          />
         </div>
       </div>
     </div>
@@ -366,7 +284,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  /* 1080P 底部安全区，避免末行卡片贴边被切 */
   padding-bottom: 40px;
   box-sizing: border-box;
 }
@@ -415,21 +332,12 @@ onBeforeUnmount(() => {
 }
 
 .chart-body {
-  padding: 4px 8px 6px;
-}
-
-.chart-el {
-  width: 100%;
-  height: 200px;
+  padding: 8px 10px 10px;
 }
 
 @media (max-width: 960px) {
   .chart-grid {
     grid-template-columns: 1fr;
-  }
-
-  .chart-el {
-    height: 220px;
   }
 }
 </style>

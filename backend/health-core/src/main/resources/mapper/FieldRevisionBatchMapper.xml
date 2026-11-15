@@ -3,6 +3,65 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.healix.core.revision.mapper.FieldRevisionBatchMapper">
 
+    <sql id="BatchColumns">
+        b.pk_id, b.id, b.tenant_id, b.target_people_id, b.operator_type, b.operator_id, b.biz_type, b.biz_key,
+        b.version_before, b.version_after, b.org_id,
+        b.is_deleted, b.gmt_created, b.gmt_modified, b.gmt_deleted
+    </sql>
+
+    <!-- 关键词：操作人姓名 / 业务编码 / 字段与展示值 / 中文业务提示码 -->
+    <sql id="KeywordFilter">
+        <if test="keyword != null and keyword != ''">
+            AND (
+                b.biz_type LIKE CONCAT('%', #{keyword}, '%')
+                OR b.biz_key LIKE CONCAT('%', #{keyword}, '%')
+                OR EXISTS (
+                    SELECT 1 FROM field_revision_item i
+                    WHERE i.batch_id = b.id
+                      AND i.is_deleted = 0
+                      AND (
+                          i.field_path LIKE CONCAT('%', #{keyword}, '%')
+                          OR IFNULL(i.old_value, '') LIKE CONCAT('%', #{keyword}, '%')
+                          OR IFNULL(i.new_value, '') LIKE CONCAT('%', #{keyword}, '%')
+                          OR IFNULL(i.old_display, '') LIKE CONCAT('%', #{keyword}, '%')
+                          OR IFNULL(i.new_display, '') LIKE CONCAT('%', #{keyword}, '%')
+                          OR IFNULL(i.quote, '') LIKE CONCAT('%', #{keyword}, '%')
+                      )
+                )
+                OR (
+                    b.operator_type = 'STAFF'
+                    AND EXISTS (
+                        SELECT 1 FROM staff_profile sp
+                        WHERE sp.id = b.operator_id
+                          AND sp.is_deleted = 0
+                          AND sp.display_name LIKE CONCAT('%', #{keyword}, '%')
+                    )
+                )
+                OR (
+                    b.operator_type = 'PEOPLE'
+                    AND EXISTS (
+                        SELECT 1 FROM people_profile pp
+                        WHERE pp.id = b.operator_id
+                          AND pp.is_deleted = 0
+                          AND pp.display_name LIKE CONCAT('%', #{keyword}, '%')
+                    )
+                )
+                <if test="bizTypeHints != null and bizTypeHints.size() &gt; 0">
+                    OR b.biz_type IN
+                    <foreach collection="bizTypeHints" item="hint" open="(" separator="," close=")">
+                        #{hint}
+                    </foreach>
+                </if>
+                <if test="bizKeyHints != null and bizKeyHints.size() &gt; 0">
+                    OR b.biz_key IN
+                    <foreach collection="bizKeyHints" item="hint" open="(" separator="," close=")">
+                        #{hint}
+                    </foreach>
+                </if>
+            )
+        </if>
+    </sql>
+
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO field_revision_batch(
             id, tenant_id, target_people_id, operator_type, operator_id, biz_type, biz_key,
@@ -16,30 +75,28 @@
     </insert>
 
     <select id="listByTarget" resultType="com.healix.core.revision.domain.FieldRevisionBatch">
-        SELECT pk_id, id, tenant_id, target_people_id, operator_type, operator_id, biz_type, biz_key,
-               version_before, version_after, org_id,
-               is_deleted, gmt_created, gmt_modified, gmt_deleted
-        FROM field_revision_batch
-        WHERE tenant_id = #{tenantId}
-          AND target_people_id = #{targetPeopleId}
-          AND biz_type = #{bizType}
-          AND is_deleted = 0
+        SELECT <include refid="BatchColumns"/>
+        FROM field_revision_batch b
+        WHERE b.tenant_id = #{tenantId}
+          AND b.target_people_id = #{targetPeopleId}
+          AND b.biz_type = #{bizType}
+          AND b.is_deleted = 0
           <if test="bizKey != null and bizKey != ''">
-              AND biz_key = #{bizKey}
+              AND b.biz_key = #{bizKey}
           </if>
-        ORDER BY gmt_created DESC
+          <include refid="KeywordFilter"/>
+        ORDER BY b.gmt_created DESC
         LIMIT 100
     </select>
 
     <select id="listByPeople" resultType="com.healix.core.revision.domain.FieldRevisionBatch">
-        SELECT pk_id, id, tenant_id, target_people_id, operator_type, operator_id, biz_type, biz_key,
-               version_before, version_after, org_id,
-               is_deleted, gmt_created, gmt_modified, gmt_deleted
-        FROM field_revision_batch
-        WHERE tenant_id = #{tenantId}
-          AND target_people_id = #{targetPeopleId}
-          AND is_deleted = 0
-        ORDER BY gmt_created DESC
+        SELECT <include refid="BatchColumns"/>
+        FROM field_revision_batch b
+        WHERE b.tenant_id = #{tenantId}
+          AND b.target_people_id = #{targetPeopleId}
+          AND b.is_deleted = 0
+          <include refid="KeywordFilter"/>
+        ORDER BY b.gmt_created DESC
         LIMIT 100
     </select>
 </mapper>

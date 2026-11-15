@@ -220,9 +220,11 @@ public class ExerciseRecordService {
         ExerciseTodayDto out = new ExerciseTodayDto();
         out.setDate(day);
         out.setPlanState(plan.state().name());
+        out.setGoal(plan.goal());
         out.setTasks(items);
         out.setContraindications(plan.contraindications());
         out.setPrecautions(plan.precautions());
+        out.setReviewHint(plan.reviewHint());
         out.setSessions(sessions.stream().map(s -> toDto(s, patientView)).toList());
         return out;
     }

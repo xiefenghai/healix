@@ -36,6 +36,7 @@ import BatchServeWorkbenchDrawer, {
 /** 与 BatchServeWorkbenchDrawer 内「全部患者」选项 id 对齐 */
 const BATCH_SERVE_TEAM_ALL = '__ALL__'
 import { setAgentDraft } from '../../shared/agent-draft-bus'
+import { pushCarePlanCompose } from '../../shared/care-plan-compose-nav'
 import { onAgentCarePlanUpdated } from '../../shared/agent-events'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
 import {
@@ -344,14 +345,18 @@ const searchKeyword = ref('')
 const minePatientGroups = ref<MinePatientGroup[]>([])
 /** 扁平患者卡（姓名提示等）；由 minePatientGroups 派生 */
 const searchResults = computed(() => minePatientGroups.value.flatMap((g) => g.cards))
-/** 「我的患者」人数含未分组；与组头人数相加一致 */
+/** 主责组内患者（不含公共池 / 未分组） */
+const mineAssignedGroups = computed(() =>
+  minePatientGroups.value.filter((g) => !isUnassignedMineGroup(g)),
+)
+const mineAssignedCount = computed(() =>
+  mineAssignedGroups.value.reduce((n, g) => n + (g.cards?.length ?? 0), 0),
+)
+/** Tab 角标：只计我组内患者，公共池单独用横幅提示 */
 const mineTabCountTitle = computed(() => {
-  const total = searchResults.value.length
-  const unassigned = unassignedMineCount.value
-  if (!total) return ''
-  if (unassigned > 0 && unassigned < total) return `共 ${total} 人，含未分组 ${unassigned} 人`
-  if (unassigned > 0) return `共 ${total} 人，均未分组`
-  return `共 ${total} 人`
+  const total = mineAssignedCount.value
+  if (!total) return '仅统计主责健管组内患者，不含公共池'
+  return `主责组内 ${total} 人（不含公共池）`
 })
 const unassignedMineGroup = computed(() =>
   minePatientGroups.value.find((g) => isUnassignedMineGroup(g)),
@@ -572,6 +577,7 @@ type SessionCache = {
   messages: ChatMessage[]
 }
 const ORG_SESSION_CACHE_KEY = 'healix.cockpit.orgSessionCache'
+const PATIENT_SESSION_CACHE_PREFIX = 'healix.cockpit.patientSessionCache:'
 const patientSessionCache = new Map<string, SessionCache>()
 /** 机构级会话缓存：选患者前写入，清除焦点时优先恢复（兼 sessionStorage，抗 HMR/刷新） */
 let orgSessionCache: SessionCache | null = null
@@ -660,13 +666,80 @@ function ensureOrgSessionCache(): SessionCache | null {
   return orgSessionCache
 }
 
+function patientSessionStorageKey(peopleId: string) {
+  return `${PATIENT_SESSION_CACHE_PREFIX}${peopleId}`
+}
+
+function readPatientCacheFromStorage(peopleId: string): SessionCache | null {
+  try {
+    const raw = sessionStorage.getItem(patientSessionStorageKey(peopleId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as SessionCache
+    if (!parsed || !Array.isArray(parsed.messages)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writePatientCacheToStorage(peopleId: string, cache: SessionCache | null) {
+  try {
+    const key = patientSessionStorageKey(peopleId)
+    if (!cache) {
+      sessionStorage.removeItem(key)
+      return
+    }
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        sessionId: cache.sessionId,
+        status: cache.status,
+        messages: cache.messages.map((m) => ({
+          role: m.role,
+          content: m.content || m.streamContent || '',
+          at: m.at,
+          actions: m.actions,
+          elapsedMs: m.elapsedMs,
+          kind: m.kind,
+          intent: m.intent,
+        })),
+      }),
+    )
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function ensurePatientSessionCache(peopleId: string): SessionCache | null {
+  const mem = patientSessionCache.get(peopleId)
+  if (mem && countThreadMessages(mem.messages) > 0) return mem
+  const stored = readPatientCacheFromStorage(peopleId)
+  if (stored && countThreadMessages(stored.messages) > 0) {
+    patientSessionCache.set(peopleId, stored)
+    return stored
+  }
+  return mem || null
+}
+
 function cachePatientSession(peopleId: string | null | undefined) {
   if (!peopleId) return
-  patientSessionCache.set(peopleId, {
+  const next: SessionCache = {
     sessionId: patientSessionId.value,
     status: sessionStatus.value,
     messages: snapshotMessages(),
-  })
+  }
+  // 离开驾驶舱（制定页）时组件会销毁，须写入 sessionStorage，返回才能秒开原会话
+  if (countThreadMessages(next.messages) === 0) {
+    const prev = ensurePatientSessionCache(peopleId)
+    if (prev && countThreadMessages(prev.messages) > 0) {
+      if (next.sessionId) prev.sessionId = next.sessionId
+      patientSessionCache.set(peopleId, prev)
+      writePatientCacheToStorage(peopleId, prev)
+      return
+    }
+  }
+  patientSessionCache.set(peopleId, next)
+  writePatientCacheToStorage(peopleId, next)
 }
 
 function cacheOrgSession() {
@@ -693,7 +766,7 @@ function cacheActiveSession() {
 }
 
 function applyPatientSessionCache(peopleId: string): boolean {
-  const cached = patientSessionCache.get(peopleId)
+  const cached = ensurePatientSessionCache(peopleId)
   if (!cached) return false
   patientSessionId.value = cached.sessionId
   sessionStatus.value = cached.status || 'ACTIVE'
@@ -1575,6 +1648,8 @@ function todoTaskTitle(t: {
   followupType?: string | null
 }) {
   if (isOnboardingTodo(t)) return '首诊评估'
+  // PLAN_CREATE 在患者交卷待确认时会挂 patientIntakeReview，勿显示成「管理方案」
+  if (isIntakeReviewLabel(t.taskTypeLabel || t.summary)) return '待确认评估'
   const typeCode = (t.taskType || '').toUpperCase()
   if (typeCode === 'PLAN_CREATE') return '管理方案'
   if (typeCode === 'PLAN_REVIEW') return '审阅方案'
@@ -1751,6 +1826,57 @@ function collapseDuplicateBriefings<T extends { role?: string; content?: string;
   if (briefings.length <= 1) return msgs
   const others = msgs.filter((m) => !isBriefingLike(m))
   return [briefings[briefings.length - 1]!, ...others]
+}
+
+function isOverdueIntakeGuideText(content?: string | null) {
+  return typeof content === 'string' && /首诊评估已逾期|首诊评估任务已经逾期/.test(content)
+}
+
+/**
+ * 历史 bug：逾期引导被当成 receipt 落库（无按钮的灰色系统行），每次点患者再追加一条。
+ * 恢复会话时按患者名折叠，优先保留带操作按钮的那条。
+ */
+function collapseDuplicateOverdueIntakeGuides<
+  T extends { role?: string; content?: string; actions?: AgentAction[] },
+>(msgs: T[]): T[] {
+  const indices: number[] = []
+  for (let i = 0; i < msgs.length; i++) {
+    if (isOverdueIntakeGuideText(msgs[i]?.content)) indices.push(i)
+  }
+  if (indices.length <= 1) return msgs
+
+  // 按【姓名】分组；无姓名的归入同一兜底桶
+  const groups = new Map<string, number[]>()
+  for (const i of indices) {
+    const text = msgs[i]?.content || ''
+    const m = text.match(/【([^】]+)】/)
+    const key = m?.[1]?.trim() || '_'
+    const list = groups.get(key) || []
+    list.push(i)
+    groups.set(key, list)
+  }
+
+  const drop = new Set<number>()
+  for (const idxs of groups.values()) {
+    if (idxs.length <= 1) continue
+    let keep = idxs[idxs.length - 1]!
+    for (let k = idxs.length - 1; k >= 0; k--) {
+      const row = msgs[idxs[k]!]
+      if (
+        (row?.actions || []).some(
+          (a) => a.path === 'COPY_INTAKE_LINK' || a.path === 'intake',
+        )
+      ) {
+        keep = idxs[k]!
+        break
+      }
+    }
+    for (const i of idxs) {
+      if (i !== keep) drop.add(i)
+    }
+  }
+  if (drop.size === 0) return msgs
+  return msgs.filter((_, i) => !drop.has(i))
 }
 
 /**
@@ -2084,12 +2210,20 @@ type CardNodeAction =
 
 /**
  * 左栏 SOP 阶段（无独立 current_sop_stage 字段时，由 badges / 待办推导）。
- * new → 新建/待评估；plan → 已评估待方案；active → 方案已生效。
+ * new → 新建/待评估；review → 交卷待确认；plan → 已评估待方案；active → 方案已生效。
+ * 注意：患者初步交卷时任务类型仍是 PLAN_CREATE，但会挂 INTAKE_REVIEW，须压过「去生成方案」。
  */
 function cardSopStage(card: PriorityCard): 'unassigned' | 'new' | 'review' | 'plan' | 'active' | 'other' {
   if (isUnassignedCard(card)) return 'unassigned'
   const badges = card.badges || []
   if (badges.includes('PLAN_ACTIVE') || hasPlanRate(card)) return 'active'
+  // 交卷待确认优先于制定方案（与中间助手话术一致）
+  if (
+    badges.includes('INTAKE_REVIEW') ||
+    (card.taskTypeLabels || []).some((t) => isIntakeReviewLabel(t))
+  ) {
+    return 'review'
+  }
   if (
     badges.includes('PLAN_IN_PROGRESS') ||
     badges.includes('PLAN_DRAFT') ||
@@ -2098,11 +2232,9 @@ function cardSopStage(card: PriorityCard): 'unassigned' | 'new' | 'review' | 'pl
   ) {
     return 'plan'
   }
-  if (
-    badges.includes('INTAKE_REVIEW') ||
-    (card.taskTypeLabels || []).some((t) => isIntakeReviewLabel(t))
-  ) {
-    return 'review'
+  // 打卡跟进：已在管，勿落到「点击开始首诊」
+  if (badges.includes('PLAN_NUDGE') || cardHasTask(card, 'PLAN_NUDGE')) {
+    return 'active'
   }
   if (
     cardHasTask(card, 'ONBOARDING', '首诊') ||
@@ -2297,7 +2429,6 @@ function cardTags(card: PriorityCard) {
       'REPORT_REVIEW',
       'TEAM_ASSIGN',
       'PLAN_REVIEW',
-      'MED_FEEDBACK',
       'MED_VERIFY',
       'ASSESSMENT_ESCALATION',
       'ASSESSMENT_SUSPECTED',
@@ -3596,7 +3727,9 @@ function applySessionBundle(
     }
     return row
   })
-  const incoming = dropOrphanUserTurns(collapseDuplicateBriefings(mapped))
+  const incoming = dropOrphanUserTurns(
+    collapseDuplicateOverdueIntakeGuides(collapseDuplicateBriefings(mapped)),
+  )
   const force = !!opts?.force
   if (peopleId) {
     const prev = patientSessionCache.get(peopleId)
@@ -3772,7 +3905,7 @@ async function persistVisibleMessage(
   peopleId: string | null,
   content: string,
   actions: AgentAction[] | undefined,
-  kind: 'briefing' | 'receipt',
+  kind: 'briefing' | 'receipt' | 'guide',
 ) {
   try {
     const res = await api<{ data: { sessionId: string } }>('/api/b/v1/agent/sessions/current/messages', {
@@ -4075,14 +4208,12 @@ function stripOrgStandbyMessages() {
 }
 
 function hasFreshOverdueIntakePrompt(name: string) {
-  return messages.value.some(
-    (m) =>
-      m.role === 'assistant' &&
-      typeof m.content === 'string' &&
-      m.content.includes(`【${name}】`) &&
-      m.content.includes('首诊评估已逾期') &&
-      (m.actions || []).some((a) => a.path === 'COPY_INTAKE_LINK'),
-  )
+  // 含历史误存的 receipt（system/notice、无按钮）：只要文案在就不重复追加
+  return messages.value.some((m) => {
+    const text = m.content || ''
+    if (!isOverdueIntakeGuideText(text)) return false
+    return !name || text.includes(`【${name}】`) || text.includes(name)
+  })
 }
 
 /**
@@ -4097,6 +4228,27 @@ function ensureOverdueIntakeTurn(peopleId: string, name: string): boolean {
 
   if (hasFreshOverdueIntakePrompt(name)) {
     stripOrgStandbyMessages()
+    // 旧 receipt 无按钮：就地升级为可点击引导，且不再落库刷屏
+    const existing = messages.value.find(
+      (m) =>
+        isOverdueIntakeGuideText(m.content) &&
+        (m.content || '').includes(name),
+    )
+    if (existing && !(existing.actions || []).some((a) => a.path === 'COPY_INTAKE_LINK')) {
+      const days = fromFocus.overdue ? fromFocus.days : card ? overdueIntakeDayCount(card) : 0
+      const step = overdueIntakeNudge(name, peopleId, days)
+      existing.role = 'assistant'
+      existing.kind = undefined
+      existing.content = step.content
+      existing.actions = step.actions
+      existing.intent = 'ORG_CHAT_OVERDUE_INTAKE'
+      messages.value = collapseDuplicateOverdueIntakeGuides(messages.value)
+      cachePatientSession(peopleId)
+      void persistVisibleMessage(peopleId, step.content, step.actions, 'guide')
+    } else {
+      messages.value = collapseDuplicateOverdueIntakeGuides(messages.value)
+      cachePatientSession(peopleId)
+    }
     return true
   }
 
@@ -4108,9 +4260,10 @@ function ensureOverdueIntakeTurn(peopleId: string, name: string): boolean {
   } else {
     stripOrgStandbyMessages()
     messages.value = messages.value.filter((m) => {
-      if (m.role !== 'assistant' || typeof m.content !== 'string') return true
+      if (typeof m.content !== 'string') return true
       return !(
-        m.content.includes(name) && /首诊评估已逾期|首诊评估任务已经逾期/.test(m.content)
+        (m.content.includes(name) || m.content.includes(`【${name}】`)) &&
+        isOverdueIntakeGuideText(m.content)
       )
     })
   }
@@ -4122,7 +4275,8 @@ function ensureOverdueIntakeTurn(peopleId: string, name: string): boolean {
     intent: 'ORG_CHAT_OVERDUE_INTAKE',
   })
   cachePatientSession(peopleId)
-  void persistVisibleMessage(peopleId, step.content, step.actions, 'receipt')
+  // guide：保留按钮；同会话覆盖旧引导，避免 receipt 刷屏
+  void persistVisibleMessage(peopleId, step.content, step.actions, 'guide')
   lastAutoAskAt.value[peopleId] = Date.now()
   return true
 }
@@ -4139,8 +4293,8 @@ function pushFocusNextStepNudge(peopleId: string) {
   }
   messages.value.push(row)
   cachePatientSession(peopleId)
-  // 落库，避免再次点卡片时服务端会话把这条本地引导盖掉
-  void persistVisibleMessage(peopleId, step.content, step.actions, 'receipt')
+  // 落库且保留按钮；勿用 receipt（会丢 actions 并在每次点卡时重复追加）
+  void persistVisibleMessage(peopleId, step.content, step.actions, 'guide')
 }
 
 function firstMinePeopleId(): string | null {
@@ -4660,11 +4814,14 @@ async function onArchiveCreatedFromDrawer(result: {
   void scrollToBottom()
 }
 
-async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reason?: string }) {
+async function selectPatient(
+  peopleId: string,
+  opts?: { autoAsk?: boolean; reason?: string; forceRestore?: boolean },
+) {
   const prevPeopleId = focusPeopleId.value
   const switching = prevPeopleId !== peopleId
   // 同一位未分组患者再点卡片：引导气泡必须留着，不能被焦点刷新冲掉
-  if (!switching && threadHasUnassignedGuide(focus.value?.displayName)) {
+  if (!switching && !opts?.forceRestore && threadHasUnassignedGuide(focus.value?.displayName)) {
     return
   }
   if (switching) {
@@ -4682,7 +4839,8 @@ async function selectPatient(peopleId: string, opts?: { autoAsk?: boolean; reaso
   if (route.query.peopleId !== peopleId) {
     void router.replace({ query: { ...route.query, peopleId } })
   }
-  if (switching) {
+  // forceRestore：从制定页返回时焦点可能已预填，仍须拉齐服务端会话
+  if (switching || opts?.forceRestore) {
     stickyCapability.value = null
     const seq = ++focusSwitchSeq
     const hadCache = applyPatientSessionCache(peopleId)
@@ -6425,6 +6583,13 @@ function runAction(action: AgentAction) {
       mode === 'care-plan' ||
       !!action.payload?.openCompose ||
       !!action.payload?.openCreate
+    if (mode === 'care-plan' && openCompose && peopleId) {
+      goCarePlanCompose({
+        peopleId,
+        fresh: !!action.payload?.openCreate,
+      })
+      return
+    }
     if (
       action.payload?.draftContent ||
       action.payload?.openCreate ||
@@ -6458,10 +6623,7 @@ function runAction(action: AgentAction) {
   if (action.type === 'PREVIEW' || isCarePlanPath(action.path)) {
     const peopleId = action.peopleId || focusPeopleId.value || undefined
     if (blockCarePlanUntilIntakeConfirmed(peopleId)) return
-    if (peopleId) {
-      setAgentDraft({ peopleId, mode: 'care-plan', openCompose: true })
-    }
-    openSheet('care-plan', action.peopleId)
+    if (peopleId) goCarePlanCompose({ peopleId })
     return
   }
   if (isFollowupPath(action.path)) {
@@ -7611,11 +7773,47 @@ function beginIntake(peopleId?: string, followupRecordId?: string | null) {
     startModule: 'BASIC_PROFILE',
   })
 }
-function goCarePlan() {
-  const id = focusPeopleId.value
+/** 打开与患者管理相同的全屏制定/精修页（非抽屉旧版式） */
+function goCarePlanCompose(opts?: { peopleId?: string; fresh?: boolean }) {
+  const id = opts?.peopleId || focusPeopleId.value
   if (blockCarePlanUntilIntakeConfirmed(id)) return
-  if (id) setAgentDraft({ peopleId: id, mode: 'care-plan', openCompose: true })
-  openSheet('care-plan')
+  if (!id) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  // 离开前固化当前会话，返回时先吃缓存，避免闪「分配健管组 / 机构空会话」
+  cachePatientSession(id)
+  setAgentDraft({
+    peopleId: id,
+    mode: 'care-plan',
+    openCompose: true,
+    openCreate: !!opts?.fresh,
+  })
+  sheetOpen.value = false
+  void pushCarePlanCompose(router, id, {
+    from: 'cockpit',
+    entry: opts?.fresh ? 'fresh' : 'continue',
+    fresh: !!opts?.fresh,
+  })
+}
+
+/** 兼容旧调用：默认进全屏精修；已发布查看走抽屉 */
+function goCarePlan() {
+  goCarePlanCompose()
+}
+
+function openCarePlanCard(preview?: CarePlanChatPreview | null) {
+  const id = focusPeopleId.value
+  if (!id) {
+    ElMessage.info('请先从左侧选择一位患者')
+    return
+  }
+  if (blockCarePlanUntilIntakeConfirmed(id)) return
+  if (preview?.status === 'ACTIVE') {
+    void openSheet('care-plan', id)
+    return
+  }
+  goCarePlanCompose({ peopleId: id })
 }
 function goFollowups() {
   openSheet('followups')
@@ -8126,6 +8324,8 @@ watch(
       zeroTeamScrubStarted = false
       return
     }
+    // 正从制定页返回恢复患者焦点时，不要往机构空会话塞「分配健管组」欢迎语
+    if (focusPeopleId.value) return
     if (prev === false) void resetOrgChatIfPatientGhosts()
     ensureZeroTeamWelcome()
   },
@@ -8158,6 +8358,14 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', onVis)
   stopVisibilityRefresh = () => document.removeEventListener('visibilitychange', onVis)
   try {
+    const qPeople = typeof route.query.peopleId === 'string' ? route.query.peopleId : ''
+    // 带 peopleId 返回时：在任何 await 之前铺好患者会话，避免加载期闪机构「分配健管组」
+    if (qPeople) {
+      focusPeopleId.value = qPeople
+      applyPatientSessionCache(qPeople)
+      markOrgSessionStartedToday()
+    }
+
     // 先按「立即处理」拉名单，便于判定默认 Tab；左栏在 leftRailReady 前只显示骨架，避免闪「新手起步」
     tab.value = 'urgent'
     await Promise.all([loadSummary(), loadPriority(), loadCapabilities(), loadDraftInbox()])
@@ -8174,14 +8382,12 @@ onMounted(async () => {
       applyDefaultCockpitTab()
     }
 
-    const freshDay = await startFreshOrgSessionForNewDay()
-    if (!freshDay) {
-      // 同日再进：恢复机构会话；仅 URL 显式带 peopleId 时恢复患者焦点
-      await loadBriefing(false)
-      const qPeople = typeof route.query.peopleId === 'string' ? route.query.peopleId : ''
-      if (qPeople) {
-        await selectPatient(qPeople, { autoAsk: false })
-      } else {
+    if (qPeople) {
+      await selectPatient(qPeople, { autoAsk: false, forceRestore: true })
+    } else {
+      const freshDay = await startFreshOrgSessionForNewDay()
+      if (!freshDay) {
+        await loadBriefing(false)
         try {
           sessionStorage.removeItem(COCKPIT_FOCUS_KEY)
         } catch {
@@ -8192,7 +8398,7 @@ onMounted(async () => {
 
     if (tab.value === 'urgent' || tab.value === 'watch') void loadPriority()
     await resetOrgChatIfPatientGhosts()
-    ensureZeroTeamWelcome()
+    if (!focusPeopleId.value) ensureZeroTeamWelcome()
     // 无 URL tab 时，按立即处理是否有数据再定一次默认落点
     if (qTab !== 'urgent' && qTab !== 'watch' && qTab !== 'mine') {
       applyDefaultCockpitTab()
@@ -8205,6 +8411,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // 离开驾驶舱（如进制定页）时固化当前患者会话，返回可直接恢复
+  if (focusPeopleId.value) cachePatientSession(focusPeopleId.value)
+  else cacheOrgSession()
   stopCockpitTasksRefresh?.()
   stopCockpitTasksRefresh = null
   stopCarePlanUpdated?.()
@@ -8356,7 +8565,7 @@ onUnmounted(() => {
               @click="tab = 'mine'"
             >
               <span class="tab-label">我的患者</span>
-              <span v-if="searchResults.length" class="count muted" :title="mineTabCountTitle">{{ searchResults.length }}</span>
+              <span v-if="mineAssignedCount" class="count muted" :title="mineTabCountTitle">{{ mineAssignedCount }}</span>
             </button>
           </div>
 
@@ -9098,7 +9307,7 @@ onUnmounted(() => {
               <AgentCarePlanCard
                 v-if="msg.carePlanPreview"
                 :preview="msg.carePlanPreview"
-                @open="goCarePlan"
+                @open="openCarePlanCard(msg.carePlanPreview)"
               />
               <button
                 v-if="msg.imageUrl"
@@ -12516,8 +12725,8 @@ onUnmounted(() => {
 
 .bubble.assistant .md-body :deep(.field-label),
 .briefing-text.md-body :deep(.field-label) {
-  font-weight: 600;
-  color: var(--ink-800);
+  font-weight: 700;
+  color: var(--ink-900);
 }
 
 .bubble.assistant .bubble-actions {
@@ -12634,7 +12843,7 @@ onUnmounted(() => {
 }
 
 .md-body :deep(.field-label) {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--ink-900);
 }
 

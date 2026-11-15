@@ -105,12 +105,18 @@ public class CarePlanLlmGenerator {
                 + "2. mustPreserveConstraints / 草稿中的骨折·卧床·制动·禁止负重等安全限制必须保留，"
                 + "除非修订意见明确解除。\n"
                 + "3. 饮食/消化类修订优先改 diet，禁止把运动从安全制动改回常规有氧。\n"
-                + "4. 执行任务过多/过少类意见优先改 execution.tasks（删减或合并），勿无故整包重写运动饮食。\n"
-                + "5. goalSummary 须同时保留仍有效的安全限制与本次新增关注。\n"
-                + "6. 仍输出完整 exercise/diet/execution/summary/goalSummary JSON。\n"
-                + "7. 若有会话历史，结合上文理解「改哪里」，不要忽略健管师刚说过的约束。\n"
-                + "8. 糖尿病相关方案示例餐禁止粥类主食（小米粥/杂粮粥等），尤其晚餐；改用杂粮饭/荞麦面/全麦馒头。\n"
-                + "9. 示例餐主食写克数或标准参照；sampleWeek 早餐鸡蛋类不超过 3 天，与豆浆/豆制品轮换。\n";
+                + "4. 执行任务过多/过少类意见优先改 execution.tasks（删减或合并），勿无故整包重写运动饮食；"
+                + "若写「保留2-3项/只要3条」：tasks 最终条数须落在该范围（取上限），并设 taskCap 为上限数字，"
+                + "优先保留运动/饮食/饮水，可去掉睡眠心情打卡；禁止删完又用默认任务凑回 5+ 条。\n"
+                + "5. 若修订意见明确「不想打卡 / 不要打卡 / 取消执行计划」：execution.tasks 必须为 []，"
+                + "并设 omitDefaultCheckins=true；禁止再保留睡眠/心情/饮水等默认打卡。\n"
+                + "6. 若修订意见明确「不要运动计划 / 不想要有运动计划」：exercise.weeklyPlan 各天 items 置空，"
+                + "goal 写明暂不安排正式运动；仍保留骨折制动等安全禁忌文案。\n"
+                + "7. goalSummary 须同时保留仍有效的安全限制与本次新增关注。\n"
+                + "8. 仍输出完整 exercise/diet/execution/summary/goalSummary JSON。\n"
+                + "9. 若有会话历史，结合上文理解「改哪里」，并保留前文已落实的忌口/限制，不要忽略。\n"
+                + "10. 糖尿病相关方案示例餐禁止粥类主食（小米粥/杂粮粥等），尤其晚餐；改用杂粮饭/荞麦面/全麦馒头。\n"
+                + "11. 示例餐主食写克数或标准参照；sampleWeek 早餐鸡蛋类不超过 3 天，与豆浆/豆制品轮换。\n";
         String userMessage = buildReviseUserMessage(
                 templateKey,
                 ctx,
@@ -485,11 +491,24 @@ public class CarePlanLlmGenerator {
                     "本次意见偏饮食/消化：请主要修订 diet（及 summary/goalSummary 中相关表述），"
                             + "运动块保留 currentDraft 中的安全限制与活动强度，勿改回常规有氧/负重。");
         }
+        if (com.healix.core.careplan.support.CarePlanRevisionIntent.wantsNoCheckins(instruction)) {
+            payload.put(
+                    "checkinHint",
+                    "修订意见要求取消打卡：execution.tasks=[] 且 omitDefaultCheckins=true。");
+        }
+        if (com.healix.core.careplan.support.CarePlanRevisionIntent.wantsNoExercisePlan(instruction)) {
+            payload.put(
+                    "exerciseHint",
+                    "修订意见要求取消运动计划：weeklyPlan 各天 items 置空，goal 写明暂不安排正式运动。");
+        }
         return """
                 请根据「修订意见」在「当前草稿」上修订，输出完整管理方案 JSON。
                 若存在 mustPreserveConstraints，必须写入新方案的 exercise 与 goalSummary，除非修订意见明确解除。
                 若有 patientContext.highlightGuidance，修订后仍须保留各条 mustApply（除非修订意见明确解除）。
                 revisionInstruction 中明确的忌口/偏好/运动限制须落实到推荐与示例餐，且不得压过过敏与安全硬约束。
+                若意见要求取消打卡：execution.tasks 必须为 []，omitDefaultCheckins=true。
+                若意见要求取消运动计划：exercise.weeklyPlan 各天 items 必须为空数组。
+                若意见要求执行计划只保留 N 项或 N-M 项：tasks 条数≤上限，写入 taskCap，勿再补默认打卡凑数。
                 sampleDay 必须与 sampleWeek.MON 完全一致。
                 未要求改动的字段尽量保留原意与结构。
                 字段顺序必须为：exercise → diet → execution → summary → goalSummary。

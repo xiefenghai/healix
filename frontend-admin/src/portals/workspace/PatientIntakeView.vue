@@ -1676,15 +1676,49 @@ function jumpToAiSummary() {
   void focusQuestion(FIELD_STAFF_AI_SUMMARY)
 }
 
-/** AI 总结页：跳到左侧第一个未填必收项 */
-function goFirstRequiredMissing() {
-  const field = localCompleteness.value.requiredMissing?.[0]
-  if (!field) {
+const requiredCursor = ref('')
+const requiredCursorEnded = ref(false)
+
+/** 顶部 / 侧栏入口：按序定位未填必收项，便于逐题补全 */
+function goFirstRequiredMissing(advance = true) {
+  const open = localCompleteness.value.requiredMissing || []
+  if (!open.length) {
     ElMessage.success('必收项已填齐')
+    requiredCursor.value = ''
+    requiredCursorEnded.value = false
+    return
+  }
+  if (advance && requiredCursorEnded.value) {
+    requiredCursorEnded.value = false
+    requiredCursor.value = ''
+  }
+  const field = pickOpen(open, advance, requiredCursor)
+  if (!field) {
+    if (advance && open.length) {
+      requiredCursorEnded.value = true
+      ElMessage.info('已到底，暂无更多必填项')
+    }
     return
   }
   void jumpToField(field)
 }
+
+const requiredMissingCount = computed(() => localCompleteness.value.requiredMissing?.length || 0)
+
+/** 右侧快捷列表：当前模块的必填缺项优先 */
+const requiredPanelItems = computed(() => {
+  const missing = localCompleteness.value.requiredMissing || []
+  if (!missing.length) return []
+  const here = new Set(currentModule.value?.items.map((it) => it.field) || [])
+  return [...missing]
+    .sort((a, b) => Number(here.has(b)) - Number(here.has(a)))
+    .slice(0, 6)
+    .map((field) => ({
+      field,
+      label: labelOf(field),
+      moduleTitle: moduleTitleOf(field),
+    }))
+})
 
 const aiSummaryActionLabel = computed(() => {
   if (aiSummaryGenerating.value) return '正在生成…'
@@ -2384,13 +2418,25 @@ onBeforeUnmount(() => {
       <button type="button" class="paste-go" @click="emit('focusPaste')">去粘贴</button>
       <button type="button" class="paste-dismiss" @click="dismissPasteHint">知道了</button>
     </div>
+    <div
+      v-if="!loading && status === 'DRAFT' && requiredMissingCount"
+      class="gap-line required"
+    >
+      <p class="gap-line-text">
+        还有 <strong>{{ requiredMissingCount }}</strong> 道必填题未填，提交前需要补齐。
+      </p>
+      <button type="button" class="gap-go" @click="goFirstRequiredMissing()">去补全</button>
+    </div>
     <div v-if="!loading && status === 'DRAFT' && riskUnasked.length" class="gap-line risk">
       <p class="gap-line-text">
         还有 {{ riskUnasked.length }} 题会影响到方案，还没填。如果暂时不清楚也可以先跳过。
       </p>
       <button type="button" class="gap-go" @click="goFirstRisk()">去补录</button>
     </div>
-    <div v-else-if="!loading && status === 'DRAFT' && staffGapItems.length" class="gap-line soft">
+    <div
+      v-else-if="!loading && status === 'DRAFT' && !requiredMissingCount && staffGapItems.length"
+      class="gap-line soft"
+    >
       <p class="gap-line-text">建议补录：{{ gapBrief }}</p>
       <button type="button" class="gap-go" @click="goFirstGap">去补录</button>
     </div>
@@ -2424,9 +2470,20 @@ onBeforeUnmount(() => {
         <div class="nav-head">
           <span>模块</span>
           <span class="nav-legend">
+            <i class="nav-mark miss" aria-hidden="true" />必填
             <i class="nav-mark suggest" aria-hidden="true" />建议完善
           </span>
         </div>
+        <button
+          v-if="status === 'DRAFT' && requiredMissingCount"
+          type="button"
+          class="nav-required-entry"
+          @click="goFirstRequiredMissing()"
+        >
+          <span class="nav-required-label">必填未填</span>
+          <span class="nav-required-count">{{ requiredMissingCount }}</span>
+          <span class="nav-required-go">定位 ›</span>
+        </button>
         <button
           v-for="m in visibleModules"
           :key="m.code"
@@ -2624,7 +2681,7 @@ onBeforeUnmount(() => {
                     localCompleteness.requiredTotal || 0
                   }}）</span
                 >
-                <button type="button" class="ai-fill-link" @click="goFirstRequiredMissing">去补全</button>
+                <button type="button" class="ai-fill-link" @click="goFirstRequiredMissing()">去补全</button>
               </template>
               <template v-else>
                 点击「✨ 点击生成 AI 总结」后将按概况、要点、风险与下一步分节展示。
@@ -2831,6 +2888,34 @@ onBeforeUnmount(() => {
           <p v-if="targetBmi != null && targetBmi < 18.5" class="bmi-caution">
             目标 BMI &lt; 18.5，请上调目标体重或核对身高
           </p>
+        </section>
+
+        <!-- 必填缺项入口：与「影响方案」并列，便于从右侧直接定位 -->
+        <section v-if="requiredMissingCount" class="panel required-panel">
+          <h3>必填未填 · {{ requiredMissingCount }}</h3>
+          <p class="risk-panel-tip">点击题目定位；也可点上方「去补全」逐题跳转</p>
+          <div class="risk-list">
+            <button
+              v-for="(it, idx) in requiredPanelItems"
+              :key="it.field"
+              type="button"
+              class="risk-item required-item"
+              :class="{ 'is-here': currentModule?.items.some((item) => item.field === it.field) }"
+              @click="jumpToField(it.field)"
+            >
+              <span class="risk-idx">{{ idx + 1 }}</span>
+              <span class="risk-label">
+                {{ it.label }}
+                <small v-if="it.moduleTitle" class="risk-mod">{{ it.moduleTitle }}</small>
+              </span>
+            </button>
+          </div>
+          <p v-if="requiredMissingCount > requiredPanelItems.length" class="muted">
+            还有 {{ requiredMissingCount - requiredPanelItems.length }} 项
+          </p>
+          <button type="button" class="required-panel-go" @click="goFirstRequiredMissing()">
+            从第一题开始补全
+          </button>
         </section>
 
         <!-- 高风险未问优先：勿被长「高亮追问」挤出视口 -->
@@ -3277,6 +3362,21 @@ onBeforeUnmount(() => {
   border: 1px solid #fde68a;
 }
 
+.gap-line.required {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.gap-line.required .gap-line-text {
+  color: #9f1239;
+}
+
+.gap-line.required .gap-go {
+  border-color: #fca5a5;
+  color: #b91c1c;
+  background: #fff;
+}
+
 .gap-line.soft {
   background: #f8fafc;
   border-color: #e2e8f0;
@@ -3711,7 +3811,52 @@ onBeforeUnmount(() => {
 }
 
 .nav-legend .nav-mark.suggest {
-  margin-left: 6px;
+  margin-left: 8px;
+}
+
+.nav-required-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.nav-required-entry:hover {
+  background: #fee2e2;
+}
+
+.nav-required-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
+.nav-required-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.nav-required-go {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b91c1c;
 }
 
 .nav-item {
@@ -4724,6 +4869,50 @@ onBeforeUnmount(() => {
 
 .hit-jump:hover {
   text-decoration: underline;
+}
+
+.required-panel {
+  flex-shrink: 0;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.required-panel .risk-panel-tip {
+  color: #9f1239;
+}
+
+.required-panel .risk-idx {
+  background: #fecaca;
+  color: #9f1239;
+}
+
+.required-panel .risk-label {
+  color: #9f1239;
+}
+
+.required-panel .risk-item:hover,
+.required-panel .risk-item.is-here {
+  border-color: #fca5a5;
+  background: #fff;
+}
+
+.required-panel-go {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fff;
+  color: #b91c1c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.required-panel-go:hover {
+  background: #fee2e2;
 }
 
 .risk-panel {

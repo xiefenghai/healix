@@ -360,13 +360,13 @@ onBeforeUnmount(() => {
               <span class="body">
                 <span class="name-row">
                   <span class="name">{{ p.displayName || p.peopleId }}</span>
+                  <span v-if="!p.patientLinked" class="unlink-tag">未绑定C端</span>
                   <i v-if="p.staffUnreadCount > 0" class="dot" />
                   <span class="time">{{ formatTime(p.lastMessageAt) }}</span>
                 </span>
                 <span class="preview">
                   <span v-if="p.careTeamName" class="team-tag">{{ p.careTeamName }}</span>
-                  <span v-if="!p.patientLinked" class="muted">未绑定 C 端</span>
-                  <span v-else-if="p.lastMessagePreview">{{ p.lastMessagePreview }}</span>
+                  <span v-if="p.lastMessagePreview">{{ p.lastMessagePreview }}</span>
                   <span v-else class="muted">暂无消息</span>
                 </span>
               </span>
@@ -399,12 +399,12 @@ onBeforeUnmount(() => {
                 <span class="body">
                   <span class="name-row">
                     <span class="name">{{ p.displayName || p.peopleId }}</span>
+                    <span v-if="!p.patientLinked" class="unlink-tag">未绑定C端</span>
                     <i v-if="p.staffUnreadCount > 0" class="dot" />
                     <span class="time">{{ formatTime(p.lastMessageAt) }}</span>
                   </span>
                   <span class="preview">
-                    <span v-if="!p.patientLinked" class="muted">未绑定 C 端</span>
-                    <span v-else-if="p.lastMessagePreview">{{ p.lastMessagePreview }}</span>
+                    <span v-if="p.lastMessagePreview">{{ p.lastMessagePreview }}</span>
                     <span v-else class="muted">暂无消息</span>
                   </span>
                 </span>
@@ -434,7 +434,8 @@ onBeforeUnmount(() => {
 
       <template v-if="focus">
         <div class="snap-scroll">
-          <div class="focus-card">
+          <section class="snap-block">
+            <div class="block-label">基本信息</div>
             <div class="focus-top">
               <span
                 class="focus-avatar"
@@ -472,6 +473,10 @@ onBeforeUnmount(() => {
                 {{ riskLabel(focus.riskLevel) }}
               </span>
             </div>
+          </section>
+
+          <section class="snap-block">
+            <div class="block-label">核心指标</div>
             <div class="focus-metrics">
               <div class="metric">
                 <div class="metric-label">本周依从</div>
@@ -496,12 +501,12 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div class="section">
-            <div class="section-title">
-              开放待办
-              <span class="count">{{ todoTasks.length }} 项</span>
+          <section class="snap-block snap-block--last">
+            <div class="block-label">
+              行动区
+              <span class="count">待办 {{ todoTasks.length }}</span>
             </div>
             <div v-if="todoTasks.length" class="draft-list">
               <button
@@ -520,16 +525,28 @@ onBeforeUnmount(() => {
                 </span>
               </button>
             </div>
-            <p v-else class="empty-hint">暂无待办</p>
-          </div>
+            <p v-else class="empty-hint">暂无开放待办</p>
 
-          <div class="section">
-            <div class="section-title">快速跳转</div>
-            <button type="button" class="quick-btn" @click="goArchive">查看完整档案</button>
-            <button type="button" class="quick-btn" @click="goPatientPath('/followups')">随访记录</button>
-            <button type="button" class="quick-btn" @click="goPatientPath('/care-plan')">管理方案</button>
-            <button type="button" class="quick-btn" @click="goPatientPath('/health-reports')">健康报告</button>
-          </div>
+            <div class="quick-label">快速跳转</div>
+            <div class="quick-list">
+              <button type="button" class="quick-link" @click="goArchive">
+                <span>查看完整档案</span>
+                <span class="chev" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="quick-link" @click="goPatientPath('/followups')">
+                <span>随访记录</span>
+                <span class="chev" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="quick-link" @click="goPatientPath('/care-plan')">
+                <span>管理方案</span>
+                <span class="chev" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="quick-link" @click="goPatientPath('/health-reports')">
+                <span>健康报告</span>
+                <span class="chev" aria-hidden="true">›</span>
+              </button>
+            </div>
+          </section>
         </div>
       </template>
 
@@ -543,8 +560,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .care-chat-page {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 300px;
-  gap: 14px;
+  grid-template-columns: 280px minmax(0, 1fr) 280px;
+  gap: 12px;
   height: calc(100vh - 112px);
   min-height: 0;
   overflow: hidden;
@@ -637,11 +654,11 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 8px 12px;
+  padding: 0 0 8px;
 }
 
 .recent-list {
-  padding: 0 2px;
+  padding: 0;
 }
 
 .team-tag {
@@ -657,7 +674,7 @@ onBeforeUnmount(() => {
 }
 
 .group {
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .group-head {
@@ -666,9 +683,9 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 8px;
+  padding: 8px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
   font: inherit;
@@ -676,7 +693,7 @@ onBeforeUnmount(() => {
 }
 
 .group-head:hover {
-  background: var(--ink-50);
+  background: #f9fafb;
 }
 
 .group-left {
@@ -727,8 +744,8 @@ onBeforeUnmount(() => {
 .patients {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 0 2px 4px;
+  gap: 0;
+  padding: 0;
 }
 
 .patient {
@@ -736,22 +753,24 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 8px;
+  padding: 12px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
   font: inherit;
   color: inherit;
+  box-sizing: border-box;
 }
 
 .patient:hover {
-  background: var(--ink-50);
+  background: #f9fafb;
 }
 
 .patient.active {
-  background: var(--brand-50);
+  background: #eff6ff;
+  box-shadow: inset 3px 0 0 var(--brand-500, #3b82f6);
 }
 
 .patient.unread .name {
@@ -759,15 +778,15 @@ onBeforeUnmount(() => {
 }
 
 .avatar {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   flex-shrink: 0;
   background: linear-gradient(135deg, #2c7ef8, #00b8a9);
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -783,11 +802,25 @@ onBeforeUnmount(() => {
 }
 
 .name {
-  font-size: 13.5px;
+  min-width: 0;
+  font-size: 13px;
   color: var(--ink-900);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.unlink-tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+  color: #9ca3af;
+  background: #f3f4f6;
 }
 
 .time {
@@ -896,7 +929,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  padding: 0;
 }
 
 .snap-empty {
@@ -909,11 +942,29 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.focus-card {
-  padding: 12px;
-  border: 1px solid var(--ink-100);
-  border-radius: 12px;
-  background: linear-gradient(180deg, #f8fbff, #fff);
+.snap-block {
+  padding: 14px 14px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.snap-block--last {
+  border-bottom: none;
+}
+
+.block-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  letter-spacing: 0.02em;
+}
+
+.block-label .count {
+  font-weight: 500;
+  color: #9ca3af;
 }
 
 .focus-top {
@@ -1005,7 +1056,7 @@ onBeforeUnmount(() => {
 }
 
 .tag.rose {
-  background: #fee2e2;
+  background: #fef2f2;
   color: #b91c1c;
 }
 
@@ -1018,14 +1069,13 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 12px;
 }
 
 .metric {
   padding: 8px;
   border-radius: 8px;
-  background: #fff;
-  border: 1px solid var(--ink-100);
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
 }
 
 .metric-label {
@@ -1048,25 +1098,6 @@ onBeforeUnmount(() => {
   color: var(--rose-500);
 }
 
-.section {
-  margin-top: 14px;
-}
-
-.section-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--ink-700);
-}
-
-.section-title .count {
-  font-weight: 600;
-  color: var(--ink-400);
-}
-
 .draft-list {
   display: flex;
   flex-direction: column;
@@ -1075,9 +1106,9 @@ onBeforeUnmount(() => {
 
 .draft-item {
   width: 100%;
-  padding: 10px;
-  border: 1px solid var(--ink-100);
-  border-radius: 10px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
   background: #fff;
   text-align: left;
   cursor: pointer;
@@ -1104,40 +1135,61 @@ onBeforeUnmount(() => {
 }
 
 .empty-hint {
-  margin: 0;
+  margin: 0 0 10px;
   font-size: 12px;
   color: var(--ink-400);
 }
 
-.quick-btn {
-  display: block;
-  width: 100%;
-  margin-bottom: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--ink-150, var(--ink-200));
-  border-radius: 10px;
-  background: #fff;
-  color: var(--ink-700);
-  font: inherit;
-  font-size: 12.5px;
+.quick-label {
+  margin: 14px 0 4px;
+  font-size: 11px;
   font-weight: 600;
+  color: #9ca3af;
+}
+
+.quick-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.quick-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px 2px;
+  border: 0;
+  border-bottom: 1px solid #f3f4f6;
+  background: transparent;
+  color: #374151;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
 
-.quick-btn:last-child {
-  margin-bottom: 0;
+.quick-link:last-child {
+  border-bottom: none;
 }
 
-.quick-btn:hover {
-  border-color: var(--brand-100);
-  color: var(--brand-600);
-  background: var(--brand-50);
+.quick-link:hover {
+  color: var(--brand-600, #2563eb);
+}
+
+.quick-link .chev {
+  color: #d1d5db;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.quick-link:hover .chev {
+  color: var(--brand-500, #3b82f6);
 }
 
 @media (max-width: 1200px) {
   .care-chat-page {
-    grid-template-columns: 280px minmax(0, 1fr) 260px;
+    grid-template-columns: 260px minmax(0, 1fr) 260px;
   }
 }
 

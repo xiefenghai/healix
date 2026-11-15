@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
-import { TABLE_COL } from '../../shared/table-columns'
 import { checkinStatus } from '../../shared/rewards'
 import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
 import CreateArchiveDrawer from './CreateArchiveDrawer.vue'
@@ -510,7 +509,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="summary-row">
+    <div class="summary-row summary-row--6">
       <button
         v-for="card in summaryCards"
         :key="card.key"
@@ -600,8 +599,9 @@ onMounted(async () => {
         class="patients-table"
         @selection-change="onSelectionChange"
       >
-        <el-table-column type="selection" width="44" />
-        <el-table-column label="患者" :min-width="showPrimaryManagerColumn ? 180 : 220">
+        <el-table-column type="selection" width="48" />
+        <!-- 大屏多余宽度优先分给患者 / 病种 / 评估（仅 min-width，不用死宽） -->
+        <el-table-column label="患者" :min-width="showPrimaryManagerColumn ? 240 : 280">
           <template #default="{ row }">
             <div class="patient-cell">
               <div class="patient-av" :style="avatarStyle(row.displayName)">
@@ -633,7 +633,7 @@ onMounted(async () => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="病种档案" :min-width="showPrimaryManagerColumn ? 140 : 180">
+        <el-table-column label="病种档案" :min-width="showPrimaryManagerColumn ? 180 : 220">
           <template #default="{ row }">
             <div v-if="row.diseaseLabels?.length" class="tag-wrap">
               <span v-for="d in row.diseaseLabels" :key="d" class="tag-disease">{{ d }}</span>
@@ -641,7 +641,7 @@ onMounted(async () => {
             <span v-else class="muted">暂无</span>
           </template>
         </el-table-column>
-        <el-table-column label="评估标签" :min-width="showPrimaryManagerColumn ? 180 : 220">
+        <el-table-column label="评估标签" :min-width="showPrimaryManagerColumn ? 220 : 280">
           <template #default="{ row }">
             <div v-if="row.assessmentTags?.length" class="tag-wrap">
               <span
@@ -658,18 +658,18 @@ onMounted(async () => {
         <el-table-column
           v-if="showPrimaryManagerColumn"
           label="主责健管师"
-          min-width="110"
+          min-width="128"
           show-overflow-tooltip
         >
           <template #default="{ row }">{{ row.primaryCareManagerName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="健管组" min-width="110">
+        <el-table-column label="健管组" min-width="128">
           <template #default="{ row }">
             <span v-if="row.careTeamName" class="team-name">{{ row.careTeamName }}</span>
             <span v-else class="team-unassigned">未分组</span>
           </template>
         </el-table-column>
-        <el-table-column label="档案完整度" width="120">
+        <el-table-column label="档案完整度" min-width="132">
           <template #default="{ row }">
             <div
               class="archive-cell"
@@ -688,10 +688,15 @@ onMounted(async () => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="入机构时间" v-bind="TABLE_COL.datetime">
+        <el-table-column
+          label="入机构时间"
+          min-width="168"
+          class-name="col-datetime"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">{{ formatTime(row.joinedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="248" align="right" fixed="right" class-name="col-actions">
+        <el-table-column label="操作" min-width="260" align="right" fixed="right" class-name="col-actions">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button

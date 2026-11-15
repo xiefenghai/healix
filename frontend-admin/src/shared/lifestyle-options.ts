@@ -96,6 +96,11 @@ export function drinkingShowsDetail(status: string) {
   return status === 'CURRENT' || status === 'OCCASIONAL' || status === 'FORMER'
 }
 
+/** 「基本不运动」等无运动频率时，不采集强度/时长/类型 */
+export function exerciseShowsDetail(frequency: string) {
+  return !!frequency && frequency !== 'NONE' && frequency !== 'RARELY'
+}
+
 export function normalizeSmoking(raw: unknown): SmokingStructured {
   if (typeof raw === 'string') {
     return { ...emptySmoking(), status: raw }
@@ -177,11 +182,12 @@ export function serializeDiet(diet: DietStructured): Record<string, unknown> {
 }
 
 export function serializeExercise(exercise: ExerciseStructured): Record<string, unknown> {
+  const detail = exerciseShowsDetail(exercise.frequency)
   return {
     frequency: exercise.frequency || undefined,
-    intensity: exercise.intensity || undefined,
-    durationMin: exercise.durationMin ?? undefined,
-    type: exercise.type.trim() || undefined,
+    intensity: detail ? exercise.intensity || undefined : undefined,
+    durationMin: detail ? exercise.durationMin ?? undefined : undefined,
+    type: detail ? exercise.type.trim() || undefined : undefined,
     note: exercise.note.trim() || undefined,
   }
 }

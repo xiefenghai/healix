@@ -13,9 +13,77 @@ const kudosText = ref('')
 const sending = ref(false)
 const toggling = ref(false)
 const showLedger = ref(false)
+/** 展开中的明细日期；打开明细时默认只展开最近一天 */
+const expandedLedgerDates = ref<Set<string>>(new Set())
+/** 当天明细已点「查看更多」 */
+const ledgerMoreDates = ref<Set<string>>(new Set())
+const LEDGER_PREVIEW = 8
 
 const s = computed(() => view.value?.summary)
 const earned = computed(() => (view.value?.badges || []).filter((b) => b.earned))
+const ledgerDays = computed(() => view.value?.ledger || [])
+
+function syncLedgerExpand(ledger: { date: string }[]) {
+  expandedLedgerDates.value = new Set(ledger[0]?.date ? [ledger[0].date] : [])
+  ledgerMoreDates.value = new Set()
+}
+
+function isLedgerDayOpen(date: string) {
+  return expandedLedgerDates.value.has(date)
+}
+
+function toggleLedgerDay(date: string) {
+  const next = new Set(expandedLedgerDates.value)
+  if (next.has(date)) {
+    next.delete(date)
+    const more = new Set(ledgerMoreDates.value)
+    more.delete(date)
+    ledgerMoreDates.value = more
+  } else {
+    next.add(date)
+  }
+  expandedLedgerDates.value = next
+}
+
+function toggleLedger() {
+  showLedger.value = !showLedger.value
+  if (showLedger.value) syncLedgerExpand(ledgerDays.value)
+  else ledgerMoreDates.value = new Set()
+}
+
+function isLedgerDayExpandedAll(date: string) {
+  return ledgerMoreDates.value.has(date)
+}
+
+function expandLedgerDayAll(date: string) {
+  const next = new Set(ledgerMoreDates.value)
+  next.add(date)
+  ledgerMoreDates.value = next
+}
+
+function visibleLedgerItems(date: string, items: { title: string; points: number }[]) {
+  if (items.length <= LEDGER_PREVIEW || isLedgerDayExpandedAll(date)) return items
+  return items.slice(0, LEDGER_PREVIEW)
+}
+
+/** 「完成方案任务·记录昨夜睡眠」→ 前缀 / 详情 */
+function splitLedgerTitle(title: string) {
+  const seps = ['·', '・', '•', '｜', '|', '：', ':']
+  for (const sep of seps) {
+    const i = title.indexOf(sep)
+    if (i > 0) {
+      return {
+        prefix: title.slice(0, i).trim(),
+        detail: title.slice(i + sep.length).trim() || title,
+      }
+    }
+  }
+  return { prefix: '', detail: title }
+}
+
+function formatPoints(n: number) {
+  return `${n > 0 ? '+' : ''}${n}`
+}
 
 async function load() {
   if (!props.peopleId) return
@@ -23,6 +91,7 @@ async function load() {
   try {
     const res = await api<{ data: RewardStaffView }>(`/api/b/v1/patients/${props.peopleId}/rewards`)
     view.value = res.data
+    if (showLedger.value) syncLedgerExpand(res.data?.ledger || [])
   } catch {
     view.value = null
   } finally {
@@ -155,62 +224,105 @@ defineExpose({ load })
         </div>
         <div class="stat">
           <span class="lbl">健康豆</span>
-          <strong>{{ s.points }}</strong>
+          <strong class="stat-hero">{{ s.points }}</strong>
           <span class="sub">本周 +{{ s.weekPoints }}</span>
         </div>
         <div class="stat">
           <span class="lbl">等级</span>
-          <strong>Lv{{ s.level?.level ?? 1 }}</strong>
+          <strong class="stat-hero">Lv{{ s.level?.level ?? 1 }}</strong>
           <span class="sub">{{ s.level?.title }}</span>
         </div>
       </div>
 
-      <div v-if="view.challenge" class="rp-row">
-        <span class="row-lbl">本周挑战</span>
-        <div class="challenge">
-          <strong>🎯 {{ view.challenge.title }}</strong>
-          <span>
-            {{ view.challenge.progress }}/{{ view.challenge.target }}
-            <template v-if="view.challenge.status === 'DONE'"> · 已达成</template>
-          </span>
-        </div>
-      </div>
-
-      <div class="rp-row">
-        <span class="row-lbl">徽章 {{ earned.length }}</span>
-        <div class="badges">
-          <span v-for="b in earned" :key="b.code" class="badge" :class="{ outcome: b.kind === 'OUTCOME' }" :title="`${shortDate(b.earnedDate)} 获得`">
-            {{ b.icon }} {{ b.name }}
-          </span>
-          <span v-if="!earned.length" class="muted">暂无</span>
-        </div>
-      </div>
-
-      <div v-if="view.kudos.length" class="rp-row">
-        <span class="row-lbl">最近点赞</span>
-        <div class="kudos-list">
-          <span v-for="(k, i) in view.kudos.slice(0, 3)" :key="i" class="kudos">
-            {{ k.staffName || '健管师' }} · {{ shortDate(k.createdAt) }}<template v-if="k.message">：{{ k.message }}</template>
-          </span>
-        </div>
-      </div>
-
-      <div class="rp-row">
-        <el-button link type="primary" @click="showLedger = !showLedger">
-          {{ showLedger ? '收起健康豆明细' : '查看近 14 天健康豆明细' }}
-        </el-button>
-      </div>
-      <div v-if="showLedger" class="ledger">
-        <div v-if="!view.ledger.length" class="muted">近 14 天暂无记录</div>
-        <div v-for="d in view.ledger" :key="d.date" class="ledger-day">
-          <div class="ld-head">
-            <span>{{ d.date }}</span>
-            <strong>{{ d.total >= 0 ? '+' : '' }}{{ d.total }}</strong>
+      <div class="rp-meta">
+        <div v-if="view.challenge" class="rp-row">
+          <span class="row-lbl">本周挑战</span>
+          <div class="challenge">
+            <strong>🎯 {{ view.challenge.title }}</strong>
+            <span>
+              {{ view.challenge.progress }}/{{ view.challenge.target }}
+              <template v-if="view.challenge.status === 'DONE'"> · 已达成</template>
+            </span>
           </div>
-          <div v-for="(it, i) in d.items" :key="i" class="ld-item">
-            <span>{{ it.title }}</span>
-            <span :class="{ neg: it.points < 0 }">{{ it.points > 0 ? '+' : '' }}{{ it.points }}</span>
+        </div>
+
+        <div class="rp-row rp-row--badges">
+          <span class="row-lbl">徽章 {{ earned.length }}</span>
+          <div class="badges">
+            <span
+              v-for="b in earned"
+              :key="b.code"
+              class="badge"
+              :class="{ outcome: b.kind === 'OUTCOME' }"
+              :title="`${shortDate(b.earnedDate)} 获得`"
+            >
+              {{ b.icon }} {{ b.name }}
+            </span>
+            <span v-if="!earned.length" class="muted">暂无</span>
           </div>
+        </div>
+
+        <div v-if="view.kudos.length" class="rp-row rp-row--kudos">
+          <span class="row-lbl">最近点赞</span>
+          <div class="kudos-list">
+            <div v-for="(k, i) in view.kudos.slice(0, 3)" :key="i" class="kudos">
+              <span class="kudos-meta">{{ k.staffName || '健管师' }} · {{ shortDate(k.createdAt) }}</span>
+              <p v-if="k.message" class="kudos-msg">“{{ k.message }}”</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="!showLedger" class="ledger-toggle-row">
+        <button type="button" class="ledger-toggle" @click="toggleLedger">展开近 14 天明细 ▼</button>
+      </div>
+
+      <div v-else class="ledger">
+        <div v-if="!ledgerDays.length" class="muted">近 14 天暂无记录</div>
+        <div
+          v-for="d in ledgerDays"
+          :key="d.date"
+          class="ledger-day"
+          :class="{ 'ledger-day--open': isLedgerDayOpen(d.date) }"
+        >
+          <button type="button" class="ld-head" @click="toggleLedgerDay(d.date)">
+            <span class="ld-chevron" aria-hidden="true">{{ isLedgerDayOpen(d.date) ? '▾' : '▸' }}</span>
+            <span class="ld-date">{{ d.date }}</span>
+            <em class="ld-count">{{ d.items.length }} 项</em>
+            <strong class="ld-total">总计 {{ formatPoints(d.total) }}</strong>
+          </button>
+          <div v-if="isLedgerDayOpen(d.date)" class="ld-body">
+            <div
+              v-for="(it, i) in visibleLedgerItems(d.date, d.items)"
+              :key="i"
+              class="ld-item"
+            >
+              <el-tooltip :content="it.title" placement="top" :disabled="it.title.length < 22">
+                <span class="ld-title">
+                  <template v-if="splitLedgerTitle(it.title).prefix">
+                    <em class="ld-prefix">{{ splitLedgerTitle(it.title).prefix }}</em>
+                    <i class="ld-sep" aria-hidden="true">•</i>
+                    <b class="ld-detail">{{ splitLedgerTitle(it.title).detail }}</b>
+                  </template>
+                  <b v-else class="ld-detail">{{ it.title }}</b>
+                </span>
+              </el-tooltip>
+              <span class="ld-pts" :class="{ 'ld-pts--neg': it.points < 0 }">
+                {{ formatPoints(it.points) }}
+              </span>
+            </div>
+            <button
+              v-if="d.items.length > LEDGER_PREVIEW && !isLedgerDayExpandedAll(d.date)"
+              type="button"
+              class="ld-more"
+              @click="expandLedgerDayAll(d.date)"
+            >
+              查看更多明细（展开剩余 {{ d.items.length - LEDGER_PREVIEW }} 条）
+            </button>
+          </div>
+        </div>
+        <div class="ledger-footer">
+          <button type="button" class="ledger-toggle" @click="toggleLedger">收起明细 ▲</button>
         </div>
       </div>
     </template>
@@ -219,9 +331,9 @@ defineExpose({ load })
 
 <style scoped>
 .reward-panel {
-  margin-bottom: 16px;
-  padding: 16px 18px;
-  border-radius: 14px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
   background: linear-gradient(135deg, #fff7ee 0%, #ffffff 60%);
   border: 1px solid #f6e3cf;
 }
@@ -233,7 +345,7 @@ defineExpose({ load })
 }
 .rp-head h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 800;
 }
 .rp-head h3 span {
@@ -250,37 +362,44 @@ defineExpose({ load })
   gap: 12px;
 }
 .rp-alert {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 .rp-off {
-  margin-top: 12px;
+  margin-top: 10px;
   font-size: 13px;
   color: #909399;
 }
 .rp-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin-top: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
 }
 .stat {
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fff;
   border: 1px solid #f1ebe3;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-height: 0;
 }
 .stat .lbl {
   font-size: 12px;
   color: #909399;
+  line-height: 1.2;
 }
 .stat strong {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 800;
   color: #303133;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.stat-hero {
+  font-size: 26px !important;
+  letter-spacing: -0.02em;
 }
 .stat strong em {
   font-style: normal;
@@ -295,13 +414,21 @@ defineExpose({ load })
   color: #c0c4cc;
 }
 .stat .sub {
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
+  line-height: 1.3;
+}
+.rp-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
 }
 .challenge {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
   font-size: 13px;
   color: #606266;
 }
@@ -311,9 +438,18 @@ defineExpose({ load })
 }
 .rp-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  margin-top: 12px;
+  min-width: 0;
+}
+.rp-meta .rp-row + .rp-row {
+  margin-top: 0;
+}
+.rp-row--badges {
+  align-items: center;
+}
+.rp-row--kudos {
+  align-items: flex-start;
 }
 .row-lbl {
   flex-shrink: 0;
@@ -322,76 +458,232 @@ defineExpose({ load })
   color: #909399;
   line-height: 24px;
 }
-.badges,
-.kudos-list {
+@media (max-width: 900px) {
+  .rp-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.badges {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
 }
 .badge {
+  flex-shrink: 0;
   padding: 2px 10px;
   border-radius: 999px;
   background: #fff4e0;
   color: #8a5a2b;
   font-size: 12px;
   line-height: 20px;
+  white-space: nowrap;
 }
 .badge.outcome {
   background: #e9f8f1;
   color: #2a7a5a;
 }
-.kudos {
-  font-size: 12px;
-  color: #606266;
-  line-height: 24px;
+.kudos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
-.kudos + .kudos::before {
-  content: '·';
-  margin-right: 6px;
-  color: #c0c4cc;
+.kudos {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffaf3;
+  border: 1px solid #f3e7d8;
+}
+.kudos-meta {
+  display: block;
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.3;
+}
+.kudos-msg {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #4b5563;
 }
 .muted {
   color: #c0c4cc;
   font-size: 12px;
 }
+.ledger-toggle-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+.ledger-toggle {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.ledger-toggle:hover {
+  color: #2563eb;
+}
 .ledger {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 10px;
-  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: none;
+  margin-top: 10px;
+  box-sizing: border-box;
 }
 .ledger-day {
-  padding: 8px 10px;
+  width: 100%;
   border-radius: 10px;
   background: #fff;
   border: 1px solid #f1ebe3;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .ld-head {
   display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  font-weight: 700;
-  margin-bottom: 4px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
 }
-.ld-head strong {
+.ld-head:hover {
+  background: #fffaf5;
+}
+.ld-chevron {
+  width: 14px;
+  color: #9ca3af;
+  font-size: 12px;
+  line-height: 1;
+}
+.ld-date {
+  font-size: 13px;
+  font-weight: 700;
+  color: #303133;
+}
+.ld-total {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 800;
   color: #e0632a;
+  font-variant-numeric: tabular-nums;
+}
+.ld-count {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 400;
+  color: #9ca3af;
+}
+.ld-body {
+  border-top: 1px solid #f3f4f6;
+  padding: 0 14px;
+  max-height: 300px;
+  overflow-y: auto;
 }
 .ld-item {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  color: #606266;
-  line-height: 1.8;
+  gap: 16px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 13px;
+  box-sizing: border-box;
 }
-.ld-item span:first-child {
+.ld-item:last-child {
+  border-bottom: none;
+}
+.ld-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  line-height: 1.4;
+}
+.ld-prefix {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+.ld-sep {
+  flex-shrink: 0;
+  font-style: normal;
+  color: #d1d5db;
+  font-size: 10px;
+  line-height: 1;
+}
+.ld-detail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
+  color: #1f2937;
 }
-.neg {
-  color: #c0c4cc;
+.ld-pts {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 40px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.ld-pts--neg {
+  color: #9ca3af;
+  background: #f9fafb;
+}
+.ld-more {
+  display: block;
+  width: 100%;
+  padding: 10px 0 12px;
+  border: none;
+  border-top: 1px solid #f3f4f6;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+}
+.ld-more:hover {
+  text-decoration: underline;
+}
+.ledger-footer {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 4px;
 }
 .kudos-pop {
   display: flex;

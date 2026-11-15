@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import {
+  ArrowDown,
   Basketball,
   Calendar,
   CircleCheck,
@@ -10,6 +11,7 @@ import {
   Document,
   InfoFilled,
 } from '@element-plus/icons-vue'
+import AutosizeTextarea from './AutosizeTextarea.vue'
 import CarePlanAiDisclaimer from './CarePlanAiDisclaimer.vue'
 import CarePlanMealStruct from './CarePlanMealStruct.vue'
 import GuidelineRefTags from './GuidelineRefTags.vue'
@@ -25,6 +27,7 @@ import {
 } from './care-plan-labels'
 import { asEnergyTarget, energyGoalText, type EnergyTarget } from './energy-target'
 import { patientDietNoteLines } from './care-plan-diet-notes'
+import { summarizeExerciseStats } from './care-plan-briefing-script'
 
 export interface CarePlanPreviewCheckin {
   id?: string
@@ -104,6 +107,8 @@ const props = withDefaults(
      * 默认关闭：方案详情/C 端预览只看 goalSummary + 方案总结，避免与首诊案头总结重复扫读。
      */
     showStaffRationale?: boolean
+    /** 全屏手动编辑：保持预览版式，长文框按内容自适应高度 */
+    editable?: boolean
     /** AI 局部修订后短暂高亮的章节：summary / exercise / diet / execution */
     aiHighlightSections?: string[]
   }>(),
@@ -112,17 +117,51 @@ const props = withDefaults(
     resetKey: null,
     stacked: false,
     showStaffRationale: false,
+    editable: false,
     aiHighlightSections: () => [],
   },
 )
+
+export type CarePlanPreviewPatch =
+  | {
+      field:
+        | 'title'
+        | 'goalSummary'
+        | 'summary'
+        | 'rationaleOverview'
+        | 'exerciseGoal'
+        | 'exerciseRationale'
+        | 'exerciseReviewHint'
+        | 'exercisePrecautionsText'
+        | 'exerciseContraindicationsText'
+        | 'dietRationale'
+        | 'dietCalorieHint'
+        | 'dietPrinciplesText'
+        | 'dietNotes'
+        | 'executionRationale'
+      value: string
+    }
+  | { field: 'taskTitle' | 'taskRationale'; index: number; value: string }
+  | { field: 'weekItemNote'; day: string; index: number; value: string }
+
+const emit = defineEmits<{
+  patch: [payload: CarePlanPreviewPatch]
+}>()
+
+function patchField(
+  field: Extract<CarePlanPreviewPatch, { value: string; field: string }>['field'],
+  value: string,
+) {
+  emit('patch', { field, value } as CarePlanPreviewPatch)
+}
 
 function isAiHighlighted(section: string) {
   return (props.aiHighlightSections || []).includes(section)
 }
 
-const STACKED_SECTIONS = ['summary', 'exercise', 'diet', 'execution', 'checkins']
-
 const previewScrollEl = ref<HTMLElement | null>(null)
+/** 一周饮食示例：默认可看，可收起省纵向空间 */
+const sampleWeekExpanded = ref(true)
 const DEFAULT_SECTION = 'summary'
 /**
  * 用数组 v-model（与项目内 AssessmentRulesDrawer 一致）。
@@ -203,8 +242,6 @@ function mealsFromSample(raw: unknown) {
   }).filter((x): x is { label: string; text: string; swapHint: string } => !!x)
 }
 
-const sampleDayRows = computed(() => mealsFromSample(props.data?.diet?.sampleDay))
-
 const sampleWeekTable = computed(() => {
   const sw = props.data?.diet?.sampleWeek
   if (!sw || typeof sw !== 'object') return []
@@ -237,6 +274,8 @@ const weeklyPlanTable = computed(() => {
   const rows: Array<{
     key: string
     day: string
+    dayCode: string
+    itemIndex: number
     type: string
     intensity: string
     intensityCode: string
@@ -273,6 +312,8 @@ const weeklyPlanTable = computed(() => {
       rows.push({
         key: `${day.code}-${index}`,
         day: shown ? '' : label,
+        dayCode: day.code,
+        itemIndex: index,
         type,
         intensity,
         intensityCode,
@@ -284,6 +325,12 @@ const weeklyPlanTable = computed(() => {
   }
   return rows
 })
+
+const precautionsText = computed(() => (props.data?.exercise?.precautions || []).join('\n'))
+const contraindicationsText = computed(() =>
+  (props.data?.exercise?.contraindications || []).join('\n'),
+)
+const dietPrinciplesText = computed(() => (props.data?.diet?.principles || []).join('\n'))
 
 function intensityBadgeLevel(code: string): 'light' | 'moderate' | 'vigorous' | 'other' {
   const c = String(code || '').toUpperCase()
@@ -308,6 +355,85 @@ const anchorItems = computed(() => {
   return items
 })
 
+/** 全屏工作台：完整模块名 Tab */
+const stackedTabItems = computed(() => {
+  const items = [
+    { key: 'summary', label: '方案总览' },
+    { key: 'exercise', label: '运动方案' },
+    { key: 'diet', label: '饮食方案' },
+    { key: 'execution', label: '执行计划' },
+  ]
+  if (showCheckinsSection.value) items.push({ key: 'checkins', label: '患者打卡' })
+  return items
+})
+
+function overviewPlain(raw: string): string {
+  return String(raw || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const overviewBodyClampStyle = {
+  display: '-webkit-box',
+  WebkitBoxOrient: 'vertical' as const,
+  WebkitLineClamp: 2,
+  overflow: 'hidden',
+}
+
+const overviewModuleCards = computed(() => {
+  const ex = summarizeExerciseStats(props.data?.exercise?.weeklyPlan as any)
+  const exerciseBody = overviewPlain(
+    props.data?.exercise?.goal ||
+      (ex
+        ? `每周约 ${ex.sessions} 次有氧，合计中等强度约 ${ex.minutes} 分钟`
+        : '暂无运动安排'),
+  )
+  const dietBits: string[] = []
+  if (previewEnergy.value?.energyKcal) dietBits.push(`每日约 ${previewEnergy.value.energyKcal} 千卡`)
+  else if (calorieTips.value) dietBits.push(overviewPlain(calorieTips.value))
+  if (dietPrinciples.value[0]) dietBits.push(overviewPlain(dietPrinciples.value[0]))
+  const dietBody = dietBits.join('；') || '暂无饮食安排'
+  const tasks = props.data?.execution?.tasks || []
+  const horizon = props.data?.execution?.horizonDays
+  const cats = [
+    ...new Set(
+      tasks
+        .map((t) => formatCarePlanTaskCategory(t.category) || String(t.category || '').trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 3)
+  const execBits: string[] = []
+  if (horizon && horizon > 0) execBits.push(`${horizon} 天周期`)
+  if (tasks.length) {
+    execBits.push(`每日需完成 ${tasks.length} 项打卡任务`)
+    if (cats.length) execBits.push(`（包含${cats.join('、')}）`)
+  }
+  const execBody = execBits.length ? execBits.join('，') : '暂无执行计划'
+  return [
+    {
+      key: 'exercise',
+      icon: Basketball,
+      title: '运动方案摘要',
+      body: exerciseBody,
+      cta: '查看完整运动方案 →',
+    },
+    {
+      key: 'diet',
+      icon: Dish,
+      title: '饮食方案摘要',
+      body: dietBody,
+      cta: '查看完整饮食方案 →',
+    },
+    {
+      key: 'execution',
+      icon: Calendar,
+      title: '执行计划摘要',
+      body: execBody,
+      cta: '查看完整执行计划 →',
+    },
+  ]
+})
+
 function openSection(name: string) {
   activeSections.value = [name]
 }
@@ -325,23 +451,22 @@ function scrollToSection(name: string) {
   root.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
 }
 
-/** Tab / 程序切换：手风琴只开一个，并滚到对应面板 */
-async function selectSection(name: string) {
+/** Tab / 程序切换：手风琴只开一个；stacked Tab 模式不滚页内折叠头 */
+async function selectSection(name: string, opts?: { pulse?: boolean }) {
   openSection(name)
   await nextTick()
-  window.setTimeout(() => scrollToSection(name), 120)
-}
-
-/** 点击折叠头：强制手风琴（一次只开一个），并禁止全部收起；stacked 模式允许多开 */
-function onCollapseChange(val: string | number | Array<string | number>) {
   if (props.stacked) {
-    const list = (Array.isArray(val) ? val : [val]).map((v) => String(v ?? '')).filter(Boolean)
-    activeSections.value = list.length ? list : [...STACKED_SECTIONS]
+    if (previewScrollEl.value) previewScrollEl.value.scrollTop = 0
     return
   }
+  window.setTimeout(() => scrollToSection(name), 120)
+  void opts
+}
+
+/** 点击折叠头：强制手风琴（一次只开一个），并禁止全部收起 */
+function onCollapseChange(val: string | number | Array<string | number>) {
   const list = (Array.isArray(val) ? val : [val]).map((v) => String(v ?? '')).filter(Boolean)
   if (list.length === 0) {
-    // 不允许五条横杠空屏：至少保持当前/默认展开
     openSection(activeSection.value || DEFAULT_SECTION)
     return
   }
@@ -350,7 +475,8 @@ function onCollapseChange(val: string | number | Array<string | number>) {
 
 function ensureStackedOpen() {
   if (!props.stacked) return
-  activeSections.value = [...STACKED_SECTIONS]
+  // Tab 模式：只开当前/默认一个面板，不要一次展开全部
+  if (!activeSections.value.length) openSection(DEFAULT_SECTION)
 }
 
 function resetToSummary() {
@@ -413,6 +539,10 @@ watch(
   },
   { immediate: true },
 )
+
+defineExpose({
+  selectSection,
+})
 </script>
 
 <template>
@@ -429,11 +559,33 @@ watch(
             {{ item.label }}
           </button>
         </nav>
+        <nav v-else class="preview-tabs" aria-label="方案模块切换">
+          <button
+            v-for="item in stackedTabItems"
+            :key="item.key"
+            type="button"
+            class="preview-tab"
+            :class="{ active: activeSection === item.key }"
+            @click="selectSection(item.key)"
+          >
+            {{ item.label }}
+            <em v-if="isAiHighlighted(item.key)" class="preview-tab-dot" aria-hidden="true" />
+          </button>
+        </nav>
 
         <div ref="previewScrollEl" class="preview-scroll">
       <div class="preview-canvas">
-      <div class="summary-header">
-        <h3 class="plan-title">{{ data.title || '管理方案' }}</h3>
+      <div v-if="!stacked || activeSection === 'summary'" class="summary-header">
+        <h3 v-if="!editable" class="plan-title">{{ data.title || '管理方案' }}</h3>
+        <AutosizeTextarea
+          v-else
+          class="plan-title-edit"
+          :model-value="data.title || ''"
+          :min-height="40"
+          :rows="1"
+          placeholder="方案标题"
+          @update:model-value="patchField('title', $event)"
+        />
         <div class="plan-meta">
           <span v-if="displayVersion" class="meta-item">
             <el-icon><Collection /></el-icon>
@@ -444,16 +596,35 @@ watch(
             {{ formatDateTime(data.publishedAt) }}
           </span>
         </div>
-        <p v-if="data.goalSummary" class="goal-summary">{{ data.goalSummary }}</p>
+        <p v-if="!editable && data.goalSummary" class="goal-summary">{{ data.goalSummary }}</p>
+        <AutosizeTextarea
+          v-else-if="editable"
+          class="goal-summary-edit"
+          :model-value="data.goalSummary || ''"
+          :min-height="72"
+          placeholder="目标摘要"
+          @update:model-value="patchField('goalSummary', $event)"
+        />
         <details
-          v-if="showStaffRationale && data.rationaleOverview"
+          v-if="showStaffRationale && (data.rationaleOverview || editable)"
           class="staff-rationale-details"
+          :open="stacked || editable || undefined"
         >
           <summary class="staff-rationale-summary">
             <span class="rationale-label">生成依据</span>
-            <span class="staff-rationale-hint">仅健管师 · 默认收起</span>
+            <span class="staff-rationale-hint">仅健管师可见 · 不展示给患者</span>
           </summary>
-          <p class="rationale-line rationale-line--staff">{{ data.rationaleOverview }}</p>
+          <p v-if="!editable" class="rationale-line rationale-line--staff">
+            {{ data.rationaleOverview }}
+          </p>
+          <AutosizeTextarea
+            v-else
+            class="rationale-edit"
+            :model-value="data.rationaleOverview || ''"
+            :min-height="96"
+            placeholder="整份方案的生成依据（仅健管师可见）"
+            @update:model-value="patchField('rationaleOverview', $event)"
+          />
         </details>
       </div>
 
@@ -466,10 +637,11 @@ watch(
       <el-collapse
         v-model="activeSections"
         class="plan-sections"
-        :class="{ 'plan-sections--stacked': stacked }"
+        :class="{ 'plan-sections--stacked': stacked, 'plan-sections--tabbed': stacked }"
         @change="onCollapseChange"
       >
         <el-collapse-item
+          v-show="!stacked || activeSection === 'summary'"
           :name="DEFAULT_SECTION"
           class="sec-item-summary"
           :class="{ 'sec-ai-updated': isAiHighlighted('summary') }"
@@ -482,12 +654,49 @@ watch(
             </div>
           </template>
           <div id="preview-sec-summary" class="section-body">
-            <p v-if="data.summary" class="section-lead">{{ data.summary }}</p>
-            <p v-else class="section-lead muted">（未填写）</p>
+            <p v-if="!editable && data.summary" class="section-lead">{{ data.summary }}</p>
+            <p v-else-if="!editable" class="section-lead muted">（未填写）</p>
+            <AutosizeTextarea
+              v-else
+              :model-value="data.summary || ''"
+              :min-height="120"
+              :rows="4"
+              placeholder="方案总结"
+              @update:model-value="patchField('summary', $event)"
+            />
+
+            <div v-if="stacked" class="overview-mod-row" aria-label="方案模块摘要">
+              <article
+                v-for="card in overviewModuleCards"
+                :key="card.key"
+                class="overview-mod-card"
+              >
+                <div class="overview-mod-card__top">
+                  <header class="overview-mod-card__head">
+                    <el-icon class="overview-mod-card__icon" :size="16">
+                      <component :is="card.icon" />
+                    </el-icon>
+                    <h4 class="overview-mod-card__title">{{ card.title }}</h4>
+                  </header>
+                  <p class="overview-mod-card__body line-clamp-2" :style="overviewBodyClampStyle">
+                    {{ card.body }}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="overview-mod-card__cta"
+                  @click="selectSection(card.key)"
+                >
+                  {{ card.cta }}
+                </button>
+              </article>
+            </div>
           </div>
         </el-collapse-item>
 
         <el-collapse-item
+          v-show="!stacked || activeSection === 'exercise'"
+          id="exercise-section"
           name="exercise"
           class="sec-item-exercise"
           :class="{ 'sec-ai-updated': isAiHighlighted('exercise') }"
@@ -500,33 +709,84 @@ watch(
             </div>
           </template>
           <div id="preview-sec-exercise" class="section-body">
-            <p class="section-lead">{{ data.exercise?.goal || '（未填写）' }}</p>
-            <p v-if="data.exercise?.rationale" class="rationale-line">
+            <p v-if="!editable" class="section-lead">{{ data.exercise?.goal || '（未填写）' }}</p>
+            <AutosizeTextarea
+              v-else
+              :model-value="data.exercise?.goal || ''"
+              :min-height="72"
+              placeholder="运动目标"
+              @update:model-value="patchField('exerciseGoal', $event)"
+            />
+            <p v-if="!editable && data.exercise?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.exercise.rationale }}
             </p>
+            <div v-else-if="editable" class="rationale-line rationale-line--edit">
+              <span class="rationale-label">依据</span>
+              <AutosizeTextarea
+                class="rationale-edit"
+                :model-value="data.exercise?.rationale || ''"
+                :min-height="72"
+                placeholder="运动方案生成依据"
+                @update:model-value="patchField('exerciseRationale', $event)"
+              />
+            </div>
             <GuidelineRefTags :refs="refsOf(data.exercise)" />
-            <div v-if="data.exercise?.contraindications?.length" class="info-block info-block--danger">
+            <div
+              v-if="!editable && data.exercise?.contraindications?.length"
+              class="info-block info-block--danger"
+            >
               <div class="info-block-title">禁忌</div>
               <ul class="info-list">
                 <li v-for="(item, i) in data.exercise.contraindications" :key="'c-' + i">{{ item }}</li>
               </ul>
             </div>
-            <div v-if="data.exercise?.precautions?.length" class="info-block info-block--caution">
+            <div v-else-if="editable" class="info-block info-block--danger">
+              <div class="info-block-title">禁忌</div>
+              <AutosizeTextarea
+                :model-value="contraindicationsText"
+                :min-height="72"
+                placeholder="每行一条禁忌"
+                @update:model-value="patchField('exerciseContraindicationsText', $event)"
+              />
+            </div>
+            <div
+              v-if="!editable && data.exercise?.precautions?.length"
+              class="info-block info-block--caution"
+            >
               <div class="info-block-title">注意事项</div>
               <ul class="info-list">
                 <li v-for="(item, i) in data.exercise.precautions" :key="'p-' + i">{{ item }}</li>
               </ul>
             </div>
-            <p v-if="data.exercise?.reviewHint" class="section-hint">
+            <div v-else-if="editable" class="info-block info-block--caution">
+              <div class="info-block-title">注意事项</div>
+              <AutosizeTextarea
+                :model-value="precautionsText"
+                :min-height="72"
+                placeholder="每行一条注意事项"
+                @update:model-value="patchField('exercisePrecautionsText', $event)"
+              />
+            </div>
+            <p v-if="!editable && data.exercise?.reviewHint" class="section-hint">
               <el-icon><InfoFilled /></el-icon>
               {{ data.exercise.reviewHint }}
             </p>
+            <div v-else-if="editable" class="section-hint section-hint--edit">
+              <el-icon><InfoFilled /></el-icon>
+              <AutosizeTextarea
+                :model-value="data.exercise?.reviewHint || ''"
+                :min-height="40"
+                :rows="1"
+                placeholder="复评提示"
+                @update:model-value="patchField('exerciseReviewHint', $event)"
+              />
+            </div>
             <div v-if="weeklyPlanTable.length" class="week-plan">
-              <div class="info-block-title">一周计划</div>
+              <div class="info-block-title">一周运动计划</div>
               <el-table
                 :data="weeklyPlanTable"
                 size="small"
-                class="task-table week-plan-table"
+                class="task-table week-plan-table week-plan-table--exercise"
                 :header-cell-style="{
                   background: '#f8fafc',
                   color: '#334155',
@@ -535,9 +795,9 @@ watch(
                 }"
                 :row-style="{}"
               >
-                <el-table-column prop="day" label="星期" width="72" />
+                <el-table-column prop="day" label="星期" width="64" />
                 <el-table-column prop="type" label="类型" min-width="96" />
-                <el-table-column label="强度" width="88">
+                <el-table-column label="强度" width="64">
                   <template #default="{ row }">
                     <span
                       v-if="row.intensity && row.intensity !== '—'"
@@ -550,13 +810,35 @@ watch(
                   </template>
                 </el-table-column>
                 <el-table-column prop="duration" label="时长" width="88" />
-                <el-table-column prop="note" label="备注" min-width="140" show-overflow-tooltip />
+                <el-table-column label="备注" min-width="160">
+                  <template #default="{ row }">
+                    <span v-if="!editable">{{ row.note }}</span>
+                    <AutosizeTextarea
+                      v-else
+                      class="table-cell-edit"
+                      :model-value="row.note === '—' ? '' : row.note"
+                      :min-height="36"
+                      :rows="1"
+                      placeholder="备注"
+                      @update:model-value="
+                        emit('patch', {
+                          field: 'weekItemNote',
+                          day: row.dayCode,
+                          index: row.itemIndex,
+                          value: $event,
+                        })
+                      "
+                    />
+                  </template>
+                </el-table-column>
               </el-table>
             </div>
           </div>
         </el-collapse-item>
 
         <el-collapse-item
+          v-show="!stacked || activeSection === 'diet'"
+          id="diet-section"
           name="diet"
           class="sec-item-diet"
           :class="{ 'sec-ai-updated': isAiHighlighted('diet') }"
@@ -569,9 +851,19 @@ watch(
             </div>
           </template>
           <div id="preview-sec-diet" class="section-body">
-            <p v-if="data.diet?.rationale" class="rationale-line">
+            <p v-if="!editable && data.diet?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.diet.rationale }}
             </p>
+            <div v-else-if="editable" class="rationale-line rationale-line--edit">
+              <span class="rationale-label">依据</span>
+              <AutosizeTextarea
+                class="rationale-edit"
+                :model-value="data.diet?.rationale || ''"
+                :min-height="72"
+                placeholder="饮食方案生成依据"
+                @update:model-value="patchField('dietRationale', $event)"
+              />
+            </div>
             <GuidelineRefTags :refs="refsOf(data.diet)" />
             <div v-if="previewEnergy" class="energy-card">
               <div class="energy-main">
@@ -595,19 +887,37 @@ watch(
             </div>
             <p v-else-if="calorieTips" class="section-hint">{{ calorieTips }}</p>
 
-            <div v-if="dietPrinciples.length" class="info-block info-block--diet">
+            <div v-if="!editable && dietPrinciples.length" class="info-block info-block--diet">
               <div class="info-block-title">饮食原则</div>
               <ol class="info-list">
                 <li v-for="(p, i) in dietPrinciples" :key="'pr-' + i">{{ p }}</li>
               </ol>
             </div>
+            <div v-else-if="editable" class="info-block info-block--diet">
+              <div class="info-block-title">饮食原则</div>
+              <AutosizeTextarea
+                :model-value="dietPrinciplesText"
+                :min-height="96"
+                placeholder="每行一条饮食原则"
+                @update:model-value="patchField('dietPrinciplesText', $event)"
+              />
+            </div>
             <p v-else-if="!previewEnergy" class="section-lead muted">（未填写）</p>
 
-            <div v-if="dietNotes.length" class="info-block info-block--tip">
+            <div v-if="!editable && dietNotes.length" class="info-block info-block--tip">
               <div class="info-block-title">执行提醒</div>
               <ul class="info-list">
                 <li v-for="(n, i) in dietNotes" :key="'n-' + i">{{ n }}</li>
               </ul>
+            </div>
+            <div v-else-if="editable" class="info-block info-block--tip">
+              <div class="info-block-title">执行提醒</div>
+              <AutosizeTextarea
+                :model-value="data.diet?.notes || ''"
+                :min-height="96"
+                placeholder="执行提醒（可用分号分隔）"
+                @update:model-value="patchField('dietNotes', $event)"
+              />
             </div>
 
             <div v-if="data.diet?.recommended?.length" class="tag-group">
@@ -663,25 +973,33 @@ watch(
               </el-tag>
             </div>
 
-            <div v-if="sampleDayRows.length" class="info-block info-block--diet sample-day">
-              <div class="info-block-title">示例日</div>
-              <ul class="info-list sample-day-struct">
-                <li v-for="(row, i) in sampleDayRows" :key="'sd-' + i">
-                  <strong class="sample-day-label">{{ row.label }}</strong>
-                  <CarePlanMealStruct
-                    :text="row.text"
-                    :snackish="row.label === '加餐'"
-                  />
-                  <span v-if="row.swapHint" class="swap-hint">可替换：{{ row.swapHint }}</span>
-                </li>
-              </ul>
-            </div>
-
             <div v-if="sampleWeekTable.length" class="week-plan">
-              <div class="info-block-title">一周饮食示例</div>
-              <el-table :data="sampleWeekTable" size="small" class="task-table week-plan-table">
-                <el-table-column prop="day" label="星期" width="72" />
-                <el-table-column label="早餐" min-width="160">
+              <button
+                type="button"
+                class="week-plan-toggle"
+                :aria-expanded="sampleWeekExpanded"
+                @click="sampleWeekExpanded = !sampleWeekExpanded"
+              >
+                <span class="info-block-title">一周饮食示例</span>
+                <span class="week-plan-toggle-meta">
+                  {{ sampleWeekExpanded ? '收起' : '展开' }}
+                  <el-icon
+                    class="week-plan-toggle-icon"
+                    :class="{ 'is-collapsed': !sampleWeekExpanded }"
+                    :size="14"
+                  >
+                    <ArrowDown />
+                  </el-icon>
+                </span>
+              </button>
+              <el-table
+                v-show="sampleWeekExpanded"
+                :data="sampleWeekTable"
+                size="small"
+                class="task-table week-plan-table week-plan-table--diet"
+              >
+                <el-table-column prop="day" label="星期" width="56" />
+                <el-table-column label="早餐" min-width="140">
                   <template #default="{ row }">
                     <div class="preview-meal-cell">
                       <CarePlanMealStruct :text="row.breakfast" />
@@ -689,7 +1007,7 @@ watch(
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="午餐" min-width="160">
+                <el-table-column label="午餐" min-width="140">
                   <template #default="{ row }">
                     <div class="preview-meal-cell">
                       <CarePlanMealStruct :text="row.lunch" />
@@ -697,7 +1015,7 @@ watch(
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="晚餐" min-width="160">
+                <el-table-column label="晚餐" min-width="140">
                   <template #default="{ row }">
                     <div class="preview-meal-cell">
                       <CarePlanMealStruct :text="row.dinner" />
@@ -705,7 +1023,7 @@ watch(
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="加餐" min-width="140">
+                <el-table-column label="加餐" min-width="120">
                   <template #default="{ row }">
                     <div class="preview-meal-cell">
                       <CarePlanMealStruct :text="row.snacks" snackish />
@@ -719,6 +1037,8 @@ watch(
         </el-collapse-item>
 
         <el-collapse-item
+          v-show="!stacked || activeSection === 'execution'"
+          id="execution-section"
           name="execution"
           class="sec-item-execution"
           :class="{ 'sec-ai-updated': isAiHighlighted('execution') }"
@@ -734,9 +1054,19 @@ watch(
             </div>
           </template>
           <div id="preview-sec-execution" class="section-body">
-            <p v-if="data.execution?.rationale" class="rationale-line">
+            <p v-if="!editable && data.execution?.rationale" class="rationale-line">
               <span class="rationale-label">依据</span>{{ data.execution.rationale }}
             </p>
+            <div v-else-if="editable" class="rationale-line rationale-line--edit">
+              <span class="rationale-label">依据</span>
+              <AutosizeTextarea
+                class="rationale-edit"
+                :model-value="data.execution?.rationale || ''"
+                :min-height="72"
+                placeholder="执行计划生成依据"
+                @update:model-value="patchField('executionRationale', $event)"
+              />
+            </div>
             <GuidelineRefTags :refs="refsOf(data.execution)" />
             <el-table
               v-if="data.execution?.tasks?.length"
@@ -745,8 +1075,38 @@ watch(
               stripe
               class="task-table"
             >
-              <el-table-column prop="title" label="任务" min-width="160" show-overflow-tooltip />
-              <el-table-column prop="rationale" label="依据" min-width="140" show-overflow-tooltip />
+              <el-table-column label="任务" min-width="180">
+                <template #default="{ row, $index }">
+                  <span v-if="!editable">{{ row.title }}</span>
+                  <AutosizeTextarea
+                    v-else
+                    class="table-cell-edit"
+                    :model-value="row.title || ''"
+                    :min-height="36"
+                    :rows="1"
+                    placeholder="任务标题"
+                    @update:model-value="
+                      emit('patch', { field: 'taskTitle', index: $index, value: $event })
+                    "
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="依据" min-width="160">
+                <template #default="{ row, $index }">
+                  <span v-if="!editable">{{ row.rationale || '—' }}</span>
+                  <AutosizeTextarea
+                    v-else
+                    class="table-cell-edit"
+                    :model-value="row.rationale || ''"
+                    :min-height="36"
+                    :rows="1"
+                    placeholder="任务依据"
+                    @update:model-value="
+                      emit('patch', { field: 'taskRationale', index: $index, value: $event })
+                    "
+                  />
+                </template>
+              </el-table-column>
               <el-table-column label="类别" width="96">
                 <template #default="{ row }">
                   <el-tag size="small" effect="plain">{{ formatCarePlanTaskCategory(row.category) }}</el-tag>
@@ -768,6 +1128,7 @@ watch(
 
         <el-collapse-item
           v-if="showCheckinsSection"
+          v-show="!stacked || activeSection === 'checkins'"
           name="checkins"
           class="sec-item-checkins"
         >
@@ -887,6 +1248,117 @@ watch(
 
 .plan-sections--stacked :deep(.el-collapse-item__arrow) {
   display: none;
+}
+
+/* Tab 模式：隐藏折叠头，只保留当前 Tab 内容 */
+.plan-sections--tabbed :deep(.el-collapse-item__header) {
+  display: none;
+}
+.plan-sections--tabbed :deep(.el-collapse-item) {
+  margin-bottom: 0;
+}
+
+.preview-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+}
+.preview-tab {
+  position: relative;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+.preview-tab:hover {
+  color: #334155;
+  background: rgba(255, 255, 255, 0.7);
+}
+.preview-tab.active {
+  color: #1d4ed8;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+.preview-tab-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b82f6;
+}
+
+.overview-mod-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.overview-mod-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 132px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.overview-mod-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.overview-mod-card__icon {
+  color: #3b82f6;
+}
+.overview-mod-card__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+.overview-mod-card__body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #475569;
+}
+.overview-mod-card__cta {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.overview-mod-card__cta:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+@media (max-width: 1100px) {
+  .overview-mod-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .preview-nav {
@@ -1024,6 +1496,37 @@ watch(
   margin-top: 8px;
 }
 
+.rationale-line--edit {
+  display: grid;
+  gap: 6px;
+}
+:deep(.hx-autosize-textarea.rationale-edit) {
+  background: #f8fbff;
+}
+:deep(.hx-autosize-textarea.goal-summary-edit) {
+  margin-top: 8px;
+}
+:deep(.hx-autosize-textarea.plan-title-edit) {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 6px 10px;
+}
+.section-hint--edit {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.section-hint--edit :deep(.hx-autosize-textarea) {
+  flex: 1;
+  min-width: 0;
+}
+:deep(.hx-autosize-textarea.table-cell-edit) {
+  padding: 6px 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  min-height: 36px;
+}
 .rationale-label {
   display: inline-flex;
   align-items: center;
@@ -1243,37 +1746,35 @@ watch(
 
 .swap-hint {
   display: block;
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.35;
   color: var(--el-text-color-secondary, #6b7280);
 }
 
-.sample-day .info-list li {
-  margin-bottom: 6px;
-}
-
-.sample-day-struct {
-  list-style: none;
-  padding-left: 0;
-}
-
-.sample-day-struct li {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 10px;
-}
-
-.sample-day-label {
-  font-size: 13px;
-  color: #0f766e;
-}
 
 .preview-meal-cell {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.preview-meal-cell :deep(.meal-struct) {
+  gap: 2px;
+}
+.preview-meal-cell :deep(.meal-struct-row) {
+  gap: 2px 4px;
+}
+.preview-meal-cell :deep(.meal-struct-lab) {
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.preview-meal-cell :deep(.meal-struct-txt) {
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .week-block {
@@ -1291,24 +1792,65 @@ watch(
   margin-bottom: 4px;
 }
 
+.week-plan-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.week-plan-toggle .info-block-title {
+  margin: 0;
+  font-size: 13px;
+}
+.week-plan-toggle-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+.week-plan-toggle-icon {
+  transition: transform 0.15s ease;
+}
+.week-plan-toggle-icon.is-collapsed {
+  transform: rotate(-90deg);
+}
+.week-plan-toggle:hover .week-plan-toggle-meta {
+  color: #2563eb;
+}
+
 .week-plan {
-  margin-top: 14px;
+  margin-top: 10px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
+.week-plan > .info-block-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
 
 .week-plan-table {
-  margin-top: 8px;
-  min-width: 640px;
+  margin-top: 4px;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
+  font-size: 13px;
 }
 
 .week-plan-table :deep(.el-table) {
   --el-table-border-color: #f1f5f9;
   --el-table-header-bg-color: #f8fafc;
   --el-table-row-hover-bg-color: #f8fafc;
+  font-size: 13px;
 }
 
 .week-plan-table :deep(.el-table__inner-wrapper::before) {
@@ -1319,6 +1861,7 @@ watch(
   background: #f8fafc !important;
   font-weight: 700;
   color: #334155;
+  font-size: 12.5px;
 }
 
 .week-plan-table :deep(.el-table__row td) {
@@ -1329,20 +1872,54 @@ watch(
   background: #f8fafc !important;
 }
 
-.week-plan-table :deep(.el-table__cell) {
-  padding: 16px 12px !important;
-  vertical-align: middle;
+.week-plan-table--exercise {
+  min-width: 640px;
 }
 
-.week-plan-table :deep(.el-table__header .el-table__cell) {
-  padding: 12px !important;
+.week-plan-table--exercise :deep(.el-table__cell) {
+  padding: 8px 10px !important;
+  vertical-align: middle;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.week-plan-table--exercise :deep(.el-table__header .el-table__cell) {
+  padding: 8px 10px !important;
+}
+
+.week-plan-table--exercise :deep(.el-table__cell:last-child) {
+  white-space: normal;
+}
+
+.week-plan-table--diet {
+  min-width: 560px;
+  font-size: 12.5px;
+}
+
+.week-plan-table--diet :deep(.el-table) {
+  font-size: 12.5px;
+}
+
+.week-plan-table--diet :deep(.el-table__header th) {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.week-plan-table--diet :deep(.el-table__cell) {
+  padding: 6px 8px !important;
+  vertical-align: top;
+  line-height: 1.4;
+}
+
+.week-plan-table--diet :deep(.el-table__header .el-table__cell) {
+  padding: 6px 8px !important;
 }
 
 .intensity-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 1px 6px;
+  padding: 0 6px;
   border-radius: 4px;
   font-size: 12px;
   font-weight: 600;

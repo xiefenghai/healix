@@ -103,7 +103,6 @@ defineExpose({ reload: load })
       <div class="card-head">
         <strong>{{ m.drugName }}</strong>
         <span class="badge" :class="{ warn: m.source === 'PATIENT' && !m.verified }">{{ medSourceLabel(m) }}</span>
-        <span v-if="m.openFeedbackCount" class="badge muted">反馈处理中</span>
         <van-icon name="arrow" class="arrow" />
       </div>
       <p class="line">{{ line(m) }}</p>

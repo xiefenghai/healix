@@ -75,6 +75,14 @@ public class BCareChatController {
         return ApiResult.ok(Map.of("ok", true));
     }
 
+    /** 单患者：健管侧未读条数（患者发来未读）。 */
+    @GetMapping("/patients/{peopleId}/care-chat/unread")
+    public ApiResult<Map<String, Integer>> unreadForPeople(@PathVariable String peopleId) {
+        int count = careChatFacade.staffUnreadForPeople(
+                SecurityUtils.requireTenantId(), SecurityUtils.requireCurrentOrgId(), peopleId);
+        return ApiResult.ok(Map.of("count", count));
+    }
+
     @GetMapping("/care-chat/unread-count")
     public ApiResult<Map<String, Long>> unreadCount() {
         long count = careChatFacade.staffUnreadTotal(

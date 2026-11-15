@@ -57,4 +57,23 @@ class CarePlanEnergyTargetServiceTest {
         CarePlanEnergyTargetService.alignSummaryKcal(snap, target);
         assertEquals("每日总热量约 1680 千卡。", snap.path("summary").asText());
     }
+
+    @Test
+    void looksLikeLoseCopyDetectsSteadyDropWithout减重Keyword() {
+        String summary =
+                "12周内体重从约86kg稳步下降约6kg（每周约0.5kg），家庭血压逐步靠近130/80mmHg";
+        assertTrue(CarePlanEnergyTargetService.looksLikeLoseCopy(summary));
+    }
+
+    @Test
+    void sanitizeLoseNarrativeSoftensDropCopy() {
+        ObjectNode snap = JsonUtils.emptyObject();
+        snap.put(
+                "summary",
+                "12周内体重从约86kg稳步下降约6kg（每周约0.5kg），饮食上限盐少油。");
+        CarePlanEnergyTargetService.sanitizeLoseNarrative(snap);
+        String next = snap.path("summary").asText();
+        assertTrue(next.contains("体重保持相对平稳"));
+        assertTrue(next.contains("体重波动可控"));
+    }
 }

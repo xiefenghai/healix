@@ -59,38 +59,12 @@ export const MED_SLOT_TITLES: Record<string, string> = {
 
 export const MED_TIMED_SLOTS = ['MORNING', 'NOON', 'EVENING', 'BEDTIME'] as const
 
-export const MED_FEEDBACK_KIND_LABELS: Record<string, string> = {
-  ADVERSE: '不适上报',
-  ADJUST: '申请调整',
-  STOPPED: '我已停药',
-  ALLERGY_CONFLICT: '过敏冲突',
-}
-
-export const MED_SYMPTOMS: { code: string; label: string }[] = [
-  { code: 'RASH', label: '皮疹或瘙痒' },
-  { code: 'DIZZY', label: '头晕' },
-  { code: 'GI', label: '胃肠不适' },
-  { code: 'PALPITATION', label: '心慌' },
-  { code: 'FATIGUE', label: '乏力' },
-  { code: 'COUGH', label: '咳嗽' },
-  { code: 'EDEMA', label: '水肿' },
-  { code: 'OTHER', label: '其他' },
-]
-
-export const MED_SEVERITY_LABELS: Record<string, string> = {
-  MILD: '轻度',
-  MODERATE: '中度',
-  SEVERE: '重度',
-}
-
 export const MED_STOP_REASONS: { code: string; label: string }[] = [
   { code: 'IMPROVED', label: '自觉好转' },
   { code: 'SIDE_EFFECT', label: '副作用' },
   { code: 'DOCTOR', label: '医生让停' },
   { code: 'OTHER', label: '其他' },
 ]
-
-export type FeedbackMode = 'ADVERSE' | 'ADJUST' | 'STOP'
 
 /** 药箱来源标签 */
 export function medSourceLabel(m: { source?: string | null; verified?: boolean | null }): string {
@@ -122,24 +96,6 @@ export interface MedicationView {
   verified?: boolean | null
   allergyConflict?: string | null
   stopReason?: string | null
-  openFeedbackCount?: number
-}
-
-export interface MedicationFeedback {
-  id: string
-  medicationId: string
-  drugName?: string
-  kind: string
-  kindLabel?: string
-  symptoms?: string[]
-  symptomLabels?: string[]
-  severity?: string | null
-  content?: string | null
-  status: 'OPEN' | 'HANDLED'
-  reply?: string | null
-  handledByName?: string | null
-  handledAt?: string | null
-  gmtCreated?: string
 }
 
 export interface ScheduleItem {

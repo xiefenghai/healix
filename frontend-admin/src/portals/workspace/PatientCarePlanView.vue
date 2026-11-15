@@ -2,12 +2,17 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ArrowLeft, CircleCheck } from '@element-plus/icons-vue'
 import { api, hasRole } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
 import { isAbortError, postSse } from '../../shared/agent-stream'
 import { emitAgentCarePlanUpdated, onAgentCarePlanUpdated } from '../../shared/agent-events'
-import { takeAgentDraft } from '../../shared/agent-draft-bus'
+import { clearAgentDraft, setAgentDraft, takeAgentDraft } from '../../shared/agent-draft-bus'
+import {
+  carePlanComposeBackPath,
+  carePlanComposePath,
+  rememberCarePlanComposeReturn,
+} from '../../shared/care-plan-compose-nav'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
 import CarePlanEnergyRing from '../../shared/CarePlanEnergyRing.vue'
 import AllergyPanel from './AllergyPanel.vue'
@@ -60,16 +65,20 @@ import {
   type EnergyTarget,
 } from '../../shared/energy-target'
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from '../../shared/CarePlanPreviewDialog.vue'
-import CarePlanPreviewContent from '../../shared/CarePlanPreviewContent.vue'
+import CarePlanPreviewContent, {
+  type CarePlanPreviewPatch,
+} from '../../shared/CarePlanPreviewContent.vue'
 import CarePlanBriefingDrawer, {
   type CarePlanBriefingSubmitPayload,
 } from '../../shared/CarePlanBriefingDrawer.vue'
 import CarePlanReviseCopilotPanel, {
   type ReviseChatMessage,
 } from '../../shared/CarePlanReviseCopilotPanel.vue'
-import ComposeMetricMiniChart, {
-  type ComposeMiniSeries,
-} from '../../shared/ComposeMetricMiniChart.vue'
+import MetricSparklineChart, {
+  type MetricSparklineSeries,
+} from '../../shared/MetricSparklineChart.vue'
+/** 兼容旧类型名 */
+type ComposeMiniSeries = MetricSparklineSeries
 import GuidelineRefTags from '../../shared/GuidelineRefTags.vue'
 import {
   generatedBeforeLibrary,
@@ -106,8 +115,9 @@ import {
   type CarePlanWarnSection,
 } from '../../shared/care-plan-warn-ack'
 
-const carePlanTextareaAutosize = { minRows: 2, maxRows: 20 }
-const carePlanTextareaAutosizeLg = { minRows: 3, maxRows: 24 }
+/** 不设 maxRows：长文完整展开，避免框内滚动条 */
+const carePlanTextareaAutosize = { minRows: 2 }
+const carePlanTextareaAutosizeLg = { minRows: 3 }
 
 interface SafetyFlag {
   level: string
@@ -380,7 +390,7 @@ const patientDiseaseTags = computed(() => {
 const loading = ref(false)
 const saving = ref(false)
 const bundle = ref<CarePlanBundle | null>(null)
-const mainTab = ref<'list' | 'compose' | 'checkins'>('list')
+const mainTab = ref<'list' | 'compose' | 'checkins' | 'history'>('list')
 const subTab = ref<'overview' | 'summary' | 'exercise' | 'diet' | 'execution'>('overview')
 const adjustHintVisible = ref(false)
 
@@ -392,17 +402,22 @@ function normalizeComposeSubTab() {
 }
 
 function composePath() {
-  return `/workspace/patients/${peopleId.value}/care-plan/compose`
+  return carePlanComposePath(peopleId.value)
 }
 
 function goFullscreenCompose(query?: Record<string, string>) {
   if (!peopleId.value) return
+  rememberCarePlanComposeReturn(peopleId.value, query?.from || String(route.query.from || '') || null)
   void router.push({ path: composePath(), query })
 }
 
 function backFromCompose() {
   if (isEmbedded.value) return
-  void router.push(`/workspace/patients/${peopleId.value}/care-plan`)
+  // 清掉一次性草稿，避免回患者方案页时又被 preferComposeIfDraft 拉去制定/分配流程
+  clearAgentDraft()
+  const loc = carePlanComposeBackPath(peopleId.value, String(route.query.from || '') || null)
+  // replace：不要在历史里留下「患者方案/加入健管组」中间页，返回应直达原会话
+  void router.replace(loc)
 }
 
 async function loadPatientName() {
@@ -441,16 +456,19 @@ async function loadPatientName() {
 
 /**
  * 从列表点「制定新方案」→ 全屏 + fresh=1（自动 AI 新生成）。
+ * 继续编辑草稿请用 continueDraftEdit（不带 fresh，只加载已有草稿）。
  * 已在全屏/生成完成后调用 → 只切到制定态并展示当前草稿，不再强制重跑。
  */
 function enterCompose(query?: Record<string, string>) {
   const fromList = !isEmbedded.value && !isFullscreenCompose.value
   if (fromList) {
-    goFullscreenCompose({ fresh: '1', ...(query || {}) })
+    setComposeEntryKind('fresh')
+    goFullscreenCompose({ fresh: '1', entry: 'fresh', ...(query || {}) })
     return
   }
   mainTab.value = 'compose'
   if (query?.fresh === '1') {
+    setComposeEntryKind('fresh')
     void bootstrapComposeEntry({ forceFresh: true })
     return
   }
@@ -554,6 +572,21 @@ const previewData = ref<CarePlanPreviewData | null>(null)
 const activeListItems = computed(() => listItems.value.filter((r) => r.status === 'ACTIVE'))
 const draftListItems = computed(() =>
   listItems.value.filter((r) => r.status === 'DRAFT' || r.recordType === 'DRAFT'),
+)
+/** 历史方案：已归档/被替代的版本（不含当前生效与草稿） */
+const historyListItems = computed(() =>
+  listItems.value
+    .filter((r) => {
+      if (r.recordType === 'DRAFT' || r.status === 'DRAFT') return false
+      const status = String(r.status || '').toUpperCase()
+      return r.recordType === 'VERSION' && status !== 'ACTIVE'
+    })
+    .slice()
+    .sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0
+      return tb - ta
+    }),
 )
 
 const listAssistLoading = ref(false)
@@ -1363,20 +1396,35 @@ const recipeLoading = ref(false)
 const applyWeekWithRecipe = ref(true)
 
 const isDraftMode = computed(() => !!bundle.value?.draft)
-/** 全屏预览确认：默认只读，点「编辑」后才可微调字段 */
+/**
+ * 全屏「手动编辑」：仍用预览版式，关键文案可就地修改（不再切到表单 Tab）。
+ */
 const composeFsFineTuning = ref(false)
+/** 进入全屏的来源：决定标题与底部文案，避免「继续编辑」也写成全新生成 */
+type ComposeEntryKind = 'fresh' | 'continue' | 'adjust'
+const composeEntryKind = ref<ComposeEntryKind>('continue')
+
+function setComposeEntryKind(kind: ComposeEntryKind) {
+  composeEntryKind.value = kind
+}
+
+function readComposeEntryKindFromRoute(): ComposeEntryKind {
+  const raw = String(route.query.entry || '').toLowerCase()
+  if (raw === 'fresh' || raw === 'continue' || raw === 'adjust') return raw
+  if (String(route.query.fresh || '') === '1') return 'fresh'
+  return 'continue'
+}
 
 /** AI 局部修订 Copilot（嵌在右侧边栏底部） */
 const reviseCopilotSending = ref(false)
 const reviseCopilotProgress = ref('')
 const reviseCopilotMessages = ref<ReviseChatMessage[]>([])
 const reviseAiHighlightSections = ref<string[]>([])
-const reviseCopilotPanelRef = ref<{ focusInput?: () => void | Promise<void> } | null>(null)
 let reviseHighlightTimer: ReturnType<typeof setTimeout> | null = null
 let reviseMsgSeq = 0
 
 const REVISE_WELCOME =
-  '你好，我可以按你的意见局部修订当前草稿（如饮食/运动），请直接描述要改什么。'
+  '你好，直接说要改什么即可（如「执行计划只留 2～3 项」「不吃水煮蛋」），我会在当前预览页上局部修订。'
 
 function pushReviseMessage(
   role: ReviseChatMessage['role'],
@@ -1494,7 +1542,21 @@ function summarizeReviseChanges(
       bits.push('已调整运动安排')
     }
   }
-  if (sections.includes('execution')) bits.push('已同步执行计划任务')
+  if (sections.includes('execution')) {
+    const aExec = (afterDraft.execution || {}) as { tasks?: unknown[] }
+    const taskCount = Array.isArray(aExec.tasks) ? aExec.tasks.length : 0
+    if (/不想打卡|不要打卡|取消打卡|取消执行计划|不要执行/.test(instruction) && taskCount === 0) {
+      bits.push('已按意见取消打卡任务')
+    } else {
+      bits.push('已同步执行计划任务')
+    }
+  }
+  if (sections.includes('exercise') && /不要运动计划|不想要有运动计划|取消运动计划/.test(instruction)) {
+    // 覆盖上面泛化的「已调整运动安排」
+    const idx = bits.findIndex((b) => b.includes('运动'))
+    if (idx >= 0) bits[idx] = '已按意见取消正式运动计划'
+    else bits.push('已按意见取消正式运动计划')
+  }
   if (sections.includes('summary') && !bits.length) bits.push('已更新方案总结/目标表述')
   if (!bits.length) bits.push('已按你的意见完成局部修订，请在左侧核对')
   return bits.join('；') + '。'
@@ -1540,9 +1602,46 @@ async function restoreDraftSnapshot(snapshot: ReturnType<typeof snapshotCurrentD
   syncFormFromBundle()
 }
 
+/** 修订会话上文（不含本轮），供多轮忌口/取消类约束延续 */
+function buildReviseChatHistory(excludeLatestUserText: string): Array<{ user: string; assistant: string }> {
+  const msgs = reviseCopilotMessages.value.filter(
+    (m) =>
+      (m.role === 'user' || m.role === 'assistant') &&
+      String(m.content || '').trim() &&
+      !(m.role === 'assistant' && m.content === REVISE_WELCOME),
+  )
+  let end = msgs.length
+  if (
+    end > 0 &&
+    msgs[end - 1]?.role === 'user' &&
+    String(msgs[end - 1]?.content || '').trim() === excludeLatestUserText
+  ) {
+    end -= 1
+  }
+  const sliced = msgs.slice(0, end)
+  const turns: Array<{ user: string; assistant: string }> = []
+  let pendingUser = ''
+  for (const m of sliced) {
+    const content = String(m.content || '').trim()
+    if (m.role === 'user') {
+      if (pendingUser) turns.push({ user: pendingUser, assistant: '' })
+      pendingUser = content
+      continue
+    }
+    turns.push({ user: pendingUser, assistant: content })
+    pendingUser = ''
+  }
+  if (pendingUser) turns.push({ user: pendingUser, assistant: '' })
+  return turns.slice(-6)
+}
+
 async function sendReviseInstruction(instruction: string) {
   const text = instruction.trim()
   if (!text || reviseCopilotSending.value) return
+  if (composeFsFineTuning.value) {
+    ElMessage.info('请先点「完成编辑」退出手动编辑，再使用 AI 修订')
+    return
+  }
   if (!bundle.value?.draft) {
     ElMessage.warning('请先进入草稿')
     return
@@ -1552,11 +1651,12 @@ async function sendReviseInstruction(instruction: string) {
   reviseCopilotProgress.value = '保存当前草稿…'
   const beforeSnapshot = snapshotCurrentDraftForRevise()
   const beforeFlags = [...(bundle.value.draft.safetyFlags || [])]
+  const history = buildReviseChatHistory(text)
   try {
     await saveDraft({ quiet: true })
     const currentDraft = snapshotCurrentDraftForRevise()
     reviseCopilotProgress.value = 'AI 正在按你的意见修订…'
-    let resultBundle: CarePlanBundle | null = null
+    const reviseResult: { bundle: CarePlanBundle | null } = { bundle: null }
     let streamError = ''
     await postSse(
       `/api/b/v1/patients/${peopleId.value}/care-plan/revise/stream`,
@@ -1564,13 +1664,14 @@ async function sendReviseInstruction(instruction: string) {
         instruction: text,
         revisionInstruction: text,
         currentDraft,
+        history,
       },
       {
         onProgress: (msg) => {
           reviseCopilotProgress.value = msg
         },
         onResult: (payload) => {
-          resultBundle = payload as CarePlanBundle
+          reviseResult.bundle = payload as CarePlanBundle
         },
         onError: (msg) => {
           streamError = msg
@@ -1581,11 +1682,11 @@ async function sendReviseInstruction(instruction: string) {
       pushReviseMessage('assistant', `修改失败：${streamError}`, 'danger')
       return
     }
-    if (!resultBundle?.draft) {
+    if (!reviseResult.bundle?.draft) {
       pushReviseMessage('assistant', '修改失败：未返回有效草稿，请重试或改用手工编辑。', 'danger')
       return
     }
-    const afterDraft = resultBundle.draft
+    const afterDraft = reviseResult.bundle.draft
     const block = findReviseSafetyBlock(beforeFlags, afterDraft.safetyFlags || [])
     if (block) {
       reviseCopilotProgress.value = '检测到安全红线，正在回滚…'
@@ -1606,7 +1707,7 @@ async function sendReviseInstruction(instruction: string) {
       flashReviseHighlights([])
       return
     }
-    bundle.value = resultBundle
+    bundle.value = reviseResult.bundle
     syncFormFromBundle()
     const changed = detectReviseChangedSections(beforeSnapshot, afterDraft)
     const summary = summarizeReviseChanges(text, changed, beforeSnapshot, afterDraft)
@@ -1658,9 +1759,16 @@ const planBeforeLibrary = computed(
 const errorFlags = computed(() => safetyFlags.value.filter((f) => f.level === 'ERROR'))
 const warnFlags = computed(() => safetyFlags.value.filter((f) => f.level === 'WARN'))
 const warnSections = computed<CarePlanWarnSection[]>(() => parseCarePlanWarnSections(warnFlags.value))
+/**
+ * 侧栏「需关注」不展示纯系统侧提示（医生无法在方案块内核对）：
+ * 指南库空 / 未标注 refs —— 属数据与生成链路问题，不应打断审阅闭环。
+ */
+const COMPOSE_SIDEBAR_SYSTEM_WARN_CODES = new Set(['GUIDELINE_REF_MISSING', 'GUIDELINE_KB_EMPTY'])
 /** 顶部不堆首诊高亮长列表，改按运动/饮食/执行分栏核对 */
 const topWarnSections = computed(() =>
-  warnSections.value.filter((sec) => sec.code !== 'HIGHLIGHT_CAUTION'),
+  warnSections.value.filter(
+    (sec) => sec.code !== 'HIGHLIGHT_CAUTION' && !COMPOSE_SIDEBAR_SYSTEM_WARN_CODES.has(sec.code),
+  ),
 )
 const highlightWarnSection = computed(
   () => warnSections.value.find((sec) => sec.code === 'HIGHLIGHT_CAUTION') || null,
@@ -1669,19 +1777,51 @@ const highlightByDomain = computed(() =>
   groupHighlightItemsByDomain(highlightWarnSection.value?.items || []),
 )
 
+const composeFsPreviewRef = ref<{
+  selectSection?: (name: string, opts?: { pulse?: boolean }) => Promise<void> | void
+} | null>(null)
+
+let editPanelPulseTimer: ReturnType<typeof setTimeout> | null = null
+
+function pulseLocateEl(el: HTMLElement | null) {
+  if (!el) return
+  el.classList.add('sec-locate-pulse')
+  if (editPanelPulseTimer) clearTimeout(editPanelPulseTimer)
+  editPanelPulseTimer = setTimeout(() => {
+    el.classList.remove('sec-locate-pulse')
+    editPanelPulseTimer = null
+  }, 2000)
+}
+
 function jumpToHighlightDomain(domain: CarePlanWarnDomain) {
-  if (composeFsFineTuning.value || !isFullscreenCompose.value) {
+  // 非全屏：切到对应 Tab，并给面板加呼吸高亮
+  if (!isFullscreenCompose.value) {
     subTab.value = domain
+    void nextTick(() => {
+      const el =
+        (document.getElementById(`${domain}-section`) as HTMLElement | null) ||
+        (document.querySelector(`.panel--fs-${domain}`) as HTMLElement | null)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        pulseLocateEl(el)
+      }
+    })
     return
   }
-  // 全屏预览态：平滑滚到左侧对应章节
-  void nextTick(() => {
+  // 全屏预览/就地编辑：交给预览组件展开 + 平滑滚动 + 黄色呼吸环
+  void nextTick(async () => {
+    const api = composeFsPreviewRef.value
+    if (api?.selectSection) {
+      await api.selectSection(domain, { pulse: true })
+      return
+    }
     const root =
       (document.querySelector('.compose-fs-main-inner .preview-scroll') as HTMLElement | null) ||
       (document.querySelector('.compose-fs-main-inner') as HTMLElement | null)
     const el =
-      (document.querySelector(`#preview-sec-${domain}`) as HTMLElement | null) ||
-      (document.querySelector(`.sec-item-${domain}`) as HTMLElement | null)
+      (document.getElementById(`${domain}-section`) as HTMLElement | null) ||
+      (document.querySelector(`.sec-item-${domain}`) as HTMLElement | null) ||
+      (document.querySelector(`#preview-sec-${domain}`) as HTMLElement | null)
     if (!el) {
       subTab.value = domain
       return
@@ -1696,6 +1836,7 @@ function jumpToHighlightDomain(domain: CarePlanWarnDomain) {
     } else {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
+    pulseLocateEl(el)
   })
 }
 
@@ -1708,34 +1849,52 @@ type ComposeWarnCta =
   | { kind: 'allergy'; label: string }
   | { kind: 'domain'; domain: CarePlanWarnDomain; label: string }
   | { kind: 'ack'; label: string }
+  | { kind: 'info'; label: string }
 
-const WARN_REVIEW_HEADLINES: Record<string, string> = {
-  ALLERGY_UNKNOWN: '过敏史未采集',
-  HIGH_ALLERGEN_FOOD_UNCHECKED: '高致敏食物待确认',
-  GUIDELINE_TARGET_CONFLICT: '与指南推荐量不一致',
-  GUIDELINE_REF_MISSING: '缺少指南依据标注',
-  GUIDELINE_REF_UNKNOWN: '指南引用需核对',
-  GUIDELINE_KB_EMPTY: '指南库为空',
-  DIET_INTOLERANCE: '饮食不耐受风险',
-  HYPOGLYCEMIA_RISK: '低血糖风险',
-  CONTEXT_INCOMPLETE: '档案上下文不完整',
-  NO_DISEASE_TAG: '病种匹配待核对',
-  MISSING_RATIONALE: '生成依据不完整',
+/** 左侧微标签：禁止再用「生成依据 / 指南依据」这类与标题重复的废话 */
+const WARN_REVIEW_TAGS: Record<string, string> = {
+  MISSING_RATIONALE: '依据缺失',
+  GUIDELINE_REF_MISSING: '未匹配指南',
+  GUIDELINE_REF_UNKNOWN: '引用异常',
+  GUIDELINE_TARGET_CONFLICT: '指南冲突',
+  GUIDELINE_KB_EMPTY: '指南库空',
+  ALLERGY_UNKNOWN: '过敏史',
+  HIGH_ALLERGEN_FOOD_UNCHECKED: '高致敏',
+  CONTEXT_INCOMPLETE: '档案不全',
+  HYPOGLYCEMIA_RISK: '低血糖',
+  DIET_INTOLERANCE: '饮食禁忌',
+  NO_DISEASE_TAG: '病种',
 }
 
-/** 侧栏「需关注」副文案：信息降噪，标题外再给一句可读解释 */
+const REDUNDANT_WARN_TAGS = new Set(['生成依据', '指南依据', '警告'])
+
+function warnReviewTag(code: string, fallbackTag?: string): string {
+  const mapped = WARN_REVIEW_TAGS[code]
+  if (mapped) return mapped
+  const raw = String(fallbackTag || '').trim()
+  if (raw && !REDUNDANT_WARN_TAGS.has(raw)) return raw
+  return '需核对'
+}
+
+function warnIgnoreLabel(_code: string): string {
+  // 次级操作：业务感话术，浅灰样式在 CSS 中体现
+  return '标记为个体化安排'
+}
+
+/** 右侧纯说明：一句说清，不再复读标签名 */
 const WARN_REVIEW_HINTS: Record<string, string> = {
-  MISSING_RATIONALE: 'AI 未能提取到足够的家族史或近期体检数据。',
-  GUIDELINE_TARGET_CONFLICT: '本方案运动量低于指南标准，或为术后限制下的个体化安排。',
-  GUIDELINE_REF_MISSING: '部分建议未匹配到特定指南库，请人工复核。',
-  GUIDELINE_REF_UNKNOWN: '引用编码可能过期或写错，请对照指南库核对。',
-  GUIDELINE_KB_EMPTY: '当前租户指南库为空，依据校验已跳过。',
-  ALLERGY_UNKNOWN: '过敏史未采集，饮食建议无法排除过敏风险。',
-  HIGH_ALLERGEN_FOOD_UNCHECKED: '示例餐含常见高致敏食材，请确认患者可耐受。',
-  CONTEXT_INCOMPLETE: '档案或缺项较多，方案建议可能不够个体化。',
-  HYPOGLYCEMIA_RISK: '存在低血糖相关信号，请核对运动强度与注意事项。',
-  DIET_INTOLERANCE: '存在饮食不耐受记录，请核对示例餐是否已避开。',
-  NO_DISEASE_TAG: '病种标签不完整，模板匹配可能偏差。',
+  MISSING_RATIONALE: '生成理由不完整（缺总览或运动/饮食/执行块级理由）',
+  GUIDELINE_TARGET_CONFLICT:
+    '方案中强度运动低于指南推荐（约 150 分钟/周），请确认是否因术后或个体限制导致',
+  GUIDELINE_REF_MISSING: '系统未能标注具体指南来源，但不影响当前方案的执行',
+  GUIDELINE_REF_UNKNOWN: '引用编码可能过期或写错，请对照指南库核对',
+  GUIDELINE_KB_EMPTY: '当前租户指南库为空，依据校验已跳过',
+  ALLERGY_UNKNOWN: '过敏史未采集，饮食建议无法排除过敏风险',
+  HIGH_ALLERGEN_FOOD_UNCHECKED: '示例餐含常见高致敏食材，请确认患者可耐受',
+  CONTEXT_INCOMPLETE: '档案或缺项较多，方案建议可能不够个体化',
+  HYPOGLYCEMIA_RISK: '存在低血糖相关信号，请核对运动强度与注意事项',
+  DIET_INTOLERANCE: '存在饮食不耐受记录，请核对示例餐是否已避开',
+  NO_DISEASE_TAG: '病种标签不完整，模板匹配可能偏差',
 }
 
 const DOMAIN_CTA_LABEL: Record<CarePlanWarnDomain, string> = {
@@ -1802,13 +1961,17 @@ function peelGuidelineRefs(text: string): { body: string; refs: string[] } {
 }
 
 function warnSectionCta(sec: CarePlanWarnSection): ComposeWarnCta {
+  // 系统侧缺数已在 topWarnSections 过滤；兜底仍给可点入口，避免再出现「无去核对」
+  if (sec.code === 'GUIDELINE_REF_MISSING' || sec.code === 'GUIDELINE_KB_EMPTY') {
+    return { kind: 'ack', label: '去核对 >' }
+  }
   if (sec.code === 'ALLERGY_UNKNOWN') return { kind: 'allergy', label: '去补采 >' }
   if (sec.code === 'HIGH_ALLERGEN_FOOD_UNCHECKED') {
     return { kind: 'domain', domain: 'diet', label: DOMAIN_CTA_LABEL.diet }
   }
   const domain = primaryDomainForWarnSection(sec)
   if (domain) return { kind: 'domain', domain, label: DOMAIN_CTA_LABEL[domain] }
-  return { kind: 'ack', label: '已核对 >' }
+  return { kind: 'ack', label: '去核对 >' }
 }
 
 const allergyDialogOpen = ref(false)
@@ -1822,18 +1985,30 @@ const overviewRationaleOpen = ref(false)
 type ComposeWarnReviewCard = {
   code: string
   index: number
-  headline: string
+  tag: string
+  ignoreLabel: string
+  /** 左侧 Tag 右侧的一句说明 */
   description: string
   refs: string[]
   cta: ComposeWarnCta
   visited: boolean
+  dismissing: boolean
+  /** 是否展示「去核对」类跳转 CTA（info 仅忽略） */
+  showLocateCta: boolean
 }
+
+/** 黄灯「忽略警告，记录原因」后本地隐藏；发布时仍会随 ackWarnCodes 留痕 */
+const composeWarnDismissedCodes = ref<Set<string>>(new Set())
+const composeWarnDismissingCodes = ref<Set<string>>(new Set())
+/** 忽略原因备注（本地留痕，随 session 草稿绑定） */
+const composeWarnDismissNotes = ref<Record<string, string>>({})
 
 function markComposeWarnVisited(code: string) {
   if (!code) return
   const next = new Set(composeWarnVisitedCodes.value)
   next.add(code)
   composeWarnVisitedCodes.value = next
+  persistComposeWarnAckLocal()
 }
 
 function runWarnSectionCta(sec: CarePlanWarnSection) {
@@ -1841,6 +2016,18 @@ function runWarnSectionCta(sec: CarePlanWarnSection) {
   markComposeWarnVisited(sec.code)
   if (cta.kind === 'allergy') openAllergyCollect()
   else if (cta.kind === 'domain') jumpToHighlightDomain(cta.domain)
+  else if (cta.kind === 'info' || cta.kind === 'ack') {
+    // 无明确方案块：展示详情，完成「去核对」动作（不可只灰掉无入口）
+    const detail =
+      WARN_REVIEW_HINTS[sec.code] ||
+      sec.items?.map((it) => String(it.action || '').trim()).filter(Boolean).join('\n') ||
+      sec.title ||
+      '请结合方案内容审阅该项风险'
+    void ElMessageBox.alert(detail, '风险详情', {
+      confirmButtonText: '知道了',
+      type: 'warning',
+    })
+  }
 }
 
 function runComposeWarnCardCta(card: ComposeWarnReviewCard) {
@@ -1849,44 +2036,177 @@ function runComposeWarnCardCta(card: ComposeWarnReviewCard) {
   else markComposeWarnVisited(card.code)
 }
 
+function persistComposeWarnAckLocal() {
+  const draftId = bundle.value?.draft?.id
+  if (!draftId || typeof sessionStorage === 'undefined') return
+  try {
+    sessionStorage.setItem(
+      `healix.careplan.warnAck.${draftId}`,
+      JSON.stringify({
+        visited: [...composeWarnVisitedCodes.value],
+        dismissed: [...composeWarnDismissedCodes.value],
+        notes: composeWarnDismissNotes.value,
+        verified: composeWarnVerified.value,
+      }),
+    )
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function restoreComposeWarnAckLocal() {
+  const draftId = bundle.value?.draft?.id
+  if (!draftId || typeof sessionStorage === 'undefined') return
+  try {
+    const raw = sessionStorage.getItem(`healix.careplan.warnAck.${draftId}`)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as {
+      visited?: string[]
+      dismissed?: string[]
+      notes?: Record<string, string>
+      verified?: boolean
+    }
+    const valid = new Set(topWarnSections.value.map((s) => s.code))
+    if (Array.isArray(parsed.visited)) {
+      composeWarnVisitedCodes.value = new Set(parsed.visited.filter((c) => valid.has(c)))
+    }
+    if (Array.isArray(parsed.dismissed)) {
+      composeWarnDismissedCodes.value = new Set(parsed.dismissed.filter((c) => valid.has(c)))
+    }
+    if (parsed.notes && typeof parsed.notes === 'object') {
+      const next: Record<string, string> = {}
+      for (const [k, v] of Object.entries(parsed.notes)) {
+        if (valid.has(k) && typeof v === 'string' && v.trim()) next[k] = v.trim()
+      }
+      composeWarnDismissNotes.value = next
+    }
+    // 仅在右侧动作已齐备时恢复「已核对」，避免断链勾选残留
+    if (parsed.verified && composeWarnActionsReady.value) {
+      composeWarnVerified.value = true
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 侧栏仍待处理的风险条数（未去核对且未标记个体化） */
+function composeWarnPendingCount(): number {
+  return composeSidebarAlerts.value.filter((c) => !c.visited).length
+}
+
+/**
+ * 底部强制确认：禁止跳过右侧动作直接勾选。
+ * 过敏未采 / 高致敏仍在列表时硬锁定；其余须每条已「去核对」或「个体化安排」。
+ */
+function toggleComposeWarnVerified() {
+  if (composeWarnVerified.value) {
+    composeWarnVerified.value = false
+    persistComposeWarnAckLocal()
+    return
+  }
+  if (composeWarnHasFatalRisk.value) {
+    void ElMessageBox.alert('请先处理过敏史未采集或高致敏食物等致命风险后再解锁核对', '致命风险未处理', {
+      type: 'warning',
+      confirmButtonText: '知道了',
+    })
+    return
+  }
+  const pending = composeWarnPendingCount()
+  if (pending > 0 || !composeWarnActionsReady.value) {
+    void ElMessageBox.alert(`尚有 ${pending || composeReviewWarnCount.value} 项风险未核对，请先处理`, '尚未完成风险核对', {
+      type: 'warning',
+      confirmButtonText: '知道了',
+    })
+    return
+  }
+  composeWarnVerified.value = true
+  persistComposeWarnAckLocal()
+}
+
+async function dismissComposeWarnAsPersonalized(card: ComposeWarnReviewCard) {
+  if (!card.code || composeWarnDismissedCodes.value.has(card.code)) return
+  let note = ''
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '将按个体化安排处理该项风险，并从侧栏移除；请填写临床判断依据，便于留痕追溯。',
+      '标记为个体化安排',
+      {
+        type: 'warning',
+        confirmButtonText: '确认标记',
+        cancelButtonText: '取消',
+        inputType: 'textarea',
+        inputPlaceholder: '例如：术后恢复期，暂不按指南满量运动',
+        inputValidator: (v) => (!!v && v.trim().length >= 2) || '请填写至少 2 字原因',
+        distinguishCancelAndClose: true,
+      },
+    )
+    note = String(value || '').trim()
+  } catch {
+    return
+  }
+  if (!note) return
+  const dismissing = new Set(composeWarnDismissingCodes.value)
+  dismissing.add(card.code)
+  composeWarnDismissingCodes.value = dismissing
+  markComposeWarnVisited(card.code)
+  composeWarnDismissNotes.value = { ...composeWarnDismissNotes.value, [card.code]: note }
+  window.setTimeout(() => {
+    const dismissed = new Set(composeWarnDismissedCodes.value)
+    dismissed.add(card.code)
+    composeWarnDismissedCodes.value = dismissed
+    const nextDismissing = new Set(composeWarnDismissingCodes.value)
+    nextDismissing.delete(card.code)
+    composeWarnDismissingCodes.value = nextDismissing
+    persistComposeWarnAckLocal()
+    ElMessage.success('已标记为个体化安排')
+  }, 280)
+}
+
+function cleanWarnDescription(raw: string): string {
+  return String(raw || '')
+    .replace(/^(生成依据|指南依据|指南推荐量|警告)\s*[：:]\s*/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 const composeWarnReviewCards = computed((): ComposeWarnReviewCard[] =>
   topWarnSections.value.map((sec, index) => {
-    const headlineBase =
-      WARN_REVIEW_HEADLINES[sec.code] ||
-      String(sec.title || sec.tag || '需核对项').replace(/^与指南推荐量不一致.*$/, '与指南推荐量不一致')
     const refs: string[] = []
     const descParts: string[] = []
-
-    // 标题里若带「请确认…」长句，挪到描述
-    const titleExtra = String(sec.title || '')
-      .replace(headlineBase, '')
-      .replace(/^[，,：:\s]+/, '')
-      .trim()
-    if (titleExtra && titleExtra !== headlineBase) descParts.push(titleExtra)
+    const hint = WARN_REVIEW_HINTS[sec.code] || ''
 
     for (const it of sec.items || []) {
       const peeled = peelGuidelineRefs(String(it.action || ''))
-      if (peeled.body) descParts.push(peeled.body)
+      if (peeled.body) descParts.push(cleanWarnDescription(peeled.body))
       refs.push(...peeled.refs)
-      if (it.source) refs.push(`首诊：${it.source}${it.answer ? ` → ${it.answer}` : ''}`)
     }
 
     let description = [...new Set(descParts.map((s) => s.trim()).filter(Boolean))].join('；')
-    const hint = WARN_REVIEW_HINTS[sec.code] || ''
-    if (!description) {
-      description = hint || '请展开核对相关方案内容后再发布'
-    } else if (hint && description.length < 12) {
-      description = hint
+    // 优先用精简 hint，避免后端长文 + 标签名复读
+    if (
+      !description ||
+      description.length > 72 ||
+      sec.code === 'GUIDELINE_REF_MISSING' ||
+      sec.code === 'MISSING_RATIONALE' ||
+      sec.code === 'GUIDELINE_TARGET_CONFLICT'
+    ) {
+      description = hint || description || '请核对相关方案内容后再发布'
     }
+    description = cleanWarnDescription(description)
 
+    const cta = warnSectionCta(sec)
     return {
       code: sec.code,
       index: index + 1,
-      headline: headlineBase,
+      tag: warnReviewTag(sec.code, sec.tag),
+      ignoreLabel: warnIgnoreLabel(sec.code),
       description,
       refs: [...new Set(refs)],
-      cta: warnSectionCta(sec),
+      cta,
       visited: composeWarnVisitedCodes.value.has(sec.code),
+      dismissing: composeWarnDismissingCodes.value.has(sec.code),
+      // 侧栏每条都必须有主操作入口，杜绝「无去核对」断链
+      showLocateCta: true,
     }
   }),
 )
@@ -3471,10 +3791,12 @@ async function load() {
   }
 }
 
-/** 进入全屏制定：fresh 或无草稿 → 自动 AI 生成；有草稿且非 fresh → 只展示草稿 */
+/** 进入全屏制定：fresh 或无草稿 → 自动 AI 生成；有草稿且非 fresh → 只展示预览页（不进表单微调） */
 async function bootstrapComposeEntry(opts?: { forceFresh?: boolean }) {
   if (!peopleId.value) return
   const wantFresh = opts?.forceFresh || String(route.query.fresh || '') === '1'
+  composeEntryKind.value = wantFresh ? 'fresh' : readComposeEntryKindFromRoute()
+  composeFsFineTuning.value = false
   loading.value = true
   try {
     const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan`)
@@ -3501,6 +3823,7 @@ async function bootstrapComposeEntry(opts?: { forceFresh?: boolean }) {
     if (String(route.query.fresh || '') === '1') {
       const q = { ...route.query }
       delete q.fresh
+      q.entry = 'fresh'
       void router.replace({ path: route.path, query: q })
     }
     return
@@ -3509,6 +3832,7 @@ async function bootstrapComposeEntry(opts?: { forceFresh?: boolean }) {
 
 async function runComposeAutoGenerate() {
   if (!peopleId.value || composeAutoGenerating.value) return
+  setComposeEntryKind('fresh')
   composeAutoGenerating.value = true
   composeGenerateProgress.value = '正在基于最新患者体征生成...'
   composeFsFineTuning.value = false
@@ -3669,7 +3993,7 @@ function onMainTabChange(name: string | number) {
     goFullscreenCompose()
     return
   }
-  if (name === 'list') {
+  if (name === 'list' || name === 'history') {
     void loadList()
   } else if (name === 'compose') {
     void load()
@@ -3751,13 +4075,28 @@ function shortVersionLabel(row: Pick<CarePlanListItem, 'versionLabel' | 'schemaV
   return 'v—'
 }
 
+/** 列表「继续编辑」：进入全屏预览页（图一）加载已有草稿，禁止 fresh 重生成，也不进表单微调 */
 function continueDraftEdit() {
-  enterCompose()
+  setComposeEntryKind('continue')
+  composeFsFineTuning.value = false
+  if (!isEmbedded.value && !isFullscreenCompose.value) {
+    goFullscreenCompose({ entry: 'continue' })
+    return
+  }
+  mainTab.value = 'compose'
+  void bootstrapComposeEntry({ forceFresh: false })
 }
 
 async function adjustActivePlan() {
   if (draftListItems.value.length) {
-    enterCompose()
+    setComposeEntryKind('adjust')
+    composeFsFineTuning.value = false
+    if (!isEmbedded.value && !isFullscreenCompose.value) {
+      goFullscreenCompose({ entry: 'adjust' })
+      return
+    }
+    mainTab.value = 'compose'
+    void bootstrapComposeEntry({ forceFresh: false })
     return
   }
   saving.value = true
@@ -3768,8 +4107,14 @@ async function adjustActivePlan() {
     })
     bundle.value = res.data
     syncFormFromBundle()
-    ElMessage.success('已基于生效版创建草稿')
-    enterCompose()
+    ElMessage.success('已基于生效版创建草稿，可在右侧用 AI 修订或确认后发布')
+    setComposeEntryKind('adjust')
+    composeFsFineTuning.value = false
+    if (!isEmbedded.value && !isFullscreenCompose.value) {
+      goFullscreenCompose({ entry: 'adjust' })
+    } else {
+      mainTab.value = 'compose'
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '打开调整失败')
   } finally {
@@ -4103,9 +4448,10 @@ async function confirmGenerate() {
     )
     generateVisible.value = false
     composeFsFineTuning.value = false
+    setComposeEntryKind('fresh')
     // 已有新草稿：进入全屏确认，勿再带 fresh 触发二次生成
     if (!isEmbedded.value && !isFullscreenCompose.value) {
-      goFullscreenCompose()
+      goFullscreenCompose({ entry: 'fresh' })
     } else {
       mainTab.value = 'compose'
       syncFormFromBundle()
@@ -4137,8 +4483,10 @@ async function createBlank() {
     bundle.value = res.data
     syncFormFromBundle()
     ElMessage.success('已创建空白草稿')
+    setComposeEntryKind('continue')
+    composeFsFineTuning.value = false
     if (!isEmbedded.value && !isFullscreenCompose.value) {
-      goFullscreenCompose()
+      goFullscreenCompose({ entry: 'continue' })
     } else {
       mainTab.value = 'compose'
     }
@@ -4150,21 +4498,9 @@ async function createBlank() {
   }
 }
 
+/** 非全屏工具栏「编辑」：与列表「调整方案」同一路径，进入预览页而非表单微调 */
 async function openEdit() {
-  saving.value = true
-  try {
-    const res = await api<{ data: CarePlanBundle }>(`/api/b/v1/patients/${peopleId.value}/care-plan/edit`, {
-      method: 'POST',
-      body: '{}',
-    })
-    bundle.value = res.data
-    syncFormFromBundle()
-    ElMessage.success('已基于生效版创建草稿')
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '打开编辑失败')
-  } finally {
-    saving.value = false
-  }
+  await adjustActivePlan()
 }
 
 function lines(text: string) {
@@ -4780,7 +5116,12 @@ function statusLabel(status?: string) {
   if (status === 'REVIEWED') return '已审核'
   if (status === 'COMMUNICATING') return '沟通中'
   if (status === 'SUPERSEDED') return '已替代'
+  if (status === 'ARCHIVED') return '已归档'
   return status || '未创建'
+}
+
+function historyStatusTagType(status?: string): 'info' | 'warning' {
+  return status === 'SUPERSEDED' ? 'warning' : 'info'
 }
 
 const draftSchemaLabel = computed(() => {
@@ -4806,22 +5147,40 @@ const composePrimaryStatus = computed(() => {
   return { kind: 'empty' as const, text: statusLabel(bundle.value?.plan?.status) }
 })
 
-/** 全屏顶栏主标题：明确这是 AI 新成果，不是旧生效案 */
+/** 全屏顶栏主标题：按进入来源区分，避免继续编辑也写成「全新生成」 */
 const composeFsTitle = computed(() => {
   if (composeAutoGenerating.value) return 'AI 正在生成新方案…'
-  if (bundle.value?.draft) return 'AI 全新生成方案（待确认）'
-  return '制定新方案'
+  if (!bundle.value?.draft) return '制定新方案'
+  const phase = composeFsFineTuning.value ? '编辑中' : '待确认'
+  if (composeEntryKind.value === 'fresh') return `AI 生成方案（${phase}）`
+  if (composeEntryKind.value === 'adjust') return `调整方案（${phase}）`
+  return `编辑草稿（${phase}）`
 })
 
-/** 全屏顶栏标签：待审核草稿（黄）；生成中用 info */
+/** 全屏顶栏标签：待审核草稿（黄）；手动编辑中显示「编辑中」；生成中用 info */
 const composeModeTag = computed(() => {
   if (composeAutoGenerating.value) {
     return { kind: 'gen' as const, text: '生成中', type: 'info' as const }
   }
   if (bundle.value?.draft) {
-    return { kind: 'draft' as const, text: '待审核草稿', type: 'warning' as const }
+    if (composeFsFineTuning.value) {
+      return { kind: 'draft' as const, text: '编辑中', type: 'warning' as const }
+    }
+    if (composeEntryKind.value === 'fresh') {
+      return { kind: 'draft' as const, text: '待确认', type: 'warning' as const }
+    }
+    if (composeEntryKind.value === 'adjust') {
+      return { kind: 'draft' as const, text: '调整中', type: 'warning' as const }
+    }
+    return { kind: 'draft' as const, text: '编辑中', type: 'warning' as const }
   }
   return { kind: 'empty' as const, text: '待生成', type: 'info' as const }
+})
+
+const composeAbandonLabel = computed(() => {
+  if (composeEntryKind.value === 'adjust') return '放弃调整'
+  if (composeEntryKind.value === 'continue') return '丢弃草稿'
+  return '放弃本次生成'
 })
 
 const composeComparePrevLabel = computed(() => {
@@ -4840,23 +5199,79 @@ const canRecordComm = computed(
   () => !!bundle.value?.draft && (planStatus.value === 'REVIEWED' || planStatus.value === 'COMMUNICATING'),
 )
 
-/** 与顶部黄灯「N 处需重点核对」同源，保证数量一致 */
-const composeSidebarAlerts = computed(() => composeWarnReviewCards.value)
+/** 侧栏展示：过滤已忽略，序号按剩余条目重排 */
+const composeSidebarAlerts = computed(() =>
+  composeWarnReviewCards.value
+    .filter((c) => !composeWarnDismissedCodes.value.has(c.code))
+    .map((c, i) => ({ ...c, index: i + 1 })),
+)
 
-const composeReviewWarnCount = computed(() => topWarnSections.value.length)
+const composeReviewWarnCount = computed(() => composeSidebarAlerts.value.length)
+
+/** 侧栏底部「已核对」勾选；有黄灯时未勾选则禁用「确认并发布」 */
+const composeWarnVerified = ref(false)
+
+/**
+ * 右侧动作是否齐备：当前仍展示的每条风险均已点过「去核对/补采」，
+ * 或已通过「忽略警告，记录原因」移出列表。
+ */
+const composeWarnActionsReady = computed(() => {
+  const alerts = composeSidebarAlerts.value
+  if (!alerts.length) return true
+  return alerts.every((c) => c.visited)
+})
+
+/** 过敏未采 / 高致敏：致命风险仍在列表时，禁止点底部「已核对」 */
+const COMPOSE_FATAL_WARN_CODES = new Set(['ALLERGY_UNKNOWN', 'HIGH_ALLERGEN_FOOD_UNCHECKED'])
+const composeWarnHasFatalRisk = computed(() =>
+  composeSidebarAlerts.value.some((c) => COMPOSE_FATAL_WARN_CODES.has(c.code)),
+)
+
+/** 有待核对风险且未勾选确认时，禁止发布 */
+const composePublishBlockedByWarn = computed(
+  () => composeReviewWarnCount.value > 0 && !composeWarnVerified.value,
+)
 
 /** 侧栏「需关注」默认展开；条目多时可收起 */
 const asideWarnExpanded = ref(true)
 
 function asideWarnCtaLabel(card: ComposeWarnReviewCard) {
-  if (card.cta.kind === 'allergy') return '去补采 >'
-  return '去核对 >'
+  if (card.cta.kind === 'allergy') return '去补采'
+  if (card.cta.kind === 'info') return String(card.cta.label || '去核对').replace(/\s*>\s*$/u, '')
+  return '去核对'
 }
 
 watch(
   () => topWarnSections.value.map((s) => s.code).join('|'),
   () => {
     composeWarnVisitedCodes.value = new Set()
+    composeWarnDismissedCodes.value = new Set()
+    composeWarnDismissingCodes.value = new Set()
+    composeWarnDismissNotes.value = {}
+    composeWarnVerified.value = false
+    restoreComposeWarnAckLocal()
+  },
+)
+
+watch(composeReviewWarnCount, (n) => {
+  if (n === 0) composeWarnVerified.value = false
+})
+
+watch(composeWarnActionsReady, (ready) => {
+  if (!ready && composeWarnVerified.value) composeWarnVerified.value = false
+})
+
+watch(composeWarnHasFatalRisk, (hasFatal) => {
+  if (hasFatal && composeWarnVerified.value) {
+    composeWarnVerified.value = false
+    persistComposeWarnAckLocal()
+  }
+})
+
+watch(
+  () => bundle.value?.draft?.id,
+  () => {
+    restoreComposeWarnAckLocal()
   },
 )
 
@@ -4867,28 +5282,99 @@ function toggleComposeFineTune() {
   }
   composeFsFineTuning.value = !composeFsFineTuning.value
   if (composeFsFineTuning.value) {
-    if (subTab.value === 'overview') subTab.value = 'summary'
-    ElMessage.info('已进入微调模式，改完后请保存为草稿或确认并发布')
+    ElMessage.info('已进入手动编辑：可在预览版式上直接改文字，改完后请保存或发布')
   }
 }
 
-/** 放弃本次 AI 生成：丢弃草稿并返回列表 */
+function onComposePreviewPatch(payload: CarePlanPreviewPatch) {
+  switch (payload.field) {
+    case 'title':
+      editForm.title = payload.value
+      break
+    case 'goalSummary':
+      editForm.goalSummary = payload.value
+      break
+    case 'summary':
+      editForm.planSummary = payload.value
+      break
+    case 'rationaleOverview':
+      editForm.rationaleOverview = payload.value
+      break
+    case 'exerciseGoal':
+      editForm.exerciseGoal = payload.value
+      break
+    case 'exerciseRationale':
+      editForm.exerciseRationale = payload.value
+      break
+    case 'exerciseReviewHint':
+      editForm.exerciseReviewHint = payload.value
+      break
+    case 'exercisePrecautionsText':
+      editForm.exercisePrecautions = payload.value
+      break
+    case 'exerciseContraindicationsText':
+      editForm.exerciseContraindications = payload.value
+      break
+    case 'dietRationale':
+      editForm.dietRationale = payload.value
+      break
+    case 'dietCalorieHint':
+      editForm.dietCalorieHint = payload.value
+      break
+    case 'dietPrinciplesText':
+      editForm.dietPrinciples = payload.value
+      break
+    case 'dietNotes':
+      editForm.dietNotes = payload.value
+      break
+    case 'executionRationale':
+      editForm.executionRationale = payload.value
+      break
+    case 'taskTitle': {
+      const row = editForm.tasks[payload.index]
+      if (row) row.title = payload.value
+      break
+    }
+    case 'taskRationale': {
+      const row = editForm.tasks[payload.index]
+      if (row) row.rationale = payload.value
+      break
+    }
+    case 'weekItemNote': {
+      const day = editForm.weeklyPlan.find(
+        (d) => String(d.day || '').toUpperCase() === String(payload.day || '').toUpperCase(),
+      )
+      const item = day?.items?.[payload.index]
+      if (item) item.note = payload.value
+      break
+    }
+    default:
+      break
+  }
+}
+
+/** 放弃草稿并返回列表（文案随进入来源变化） */
 async function abandonAiGeneration() {
   if (!bundle.value?.draft) {
     backFromCompose()
     return
   }
+  const kind = composeEntryKind.value
+  const title =
+    kind === 'adjust' ? '放弃调整' : kind === 'continue' ? '丢弃草稿' : '放弃本次生成'
+  const body =
+    kind === 'adjust'
+      ? '将丢弃基于生效版创建的调整草稿，已生效方案不受影响。是否继续？'
+      : kind === 'continue'
+        ? '将丢弃当前未发布草稿，已生效方案不受影响。是否继续？'
+        : '将丢弃本次 AI 生成的草稿，已生效方案不受影响。是否继续？'
   try {
-    await ElMessageBox.confirm(
-      '将丢弃本次 AI 生成的草稿，已生效方案不受影响。是否继续？',
-      '放弃本次生成',
-      {
-        type: 'warning',
-        confirmButtonText: '放弃生成',
-        cancelButtonText: '继续审阅',
-        confirmButtonClass: 'el-button--danger',
-      },
-    )
+    await ElMessageBox.confirm(body, title, {
+      type: 'warning',
+      confirmButtonText: kind === 'fresh' ? '放弃生成' : '确认丢弃',
+      cancelButtonText: '继续审阅',
+      confirmButtonClass: 'el-button--danger',
+    })
   } catch {
     return
   }
@@ -4900,7 +5386,7 @@ async function abandonAiGeneration() {
     bundle.value = res.data
     syncFormFromBundle()
     composeFsFineTuning.value = false
-    ElMessage.success('已放弃本次生成')
+    ElMessage.success(kind === 'fresh' ? '已放弃本次生成' : '已丢弃草稿')
     refreshAfterMutation()
     backFromCompose()
   } catch (e) {
@@ -4922,15 +5408,8 @@ async function saveAsNewDraft() {
   backFromCompose()
 }
 
-/** 黄灯风险示例文案，供强行发布确认框引用 */
-function composeWarnForceExample(): string {
-  const first = composeWarnReviewCards.value[0]
-  if (!first) return '风险点待核对'
-  return first.headline.replace(/^⚠️\s*/, '') || first.description || '风险点待核对'
-}
-
 /**
- * 确认并发布：有黄灯时弹出强行发布二次确认，禁止一键盲发。
+ * 确认并发布：有黄灯时须先勾选侧栏「已核对」，禁止未核对盲发。
  */
 async function publishAiDraftDirectly() {
   if (!bundle.value?.draft) {
@@ -4941,29 +5420,18 @@ async function publishAiDraftDirectly() {
     ElMessage.error('存在 ERROR 级安全问题，请先修正后再发布')
     return
   }
-  const reviewN = composeReviewWarnCount.value
+  if (composePublishBlockedByWarn.value) {
+    asideWarnExpanded.value = true
+    ElMessage.warning('请先勾选确认已核对上述风险')
+    return
+  }
   try {
-    if (reviewN > 0) {
-      asideWarnExpanded.value = true
-      await ElMessageBox.confirm(
-        `当前方案仍存在 ${reviewN} 处需重点核对的风险（如：${composeWarnForceExample()}）。请确认是否已人工评估并强行发布？`,
-        '发布前风险确认',
-        {
-          type: 'warning',
-          confirmButtonText: '确认强行发布',
-          cancelButtonText: '取消，返回核对',
-          confirmButtonClass: 'el-button--danger',
-          distinguishCancelAndClose: true,
-        },
-      )
-    } else {
-      await ElMessageBox.confirm('确认发布该方案并使其生效？', '确认并发布', {
-        type: 'warning',
-        confirmButtonText: '确认并发布',
-        cancelButtonText: '取消',
-        distinguishCancelAndClose: true,
-      })
-    }
+    await ElMessageBox.confirm('确认发布该方案并使其生效？', '确认并发布', {
+      type: 'warning',
+      confirmButtonText: '确认并发布',
+      cancelButtonText: '取消',
+      distinguishCancelAndClose: true,
+    })
   } catch {
     return
   }
@@ -5014,12 +5482,14 @@ const composeFsLivePreview = computed((): CarePlanPreviewData | null => {
     title: editForm.title || bundle.value?.plan?.title,
     goalSummary: editForm.goalSummary || editForm.exerciseGoal,
     summary: editForm.planSummary || readPlanSummary(src),
+    rationaleOverview: editForm.rationaleOverview || readRationaleOverview(src) || undefined,
     source: src.source || currentPlanSource.value,
     versionLabel: draftSchemaLabel.value ? `${draftSchemaLabel.value}·草稿` : '草稿',
     status: 'DRAFT',
     peopleName: patientName.value || undefined,
     exercise: {
       goal: editForm.exerciseGoal,
+      rationale: editForm.exerciseRationale || undefined,
       weeklyPlan: editForm.weeklyPlan,
       precautions: lines(editForm.exercisePrecautions),
       contraindications: lines(editForm.exerciseContraindications),
@@ -5027,6 +5497,7 @@ const composeFsLivePreview = computed((): CarePlanPreviewData | null => {
     },
     diet: {
       principles: lines(editForm.dietPrinciples),
+      rationale: editForm.dietRationale || undefined,
       calorieHint: editForm.dietCalorieHint || undefined,
       energyTarget: editForm.energyTarget,
       notes: editForm.dietNotes || undefined,
@@ -5039,6 +5510,7 @@ const composeFsLivePreview = computed((): CarePlanPreviewData | null => {
     },
     execution: {
       horizonDays: editForm.horizonDays,
+      rationale: editForm.executionRationale || undefined,
       tasks: editForm.tasks,
     },
   }
@@ -5195,15 +5667,35 @@ async function preferComposeIfDraft() {
   }
 
   if (queryTab === 'compose' || wantCompose) {
-    if (!isEmbedded.value) {
-      const q: Record<string, string> = {}
-      if (route.query.adjustHint) q.adjustHint = String(route.query.adjustHint)
-      if (wantCreate || queryTab === 'compose') q.fresh = '1'
+    // 驾驶舱抽屉嵌入时也跳到同一全屏制定页，避免两套 UI
+    if (isEmbedded.value) {
+      setAgentDraft({
+        peopleId: peopleId.value,
+        mode: 'care-plan',
+        openCompose: true,
+        openCreate: wantCreate,
+      })
+      const q: Record<string, string> = { from: 'cockpit' }
+      if (wantCreate) {
+        q.fresh = '1'
+        q.entry = 'fresh'
+      } else {
+        q.entry = 'continue'
+      }
       goFullscreenCompose(q)
       return
     }
-    mainTab.value = 'compose'
-    await bootstrapComposeEntry({ forceFresh: wantCreate })
+    const q: Record<string, string> = {}
+    if (route.query.adjustHint) q.adjustHint = String(route.query.adjustHint)
+    if (wantCreate || queryTab === 'compose') {
+      q.fresh = '1'
+      q.entry = 'fresh'
+      setComposeEntryKind('fresh')
+    } else {
+      q.entry = 'continue'
+      setComposeEntryKind('continue')
+    }
+    goFullscreenCompose(q)
     return
   }
   if (queryTab) return
@@ -5268,7 +5760,7 @@ watch(
     class="care-plan"
     :class="{
       'care-plan--fullscreen': isFullscreenCompose,
-      'care-plan--fs-preview': isFullscreenCompose && !!bundle?.draft && !composeFsFineTuning,
+      'care-plan--fs-preview': isFullscreenCompose && !!bundle?.draft,
       'care-plan--fs-generating': composeImmersiveGenerating,
     }"
   >
@@ -5295,14 +5787,24 @@ watch(
       </template>
       <template v-else>
         <div class="compose-fs-header-left">
+          <button type="button" class="compose-fs-back" @click="backFromCompose">
+            <el-icon :size="16"><ArrowLeft /></el-icon>
+            <span>返回</span>
+          </button>
           <div class="compose-who">
             <div class="compose-fs-title-row">
-              <strong>{{ composeFsTitle }}</strong>
-              <el-tag size="small" effect="light" :type="composeModeTag.type">
+              <strong class="compose-fs-page-title">{{ composeFsTitle }}</strong>
+              <el-tag
+                size="small"
+                effect="light"
+                round
+                class="compose-fs-status-tag"
+                :type="composeModeTag.type"
+              >
                 {{ composeModeTag.text }}
               </el-tag>
+              <span class="compose-fs-header-patient">{{ patientName || '患者' }}</span>
             </div>
-            <span class="compose-sub">{{ patientName || '患者' }}</span>
           </div>
         </div>
         <div class="compose-fs-header-actions">
@@ -5325,19 +5827,10 @@ watch(
             <el-button
               plain
               class="compose-fs-ghost-btn"
-              :class="{ 'is-active-edit': composeFsFineTuning }"
-              :disabled="saving || reviseCopilotSending"
-              @click="toggleComposeFineTune"
-            >
-              {{ composeFsFineTuning ? '完成微调' : '编辑' }}
-            </el-button>
-            <el-button
-              plain
-              class="compose-fs-ghost-btn"
               :disabled="saving"
               @click="previewClientEffect"
             >
-              预览 C 端效果
+              预览效果
             </el-button>
           </template>
         </div>
@@ -5361,6 +5854,7 @@ watch(
     >
       <el-tab-pane label="当前生效方案" name="list" />
       <el-tab-pane label="患者打卡记录" name="checkins" />
+      <el-tab-pane label="历史方案" name="history" />
     </el-tabs>
 
     <div v-show="mainTab === 'checkins'" v-loading="checkinLoading" class="checkin-panel section-card">
@@ -5444,6 +5938,55 @@ watch(
           </el-table-column>
           <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
         </el-table>
+      </div>
+    </div>
+
+    <div v-show="mainTab === 'history'" v-loading="listLoading" class="list-shell">
+      <div class="list-shell-head">
+        <h3 class="section-title">历史方案</h3>
+        <span class="history-tab-count">共 {{ historyListItems.length }} 个版本</span>
+      </div>
+      <div class="list-shell-body plan-flow">
+        <el-empty
+          v-if="!listLoading && historyListItems.length === 0"
+          class="page-empty"
+          description="暂无历史方案"
+        />
+        <article
+          v-for="row in historyListItems"
+          :key="`history-${row.id}`"
+          class="plan-card plan-card--history plan-card--clickable"
+          role="button"
+          tabindex="0"
+          title="点击查看方案详情"
+          @click="openListDetail(row)"
+          @keydown.enter.prevent="openListDetail(row)"
+        >
+          <header class="plan-card-head">
+            <div class="plan-card-title-row">
+              <h4 class="plan-card-title">{{ row.title || '未命名方案' }}</h4>
+              <el-tag size="small" effect="plain" class="plan-source-tag">
+                {{ sourceModeTag(row.sourceMode) }}
+              </el-tag>
+              <span class="plan-ver-chip plan-ver-chip--static">{{ shortVersionLabel(row) }}</span>
+            </div>
+            <el-tag size="small" :type="historyStatusTagType(row.status)" effect="light">
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </header>
+          <p class="plan-card-summary" :class="{ empty: !row.goalSummary }">
+            {{ row.goalSummary || '暂无方案摘要' }}
+          </p>
+          <footer class="plan-card-actions" @click.stop>
+            <div class="plan-card-meta">
+              <span>制定人 {{ row.staffName || '—' }}</span>
+              <span>{{ formatDateMinute(row.createdAt) }}</span>
+            </div>
+            <div class="plan-card-actions-right">
+              <el-button plain @click="openListDetail(row)">查看方案详情</el-button>
+            </div>
+          </footer>
+        </article>
       </div>
     </div>
 
@@ -5867,7 +6410,7 @@ watch(
           </span>
         </div>
         <div class="compose-metric-detail-chart">
-          <ComposeMetricMiniChart
+          <MetricSparklineChart
             :categories="composeMetricDetailCard.categories"
             :series="composeMetricDetailCard.series"
             :unit="composeMetricDetailCard.unit"
@@ -5960,39 +6503,30 @@ watch(
       "
     >
       <div
-        v-if="isFullscreenCompose && !composeFsFineTuning && composeFsLivePreview"
+        v-if="isFullscreenCompose && composeFsLivePreview"
         class="compose-fs-preview-stack"
+        :class="{ 'is-editing': composeFsFineTuning }"
       >
         <CarePlanPreviewContent
+          ref="composeFsPreviewRef"
           :data="composeFsLivePreview"
           stacked
+          show-staff-rationale
+          :editable="composeFsFineTuning"
           :reset-key="bundle?.draft?.id || 'compose-draft-preview'"
           :ai-highlight-sections="reviseAiHighlightSections"
+          @patch="onComposePreviewPatch"
         />
       </div>
 
-      <template v-if="!isFullscreenCompose || composeFsFineTuning">
-      <el-tabs v-if="!isFullscreenCompose" v-model="subTab" class="sub-tabs hx-pill-tabs">
+      <template v-if="!isFullscreenCompose">
+      <el-tabs v-model="subTab" class="sub-tabs hx-pill-tabs">
         <el-tab-pane label="总览" name="overview" />
         <el-tab-pane label="方案总结" name="summary" />
         <el-tab-pane label="运动方案" name="exercise" />
         <el-tab-pane label="饮食方案" name="diet" />
         <el-tab-pane label="执行计划" name="execution" />
       </el-tabs>
-      <div v-if="isFullscreenCompose && composeFsFineTuning" class="compose-fs-finetune-hint">
-        <el-alert
-          type="warning"
-          show-icon
-          :closable="false"
-          title="微调模式：可修改下方各模块后，点底部「保存为草稿」或「确认并发布」。"
-        />
-        <el-tabs v-model="subTab" class="sub-tabs hx-pill-tabs">
-          <el-tab-pane label="方案总结" name="summary" />
-          <el-tab-pane label="运动方案" name="exercise" />
-          <el-tab-pane label="饮食方案" name="diet" />
-          <el-tab-pane label="执行计划" name="execution" />
-        </el-tabs>
-      </div>
 
       <div v-show="subTab === 'overview' && !isFullscreenCompose" class="panel panel--fluid section-card panel--overview">
         <div class="panel-head panel-head--compact">
@@ -6160,7 +6694,7 @@ watch(
               v-model="editForm.rationaleOverview"
               :readonly="!composeCanFineTune"
               type="textarea"
-              :autosize="{ minRows: 2, maxRows: 6 }"
+              :autosize="carePlanTextareaAutosize"
               placeholder="为何推荐该方案类型（档案病种、评估等）"
               class="rationale-input"
               :class="{ 'textarea-readonly': !composeCanFineTune }"
@@ -6194,7 +6728,7 @@ watch(
             <el-input
               v-model="editForm.planSummary"
               type="textarea"
-              :autosize="{ minRows: 6, maxRows: 18 }"
+              :autosize="carePlanTextareaAutosizeLg"
               placeholder="面向健管师的阶段总结：控制目标、运动饮食要点、执行重点与复评建议（约 200 字内）"
               class="summary-full-input"
             />
@@ -6224,7 +6758,7 @@ watch(
                 v-if="summarySectionEditing === sec.key"
                 v-model="summarySectionDrafts[sec.key]"
                 type="textarea"
-                :autosize="{ minRows: 3, maxRows: 10 }"
+                :autosize="carePlanTextareaAutosizeLg"
                 class="summary-sec-input"
               />
               <div v-if="summarySectionEditing === sec.key" class="summary-sec-bar">
@@ -6250,8 +6784,9 @@ watch(
       </div>
 
       <div
+        id="exercise-section"
         v-show="subTab === 'exercise'"
-        class="panel panel--fluid section-card"
+        class="panel panel--fluid section-card panel--fs-exercise"
         :class="{ 'panel-ai-updated': reviseAiHighlightSections.includes('exercise') }"
       >
         <div class="panel-head">
@@ -6336,7 +6871,7 @@ watch(
               v-model="editForm.exerciseRationale"
               :readonly="!composeCanFineTune"
               type="textarea"
-              :autosize="{ minRows: 1, maxRows: 4 }"
+              :autosize="carePlanTextareaAutosize"
               placeholder="本块运动安排的推荐理由"
               class="rationale-input"
               :class="{ 'textarea-readonly': !composeCanFineTune }"
@@ -6456,7 +6991,7 @@ watch(
                           v-if="composeCanFineTune && exerciseNoteEditKey === noteEditKey(di, $index)"
                           v-model="row.note"
                           type="textarea"
-                          :autosize="{ minRows: 2, maxRows: 5 }"
+                          :autosize="carePlanTextareaAutosize"
                           placeholder="备注（选填）"
                           @blur="endNoteEdit"
                         />
@@ -6502,8 +7037,9 @@ watch(
       </div>
 
       <div
+        id="diet-section"
         v-show="subTab === 'diet'"
-        class="panel panel--fluid section-card"
+        class="panel panel--fluid section-card panel--fs-diet"
         :class="{ 'panel-ai-updated': reviseAiHighlightSections.includes('diet') }"
       >
         <div class="panel-head">
@@ -6701,7 +7237,7 @@ watch(
               v-model="editForm.dietRationale"
               :readonly="!composeCanFineTune"
               type="textarea"
-              :autosize="{ minRows: 1, maxRows: 4 }"
+              :autosize="carePlanTextareaAutosize"
               placeholder="本块饮食安排的推荐理由"
               class="rationale-input"
               :class="{ 'textarea-readonly': !composeCanFineTune }"
@@ -7129,8 +7665,9 @@ watch(
       </div>
 
       <div
+        id="execution-section"
         v-show="subTab === 'execution'"
-        class="panel panel--fluid section-card"
+        class="panel panel--fluid section-card panel--fs-execution"
         :class="{ 'panel-ai-updated': reviseAiHighlightSections.includes('execution') }"
       >
         <div class="panel-head">
@@ -7196,7 +7733,7 @@ watch(
               v-model="editForm.executionRationale"
               :readonly="!composeCanFineTune"
               type="textarea"
-              :autosize="{ minRows: 1, maxRows: 4 }"
+              :autosize="carePlanTextareaAutosize"
               placeholder="执行任务清单的推荐理由"
               class="rationale-input"
               :class="{ 'textarea-readonly': !composeCanFineTune }"
@@ -7420,7 +7957,7 @@ watch(
                   </span>
                 </div>
               </div>
-              <ComposeMetricMiniChart
+              <MetricSparklineChart
                 spark
                 :categories="card.categories"
                 :series="card.series"
@@ -7432,7 +7969,10 @@ watch(
           </div>
         </section>
 
-        <section v-if="composeSidebarAlerts.length" class="compose-aside-card compose-aside-card--alert">
+        <section
+          v-if="composeWarnReviewCards.length"
+          class="compose-aside-card compose-aside-card--alert"
+        >
           <button
             type="button"
             class="compose-aside-warn-toggle"
@@ -7450,33 +7990,80 @@ watch(
               v-for="card in composeSidebarAlerts"
               :key="card.code"
               class="compose-aside-alert"
-              :class="{ 'compose-aside-alert--done': card.visited }"
+              :class="{
+                'compose-aside-alert--done': card.visited,
+                'compose-aside-alert--dismissing': card.dismissing,
+              }"
             >
-              <div class="compose-aside-alert-main">
-                <p class="compose-aside-alert-title">
-                  {{ card.index }}. {{ card.headline }}
-                </p>
-                <p v-if="card.description" class="compose-aside-alert-desc">
-                  {{ card.description }}
-                </p>
-              </div>
-              <button
-                type="button"
-                class="compose-aside-alert-cta"
-                @click.stop="runComposeWarnCardCta(card)"
+              <h5 class="compose-aside-alert-title">{{ card.tag }}</h5>
+              <p class="compose-aside-alert-desc">{{ card.description }}</p>
+              <p
+                v-if="card.code === 'GUIDELINE_REF_MISSING'"
+                class="compose-aside-alert-note"
               >
-                {{ asideWarnCtaLabel(card) }}
-              </button>
+                检测到未匹配到特定指南库
+              </p>
+              <div class="compose-aside-alert-ops">
+                <button
+                  v-if="card.showLocateCta"
+                  type="button"
+                  class="compose-aside-alert-btn compose-aside-alert-btn--primary"
+                  @click.stop="runComposeWarnCardCta(card)"
+                >
+                  {{ asideWarnCtaLabel(card) }}
+                </button>
+                <button
+                  type="button"
+                  class="compose-aside-alert-btn compose-aside-alert-btn--muted"
+                  @click.stop="dismissComposeWarnAsPersonalized(card)"
+                >
+                  {{ card.ignoreLabel }}
+                </button>
+              </div>
             </li>
           </ul>
+          <p v-if="asideWarnExpanded && !composeSidebarAlerts.length" class="compose-aside-alert-empty">
+            风险项已全部核查
+          </p>
+          <div
+            v-if="asideWarnExpanded && composeSidebarAlerts.length"
+            class="compose-aside-warn-confirm-wrap"
+          >
+            <button
+              type="button"
+              class="compose-aside-warn-confirm-all"
+              :class="{
+                'is-verified': composeWarnVerified,
+                'is-disabled':
+                  !composeWarnVerified &&
+                  (composeWarnHasFatalRisk || !composeWarnActionsReady),
+                'is-fatal-locked': !composeWarnVerified && composeWarnHasFatalRisk,
+              }"
+              :aria-pressed="composeWarnVerified"
+              :aria-disabled="
+                !composeWarnVerified && (composeWarnHasFatalRisk || !composeWarnActionsReady)
+                  ? 'true'
+                  : undefined
+              "
+              :disabled="saving || (!composeWarnVerified && composeWarnHasFatalRisk)"
+              @click="toggleComposeWarnVerified"
+            >
+              <el-icon class="compose-aside-warn-confirm-icon" :size="16">
+                <CircleCheck />
+              </el-icon>
+              <span v-if="composeWarnVerified">已核对</span>
+              <span v-else-if="composeWarnHasFatalRisk">⚠️ 请先在右侧完成过敏史核对</span>
+              <span v-else>点击确认已核对 {{ composeReviewWarnCount }} 项风险</span>
+            </button>
+          </div>
         </section>
 
         <section class="compose-aside-card compose-aside-card--copilot">
           <CarePlanReviseCopilotPanel
-            ref="reviseCopilotPanelRef"
             :messages="reviseCopilotMessages"
             :sending="reviseCopilotSending"
             :progress="reviseCopilotProgress"
+            :disabled="composeFsFineTuning"
             @send="sendReviseInstruction"
           />
         </section>
@@ -7537,7 +8124,7 @@ watch(
           <el-input
             v-model="generateForm.instruction"
             type="textarea"
-            :autosize="{ minRows: 3, maxRows: 8 }"
+            :autosize="carePlanTextareaAutosizeLg"
             placeholder="可选，补充本次偏好（首诊总结已自动带入，无需重复粘贴）。例如：近期低血糖偏多，运动强度放低"
             maxlength="500"
             show-word-limit
@@ -7601,20 +8188,33 @@ watch(
     >
       <div class="compose-fs-footer-inner">
         <div class="compose-fs-footer-left">
+          <span v-if="draftSchemaLabel" class="compose-fs-footer-meta">
+            草稿 {{ draftSchemaLabel }}
+          </span>
+        </div>
+        <div class="compose-fs-footer-actions">
           <el-button
             text
             class="compose-fs-btn-abandon"
             :disabled="saving"
             @click="abandonAiGeneration"
           >
-            放弃本次生成
+            {{ composeAbandonLabel }}
           </el-button>
-        </div>
-        <div class="compose-fs-footer-actions">
+          <el-button
+            plain
+            class="compose-fs-btn-edit"
+            :class="{ 'is-active-edit': composeFsFineTuning }"
+            :disabled="saving || reviseCopilotSending"
+            @click="toggleComposeFineTune"
+          >
+            {{ composeFsFineTuning ? '完成编辑' : '手动编辑' }}
+          </el-button>
           <el-button
             plain
             class="compose-fs-btn-draft"
             :loading="saving"
+            :disabled="saving"
             @click="saveAsNewDraft"
           >
             保存为草稿
@@ -7622,7 +8222,9 @@ watch(
           <el-button
             type="primary"
             class="compose-fs-btn-publish"
+            :class="{ 'is-blocked': composePublishBlockedByWarn }"
             :loading="saving"
+            :disabled="saving || composePublishBlockedByWarn"
             @click="publishAiDraftDirectly"
           >
             确认并发布
@@ -7724,7 +8326,7 @@ watch(
       <el-input
         v-model="weekMealEdit.text"
         type="textarea"
-        :autosize="{ minRows: 4, maxRows: 10 }"
+        :autosize="carePlanTextareaAutosizeLg"
         placeholder="杂粮饭约150g（熟重）&#10;清蒸鸡腿约80g（去皮）&#10;蒜蓉空心菜约150g"
         class="week-meal-edit-input"
       />
@@ -8060,12 +8662,28 @@ watch(
 }
 
 .care-plan--fullscreen {
+  /* 第一阶段：全屏方案制定工作台视觉 token */
+  --compose-bg: #f5f7fa;
+  --compose-card: #ffffff;
+  --compose-border: #e2e8f0;
+  --compose-text: #1e293b;
+  --compose-text-secondary: #64748b;
+  --compose-text-muted: #94a3b8;
+  --compose-primary: #2563eb;
+  --compose-primary-hover: #1d4ed8;
+  --compose-radius: 10px;
+  --compose-radius-btn: 8px;
+  --compose-header-h: 56px;
+  --compose-gap: 14px;
+  --compose-pad: 16px;
+
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   padding: 0;
-  background: #fff;
+  background: var(--compose-bg);
+  color: var(--compose-text);
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -8091,12 +8709,15 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
-  padding: 12px 20px;
-  background: #fff;
-  border-bottom: 1px solid var(--ink-200, #e2e8f0);
+  flex-wrap: nowrap;
+  min-height: var(--compose-header-h, 56px);
+  height: var(--compose-header-h, 56px);
+  padding: 0 20px;
+  background: var(--compose-card, #fff);
+  border-bottom: 1px solid var(--compose-border, #e2e8f0);
   flex-shrink: 0;
   z-index: 20;
+  box-sizing: border-box;
 }
 
 .compose-fs-header-left {
@@ -8110,8 +8731,35 @@ watch(
 .compose-fs-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.compose-fs-page-title {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--compose-text, #1e293b);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.compose-fs-status-tag {
+  flex-shrink: 0;
+  font-weight: 560;
+}
+
+.compose-fs-header-patient {
+  min-width: 0;
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--compose-text-secondary, #64748b);
+  line-height: 1.3;
 }
 
 .compose-fs-base {
@@ -8141,9 +8789,19 @@ watch(
 .compose-fs-header-actions {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.compose-fs-header-actions :deep(.el-button) {
+  margin: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--compose-radius-btn, 8px);
+  font-size: 13px;
+  font-weight: 560;
 }
 
 .compose-more-icon {
@@ -8166,7 +8824,7 @@ watch(
   margin: 0;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--compose-bg, #f5f7fa);
   overflow: hidden;
 }
 
@@ -8191,6 +8849,9 @@ watch(
 .care-plan--fullscreen .compose-fs-grid--split {
   flex-direction: row;
   align-items: stretch;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
 }
 
 .compose-fs-grid--split {
@@ -8202,21 +8863,26 @@ watch(
 
 .compose-fs-main {
   min-width: 0;
+  min-height: 0;
 }
 
 .care-plan--fullscreen .compose-fs-main {
-  flex: 1;
+  flex: 1 1 auto;
   width: 100%;
-  background: #fff;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  background: var(--compose-bg, #f5f7fa);
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .care-plan--fullscreen .compose-fs-grid--split .compose-fs-main {
-  flex: 1 1 72%;
-  width: 72%;
-  max-width: 72%;
+  flex: 1 1 71%;
+  width: 71%;
+  max-width: 71%;
 }
 
 .compose-fs-main-inner {
@@ -8227,7 +8893,7 @@ watch(
   max-width: none;
   width: 100%;
   margin: 0;
-  padding: 20px 28px 32px;
+  padding: 16px 20px 28px;
   box-sizing: border-box;
 }
 
@@ -8242,6 +8908,7 @@ watch(
 .care-plan--fullscreen.care-plan--fs-generating .compose-fs-main {
   display: flex;
   flex-direction: column;
+  background: var(--compose-bg, #f5f7fa);
 }
 
 /* 预览确认态：隐藏行内「修改」等编辑入口，字段只读由 composeCanFineTune 控制 */
@@ -8254,12 +8921,71 @@ watch(
 .care-plan--fullscreen .compose-fs-main .section-card,
 .care-plan--fullscreen .compose-fs-main .panel.section-card {
   box-shadow: none;
-  border: 0;
-  background: transparent;
-  border-radius: 0;
-  padding-left: 0;
-  padding-right: 0;
+  border: 1px solid var(--compose-border, #e2e8f0);
+  background: var(--compose-card, #fff);
+  border-radius: var(--compose-radius, 10px);
+  padding: 16px 18px;
+  margin-bottom: var(--compose-gap, 14px);
 }
+
+/* 左侧预览栈：统一白卡片 + 浅灰底 */
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.preview-shell.stacked .summary-header) {
+  background: var(--compose-card, #fff);
+  border: 1px solid var(--compose-border, #e2e8f0);
+  border-radius: var(--compose-radius, 10px);
+  padding: 16px 18px;
+  margin-bottom: var(--compose-gap, 14px);
+  box-shadow: none;
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.plan-title) {
+  font-size: 17px;
+  font-weight: 650;
+  color: var(--compose-text, #1e293b);
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.preview-tabs) {
+  position: sticky;
+  top: 0;
+  z-index: 9;
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.plan-sections--tabbed .el-collapse-item) {
+  margin: 0;
+  border: 1px solid var(--compose-border, #e2e8f0);
+  border-radius: var(--compose-radius, 10px);
+  background: var(--compose-card, #fff);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.plan-sections--tabbed .el-collapse-item__wrap) {
+  background: var(--compose-card, #fff);
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.plan-sections--tabbed .el-collapse-item__content) {
+  padding: 16px 18px;
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.section-name) {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--compose-text, #1e293b);
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.section-icon) {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.care-plan--fullscreen .compose-fs-preview-stack :deep(.section-lead) {
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: #334155;
+}
+
+/* 勿把 section-body 行高继承进摘要卡，避免 line-clamp 失效 */
 
 .compose-fs-intro {
   margin-bottom: 8px;
@@ -8321,29 +9047,36 @@ watch(
 }
 
 .care-plan--fullscreen .compose-fs-aside {
-  flex: 0 0 28%;
-  width: 28%;
-  max-width: 28%;
+  flex: 0 0 29%;
+  width: 29%;
+  max-width: 29%;
+  align-self: stretch;
+  height: auto;
+  max-height: 100%;
+  min-height: 0;
   position: static;
-  background: #f1f5f9;
-  border-left: 1px solid #e2e8f0;
+  background: var(--compose-bg, #f5f7fa);
+  border-left: 1px solid var(--compose-border, #e2e8f0);
   overflow: hidden;
   padding: 0;
   box-sizing: border-box;
 }
 
+/* 右侧整栏独立滚动：患者摘要 → 核心指标 → 需关注 → AI 助手 */
 .compose-aside-scroll {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   width: 100%;
+  height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 12px;
+  gap: 16px; /* gap-4 */
   padding: 16px;
   box-sizing: border-box;
 }
@@ -8356,24 +9089,29 @@ watch(
   box-sizing: border-box;
   align-self: stretch;
   flex-shrink: 0;
+  /* 统一卡片轮廓：白底 + slate-200 边框 + rounded-xl，与灰底明确分离 */
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important; /* slate-200 */
+  border-radius: 12px !important; /* rounded-xl */
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  outline: none;
 }
 
 .compose-aside-card {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 16px;
   border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: none;
   box-sizing: border-box;
 }
 
 .compose-aside-card--copilot {
   flex: 1 1 auto;
-  flex-shrink: 1;
-  min-height: 300px;
+  min-height: 320px;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -8387,23 +9125,32 @@ watch(
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  border: 0;
-  border-radius: 14px;
-  box-shadow: none;
-  background: transparent;
+  border: 0 !important;
+  border-radius: 12px;
+  box-shadow: none !important;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.compose-aside-card--copilot :deep(.revise-panel__head) {
+  background: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .compose-aside-card--flush {
-  background: #fff;
+  background: #ffffff;
+  padding: 16px;
 }
 
 .compose-aside-card--alert {
-  border: 1px solid #fde68a;
-  background: #fffbeb;
-  /* 左侧强调用 inset，避免 4px border 造成外缘视觉错位 */
-  box-shadow:
-    inset 3px 0 0 #f59e0b,
-    0 4px 14px rgba(15, 23, 42, 0.06);
+  /* 轮廓与其它卡片一致；高度随内容自然撑开，不留大块空底 */
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: none !important;
+  padding: 12px 14px;
+  height: auto;
+  min-height: 0;
+  flex: 0 0 auto;
 }
 
 .compose-aside-title {
@@ -8411,11 +9158,12 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 0.01em;
-  color: #0f172a;
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--compose-text, #1e293b);
+  line-height: 1.35;
 }
 
 .compose-aside-count {
@@ -8497,81 +9245,244 @@ watch(
 }
 
 .compose-aside-alerts {
-  margin: 10px 0 0;
+  margin: 6px 0 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
 }
 
 .compose-aside-alert {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
   margin: 0;
-  padding: 0;
-  background: transparent;
+  padding: 12px 0;
   border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  border-bottom: 1px dashed #fde68a; /* border-dashed border-amber-200 */
+  background: transparent;
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s ease;
 }
 
-.compose-aside-alert + .compose-aside-alert {
-  padding-top: 10px;
-  border-top: 1px solid rgba(245, 158, 11, 0.22);
+.compose-aside-alert:last-child {
+  border-bottom: 0;
+  padding-bottom: 4px;
 }
 
-.compose-aside-alert-main {
-  min-width: 0;
-  flex: 1 1 auto;
+.compose-aside-alert--dismissing {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
 }
 
 .compose-aside-alert-title {
   margin: 0;
   font-size: 13px;
   font-weight: 700;
-  line-height: 1.45;
+  line-height: 1.35;
   color: #92400e;
 }
 
 .compose-aside-alert-desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  min-width: 0;
+  font-size: 12px; /* text-xs */
   line-height: 1.5;
+  color: #64748b; /* text-slate-500 */
+  font-weight: 400;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.compose-aside-alert-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+/* 操作区：说明下方横向小按钮，不挤标题旁 */
+.compose-aside-alert-ops {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.compose-aside-alert-btn {
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.compose-aside-alert-btn--primary {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.compose-aside-alert-btn--primary:hover,
+.compose-aside-alert-btn--primary:focus-visible {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.compose-aside-alert-btn--muted {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
   color: #64748b;
 }
 
-.compose-aside-alert-cta {
-  flex-shrink: 0;
-  margin-top: 1px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #92400e;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
-  cursor: pointer;
-  white-space: nowrap;
-  text-decoration: none;
-  opacity: 0.85;
+.compose-aside-alert-btn--muted:hover,
+.compose-aside-alert-btn--muted:focus-visible {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #475569;
 }
 
-.compose-aside-alert-cta:hover {
-  color: #78350f;
-  text-decoration: underline;
+.compose-aside-alert-empty {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #a16207;
+  font-weight: 560;
+}
+
+.compose-aside-warn-confirm-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+  margin-bottom: 0;
+  padding-top: 0;
+}
+
+.compose-aside-warn-confirm-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 16px;
+  border: 1px solid #fcd34d; /* amber-300 实线：明确可点，非输入框 */
+  border-radius: 8px;
+  background: #fff;
+  color: #b45309; /* amber-700 */
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    font-weight 0.15s ease;
+}
+
+.compose-aside-warn-confirm-icon {
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.compose-aside-warn-confirm-all:hover:not(:disabled):not(.is-verified) {
+  background: #fffbeb; /* amber-50 */
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+/* 右侧动作未齐 / 致命风险锁定：灰色 Disabled */
+.compose-aside-warn-confirm-all.is-disabled,
+.compose-aside-warn-confirm-all.is-fatal-locked {
+  border-color: #e2e8f0;
+  background: #f1f5f9;
+  color: #94a3b8;
+  font-weight: 550;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.compose-aside-warn-confirm-all.is-disabled:hover:not(:disabled),
+.compose-aside-warn-confirm-all.is-fatal-locked:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+}
+
+.compose-aside-warn-confirm-all.is-fatal-locked:disabled {
   opacity: 1;
 }
 
-.compose-aside-alert--done .compose-aside-alert-title {
-  color: #a16207;
+/* 动作齐备、待确认：高亮可点 */
+.compose-aside-warn-confirm-all:not(.is-disabled):not(.is-verified) {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #b45309;
 }
 
-.compose-aside-alert--done .compose-aside-alert-cta {
-  color: #a8a29e;
-  opacity: 0.75;
+.compose-aside-warn-confirm-all.is-verified {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+  font-weight: 650;
+  box-shadow: 0 1px 2px rgba(22, 163, 74, 0.08);
+}
+
+.compose-aside-warn-confirm-all.is-verified:hover:not(:disabled) {
+  background: #dcfce7;
+  border-color: #4ade80;
+  color: #14532d;
+}
+
+.compose-aside-warn-confirm-all:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 已点过仍保持主操作蓝，避免「死链」灰字；仅用条目本身 done 态提示 */
+.compose-aside-alert--done .compose-aside-alert-btn--primary {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563eb;
+  opacity: 1;
+}
+
+/* 微调态面板：与预览区同款定位呼吸环 */
+.sec-locate-pulse {
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 3px rgba(250, 204, 21, 0.95),
+    0 0 0 8px rgba(250, 204, 21, 0.28);
+  animation: sec-locate-pulse 0.85s ease-in-out 2;
+}
+
+@keyframes sec-locate-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 3px rgba(250, 204, 21, 0.95),
+      0 0 0 8px rgba(250, 204, 21, 0.22);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(245, 158, 11, 1),
+      0 0 0 12px rgba(250, 204, 21, 0.38);
+  }
 }
 
 .compose-aside-actions {
@@ -8747,7 +9658,7 @@ watch(
   text-overflow: ellipsis;
 }
 
-.compose-metric-card--tile :deep(.compose-mini-chart.is-spark) {
+.compose-metric-card--tile :deep(.metric-sparkline-chart.is-spark) {
   height: 64px;
   min-height: 64px;
   max-height: 64px;
@@ -8808,7 +9719,7 @@ watch(
   color: #64748b;
 }
 
-.compose-metric-detail-chart :deep(.compose-mini-chart) {
+.compose-metric-detail-chart :deep(.metric-sparkline-chart) {
   height: 220px;
 }
 
@@ -8817,9 +9728,9 @@ watch(
   z-index: 40;
   width: 100%;
   box-sizing: border-box;
-  background: #fff;
-  border-top: 1px solid #e2e8f0;
-  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.06);
+  background: var(--compose-card, #fff);
+  border-top: 1px solid var(--compose-border, #e2e8f0);
+  box-shadow: none;
 }
 
 .compose-fs-footer-inner {
@@ -8828,8 +9739,8 @@ watch(
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  min-height: 64px;
-  padding: 10px 24px;
+  min-height: 56px;
+  padding: 10px 20px;
   padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   box-sizing: border-box;
 }
@@ -8838,7 +9749,16 @@ watch(
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.compose-fs-footer-meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--compose-text-muted, #94a3b8);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .compose-fs-footer-actions {
@@ -8846,45 +9766,106 @@ watch(
   align-items: center;
   justify-content: flex-end;
   flex: 0 0 auto;
-  gap: 12px;
+  gap: 10px;
+}
+
+.compose-fs-footer-actions :deep(.el-button) {
+  margin: 0;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--compose-radius-btn, 8px);
+  font-size: 13px;
+  line-height: 1;
 }
 
 .compose-fs-btn-abandon {
   color: #dc2626 !important;
-  font-weight: 600;
-  padding-left: 4px !important;
-  padding-right: 4px !important;
+  font-weight: 560;
+  background: transparent !important;
+  border-color: transparent !important;
 }
 
 .compose-fs-btn-abandon:hover:not(:disabled) {
   color: #b91c1c !important;
   background: #fef2f2 !important;
+  border-color: transparent !important;
 }
 
-.compose-fs-btn-draft {
-  background: #fff !important;
+/* 手动编辑：与保存草稿同级的次要动作 */
+.compose-fs-btn-edit {
+  background: var(--compose-card, #fff) !important;
+  border: 1px solid var(--compose-border, #e2e8f0) !important;
+  color: var(--compose-text, #1e293b) !important;
+  font-weight: 560;
+  box-shadow: none !important;
+}
+
+.compose-fs-btn-edit:hover:not(:disabled) {
+  background: #f8fafc !important;
   border-color: #cbd5e1 !important;
-  color: #0f172a !important;
-  font-weight: 600;
+  color: var(--compose-text, #1e293b) !important;
+}
+
+.compose-fs-btn-edit.is-active-edit {
+  background: #eff6ff !important;
+  border-color: #93c5fd !important;
+  color: #1d4ed8 !important;
+}
+
+.compose-fs-btn-edit:disabled {
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  opacity: 1;
+}
+
+/* 保存为草稿：次要按钮 */
+.compose-fs-btn-draft {
+  background: var(--compose-card, #fff) !important;
+  border: 1px solid var(--compose-border, #e2e8f0) !important;
+  color: var(--compose-text, #1e293b) !important;
+  font-weight: 560;
+  box-shadow: none !important;
 }
 
 .compose-fs-btn-draft:hover:not(:disabled) {
-  border-color: #94a3b8 !important;
   background: #f8fafc !important;
-  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+  color: var(--compose-text, #1e293b) !important;
 }
 
+.compose-fs-btn-draft:disabled {
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  opacity: 1;
+}
+
+/* 确认并发布：主按钮品牌蓝；未核对时灰色 */
 .compose-fs-btn-publish {
-  background: #1d4ed8 !important;
-  border-color: #1d4ed8 !important;
-  font-weight: 700;
+  background: var(--compose-primary, #2563eb) !important;
+  border-color: var(--compose-primary, #2563eb) !important;
+  color: #fff !important;
+  font-weight: 650;
   min-width: 112px;
-  box-shadow: 0 1px 2px rgba(29, 78, 216, 0.25);
+  box-shadow: none !important;
 }
 
 .compose-fs-btn-publish:hover:not(:disabled) {
-  background: #1e40af !important;
-  border-color: #1e40af !important;
+  background: var(--compose-primary-hover, #1d4ed8) !important;
+  border-color: var(--compose-primary-hover, #1d4ed8) !important;
+}
+
+.compose-fs-btn-publish.is-blocked,
+.compose-fs-btn-publish.is-blocked:hover,
+.compose-fs-btn-publish:disabled {
+  background: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+  color: #94a3b8 !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+  opacity: 1;
 }
 
 .care-plan--fullscreen .compose-fs-shell > .compose-fs-footer {
@@ -9130,22 +10111,23 @@ watch(
 }
 
 .compose-fs-ghost-btn {
-  background: #fff !important;
-  border: 1px solid #e2e8f0 !important;
-  color: #475569 !important;
-  font-weight: 600;
+  background: var(--compose-card, #fff) !important;
+  border: 1px solid var(--compose-border, #e2e8f0) !important;
+  color: var(--compose-text-secondary, #64748b) !important;
+  font-weight: 560;
+  box-shadow: none !important;
 }
 
 .compose-fs-ghost-btn:hover:not(:disabled) {
   background: #f8fafc !important;
   border-color: #cbd5e1 !important;
-  color: #334155 !important;
+  color: var(--compose-text, #1e293b) !important;
 }
 
 .compose-fs-ghost-btn.is-active-edit {
-  border-color: #fdba74 !important;
-  color: #c2410c !important;
-  background: #fff7ed !important;
+  border-color: #93c5fd !important;
+  color: var(--compose-primary, #2563eb) !important;
+  background: #eff6ff !important;
 }
 
 .compose-compare-body {
@@ -9308,11 +10290,12 @@ watch(
     flex: none;
     width: 100%;
     max-width: none;
+    height: auto;
+    max-height: none;
   }
   .care-plan--fullscreen .compose-fs-aside {
     border-left: 0;
     border-top: 1px solid #e2e8f0;
-    max-height: none;
     overflow: visible;
   }
   .compose-aside-scroll {
@@ -9671,6 +10654,11 @@ watch(
   font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+.history-tab-count {
+  font-size: 13px;
+  color: var(--ink-500, #64748b);
 }
 
 .list-shell-body {
@@ -10121,6 +11109,11 @@ watch(
 .plan-card--draft {
   border: 1px dashed #fcd34d;
   background: linear-gradient(180deg, #fffbeb 0%, #fff 48%);
+}
+
+.plan-card--history {
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 48%);
 }
 
 .plan-card-head {

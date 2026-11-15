@@ -30,17 +30,20 @@ public class BArchiveRevisionController {
     /**
      * 查询患者修订批次列表（默认返回全部业务类型，按时间倒序）。
      *
-     * @param bizType 可选，如 BASIC_ARCHIVE / DISEASE_ARCHIVE / MEDICATION / MEDICATION_INTAKE
-     * @param bizKey  可选，病种 code 或用药记录 ID
+     * @param bizType  可选，如 BASIC_ARCHIVE / DISEASE_ARCHIVE / MEDICATION / MEDICATION_INTAKE
+     * @param bizKey   可选，病种 code 或用药记录 ID
+     * @param keyword  可选，匹配操作人、业务模块、字段路径与变更展示值
      */
     @GetMapping("/patients/{peopleId}/archive/revisions")
     public ApiResult<List<RevisionBatchViewDto>> listRevisions(
             @PathVariable String peopleId,
             @RequestParam(required = false) String bizType,
-            @RequestParam(required = false) String bizKey) {
+            @RequestParam(required = false) String bizKey,
+            @RequestParam(required = false) String keyword) {
         String tenantId = SecurityUtils.requireTenantId();
         String orgId = SecurityUtils.requireCurrentOrgId();
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
-        return ApiResult.ok(revisionQueryService.listRevisions(tenantId, peopleId, bizType, bizKey));
+        return ApiResult.ok(
+                revisionQueryService.listRevisions(tenantId, peopleId, bizType, bizKey, keyword));
     }
 }

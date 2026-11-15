@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../shared/http'
+import type { CareChatSseEvent, CareChatSseHandler } from '../../shared/care-chat-sse'
 import { formatGender } from '../../shared/enums'
 import { formatMobileOwner } from '../../shared/mobile-owner'
 import { confirmLeaveBasicArchive } from '../../shared/basic-archive-dirty'
@@ -16,6 +17,10 @@ import { assessmentTick, type AssessmentSnapshot } from '../../shared/assessment
 import { allergyTick } from '../../shared/allergy'
 import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
+import {
+  clearPatientDetailCrumb,
+  setPatientDetailCrumb,
+} from '../../shared/patient-detail-crumb'
 import {
   clearBirthdayEstimated,
   isBirthdayEstimated,
@@ -34,6 +39,9 @@ import PatientFollowupView from './PatientFollowupView.vue'
 import PatientHealthReportView from './PatientHealthReportView.vue'
 import PatientRevisionView from './PatientRevisionView.vue'
 import PatientChatView from './PatientChatView.vue'
+import MetricSparklineChart, {
+  type MetricSparklineSeries,
+} from '../../shared/MetricSparklineChart.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -137,6 +145,50 @@ const watching = ref(false)
 const basicInfoEditorRef = ref<{ openEdit: () => void } | null>(null)
 const revealMobile = ref(false)
 const careTeamDialogOpen = ref(false)
+const chatDrawerOpen = ref(false)
+/** 当前患者发来、健管侧未读 */
+const chatUnreadCount = ref(0)
+const subscribeCareChatEvent = inject<(h: CareChatSseHandler) => () => void>(
+  'subscribeCareChatEvent',
+  () => () => undefined,
+)
+let unsubCareChat: (() => void) | null = null
+
+async function loadChatUnread() {
+  if (!peopleId.value) {
+    chatUnreadCount.value = 0
+    return
+  }
+  try {
+    const res = await api<{ data: { count: number } }>(
+      `/api/b/v1/patients/${peopleId.value}/care-chat/unread`,
+    )
+    chatUnreadCount.value = Math.max(0, Number(res.data?.count || 0))
+  } catch {
+    /* 静默：无会话或无权限时不当成错误 */
+  }
+}
+
+function onChatRead() {
+  chatUnreadCount.value = 0
+}
+
+function onCareChatEvent(ev: CareChatSseEvent) {
+  if (!ev.peopleId || ev.peopleId !== peopleId.value) return
+  if (typeof ev.staffUnreadCount === 'number') {
+    chatUnreadCount.value = Math.max(0, Number(ev.staffUnreadCount))
+    return
+  }
+  if (ev.type === 'message' || ev.type === 'read' || ev.type === 'unread') {
+    void loadChatUnread()
+  }
+}
+
+const chatUnreadLabel = computed(() => {
+  const n = chatUnreadCount.value
+  if (n <= 0) return ''
+  return n > 99 ? '99+' : String(n)
+})
 const NAV_ITEMS = [
   { name: 'persona', label: '用户画像' },
   { name: 'archive', label: '患者档案' },
@@ -177,6 +229,10 @@ const activeTab = computed<NavName>(() => {
 
 const embeddedView = computed(() => EMBEDDED_VIEWS[activeTab.value] || PatientPersonaPanel)
 
+/** 管理方案等需填满剩余视口的分区，仍用 body 内滚动；指标检验随整页外层滚动 */
+const PANE_FILL_TABS = new Set<NavName>(['care-plan'])
+const paneFill = computed(() => PANE_FILL_TABS.has(activeTab.value))
+
 interface LatestSlot {
   slotKey: string
   metricType: string
@@ -202,8 +258,14 @@ interface MetricSparkCard {
   label: string
   display: string
   hint: string
+  latestAt?: string
   tone: 'good' | 'fair' | 'poor' | 'empty'
   points: Array<number | null>
+  categories?: string[]
+  series?: MetricSparklineSeries[]
+  unit?: string
+  precision?: number
+  normalRange?: { min: number; max: number } | null
 }
 
 const latestSlots = ref<LatestSlot[]>([])
@@ -367,23 +429,38 @@ function buildTags(category: AssessmentGroup['category']): HeroTag[] {
   return tags
 }
 
-/** 病情标签：已患病种的严重等级分层 */
+/** 病情标签 = 疾病严重等级分层（已患病种 SEVERITY） */
 const conditionTags = computed(() => buildTags('SEVERITY'))
-/**
- * 评估标签：未患病种的患病风险。
- * 若 RISK 为空但病情侧已有高/中危分层，顶上同步警示，避免与画像「风险与病情」穿帮。
- */
-const riskTags = computed(() => {
-  const risk = buildTags('RISK')
-  if (risk.length) return risk
-  return conditionTags.value.filter((t) => t.tone === 'danger' || t.tone === 'warning')
-})
+/** 评估标签 = 患病风险评估（未患病种 RISK；不回落病情分层，避免两行内容雷同） */
+const riskTags = computed(() => buildTags('RISK'))
 const riskTagsAlert = computed(() =>
   riskTags.value.some((t) => t.tone === 'danger' || t.tone === 'warning'),
 )
 const conditionTagsAlert = computed(() =>
   conditionTags.value.some((t) => t.tone === 'danger' || t.tone === 'warning'),
 )
+
+/** 头图病种小 Tag：糖尿病 / 高血压等（SEVERITY 适用病种） */
+const diseaseChips = computed(() => {
+  const chips: Array<{ key: string; label: string; tone: 'diabetes' | 'hypertension' | 'obesity' | 'default' }> = []
+  const seen = new Set<string>()
+  for (const g of assessmentOverview.value?.groups || []) {
+    if (!g.applicable || g.category !== 'SEVERITY') continue
+    if (seen.has(g.diseaseCode)) continue
+    seen.add(g.diseaseCode)
+    const code = String(g.diseaseCode || '').toLowerCase()
+    let tone: 'diabetes' | 'hypertension' | 'obesity' | 'default' = 'default'
+    if (code.includes('diabetes') || code.includes('糖')) tone = 'diabetes'
+    else if (code.includes('hypertension') || code.includes('血压')) tone = 'hypertension'
+    else if (code.includes('obesity') || code.includes('肥胖')) tone = 'obesity'
+    chips.push({
+      key: g.diseaseCode,
+      label: g.diseaseLabel || g.diseaseCode,
+      tone,
+    })
+  }
+  return chips
+})
 
 /**
  * 方案执行（头图合并卡）：只信依从摘要 hasActivePlan（= ACTIVE 已发布方案）。
@@ -476,11 +553,25 @@ function isoDay(d: Date) {
   return `${y}-${m}-${day}`
 }
 
+function lastNDayLabels(days: number): string[] {
+  const labels: string[] = []
+  const base = new Date()
+  base.setHours(0, 0, 0, 0)
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(base)
+    d.setDate(base.getDate() - i)
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    labels.push(`${m}/${day}`)
+  }
+  return labels
+}
+
 function lastNDaysSeries(
   days: number,
   predicate: (m: MetricRow) => boolean,
   pick: (m: MetricRow) => number | null,
-): Array<number | null> {
+): { values: Array<number | null>; times: Array<string | null> } {
   const best = new Map<string, { at: string; v: number }>()
   for (const m of recentMetrics.value) {
     if (!predicate(m) || !m.recordedAt) continue
@@ -491,32 +582,55 @@ function lastNDaysSeries(
     const cur = best.get(day)
     if (!cur || at > cur.at) best.set(day, { at, v })
   }
-  const out: Array<number | null> = []
+  const values: Array<number | null> = []
+  const times: Array<string | null> = []
   const base = new Date()
   base.setHours(0, 0, 0, 0)
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(base)
     d.setDate(base.getDate() - i)
-    out.push(best.get(isoDay(d))?.v ?? null)
+    const hit = best.get(isoDay(d))
+    values.push(hit?.v ?? null)
+    times.push(hit?.at ?? null)
   }
-  return out
+  return { values, times }
 }
 
-function sparkPath(points: Array<number | null>, w = 72, h = 28): string {
-  const vals = points.filter((p): p is number => p != null && !Number.isNaN(p))
-  if (vals.length < 2) return ''
-  const min = Math.min(...vals)
-  const max = Math.max(...vals)
-  const span = max - min || 1
-  const step = w / Math.max(points.length - 1, 1)
-  const parts: string[] = []
-  points.forEach((p, i) => {
-    if (p == null || Number.isNaN(p)) return
-    const x = i * step
-    const y = h - ((p - min) / span) * (h - 4) - 2
-    parts.push(`${parts.length ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`)
-  })
-  return parts.join(' ')
+/** 近 N 日全空时，把最新读数落到对应日，避免有值却空白图 */
+function injectLatestPoint(
+  series: { values: Array<number | null>; times: Array<string | null> },
+  latest: number | null | undefined,
+  recordedAt?: string | null,
+) {
+  const values = [...series.values]
+  const times = [...series.times]
+  if (latest == null || Number.isNaN(Number(latest))) return { values, times }
+  if (values.some((p) => p != null)) return { values, times }
+  const day = recordedAt ? String(recordedAt).slice(0, 10) : ''
+  let idx = values.length - 1
+  if (day) {
+    const base = new Date()
+    base.setHours(0, 0, 0, 0)
+    for (let i = 0; i < values.length; i++) {
+      const d = new Date(base)
+      d.setDate(base.getDate() - (values.length - 1 - i))
+      if (isoDay(d) === day) {
+        idx = i
+        break
+      }
+    }
+  }
+  values[idx] = Number(latest)
+  times[idx] = recordedAt ? String(recordedAt) : times[idx]
+  return { values, times }
+}
+
+function formatFreshAt(at?: string | null) {
+  if (!at) return ''
+  const s = String(at).replace('T', ' ')
+  if (s.length >= 16) return `${s.slice(5, 10)} ${s.slice(11, 16)}`
+  if (s.length >= 10) return s.slice(5, 10)
+  return s
 }
 
 function findSlot(...types: string[]) {
@@ -528,111 +642,11 @@ function formatSlotTime(iso?: string) {
   return String(iso).replace('T', ' ').slice(5, 16)
 }
 
-const metricCards = computed<MetricSparkCard[]>(() => {
-  const cards: MetricSparkCard[] = []
-  const sys = findSlot('BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE', 'BP_SYS')
-  const dia = findSlot('BLOOD_PRESSURE_DIA', 'BP_DIA')
-  const glucose = findSlot('BLOOD_GLUCOSE', 'GLUCOSE')
-  const hr = findSlot('HEART_RATE', 'HR')
-  const weight = findSlot('WEIGHT')
+const HERO_TREND_DAYS = 7
 
-  if (sys || dia) {
-    const sysV = sys?.value ?? (sys?.extra?.sys != null ? Number(sys.extra.sys) : null)
-    const diaV = dia?.value ?? (sys?.extra?.dia != null ? Number(sys.extra.dia) : null)
-    let display = '—'
-    if (sysV != null && diaV != null) display = `${sysV}/${diaV}`
-    else if (sysV != null) display = String(sysV)
-    let tone: MetricSparkCard['tone'] = 'empty'
-    if (sysV != null) {
-      if (sysV >= 140 || (diaV != null && diaV >= 90)) tone = 'poor'
-      else if (sysV >= 130 || (diaV != null && diaV >= 85)) tone = 'fair'
-      else tone = 'good'
-    }
-    cards.push({
-      key: 'bp',
-      label: '血压',
-      display,
-      hint: formatSlotTime(sys?.recordedAt || dia?.recordedAt) || '近7日',
-      tone,
-      points: lastNDaysSeries(
-        7,
-        (m) =>
-          m.metricType === 'BLOOD_PRESSURE_SYS'
-          || m.metricType === 'BLOOD_PRESSURE'
-          || m.metricType === 'BP_SYS',
-        (m) => {
-          if (m.extra?.sys != null) return Number(m.extra.sys)
-          return m.value == null ? null : Number(m.value)
-        },
-      ),
-    })
-  }
-
-  if (glucose) {
-    const v = glucose.value == null ? null : Number(glucose.value)
-    let tone: MetricSparkCard['tone'] = 'empty'
-    if (v != null) {
-      if (v >= 11.1 || v < 3.9) tone = 'poor'
-      else if (v >= 7.0) tone = 'fair'
-      else tone = 'good'
-    }
-    cards.push({
-      key: 'glu',
-      label: '血糖',
-      display: v == null ? '—' : String(v),
-      hint: formatSlotTime(glucose.recordedAt) || (glucose.unit || 'mmol/L'),
-      tone,
-      points: lastNDaysSeries(
-        7,
-        (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
-        (m) => (m.value == null ? null : Number(m.value)),
-      ),
-    })
-  }
-
-  if (hr) {
-    const v = hr.value == null ? null : Number(hr.value)
-    let tone: MetricSparkCard['tone'] = 'empty'
-    if (v != null) {
-      if (v > 100 || v < 50) tone = 'poor'
-      else if (v > 90 || v < 55) tone = 'fair'
-      else tone = 'good'
-    }
-    cards.push({
-      key: 'hr',
-      label: '心率',
-      display: v == null ? '—' : String(v),
-      hint: formatSlotTime(hr.recordedAt) || 'bpm',
-      tone,
-      points: lastNDaysSeries(
-        7,
-        (m) => m.metricType === 'HEART_RATE' || m.metricType === 'HR',
-        (m) => (m.value == null ? null : Number(m.value)),
-      ),
-    })
-  }
-
-  if (weight && cards.length < 4) {
-    const v = weight.value == null ? null : Number(weight.value)
-    cards.push({
-      key: 'wt',
-      label: '体重',
-      display: v == null ? '—' : String(v),
-      hint: formatSlotTime(weight.recordedAt) || (weight.unit || 'kg'),
-      tone: v == null ? 'empty' : 'good',
-      points: lastNDaysSeries(
-        7,
-        (m) => m.metricType === 'WEIGHT',
-        (m) => (m.value == null ? null : Number(m.value)),
-      ),
-    })
-  }
-
-  return cards.slice(0, 4)
-})
-
-/** 头图右侧固定三卡：血压 / 血糖 / 体重（缺数据也占位） */
+/** 头图右侧固定三卡：血压 / 血糖 / 体重（复用 MetricSparklineChart） */
 const heroTrendCards = computed<MetricSparkCard[]>(() => {
+  const cats = lastNDayLabels(HERO_TREND_DAYS)
   const sys = findSlot('BLOOD_PRESSURE_SYS', 'BLOOD_PRESSURE', 'BP_SYS')
   const dia = findSlot('BLOOD_PRESSURE_DIA', 'BP_DIA')
   const glucose = findSlot('BLOOD_GLUCOSE', 'GLUCOSE')
@@ -661,55 +675,139 @@ const heroTrendCards = computed<MetricSparkCard[]>(() => {
   }
 
   const wtV = weight?.value == null ? null : Number(weight.value)
+  const bpAt = sys?.recordedAt || dia?.recordedAt
+
+  const sysRaw = injectLatestPoint(
+    lastNDaysSeries(
+      HERO_TREND_DAYS,
+      (m) =>
+        m.metricType === 'BLOOD_PRESSURE_SYS'
+        || m.metricType === 'BLOOD_PRESSURE'
+        || m.metricType === 'BP_SYS',
+      (m) => {
+        if (m.extra?.sys != null) return Number(m.extra.sys)
+        return m.value == null ? null : Number(m.value)
+      },
+    ),
+    bpSysV,
+    bpAt,
+  )
+  const diaRaw = injectLatestPoint(
+    lastNDaysSeries(
+      HERO_TREND_DAYS,
+      (m) =>
+        m.metricType === 'BLOOD_PRESSURE_DIA'
+        || m.metricType === 'BP_DIA'
+        || m.metricType === 'BLOOD_PRESSURE',
+      (m) => {
+        if (m.extra?.dia != null) return Number(m.extra.dia)
+        if (m.metricType === 'BLOOD_PRESSURE') return null
+        return m.value == null ? null : Number(m.value)
+      },
+    ),
+    bpDiaV,
+    dia?.recordedAt || sys?.recordedAt,
+  )
+  const gluRaw = injectLatestPoint(
+    lastNDaysSeries(
+      HERO_TREND_DAYS,
+      (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
+      (m) => (m.value == null ? null : Number(m.value)),
+    ),
+    gluV,
+    glucose?.recordedAt,
+  )
+  const wtRaw = injectLatestPoint(
+    lastNDaysSeries(
+      HERO_TREND_DAYS,
+      (m) => m.metricType === 'WEIGHT',
+      (m) => (m.value == null ? null : Number(m.value)),
+    ),
+    wtV,
+    weight?.recordedAt,
+  )
 
   return [
     {
       key: 'bp',
       label: '血压',
       display: bpDisplay,
-      hint: formatSlotTime(sys?.recordedAt || dia?.recordedAt) || '近7日 mmHg',
+      hint: formatSlotTime(bpAt) || '近7日 mmHg',
+      latestAt: formatFreshAt(bpAt),
       tone: bpTone,
-      points: lastNDaysSeries(
-        7,
-        (m) =>
-          m.metricType === 'BLOOD_PRESSURE_SYS'
-          || m.metricType === 'BLOOD_PRESSURE'
-          || m.metricType === 'BP_SYS',
-        (m) => {
-          if (m.extra?.sys != null) return Number(m.extra.sys)
-          return m.value == null ? null : Number(m.value)
+      points: sysRaw.values,
+      categories: cats,
+      unit: 'mmHg',
+      precision: 0,
+      normalRange: { min: 90, max: 140 },
+      series: [
+        {
+          name: '收缩压',
+          data: sysRaw.values,
+          times: sysRaw.times,
+          color: '#b91c1c',
+          area: false,
         },
-      ),
+        {
+          name: '舒张压',
+          data: diaRaw.values,
+          times: diaRaw.times,
+          color: '#1d4ed8',
+          area: false,
+        },
+      ],
     },
     {
       key: 'glu',
       label: '血糖',
       display: gluV == null ? '暂无' : String(gluV),
       hint: formatSlotTime(glucose?.recordedAt) || '近7日 mmol/L',
+      latestAt: formatFreshAt(glucose?.recordedAt),
       tone: gluTone,
-      points: lastNDaysSeries(
-        7,
-        (m) => m.metricType === 'BLOOD_GLUCOSE' || m.metricType === 'GLUCOSE',
-        (m) => (m.value == null ? null : Number(m.value)),
-      ),
+      points: gluRaw.values,
+      categories: cats,
+      unit: 'mmol/L',
+      precision: 1,
+      normalRange: { min: 3.9, max: 6.1 },
+      series: [
+        {
+          name: '血糖',
+          data: gluRaw.values,
+          times: gluRaw.times,
+          color: gluTone === 'poor' ? '#b91c1c' : gluTone === 'fair' ? '#b45309' : '#047857',
+          area: false,
+        },
+      ],
     },
     {
       key: 'wt',
       label: '体重',
       display: wtV == null ? '暂无' : String(wtV),
       hint: formatSlotTime(weight?.recordedAt) || '近7日 kg',
+      latestAt: formatFreshAt(weight?.recordedAt),
       tone: wtV == null ? 'empty' : 'good',
-      points: lastNDaysSeries(
-        7,
-        (m) => m.metricType === 'WEIGHT',
-        (m) => (m.value == null ? null : Number(m.value)),
-      ),
+      points: wtRaw.values,
+      categories: cats,
+      unit: 'kg',
+      precision: 1,
+      normalRange: null,
+      series: [
+        {
+          name: '体重',
+          data: wtRaw.values,
+          times: wtRaw.times,
+          color: '#047857',
+          area: false,
+        },
+      ],
     },
   ]
 })
 
 const showHeroTrends = computed(() =>
-  heroTrendCards.value.some((c) => c.display !== '暂无' || sparkPath(c.points, 96, 36)),
+  heroTrendCards.value.some(
+    (c) => c.display !== '暂无' || (c.points || []).some((p) => p != null),
+  ),
 )
 
 const genderText = computed(() => {
@@ -942,16 +1040,8 @@ function switchTab(name: string | number) {
 }
 
 function goChat() {
-  void onNavClick('chat')
-}
-
-function goCarePlanCheckins() {
   if (!peopleId.value) return
-  const base = `/workspace/patients/${peopleId.value}`
-  void router.push({
-    path: `${base}/care-plan`,
-    query: { ...route.query, mainTab: 'checkins' },
-  })
+  chatDrawerOpen.value = true
 }
 
 watch(allergyTick, () => {
@@ -975,6 +1065,7 @@ watch(
       loadAssessmentSummary(),
       loadMetricSummary(),
       loadIntakeStatus(),
+      loadChatUnread(),
     ])
   },
   { immediate: false },
@@ -1015,6 +1106,18 @@ async function refreshAfterExternalIntake() {
 
 let unsubPatientCrossTab: (() => void) | null = null
 
+watch(
+  () => [props.embedded, patient.value?.displayName, peopleId.value] as const,
+  ([embedded, name, id]) => {
+    if (embedded || !id) {
+      clearPatientDetailCrumb()
+      return
+    }
+    setPatientDetailCrumb(name)
+  },
+  { immediate: true },
+)
+
 onMounted(async () => {
   setArchiveCompletenessRefresh(() => {
     void loadCompleteness()
@@ -1031,53 +1134,55 @@ onMounted(async () => {
     loadAssessmentSummary(),
     loadMetricSummary(),
     loadIntakeStatus(),
+    loadChatUnread(),
   ])
+  unsubCareChat = subscribeCareChatEvent(onCareChatEvent)
 })
 
 onBeforeUnmount(() => {
+  clearPatientDetailCrumb()
   setArchiveCompletenessRefresh(null)
   unsubPatientCrossTab?.()
   unsubPatientCrossTab = null
+  unsubCareChat?.()
+  unsubCareChat = null
 })
 </script>
 
 <template>
-  <div class="patient-detail" :class="{ embedded }">
+  <div class="patient-detail" :class="{ embedded, 'is-pane-fill': paneFill }">
     <div class="patient-detail-chrome">
-    <nav v-if="!embedded" class="crumbs">
-      <button type="button" class="crumb-link" @click="router.push('/workspace/patients')">
-        患者管理
-      </button>
-      <svg class="crumb-sep" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <polyline points="9 18 15 12 9 6" />
-      </svg>
-      <strong>{{ patient?.displayName || '患者' }}</strong>
-    </nav>
-
-    <section class="patient-hero">
-      <div class="hero-row">
+    <section class="patient-hero" :class="{ 'has-trends': showHeroTrends }">
+      <!-- 身份条：全宽 · 左头像 | 中信息 | 右操作 -->
+      <div class="hero-profile">
         <div class="hero-avatar" aria-hidden="true">{{ nameInitial }}</div>
 
-        <div class="hero-info">
-          <h1 class="hero-name">
-            {{ patient?.displayName || '患者' }}
-            <button type="button" class="text-btn" @click="openBasicInfoEdit">编辑资料</button>
-            <button
-              v-if="intakeStatus && !intakeStatus.hasSubmitted"
-              type="button"
-              class="text-btn"
-              @click="router.push(`/workspace/patients/${peopleId}/intake`)"
-            >
-              开始首诊
-            </button>
-            <button
-              v-if="intakeStatus?.latestSubmittedId"
-              type="button"
-              class="text-btn"
-              @click="router.push(`/workspace/intake-responses/${intakeStatus.latestSubmittedId}`)"
-            >
-              查看首诊
-            </button>
+        <div class="hero-main">
+          <div class="hero-row hero-row--primary">
+            <h1 class="hero-name">{{ patient?.displayName || '患者' }}</h1>
+            <span class="hero-meta">
+              {{ patientAge }}
+              <span
+                v-if="birthdayEstimated && patientAge !== '-' && patientAge !== '需核对'"
+                class="birthday-est-tag"
+                title="由年龄推算的出生日期，建议补录证件后核对"
+              >估算</span>
+              <span class="hero-meta-sep" aria-hidden="true">·</span>
+              {{ genderText }}
+            </span>
+            <span v-if="diseaseChips.length" class="hero-disease-chips">
+              <button
+                v-for="chip in diseaseChips"
+                :key="chip.key"
+                type="button"
+                class="disease-chip"
+                :class="`is-${chip.tone}`"
+                :title="chip.label"
+                @click="goAssessments"
+              >
+                {{ chip.label }}
+              </button>
+            </span>
             <button
               v-if="intakeStatus && intakeStatus.hasSubmitted && intakeStatus.pendingCount > 0"
               type="button"
@@ -1090,254 +1195,92 @@ onBeforeUnmount(() => {
                 })
               "
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M12 9v4" />
-                <path d="M12 17h.01" />
-                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-              </svg>
               {{ intakeStatus.pendingCount }} 项待补
             </button>
-            <span
-              v-if="intakeStatus?.hasSubmitted && intakeStatus.submittedDepthLabel"
-              class="intake-depth"
-              :title="`患者已交${intakeStatus.submittedDepthLabel}首诊`"
-            >
-              已交{{ intakeStatus.submittedDepthLabel }}首诊
+            <div class="hero-quiet-links">
+              <button type="button" class="icon-link" title="编辑资料" @click="openBasicInfoEdit">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+                <span>编辑</span>
+              </button>
+              <button
+                v-if="intakeStatus && !intakeStatus.hasSubmitted"
+                type="button"
+                class="icon-link"
+                title="开始首诊"
+                @click="router.push(`/workspace/patients/${peopleId}/intake`)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                </svg>
+                <span>首诊</span>
+              </button>
+              <button
+                v-if="intakeStatus?.latestSubmittedId"
+                type="button"
+                class="icon-link"
+                title="查看首诊"
+                @click="router.push(`/workspace/intake-responses/${intakeStatus.latestSubmittedId}`)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M8 13h8" />
+                  <path d="M8 17h5" />
+                </svg>
+                <span>首诊</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="hero-row hero-row--secondary">
+            <span class="hero-phone mono">
+              {{ mobileDisplay || '暂无电话' }}
+              <button
+                v-if="patient?.mobile"
+                type="button"
+                class="text-btn sm"
+                @click="revealMobile = !revealMobile"
+              >
+                {{ revealMobile ? '隐藏' : '显示' }}
+              </button>
             </span>
-          </h1>
-
-          <dl class="hero-fields">
-            <div class="hf">
-              <dt>年龄</dt>
-              <dd>
-                {{ patientAge }}
-                <span
-                  v-if="birthdayEstimated && patientAge !== '-' && patientAge !== '需核对'"
-                  class="birthday-est-tag"
-                  title="由年龄推算的出生日期，建议补录证件后核对"
-                >估算</span>
-              </dd>
-            </div>
-            <div class="hf">
-              <dt>性别</dt>
-              <dd>{{ genderText }}</dd>
-            </div>
-            <div class="hf">
-              <dt>身份证</dt>
-              <dd class="mono">{{ patient?.identityMask || '-' }}</dd>
-            </div>
-            <div class="hf">
-              <dt>联系电话</dt>
-              <dd class="mono">
-                {{ mobileDisplay || '-' }}
-                <button
-                  v-if="patient?.mobile"
-                  type="button"
-                  class="text-btn sm"
-                  @click="revealMobile = !revealMobile"
-                >
-                  {{ revealMobile ? '隐藏' : '显示' }}
-                </button>
-              </dd>
-            </div>
-            <div class="hf">
-              <dt>健管组</dt>
-              <dd>
-                <button
-                  type="button"
-                  class="tag brand is-btn"
-                  :disabled="!patient"
-                  :title="patient?.careTeamName ? '变更健管组' : '加入健管组'"
-                  @click="openCareTeamDialog"
-                >
-                  {{ patient?.careTeamName || '未入组' }}
-                  <span class="tag-action">{{ patient?.careTeamName ? '变更' : '加入' }}</span>
-                </button>
-              </dd>
-            </div>
-            <div class="hf">
-              <dt>C 端激活</dt>
-              <dd>
-                <span class="tag" :class="clientStatus.tone">
-                  <span class="dot" aria-hidden="true" />
-                  {{ clientStatus.text }}
-                </span>
-              </dd>
-            </div>
-          </dl>
-
-          <div class="hero-insight" :class="{ 'has-trends': showHeroTrends }">
-            <div class="eval-block">
-              <template v-if="assessmentOverview">
-                <div class="eval-row">
-                  <div class="eval-label risk" :class="{ alert: riskTagsAlert }" title="未患病种的患病风险评估">
-                    <span v-if="riskTagsAlert" class="eval-dot" aria-hidden="true" />
-                    评估标签
-                  </div>
-                  <div class="eval-tags">
-                    <span
-                      v-for="tag in riskTags"
-                      :key="tag.key"
-                      class="eval-tag"
-                      :class="tag.tone"
-                    >
-                      <button type="button" class="eval-tag-go" :title="tag.title" @click="goAssessments">
-                        {{ tag.text }}
-                      </button>
-                      <button
-                        v-if="tag.snapshot"
-                        type="button"
-                        class="eval-q"
-                        aria-label="查看评估依据"
-                        @click="openBasis(tag)"
-                      >
-                        ?
-                      </button>
-                    </span>
-                    <span v-if="!riskTags.length" class="eval-empty">暂无患病风险标签</span>
-                  </div>
-                </div>
-                <div class="eval-row">
-                  <div class="eval-label cond" :class="{ alert: conditionTagsAlert }" title="已患病种的严重等级分层">
-                    <span v-if="conditionTagsAlert" class="eval-dot" aria-hidden="true" />
-                    病情标签
-                  </div>
-                  <div class="eval-tags">
-                    <span
-                      v-for="tag in conditionTags"
-                      :key="tag.key"
-                      class="eval-tag"
-                      :class="tag.tone"
-                    >
-                      <button type="button" class="eval-tag-go" :title="tag.title" @click="goAssessments">
-                        {{ tag.text }}
-                      </button>
-                      <button
-                        v-if="tag.snapshot"
-                        type="button"
-                        class="eval-q"
-                        aria-label="查看评估依据"
-                        @click="openBasis(tag)"
-                      >
-                        ?
-                      </button>
-                    </span>
-                    <span v-if="!conditionTags.length" class="eval-empty">暂无已患病种</span>
-                  </div>
-                </div>
-              </template>
-              <div class="eval-row">
-                <div class="eval-label plan" title="方案执行与近7日依从">方案执行</div>
-                <div class="eval-tags">
-                  <button
-                    type="button"
-                    class="eval-stat eval-stat--stack"
-                    :class="planExecution.tone"
-                    :title="planExecution.title"
-                    @click="onNavClick('adherence')"
-                  >
-                    <span class="eval-stat-main">
-                      <strong class="eval-stat-val">{{ planExecution.value }}</strong>
-                      <span v-if="planExecution.hint" class="eval-stat-hint">{{ planExecution.hint }}</span>
-                      <span
-                        v-if="planExecution.percent != null"
-                        class="eval-stat-rate"
-                      >
-                        <template v-if="planExecution.hint">·</template>
-                        {{ planExecution.rateLabel }}
-                        <em class="eval-stat-pct">{{ planExecution.percent }}%</em>
-                      </span>
-                    </span>
-                    <span
-                      v-if="planExecution.percent != null"
-                      class="eval-stat-bar"
-                      aria-hidden="true"
-                    >
-                      <i :style="{ width: `${Math.max(0, Math.min(100, planExecution.percent))}%` }" />
-                    </span>
-                  </button>
-                </div>
-              </div>
-              <div class="eval-row">
-                <div class="eval-label archive" title="档案字段完整度">档案完整度</div>
-                <div class="eval-tags">
-                  <button
-                    type="button"
-                    class="eval-stat"
-                    :class="completenessTone"
-                    @click="onNavClick('archive')"
-                  >
-                    <strong class="eval-stat-val">
-                      {{ completeness ? completenessPercent : '—' }}<small v-if="completeness">%</small>
-                    </strong>
-                    <span class="eval-stat-hint">{{ completenessHint }}</span>
-                    <span class="eval-stat-bar" aria-hidden="true">
-                      <i :style="{ width: `${completenessPercent}%` }" />
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="showHeroTrends" class="trend-panel">
-              <div class="trend-panel-head">
-                <span class="trend-panel-title">关键指标 · 近7日</span>
-                <button type="button" class="text-btn" @click="onNavClick('observations')">查看</button>
-              </div>
-              <div class="trend-cards">
-                <button
-                  v-for="card in heroTrendCards"
-                  :key="card.key"
-                  type="button"
-                  class="trend-card"
-                  :class="[card.tone, { compact: !sparkPath(card.points, 96, 28) }]"
-                  @click="onNavClick('observations')"
-                >
-                  <div class="trend-card-top">
-                    <span class="trend-card-label">{{ card.label }}</span>
-                    <strong class="trend-card-val">{{ card.display }}</strong>
-                  </div>
-                  <svg
-                    v-if="sparkPath(card.points, 96, 28)"
-                    class="trend-spark"
-                    viewBox="0 0 96 28"
-                    aria-hidden="true"
-                  >
-                    <path
-                      :d="sparkPath(card.points, 96, 28)"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                  <span class="trend-card-hint">{{ card.hint }}</span>
-                </button>
-              </div>
-            </div>
+            <span class="hero-team">
+              <span class="hero-team-name">{{ patient?.careTeamName || '未入组' }}</span>
+              <button
+                type="button"
+                class="text-btn sm"
+                :disabled="!patient"
+                @click="openCareTeamDialog"
+              >
+                {{ patient?.careTeamName ? '变更' : '加入' }}
+              </button>
+            </span>
+            <span class="hero-client" :class="`is-${clientStatus.tone}`">
+              <span class="dot" aria-hidden="true" />
+              {{ clientStatus.text }}
+            </span>
           </div>
         </div>
 
         <div class="hero-actions">
-          <button type="button" class="btn primary" :disabled="!patient" @click="goChat">
+          <button
+            type="button"
+            class="btn primary chat-entry"
+            :disabled="!patient"
+            :aria-label="
+              chatUnreadCount > 0 ? `沟通，${chatUnreadCount} 条未读消息` : '沟通'
+            "
+            @click="goChat"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
             沟通
-          </button>
-          <button
-            type="button"
-            class="btn secondary"
-            :disabled="!patient"
-            title="查看患者打卡记录"
-            @click="goCarePlanCheckins"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M9 11l3 3L22 4" />
-              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-            </svg>
-            患者打卡
+            <span v-if="chatUnreadLabel" class="chat-unread-badge">{{ chatUnreadLabel }}</span>
           </button>
           <button
             type="button"
@@ -1351,7 +1294,12 @@ onBeforeUnmount(() => {
             </svg>
             {{ watching ? '处理中…' : patient?.watched ? '取消关注' : '重点关注' }}
           </button>
-          <button type="button" class="btn secondary" :disabled="issuing" @click="issueCode">
+          <button
+            type="button"
+            class="hero-quiet-btn"
+            :disabled="issuing"
+            @click="issueCode"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <line x1="9" y1="9" x2="15" y2="9" />
@@ -1362,7 +1310,7 @@ onBeforeUnmount(() => {
           <button
             v-if="latestInvite?.active"
             type="button"
-            class="btn secondary"
+            class="hero-quiet-btn"
             @click="copyCode"
           >
             复制激活码
@@ -1370,52 +1318,176 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="metricCards.length" class="insight-band">
-        <div class="metric-strip">
-          <div class="metric-strip-head">
-            <h3>最新指标</h3>
-            <button type="button" class="text-btn" @click="onNavClick('observations')">全部</button>
+      <!-- 概览带：左标签/执行 · 右关键指标 -->
+      <div class="hero-band" :class="{ 'has-trends': showHeroTrends }">
+        <div class="hero-col hero-col--tags">
+          <template v-if="assessmentOverview">
+            <div class="eval-row">
+              <div class="eval-label risk" :class="{ alert: riskTagsAlert }" title="评估标签：未患病种的患病风险评估">
+                <span v-if="riskTagsAlert" class="eval-dot" aria-hidden="true" />
+                患病风险评估
+              </div>
+              <div class="eval-tags">
+                <span
+                  v-for="tag in riskTags"
+                  :key="tag.key"
+                  class="eval-tag"
+                  :class="tag.tone"
+                >
+                  <button type="button" class="eval-tag-go" :title="tag.title" @click="goAssessments">
+                    {{ tag.text }}
+                  </button>
+                  <button
+                    v-if="tag.snapshot"
+                    type="button"
+                    class="eval-q"
+                    aria-label="查看评估依据"
+                    @click="openBasis(tag)"
+                  >
+                    ?
+                  </button>
+                </span>
+                <span v-if="!riskTags.length" class="eval-empty">暂无患病风险评估</span>
+              </div>
+            </div>
+            <div class="eval-row">
+              <div class="eval-label cond" :class="{ alert: conditionTagsAlert }" title="病情标签：已患病种的疾病严重等级分层">
+                <span v-if="conditionTagsAlert" class="eval-dot" aria-hidden="true" />
+                疾病严重等级分层
+              </div>
+              <div class="eval-tags">
+                <span
+                  v-for="tag in conditionTags"
+                  :key="tag.key"
+                  class="eval-tag"
+                  :class="tag.tone"
+                >
+                  <button type="button" class="eval-tag-go" :title="tag.title" @click="goAssessments">
+                    {{ tag.text }}
+                  </button>
+                  <button
+                    v-if="tag.snapshot"
+                    type="button"
+                    class="eval-q"
+                    aria-label="查看评估依据"
+                    @click="openBasis(tag)"
+                  >
+                    ?
+                  </button>
+                </span>
+                <span v-if="!conditionTags.length" class="eval-empty">暂无疾病严重等级分层</span>
+              </div>
+            </div>
+          </template>
+          <p v-else class="eval-empty">暂无评估数据</p>
+
+          <div class="hero-ops">
+            <div class="eval-row">
+              <div class="eval-label archive" title="档案字段完整度">档案完整度</div>
+              <div class="eval-tags">
+                <button
+                  type="button"
+                  class="eval-stat"
+                  :class="completenessTone"
+                  @click="onNavClick('archive')"
+                >
+                  <strong class="eval-stat-val">
+                    {{ completeness ? completenessPercent : '—' }}<small v-if="completeness">%</small>
+                  </strong>
+                  <span class="eval-stat-hint">{{ completenessHint }}</span>
+                  <span class="eval-stat-bar" aria-hidden="true">
+                    <i :style="{ width: `${completenessPercent}%` }" />
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div class="eval-row">
+              <div class="eval-label plan" title="方案执行与近7日依从">方案执行</div>
+              <div class="eval-tags">
+                <button
+                  type="button"
+                  class="eval-stat eval-stat--stack"
+                  :class="planExecution.tone"
+                  :title="planExecution.title"
+                  @click="onNavClick('adherence')"
+                >
+                  <span class="eval-stat-main">
+                    <strong class="eval-stat-val">{{ planExecution.value }}</strong>
+                    <span v-if="planExecution.hint" class="eval-stat-hint">{{ planExecution.hint }}</span>
+                    <span
+                      v-if="planExecution.percent != null"
+                      class="eval-stat-rate"
+                    >
+                      <template v-if="planExecution.hint">·</template>
+                      {{ planExecution.rateLabel }}
+                      <em class="eval-stat-pct">{{ planExecution.percent }}%</em>
+                    </span>
+                  </span>
+                  <span
+                    v-if="planExecution.percent != null"
+                    class="eval-stat-bar"
+                    aria-hidden="true"
+                  >
+                    <i :style="{ width: `${Math.max(0, Math.min(100, planExecution.percent))}%` }" />
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="metric-chips">
-            <button
-              v-for="card in metricCards"
+        </div>
+
+        <div v-if="showHeroTrends" class="hero-col hero-col--metrics">
+          <div class="trend-panel-head">
+            <span class="trend-panel-title">关键指标 · 近7日</span>
+            <button type="button" class="text-btn" @click="onNavClick('observations')">查看全部</button>
+          </div>
+          <div class="trend-cards">
+            <div
+              v-for="card in heroTrendCards"
               :key="card.key"
-              type="button"
-              class="metric-chip"
-              :class="card.tone"
+              class="trend-card"
+              :class="`is-${card.tone}`"
+              role="button"
+              tabindex="0"
               @click="onNavClick('observations')"
+              @keydown.enter.prevent="onNavClick('observations')"
+              @keydown.space.prevent="onNavClick('observations')"
             >
-              <span class="metric-label">{{ card.label }}</span>
-              <strong class="metric-val">{{ card.display }}</strong>
-              <span v-if="card.hint" class="metric-hint">{{ card.hint }}</span>
-              <svg
-                v-if="sparkPath(card.points, 48, 16)"
-                class="spark"
-                viewBox="0 0 48 16"
-                aria-hidden="true"
-              >
-                <path
-                  :d="sparkPath(card.points, 48, 16)"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+              <div class="trend-card-top">
+                <span class="trend-card-label">{{ card.label }}</span>
+                <div class="trend-card-value-row">
+                  <span class="trend-card-value-left">
+                    <strong class="trend-card-val">{{ card.display }}</strong>
+                    <span v-if="card.unit && card.display !== '暂无'" class="trend-card-unit">{{ card.unit }}</span>
+                  </span>
+                  <span v-if="card.latestAt" class="trend-card-fresh">{{ card.latestAt }}</span>
+                  <span v-else class="trend-card-fresh">近7日暂无</span>
+                </div>
+              </div>
+              <div class="trend-card-chart">
+                <MetricSparklineChart
+                  spark
+                  :categories="card.categories || []"
+                  :series="card.series || []"
+                  :unit="card.unit || ''"
+                  :precision="card.precision ?? 0"
+                  :normal-range="card.normalRange"
+                  empty-text="近7日暂无测量"
                 />
-              </svg>
-            </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-
-      <PatientBasicInfoEditor
-        v-if="peopleId"
-        ref="basicInfoEditorRef"
-        compact
-        :people-id="peopleId"
-        @updated="onBasicInfoUpdated"
-      />
     </section>
+
+    <PatientBasicInfoEditor
+      v-if="peopleId"
+      ref="basicInfoEditorRef"
+      compact
+      :people-id="peopleId"
+      @updated="onBasicInfoUpdated"
+    />
 
     <nav class="pill-nav" aria-label="患者详情分段">
       <button
@@ -1463,6 +1535,24 @@ onBeforeUnmount(() => {
         }
       "
     />
+
+    <el-drawer
+      v-model="chatDrawerOpen"
+      direction="rtl"
+      size="520px"
+      append-to-body
+      destroy-on-close
+      class="patient-chat-drawer"
+    >
+      <template #header>
+        <span class="chat-drawer-title">
+          沟通{{ patient?.displayName ? ` · ${patient.displayName}` : '' }}
+        </span>
+      </template>
+      <div v-if="chatDrawerOpen && peopleId" class="chat-drawer-body">
+        <PatientChatView :people-id="peopleId" @read="onChatRead" />
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -1476,6 +1566,8 @@ onBeforeUnmount(() => {
   height: calc(100vh - 112px);
   min-height: 0;
   overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .patient-detail.embedded {
@@ -1483,59 +1575,60 @@ onBeforeUnmount(() => {
   max-height: calc(100vh - 72px);
 }
 
+.patient-detail.is-pane-fill {
+  overflow-y: hidden;
+}
+
 .patient-detail-chrome {
   flex: 0 0 auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .patient-detail-body {
+  flex: 0 0 auto;
+  min-height: auto;
+  max-width: 100%;
+  overflow: visible;
+  /* 与 patient-hero / pill-nav 左右边距对齐 */
+  padding: 8px 16px 24px;
+  background: transparent;
+}
+
+.patient-detail.is-pane-fill .patient-detail-body {
   flex: 1 1 auto;
   min-height: 0;
-  max-width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-top: 12px;
+  padding-bottom: 0;
   overscroll-behavior: contain;
 }
 
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  font-size: 13px;
-  color: var(--ink-500);
-}
-
-.crumb-link {
-  border: none;
-  background: none;
+/* 拆掉各 Tab 根节点 .panel 的大白卡片外壳，透出页面浅灰底 */
+.patient-detail-body > :deep(.panel) {
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 0;
-  font: inherit;
-  color: var(--ink-500);
-  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
-.crumb-link:hover {
-  color: var(--brand-600);
-}
-
-.crumb-sep {
-  width: 14px;
-  height: 14px;
-  opacity: 0.5;
-  flex-shrink: 0;
-}
-
-.crumbs strong {
-  color: var(--ink-800);
-  font-weight: 600;
-}
-
-/* ── Hero ─────────────────────────────────────────── */
+/* ── Hero：全宽身份条 + 下左右分栏 ─────────────────── */
 .patient-hero {
   position: relative;
-  overflow: hidden;
-  margin-bottom: 10px;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0;
   padding: 14px 16px;
   background: linear-gradient(135deg, #fff 0%, #f8fbff 100%);
   border: 1px solid var(--ink-200);
@@ -1551,21 +1644,26 @@ onBeforeUnmount(() => {
   height: 180px;
   background: radial-gradient(circle, rgba(44, 126, 248, 0.08) 0%, transparent 70%);
   pointer-events: none;
+  border-radius: inherit;
 }
 
-.hero-row {
+.hero-profile {
   position: relative;
+  z-index: 1;
   display: flex;
+  flex-direction: row;
   align-items: flex-start;
   gap: 14px;
-  margin-bottom: 12px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .hero-avatar {
   width: 52px;
   height: 52px;
   border-radius: 50%;
-  flex-shrink: 0;
+  flex: 0 0 52px;
   display: grid;
   place-items: center;
   font-size: 20px;
@@ -1575,61 +1673,201 @@ onBeforeUnmount(() => {
   box-shadow: 0 6px 16px -4px rgba(59, 130, 246, 0.28);
 }
 
-.hero-info {
-  flex: 1;
+.hero-main {
+  flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 12px;
 }
 
-.hero-name {
+.hero-actions {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  align-self: flex-start;
+}
+
+.hero-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 2px;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.hero-row--primary {
+  align-items: center;
+}
+
+.hero-row--secondary {
+  align-items: center;
+}
+
+.hero-name {
+  margin: 0;
   font-size: 20px;
   font-weight: 700;
   color: var(--ink-900);
   letter-spacing: -0.02em;
   line-height: 1.25;
+  white-space: nowrap;
 }
 
-.hero-fields {
-  display: flex;
-  flex-wrap: wrap;
-  row-gap: 6px;
-  margin: 6px 0 0;
+.hero-quiet-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
 }
 
-.hf {
+.icon-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.icon-link svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.icon-link:hover {
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+.hero-band {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px 20px;
+  align-items: start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-top: 12px;
+  border-top: 1px solid var(--ink-100, #eef2f6);
+}
+
+.hero-band.has-trends {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+}
+
+.hero-col {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  align-self: start;
+}
+
+.hero-col--tags {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
   min-width: 0;
-  padding: 0 16px;
-  border-left: 1px solid var(--ink-100, #eef2f6);
 }
 
-.hf:first-child {
-  padding-left: 0;
-  border-left: none;
+.hero-col--tags .hero-ops {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ink-100, #eef2f6);
 }
 
-.hf dt {
-  font-size: 12px;
-  color: var(--ink-400, #94a3b8);
-  line-height: 1;
-}
-
-.hf dd {
+.hero-col--metrics {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
-  margin: 0;
-  min-height: 20px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-800, #1e293b);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* 勿 overflow:hidden，会裁掉指标卡底边框 */
+  overflow: visible;
+}
+
+.hero-col--tags .eval-row {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.hero-col--tags .eval-label {
+  flex-shrink: 0;
+  padding-top: 4px;
   white-space: nowrap;
+}
+
+.hero-col--tags .eval-tags {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.hero-col--tags .eval-stat,
+.hero-col--tags .eval-stat--stack {
+  width: 100%;
+  max-width: 100%;
+}
+
+.hero-col--tags .eval-stat-main {
+  flex-wrap: nowrap;
+}
+
+.hero-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hero-phone {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.hero-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.hero-meta-sep {
+  color: #cbd5e1;
+  margin: 0 2px;
 }
 
 .birthday-est-tag {
@@ -1646,44 +1884,93 @@ onBeforeUnmount(() => {
   border: 1px solid #fde68a;
 }
 
-.hf dd.mono {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.01em;
-}
-
-.hero-insight {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  margin-top: 14px;
-  align-items: stretch;
-}
-
-.hero-insight.has-trends {
-  grid-template-columns: minmax(280px, 1fr) minmax(260px, 1.15fr);
-}
-
-.eval-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 0;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid var(--ink-100, #eef2f6);
-  min-width: 0;
-}
-
-.trend-panel {
-  display: flex;
-  flex-direction: column;
+.hero-disease-chips {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: 10px;
+}
+
+.disease-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
   background: #f8fafc;
-  border: 1px solid var(--ink-100, #eef2f6);
+  color: #475569;
+  border-color: #e2e8f0;
+}
+
+.disease-chip.is-diabetes {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.disease-chip.is-hypertension {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.disease-chip.is-obesity {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.disease-chip:hover {
+  filter: brightness(0.97);
+}
+
+.hero-team {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.hero-team-name {
+  font-weight: 500;
+  color: #475569;
+}
+
+.hero-client {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.hero-client .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.hero-client.is-teal {
+  color: #0f766e;
+}
+
+.hero-client.is-amber {
+  color: #b45309;
+}
+
+.hero-client.is-muted {
+  color: #94a3b8;
 }
 
 .trend-panel-head {
@@ -1691,107 +1978,188 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 0;
+  width: 100%;
 }
 
 .trend-panel-title {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--ink-600, #475569);
+  letter-spacing: 0.01em;
+  text-align: left;
 }
 
 .trend-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  flex: 1;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  /* 给卡片边框留 1px，避免贴边被裁 */
+  padding: 1px;
 }
 
 .trend-card {
+  position: relative;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--ink-200, #e2e8f0);
-  background: #fff;
+  max-width: 100%;
+  width: 100%;
+  height: 132px;
+  padding: 10px 10px 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background-color: #ffffff;
+  background-clip: border-box;
   text-align: left;
   cursor: pointer;
   color: inherit;
   font: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+  isolation: isolate;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
+
+.trend-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 3px;
+  border-radius: 8px 0 0 8px;
+  background: #cbd5e1;
+  pointer-events: none;
+}
+
+.trend-card.is-good::before { background: #10b981; }
+.trend-card.is-fair::before { background: #f59e0b; }
+.trend-card.is-poor::before { background: #ef4444; }
+.trend-card.is-empty::before { background: #cbd5e1; }
 
 .trend-card:hover {
-  border-color: rgba(44, 126, 248, 0.35);
-  box-shadow: 0 2px 8px -4px rgba(15, 23, 42, 0.16);
+  border-color: #93c5fd;
+  box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.14);
 }
 
-.trend-card.compact {
-  padding-block: 6px;
-  gap: 2px;
+.trend-card:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.45);
+  outline-offset: 2px;
 }
 
 .trend-card-top {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  background: #fff;
 }
 
 .trend-card-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-600, #475569);
   white-space: nowrap;
+}
+
+.trend-card-value-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trend-card-value-left {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.trend-card-fresh {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-400, #94a3b8);
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .trend-card-val {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 750;
   color: var(--ink-900, #0f172a);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
 }
 
-.trend-spark {
+.trend-card-unit {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-400, #94a3b8);
+}
+
+.trend-card.is-good .trend-card-val { color: #047857; }
+.trend-card.is-fair .trend-card-val { color: #b45309; }
+.trend-card.is-poor .trend-card-val { color: #b91c1c; }
+.trend-card.is-empty .trend-card-val { color: var(--ink-400, #94a3b8); }
+
+.trend-card-chart {
+  position: relative;
+  z-index: 0;
+  flex: 1 1 auto;
+  height: 0;
+  min-height: 64px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  border-radius: 0 0 4px 4px;
+  overflow: hidden;
+  /* 图表勿盖住卡片底边 */
+  max-height: calc(100% - 2px);
+}
+
+.trend-card-chart :deep(.metric-sparkline-chart.is-spark) {
   display: block;
   width: 100%;
-  height: 28px;
-  color: var(--brand-500, #2c7ef8);
+  height: 100% !important;
+  min-height: 68px !important;
+  max-height: none !important;
+  background: #ffffff;
 }
 
-.trend-card-hint {
-  font-size: 10px;
-  color: var(--ink-400, #94a3b8);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.trend-card.good .trend-card-val { color: #047857; }
-.trend-card.fair .trend-card-val { color: #92400e; }
-.trend-card.poor .trend-card-val { color: #b91c1c; }
-.trend-card.empty .trend-card-val { color: var(--ink-400, #94a3b8); }
-.trend-card.good .trend-spark { color: #10b981; }
-.trend-card.fair .trend-spark { color: #f59e0b; }
-.trend-card.poor .trend-spark { color: #ef4444; }
-.trend-card.empty .trend-spark { color: var(--ink-300, #cbd5e1); }
-
-.eval-block .eval-row {
+.hero-col .eval-row {
   margin-top: 0;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: nowrap;
+  gap: 8px;
 }
 
-.eval-block .eval-label {
-  min-width: 76px;
-  padding-top: 0;
+.hero-col .eval-label {
+  min-width: 64px;
+  padding-top: 4px;
   color: var(--ink-600, #475569);
+  font-size: 12px;
 }
 
-.eval-block .eval-label::before {
+.hero-col .eval-label::before {
   content: '';
   width: 3px;
   height: 12px;
@@ -1799,19 +2167,19 @@ onBeforeUnmount(() => {
   background: #3b82f6;
 }
 
-.eval-block .eval-label.cond::before {
+.hero-col .eval-label.cond::before {
   background: #f97316;
 }
 
-.eval-block .eval-label.plan::before {
+.hero-col .eval-label.plan::before {
   background: #14b8a6;
 }
 
-.eval-block .eval-label.archive::before {
+.hero-col .eval-label.archive::before {
   background: #8b5cf6;
 }
 
-.eval-block .eval-label.alert {
+.hero-col .eval-label.alert {
   color: var(--ink-600, #475569);
 }
 
@@ -1930,8 +2298,15 @@ onBeforeUnmount(() => {
 .eval-stat.fair .eval-stat-val { color: #92400e; }
 .eval-stat.poor .eval-stat-val { color: #b91c1c; }
 .eval-stat.poor {
-  border-color: #fecaca;
-  background: #fff7f7;
+  border-color: rgba(254, 202, 202, 0.7);
+  background: rgba(254, 226, 226, 0.35);
+  padding-top: 6px;
+  padding-bottom: 8px;
+}
+.eval-stat.poor.eval-stat--stack {
+  padding-top: 6px;
+  padding-bottom: 8px;
+  min-height: 0;
 }
 .eval-stat.fair {
   border-color: #fde68a;
@@ -1955,13 +2330,13 @@ onBeforeUnmount(() => {
 .eval-stat.poor .eval-stat-bar { background: #fee2e2; }
 .eval-stat.poor .eval-stat-bar i { background: #ef4444; }
 
-.eval-block .eval-tag {
+.hero-col .eval-tag {
   height: 24px;
   padding: 0 4px 0 10px;
   border-radius: 999px;
 }
 
-.eval-block .eval-q {
+.hero-col .eval-q {
   width: 13px;
   height: 13px;
   font-size: 9px;
@@ -2157,13 +2532,6 @@ onBeforeUnmount(() => {
   background: #f8fafc;
 }
 
-.hero-actions {
-  position: relative;
-  display: flex;
-  flex-shrink: 0;
-  gap: 8px;
-}
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -2198,6 +2566,28 @@ onBeforeUnmount(() => {
 .btn.primary:hover:not(:disabled) {
   background: var(--brand-600);
   transform: translateY(-1px);
+}
+
+.chat-entry {
+  position: relative;
+}
+
+.chat-unread-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #fff;
+  pointer-events: none;
 }
 
 .btn.ghost,
@@ -2249,222 +2639,148 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 6px;
   height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid var(--ink-200, #e2e8f0);
-  background: var(--ink-50, #f8fafc);
-  color: var(--ink-500, #64748b);
+  border: 1px solid #fdba74;
+  background: #fff7ed;
+  color: #c2410c;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
   vertical-align: middle;
-}
-
-.pending-chip svg {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
-  color: var(--ink-400, #94a3b8);
+  white-space: nowrap;
 }
 
 .pending-chip:hover {
-  background: var(--ink-100, #f1f5f9);
-  color: var(--ink-600, #475569);
+  background: #ffedd5;
+  color: #9a3412;
 }
 
-.intake-depth {
+/* ── Pill nav：文字 + 底部下划线激活 ───────────────── */
+.hero-quiet-btn {
   display: inline-flex;
   align-items: center;
-  margin-left: 8px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  color: #1d4ed8;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  vertical-align: middle;
-}
-
-/* ── Metrics band ───────────────────────── */
-.insight-band {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 0;
-}
-
-.metric-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--ink-200);
-  border-radius: 10px;
-  background: #fff;
-}
-
-.metric-strip-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.metric-strip-head h3 {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 650;
-  color: var(--ink-500);
-  white-space: nowrap;
-}
-
-.metric-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.metric-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 4px 8px;
-  border-radius: 8px;
-  border: 1px solid #e8eef3;
-  background: #f8fafc;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease;
-}
-
-.metric-chip:hover {
-  border-color: rgba(44, 126, 248, 0.35);
-  background: #fff;
-}
-
-.metric-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink-500);
-  white-space: nowrap;
-}
-
-.spark {
-  width: 40px;
-  height: 14px;
-  opacity: 0.85;
-  flex-shrink: 0;
-}
-
-.metric-val {
+  gap: 5px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
   font-size: 13px;
-  font-weight: 750;
-  color: var(--ink-900);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+  font-weight: 500;
+  cursor: pointer;
   white-space: nowrap;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.hero-quiet-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.hero-quiet-btn:hover:not(:disabled) {
+  color: #2563eb;
+  background: #eff6ff;
+}
+.hero-quiet-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
-.metric-hint {
-  font-size: 10.5px;
-  color: var(--ink-400);
-  white-space: nowrap;
-}
-
-.metric-chip.good .spark,
-.metric-chip.good .metric-val { color: #047857; }
-.metric-chip.fair .spark,
-.metric-chip.fair .metric-val { color: #b45309; }
-.metric-chip.poor .spark,
-.metric-chip.poor .metric-val { color: #b91c1c; }
-.metric-chip.empty .metric-val { color: var(--ink-400); }
-
-/* ── Pill nav ─────────────────────────────────────── */
 .pill-nav {
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 16px;
+  gap: 2px 4px;
+  margin-top: 8px;
   margin-bottom: 0;
-  padding: 8px 10px;
-  background: #fff;
-  border: 1px solid var(--ink-200);
-  border-radius: 12px;
+  /* 与 patient-hero 左右 padding(16px) 对齐，使首 Tab 与头像左缘同列 */
+  padding: 0 16px;
+  background: var(--admin-bg, #f4f6f9);
+  border: none;
+  border-bottom: 1px solid var(--ink-200, #e2e8f0);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .pill {
-  height: 34px;
-  padding: 0 14px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--ink-50, #f8fafc);
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
   color: var(--ink-600);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  transition: color 140ms ease, border-color 140ms ease;
 }
 
 .pill:hover {
   color: var(--ink-900);
-  background: #eef2ff;
+  background: transparent;
 }
 
 .pill.active {
-  color: #fff;
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  box-shadow: 0 6px 14px -6px rgba(37, 99, 235, 0.55);
+  color: var(--brand-600, #1e63d9);
+  background: transparent;
+  font-weight: 700;
+  border-bottom-color: var(--brand-500, #2c7ef8);
+  box-shadow: none;
 }
 
 @media (max-width: 1100px) {
-  .hero-insight.has-trends {
-    grid-template-columns: 1fr;
+  .hero-band.has-trends {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 960px) {
-  .hero-row {
+  .hero-profile {
     flex-wrap: wrap;
   }
 
   .hero-actions {
     width: 100%;
-    justify-content: flex-start;
+    margin-left: 0;
     flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .hero-main {
+    padding-right: 0;
   }
 
   .patient-hero {
     padding: 12px 14px;
   }
-
-  .metric-strip {
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 560px) {
-  .trend-cards {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 720px) {
-  .patient-detail {
-    height: auto;
-    max-height: none;
+  .trend-cards {
+    grid-template-columns: 1fr;
   }
 
-  .patient-detail-body {
+  .trend-card {
+    height: 110px;
+  }
+
+  .patient-detail,
+  .patient-detail.is-pane-fill {
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  .patient-detail.is-pane-fill .patient-detail-body {
     overflow: visible;
+    flex: 0 0 auto;
+    min-height: auto;
   }
 
   .hero-avatar {
@@ -2496,6 +2812,31 @@ onBeforeUnmount(() => {
 
 .patient-detail-drawer.el-drawer .el-drawer__body {
   padding-top: 0;
+  overflow: hidden;
+}
+
+.patient-chat-drawer.el-drawer .el-drawer__header {
+  margin-bottom: 8px;
+  padding-bottom: 0;
+}
+
+.patient-chat-drawer.el-drawer .el-drawer__body {
+  padding: 0 12px 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.patient-chat-drawer .chat-drawer-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+}
+
+.patient-chat-drawer .chat-drawer-body {
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 100px);
   overflow: hidden;
 }
 </style>

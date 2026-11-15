@@ -6,7 +6,6 @@ import com.healix.common.result.ApiResult;
 import com.healix.core.medication.dto.DrugCatalogItemDto;
 import com.healix.core.medication.dto.MedOcrPrefillDto;
 import com.healix.core.medication.dto.MedicationAdherenceDto;
-import com.healix.core.medication.dto.MedicationFeedbackDto;
 import com.healix.core.medication.dto.MedicationIntakeViewDto;
 import com.healix.core.medication.dto.MedicationReminderDto;
 import com.healix.core.medication.dto.MedicationScheduleDto;
@@ -14,8 +13,6 @@ import com.healix.core.medication.dto.MedicationViewDto;
 import com.healix.core.medication.service.DrugCatalogService;
 import com.healix.core.medication.service.MedicationAdherenceService;
 import com.healix.core.medication.service.MedicationAllergyGuard;
-import com.healix.core.medication.service.MedicationFeedbackService;
-import com.healix.core.medication.service.MedicationFeedbackService.FeedbackCommand;
 import com.healix.core.medication.service.MedicationReminderService;
 import com.healix.core.medication.service.MedicationScheduleService;
 import com.healix.core.medication.service.MedicationService;
@@ -49,7 +46,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-/** C 端用药：今日服药、药箱、服药记录、提醒设置、反馈与停药、拍照添加。 */
+/** C 端用药：今日服药、药箱、服药记录、提醒设置、停药、拍照添加。 */
 @Validated
 @RestController
 @RequestMapping("/api/c/v1/me")
@@ -60,7 +57,6 @@ public class CMedicationController {
     private final MedicationScheduleService scheduleService;
     private final MedicationAdherenceService adherenceService;
     private final MedicationReminderService reminderService;
-    private final MedicationFeedbackService feedbackService;
     private final MedicationAllergyGuard allergyGuard;
     private final DrugCatalogService drugCatalogService;
     private final MedOcrRecognitionService medOcrRecognitionService;
@@ -116,21 +112,6 @@ public class CMedicationController {
             @PathVariable String medicationId, @RequestBody @Validated StopRequest request) {
         return ApiResult.ok(medicationService.stopByPatient(
                 tenantId(), peopleId(), medicationId, request.reason(), request.note()));
-    }
-
-    @PostMapping("/medications/{medicationId}/feedback")
-    public ApiResult<MedicationFeedbackDto> feedback(
-            @PathVariable String medicationId, @RequestBody @Validated FeedbackRequest request) {
-        return ApiResult.ok(feedbackService.submitByPatient(
-                tenantId(),
-                peopleId(),
-                medicationId,
-                new FeedbackCommand(request.kind(), request.symptoms(), request.severity(), request.content())));
-    }
-
-    @GetMapping("/medications/{medicationId}/feedback")
-    public ApiResult<List<MedicationFeedbackDto>> feedbackList(@PathVariable String medicationId) {
-        return ApiResult.ok(feedbackService.listByMedicationForPatient(tenantId(), peopleId(), medicationId));
     }
 
     /** 保存前预检药物过敏；命中只提醒不拦截。 */
@@ -297,9 +278,6 @@ public class CMedicationController {
             LocalDateTime takenAt) {}
 
     public record StopRequest(@NotBlank String reason, @Size(max = 200) String note) {}
-
-    public record FeedbackRequest(
-            @NotBlank String kind, List<String> symptoms, String severity, @Size(max = 500) String content) {}
 
     public record AllergyCheckRequest(String drugCode, String drugName) {}
 }

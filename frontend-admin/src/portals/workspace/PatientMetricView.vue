@@ -188,6 +188,7 @@ type HistoryMetricGroup = 'ALL' | 'BP' | 'GLUCOSE' | 'HEART_RATE' | 'BODY' | 'WA
 const historyMetricGroup = ref<HistoryMetricGroup>('ALL')
 /** 近期记录：列表 / 趋势视图 */
 const historyViewMode = ref<'list' | 'trend'>('list')
+const historyDrawerVisible = ref(false)
 const trendChartRef = ref<HTMLDivElement | null>(null)
 let trendChart: EChartsType | null = null
 let trendResizeObserver: ResizeObserver | null = null
@@ -250,6 +251,9 @@ const filteredList = computed(() => {
     return day >= cutoff
   })
 })
+
+const historyBadgeCount = computed(() => list.value.length)
+const historyFilteredCount = computed(() => filteredList.value.length)
 
 const historyEmptyText = computed(() => {
   if (list.value.length === 0) return '暂无记录'
@@ -905,6 +909,7 @@ async function submitEntry() {
 }
 
 function openEdit(row: Metric) {
+  historyDrawerVisible.value = false
   editing.id = row.id
   editing.metricType = row.metricType
   editing.value = row.value
@@ -1001,6 +1006,20 @@ watch(historyViewMode, async (mode) => {
   }
 })
 
+watch(historyDrawerVisible, async (visible) => {
+  if (!visible) {
+    trendResizeObserver?.disconnect()
+    trendResizeObserver = null
+    trendChart?.dispose()
+    trendChart = null
+    return
+  }
+  if (historyViewMode.value !== 'trend') return
+  await nextTick()
+  bindTrendResize()
+  await refreshTrendChart()
+})
+
 onMounted(() => {
   resetForm()
   loadAll()
@@ -1016,6 +1035,17 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-loading="loading" class="metric-page">
+    <Teleport defer to="#obs-history-slot">
+      <button
+        type="button"
+        class="history-entry-btn"
+        @click="historyDrawerVisible = true"
+      >
+        近期记录
+        <span v-if="historyBadgeCount" class="history-entry-count">{{ historyBadgeCount }}</span>
+      </button>
+    </Teleport>
+
     <section class="entry-shell">
       <header class="entry-card-head">
         <span class="section-title">就诊录入</span>
@@ -1215,137 +1245,145 @@ onBeforeUnmount(() => {
       </el-form>
     </section>
 
-    <section class="records-card">
-      <header class="records-card-head">
-        <span class="section-title">近期记录</span>
-        <div class="records-toolbar">
-          <div class="view-tabs" role="tablist" aria-label="记录视图">
-            <button
-              type="button"
-              class="view-tab"
-              :class="{ active: historyViewMode === 'list' }"
-              role="tab"
-              :aria-selected="historyViewMode === 'list'"
-              @click="historyViewMode = 'list'"
-            >
-              📄 列表
-            </button>
-            <button
-              type="button"
-              class="view-tab"
-              :class="{ active: historyViewMode === 'trend' }"
-              role="tab"
-              :aria-selected="historyViewMode === 'trend'"
-              @click="historyViewMode = 'trend'"
-            >
-              📈 趋势
-            </button>
-          </div>
-          <div class="records-filters">
-            <el-select
-              v-model="historyRangeDays"
-              size="small"
-              class="records-filter-select"
-              aria-label="时间筛选"
-            >
-              <el-option
-                v-for="opt in HISTORY_RANGE_OPTIONS"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-            <el-select
-              v-model="historyMetricGroup"
-              size="small"
-              class="records-filter-select"
-              aria-label="指标筛选"
-            >
-              <el-option
-                v-for="opt in historyMetricOptions"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-          </div>
-        </div>
-      </header>
-
-      <div v-show="historyViewMode === 'list'" class="records-scroll">
-        <div class="records-table-head">
-          <span class="head-day">日期</span>
-          <span class="col-time">时间 / 场景</span>
-          <span class="col-name">指标</span>
-          <span class="col-value">数值</span>
-          <span class="col-status">状态</span>
-          <span class="col-ref">参考范围</span>
-          <span class="col-actions">操作</span>
-        </div>
-
-        <el-empty
-          v-if="!recordGroups.length"
-          :description="historyEmptyText"
-          :image-size="48"
-          class="records-empty"
-        />
-        <div v-else class="day-timeline">
-          <section v-for="group in recordGroups" :key="group.key" class="day-block">
-            <div class="day-side">
-              <div class="day-rail" aria-hidden="true">
-                <span class="day-dot" />
-              </div>
-              <div class="day-meta">
-                <span class="day-stamp">{{ dayStamp(group.key) }}</span>
-                <span v-if="group.relative" class="day-rel">{{ group.relative }}</span>
-              </div>
+    <el-drawer
+      v-model="historyDrawerVisible"
+      :title="`近期记录 (共 ${historyFilteredCount} 条)`"
+      size="720px"
+      destroy-on-close
+      append-to-body
+      class="metric-history-drawer"
+    >
+      <section class="records-card records-card--drawer">
+        <header class="records-card-head">
+          <div class="records-toolbar">
+            <div class="view-tabs" role="tablist" aria-label="记录视图">
+              <button
+                type="button"
+                class="view-tab"
+                :class="{ active: historyViewMode === 'list' }"
+                role="tab"
+                :aria-selected="historyViewMode === 'list'"
+                @click="historyViewMode = 'list'"
+              >
+                📄 列表
+              </button>
+              <button
+                type="button"
+                class="view-tab"
+                :class="{ active: historyViewMode === 'trend' }"
+                role="tab"
+                :aria-selected="historyViewMode === 'trend'"
+                @click="historyViewMode = 'trend'"
+              >
+                📈 趋势
+              </button>
             </div>
-            <div class="day-rows">
-              <template v-for="cluster in group.clusters" :key="cluster.key">
-                <div
-                  v-for="row in cluster.rows"
-                  :key="row.id"
-                  class="metric-line"
-                  :class="{ 'metric-line--abnormal': rowJudge(row).abnormal }"
-                >
-                  <div class="col-time">
-                    <span class="line-clock">{{ cluster.time }}</span>
-                    <span v-if="sceneLabel(row)" class="line-source">{{ sceneLabel(row) }}</span>
-                  </div>
-                  <span class="col-name">{{ metricLabel(row.metricType) }}</span>
-                  <span class="col-value" :class="{ 'value-abnormal': rowJudge(row).abnormal }">
-                    {{ row.value }}{{ row.unit ? ` ${row.unit}` : '' }}
-                  </span>
-                  <span class="col-status">
-                    <span v-if="rowJudge(row).abnormal" class="status-tag status-tag--bad">
-                      {{ abnormalLabel(rowJudge(row).flag) }}
-                    </span>
-                    <span v-else-if="rowJudge(row).rangeText" class="status-tag status-tag--ok">
-                      正常
-                    </span>
-                    <span v-else class="status-empty">—</span>
-                  </span>
-                  <span class="col-ref">{{ refCellText(row) }}</span>
-                  <span class="col-actions">
-                    <el-button link type="primary" @click="openEdit(row)">更正</el-button>
-                    <el-button link type="danger" @click="removeRow(row)">删除</el-button>
-                  </span>
+            <div class="records-filters">
+              <el-select
+                v-model="historyRangeDays"
+                size="small"
+                class="records-filter-select"
+                aria-label="时间筛选"
+              >
+                <el-option
+                  v-for="opt in HISTORY_RANGE_OPTIONS"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+              <el-select
+                v-model="historyMetricGroup"
+                size="small"
+                class="records-filter-select"
+                aria-label="指标筛选"
+              >
+                <el-option
+                  v-for="opt in historyMetricOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+            </div>
+          </div>
+        </header>
+
+        <div v-show="historyViewMode === 'list'" class="records-scroll">
+          <div class="records-table-head">
+            <span class="head-day">日期</span>
+            <span class="col-time">时间 / 场景</span>
+            <span class="col-name">指标</span>
+            <span class="col-value">数值</span>
+            <span class="col-status">状态</span>
+            <span class="col-ref">参考范围</span>
+            <span class="col-actions">操作</span>
+          </div>
+
+          <el-empty
+            v-if="!recordGroups.length"
+            :description="historyEmptyText"
+            :image-size="48"
+            class="records-empty"
+          />
+          <div v-else class="day-timeline">
+            <section v-for="group in recordGroups" :key="group.key" class="day-block">
+              <div class="day-side">
+                <div class="day-rail" aria-hidden="true">
+                  <span class="day-dot" />
                 </div>
-              </template>
-            </div>
-          </section>
+                <div class="day-meta">
+                  <span class="day-stamp">{{ dayStamp(group.key) }}</span>
+                  <span v-if="group.relative" class="day-rel">{{ group.relative }}</span>
+                </div>
+              </div>
+              <div class="day-rows">
+                <template v-for="cluster in group.clusters" :key="cluster.key">
+                  <div
+                    v-for="row in cluster.rows"
+                    :key="row.id"
+                    class="metric-line"
+                    :class="{ 'metric-line--abnormal': rowJudge(row).abnormal }"
+                  >
+                    <div class="col-time">
+                      <span class="line-clock">{{ cluster.time }}</span>
+                      <span v-if="sceneLabel(row)" class="line-source">{{ sceneLabel(row) }}</span>
+                    </div>
+                    <span class="col-name">{{ metricLabel(row.metricType) }}</span>
+                    <span class="col-value" :class="{ 'value-abnormal': rowJudge(row).abnormal }">
+                      {{ row.value }}{{ row.unit ? ` ${row.unit}` : '' }}
+                    </span>
+                    <span class="col-status">
+                      <span v-if="rowJudge(row).abnormal" class="status-tag status-tag--bad">
+                        {{ abnormalLabel(rowJudge(row).flag) }}
+                      </span>
+                      <span v-else-if="rowJudge(row).rangeText" class="status-tag status-tag--ok">
+                        正常
+                      </span>
+                      <span v-else class="status-empty">—</span>
+                    </span>
+                    <span class="col-ref">{{ refCellText(row) }}</span>
+                    <span class="col-actions">
+                      <el-button link type="primary" @click="openEdit(row)">更正</el-button>
+                      <el-button link type="danger" @click="removeRow(row)">删除</el-button>
+                    </span>
+                  </div>
+                </template>
+              </div>
+            </section>
+          </div>
         </div>
-      </div>
 
-      <div v-show="historyViewMode === 'trend'" class="trend-panel">
-        <div class="trend-panel-head">
-          <span class="trend-panel-title">{{ trendTitle }}</span>
+        <div v-show="historyViewMode === 'trend'" class="trend-panel">
+          <div class="trend-panel-head">
+            <span class="trend-panel-title">{{ trendTitle }}</span>
+          </div>
+          <div class="trend-chart-wrap">
+            <div ref="trendChartRef" class="chart-frame trend-chart-el" />
+          </div>
         </div>
-        <div class="trend-chart-wrap">
-          <div ref="trendChartRef" class="trend-chart-el" />
-        </div>
-      </div>
-    </section>
+      </section>
+    </el-drawer>
 
     <el-dialog v-model="editVisible" title="更正指标" width="480px" destroy-on-close>
       <el-form label-width="88px">
@@ -1396,24 +1434,69 @@ onBeforeUnmount(() => {
 <style scoped>
 .metric-page {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
-  height: 100%;
+  height: auto;
   min-height: 0;
-  gap: 16px;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.history-entry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  background: #fff;
+  color: var(--ink-700, #334155);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.history-entry-btn:hover {
+  color: var(--brand-600, #1e63d9);
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.history-entry-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-entry-btn:hover .history-entry-count {
+  background: #bfdbfe;
+  color: #1d4ed8;
 }
 
 .entry-shell {
-  flex: 0 0 40%;
-  max-width: 40%;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   min-height: 0;
-  height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  overscroll-behavior: contain;
+  overflow: visible;
   background:
     linear-gradient(180deg, #ffffff 0%, #f8fafc 72%, #f1f5f9 100%);
   border-radius: 12px;
@@ -1426,16 +1509,19 @@ onBeforeUnmount(() => {
 }
 
 .records-card {
-  flex: 1 1 60%;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: #fff;
-  border-radius: 12px;
-  border: 1px solid rgba(226, 232, 240, 0.7);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.records-card--drawer {
+  height: calc(100vh - 120px);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .records-card-head {
@@ -1622,6 +1708,8 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   min-height: 280px;
+  /* 覆盖全局 .chart-frame 固定高，随面板拉伸 */
+  --chart-h: 100%;
 }
 
 .records-empty {
@@ -1860,23 +1948,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1100px) {
-  .metric-page {
-    flex-direction: column;
-    height: auto;
-    overflow: visible;
-  }
-
-  .entry-shell,
-  .records-card {
-    flex: none;
-    max-width: none;
-    width: 100%;
-  }
-
-  .records-card {
-    max-height: 58vh;
-  }
-
   .records-table-head {
     grid-template-columns: 84px 100px 68px 68px 44px minmax(72px, 1fr) 72px;
     column-gap: 6px;
@@ -1894,14 +1965,13 @@ onBeforeUnmount(() => {
 
 .entry-form {
   width: 100%;
-  flex: 1 1 auto;
+  max-width: 880px;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex !important;
   flex-direction: column;
   gap: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: visible;
   box-sizing: border-box;
 }
 

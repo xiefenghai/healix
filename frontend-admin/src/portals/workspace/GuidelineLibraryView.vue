@@ -99,15 +99,15 @@ onMounted(load)
         </el-table>
 
         <h4 class="section">推荐条目</h4>
-        <div class="toolbar">
-          <el-input v-model="keyword" clearable placeholder="搜索内容或编码" style="width: 220px" />
-          <el-select v-model="sourceCode" clearable placeholder="指南" style="width: 200px">
+        <div class="toolbar control-row">
+          <el-input v-model="keyword" class="control-grow" clearable placeholder="搜索内容或编码" />
+          <el-select v-model="sourceCode" class="control-fixed-md" clearable placeholder="指南">
             <el-option v-for="s in lib.sources" :key="s.code" :label="s.label" :value="s.code" />
           </el-select>
-          <el-select v-model="audience" clearable placeholder="人群" style="width: 140px">
+          <el-select v-model="audience" class="control-fixed-sm" clearable placeholder="人群">
             <el-option v-for="a in audiences" :key="a" :label="a" :value="a" />
           </el-select>
-          <el-select v-model="kind" clearable placeholder="类型" style="width: 120px">
+          <el-select v-model="kind" class="control-fixed-sm" clearable placeholder="类型">
             <el-option label="安全类" value="SAFETY" />
             <el-option label="目标类" value="TARGET" />
           </el-select>

@@ -16,11 +16,14 @@ import com.healix.core.revision.mapper.FieldRevisionItemMapper;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -33,11 +36,15 @@ public class RevisionQueryService {
     private final PeopleProfileMapper peopleProfileMapper;
 
     public List<RevisionBatchViewDto> listRevisions(
-            String tenantId, String peopleId, String bizType, String bizKey) {
+            String tenantId, String peopleId, String bizType, String bizKey, String keyword) {
+        String kw = blankToNull(keyword);
+        List<String> bizTypeHints = kw == null ? List.of() : resolveBizTypeHints(kw);
+        List<String> bizKeyHints = kw == null ? List.of() : resolveBizKeyHints(kw);
         List<FieldRevisionBatch> batches =
                 bizType == null || bizType.isBlank()
-                        ? batchMapper.listByPeople(tenantId, peopleId)
-                        : batchMapper.listByTarget(tenantId, peopleId, bizType, bizKey);
+                        ? batchMapper.listByPeople(tenantId, peopleId, kw, bizTypeHints, bizKeyHints)
+                        : batchMapper.listByTarget(
+                                tenantId, peopleId, bizType, bizKey, kw, bizTypeHints, bizKeyHints);
         List<RevisionBatchViewDto> out = new ArrayList<>();
         for (FieldRevisionBatch batch : batches) {
             RevisionBatchViewDto dto = new RevisionBatchViewDto();
@@ -66,6 +73,76 @@ public class RevisionQueryService {
         enrichOperatorNames(out);
         enrichOperatorRoles(out);
         return out;
+    }
+
+    private static String blankToNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /** 中文业务名 → biz_type，便于搜「基础档案」「过敏史」等。 */
+    private static List<String> resolveBizTypeHints(String keyword) {
+        String k = keyword.toLowerCase(Locale.ROOT);
+        Set<String> out = new LinkedHashSet<>();
+        Map<String, String> labels =
+                Map.of(
+                        "基础档案", "BASIC_ARCHIVE",
+                        "病种档案", "DISEASE_ARCHIVE",
+                        "用药管理", "MEDICATION",
+                        "用药依从", "MEDICATION_INTAKE",
+                        "依从性", "MEDICATION_INTAKE",
+                        "指标", "METRIC",
+                        "检验", "LAB",
+                        "检查", "EXAM",
+                        "管理方案", "CARE_PLAN",
+                        "过敏", "ALLERGY");
+        for (Map.Entry<String, String> e : labels.entrySet()) {
+            if (k.contains(e.getKey().toLowerCase(Locale.ROOT))
+                    || e.getKey().toLowerCase(Locale.ROOT).contains(k)) {
+                out.add(e.getValue());
+            }
+        }
+        // 直接输编码也命中
+        for (String code :
+                List.of(
+                        "BASIC_ARCHIVE",
+                        "DISEASE_ARCHIVE",
+                        "MEDICATION",
+                        "MEDICATION_INTAKE",
+                        "METRIC",
+                        "LAB",
+                        "EXAM",
+                        "CARE_PLAN",
+                        "ALLERGY")) {
+            if (code.toLowerCase(Locale.ROOT).contains(k)) {
+                out.add(code);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static List<String> resolveBizKeyHints(String keyword) {
+        String k = keyword.toLowerCase(Locale.ROOT);
+        Set<String> out = new LinkedHashSet<>();
+        Map<String, String> labels =
+                Map.of(
+                        "糖尿病", "diabetes",
+                        "高血压", "hypertension",
+                        "肥胖", "obesity");
+        for (Map.Entry<String, String> e : labels.entrySet()) {
+            if (k.contains(e.getKey()) || e.getKey().contains(k)) {
+                out.add(e.getValue());
+            }
+        }
+        for (String code : List.of("diabetes", "hypertension", "obesity")) {
+            if (code.contains(k)) {
+                out.add(code);
+            }
+        }
+        return List.copyOf(out);
     }
 
     private void enrichOperatorRoles(List<RevisionBatchViewDto> batches) {

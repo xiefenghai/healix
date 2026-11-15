@@ -251,7 +251,11 @@ export function hydrateFollowupFormFromContent(content?: Record<string, unknown>
   return { followupType, contactTarget, followupMethod, guidance, suggestPlanAdjust, section }
 }
 
-const TYPE_LABELS = Object.fromEntries(FOLLOWUP_TYPE_OPTIONS.map((o) => [o.value, o.label]))
+/** 含系统自动生成、不可选手动新建的类型文案 */
+const TYPE_LABELS: Record<string, string> = {
+  ...Object.fromEntries(FOLLOWUP_TYPE_OPTIONS.map((o) => [o.value, o.label])),
+  PLAN_COMMUNICATION: '方案沟通',
+}
 const RECORD_TYPE_LABELS = Object.fromEntries(FOLLOWUP_RECORD_TYPE_OPTIONS.map((o) => [o.value, o.label]))
 const METHOD_LABELS = Object.fromEntries(FOLLOWUP_METHOD_OPTIONS.map((o) => [o.value, o.label]))
 const TARGET_LABELS = Object.fromEntries(FOLLOWUP_CONTACT_TARGET_OPTIONS.map((o) => [o.value, o.label]))

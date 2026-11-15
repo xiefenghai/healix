@@ -9,6 +9,7 @@ import AgentFloatingRobot from '../../shared/AgentFloatingRobot.vue'
 import { subscribeCareChatSse, type CareChatSseEvent, type CareChatSseHandler } from '../../shared/care-chat-sse'
 import { debounce } from '../../shared/debounce'
 import { api, getCurrentOrgId, orgSessionTick } from '../../shared/http'
+import { patientDetailCrumbName } from '../../shared/patient-detail-crumb'
 import { startVisiblePoll } from '../../shared/visible-poll'
 
 const route = useRoute()
@@ -91,6 +92,21 @@ const pageTitle = computed(() => {
   if (route.path.startsWith('/workspace/security')) return '系统设置'
   if (route.path.startsWith('/workspace/orgs')) return '选择机构'
   return '机构工作台'
+})
+
+/** 患者详情：顶栏展示 患者管理 / 姓名，避免页内再占一行面包屑 */
+const isPatientDetail = computed(
+  () =>
+    /^\/workspace\/patients\/[^/]+/.test(route.path)
+    && !isFullscreenWorkspace.value,
+)
+
+const crumbItems = computed(() => {
+  if (!isPatientDetail.value || !patientDetailCrumbName.value) return []
+  return [
+    { label: '患者管理', to: '/workspace/patients' },
+    { label: patientDetailCrumbName.value },
+  ]
 })
 
 async function loadSummary() {
@@ -226,6 +242,7 @@ onBeforeUnmount(() => {
     :hide-sider="hideSiderEffective"
     :hide-topbar="isFullscreenWorkspace"
     :hide-crumbs="hideCrumbs"
+    :crumb-items="crumbItems"
     :org-switchable="orgSwitchable && !isFullscreenWorkspace"
     :flush-content="flushContent"
     @switch-org="switchOrg"

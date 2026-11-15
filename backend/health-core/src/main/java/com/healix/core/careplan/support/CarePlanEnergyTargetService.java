@@ -56,10 +56,10 @@ public class CarePlanEnergyTargetService {
     private static final Pattern WEEKLY_RATE =
             Pattern.compile("每周\\s*(?:约|大约)?\\s*(\\d+(?:\\.\\d+)?)\\s*kg", Pattern.CASE_INSENSITIVE);
     private static final Pattern WEEKS_LOSE = Pattern.compile(
-            "(\\d+)\\s*周[^。；;]{0,24}?(?:减重|减约|减轻|降至|降到|减)\\s*(?:约)?\\s*(\\d+(?:\\.\\d+)?)\\s*kg",
+            "(\\d+)\\s*周[^。；;]{0,40}?(?:减重|减约|减轻|降至|降到|下降|减)\\s*(?:约)?\\s*(\\d+(?:\\.\\d+)?)\\s*kg",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern MONTHS_LOSE = Pattern.compile(
-            "(\\d+)\\s*个?月[^。；;]{0,24}?(?:减重|减约|减轻|降至|降到|减)\\s*(?:约)?\\s*(\\d+(?:\\.\\d+)?)\\s*kg",
+            "(\\d+)\\s*个?月[^。；;]{0,40}?(?:减重|减约|减轻|降至|降到|下降|减)\\s*(?:约)?\\s*(\\d+(?:\\.\\d+)?)\\s*kg",
             Pattern.CASE_INSENSITIVE);
     private static final Map<String, String> MISSING_LABELS =
             Map.of("GENDER", "性别", "BIRTHDAY", "出生日期", "HEIGHT", "身高", "WEIGHT", "体重");
@@ -100,9 +100,10 @@ public class CarePlanEnergyTargetService {
                 double m = status.heightCm() / 100.0;
                 bmi = status.weightKg() / (m * m);
             }
-            boolean lose = (intent != null && intent.lose())
-                    || obesityDisease
-                    || (bmi != null && bmi >= OVERWEIGHT_BMI);
+            // intent==null：按病种/BMI 自动推断；intent 显式传入时尊重 lose 开关（阻断减重可强制维持）
+            boolean lose = intent == null
+                    ? (obesityDisease || (bmi != null && bmi >= OVERWEIGHT_BMI))
+                    : intent.lose();
             if (lose) {
                 type = DietGoalTypeEnum.LOSE;
                 rate = intent != null && intent.rateKgPerWeek() != null
@@ -181,6 +182,9 @@ public class CarePlanEnergyTargetService {
         // 生成后强制用服务端数字重写文案，避免模型自算或沿用旧维持热量
         rewriteHint(diet, target);
         alignSummaryKcal(contextSnapshot, target);
+        if (target != null && isMaintainType(target.path("goalType").asText(null))) {
+            sanitizeLoseNarrative(contextSnapshot);
+        }
         if (contextSnapshot != null && target != null) {
             ObjectNode snapTarget = target.deepCopy();
             snapTarget.put("available", true);
@@ -190,13 +194,43 @@ public class CarePlanEnergyTargetService {
 
     /** 编辑 / 修订后：保留健管师手改的热量（重算三大营养素），其余来源刷新为最新饮食目标或估算。 */
     public void apply(String tenantId, String peopleId, ObjectNode diet) {
+        applyAfterMutation(tenantId, peopleId, diet, null, null);
+    }
+
+    /**
+     * 草稿保存 / AI 修订后对齐热量与文案：
+     * <ul>
+     *   <li>健管师手改（PLAN_EDIT）保留 kcal，仅重算宏量；</li>
+     *   <li>否则按 summary/goalSummary/goals 推断减重意图，走与生成相同的 resolve（避免总结写减重、卡片仍维持）；</li>
+     *   <li>若高亮阻断减重，则热量维持，并弱化总结里的减重叙事。</li>
+     * </ul>
+     *
+     * @return 可能被弱化后的 goalSummary（未改则原样返回）
+     */
+    public String applyAfterMutation(
+            String tenantId,
+            String peopleId,
+            ObjectNode diet,
+            ObjectNode contextSnapshot,
+            String goalSummary) {
         if (diet == null) {
-            return;
+            return goalSummary;
+        }
+        ObjectNode snap = contextSnapshot == null ? JsonUtils.emptyObject() : contextSnapshot;
+        if (StringUtils.hasText(goalSummary)) {
+            snap.put("goalSummary", goalSummary.trim());
         }
         JsonNode existing = diet.get(FIELD);
         ObjectNode target;
+        boolean lossBlocked = isLossBlocked(snap);
+        LoseIntent intent = inferLoseIntent(tenantId, peopleId, snap);
         if (existing != null && SOURCE_PLAN_EDIT.equals(existing.path("source").asText())) {
             target = planEdit(tenantId, peopleId, existing);
+        } else if (lossBlocked) {
+            // 阻断减重：不得因总结数字落成 LOSE
+            target = maintainPreferred(tenantId, peopleId);
+        } else if (intent.lose()) {
+            target = resolveForGeneration(tenantId, peopleId, snap);
         } else {
             target = current(tenantId, peopleId);
         }
@@ -205,7 +239,19 @@ public class CarePlanEnergyTargetService {
         } else {
             diet.set(FIELD, target);
         }
-        fixHint(diet, target);
+        rewriteHint(diet, target);
+        alignSummaryKcal(snap, target);
+        String nextGoal = goalSummary;
+        if (target != null && isMaintainType(target.path("goalType").asText(null))) {
+            sanitizeLoseNarrative(snap);
+            nextGoal = sanitizeLoseNarrativeText(goalSummary);
+        }
+        if (target != null) {
+            ObjectNode snapTarget = target.deepCopy();
+            snapTarget.put("available", true);
+            snap.set(FIELD, snapTarget);
+        }
+        return nextGoal;
     }
 
     /**
@@ -329,10 +375,11 @@ public class CarePlanEnergyTargetService {
             String blob = String.join(
                     " ",
                     contextSnapshot.path("summary").asText(""),
+                    contextSnapshot.path("goalSummary").asText(""),
                     goals.path("modeLabel").asText(""),
                     goals.path("primaryAppealLabel").asText(""));
             rate = firstNonNull(parseWeeklyRate(blob), parseRateFromPeriod(blob));
-            if (blob.contains("减重") || blob.contains("降体重") || blob.contains("减轻体重")) {
+            if (looksLikeLoseCopy(blob) || parseRateFromPeriod(blob) != null) {
                 lose = true;
             }
         }
@@ -424,6 +471,81 @@ public class CarePlanEnergyTargetService {
 
     private static Double firstNonNull(Double a, Double b) {
         return a != null ? a : b;
+    }
+
+    private static boolean isLossBlocked(ObjectNode contextSnapshot) {
+        return contextSnapshot != null && contextSnapshot.path("goals").path("lossBlocked").asBoolean(false);
+    }
+
+    private static boolean isMaintainType(String goalType) {
+        return !StringUtils.hasText(goalType)
+                || DietGoalTypeEnum.MAINTAIN.name().equalsIgnoreCase(goalType);
+    }
+
+    static boolean looksLikeLoseCopy(String text) {
+        if (!StringUtils.hasText(text)) {
+            return false;
+        }
+        String s = text.toLowerCase(Locale.ROOT);
+        return s.contains("减重")
+                || s.contains("降体重")
+                || s.contains("减轻体重")
+                || s.contains("稳步下降")
+                || s.contains("体重下降")
+                || s.contains("下降约")
+                || WEEKS_LOSE.matcher(s).find()
+                || MONTHS_LOSE.matcher(s).find();
+    }
+
+    /** 优先沿用档案维持目标；否则按维持估算。 */
+    private ObjectNode maintainPreferred(String tenantId, String peopleId) {
+        DietGoal goal = goalService.current(tenantId, peopleId);
+        if (goal != null
+                && goal.getEnergyKcal() != null
+                && DietGoalTypeEnum.MAINTAIN.name().equals(goal.getGoalType())) {
+            String source =
+                    DietGoalService.SOURCE_STAFF.equals(goal.getSource()) ? SOURCE_STAFF_GOAL : SOURCE_PATIENT_GOAL;
+            return node(
+                    goal.getEnergyKcal(),
+                    goal.getCarbG(),
+                    goal.getProteinG(),
+                    goal.getFatG(),
+                    goal.getGoalType(),
+                    goal.getRateKgPerWeek(),
+                    source);
+        }
+        return estimateForPlan(tenantId, peopleId, new LoseIntent(false, null));
+    }
+
+    /** 热量已是维持时，去掉总结里容易误导的减重措辞。 */
+    public static void sanitizeLoseNarrative(ObjectNode contextSnapshot) {
+        if (contextSnapshot == null) {
+            return;
+        }
+        String summary = contextSnapshot.path("summary").asText(null);
+        String next = sanitizeLoseNarrativeText(summary);
+        if (next != null && !next.equals(summary)) {
+            contextSnapshot.put("summary", next);
+        }
+        String goal = contextSnapshot.path("goalSummary").asText(null);
+        String nextGoal = sanitizeLoseNarrativeText(goal);
+        if (nextGoal != null && !nextGoal.equals(goal)) {
+            contextSnapshot.put("goalSummary", nextGoal);
+        }
+    }
+
+    public static String sanitizeLoseNarrativeText(String text) {
+        if (!StringUtils.hasText(text) || !looksLikeLoseCopy(text)) {
+            return text;
+        }
+        String s = text;
+        s = s.replaceAll("稳步下降约\\s*\\d+(?:\\.\\d+)?\\s*kg", "体重保持相对平稳");
+        s = s.replaceAll("下降约\\s*\\d+(?:\\.\\d+)?\\s*kg", "体重保持相对平稳");
+        s = s.replaceAll("每周约\\s*\\d+(?:\\.\\d+)?\\s*kg", "体重波动可控");
+        s = s.replace("减重", "体重管理");
+        s = s.replace("降体重", "体重管理");
+        s = s.replace("减轻体重", "体重管理");
+        return s.replaceAll("；{2,}", "；").replaceAll("，{2,}", "，").trim();
     }
 
     private ObjectNode planEdit(String tenantId, String peopleId, JsonNode existing) {

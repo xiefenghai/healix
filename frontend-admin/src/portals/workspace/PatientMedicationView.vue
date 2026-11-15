@@ -46,29 +46,12 @@ interface Medication {
   verified?: boolean | null
   allergyConflict?: string | null
   stopReason?: string | null
-  openFeedbackCount?: number
-}
-
-interface Feedback {
-  id: string
-  medicationId: string
-  drugName?: string
-  kind: string
-  kindLabel?: string
-  symptomLabels?: string[]
-  severity?: string | null
-  content?: string | null
-  status: 'OPEN' | 'HANDLED'
-  reply?: string | null
-  handledByName?: string | null
-  handledAt?: string | null
-  gmtCreated?: string
 }
 
 interface AdherenceCell {
-  date: string
+  date: string | number[]
   slot: string
-  status: string
+  status: string | null
   takenAt?: string | null
   backfill: boolean
   count: number
@@ -87,7 +70,7 @@ interface Adherence {
     onTimePercent: number | null
     prnCount: number
   }
-  days: { date: string }[]
+  days: { date: string | number[] }[]
   meds: { medicationId: string; drugName: string; prn: boolean; slots: string[]; cells: AdherenceCell[] }[]
 }
 
@@ -114,7 +97,6 @@ const STOP_REASON_LABELS: Record<string, string> = {
   DOCTOR: '医生让停',
   OTHER: '其他',
 }
-const SEVERITY_LABELS: Record<string, string> = { MILD: '轻度', MODERATE: '中度', SEVERE: '重度' }
 
 const props = defineProps<{
   peopleId?: string
@@ -126,7 +108,8 @@ const peopleId = computed(() => String(props.peopleId || route.params.peopleId |
 const loading = ref(false)
 const saving = ref(false)
 const list = ref<Medication[]>([])
-const statusFilter = ref<'ALL' | 'ACTIVE' | 'STOPPED'>('ALL')
+/** 当前用药 / 历史用药 / 近14天用药 */
+const listTab = ref<'ACTIVE' | 'STOPPED' | 'ADHERENCE'>('ACTIVE')
 const doseUnitOptions = ref<DictItem[]>([])
 const usageOptions = ref<DictItem[]>([])
 const frequencyOptions = ref<DictItem[]>([])
@@ -153,8 +136,6 @@ const form = reactive({
 })
 
 const adherence = ref<Adherence | null>(null)
-const feedback = ref<Feedback[]>([])
-const feedbackFilter = ref<'OPEN' | 'ALL'>('OPEN')
 
 const intakeVisible = ref(false)
 const intakeMed = ref<Medication | null>(null)
@@ -166,10 +147,11 @@ const intakeForm = reactive({
   note: '',
 })
 
-const filteredList = computed(() => {
-  if (statusFilter.value === 'ALL') return list.value
-  return list.value.filter((m) => m.status === statusFilter.value)
-})
+const listEmptyText = computed(() =>
+  listTab.value === 'STOPPED' ? '暂无历史用药' : '暂无在用药品',
+)
+
+const showMedTable = computed(() => listTab.value === 'ACTIVE' || listTab.value === 'STOPPED')
 
 const dialogTitle = computed(() => (editingId.value ? '编辑用药' : '添加用药'))
 
@@ -234,8 +216,11 @@ function cellText(value?: string | null) {
 }
 
 function medicationPeriodLabel(row: Pick<Medication, 'startDate' | 'stopDate' | 'courseDays'>) {
-  const start = row.startDate || '-'
-  const stop = row.stopDate || (row.courseDays ? '—' : '长期')
+  const start = row.startDate?.trim() || ''
+  const stop = row.stopDate?.trim() || (row.courseDays ? '' : '长期')
+  if (!start && !stop) return ''
+  if (!start) return stop || '长期'
+  if (!stop) return `${start} 起`
   return `${start} ~ ${stop}`
 }
 
@@ -458,13 +443,15 @@ async function loadDict() {
 async function loadList() {
   loading.value = true
   try {
-    const q = statusFilter.value === 'ALL' ? '' : `?status=${statusFilter.value}`
+    if (listTab.value === 'ADHERENCE') {
+      await loadAdherence()
+      return
+    }
     const res = await api<{ data: Medication[] }>(
-      `/api/b/v1/patients/${peopleId.value}/medications${q}`,
+      `/api/b/v1/patients/${peopleId.value}/medications?status=${listTab.value}`,
     )
     list.value = res.data ?? []
     void loadAdherence()
-    void loadFeedback()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载用药失败')
   } finally {
@@ -561,60 +548,36 @@ async function loadAdherence() {
   }
 }
 
-async function loadFeedback() {
-  try {
-    const q = feedbackFilter.value === 'OPEN' ? '?status=OPEN' : ''
-    const res = await api<{ data: Feedback[] }>(`/api/b/v1/patients/${peopleId.value}/medication-feedback${q}`)
-    feedback.value = res.data ?? []
-  } catch {
-    feedback.value = []
-  }
-}
-
-async function handleFeedback(row: Feedback) {
-  let reply: string
-  try {
-    const res = await ElMessageBox.prompt(
-      '回复会显示在患者该药的详情页，并关闭对应的工作台任务。',
-      `处理反馈 · ${row.drugName || ''}`,
-      {
-        inputType: 'textarea',
-        inputPlaceholder: '如：已电话沟通，建议暂停并复诊；或：可改到晚饭后服用',
-        inputValidator: (v: string) => (!!v && v.trim().length > 0 && v.trim().length <= 500) || '请填写 1-500 字',
-        confirmButtonText: '提交',
-      },
-    )
-    reply = String(res.value).trim()
-  } catch {
-    return
-  }
-  try {
-    await api(`/api/b/v1/patients/${peopleId.value}/medication-feedback/${row.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ reply }),
-    })
-    ElMessage.success('已处理')
-    await loadList()
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '处理失败')
-  }
-}
-
-function feedbackDetail(row: Feedback) {
-  const parts: string[] = []
-  if (row.symptomLabels?.length) parts.push(row.symptomLabels.join('、'))
-  if (row.severity) parts.push(SEVERITY_LABELS[row.severity] || row.severity)
-  if (row.content) parts.push(row.content)
-  return parts.join(' · ') || '-'
-}
-
-function fmtTime(dt?: string | null) {
-  return dt ? dt.replace('T', ' ').slice(5, 16) : '-'
-}
-
 function slotsLabel(row: Medication) {
   if (row.prn) return '需要时'
   return (row.suggestedSlots ?? []).map((s) => timeSlotLabel(s)).join('、') || '-'
+}
+
+function scheduleLabel(row: Medication) {
+  const period = medicationPeriodLabel(row)
+  const slots = slotsLabel(row)
+  const slotText = !slots || slots === '-' ? '' : slots
+  if (period && slotText) return `${period} · ${slotText}`
+  return period || slotText || '—'
+}
+
+function needsVerify(row: Medication) {
+  return row.source === 'PATIENT' && !row.verified
+}
+
+function sourceSoftClass(row: Medication) {
+  if (needsVerify(row)) return 'soft-tag--warn'
+  if (row.source === 'PATIENT') return 'soft-tag--ok'
+  if (row.source === 'PRESCRIPTION') return 'soft-tag--info'
+  return 'soft-tag--muted'
+}
+
+function statusSoftClass(status?: string) {
+  return status === 'STOPPED' ? 'soft-tag--muted' : 'soft-tag--ok'
+}
+
+function onRowMoreCommand(cmd: string | number, row: Medication) {
+  if (cmd === 'delete') void remove(row)
 }
 
 /** 网格行：定时药按时段拆行，PRN 一行显示次数 */
@@ -626,32 +589,60 @@ const gridRows = computed(() => {
     const slots = m.prn ? ['PRN'] : m.slots
     for (const slot of slots) {
       const cells: Record<string, AdherenceCell> = {}
-      for (const c of m.cells) if (c.slot === slot || (m.prn && c.slot === 'PRN')) cells[c.date] = c
+      for (const c of m.cells) {
+        if (c.slot === slot || (m.prn && c.slot === 'PRN')) {
+          cells[cellDayKey(c.date)] = c
+        }
+      }
       rows.push({ key: `${m.medicationId}|${slot}`, drugName: m.drugName, slot, cells })
     }
   }
   return rows
 })
 
+function cellDayKey(date?: string | number[] | null) {
+  if (Array.isArray(date) && date.length >= 3) {
+    const [y, m, d] = date
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  }
+  return String(date || '').slice(0, 10)
+}
+
 function gridCellText(c?: AdherenceCell) {
-  if (!c) return ''
-  if (c.slot === 'PRN') return c.count ? `${c.count}次` : ''
+  if (!c) return '—'
+  if (c.slot === 'PRN') {
+    if (c.status === 'NA') return '—'
+    return c.count > 0 ? `${c.count}次` : '—'
+  }
   switch (c.status) {
-    case 'TAKEN':
-      return (c.takenAt ? c.takenAt.slice(11, 16) : '✓') + (c.backfill ? '补' : '')
+    case 'TAKEN': {
+      const time = c.takenAt ? c.takenAt.slice(11, 16) : ''
+      const mark = time ? `✓ ${time}` : '✓'
+      return mark + (c.backfill ? '补' : '')
+    }
     case 'MISSED':
       return '漏'
     case 'SKIPPED':
       return '跳'
     case 'UNRECORDED':
       return '?'
+    case 'PENDING':
+    case 'NA':
+      return '—'
     default:
-      return ''
+      return '—'
   }
 }
 
 function gridCellClass(c?: AdherenceCell) {
-  return c ? `g-${c.status.toLowerCase()}` : ''
+  if (!c) return 'g-na'
+  if (c.slot === 'PRN') {
+    if (c.status === 'NA' || !c.count) return 'g-na'
+    return 'g-taken'
+  }
+  const status = String(c.status || '').toUpperCase()
+  if (status === 'PENDING' || status === 'NA' || !status) return 'g-na'
+  return `g-${status.toLowerCase()}`
 }
 
 async function remove(row: Medication) {
@@ -710,8 +701,7 @@ async function saveIntake() {
   }
 }
 
-watch(statusFilter, () => loadList())
-watch(feedbackFilter, () => loadFeedback())
+watch(listTab, () => loadList())
 watch(
   () => [form.courseMode, form.courseDays, form.startDate] as const,
   () => {
@@ -743,167 +733,239 @@ watch(peopleId, async (id, prev) => {
 
 <template>
   <div v-loading="loading" class="med-page">
-    <el-card shadow="never" class="section-card">
-      <template #header>
-        <div class="card-head">
-          <span class="section-title">用药清单</span>
-          <div class="head-actions">
-            <el-radio-group v-model="statusFilter" size="small">
-              <el-radio-button value="ALL">全部</el-radio-button>
-              <el-radio-button value="ACTIVE">在用</el-radio-button>
-              <el-radio-button value="STOPPED">已停用</el-radio-button>
-            </el-radio-group>
-            <el-button type="primary" @click="openCreate">添加用药</el-button>
+    <div class="med-toolbar">
+      <div class="list-tabs" role="tablist" aria-label="用药列表">
+        <button
+          type="button"
+          class="list-tab"
+          :class="{ active: listTab === 'ACTIVE' }"
+          role="tab"
+          :aria-selected="listTab === 'ACTIVE'"
+          @click="listTab = 'ACTIVE'"
+        >
+          当前用药
+        </button>
+        <button
+          type="button"
+          class="list-tab"
+          :class="{ active: listTab === 'STOPPED' }"
+          role="tab"
+          :aria-selected="listTab === 'STOPPED'"
+          @click="listTab = 'STOPPED'"
+        >
+          历史用药
+        </button>
+        <button
+          type="button"
+          class="list-tab"
+          :class="{ active: listTab === 'ADHERENCE' }"
+          role="tab"
+          :aria-selected="listTab === 'ADHERENCE'"
+          @click="listTab = 'ADHERENCE'"
+        >
+          近14天用药
+        </button>
+      </div>
+      <div class="head-actions">
+        <button
+          v-if="listTab === 'ACTIVE'"
+          type="button"
+          class="add-med-btn"
+          @click="openCreate"
+        >
+          添加用药
+        </button>
+        <div v-else-if="listTab === 'ADHERENCE' && adherence" class="grid-stats">
+          <div class="stat-item">
+            <span class="stat-label">依从率</span>
+            <strong class="stat-value">
+              {{ adherence.stats.ratePercent ?? '—' }}{{ adherence.stats.ratePercent != null ? '%' : '' }}
+            </strong>
           </div>
+          <span class="stat-sep" aria-hidden="true">|</span>
+          <div class="stat-item">
+            <span class="stat-label">按时率</span>
+            <strong class="stat-value">
+              {{ adherence.stats.onTimePercent ?? '—' }}{{ adherence.stats.onTimePercent != null ? '%' : '' }}
+            </strong>
+          </div>
+          <span class="stat-sep" aria-hidden="true">|</span>
+          <div class="stat-item">
+            <span class="stat-label">漏服</span>
+            <strong class="stat-value">{{ adherence.stats.missed }}</strong>
+          </div>
+          <span class="stat-sep" aria-hidden="true">|</span>
+          <div class="stat-item">
+            <span class="stat-label">未记录</span>
+            <strong class="stat-value">{{ adherence.stats.unrecorded }}</strong>
+          </div>
+          <template v-if="adherence.stats.prnCount">
+            <span class="stat-sep" aria-hidden="true">|</span>
+            <div class="stat-item">
+              <span class="stat-label">按需</span>
+              <strong class="stat-value">{{ adherence.stats.prnCount }}</strong>
+            </div>
+          </template>
         </div>
-      </template>
+      </div>
+    </div>
 
-      <el-table :data="filteredList" stripe class="med-table" empty-text="暂无用药记录">
-        <el-table-column label="药品名称" min-width="132" show-overflow-tooltip>
+    <section class="med-panel">
+      <el-table
+        v-if="showMedTable"
+        :data="list"
+        class="med-table"
+        :empty-text="listEmptyText"
+      >
+        <el-table-column label="药品名称" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            <div class="table-drug-name">{{ row.drugName || '-' }}</div>
-            <div v-if="row.remark" class="table-drug-remark">{{ row.remark }}</div>
+            <div class="drug-cell">
+              <span v-if="needsVerify(row)" class="verify-dot" title="待核对" aria-label="待核对" />
+              <div class="drug-cell-text">
+                <div class="table-drug-name">{{ row.drugName || '—' }}</div>
+                <div v-if="row.remark" class="table-drug-remark">{{ row.remark }}</div>
+              </div>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="剂量" min-width="72" align="center">
-          <template #default="{ row }">{{ cellText(doseLabel(row)) }}</template>
-        </el-table-column>
-        <el-table-column label="用法" min-width="64" align="center">
-          <template #default="{ row }">{{ cellText(usageLabel(row.usageMethod)) }}</template>
-        </el-table-column>
-        <el-table-column label="频率" min-width="88" align="center">
-          <template #default="{ row }">{{ cellText(frequencyLabel(row.frequency)) }}</template>
-        </el-table-column>
-        <el-table-column label="用药时机" min-width="88" align="center">
+        <el-table-column label="剂量" min-width="72">
           <template #default="{ row }">
-            <span :class="{ 'cell-timing': row.timingNote }">{{ cellText(row.timingNote) }}</span>
+            <span class="cell-num" :class="{ 'cell-empty': !doseLabel(row) }">
+              {{ cellText(doseLabel(row)) }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="疗程" min-width="64" align="center">
-          <template #default="{ row }">{{ courseDisplayLabel(row) }}</template>
+        <el-table-column label="用法" min-width="64">
+          <template #default="{ row }">
+            <span :class="{ 'cell-empty': !usageLabel(row.usageMethod) }">
+              {{ cellText(usageLabel(row.usageMethod)) }}
+            </span>
+          </template>
         </el-table-column>
-        <el-table-column label="服药时间" min-width="168" show-overflow-tooltip>
-          <template #default="{ row }">{{ medicationPeriodLabel(row) }}</template>
+        <el-table-column label="频率" min-width="88">
+          <template #default="{ row }">
+            <span class="cell-num" :class="{ 'cell-empty': !frequencyLabel(row.frequency) }">
+              {{ cellText(frequencyLabel(row.frequency)) }}
+            </span>
+          </template>
         </el-table-column>
-        <el-table-column label="不良反应" min-width="80" align="center">
+        <el-table-column label="用药时机" min-width="80">
+          <template #default="{ row }">
+            <span :class="row.timingNote ? 'cell-timing' : 'cell-empty'">
+              {{ cellText(row.timingNote) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="疗程" min-width="64">
+          <template #default="{ row }">
+            <span class="cell-num">{{ courseDisplayLabel(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="服药安排" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="cell-num">{{ scheduleLabel(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="不良反应" min-width="80">
           <template #default="{ row }">
             <span :class="{ 'cell-adverse-yes': row.hasAdverseReaction }">
               {{ adverseReactionLabel(row.hasAdverseReaction) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="服药时段" min-width="96" align="center">
-          <template #default="{ row }">{{ slotsLabel(row) }}</template>
-        </el-table-column>
-        <el-table-column label="数据来源" min-width="120" align="center">
+        <el-table-column label="数据来源" min-width="128">
           <template #default="{ row }">
-            <el-tag :type="sourceTagType(row.source)" size="small" effect="plain">
-              {{ rowSourceLabel(row) }}
-            </el-tag>
+            <span class="soft-tag" :class="sourceSoftClass(row)">{{ rowSourceLabel(row) }}</span>
             <div v-if="row.allergyConflict" class="flag-line danger" :title="row.allergyConflict">过敏冲突</div>
-            <div v-if="row.openFeedbackCount" class="flag-line warn">待处理反馈 {{ row.openFeedbackCount }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" min-width="72" align="center">
+        <el-table-column label="状态" min-width="88">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'STOPPED' ? 'info' : 'success'" size="small" effect="plain">
-              {{ statusLabel(row.status) }}
-            </el-tag>
+            <span class="soft-tag" :class="statusSoftClass(row.status)">{{ statusLabel(row.status) }}</span>
             <div v-if="row.stopReason" class="flag-line">{{ STOP_REASON_LABELS[row.stopReason] || row.stopReason }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="center">
+        <el-table-column label="操作" width="220" align="right" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button v-if="row.source === 'PATIENT' && !row.verified" link type="warning" @click="verify(row)">
+              <button
+                v-if="needsVerify(row)"
+                type="button"
+                class="verify-btn"
+                @click="verify(row)"
+              >
                 核对
-              </el-button>
-              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="primary" @click="openIntake(row)">依从性</el-button>
-              <el-button link type="danger" @click="remove(row)">删除</el-button>
+              </button>
+              <button type="button" class="action-edit" @click="openEdit(row)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+                编辑
+              </button>
+              <button type="button" class="action-link" @click="openIntake(row)">依从性</button>
+              <el-dropdown trigger="click" @command="(cmd) => onRowMoreCommand(cmd, row)">
+                <button type="button" class="more-btn" aria-label="更多操作" @click.stop>
+                  ···
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="delete" class="danger-item">删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
 
-    <el-card shadow="never" class="section-card">
-      <template #header>
-        <div class="card-head">
-          <span class="section-title">用药反馈</span>
-          <el-radio-group v-model="feedbackFilter" size="small">
-            <el-radio-button value="OPEN">待处理</el-radio-button>
-            <el-radio-button value="ALL">全部</el-radio-button>
-          </el-radio-group>
-        </div>
+      <template v-else>
+        <el-empty
+          v-if="!adherence || !gridRows.length"
+          description="近14天暂无服药记录"
+          :image-size="64"
+        />
+        <template v-else>
+          <div class="grid-wrap">
+            <table class="adh-grid">
+              <thead>
+                <tr>
+                  <th class="sticky">药品 / 时段</th>
+                  <th v-for="d in adherence.days" :key="cellDayKey(d.date)">
+                    {{ cellDayKey(d.date).slice(5) }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in gridRows" :key="r.key">
+                  <td class="sticky">
+                    <div class="g-drug">
+                      <span class="g-name">{{ r.drugName }}</span>
+                      <span class="g-slot">{{ r.slot === 'PRN' ? '需要时' : timeSlotLabel(r.slot) }}</span>
+                    </div>
+                  </td>
+                  <td
+                    v-for="d in adherence.days"
+                    :key="cellDayKey(d.date)"
+                    :class="gridCellClass(r.cells[cellDayKey(d.date)])"
+                  >
+                    {{ gridCellText(r.cells[cellDayKey(d.date)]) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="grid-legend" aria-label="图例">
+            <span class="leg"><i class="swatch taken" aria-hidden="true" />已服</span>
+            <span class="leg"><i class="swatch unrecorded" aria-hidden="true" />未记录</span>
+            <span class="leg"><i class="swatch missed" aria-hidden="true" />漏服</span>
+            <span class="leg"><i class="swatch skipped" aria-hidden="true" />跳过</span>
+            <span class="leg"><i class="swatch empty" aria-hidden="true" />无需服</span>
+            <span class="leg muted">「补」= 次日补记</span>
+          </div>
+        </template>
       </template>
-      <el-table :data="feedback" class="med-table" empty-text="暂无反馈">
-        <el-table-column label="时间" width="110">
-          <template #default="{ row }">{{ fmtTime(row.gmtCreated) }}</template>
-        </el-table-column>
-        <el-table-column label="药品" prop="drugName" min-width="120" show-overflow-tooltip />
-        <el-table-column label="类型" width="96">
-          <template #default="{ row }">
-            <el-tag
-              size="small"
-              effect="plain"
-              :type="row.kind === 'ALLERGY_CONFLICT' || row.severity === 'SEVERE' ? 'danger' : 'warning'"
-            >
-              {{ row.kindLabel || row.kind }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="内容" min-width="220">
-          <template #default="{ row }">
-            <div>{{ feedbackDetail(row) }}</div>
-            <div v-if="row.reply" class="fb-reply">{{ row.handledByName || '健管师' }}：{{ row.reply }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="120" align="center">
-          <template #default="{ row }">
-            <el-button v-if="row.status === 'OPEN'" size="small" type="primary" @click="handleFeedback(row)">处理</el-button>
-            <span v-else class="muted">已处理 {{ fmtTime(row.handledAt) }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <el-card v-if="adherence && gridRows.length" shadow="never" class="section-card">
-      <template #header>
-        <div class="card-head">
-          <span class="section-title">近 14 天服药</span>
-          <span class="grid-stats">
-            依从率 <b>{{ adherence.stats.ratePercent ?? '—' }}{{ adherence.stats.ratePercent != null ? '%' : '' }}</b>
-            · 按时率 <b>{{ adherence.stats.onTimePercent ?? '—' }}{{ adherence.stats.onTimePercent != null ? '%' : '' }}</b>
-            · 漏服 <b>{{ adherence.stats.missed }}</b>
-            · 未记录 <b>{{ adherence.stats.unrecorded }}</b>
-            <template v-if="adherence.stats.prnCount"> · 按需 {{ adherence.stats.prnCount }} 次</template>
-          </span>
-        </div>
-      </template>
-      <div class="grid-wrap">
-        <table class="adh-grid">
-          <thead>
-            <tr>
-              <th class="sticky">药品 / 时段</th>
-              <th v-for="d in adherence.days" :key="d.date">{{ d.date.slice(5) }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="r in gridRows" :key="r.key">
-              <td class="sticky">
-                <span class="g-name">{{ r.drugName }}</span>
-                <span class="g-slot">{{ r.slot === 'PRN' ? '需要时' : timeSlotLabel(r.slot) }}</span>
-              </td>
-              <td v-for="d in adherence.days" :key="d.date" :class="gridCellClass(r.cells[d.date])">
-                {{ gridCellText(r.cells[d.date]) }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="grid-legend">时刻=已服 · 补=次日补记 · 漏=漏服 · 跳=跳过 · ?=未记录 · 空白=当天不需要服</p>
-    </el-card>
+    </section>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="600px" destroy-on-close>
       <el-form label-width="100px" class="med-form">
@@ -1102,19 +1164,93 @@ watch(peopleId, async (id, prev) => {
 <style scoped>
 .med-page {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.section-card :deep(.el-card__header) {
-  padding: 14px 20px;
-  background: #f8fafc;
-}
-
-.card-head {
+.med-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.list-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+}
+
+.list-tab {
+  margin: 0;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-500, #64748b);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.list-tab:hover {
+  color: var(--ink-800, #1e293b);
+  background: #f8fafc;
+}
+
+.list-tab.active {
+  color: #1d4ed8;
+  background: #eff6ff;
+  box-shadow: none;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.add-med-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid #93c5fd;
+  background: #eff6ff;
+  color: var(--brand-600, #1e63d9);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.add-med-btn:hover {
+  background: #dbeafe;
+  border-color: #60a5fa;
+  color: #1d4ed8;
+}
+
+.med-panel {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  overflow: hidden;
+  padding: 4px 4px 8px;
 }
 
 .section-title {
@@ -1128,26 +1264,90 @@ watch(peopleId, async (id, prev) => {
   line-height: 32px;
 }
 
-.head-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .row-actions {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 12px;
   flex-wrap: nowrap;
   white-space: nowrap;
+  min-height: 32px;
+  width: 100%;
 }
 
-.row-actions :deep(.el-button) {
+.verify-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.verify-btn:hover {
+  background: #dbeafe;
+}
+
+.action-edit,
+.action-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--brand-600, #1e63d9);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.action-edit svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.action-edit:hover,
+.action-link:hover {
+  color: #1d4ed8;
+  opacity: 0.85;
+}
+
+.more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   margin: 0;
-  padding: 0 4px;
-  height: auto;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.more-btn:hover {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+:deep(.danger-item) {
+  color: #dc2626 !important;
 }
 
 .dose-row {
@@ -1227,24 +1427,77 @@ watch(peopleId, async (id, prev) => {
 
 .med-table {
   width: 100%;
+  --el-table-border-color: transparent;
+  --el-table-row-hover-bg-color: #f9fafb;
+}
+
+.med-table :deep(.el-table__inner-wrapper::before),
+.med-table :deep(.el-table__border-left-patch),
+.med-table :deep(.el-table--border::after),
+.med-table :deep(.el-table__border-bottom-patch) {
+  display: none;
 }
 
 .med-table :deep(.el-table__cell) {
-  padding: 12px 0;
+  padding: 14px 12px;
+  border-right: none !important;
+  border-bottom: 1px solid #f0f0f0 !important;
+  vertical-align: middle;
+}
+
+.med-table :deep(.el-table__header .el-table__cell) {
+  background: #fff;
+  border-bottom: 1px solid #eef2f7 !important;
 }
 
 .med-table :deep(.el-table__header .cell) {
   white-space: nowrap;
   font-weight: 600;
+  font-size: 13px;
   color: var(--admin-text-secondary, #64748b);
+  text-align: left;
 }
 
 .med-table :deep(.cell) {
   line-height: 1.45;
+  text-align: left;
+  font-size: 13px;
+  color: #334155;
+}
+
+.med-table :deep(.el-table__fixed-right .el-table__cell),
+.med-table :deep(.el-table__fixed-right-patch) {
+  background: #fff;
+}
+
+.med-table :deep(.el-table__body tr:hover > td.el-table__cell) {
+  background: #f9fafb !important;
+}
+
+.drug-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.verify-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+}
+
+.drug-cell-text {
+  min-width: 0;
 }
 
 .table-drug-name {
   font-weight: 600;
+  font-size: 13px;
   color: var(--admin-text);
 }
 
@@ -1255,8 +1508,19 @@ watch(peopleId, async (id, prev) => {
   line-height: 1.35;
 }
 
+.cell-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  letter-spacing: 0.01em;
+}
+
+.cell-empty {
+  color: #cbd5e1;
+  font-weight: 400;
+}
+
 .cell-timing {
-  color: #c2410c;
+  color: #334155;
   font-weight: 500;
 }
 
@@ -1265,8 +1529,37 @@ watch(peopleId, async (id, prev) => {
   font-weight: 600;
 }
 
-.section-card :deep(.el-card__body) {
-  padding: 0 20px 16px;
+.soft-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.soft-tag--ok {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.soft-tag--warn {
+  background: #fef9c3;
+  color: #a16207;
+}
+
+.soft-tag--info {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.soft-tag--muted {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .flag-line {
@@ -1278,90 +1571,215 @@ watch(peopleId, async (id, prev) => {
   color: #dc2626;
   font-weight: 600;
 }
-.flag-line.warn {
-  color: #c2410c;
-}
-.fb-reply {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #0b7a66;
-}
-.muted {
-  font-size: 12px;
-  color: var(--admin-muted);
-}
 .slot-hint {
   font-size: 12px;
   color: var(--admin-muted);
 }
-.section-card + .section-card {
-  margin-top: 16px;
-}
 .grid-stats {
-  font-size: 13px;
-  color: var(--admin-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
 }
+
+.stat-item {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+}
+
+.stat-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #9ca3af;
+  line-height: 1.2;
+}
+
+.stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat-sep {
+  width: auto;
+  height: auto;
+  background: transparent;
+  color: #d1d5db;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
+}
+
 .grid-wrap {
-  overflow-x: auto;
-  padding-top: 12px;
+  overflow: auto;
+  max-height: min(62vh, 640px);
+  padding: 0;
+  border-radius: 6px;
 }
+
 .adh-grid {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12px;
   min-width: 100%;
 }
+
 .adh-grid th,
 .adh-grid td {
-  border: 1px solid var(--admin-border, #e5e7eb);
-  padding: 6px 4px;
+  border-right: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9;
+  padding: 8px 6px;
   text-align: center;
   white-space: nowrap;
-  min-width: 44px;
+  min-width: 52px;
+  background: #fff;
 }
+
 .adh-grid th {
-  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f9fafb;
   font-weight: 600;
-  color: var(--admin-text-secondary);
+  color: #64748b;
+  border-bottom: 1px solid #e5e7eb;
 }
+
 .adh-grid .sticky {
   position: sticky;
   left: 0;
   z-index: 1;
   background: #fff;
   text-align: left;
-  min-width: 150px;
+  min-width: 180px;
+  width: 180px;
+  max-width: 220px;
+  padding-left: 12px;
+  padding-right: 12px;
+  border-right: 1px solid #e5e7eb;
+  box-shadow: 4px 0 8px -6px rgba(15, 23, 42, 0.12);
 }
+
 .adh-grid th.sticky {
-  background: #f8fafc;
+  z-index: 3;
+  background: #f9fafb;
 }
+
+.g-drug {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  white-space: normal;
+}
+
 .g-name {
   font-weight: 600;
-  margin-right: 6px;
+  font-size: 13px;
+  color: #1f2937;
+  line-height: 1.35;
+  word-break: break-word;
 }
+
 .g-slot {
-  color: var(--admin-muted);
+  font-size: 12px;
+  font-weight: 500;
+  color: #9ca3af;
+  line-height: 1.2;
 }
+
 .g-taken {
-  background: #ecfdf5;
-  color: #047857;
+  background: #ecfdf5 !important;
+  color: #059669;
+  font-weight: 700;
 }
+
 .g-missed {
-  background: #fef2f2;
-  color: #dc2626;
-  font-weight: 600;
+  background: #fff7ed !important;
+  color: #c2410c;
+  font-weight: 700;
 }
+
 .g-skipped {
-  background: #f3f4f6;
+  background: #f8fafc !important;
+  color: #94a3b8;
+}
+
+.g-unrecorded {
+  background: #f9fafb !important;
+  color: #d1d5db;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.g-na,
+.g-pending {
+  background: #fff !important;
+  color: #d1d5db;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.grid-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  margin: 12px 8px 4px;
+  font-size: 12px;
   color: #6b7280;
 }
-.g-unrecorded {
-  background: #fff7ed;
-  color: #c2410c;
+
+.leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #6b7280;
 }
-.grid-legend {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--admin-muted);
+
+.leg.muted {
+  color: #9ca3af;
+}
+
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: none;
+  flex-shrink: 0;
+}
+
+.swatch.taken {
+  background: #10b981;
+}
+
+.swatch.unrecorded {
+  background: #d1d5db;
+}
+
+.swatch.missed {
+  background: #f59e0b;
+}
+
+.swatch.skipped {
+  background: #94a3b8;
+}
+
+.swatch.empty {
+  background: #e5e7eb;
 }
 
 .intake-list {

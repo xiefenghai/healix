@@ -12,7 +12,10 @@ const SECTION_TITLES = new Set([
 
 /** 行首字段标签（只加粗标签名，冒号后正文不加粗） */
 const FIELD_LABEL =
-  /^(目标|周计划|禁忌|注意|复评|热量建议|原则|推荐|限制|过敏规避|示例日|补充|周期|打卡任务)([：:].*)/
+  /^(目标|周计划|禁忌|注意|复评|热量建议|原则|推荐|限制|过敏规避|示例日|补充|周期|打卡任务|客户分组|团队协作)([：:].*)/
+
+/** 列表前缀：数字 / 中点 / 短横 / 实心圆点（模型常输出 • 或 -无空格） */
+const LIST_PREFIX = /^(\d+[、.．）)]\s*|[·•]\s*|-\s*)/
 
 /**
  * 把「一、标题1.条目」「。2.下一条」等粘连拆成多行（与后端 AgentReplyPlainText 对齐）。
@@ -68,7 +71,7 @@ function isNamedSectionTitle(trimmed: string): boolean {
 }
 
 function isListItemLine(trimmed: string): boolean {
-  return /^(\d+[、.．）)]|·)\s*/.test(trimmed)
+  return LIST_PREFIX.test(trimmed)
 }
 
 function escapeHtml(text: string): string {
@@ -77,9 +80,12 @@ function escapeHtml(text: string): string {
 
 /** 对已转义的一行做字段标签加粗（不再二次转义） */
 function enrichBodyLine(escapedTrimmed: string): string {
-  const field = FIELD_LABEL.exec(escapedTrimmed)
+  // 兼容「-客户分组：」「• 团队协作：」整行未拆前缀的情况
+  const stripped = escapedTrimmed.replace(/^([·•]\s*|-\s*)/, '')
+  const field = FIELD_LABEL.exec(stripped)
   if (field) {
-    return `<strong class="field-label">${field[1]}</strong>${field[2]}`
+    const bullet = escapedTrimmed.slice(0, escapedTrimmed.length - stripped.length)
+    return `${bullet}<strong class="field-label">${field[1]}</strong>${field[2]}`
   }
   const numbered = /^(\d+[、.．]\s*)([^：:，。；;\n]{1,4})([：:].+)$/.exec(escapedTrimmed)
   if (numbered && !/[已均建议处理确认优先请要]/.test(numbered[2])) {
@@ -102,12 +108,13 @@ function formatSectionTitleHtml(trimmed: string): string {
 }
 
 function formatListItemHtml(trimmed: string): string {
-  const m = /^(\d+[、.．）)]\s*|·\s*)(.+)$/.exec(trimmed)
-  if (m) {
+  const m = LIST_PREFIX.exec(trimmed)
+  if (m && m[0].length < trimmed.length) {
+    const body = trimmed.slice(m[0].length)
     return (
       `<div class="reply-line is-item">` +
-      `<span class="item-idx">${escapeHtml(m[1].trim())}</span>` +
-      `<span class="item-body">${enrichBodyLine(escapeHtml(m[2]))}</span>` +
+      `<span class="item-idx">${escapeHtml(m[0].trim() || '-')}</span>` +
+      `<span class="item-body">${enrichBodyLine(escapeHtml(body))}</span>` +
       `</div>`
     )
   }

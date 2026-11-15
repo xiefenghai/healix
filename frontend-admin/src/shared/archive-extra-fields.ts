@@ -38,7 +38,7 @@ export const PSYCH_FIELDS: ArchiveExtraField[] = [
     options: 'eatingDisorderHistory',
     sensitive: true,
   },
-  { field: 'basic.psych.soughtHelp', label: '是否寻求过专业帮助', type: 'ENUM', options: 'soughtHelp', sensitive: true },
+  { field: 'basic.psych.soughtHelp', label: '是否寻求专业帮助', type: 'ENUM', options: 'soughtHelp', sensitive: true },
   {
     field: 'basic.psych.bodySatisfaction',
     label: '身材满意度',

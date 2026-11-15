@@ -11,7 +11,6 @@ import com.healix.core.medication.domain.PeopleMedication;
 import com.healix.core.medication.domain.PeopleMedicationIntake;
 import com.healix.core.medication.dto.MedicationIntakeViewDto;
 import com.healix.core.medication.dto.MedicationViewDto;
-import com.healix.core.medication.enums.MedicationFeedbackKindEnum;
 import com.healix.core.medication.enums.MedicationIntakeStatusEnum;
 import com.healix.core.medication.enums.MedicationSourceEnum;
 import com.healix.core.medication.enums.MedicationStatusEnum;
@@ -31,7 +30,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,7 +48,6 @@ public class MedicationService {
     private final ArchiveAccessService archiveAccessService;
     private final FieldRevisionService fieldRevisionService;
     private final MedicationAllergyGuard allergyGuard;
-    private final MedicationFeedbackService feedbackService;
     private final WorkspaceTaskGenerator workspaceTaskGenerator;
     private final ImageFileService imageFileService;
 
@@ -78,14 +75,9 @@ public class MedicationService {
         for (PeopleMedication row : rows) {
             expireIfNeeded(row);
         }
-        Map<String, Integer> openFeedback = feedbackService.openCountByMedication(tenantId, peopleId);
         return rows.stream()
                 .filter(row -> filter == null || filter.equalsIgnoreCase(row.getStatus()))
-                .map(row -> {
-                    MedicationViewDto dto = toView(row);
-                    dto.setOpenFeedbackCount(openFeedback.getOrDefault(row.getId(), 0));
-                    return dto;
-                })
+                .map(this::toView)
                 .toList();
     }
 
@@ -95,10 +87,7 @@ public class MedicationService {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
         expireIfNeeded(row);
-        MedicationViewDto dto = toView(row);
-        dto.setOpenFeedbackCount(
-                feedbackService.openCountByMedication(tenantId, peopleId).getOrDefault(medicationId, 0));
-        return dto;
+        return toView(row);
     }
 
     public List<MedicationIntakeViewDto> listIntakesByDateForPatient(
@@ -366,7 +355,6 @@ public class MedicationService {
                 null,
                 "{}",
                 toRevisionJson(row));
-        reportAllergyConflict(row, null);
         return row;
     }
 
@@ -380,7 +368,6 @@ public class MedicationService {
         archiveAccessService.requirePeopleInTenant(tenantId, peopleId);
         PeopleMedication row = requireOwned(tenantId, peopleId, medicationId);
         String oldJson = toRevisionJson(row);
-        String oldConflict = row.getAllergyConflict();
         if (isPatientOwned(row)) {
             validateCommand(cmd);
             boolean adverse = Integer.valueOf(1).equals(row.getHasAdverseReaction());
@@ -411,7 +398,6 @@ public class MedicationService {
                 null,
                 oldJson,
                 toRevisionJson(row));
-        reportAllergyConflict(row, oldConflict);
         syncVerifyTask(tenantId, peopleId);
         return toView(row);
     }
@@ -476,8 +462,6 @@ public class MedicationService {
                 null,
                 oldJson,
                 toRevisionJson(row));
-        String content = "原因：" + stopReason.label() + (text == null ? "" : "；" + text);
-        feedbackService.record(row, MedicationFeedbackKindEnum.STOPPED, null, null, content);
         syncVerifyTask(tenantId, peopleId);
         return toView(row);
     }
@@ -687,16 +671,6 @@ public class MedicationService {
                 oldJson,
                 toIntakeRevisionJson(existing, med.getDrugName()));
         return toIntakeView(existing, med.getDrugName());
-    }
-
-    /** 保存时比对药物过敏；新出现的冲突写反馈并开 HIGH 任务。 */
-    private void reportAllergyConflict(PeopleMedication row, String previousConflict) {
-        String conflict = row.getAllergyConflict();
-        if (!StringUtils.hasText(conflict) || Objects.equals(conflict, previousConflict)) {
-            return;
-        }
-        feedbackService.record(
-                row, MedicationFeedbackKindEnum.ALLERGY_CONFLICT, null, null, "档案过敏：" + conflict);
     }
 
     private String conflictOf(PeopleMedication row) {

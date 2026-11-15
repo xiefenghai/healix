@@ -12,7 +12,7 @@ import {
   type HighlightType,
   type ReportHighlight,
 } from '../../shared/report-view'
-import { toneTagType, type AssessmentGroup, type AssessmentOverview } from '../../shared/assessment'
+import type { AssessmentGroup, AssessmentOverview } from '../../shared/assessment'
 
 export interface HealthReportDetail {
   id: string
@@ -115,8 +115,8 @@ const canPublish = computed(() => {
 })
 const publishBlockHint = computed(() => {
   if (!isReview.value) return ''
-  if (!staffComment.value.trim()) return '请先填写健管师寄语（可点「AI 生成点评」）后再发布'
-  if (isQuarter.value && !quarterAdvice.value.trim()) return '三个月报告须填写阶段建议'
+  if (!staffComment.value.trim()) return '请填写寄语后发布'
+  if (isQuarter.value && !quarterAdvice.value.trim()) return '请填写阶段建议后再发布'
   return ''
 })
 
@@ -447,8 +447,13 @@ function onClosed() {
           <div class="review-form-title">疾病评估（仅内部参考，不进入报告）</div>
           <div v-for="g in assessGroups" :key="g.diseaseCode + g.engineCode" class="assess-row">
             <span class="assess-name">{{ g.diseaseLabel }}·{{ g.category === 'RISK' ? '患病风险' : '严重分层' }}</span>
-            <el-tag size="small" :type="toneTagType(g.latest?.tone)" effect="light">{{ assessText(g) }}</el-tag>
-            <el-tag v-if="g.latest?.suspicion" size="small" type="danger" effect="plain">疑似</el-tag>
+            <div class="assess-tags">
+              <span
+                class="assess-tag"
+                :data-tone="g.latest?.tone || 'info'"
+              >{{ assessText(g) }}</span>
+              <span v-if="g.latest?.suspicion" class="assess-tag" data-tone="danger">疑似</span>
+            </div>
           </div>
         </div>
         <div class="review-form-title">发布前确认</div>
@@ -460,21 +465,21 @@ function onClosed() {
           title="须先填写健管师寄语再发布；建议先刷新快照，发布后内容冻结，患者端即可查看。"
         />
         <el-form label-position="top">
-          <el-form-item label="健管师寄语（必填）" required>
-            <div class="ai-bar">
-              <el-button
-                link
-                type="primary"
-                :loading="aiLoading"
-                :disabled="submitting"
-                @click="generateAiSummary"
-              >
-                {{ aiLoading ? 'AI 生成中…' : 'AI 生成点评' }}
-              </el-button>
-              <span class="ai-hint">
-                {{ aiNote || '可点「AI 生成点评」后修改确认，寄语必填才能发布' }}
-              </span>
-            </div>
+          <el-form-item required>
+            <template #label>
+              <div class="comment-label-row">
+                <span>健管师寄语（必填）</span>
+                <button
+                  type="button"
+                  class="ai-gen-btn"
+                  :disabled="aiLoading || submitting"
+                  @click="generateAiSummary"
+                >
+                  <span aria-hidden="true">✨</span>
+                  {{ aiLoading ? '生成中…' : 'AI 生成点评' }}
+                </button>
+              </div>
+            </template>
             <el-input
               v-model="staffComment"
               type="textarea"
@@ -483,6 +488,8 @@ function onClosed() {
               show-word-limit
               placeholder="写给患者看的寄语，用「您」说话；可先点「AI 生成点评」再改"
             />
+            <p v-if="publishBlockHint" class="publish-hint">{{ publishBlockHint }}</p>
+            <p v-else-if="aiNote" class="ai-hint-line">{{ aiNote }}</p>
             <div v-if="commentPreview" class="preview">
               <span class="preview-label">未填写时参考模板（发布前须改成正式寄语）：</span>{{ commentPreview }}
             </div>
@@ -544,10 +551,22 @@ function onClosed() {
     <template #footer>
       <div class="footer">
         <template v-if="isReview">
-          <el-button :loading="submitting" @click="refresh">刷新快照</el-button>
+          <button
+            type="button"
+            class="footer-ghost"
+            :disabled="submitting"
+            @click="refresh"
+          >
+            <span aria-hidden="true">↻</span>
+            {{ submitting ? '刷新中…' : '刷新快照' }}
+          </button>
           <div class="footer-right">
-            <el-button :loading="exporting" @click="exportPdf">导出 PDF</el-button>
-            <el-button :loading="submitting" @click="skip">跳过本周期</el-button>
+            <el-button class="footer-secondary" :loading="exporting" @click="exportPdf">
+              导出 PDF
+            </el-button>
+            <el-button class="footer-secondary" :loading="submitting" @click="skip">
+              跳过本周期
+            </el-button>
             <el-tooltip
               :disabled="canPublish"
               :content="publishBlockHint"
@@ -556,6 +575,7 @@ function onClosed() {
               <span class="publish-wrap">
                 <el-button
                   type="primary"
+                  class="footer-primary"
                   :loading="submitting"
                   :disabled="!canPublish"
                   @click="publish"
@@ -568,7 +588,9 @@ function onClosed() {
         </template>
         <template v-else>
           <div class="footer-right">
-            <el-button :loading="exporting" @click="exportPdf">导出 PDF</el-button>
+            <el-button class="footer-secondary" :loading="exporting" @click="exportPdf">
+              导出 PDF
+            </el-button>
             <el-button @click="open = false">关闭</el-button>
           </div>
         </template>
@@ -610,26 +632,33 @@ function onClosed() {
   flex-direction: column;
   gap: 4px;
   width: 84px;
+  padding-left: 0;
+  border-left: 2px solid #e5e7eb;
   overflow-y: auto;
 }
 .sec-item {
-  padding: 7px 10px;
+  position: relative;
+  padding: 8px 10px;
+  margin-left: -2px;
   border: none;
-  border-radius: 999px;
+  border-left: 2px solid transparent;
+  border-radius: 0 8px 8px 0;
   background: transparent;
-  color: var(--el-text-color-regular);
+  color: #6b7280;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .sec-item:hover {
-  background: var(--el-fill-color-light);
+  background: #f3f4f6;
+  color: #374151;
 }
 .sec-item.on {
-  background: #13222e;
-  color: #fff;
+  background: #eff6ff;
+  color: var(--el-color-primary, #2563eb);
   font-weight: 600;
+  border-left-color: var(--el-color-primary, #2563eb);
 }
 .body-scroll {
   min-height: 0;
@@ -661,32 +690,102 @@ function onClosed() {
   line-height: 1.55;
   font-size: 13px;
 }
-.ai-bar {
+.comment-label-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.ai-gen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.ai-gen-btn:hover:not(:disabled) {
+  background: #dbeafe;
+}
+.ai-gen-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .ai-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
+.ai-hint-line {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+.publish-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #dc2626;
+  line-height: 1.4;
+}
 .assess {
   margin-bottom: 14px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
+  border: 1px solid #e5e7eb;
 }
 .assess-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 0;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
   font-size: 12px;
 }
 .assess-name {
   flex: 1;
-  color: var(--el-text-color-regular);
+  min-width: 0;
+  color: #4b5563;
+}
+.assess-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.assess-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.assess-tag[data-tone='danger'],
+.assess-tag[data-tone='warning'] {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.assess-tag[data-tone='success'] {
+  background: #ecfdf5;
+  color: #059669;
+}
+.assess-tag[data-tone='info'] {
+  background: #eff6ff;
+  color: #2563eb;
 }
 .review-form-title {
   font-size: 13px;
@@ -726,7 +825,41 @@ function onClosed() {
 }
 .footer-right {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+.footer-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 32px;
+}
+.footer-ghost:hover:not(:disabled) {
+  color: var(--el-color-primary);
+}
+.footer-ghost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.footer-secondary {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: #e5e7eb;
+  --el-button-text-color: #4b5563;
+  --el-button-hover-bg-color: #f9fafb;
+  --el-button-hover-border-color: #d1d5db;
+  --el-button-hover-text-color: #111827;
+}
+.footer-primary {
+  min-height: 36px;
+  padding: 0 18px;
+  font-weight: 600;
 }
 </style>

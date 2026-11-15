@@ -717,35 +717,31 @@ onBeforeUnmount(() => disposeCharts())
 
 <style scoped>
 .hr-body {
-  --ink: #13222e;
-  --mark: #ffd84d;
-  --teal: #2b9e9e;
-  --muted: #6d7d88;
-  --line: #eef2f4;
-  --good: #0b7a66;
-  --good-bg: #e3f6ef;
-  --bad: #e0435a;
-  --bad-bg: #fde7ea;
-  --warn: #b07400;
-  --warn-bg: #fff1d6;
-  --info: #2f5fb3;
-  --info-bg: #e6eefc;
+  --ink: #111827;
+  --mark: #dbeafe;
+  --teal: #0d9488;
+  --muted: #9ca3af;
+  --line: #e5e7eb;
+  --good: #059669;
+  --good-bg: #ecfdf5;
+  --bad: #dc2626;
+  --bad-bg: #fef2f2;
+  --warn: #c2410c;
+  --warn-bg: #fff7ed;
+  --info: #2563eb;
+  --info-bg: #eff6ff;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 16px;
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(255, 216, 77, 0.24), transparent 36%),
-    radial-gradient(circle at 0% 40%, rgba(92, 184, 184, 0.14), transparent 40%),
-    linear-gradient(170deg, #fff8ec 0%, #f4fbf8 50%, #eaf7f2 100%);
+  border-radius: 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
   color: var(--ink);
 }
 .mark {
-  background: linear-gradient(transparent 60%, var(--mark) 60%);
-  padding: 0 3px;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
+  background: none;
+  padding: 0;
 }
 .muted {
   font-size: 12px;
@@ -772,8 +768,8 @@ onBeforeUnmount(() => disposeCharts())
   font-weight: 700;
 }
 .period-pill {
-  background: var(--ink);
-  color: #fff;
+  background: #eff6ff;
+  color: #2563eb;
 }
 .status-pill {
   background: #fff;
@@ -811,8 +807,8 @@ onBeforeUnmount(() => disposeCharts())
 .hero-meta {
   margin: 6px 0 0;
   font-size: 13px;
-  font-weight: 600;
-  color: #4a5b68;
+  font-weight: 500;
+  color: #6b7280;
 }
 .kpi-grid {
   display: grid;
@@ -824,70 +820,67 @@ onBeforeUnmount(() => disposeCharts())
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 12px 14px;
-  border-radius: 16px;
+  gap: 2px;
+  padding: 14px 16px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 6px 18px rgba(19, 34, 46, 0.06);
+  border: 1px solid #e5e7eb;
+  box-shadow: none;
 }
 .kpi-label,
 .rate-label,
 .ls-label {
   font-size: 12px;
-  font-weight: 700;
-  color: #5b6b7a;
+  font-weight: 500;
+  color: #9ca3af;
 }
 .kpi-value {
   margin-top: 2px;
-  font-size: 26px;
-  font-weight: 900;
+  font-size: 24px;
+  font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.02em;
+  color: #111827;
 }
 .kpi-value--bad {
-  color: var(--bad);
+  color: #111827;
 }
 .kpi-value small {
   margin-left: 2px;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
+  color: #6b7280;
 }
 .kpi-sub {
   margin-top: 2px;
   font-size: 11px;
-  color: var(--muted);
+  color: #9ca3af;
 }
 .kpi-delta {
   display: inline-block;
-  margin-top: 6px;
-  padding: 2px 8px;
-  border-radius: 6px;
+  margin-top: 4px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent !important;
   font-size: 11px;
-  font-weight: 800;
-}
-.kpi-delta.trend--better {
-  background: var(--good-bg);
-}
-.kpi-delta.trend--worse {
-  background: var(--bad-bg);
-}
-.kpi-delta.trend--flat {
-  background: var(--line);
+  font-weight: 600;
 }
 .trend--better {
-  color: var(--good);
+  color: #059669;
 }
 .trend--worse {
-  color: var(--bad);
+  color: #dc2626;
 }
 .trend--flat {
-  color: var(--muted);
+  color: #9ca3af;
 }
 
 .card {
   padding: 16px 18px;
-  border-radius: 18px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 8px 22px rgba(19, 34, 46, 0.06);
+  border: 1px solid #e5e7eb;
+  box-shadow: none;
 }
 .card-head {
   margin-bottom: 12px;
@@ -895,10 +888,11 @@ onBeforeUnmount(() => disposeCharts())
 .card-head h2 {
   display: inline;
   margin: 0;
-  padding: 0 3px;
-  font-size: 17px;
-  font-weight: 900;
-  background: linear-gradient(transparent 62%, var(--mark) 62%);
+  padding: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+  background: none;
 }
 .insight {
   margin: -2px 0 12px;
@@ -978,36 +972,40 @@ onBeforeUnmount(() => disposeCharts())
 
 .hl-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 .hl-row {
-  --hl: var(--good);
-  --hl-bg: var(--good-bg);
+  --hl: #059669;
+  --hl-bg: #ecfdf5;
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  margin-bottom: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.6;
+  color: #374151;
 }
 .hl--watch {
-  --hl: var(--warn);
-  --hl-bg: var(--warn-bg);
+  --hl: #c2410c;
+  --hl-bg: #fff7ed;
 }
 .hl--focus {
-  --hl: var(--info);
-  --hl-bg: var(--info-bg);
+  --hl: #2563eb;
+  --hl-bg: #eff6ff;
 }
 .hl-tag {
   flex: none;
-  margin-top: 2px;
-  padding: 1px 8px;
-  border-radius: 6px;
+  margin-top: 1px;
+  padding: 2px 8px;
+  border-radius: 4px;
   background: var(--hl-bg);
   color: var(--hl);
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
-  font-weight: 800;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .goal-grid {
@@ -1063,7 +1061,7 @@ onBeforeUnmount(() => disposeCharts())
   font-weight: 600;
 }
 .ach-card {
-  background: linear-gradient(135deg, #fff6ea, #fffdf8);
+  background: #fff;
 }
 .ach-grid {
   display: grid;
@@ -1103,31 +1101,32 @@ onBeforeUnmount(() => disposeCharts())
   gap: 12px;
 }
 .rate-box {
-  --rate: var(--teal);
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #f7fafb;
+  --rate: #0d9488;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
 }
 .rate--fair {
-  --rate: #e89a1a;
+  --rate: #0d9488;
 }
 .rate--poor {
-  --rate: var(--bad);
+  --rate: #0d9488;
 }
 .rate--empty {
-  --rate: #b8c3cc;
+  --rate: #9ca3af;
 }
 .rate-value {
   margin: 2px 0 6px;
-  font-size: 28px;
-  font-weight: 900;
+  font-size: 24px;
+  font-weight: 700;
   line-height: 1.15;
-  color: var(--rate);
+  color: #111827;
 }
 .rate-sub {
   margin-top: 6px;
   font-size: 12px;
-  color: #4a5b68;
+  color: #9ca3af;
 }
 .rate-track {
   height: 8px;
@@ -1408,17 +1407,19 @@ onBeforeUnmount(() => disposeCharts())
   gap: 10px;
 }
 .ls-box {
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: #f7fafb;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
 }
 .ls-value {
   margin-top: 2px;
   font-size: 18px;
-  font-weight: 900;
+  font-weight: 700;
+  color: #111827;
 }
 .ls-warn {
-  color: var(--bad);
+  color: #111827;
 }
 .ls-sub {
   margin-top: 2px;

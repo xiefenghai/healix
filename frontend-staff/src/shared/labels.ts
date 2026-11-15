@@ -18,7 +18,6 @@ export const TASK_TYPE_OPTIONS = [
   { value: 'EXERCISE_ALERT', label: '运动不适' },
   { value: 'FOLLOW_UP', label: '定期随访' },
   { value: 'REPORT_REVIEW', label: '报告审阅' },
-  { value: 'MED_FEEDBACK', label: '用药反馈' },
   { value: 'MED_VERIFY', label: '用药核对' },
   { value: 'ASSESSMENT_ESCALATION', label: '评估升级' },
   { value: 'ASSESSMENT_SUSPECTED', label: '疑似患病' },
@@ -101,9 +100,14 @@ export function formatFollowupStatus(code?: string | null) {
   return FOLLOWUP_STATUS[code] ?? code
 }
 
+const FOLLOWUP_TYPE_LABELS: Record<string, string> = {
+  ...Object.fromEntries(FOLLOWUP_TYPE_OPTIONS.map((o) => [o.value, o.label])),
+  PLAN_COMMUNICATION: '方案沟通',
+}
+
 export function formatFollowupType(code?: string | null) {
   if (!code) return ''
-  return FOLLOWUP_TYPE_OPTIONS.find((o) => o.value === code)?.label ?? code
+  return FOLLOWUP_TYPE_LABELS[code] ?? code
 }
 
 export function formatFollowupMethod(code?: string | null) {

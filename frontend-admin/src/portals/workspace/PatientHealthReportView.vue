@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import { api } from '../../shared/http'
 import { takeAgentDraft } from '../../shared/agent-draft-bus'
 import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-refresh'
@@ -10,7 +11,6 @@ import {
   formatHealthReportStatus,
   formatReportDate,
   formatReportDateTime,
-  healthReportStatusTagType,
 } from '../../shared/health-report-labels'
 import HealthReportReviewDialog, { type ReportAiPrefill } from './HealthReportReviewDialog.vue'
 
@@ -141,6 +141,13 @@ function generatedByLabel(v?: string) {
   return ''
 }
 
+function statusTone(status?: string) {
+  if (status === 'DRAFT') return 'draft'
+  if (status === 'PUBLISHED') return 'published'
+  if (status === 'SKIPPED') return 'skipped'
+  return 'default'
+}
+
 function onDialogClosed() {
   detailId.value = null
   aiPrefill.value = null
@@ -171,8 +178,9 @@ watch(
         </p>
       </div>
       <el-dropdown :disabled="generating" @command="generate">
-        <el-button type="primary" :loading="generating">
-          生成报告 <el-icon class="el-icon--right"><arrow-down /></el-icon>
+        <el-button type="primary" class="gen-btn" :loading="generating">
+          生成报告
+          <el-icon class="gen-btn-ico"><ArrowDown /></el-icon>
         </el-button>
         <template #dropdown>
           <el-dropdown-menu>
@@ -196,7 +204,7 @@ watch(
       </button>
       <button
         type="button"
-        class="sum-card sum-card--warn"
+        class="sum-card"
         :class="{ active: statusFilter === 'DRAFT' }"
         @click="statusFilter = 'DRAFT'"
       >
@@ -205,7 +213,7 @@ watch(
       </button>
       <button
         type="button"
-        class="sum-card sum-card--ok"
+        class="sum-card"
         :class="{ active: statusFilter === 'PUBLISHED' }"
         @click="statusFilter = 'PUBLISHED'"
       >
@@ -240,7 +248,14 @@ watch(
       <template #default>
         <div class="pending-actions">
           <span>可在工作台领取任务后发布，或直接在此审阅。</span>
-          <el-button type="warning" size="small" @click="openRow(pendingDraft)">去审阅</el-button>
+          <el-button
+            type="primary"
+            size="small"
+            class="pending-go"
+            @click="openRow(pendingDraft)"
+          >
+            去审阅
+          </el-button>
         </div>
       </template>
     </el-alert>
@@ -269,12 +284,12 @@ watch(
         <div class="card-main">
           <div class="card-title-row">
             <h4>{{ row.title || '管理报告' }}</h4>
-            <el-tag size="small" effect="light" :type="healthReportStatusTagType(row.status)">
+            <span class="rp-tag" :data-tone="statusTone(row.status)">
               {{ formatHealthReportStatus(row.status) }}
-            </el-tag>
-            <el-tag size="small" effect="plain" type="info">
+            </span>
+            <span class="rp-tag" data-tone="period">
               {{ formatHealthReportPeriodType(row.periodType) }}
-            </el-tag>
+            </span>
           </div>
           <div class="card-meta">
             <span>
@@ -298,15 +313,14 @@ watch(
             审阅发布
           </el-button>
           <el-button v-else size="small" @click="openRow(row)">查看详情</el-button>
-          <el-button
+          <button
             v-if="row.status === 'DRAFT' || row.status === 'SKIPPED'"
-            size="small"
-            text
-            type="danger"
+            type="button"
+            class="void-link"
             @click="voidRow(row)"
           >
             作废
-          </el-button>
+          </button>
         </div>
       </article>
     </div>
@@ -329,7 +343,15 @@ watch(
 
 <style scoped>
 .panel {
-  padding: 8px 0 24px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 4px 0 16px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 .head {
   display: flex;
@@ -347,79 +369,102 @@ watch(
   font-size: 13px;
   color: var(--el-text-color-secondary);
   line-height: 1.5;
-  max-width: 520px;
+  max-width: 640px;
+}
+.gen-btn {
+  height: auto !important;
+  padding: 8px 16px !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.gen-btn-ico {
+  margin: 0;
+  font-size: 12px;
 }
 
 .summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  width: 100%;
   margin-bottom: 14px;
 }
 .sum-card {
   appearance: none;
-  border: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
-  border-radius: 10px;
-  padding: 12px 14px;
+  width: 100%;
+  min-height: 76px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px 24px;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: none;
+  transition: border-color 0.15s, background 0.15s;
 }
 .sum-card:hover {
-  border-color: var(--el-color-primary-light-5);
+  border-color: #cbd5e1;
 }
 .sum-card.active {
   border-color: var(--el-color-primary);
-  box-shadow: 0 0 0 1px var(--el-color-primary-light-7);
   background: var(--el-color-primary-light-9);
-}
-.sum-card--warn.active {
-  border-color: var(--el-color-warning);
-  box-shadow: 0 0 0 1px var(--el-color-warning-light-7);
-  background: var(--el-color-warning-light-9);
-}
-.sum-card--ok.active {
-  border-color: var(--el-color-success);
-  box-shadow: 0 0 0 1px var(--el-color-success-light-7);
-  background: var(--el-color-success-light-9);
+  box-shadow: none;
 }
 .sum-num {
-  font-size: 22px;
-  font-weight: 650;
+  font-size: 24px;
+  font-weight: 700;
   line-height: 1.1;
-  color: var(--el-text-color-primary);
+  color: #111827;
 }
 .sum-label {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #9ca3af;
 }
 
 .pending {
+  width: 100%;
   margin-bottom: 14px;
+  padding: 12px 24px !important;
+  background: rgba(254, 243, 199, 0.22) !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.pending :deep(.el-alert__title) {
+  color: #b45309;
+  font-weight: 600;
 }
 .pending-period {
   font-weight: 400;
-  color: var(--el-text-color-regular);
+  color: #92400e;
 }
 .pending-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   flex-wrap: wrap;
   margin-top: 4px;
   font-size: 13px;
+  color: #78716c;
+}
+.pending-go {
+  margin-left: 24px;
+  height: 28px !important;
+  padding: 0 12px !important;
+  font-size: 12px;
 }
 
 .empty {
+  width: 100%;
   margin-top: 8px;
   padding: 48px 24px;
   text-align: center;
-  border: 1px dashed var(--el-border-color);
-  border-radius: 12px;
-  background: var(--el-fill-color-blank);
+  border: 1px dashed #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: none;
 }
 .empty-title {
   font-size: 15px;
@@ -437,26 +482,28 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
 }
 .card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
+  gap: 20px;
+  padding: 16px 24px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
   background: #fff;
+  box-shadow: none;
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s;
 }
 .card:hover {
-  border-color: var(--el-color-primary-light-5);
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+  border-color: #cbd5e1;
 }
 .card--draft {
-  border-color: var(--el-color-warning-light-5);
-  background: linear-gradient(90deg, var(--el-color-warning-light-9), #fff 48%);
+  border-color: #e5e7eb;
+  background: #fff;
+  box-shadow: inset 3px 0 0 #f59e0b;
 }
 .card-main {
   min-width: 0;
@@ -464,14 +511,53 @@ watch(
 }
 .card-title-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 .card-title-row h4 {
   margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(560px, 62%);
   font-size: 15px;
   font-weight: 600;
+  line-height: 1.4;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  background: #f3f4f6;
+  color: #4b5563;
+}
+.rp-tag[data-tone='draft'] {
+  background: #fff7ed;
+  color: #c2410c;
+}
+.rp-tag[data-tone='published'] {
+  background: #ecfdf5;
+  color: #059669;
+}
+.rp-tag[data-tone='skipped'] {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.rp-tag[data-tone='period'] {
+  background: #f3f4f6;
+  color: #4b5563;
 }
 .card-meta {
   margin-top: 8px;
@@ -479,18 +565,41 @@ watch(
   flex-wrap: wrap;
   gap: 8px 14px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #9ca3af;
 }
 .card-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 16px;
   flex-shrink: 0;
+}
+.card-actions :deep(.el-button) {
+  height: 32px;
+  margin: 0;
+  padding: 0 14px;
+}
+.void-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  color: #9ca3af;
+  cursor: pointer;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.void-link:hover {
+  color: #ef4444;
 }
 
 @media (max-width: 900px) {
   .summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(2, 1fr);
   }
   .card {
     flex-direction: column;

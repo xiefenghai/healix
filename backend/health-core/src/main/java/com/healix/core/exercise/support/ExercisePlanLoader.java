@@ -46,8 +46,10 @@ public class ExercisePlanLoader {
             int horizonDays,
             List<TaskTarget> tasks,
             int weeklyActiveMin,
+            String goal,
             List<String> contraindications,
             List<String> precautions,
+            String reviewHint,
             CarePlanTemplateKeyEnum diseaseKey,
             boolean hypoglycemiaRisk) {
 
@@ -89,7 +91,17 @@ public class ExercisePlanLoader {
         if (version == null) {
             CarePlanTemplateKeyEnum disease = dietContextLoader.load(tenantId, peopleId).diseaseKey();
             return new ExercisePlan(
-                    PlanState.NONE, null, 0, List.of(), DEFAULT_WEEKLY_ACTIVE_MIN, List.of(), List.of(), disease, false);
+                    PlanState.NONE,
+                    null,
+                    0,
+                    List.of(),
+                    DEFAULT_WEEKLY_ACTIVE_MIN,
+                    null,
+                    List.of(),
+                    List.of(),
+                    null,
+                    disease,
+                    false);
         }
 
         JsonNode exercise = StringUtils.hasText(version.getExerciseJson())
@@ -130,8 +142,10 @@ public class ExercisePlanLoader {
                 horizonDays,
                 List.copyOf(tasks),
                 weeklyActiveMin,
+                text(exercise.path("goal")),
                 texts(exercise.path("contraindications")),
                 texts(exercise.path("precautions")),
+                text(exercise.path("reviewHint")),
                 disease,
                 hypo);
     }
@@ -145,6 +159,14 @@ public class ExercisePlanLoader {
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    private static String text(JsonNode n) {
+        if (n == null || n.isMissingNode() || n.isNull() || !n.isTextual()) {
+            return null;
+        }
+        String v = n.asText().trim();
+        return StringUtils.hasText(v) ? v : null;
     }
 
     private static List<String> texts(JsonNode arr) {

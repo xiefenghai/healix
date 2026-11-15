@@ -100,7 +100,7 @@ function delta(text?: string | null, trend?: string | null): string {
 
 function card(title: string, inner: string): string {
   if (!inner.trim()) return ''
-  return `<section class="card"><h2><span class="mark">${esc(title)}</span></h2>${inner}</section>`
+  return `<section class="card"><h2>${esc(title)}</h2>${inner}</section>`
 }
 
 function insightLine(text?: string): string {
@@ -113,18 +113,18 @@ function buildKpis(content: Record<string, unknown>): string {
   if (!kpis.length) return ''
   const cells = kpis
     .map((k) => {
-      const wide = kpis.length % 2 === 1 && k === kpis[kpis.length - 1] ? ' kpi--wide' : ''
-      const bad = k.trend === 'WORSE' ? ' bad' : ''
       const unit = k.display !== '—' && k.unit ? `<small>${esc(k.unit)}</small>` : ''
-      return `<div class="kpi${wide}">
+      return `<div class="kpi">
         <div class="kpi-label">${esc(k.label)}</div>
-        <div class="kpi-value${bad}">${esc(k.display)}${unit}</div>
+        <div class="kpi-value">${esc(k.display)}${unit}</div>
         ${k.sub ? `<div class="kpi-sub">${esc(k.sub)}</div>` : ''}
         ${delta(k.deltaText, k.trend)}
       </div>`
     })
     .join('')
-  return `<div class="kpi-grid">${cells}</div>`
+  // 凑满 3 列网格：奇数个时末格留白占位，避免拉伸挤压
+  const pad = kpis.length % 3 === 2 ? '<div class="kpi kpi--empty" aria-hidden="true"></div>' : ''
+  return `<div class="kpi-grid">${cells}${pad}</div>`
 }
 
 function buildNote(report: PrintableReport, content: Record<string, unknown>): string {

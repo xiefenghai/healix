@@ -161,6 +161,16 @@ public class AgentConversationService {
         insert(sessionId, "SYSTEM", text, "receipt", null);
     }
 
+    /**
+     * 焦点引导卡（如首诊逾期 / 分配健管组）：保留按钮，且同会话只留最新一条，避免反复点患者刷屏。
+     */
+    public void appendGuide(String sessionId, String text, List<AgentAction> actions) {
+        if (StringUtils.hasText(sessionId)) {
+            messageMapper.softDeleteBySessionAndTool(sessionId, "guide");
+        }
+        insert(sessionId, "ASSISTANT", text, "guide", actions);
+    }
+
     /** 整理记录：用户消息保留全文，但不改会话标题。助手消息挂核对卡。 */
     public String appendChatExtract(String sessionId, String userText, String assistantText, ChatExtractCard card) {
         supersedeOpenExtracts(sessionId);

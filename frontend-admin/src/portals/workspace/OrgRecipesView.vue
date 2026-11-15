@@ -173,9 +173,15 @@ onMounted(load)
 
 <template>
   <div class="page" v-loading="loading">
-    <div class="toolbar">
-      <el-input v-model="keyword" clearable placeholder="搜索名称" style="width: 220px" @keyup.enter="load" />
-      <el-select v-model="status" clearable placeholder="状态" style="width: 120px">
+    <div class="toolbar control-row">
+      <el-input
+        v-model="keyword"
+        class="control-grow"
+        clearable
+        placeholder="搜索名称"
+        @keyup.enter="load"
+      />
+      <el-select v-model="status" class="control-fixed-sm" clearable placeholder="状态">
         <el-option label="启用" value="ENABLED" />
         <el-option label="停用" value="DISABLED" />
       </el-select>

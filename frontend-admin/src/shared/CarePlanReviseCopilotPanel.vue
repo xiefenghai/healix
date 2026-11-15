@@ -19,9 +19,13 @@ const props = withDefaults(
     messages: ReviseChatMessage[]
     sending?: boolean
     progress?: string
+    /** 手动编辑中：禁用输入，避免与就地改字抢写 */
+    disabled?: boolean
   }>(),
-  { sending: false, progress: '' },
+  { sending: false, progress: '', disabled: false },
 )
+
+const inputLocked = computed(() => props.sending || props.disabled)
 
 const emit = defineEmits<{
   send: [text: string]
@@ -54,7 +58,7 @@ function onBlur() {
 }
 
 function submit() {
-  if (props.sending) return
+  if (inputLocked.value) return
   const text = input.value.trim()
   if (!text) {
     ElMessage.info('请先输入要修改的内容')
@@ -67,6 +71,10 @@ function submit() {
 
 /** 供顶栏「AI 协助修改」聚焦输入框 */
 async function focusInput() {
+  if (props.disabled) {
+    ElMessage.info('请先点「完成编辑」退出手动编辑，再使用 AI 修订')
+    return
+  }
   await nextTick()
   const inst = textareaRef.value as unknown as {
     focus?: () => void
@@ -90,7 +98,11 @@ defineExpose({ focusInput })
 </script>
 
 <template>
-  <section class="revise-panel" aria-label="AI 方案修订助手">
+  <section
+    class="revise-panel"
+    :class="{ 'is-disabled': disabled }"
+    aria-label="AI 方案修订助手"
+  >
     <header class="revise-panel__head">
       <div class="revise-panel__title-row">
         <span class="revise-panel__icon" aria-hidden="true">
@@ -98,7 +110,9 @@ defineExpose({ focusInput })
         </span>
         <h4 class="revise-panel__title">AI 方案修订助手</h4>
       </div>
-      <p class="revise-panel__sub">支持局部修改，安全红线自动拦截</p>
+      <p class="revise-panel__sub">
+        {{ disabled ? '手动编辑中，完成后可再使用 AI 修订' : '支持局部修改，安全红线自动拦截' }}
+      </p>
     </header>
 
     <div ref="listEl" class="revise-panel__chat" aria-live="polite">
@@ -129,8 +143,12 @@ defineExpose({ focusInput })
         :autosize="{ minRows: 3, maxRows: 4 }"
         maxlength="500"
         resize="none"
-        placeholder="例如：患者不爱吃鱼，请换成其他蛋白质..."
-        :disabled="sending"
+        :placeholder="
+          disabled
+            ? '手动编辑中，请先点「完成编辑」'
+            : '例如：患者不爱吃鱼，请换成其他蛋白质...'
+        "
+        :disabled="inputLocked"
         class="revise-panel__textarea"
         @focus="onFocus"
         @blur="onBlur"
@@ -140,11 +158,11 @@ defineExpose({ focusInput })
         type="button"
         class="revise-panel__send"
         :class="{
-          'is-awake': sendAwake && !sending,
-          'is-idle': !sendAwake && !sending,
+          'is-awake': sendAwake && !inputLocked,
+          'is-idle': !sendAwake && !inputLocked,
         }"
-        :disabled="sending"
-        :aria-label="sending ? '修订中' : '发送'"
+        :disabled="inputLocked"
+        :aria-label="sending ? '修订中' : disabled ? '手动编辑中' : '发送'"
         @click="submit"
       >
         <el-icon v-if="!sending" :size="16"><Promotion /></el-icon>
@@ -158,20 +176,28 @@ defineExpose({ focusInput })
 .revise-panel {
   display: flex;
   flex-direction: column;
-  min-height: 280px;
+  min-height: 0;
   height: 100%;
-  background: #fff;
+  background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04);
+  border-radius: 12px;
+  box-shadow: none;
   overflow: hidden;
+}
+
+.revise-panel.is-disabled {
+  opacity: 0.72;
+}
+
+.revise-panel.is-disabled .revise-panel__composer {
+  pointer-events: none;
 }
 
 .revise-panel__head {
   flex: 0 0 auto;
   padding: 12px 14px 10px;
   border-bottom: 1px solid #f1f5f9;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  background: #ffffff;
 }
 
 .revise-panel__title-row {

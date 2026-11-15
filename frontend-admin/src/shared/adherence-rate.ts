@@ -21,4 +21,4 @@ export function planRateBarWidth(rate?: number | null): number {
 }
 
 export const PLAN_RATE_COLUMN_HINT =
-  '近7日方案任务完成率（应打任务：已完成/应打）。色阶：≥80% 绿 · ≥60% 蓝 · ≥50% 橙 · <50% 红'
+  '近7日方案任务完成率（已完成/应打）。≥80% 良好 · ≥60% 一般 · 偏低时温和提示'

@@ -125,16 +125,15 @@ function confirmDialog() {
         >
           {{ formatFamilyHistoryTag(entry) }}
         </el-tag>
-        <el-button
+        <button
+          type="button"
           class="fh-add"
-          circle
-          type="primary"
-          plain
           :disabled="disabled"
+          aria-label="添加家族史"
           @click="openDialog"
         >
           +
-        </el-button>
+        </button>
       </div>
       <p v-if="!entries.length" class="fh-hint">点击 + 添加家族史条目</p>
     </div>
@@ -216,11 +215,34 @@ function confirmDialog() {
 }
 
 .fh-status {
-  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+  width: 100%;
+  min-height: 32px;
+  height: auto;
+  margin-bottom: 0;
+}
+
+.fh-status :deep(.el-radio) {
+  height: 32px;
+  margin-right: 0;
+  align-items: center;
+}
+
+.fh-status :deep(.el-radio__input) {
+  align-self: center;
+}
+
+.fh-status :deep(.el-radio__label) {
+  padding-left: 8px;
+  line-height: 32px;
 }
 
 .fh-body {
-  min-height: 40px;
+  min-height: 32px;
+  margin-top: 8px;
 }
 
 .fh-tags {
@@ -231,12 +253,14 @@ function confirmDialog() {
 }
 
 .fh-tag {
+  box-sizing: border-box;
   max-width: 100%;
+  min-height: 32px;
   height: auto;
+  margin: 0;
+  padding: 0 10px;
+  line-height: 30px;
   white-space: normal;
-  line-height: 1.45;
-  padding-top: 6px;
-  padding-bottom: 6px;
 }
 
 .fh-tag :deep(.el-tag__content) {
@@ -244,13 +268,45 @@ function confirmDialog() {
 }
 
 .fh-add {
+  box-sizing: border-box;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+  color: #6b7280;
+  background: #fff;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.fh-add:hover:not(:disabled) {
+  color: #2563eb;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.fh-add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .fh-hint {
   margin: 8px 0 0;
-  font-size: 13px;
-  color: var(--admin-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9ca3af;
 }
 
 .fh-unsaved-hint {

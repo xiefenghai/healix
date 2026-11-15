@@ -354,7 +354,7 @@ async function save() {
 
       <div class="sheet-body">
         <p v-if="medicalLocked" class="locked-tip">
-          这是医护开立的药，药名、剂量、频次等由健管师调整；你可以改服药时段、服药时机和备注。需要调整请在详情页「申请调整」。
+          这是医护开立的药，药名、剂量、频次等由健管师调整；你可以改服药时段、服药时机和备注。
         </p>
 
         <div class="block">

@@ -69,6 +69,7 @@ const listActiveExamType = ref(EXAM_PANELS[0].examTypes[0])
 
 const detailVisible = ref(false)
 const detailRow = ref<ExamReport | null>(null)
+const historyDrawerVisible = ref(false)
 
 const ocrLoading = ref(false)
 const ocrHint = ref('')
@@ -343,6 +344,7 @@ function resetFindings(type: string) {
 
 function openDetail(row: ExamReport) {
   detailRow.value = row
+  historyDrawerVisible.value = false
   detailVisible.value = true
 }
 
@@ -473,6 +475,7 @@ function tryOpenOcrDraft() {
 }
 
 function openEdit(row: ExamReport) {
+  historyDrawerVisible.value = false
   editingId.value = row.id
   ocrImageKey.value = ''
   ocrHint.value = ''
@@ -618,16 +621,18 @@ watch(
       @change="onOcrFileChange"
     />
 
-    <!-- 左侧录入 + 右侧历史时间轴（对齐化验报告） -->
+    <!-- 录入区；历史记录经搜索栏入口打开抽屉 -->
     <div v-if="mode === 'list'" class="exam-browse">
-      <header class="browse-toolbar">
-        <div class="browse-toolbar-left">
-          <h2 class="section-title">检查记录</h2>
-          <el-tag v-if="quickEntryFilledCount" size="small" type="warning" effect="plain">
-            待保存 {{ quickEntryFilledCount }} 项
-          </el-tag>
-        </div>
-      </header>
+      <Teleport defer to="#obs-history-slot">
+        <button
+          type="button"
+          class="history-entry-btn"
+          @click="historyDrawerVisible = true"
+        >
+          历史记录
+          <span v-if="historyCardCount" class="history-entry-count">{{ historyCardCount }}</span>
+        </button>
+      </Teleport>
 
       <div class="panel-tabs" role="tablist" aria-label="辅助检查分类">
         <button
@@ -643,9 +648,18 @@ watch(
           <span>{{ panel.label }}</span>
           <span v-if="panel.filledCount" class="panel-badge">{{ panel.filledCount }}</span>
         </button>
+        <el-tag
+          v-if="quickEntryFilledCount"
+          size="small"
+          type="warning"
+          effect="plain"
+          class="panel-tabs-pending"
+        >
+          待保存 {{ quickEntryFilledCount }} 项
+        </el-tag>
       </div>
 
-      <div class="split-workspace">
+      <div class="split-workspace split-workspace--single">
         <section class="split-left" aria-label="检查录入">
           <div class="meta-bar">
             <el-form :inline="true" label-width="72px" class="meta-form">
@@ -688,7 +702,7 @@ watch(
                   size="small"
                 />
               </div>
-              <span class="panel-hint">空项不保存；右侧可查看历史报告</span>
+              <span class="panel-hint">空项不保存；可从搜索栏打开历史记录</span>
             </div>
 
             <div class="table-wrap">
@@ -811,50 +825,53 @@ watch(
             </el-button>
           </div>
         </section>
-
-        <aside class="split-right" aria-label="历史记录">
-          <div class="history-head">
-            <h3>历史记录 (共 {{ historyCardCount }} 份)</h3>
-            <span class="history-hint">{{ listCurrentPanel.label }} · 按检查时间</span>
-          </div>
-          <div class="history-scroll">
-            <el-empty
-              v-if="!historyGroups.length"
-              :description="historyEmptyText"
-              :image-size="56"
-            />
-            <div v-else class="history-days">
-              <section v-for="group in historyGroups" :key="group.key" class="history-day">
-                <div class="history-day-head">
-                  <span v-if="group.relative" class="history-day-rel">{{ group.relative }}</span>
-                  <span class="history-day-date">{{ group.dateText }}</span>
-                  <span class="history-day-count">{{ group.cards.length }} 份</span>
-                </div>
-                <article v-for="card in group.cards" :key="card.id" class="hist-card">
-                  <header class="hist-card-head">
-                    <div class="hist-card-meta">
-                      <span class="hist-time">{{ formatCardTime(card.examinedAt) }}</span>
-                      <span class="hist-type">[{{ typeLabel(card.examType) }}]</span>
-                      <el-tag size="small" effect="plain" class="hist-source">
-                        {{ examSourceLabel(card.source) }}
-                      </el-tag>
-                    </div>
-                    <div class="hist-card-actions">
-                      <el-button link type="primary" @click="openDetail(card)">详情</el-button>
-                      <el-button link type="primary" @click="openEdit(card)">编辑</el-button>
-                      <el-button link type="danger" @click="removeRow(card)">删除</el-button>
-                    </div>
-                  </header>
-                  <p class="hist-summary" :title="findingsSummaryText(card.examType, card.findings)">
-                    {{ findingsSummaryText(card.examType, card.findings) || '无结构化测量' }}
-                  </p>
-                  <p v-if="card.conclusion" class="hist-note" :title="card.conclusion">{{ card.conclusion }}</p>
-                </article>
-              </section>
-            </div>
-          </div>
-        </aside>
       </div>
+
+      <el-drawer
+        v-model="historyDrawerVisible"
+        :title="`历史记录 (共 ${historyCardCount} 份)`"
+        size="420px"
+        destroy-on-close
+        append-to-body
+      >
+        <p class="history-drawer-hint">{{ listCurrentPanel.label }} · 按检查时间</p>
+        <div class="history-scroll history-scroll--drawer">
+          <el-empty
+            v-if="!historyGroups.length"
+            :description="historyEmptyText"
+            :image-size="56"
+          />
+          <div v-else class="history-days">
+            <section v-for="group in historyGroups" :key="group.key" class="history-day">
+              <div class="history-day-head">
+                <span v-if="group.relative" class="history-day-rel">{{ group.relative }}</span>
+                <span class="history-day-date">{{ group.dateText }}</span>
+                <span class="history-day-count">{{ group.cards.length }} 份</span>
+              </div>
+              <article v-for="card in group.cards" :key="card.id" class="hist-card">
+                <header class="hist-card-head">
+                  <div class="hist-card-meta">
+                    <span class="hist-time">{{ formatCardTime(card.examinedAt) }}</span>
+                    <span class="hist-type">[{{ typeLabel(card.examType) }}]</span>
+                    <el-tag size="small" effect="plain" class="hist-source">
+                      {{ examSourceLabel(card.source) }}
+                    </el-tag>
+                  </div>
+                  <div class="hist-card-actions">
+                    <el-button link type="primary" @click="openDetail(card)">详情</el-button>
+                    <el-button link type="primary" @click="openEdit(card)">编辑</el-button>
+                    <el-button link type="danger" @click="removeRow(card)">删除</el-button>
+                  </div>
+                </header>
+                <p class="hist-summary" :title="findingsSummaryText(card.examType, card.findings)">
+                  {{ findingsSummaryText(card.examType, card.findings) || '无结构化测量' }}
+                </p>
+                <p v-if="card.conclusion" class="hist-note" :title="card.conclusion">{{ card.conclusion }}</p>
+              </article>
+            </section>
+          </div>
+        </div>
+      </el-drawer>
     </div>
 
     <!-- 完整编辑 -->
@@ -1039,7 +1056,7 @@ watch(
 <style scoped>
 .exam-page {
   width: 100%;
-  height: 100%;
+  height: auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1047,7 +1064,7 @@ watch(
 }
 
 .exam-browse {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1060,20 +1077,6 @@ watch(
   gap: 10px;
 }
 
-.browse-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0;
-  padding: 8px 12px;
-  background: #fff;
-  border: 1px solid var(--admin-border, #e2e8f0);
-  border-radius: 10px;
-  flex: 0 0 auto;
-}
-
-.browse-toolbar-left,
 .panel-head-left {
   display: flex;
   align-items: center;
@@ -1082,12 +1085,56 @@ watch(
   min-height: 32px;
 }
 
-.browse-toolbar .section-title {
-  margin: 0;
-  font-size: 16px;
+.history-entry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--admin-border, #e2e8f0);
+  background: #fff;
+  color: var(--ink-700, #334155);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.history-entry-btn:hover {
+  color: var(--brand-600, #1e63d9);
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.history-entry-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
   font-weight: 700;
-  line-height: 32px;
-  color: var(--ink-800, #1e293b);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-entry-btn:hover .history-entry-count {
+  background: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.history-drawer-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .split-workspace {
@@ -1098,57 +1145,29 @@ watch(
   align-items: stretch;
 }
 
+.split-workspace--single {
+  display: block;
+}
+
+.split-workspace--single .split-left {
+  width: 100%;
+  max-width: 100%;
+}
+
 .split-left {
-  flex: 6 1 0;
+  flex: 0 0 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow: hidden;
+  overflow: visible;
   min-height: 0;
-  height: 100%;
+  height: auto;
   padding: 10px;
   box-sizing: border-box;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 78%, #f1f5f9 100%);
   border: 1px solid #eef2f7;
   border-radius: 12px;
-}
-
-.split-right {
-  flex: 4 1 0;
-  min-width: 280px;
-  max-width: 420px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  border: 1px solid var(--admin-border, #e2e8f0);
-  border-radius: 10px;
-  background: #fff;
-  overflow: hidden;
-}
-
-.history-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #f1f5f9;
-  background: #f8fafc;
-  flex: 0 0 auto;
-}
-
-.history-head h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--ink-800, #1e293b);
-}
-
-.history-hint {
-  font-size: 12px;
-  color: #94a3b8;
 }
 
 .history-scroll {
@@ -1158,6 +1177,12 @@ watch(
   overflow-y: auto;
   padding: 10px 12px 14px;
   -webkit-overflow-scrolling: touch;
+}
+
+.history-scroll--drawer {
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  padding: 0;
 }
 
 .history-days {
@@ -1492,6 +1517,10 @@ watch(
   flex: 0 0 auto;
 }
 
+.panel-tabs-pending {
+  margin-left: auto;
+}
+
 .panel-tab {
   flex: 0 0 auto;
   display: inline-flex;
@@ -1539,10 +1568,10 @@ watch(
 }
 
 .panel-main {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   padding: 12px;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--admin-border, #e2e8f0);
@@ -1551,14 +1580,14 @@ watch(
 }
 
 .exam-editor .panel-main {
-  overflow: auto;
+  overflow: visible;
 }
 
 .table-wrap {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   width: 100%;
-  overflow: auto;
+  overflow: visible;
 }
 
 .left-footer {
@@ -1812,15 +1841,4 @@ watch(
   padding: 24px 12px;
 }
 
-@media (max-width: 1100px) {
-  .split-workspace {
-    flex-direction: column;
-  }
-
-  .split-right {
-    flex: 0 0 auto;
-    max-width: none;
-    max-height: 360px;
-  }
-}
 </style>

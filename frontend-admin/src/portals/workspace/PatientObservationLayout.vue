@@ -130,7 +130,9 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
 
       <div class="obs-content">
         <header v-if="showGlobalSearch" class="obs-global-bar">
-          <ObservationGlobalSearch @select="onGlobalSearchSelect" />
+          <ObservationGlobalSearch class="obs-global-search" @select="onGlobalSearchSelect" />
+          <!-- 指标/化验/检查页 Teleport 挂载「历史记录」入口 -->
+          <div id="obs-history-slot" class="obs-global-bar-actions" />
         </header>
         <div class="obs-panel">
           <template v-if="embedded">
@@ -158,29 +160,32 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
 <style scoped>
 .obs-layout {
   width: 100%;
-  height: 100%;
+  height: auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
   box-sizing: border-box;
 }
 
 .obs-workspace {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
   gap: 24px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .obs-side-nav {
+  position: sticky;
+  top: 52px;
   display: flex;
   flex-direction: column;
   padding: 0;
   min-height: 0;
+  max-height: calc(100vh - 160px);
   overflow-y: auto;
 }
 
@@ -235,12 +240,12 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
 .obs-content {
   min-width: 0;
   min-height: 0;
-  height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
   padding: 0;
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: visible;
   gap: 10px;
 }
 
@@ -248,25 +253,39 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  gap: 10px;
   min-height: 36px;
+}
+
+.obs-global-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.obs-global-bar-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
 }
 
 .obs-panel {
   min-width: 0;
   min-height: 0;
-  flex: 1 1 auto;
-  height: 100%;
+  flex: 0 0 auto;
+  height: auto;
   display: flex;
   flex-direction: column;
-  /* 指标录入页内部自滚动；其它子页可在此区域滚动 */
-  overflow: auto;
+  overflow: visible;
 }
 
 .obs-panel > :deep(.metric-page),
-.obs-panel > :deep(.lab-page) {
-  flex: 1 1 auto;
+.obs-panel > :deep(.lab-page),
+.obs-panel > :deep(.exam-page) {
+  flex: 0 0 auto;
   min-height: 0;
-  height: 100%;
+  height: auto;
 }
 
 </style>

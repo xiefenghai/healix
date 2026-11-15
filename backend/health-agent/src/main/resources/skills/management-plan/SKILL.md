@@ -120,7 +120,7 @@ display_name: 管理方案生成
 | `goal` | 阶段运动总目标（中文，具体可执行） |
 | `contraindications` | 字符串数组，禁忌事项 |
 | `weeklyPlan` | 周计划数组，每项含 `day`（MON~SUN）、`items[]` |
-| `items[]` | `type`（如 WALKING）、`durationMin`、`intensity`（LIGHT/MODERATE）、`note`。大类项目的 `note` 必须写成患者能照做的动作：抗阻/力量写 2～3 个居家动作和次数（靠墙静蹲、坐姿抬腿、弹力带向后拉，各 8～12 次、2～3 组，不憋气）；有氧写具体方式（快走、骑车或游泳）；拉伸写部位和停留秒数；平衡写扶椅动作。标题已点名步行、太极等具体运动时，`note` 只补充时机 |
+| `items[]` | `type`（规范英文码，前端会转中文展示）、`durationMin`、`intensity`（LIGHT/MODERATE/VIGOROUS）、`note`。`type` 优先用：WALKING / BRISK_WALKING / STRETCHING / RELAXATION / BREATHING / STRENGTH / RESISTANCE / YOGA / TAICHI / CYCLING / SWIMMING；放松呼吸用 `RELAXATION` 或 `BREATHING`，禁止自造未列出的英文大类。大类项目的 `note` 必须写成患者能照做的动作：抗阻/力量写 2～3 个居家动作和次数（靠墙静蹲、坐姿抬腿、弹力带向后拉，各 8～12 次、2～3 组，不憋气）；有氧写具体方式（快走、骑车或游泳）；拉伸写部位和停留秒数；平衡写扶椅动作。标题已点名步行、太极等具体运动时，`note` 只补充时机 |
 | `precautions` | 注意事项数组 |
 | `reviewHint` | 复评提示（如「2周后根据血糖调整」） |
 

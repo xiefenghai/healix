@@ -1,3 +1,20 @@
+/*
+ * Healix B 端宽屏 Layout 规范（管理端无 Tailwind，用 CSS 变量等价落地）
+ *
+ * 1) 壳：页面级不滚动，仅 .page-scroll / 看板列内滚动（见 AdminShell）
+ * 2) 防扯：常规页壳内自动包 .content-container（分级 max：1400 → 1800 → 2400）；看板 flush 全宽
+ * 3) 多栏：.layout-grid + .layout-aside / .layout-main（12 栏比例，禁写死栏宽）
+ * 4) 控件：默认高度 --control-h；搜索行用 .control-row（按钮 shrink-0）
+ * 5) 图表：外层 .chart-frame + useEchartsHost（ResizeObserver）
+ *
+ * 完整说明：docs/admin-widescreen-layout.md
+ *
+ * absolute / fixed 排查：
+ *   rg -n "position:\\s*(absolute|fixed)" frontend-admin/src
+ * 允许：Tooltip/气泡、角标、sticky 顶栏、浮窗机器人、对话框遮罩
+ * 危险：用 absolute 撑整页高度、相对视口写死 left/width、无 relative 祖先的业务布局
+ * 原则：能 flex/grid 不用 absolute；必须定位时相对近祖先卡片
+ */
 :root {
   /* Healix B 端 · docs/ui-redesign 设计系统 */
   --brand-50: #eaf2ff;
@@ -59,6 +76,22 @@
   --admin-shadow-md: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
   --admin-transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
 
+  /* 宽屏 Layout（大屏分级延展，勿一刀切去掉 max-width） */
+  --layout-topbar-h: 56px;
+  --layout-page-max: 1400px;
+  --layout-page-max-2xl: 1800px; /* ≥1536px（约 2K 起） */
+  --layout-page-max-4k: 2400px; /* ≥2000px */
+  --layout-page-max-wide: 1800px;
+  --layout-gap: 24px;
+  --layout-gap-xl: 32px;
+  --layout-page-pad-x: 28px;
+  --layout-page-pad-y: 24px;
+  --control-h: 40px;
+  --control-h-lg: 44px;
+  --radius-card: 12px;
+  --chart-h: 300px;
+  --chart-h-sm: 220px;
+
   --el-color-primary: #2c7ef8;
   --el-color-primary-light-3: #7ba9fb;
   --el-color-primary-light-5: #a8c8fc;
@@ -75,6 +108,22 @@
   --el-fill-color-blank: #fff;
   --el-bg-color: #fff;
   --el-bg-color-page: var(--admin-bg);
+}
+
+@media (min-width: 1536px) {
+  :root {
+    --layout-page-max: var(--layout-page-max-2xl);
+    --layout-gap: var(--layout-gap-xl);
+    --layout-page-pad-x: 32px;
+    --layout-page-pad-y: 28px;
+  }
+}
+
+@media (min-width: 2000px) {
+  :root {
+    --layout-page-max: var(--layout-page-max-4k);
+    --layout-page-pad-x: 40px;
+  }
 }
 
 * {
@@ -146,7 +195,7 @@ a:hover {
 /* —— Element Plus：卡片 / 表格 / 表单 / 对话框 —— */
 .el-card {
   border: 1px solid var(--admin-border) !important;
-  border-radius: var(--admin-radius) !important;
+  border-radius: var(--radius-card, var(--admin-radius)) !important;
   box-shadow: var(--admin-shadow) !important;
   background: var(--admin-card) !important;
 }
@@ -198,6 +247,16 @@ a:hover {
 
 .el-button {
   font-weight: 600;
+  min-height: var(--control-h);
+  border-radius: var(--admin-radius-sm) !important;
+}
+
+.el-button--small {
+  min-height: 32px;
+}
+
+.el-button--large {
+  min-height: var(--control-h-lg);
 }
 
 .el-button--primary {
@@ -220,9 +279,18 @@ a:hover {
 }
 
 .el-input__wrapper,
-.el-select__wrapper,
+.el-select__wrapper {
+  min-height: var(--control-h);
+  border-radius: var(--admin-radius-sm) !important;
+}
+
 .el-textarea__inner {
-  border-radius: 8px !important;
+  border-radius: var(--admin-radius-sm) !important;
+}
+
+.el-input--small .el-input__wrapper,
+.el-select--small .el-select__wrapper {
+  min-height: 32px;
 }
 
 .el-input__wrapper:focus-within,
@@ -337,6 +405,142 @@ a:hover {
   font-weight: 560 !important;
 }
 
+/* —— 宽屏页面容器（分级延展；常规页由 AdminShell 自动包裹） —— */
+.content-container {
+  width: 100%;
+  max-width: var(--layout-page-max);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.content-container--wide {
+  max-width: max(var(--layout-page-max), var(--layout-page-max-wide));
+}
+
+.content-container--fluid {
+  max-width: none;
+}
+
+/* 12 栏网格：左列表+右详情等；禁止用固定 px 撑栏宽 */
+.layout-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--layout-gap);
+  width: 100%;
+  min-width: 0;
+}
+
+@media (min-width: 1024px) {
+  .layout-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .layout-span-3 {
+    grid-column: span 3;
+  }
+
+  .layout-span-4 {
+    grid-column: span 4;
+  }
+
+  .layout-span-5 {
+    grid-column: span 5;
+  }
+
+  .layout-span-6 {
+    grid-column: span 6;
+  }
+
+  .layout-span-7 {
+    grid-column: span 7;
+  }
+
+  .layout-span-8 {
+    grid-column: span 8;
+  }
+
+  .layout-span-9 {
+    grid-column: span 9;
+  }
+
+  .layout-aside {
+    grid-column: span 4;
+    min-width: 0;
+  }
+
+  .layout-main {
+    grid-column: span 8;
+    min-width: 0;
+  }
+
+  .layout-aside--narrow {
+    grid-column: span 3;
+  }
+
+  .layout-main--wide {
+    grid-column: span 9;
+  }
+}
+
+/* 搜索/筛选行：输入可伸缩，旁侧按钮不被挤扁 */
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.control-row > .el-input,
+.control-row > .el-select,
+.control-row > .el-date-editor,
+.control-row > .el-autocomplete {
+  flex: 1 1 180px;
+  min-width: 140px;
+  max-width: 360px;
+}
+
+.control-row > .el-button,
+.control-row > .el-button-group,
+.control-row > .el-radio-group {
+  flex-shrink: 0;
+}
+
+.control-row > .control-grow,
+.control-grow {
+  flex: 1 1 220px !important;
+  min-width: 160px;
+  max-width: 480px;
+}
+
+.control-row > .control-fixed-sm,
+.control-fixed-sm {
+  flex: 0 1 140px !important;
+  min-width: 112px;
+  max-width: 160px;
+}
+
+.control-row > .control-fixed-md,
+.control-fixed-md {
+  flex: 0 1 200px !important;
+  min-width: 160px;
+  max-width: 240px;
+}
+
+/* 图表宿主：宽屏不压扁；配合 useEchartsHost */
+.chart-frame {
+  width: 100%;
+  height: var(--chart-h);
+  min-height: 240px;
+  display: block;
+}
+
+.chart-frame--sm {
+  height: var(--chart-h-sm);
+  min-height: 180px;
+}
+
 /* —— 统一页面骨架 —— */
 .page-title {
   display: flex;
@@ -389,12 +593,35 @@ a:hover {
   min-width: 8px;
 }
 
+.toolbar > .el-button,
+.toolbar > .el-button-group {
+  flex-shrink: 0;
+}
+
 /* KPI / 摘要卡 */
 .summary-row {
   display: grid;
   gap: 12px;
   margin-bottom: 16px;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+/* 6 卡 KPI：md 三列 → xl 六列拉满（患者管理等） */
+.summary-row--6 {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .summary-row--6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .summary-row--6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
 }
 
 .summary-card {
