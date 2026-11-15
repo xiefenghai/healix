@@ -358,7 +358,6 @@ function render() {
             const realIdxs = findRealIndexes(s.data)
             const realN = realIdxs.length
             const pointOnly = realN === 1
-            const twoPoints = realN === 2
             const firstIdx = realIdxs[0]
             const lastIdx = realIdxs[realIdxs.length - 1]
             const single =

@@ -904,7 +904,7 @@ watch(peopleId, async (id, prev) => {
                 编辑
               </button>
               <button type="button" class="action-link" @click="openIntake(row)">依从性</button>
-              <el-dropdown trigger="click" @command="(cmd) => onRowMoreCommand(cmd, row)">
+              <el-dropdown trigger="click" @command="(cmd: string | number) => onRowMoreCommand(cmd, row)">
                 <button type="button" class="more-btn" aria-label="更多操作" @click.stop>
                   ···
                 </button>
