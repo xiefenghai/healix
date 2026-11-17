@@ -243,11 +243,7 @@ onMounted(load)
 <style scoped>
 .report-page {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(255, 216, 77, 0.28), transparent 40%),
-    radial-gradient(circle at 0% 30%, rgba(92, 184, 184, 0.16), transparent 38%),
-    linear-gradient(170deg, #fff8ec 0%, #f4fbf8 45%, #eaf7f2 100%);
-  background-attachment: fixed;
+  background: var(--hx-bg);
 }
 .report-page :deep(.van-nav-bar) {
   background: transparent;
@@ -260,7 +256,7 @@ onMounted(load)
   padding: 16px;
   border-radius: 20px;
   border: none;
-  box-shadow: 0 8px 22px rgba(19, 34, 46, 0.06);
+  box-shadow: var(--hx-shadow-soft);
 }
 .chips {
   display: flex;
@@ -269,26 +265,26 @@ onMounted(load)
 }
 .period-pill,
 .status-pill {
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 700;
 }
 .period-pill {
   background: var(--hx-ink);
-  color: #fff;
+  color: var(--hx-on-accent);
 }
 .status-pill {
-  background: #fff;
+  background: var(--hx-surface);
   color: var(--hx-muted);
 }
 .status--draft {
-  background: #fff1d6;
-  color: #b07400;
+  background: var(--hx-warn-soft);
+  color: var(--hx-warn-ink);
 }
 .status--published {
-  background: #e3f6ef;
-  color: #0b7a66;
+  background: var(--hx-ok-soft);
+  color: var(--hx-ok);
 }
 .hero h2 {
   margin: 0 0 6px;
@@ -298,8 +294,8 @@ onMounted(load)
   color: var(--hx-ink);
 }
 .mark {
-  padding: 0 3px;
-  background: linear-gradient(transparent 60%, #ffd84d 60%);
+  padding: 0 4px;
+  background: var(--hx-mark);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
@@ -310,7 +306,7 @@ onMounted(load)
 }
 .hero p {
   font-weight: 600;
-  color: #4a5b68;
+  color: var(--hx-text);
 }
 .hint {
   padding: 0 20px 20px;
@@ -318,11 +314,11 @@ onMounted(load)
 .form h3 {
   display: inline;
   margin: 0;
-  padding: 0 3px;
-  font-size: 17px;
+  padding: 0 4px;
+  font-size: 16px;
   font-weight: 900;
   color: var(--hx-ink);
-  background: linear-gradient(transparent 62%, #ffd84d 62%);
+  background: var(--hx-mark);
 }
 .form-head {
   display: flex;

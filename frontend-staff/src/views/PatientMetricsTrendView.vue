@@ -240,21 +240,21 @@ onMounted(load)
   width: 70%;
   max-width: 18px;
   border-radius: 6px 6px 2px 2px;
-  background: linear-gradient(180deg, var(--hx-teal-soft), var(--hx-teal));
+  background: var(--hx-teal);
 }
 .col.glu {
-  background: linear-gradient(180deg, #f0c36d, var(--hx-orange));
+  background: var(--hx-orange);
 }
 .col.hr {
-  background: linear-gradient(180deg, #f0a0a0, var(--hx-danger));
+  background: var(--hx-danger);
 }
 .val {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--hx-ink);
   font-weight: 650;
 }
 .day {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--hx-muted);
 }
 .row {

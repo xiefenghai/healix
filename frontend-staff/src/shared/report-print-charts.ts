@@ -5,16 +5,20 @@
  * 这里用同一套序列画成 SVG，页面和打印稿都能直接排进去。
  */
 
-const TEAL = '#0e9f83'
-const TEAL_SOFT = '#3fbfa3'
-const ORANGE = '#e5a100'
-const BLUE = '#5b8def'
-const DANGER = '#e0435a'
-const AXIS = '#6b7a87'
-const INK = '#13222e'
-const TRACK = '#eef2f4'
-const BAND_TEAL = 'rgba(14,159,131,0.12)'
-const BAND_BLUE = 'rgba(91,141,239,0.12)'
+/* SVG 打印图无法读 CSS 变量，色值对齐 style.css 的 --hx-* — unslop-ignore */
+const TEAL = '#166f6f' // unslop-ignore
+const TEAL_SOFT = '#4db3b3' // unslop-ignore
+const ORANGE = '#e89a1a' // unslop-ignore
+const BLUE = '#2f5fb3' // unslop-ignore
+const DANGER = '#d64545' // unslop-ignore
+const AXIS = '#5a6a74' // unslop-ignore
+const INK = '#132027' // unslop-ignore
+const TRACK = '#f5f9f9' // unslop-ignore
+const BAND_TEAL = 'rgba(31,143,143,0.12)' // unslop-ignore
+const BAND_BLUE = 'rgba(47,95,179,0.12)' // unslop-ignore
+const WARN = '#9a6508' // unslop-ignore
+const GRID_STROKE = '#e6eef2' // unslop-ignore
+const DOT_STROKE = '#ffffff' // unslop-ignore
 
 type Rec = Record<string, unknown>
 
@@ -131,7 +135,7 @@ function grid(scale: Scale, box: Box, unit = ''): string {
     .map((t) => {
       const y = yAt(t, scale, box).toFixed(1)
       const text = unit === '%' ? `${fmt(t)}%` : fmt(t)
-      return `<line x1="${box.x}" y1="${y}" x2="${(box.x + box.w).toFixed(1)}" y2="${y}" stroke="#e6eef2" stroke-dasharray="3 3"/>
+      return `<line x1="${box.x}" y1="${y}" x2="${(box.x + box.w).toFixed(1)}" y2="${y}" stroke="${GRID_STROKE}" stroke-dasharray="3 3"/>
         <text x="${box.x - 6}" y="${y}" text-anchor="end" dominant-baseline="middle" fill="${AXIS}" font-size="11">${esc(text)}</text>`
     })
     .join('')
@@ -216,15 +220,15 @@ function lineSvg(
           const bad = s.bad[i]
           const color = bad ? DANGER : s.color
           const r = bad ? 4.5 : 3.5
-          return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${color}" stroke="#fff" stroke-width="1.5"/>`
+          return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${color}" stroke="${DOT_STROKE}" stroke-width="1.5"/>`
         })
         .join(''),
     )
     .join('')
 
   const marks = [
-    opts.upper != null ? hLine(yAt(opts.upper, scale, box), box, '#b07400', `上限 ${fmt(opts.upper)}`) : '',
-    opts.target != null ? hLine(yAt(opts.target, scale, box), box, '#b07400', opts.targetLabel || '目标') : '',
+    opts.upper != null ? hLine(yAt(opts.upper, scale, box), box, WARN, `上限 ${fmt(opts.upper)}`) : '',
+    opts.target != null ? hLine(yAt(opts.target, scale, box), box, WARN, opts.targetLabel || '目标') : '',
   ].join('')
 
   const legendHtml = legend
@@ -269,7 +273,7 @@ function barSvg(
     })
     .join('')
   const target =
-    opts.target != null ? hLine(yAt(opts.target, scale, box), box, '#b07400', opts.targetLabel || '目标') : ''
+    opts.target != null ? hLine(yAt(opts.target, scale, box), box, WARN, opts.targetLabel || '目标') : ''
   return `${svgOpen(w, h)}${grid(scale, box, opts.unit || '')}${target}${bars}${xLabels(labels, box, n)}</svg>`
 }
 

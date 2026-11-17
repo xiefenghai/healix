@@ -87,11 +87,7 @@ onMounted(load)
 <style scoped>
 .report-page {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(255, 216, 77, 0.28), transparent 40%),
-    radial-gradient(circle at 0% 30%, rgba(92, 184, 184, 0.16), transparent 38%),
-    linear-gradient(170deg, #fff8ec 0%, #f4fbf8 45%, #eaf7f2 100%);
-  background-attachment: fixed;
+  background: var(--hx-bg);
 }
 .report-page :deep(.van-nav-bar) {
   background: transparent;
@@ -106,26 +102,26 @@ onMounted(load)
 }
 .period-pill,
 .status-pill {
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 700;
 }
 .period-pill {
   background: var(--hx-ink);
-  color: #fff;
+  color: var(--hx-on-accent);
 }
 .status-pill {
-  background: #fff;
+  background: var(--hx-surface);
   color: var(--hx-muted);
 }
 .status--draft {
-  background: #fff1d6;
-  color: #b07400;
+  background: var(--hx-warn-soft);
+  color: var(--hx-warn-ink);
 }
 .status--published {
-  background: #e3f6ef;
-  color: #0b7a66;
+  background: var(--hx-ok-soft);
+  color: var(--hx-ok);
 }
 .hero h2 {
   margin: 0 0 6px;
@@ -135,8 +131,8 @@ onMounted(load)
   color: var(--hx-ink);
 }
 .mark {
-  padding: 0 3px;
-  background: linear-gradient(transparent 60%, #ffd84d 60%);
+  padding: 0 4px;
+  background: var(--hx-mark);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
@@ -144,18 +140,18 @@ onMounted(load)
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #4a5b68;
+  color: var(--hx-text);
 }
 .block {
   margin: 0 16px 14px;
   padding: 16px;
   border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 8px 22px rgba(19, 34, 46, 0.06);
+  background: var(--hx-surface);
+  box-shadow: var(--hx-shadow-soft);
 }
 .note {
-  background: linear-gradient(180deg, #fff 0%, #f6fbfb 100%);
-  border: 1px solid #e3f1f1;
+  background: var(--hx-surface);
+  border: 1px solid var(--hx-line);
 }
 .note-head {
   display: flex;
@@ -171,12 +167,12 @@ onMounted(load)
   height: 26px;
   border-radius: 50%;
   background: var(--hx-teal);
-  color: #fff;
+  color: var(--hx-on-accent);
   font-size: 13px;
   font-weight: 800;
 }
 .note-avatar--blue {
-  background: #2f5fb3;
+  background: var(--hx-info);
 }
 .note-quote {
   margin: 10px 0 0;
@@ -188,7 +184,7 @@ onMounted(load)
 .note-item {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px dashed #dbe8e8;
+  border-top: 1px dashed var(--hx-line);
 }
 .note-item p {
   margin: 6px 0 0;
@@ -198,10 +194,10 @@ onMounted(load)
 }
 .note-tag {
   display: inline-block;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 6px;
-  background: #fff1d6;
-  color: #b07400;
+  background: var(--hx-warn-soft);
+  color: var(--hx-warn-ink);
   font-size: 12px;
   font-weight: 800;
 }

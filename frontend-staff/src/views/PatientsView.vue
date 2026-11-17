@@ -219,7 +219,7 @@ onMounted(load)
             <div class="top">
               <strong>{{ row.displayName }}</strong>
               <span v-if="row.watched" class="hx-chip warn">关注</span>
-              <span v-if="row.streakDays" class="flame">🔥{{ row.streakDays }}</span>
+              <span v-if="row.streakDays" class="flame">连续 {{ row.streakDays }} 天</span>
               <span v-else-if="row.streakDays === 0" class="flame flame--out">打卡中断</span>
               <span
                 v-if="checkinStatus(row)"
@@ -259,8 +259,8 @@ onMounted(load)
   padding: 8px 14px;
   border: 0;
   border-radius: 999px;
-  background: var(--hx-teal-deep, #0b7a66);
-  color: #fff;
+  background: var(--hx-teal-deep);
+  color: var(--hx-on-accent);
   font-size: 13px;
   font-weight: 700;
 }
@@ -283,34 +283,34 @@ onMounted(load)
 .flame {
   padding: 0 6px;
   border-radius: 999px;
-  background: #fff1e3;
-  color: #e0632a;
+  background: var(--hx-orange-soft);
+  color: var(--hx-streak);
   font-size: 12px;
   font-weight: 700;
 }
 .flame--out {
-  background: #f0f3f5;
-  color: #a0aab4;
+  background: var(--hx-surface-soft);
+  color: var(--hx-muted);
   font-weight: 600;
 }
 .checkin {
   margin-left: auto;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 8px;
   font-size: 11px;
   font-weight: 700;
 }
 .checkin--ok {
-  background: #e3f6ef;
-  color: #0b7a66;
+  background: var(--hx-ok-soft);
+  color: var(--hx-ok);
 }
 .checkin--idle {
-  background: #f0f3f5;
-  color: #8a96a3;
+  background: var(--hx-surface-soft);
+  color: var(--hx-muted);
 }
 .checkin--warn {
-  background: #fde7ea;
-  color: #c8324a;
+  background: var(--hx-danger-soft);
+  color: var(--hx-danger);
 }
 .meta {
   margin: 4px 0 0;

@@ -109,11 +109,12 @@ watch(
   inset: 0;
   pointer-events: none;
   z-index: 0;
+  /* brand atmosphere signature — unslop-ignore */
   background:
-    radial-gradient(ellipse 80% 50% at 8% -10%, rgba(77, 179, 179, 0.34), transparent 55%),
-    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(232, 154, 26, 0.16), transparent 50%),
-    radial-gradient(ellipse 50% 35% at 70% 100%, rgba(31, 143, 143, 0.1), transparent 55%),
-    linear-gradient(180deg, #f5f9f9 0%, var(--hx-bg) 40%, #e8f0f1 100%);
+    radial-gradient(ellipse 80% 50% at 8% -10%, rgba(77, 179, 179, 0.34), transparent 55%), /* unslop-ignore */
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(232, 154, 26, 0.16), transparent 50%), /* unslop-ignore */
+    radial-gradient(ellipse 50% 35% at 70% 100%, rgba(31, 143, 143, 0.1), transparent 55%), /* unslop-ignore */
+    linear-gradient(180deg, #f5f9f9 0%, var(--hx-bg) 40%, #e8f0f1 100%); /* unslop-ignore */
 }
 .page-body {
   position: relative;
@@ -129,6 +130,6 @@ watch(
   flex: none;
   --van-tabbar-height: 48px;
   backdrop-filter: blur(10px);
-  box-shadow: 0 -4px 16px rgba(22, 70, 78, 0.05);
+  box-shadow: var(--hx-shadow-soft);
 }
 </style>

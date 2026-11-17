@@ -901,7 +901,7 @@ onMounted(load)
 }
 .hero h2 {
   margin: 12px 0 8px;
-  font-size: 19px;
+  font-size: 18px;
   line-height: 1.35;
   color: var(--hx-ink);
 }
@@ -946,7 +946,7 @@ onMounted(load)
   font-weight: 650;
 }
 .hit strong.deleted {
-  color: var(--hx-muted, #8a97a5);
+  color: var(--hx-muted);
   text-decoration: line-through;
 }
 .actions.stack {

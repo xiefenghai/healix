@@ -600,7 +600,7 @@ onMounted(load)
   color: var(--hx-ink);
 }
 .sec-head p {
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   font-size: 12px;
   color: var(--hx-muted);
   line-height: 1.45;
@@ -618,22 +618,22 @@ onMounted(load)
   letter-spacing: 0.02em;
 }
 .sec-badge.risk {
-  background: #e8f4ff;
-  color: #1d5f9c;
+  background: var(--hx-info-soft);
+  color: var(--hx-info);
 }
 .sec-badge.sev {
-  background: #fff1e6;
-  color: #b35a12;
+  background: var(--hx-orange-soft);
+  color: var(--hx-warn-ink);
 }
 .sec-badge.q {
-  background: var(--hx-teal-light, #e8f6f6);
-  color: var(--hx-teal-deep, #166f6f);
+  background: var(--hx-teal-light);
+  color: var(--hx-teal-deep);
 }
 .sec-risk .card {
-  border-left: 3px solid #5b8def;
+  border-left: 4px solid var(--hx-info);
 }
 .sec-sev .card {
-  border-left: 3px solid #e89a1a;
+  border-left: 4px solid var(--hx-orange);
 }
 .card {
   padding: 0;
@@ -658,7 +658,7 @@ onMounted(load)
 .card-titles {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 .card-titles strong {
@@ -702,7 +702,7 @@ onMounted(load)
   margin: 0 14px 12px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: #fdecec;
+  background: var(--hx-danger-soft);
   font-size: 13px;
   color: var(--hx-danger);
 }
@@ -737,7 +737,7 @@ onMounted(load)
   text-align: right;
 }
 .row em.warn {
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 .dims {
   display: grid;
@@ -759,7 +759,7 @@ onMounted(load)
   color: var(--hx-ink);
 }
 .dim.danger {
-  background: #fdecec;
+  background: var(--hx-danger-soft);
 }
 .dim.warning {
   background: var(--hx-orange-soft);
@@ -836,7 +836,7 @@ onMounted(load)
   color: var(--hx-ink);
 }
 .q-main p {
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.45;
 }
@@ -857,15 +857,15 @@ onMounted(load)
 }
 .status-chip.warn {
   background: var(--hx-orange-soft);
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 .status-chip.danger {
-  background: #fdecec;
+  background: var(--hx-danger-soft);
   color: var(--hx-danger);
 }
 .status-chip.ok {
-  background: var(--hx-teal-light, #e8f6f6);
-  color: var(--hx-teal-deep, #166f6f);
+  background: var(--hx-teal-light);
+  color: var(--hx-teal-deep);
 }
 .foot {
   margin: 8px 2px 0;
@@ -873,7 +873,7 @@ onMounted(load)
   line-height: 1.55;
 }
 .sheet {
-  padding: 18px 16px 30px;
+  padding: 16px 16px 32px;
 }
 .sheet h3 {
   margin: 0 0 4px;
@@ -887,7 +887,7 @@ onMounted(load)
   padding: 8px 10px;
   border-radius: 10px;
   background: var(--hx-orange-soft);
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 .table-wrap {
   overflow-x: auto;
@@ -900,7 +900,7 @@ table {
 th,
 td {
   border: 1px solid var(--hx-line);
-  padding: 5px 6px;
+  padding: 4px 6px;
   text-align: left;
   vertical-align: top;
 }

@@ -433,8 +433,8 @@ onBeforeUnmount(() => {
   height: 30px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(31, 143, 143, 0.22);
-  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--hx-teal-ring);
+  background: var(--hx-surface);
   color: var(--hx-teal-deep);
   font-size: 12px;
   font-weight: 650;
@@ -452,7 +452,7 @@ onBeforeUnmount(() => {
 }
 .task-chip {
   flex: 0 0 auto;
-  border: 1px solid rgba(31, 143, 143, 0.22);
+  border: 1px solid var(--hx-teal-ring);
   background: var(--hx-teal-light);
   color: var(--hx-teal-deep);
   border-radius: 999px;
@@ -461,8 +461,8 @@ onBeforeUnmount(() => {
   font-weight: 650;
 }
 .task-chip.overdue {
-  border-color: rgba(214, 69, 69, 0.28);
-  background: #fdecec;
+  border-color: var(--hx-danger-ring);
+  background: var(--hx-danger-soft);
   color: var(--hx-danger);
 }
 .loading {
@@ -487,18 +487,18 @@ onBeforeUnmount(() => {
 }
 .bubble {
   max-width: 78%;
-  padding: 11px 13px;
+  padding: 12px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--hx-surface);
   border: 1px solid var(--hx-line);
   box-shadow: var(--hx-shadow-soft);
 }
 .bubble.failed {
-  border-color: rgba(214, 69, 69, 0.35);
+  border-color: var(--hx-danger-ring);
 }
 .mine .bubble {
-  background: linear-gradient(160deg, #dff4f4, #e8f6f6);
-  border-color: rgba(31, 143, 143, 0.18);
+  background: var(--hx-teal-light);
+  border-color: var(--hx-teal-mist);
   border-bottom-right-radius: 6px;
 }
 .theirs .bubble {
@@ -534,14 +534,13 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: flex-end;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--hx-surface);
   border-top: 1px solid var(--hx-line);
-  backdrop-filter: blur(14px);
   box-sizing: border-box;
 }
 .composer :deep(.van-field) {
   flex: 1;
-  background: #f3f7f8;
+  background: var(--hx-surface-soft);
   border-radius: 14px;
   padding: 4px 8px;
 }

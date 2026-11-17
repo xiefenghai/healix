@@ -499,14 +499,14 @@ onMounted(load)
   gap: 8px;
 }
 .kpis div {
-  background: rgba(238, 246, 246, 0.9);
+  background: var(--hx-teal-light);
   border-radius: 14px;
   padding: 12px 8px;
   text-align: center;
 }
 .kpis strong {
   display: block;
-  font-size: 17px;
+  font-size: 16px;
   color: var(--hx-ink);
 }
 .kpis span {
@@ -531,7 +531,7 @@ onMounted(load)
   border: 0;
   border-radius: 999px;
   background: var(--hx-teal);
-  color: #fff;
+  color: var(--hx-on-accent);
   font-size: 13px;
   font-weight: 650;
 }
@@ -588,7 +588,7 @@ onMounted(load)
 .metric small {
   display: block;
   margin-top: 2px;
-  font-size: 10px;
+  font-size: 11px;
 }
 .actions {
   margin: 0 16px;
@@ -599,7 +599,7 @@ onMounted(load)
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 15px 16px;
+  padding: 16px;
   border: 0;
   background: transparent;
   color: var(--hx-ink);

@@ -182,13 +182,13 @@ defineExpose({ payload, touchedCount, reset })
   color: var(--hx-muted);
 }
 .qf-missing {
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 .qf-input {
   margin-top: 8px;
   padding: 6px 10px;
   border-radius: 10px;
-  background: var(--hx-bg, #f4f6f7);
+  background: var(--hx-bg);
 }
 .qf-unit {
   font-size: 13px;
@@ -204,15 +204,15 @@ defineExpose({ payload, touchedCount, reset })
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--hx-line);
-  background: #fff;
+  background: var(--hx-surface);
   font-size: 13px;
   color: var(--hx-text);
   cursor: pointer;
 }
 .qf-opt.on {
   border-color: var(--hx-teal);
-  background: var(--hx-teal-light, #e8f6f6);
-  color: var(--hx-teal-deep, #166f6f);
+  background: var(--hx-teal-light);
+  color: var(--hx-teal-deep);
   font-weight: 600;
 }
 </style>

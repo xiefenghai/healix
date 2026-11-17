@@ -4,35 +4,51 @@
   --hx-teal-soft: #4db3b3;
   --hx-teal-light: #e8f6f6;
   --hx-teal-mist: rgba(31, 143, 143, 0.12);
+  --hx-teal-ring: rgba(31, 143, 143, 0.28);
+  --hx-danger-ring: rgba(214, 69, 69, 0.28);
+  --hx-info: #2f5fb3;
+  --hx-info-soft: #e6eefc;
   --hx-orange: #e89a1a;
   --hx-orange-soft: #fff6e8;
+  --hx-warn-ink: #9a6508;
+  --hx-warn-soft: #fff3da;
+  --hx-ok: #0b7a66;
+  --hx-ok-soft: #e3f6ef;
   --hx-bg: #eef3f4;
   --hx-surface: #ffffff;
+  --hx-surface-soft: #f5f9f9;
   --hx-ink: #132027;
   --hx-text: #24343c;
-  --hx-muted: #6d7d88;
+  --hx-muted: #5a6a74;
   --hx-line: rgba(20, 40, 48, 0.08);
   --hx-danger: #d64545;
+  --hx-danger-soft: #fdecec;
+  --hx-on-accent: #ffffff;
+  --hx-on-deep: #d7ecec;
+  --hx-streak: #c45a1a;
+  --hx-mark: #ffe08a;
+  --hx-chip-on-dark: rgba(255, 255, 255, 0.22);
   --hx-radius: 18px;
   --hx-radius-sm: 12px;
   --hx-shadow: 0 10px 28px rgba(22, 70, 78, 0.08);
   --hx-shadow-soft: 0 4px 14px rgba(22, 70, 78, 0.05);
   --hx-font: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
   --hx-display: "Avenir Next", "PingFang SC", "Hiragino Sans GB", sans-serif;
-  --van-primary-color: #1f8f8f;
-  --van-success-color: #1f8f8f;
+  /* 主色用更深青，保证白字对比度 ≥ AA */
+  --van-primary-color: #166f6f;
+  --van-success-color: #166f6f;
   --van-warning-color: #e89a1a;
   --van-danger-color: #d64545;
   --van-nav-bar-background: transparent;
   --van-nav-bar-title-text-color: var(--hx-ink);
   --van-nav-bar-icon-color: var(--hx-ink);
-  --van-tabbar-background: rgba(255, 255, 255, 0.88);
-  --van-tabbar-item-active-color: var(--hx-teal);
+  --van-tabbar-background: rgba(255, 255, 255, 0.92);
+  --van-tabbar-item-active-color: var(--hx-teal-deep);
   --van-tabbar-item-text-color: var(--hx-muted);
-  --van-tabs-bottom-bar-color: var(--hx-teal);
+  --van-tabs-bottom-bar-color: var(--hx-teal-deep);
   --van-tabs-nav-background: transparent;
   --van-search-background: transparent;
-  --van-search-content-background: rgba(255, 255, 255, 0.78);
+  --van-search-content-background: var(--hx-surface);
   --van-cell-background: transparent;
   --van-border-color: var(--hx-line);
 }
@@ -53,11 +69,12 @@ body,
   -webkit-font-smoothing: antialiased;
 }
 
-/* 对齐 C 端：轻微强化底栏层级与选中态 */
+/* 底栏仅 chrome 可 blur；阴影用中性 elevation */
 .van-tabbar {
   backdrop-filter: blur(10px);
-  box-shadow: 0 -6px 20px rgba(22, 70, 78, 0.05);
+  box-shadow: var(--hx-shadow-soft);
 }
+
 .van-tabbar-item--active {
   font-weight: 700;
 }
@@ -70,7 +87,7 @@ select {
 }
 
 a {
-  color: var(--hx-teal);
+  color: var(--hx-teal-deep);
   text-decoration: none;
 }
 
@@ -115,11 +132,10 @@ a {
 }
 
 .hx-surface {
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--hx-surface);
   border: 1px solid var(--hx-line);
   border-radius: var(--hx-radius);
   box-shadow: var(--hx-shadow-soft);
-  backdrop-filter: blur(10px);
 }
 
 .hx-row {
@@ -130,7 +146,7 @@ a {
   padding: 14px 14px;
   border: 1px solid var(--hx-line);
   border-radius: var(--hx-radius);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--hx-surface);
   box-shadow: var(--hx-shadow-soft);
   text-align: left;
   color: inherit;
@@ -156,11 +172,11 @@ a {
 
 .hx-chip.warn {
   background: var(--hx-orange-soft);
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 
 .hx-chip.danger {
-  background: #fdecec;
+  background: var(--hx-danger-soft);
   color: var(--hx-danger);
 }
 
@@ -170,7 +186,7 @@ a {
   margin: 4px 16px 8px;
   padding: 4px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--hx-surface-soft);
   border: 1px solid var(--hx-line);
 }
 
@@ -179,7 +195,7 @@ a {
   min-width: 0;
   border: 0;
   background: transparent;
-  border-radius: 11px;
+  border-radius: 12px;
   padding: 10px 4px;
   font-size: 13px;
   font-weight: 600;
@@ -188,22 +204,22 @@ a {
 }
 
 .hx-seg button.active {
-  background: var(--hx-teal);
-  color: #fff;
-  box-shadow: 0 6px 14px rgba(31, 143, 143, 0.28);
+  background: var(--hx-teal-deep);
+  color: var(--hx-on-accent);
+  box-shadow: var(--hx-shadow-soft);
 }
 
 .hx-avatar {
   width: 44px;
   height: 44px;
-  border-radius: 15px;
+  border-radius: 16px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
   font-weight: 700;
-  color: #fff;
-  background: linear-gradient(145deg, var(--hx-teal-soft), var(--hx-teal-deep));
-  box-shadow: 0 8px 16px rgba(31, 143, 143, 0.22);
+  color: var(--hx-on-accent);
+  background: var(--hx-teal-deep);
+  box-shadow: var(--hx-shadow-soft);
 }
 
 .hx-list {
@@ -223,6 +239,21 @@ a {
   }
   to {
     opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hx-page {
+    animation: none;
+  }
+
+  .hx-row,
+  .hx-seg button {
+    transition: none;
+  }
+
+  .hx-row:active {
     transform: none;
   }
 }

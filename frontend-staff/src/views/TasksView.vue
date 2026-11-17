@@ -67,17 +67,13 @@ const keyword = ref('')
 const showFilters = ref(false)
 const showTypePicker = ref(false)
 const showTeamPicker = ref(false)
+/** 点「逾期」后只看逾期任务 */
+const focusOverdue = ref(false)
+/** 次要动态默认收起，避免 chips 墙 */
+const moreStatsOpen = ref(false)
 const staffId = computed(() => getStaffId())
 const orgName = computed(() => getCurrentOrgName() || '工作台')
 const unread = computed(() => chatUnreadTotal.value)
-
-const greeting = computed(() => {
-  const h = new Date().getHours()
-  if (h < 11) return '上午好'
-  if (h < 14) return '中午好'
-  if (h < 18) return '下午好'
-  return '晚上好'
-})
 
 const poolTabs = computed(() => [
   { name: 'MINE' as const, title: '我的', count: summary.value.mineOpenCount },
@@ -91,44 +87,85 @@ const typeLabel = computed(
 const teamLabel = computed(
   () => teams.value.find((t) => t.id === careTeamId.value)?.name || '全部健管组',
 )
-const filterActive = computed(() => !!(taskType.value || careTeamId.value || keyword.value.trim()))
-const visibleItems = computed(() =>
-  listOpen.value ? items.value : items.value.slice(0, TASK_PREVIEW),
+const filterActive = computed(
+  () => !!(taskType.value || careTeamId.value || keyword.value.trim() || focusOverdue.value),
 )
-const hiddenTaskCount = computed(() => Math.max(0, items.value.length - TASK_PREVIEW))
+
+const listSource = computed(() => {
+  if (!focusOverdue.value) return items.value
+  return items.value.filter((row) => isOverdue(row.dueAt, row.status))
+})
+
+const visibleItems = computed(() =>
+  listOpen.value ? listSource.value : listSource.value.slice(0, TASK_PREVIEW),
+)
+const hiddenTaskCount = computed(() => Math.max(0, listSource.value.length - TASK_PREVIEW))
+
+const emptyDescription = computed(() => {
+  if (focusOverdue.value) return '暂无逾期任务'
+  if (pool.value === 'PUBLIC') return '暂无公共任务，未领取的可在此抢单'
+  if (pool.value === 'DONE') return '今日暂无已办'
+  return '暂无我的待办'
+})
+
+const overviewHint = computed(() =>
+  focusOverdue.value ? '正在查看逾期' : '点数字切换列表或查看逾期',
+)
+
+const secondaryStats = computed(() => {
+  const rows: { key: string; label: string; warn?: boolean }[] = []
+  if (cockpit.value?.urgentCount) {
+    rows.push({ key: 'urgent', label: `优先 ${cockpit.value.urgentCount}`, warn: true })
+  }
+  if (cockpit.value?.watchCount) {
+    rows.push({ key: 'watch', label: `关注 ${cockpit.value.watchCount}` })
+  }
+  if (cockpit.value?.pendingReportDraftCount) {
+    rows.push({
+      key: 'report',
+      label: `待审报告 ${cockpit.value.pendingReportDraftCount}`,
+    })
+  }
+  if (cockpit.value?.pendingCarePlanDraftCount) {
+    rows.push({
+      key: 'plan',
+      label: `方案草稿 ${cockpit.value.pendingCarePlanDraftCount}`,
+    })
+  }
+  return rows
+})
+
+function showMineAll() {
+  focusOverdue.value = false
+  listOpen.value = false
+  if (pool.value !== 'MINE') pool.value = 'MINE'
+}
+
+function showOverdue() {
+  focusOverdue.value = true
+  listOpen.value = false
+  moreStatsOpen.value = false
+  if (pool.value !== 'MINE') {
+    pool.value = 'MINE'
+  }
+}
 
 const todayCards = computed(() => [
   {
     key: 'mine',
     label: '我的待办',
     value: summary.value.mineOpenCount,
-    tone: summary.value.mineOpenCount ? 'teal' : '',
-    go: () => {
-      pool.value = 'MINE'
-    },
+    tone: summary.value.mineOpenCount && !focusOverdue.value ? 'teal' : '',
+    active: pool.value === 'MINE' && !focusOverdue.value,
+    go: showMineAll,
   },
   {
     key: 'overdue',
     label: '逾期',
     value: cockpit.value?.overdueCount ?? 0,
     tone: (cockpit.value?.overdueCount || 0) > 0 ? 'danger' : '',
-    go: () => {
-      pool.value = 'MINE'
-    },
-  },
-  {
-    key: 'chat',
-    label: '未读沟通',
-    value: unread.value,
-    tone: unread.value > 0 ? 'warn' : '',
-    go: () => void router.push('/chat'),
-  },
-  {
-    key: 'adh',
-    label: '依从缺口',
-    value: adherenceGap.value,
-    tone: adherenceGap.value > 0 ? 'warn' : '',
-    go: () => void router.push('/adherence'),
+    active: focusOverdue.value,
+    go: showOverdue,
   },
 ])
 
@@ -229,8 +266,14 @@ function clearFilters() {
   taskType.value = ''
   careTeamId.value = ''
   keyword.value = ''
+  focusOverdue.value = false
   persistFilters()
   void loadList()
+}
+
+function selectPool(next: TaskPool) {
+  focusOverdue.value = false
+  pool.value = next
 }
 
 function openTask(row: WorkspaceTaskItem) {
@@ -269,13 +312,13 @@ onMounted(() => {
   <div class="hx-page">
     <header class="hx-page-head">
       <p class="eyebrow">{{ orgName }}</p>
-      <h1>{{ greeting }}</h1>
+      <h1>待办</h1>
     </header>
 
     <section class="today hx-surface">
       <div class="today-head">
         <h2>今日概览</h2>
-        <span class="hx-muted">点卡片直达</span>
+        <span class="hx-muted">{{ overviewHint }}</span>
       </div>
       <div class="today-grid">
         <button
@@ -283,23 +326,51 @@ onMounted(() => {
           :key="c.key"
           type="button"
           class="today-card"
-          :class="c.tone"
+          :class="[c.tone, { active: c.active }]"
           @click="c.go()"
         >
           <strong>{{ c.value }}</strong>
           <span>{{ c.label }}</span>
         </button>
       </div>
-      <div v-if="cockpit" class="chips">
-        <span v-if="cockpit.urgentCount" class="chip warn">优先 {{ cockpit.urgentCount }}</span>
-        <span v-if="cockpit.watchCount" class="chip">关注 {{ cockpit.watchCount }}</span>
-        <span v-if="cockpit.pendingReportDraftCount" class="chip">
-          待审报告 {{ cockpit.pendingReportDraftCount }}
-        </span>
-        <span v-if="cockpit.pendingCarePlanDraftCount" class="chip">
-          方案草稿 {{ cockpit.pendingCarePlanDraftCount }}
-        </span>
-        <span v-if="summary.doneTodayCount" class="chip">今日已办 {{ summary.doneTodayCount }}</span>
+      <div v-if="unread || adherenceGap" class="chips">
+        <button
+          v-if="unread"
+          type="button"
+          class="chip chip-action warn"
+          @click="router.push('/chat')"
+        >
+          未读沟通 {{ unread }}
+        </button>
+        <button
+          v-if="adherenceGap"
+          type="button"
+          class="chip chip-action warn"
+          @click="router.push('/adherence')"
+        >
+          依从缺口 {{ adherenceGap }}
+        </button>
+      </div>
+      <div v-if="secondaryStats.length" class="more-stats">
+        <button
+          type="button"
+          class="more-toggle"
+          :aria-expanded="moreStatsOpen"
+          @click="moreStatsOpen = !moreStatsOpen"
+        >
+          {{ moreStatsOpen ? '收起动态' : `更多动态 ${secondaryStats.length}` }}
+        </button>
+        <div v-if="moreStatsOpen" class="more-list" role="list">
+          <span
+            v-for="s in secondaryStats"
+            :key="s.key"
+            class="stat-line"
+            :class="{ warn: s.warn }"
+            role="listitem"
+          >
+            {{ s.label }}
+          </span>
+        </div>
       </div>
     </section>
 
@@ -309,13 +380,16 @@ onMounted(() => {
         :key="t.name"
         type="button"
         role="tab"
-        :class="{ active: pool === t.name }"
-        @click="pool = t.name"
+        :class="{ active: pool === t.name && !focusOverdue }"
+        @click="selectPool(t.name)"
       >
         {{ t.title }}
         <span v-if="t.count" class="count">{{ t.count }}</span>
       </button>
     </div>
+    <p v-if="pool === 'PUBLIC' && !focusOverdue" class="pool-hint hx-muted">
+      公共池：尚未领取的任务，领取后进入「我的」
+    </p>
 
     <div class="filter-bar">
       <van-search
@@ -347,10 +421,15 @@ onMounted(() => {
       </div>
     </div>
 
+    <div v-if="focusOverdue" class="focus-bar">
+      <span>仅显示逾期任务</span>
+      <button type="button" class="focus-clear" @click="showMineAll">查看全部我的</button>
+    </div>
+
     <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
       <van-loading v-if="loading && !refreshing" class="hx-loading" vertical>加载中</van-loading>
       <div v-else class="hx-list">
-        <van-empty v-if="!items.length" description="暂无任务" />
+        <van-empty v-if="!listSource.length" :description="emptyDescription" />
         <article
           v-for="row in visibleItems"
           :key="row.id"
@@ -381,7 +460,7 @@ onMounted(() => {
               </span>
               <van-button
                 v-if="canQuickClaim(row)"
-                size="mini"
+                size="small"
                 type="primary"
                 round
                 @click="claim(row, $event)"
@@ -403,7 +482,7 @@ onMounted(() => {
           class="more-tasks"
           @click="listOpen = !listOpen"
         >
-          {{ listOpen ? '收起' : `查看全部 ${items.length} 项` }}
+          {{ listOpen ? '收起' : `查看全部 ${listSource.length} 项` }}
         </button>
       </div>
     </van-pull-refresh>
@@ -455,33 +534,37 @@ onMounted(() => {
 }
 .today-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
 }
 .today-card {
-  border: 0;
-  border-radius: 14px;
-  padding: 10px 4px;
-  background: rgba(238, 246, 246, 0.95);
+  border: 1px solid transparent;
+  border-radius: var(--hx-radius-sm);
+  padding: 12px 8px;
+  background: var(--hx-teal-light);
   text-align: center;
+}
+.today-card.active {
+  border-color: var(--hx-teal-ring);
+  box-shadow: var(--hx-shadow-soft);
 }
 .today-card strong {
   display: block;
-  font-size: 18px;
+  font-size: 22px;
   color: var(--hx-ink);
   line-height: 1.1;
 }
 .today-card span {
   display: block;
   margin-top: 4px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--hx-muted);
 }
 .today-card.teal strong {
   color: var(--hx-teal-deep);
 }
 .today-card.warn strong {
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 .today-card.danger strong {
   color: var(--hx-danger);
@@ -489,23 +572,83 @@ onMounted(() => {
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   margin-top: 10px;
 }
 .chip {
   display: inline-flex;
   align-items: center;
-  height: 22px;
-  padding: 0 9px;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 0;
   border-radius: 999px;
+  font: inherit;
   font-size: 11px;
   font-weight: 650;
   background: var(--hx-teal-light);
   color: var(--hx-teal-deep);
 }
+.chip-action {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
 .chip.warn {
   background: var(--hx-orange-soft);
-  color: #9a6508;
+  color: var(--hx-warn-ink);
+}
+.more-stats {
+  margin-top: 8px;
+}
+.more-toggle {
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  color: var(--hx-teal-deep);
+  font-size: 12px;
+  font-weight: 650;
+}
+.more-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.stat-line {
+  font-size: 12px;
+  color: var(--hx-muted);
+  line-height: 1.4;
+}
+.stat-line.warn {
+  color: var(--hx-warn-ink);
+  font-weight: 650;
+}
+.pool-hint {
+  margin: 0 16px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.focus-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 16px 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--hx-danger-soft);
+  color: var(--hx-danger);
+  font-size: 13px;
+  font-weight: 650;
+}
+.focus-clear {
+  border: 0;
+  background: transparent;
+  color: var(--hx-teal-deep);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 0;
+  white-space: nowrap;
 }
 .hx-seg button {
   display: inline-flex;
@@ -516,11 +659,11 @@ onMounted(() => {
 .count {
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 6px;
   border-radius: 999px;
   font-size: 11px;
   line-height: 18px;
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--hx-chip-on-dark);
 }
 .hx-seg button:not(.active) .count {
   background: var(--hx-teal-mist);
@@ -542,13 +685,13 @@ onMounted(() => {
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--hx-line);
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--hx-surface);
   color: var(--hx-muted);
   font-size: 13px;
   font-weight: 650;
 }
 .filter-btn.on {
-  border-color: rgba(31, 143, 143, 0.35);
+  border-color: var(--hx-teal-mist);
   background: var(--hx-teal-light);
   color: var(--hx-teal-deep);
 }
@@ -643,7 +786,7 @@ h3 {
   height: 40px;
   border: 0;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--hx-surface);
   color: var(--hx-teal-deep);
   font-size: 14px;
   font-weight: 650;

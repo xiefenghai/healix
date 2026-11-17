@@ -158,7 +158,7 @@ onMounted(load)
   right: 0;
   bottom: 0;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--hx-surface);
   border-top: 1px solid var(--hx-line);
 }
 </style>

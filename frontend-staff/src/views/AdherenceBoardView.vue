@@ -200,13 +200,13 @@ onMounted(load)
 }
 .card {
   border: 1px solid var(--hx-line);
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--hx-surface);
   border-radius: 14px;
   padding: 12px;
   text-align: left;
 }
 .card.active {
-  border-color: rgba(31, 143, 143, 0.35);
+  border-color: var(--hx-teal-ring);
   background: var(--hx-teal-light);
 }
 .card strong {

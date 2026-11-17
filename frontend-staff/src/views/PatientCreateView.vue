@@ -229,7 +229,7 @@ function dupMeta(d: DuplicateCandidate) {
 .hint {
   margin: 12px 16px 8px;
   font-size: 13px;
-  color: var(--hx-muted, #8a96a3);
+  color: var(--hx-muted);
   line-height: 1.5;
 }
 .actions {
@@ -241,7 +241,7 @@ function dupMeta(d: DuplicateCandidate) {
 .dup-tip {
   margin: 0 0 10px;
   font-size: 13px;
-  color: #666;
+  color: var(--hx-muted);
 }
 .dup-item {
   width: 100%;
@@ -251,23 +251,23 @@ function dupMeta(d: DuplicateCandidate) {
   gap: 4px;
   margin-bottom: 8px;
   padding: 12px;
-  border: 1px solid #e8ecef;
+  border: 1px solid var(--hx-line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--hx-surface);
   text-align: left;
 }
 .dup-item strong {
   font-size: 15px;
-  color: #1a1a1a;
+  color: var(--hx-ink);
 }
 .dup-item span {
   font-size: 12px;
-  color: #8a96a3;
+  color: var(--hx-muted);
 }
 .dup-item em {
   font-style: normal;
   font-size: 12px;
   font-weight: 700;
-  color: var(--hx-teal-deep, #0b7a66);
+  color: var(--hx-teal-deep);
 }
 </style>

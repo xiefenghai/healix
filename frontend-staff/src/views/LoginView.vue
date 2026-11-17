@@ -148,13 +148,12 @@ async function submit() {
   border-radius: 22px;
   display: grid;
   place-items: center;
-  background: linear-gradient(150deg, #4db3b3 0%, #1f8f8f 55%, #166f6f 100%);
-  color: #fff;
+  background: var(--hx-teal-deep);
+  color: var(--hx-on-accent);
   font-family: var(--hx-display);
   font-size: 30px;
   font-weight: 750;
-  box-shadow: 0 16px 32px rgba(31, 143, 143, 0.32);
-  animation: float-mark 3.2s ease-in-out infinite;
+  box-shadow: var(--hx-shadow);
 }
 .brand h1 {
   margin: 0;
@@ -172,10 +171,9 @@ async function submit() {
 .panel {
   padding: 22px 16px 20px;
   border-radius: 22px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--hx-surface);
   border: 1px solid var(--hx-line);
   box-shadow: var(--hx-shadow);
-  backdrop-filter: blur(12px);
 }
 .panel h2 {
   margin: 0 4px;
@@ -201,15 +199,5 @@ async function submit() {
   line-height: 1.5;
   color: var(--hx-muted);
   text-align: center;
-}
-
-@keyframes float-mark {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-4px);
-  }
 }
 </style>

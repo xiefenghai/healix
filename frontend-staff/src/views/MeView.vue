@@ -197,21 +197,21 @@ onMounted(loadStats)
   display: flex;
   gap: 14px;
   align-items: center;
-  background: linear-gradient(145deg, #1f8f8f 0%, #166f6f 70%, #125c5c 100%);
-  color: #fff;
-  box-shadow: 0 16px 32px rgba(22, 111, 111, 0.28);
+  background: var(--hx-teal-deep);
+  color: var(--hx-on-accent);
+  box-shadow: var(--hx-shadow);
 }
 .hx-avatar.lg {
   width: 52px;
   height: 52px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--hx-chip-on-dark);
   box-shadow: none;
   font-size: 20px;
 }
 .label {
   font-size: 12px;
-  opacity: 0.78;
+  color: var(--hx-on-deep);
 }
 .org {
   margin-top: 4px;
@@ -222,7 +222,7 @@ onMounted(loadStats)
 .roles {
   margin-top: 6px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.78) !important;
+  color: var(--hx-on-deep) !important;
 }
 .stats {
   margin: 0 16px 12px;
@@ -251,7 +251,7 @@ onMounted(loadStats)
   text-align: center;
   padding: 10px 4px;
   border-radius: 12px;
-  background: rgba(238, 246, 246, 0.95);
+  background: var(--hx-teal-light);
 }
 .stats-grid strong {
   display: block;
@@ -261,7 +261,7 @@ onMounted(loadStats)
 .stats-grid span {
   display: block;
   margin-top: 4px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--hx-muted);
 }
 .stats-foot {

@@ -83,8 +83,8 @@ onMounted(load)
 
 <style scoped>
 .org.current {
-  border-color: rgba(31, 143, 143, 0.35);
-  background: linear-gradient(135deg, rgba(232, 246, 246, 0.95), rgba(255, 255, 255, 0.95));
+  border-color: var(--hx-teal-ring);
+  background: var(--hx-teal-light);
 }
 .copy {
   flex: 1;

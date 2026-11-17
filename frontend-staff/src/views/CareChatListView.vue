@@ -346,14 +346,14 @@ onBeforeUnmount(() => {
   margin: 4px 16px 8px;
   padding: 4px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--hx-surface-soft);
   border: 1px solid var(--hx-line);
 }
 
 .mode-seg button {
   border: 0;
   background: transparent;
-  border-radius: 11px;
+  border-radius: 12px;
   padding: 10px 6px;
   font-size: 13px;
   font-weight: 600;
@@ -366,19 +366,19 @@ onBeforeUnmount(() => {
 }
 
 .mode-seg button.active {
-  background: var(--hx-teal);
-  color: #fff;
-  box-shadow: 0 6px 14px rgba(31, 143, 143, 0.28);
+  background: var(--hx-teal-deep);
+  color: var(--hx-on-accent);
+  box-shadow: var(--hx-shadow-soft);
 }
 
 .count {
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 6px;
   border-radius: 999px;
   font-size: 11px;
   line-height: 18px;
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--hx-chip-on-dark);
 }
 
 .mode-seg button:not(.active) .count {
@@ -391,8 +391,8 @@ onBeforeUnmount(() => {
 }
 
 .row.unread {
-  border-color: rgba(214, 69, 69, 0.28);
-  background: linear-gradient(120deg, rgba(255, 244, 244, 0.96), rgba(255, 255, 255, 0.98));
+  border-color: var(--hx-danger-ring);
+  background: var(--hx-danger-soft);
 }
 
 .avatar-wrap {
@@ -404,14 +404,14 @@ onBeforeUnmount(() => {
 
 .dot {
   position: absolute;
-  top: -1px;
-  right: -1px;
+  top: 0;
+  right: 0;
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: #ee0a24;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px rgba(238, 10, 36, 0.25);
+  background: var(--hx-danger);
+  border: 2px solid var(--hx-surface);
+  box-shadow: none;
   z-index: 2;
   pointer-events: none;
 }
@@ -421,7 +421,7 @@ onBeforeUnmount(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #ee0a24;
+  background: var(--hx-danger);
   flex-shrink: 0;
 }
 
@@ -448,7 +448,7 @@ onBeforeUnmount(() => {
 }
 
 .preview {
-  margin-top: 5px;
+  margin-top: 6px;
   font-size: 13px;
   color: var(--hx-muted);
   white-space: nowrap;
@@ -467,8 +467,8 @@ onBeforeUnmount(() => {
   height: 20px;
   padding: 0 6px;
   border-radius: 999px;
-  background: #ee0a24;
-  color: #fff;
+  background: var(--hx-danger);
+  color: var(--hx-on-accent);
   font-size: 11px;
   line-height: 20px;
   text-align: center;
@@ -491,7 +491,7 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   border: 0;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--hx-surface);
   color: var(--hx-ink);
 }
 

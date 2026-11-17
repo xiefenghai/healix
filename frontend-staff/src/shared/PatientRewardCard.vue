@@ -28,7 +28,7 @@ interface StaffView {
 
 const BACKFILL_ALERT = 5
 
-const PRESETS = ['坚持得很好，继续保持！', '这周进步很明显 👏', '指标控制得很稳，继续加油']
+const PRESETS = ['坚持得很好，继续保持', '这周进步很明显', '指标控制得很稳，继续加油']
 
 const props = defineProps<{ peopleId: string }>()
 const view = ref<StaffView | null>(null)
@@ -100,11 +100,11 @@ watch(() => props.peopleId, load, { immediate: true })
     <p v-if="!view.patientEnabled" class="off">已为该患者关闭激励</p>
     <template v-else>
       <p v-if="view.backfills7d >= BACKFILL_ALERT" class="alert">
-        ⚠️ 近 7 天补录 {{ view.backfills7d }} 条，建议核实数据真实性
+        注意：近 7 天补录 {{ view.backfills7d }} 条，建议核实数据真实性
       </p>
       <div class="stats">
         <div class="flame">
-          <strong>🔥{{ view.summary.streak }}</strong>
+          <strong>{{ view.summary.streak }}</strong>
           <span>连续天数</span>
         </div>
         <div>
@@ -121,14 +121,14 @@ watch(() => props.peopleId, load, { immediate: true })
         </div>
       </div>
       <p v-if="view.challenge" class="challenge">
-        🎯 {{ view.challenge.title }}
+        挑战：{{ view.challenge.title }}
         <em>{{ view.challenge.progress }}/{{ view.challenge.target }}</em>
       </p>
       <div v-if="earned.length" class="badges">
-        <span v-for="b in earned.slice(0, 6)" :key="b.code" class="badge">{{ b.icon }} {{ b.name }}</span>
+        <span v-for="b in earned.slice(0, 6)" :key="b.code" class="badge">{{ b.name }}</span>
       </div>
       <button type="button" class="kudos" :disabled="view.kudosSentToday" @click="sheetOpen = true">
-        {{ view.kudosSentToday ? '今日已点赞' : '👍 点赞鼓励' }}
+        {{ view.kudosSentToday ? '今日已点赞' : '点赞鼓励' }}
       </button>
     </template>
 
@@ -149,7 +149,7 @@ watch(() => props.peopleId, load, { immediate: true })
 .reward {
   margin: 0 16px 12px;
   padding: 14px;
-  background: linear-gradient(135deg, #fff6ea, #ffffff 70%);
+  background: var(--hx-orange-soft);
 }
 .head {
   display: flex;
@@ -160,29 +160,27 @@ watch(() => props.peopleId, load, { immediate: true })
   margin: 0;
   font-size: 15px;
   font-weight: 800;
-}
-.head h3 span {
-  background: linear-gradient(transparent 60%, #ffe58a 60%);
+  color: var(--hx-ink);
 }
 .toggle {
   border: 0;
   background: transparent;
-  color: var(--hx-muted, #8a96a3);
+  color: var(--hx-muted);
   font-size: 12px;
 }
 .alert {
   margin: 8px 0 0;
   padding: 6px 10px;
   border-radius: 10px;
-  background: #fff3da;
-  color: #8a5c00;
+  background: var(--hx-warn-soft);
+  color: var(--hx-warn-ink);
   font-size: 12px;
   font-weight: 600;
 }
 .off {
   margin: 8px 0 0;
   font-size: 13px;
-  color: var(--hx-muted, #8a96a3);
+  color: var(--hx-muted);
 }
 .stats {
   display: grid;
@@ -192,30 +190,30 @@ watch(() => props.peopleId, load, { immediate: true })
 }
 .stats strong {
   display: block;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 800;
-  color: var(--hx-ink, #1f2d3a);
+  color: var(--hx-ink);
 }
 .stats .flame strong {
-  color: #e0632a;
+  color: var(--hx-streak);
 }
 .stats strong.dim {
-  color: #b8c2cc;
+  color: var(--hx-muted);
 }
 .stats span {
   font-size: 11px;
-  color: var(--hx-muted, #8a96a3);
+  color: var(--hx-muted);
 }
 .challenge {
   margin: 10px 0 0;
   font-size: 13px;
   font-weight: 700;
-  color: #5b6b7a;
+  color: var(--hx-text);
 }
 .challenge em {
   margin-left: 6px;
   font-style: normal;
-  color: #e0632a;
+  color: var(--hx-streak);
 }
 .badges {
   display: flex;
@@ -226,8 +224,8 @@ watch(() => props.peopleId, load, { immediate: true })
 .badge {
   padding: 2px 8px;
   border-radius: 999px;
-  background: #fff4e0;
-  color: #8a5a2b;
+  background: var(--hx-orange-soft);
+  color: var(--hx-warn-ink);
   font-size: 11px;
 }
 .kudos {
@@ -236,14 +234,14 @@ watch(() => props.peopleId, load, { immediate: true })
   height: 36px;
   border: 0;
   border-radius: 999px;
-  background: linear-gradient(90deg, #ffb057, #ff7a45);
-  color: #fff;
+  background: var(--hx-teal-deep);
+  color: var(--hx-on-accent);
   font-weight: 700;
   font-size: 14px;
 }
 .kudos:disabled {
-  background: #f1f3f5;
-  color: #a0aab4;
+  background: var(--hx-surface-soft);
+  color: var(--hx-muted);
 }
 .sheet {
   padding: 16px 16px 24px;
@@ -262,9 +260,9 @@ watch(() => props.peopleId, load, { immediate: true })
   gap: 6px;
 }
 .preset {
-  border: 1px solid #f6d9b8;
-  background: #fff8ef;
-  color: #8a5a2b;
+  border: 1px solid var(--hx-line);
+  background: var(--hx-orange-soft);
+  color: var(--hx-warn-ink);
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 12px;

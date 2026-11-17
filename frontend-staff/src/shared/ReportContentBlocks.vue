@@ -140,7 +140,7 @@ function barWidth(rate?: number | null) {
       <div class="track"><i :class="g.met ? 'fill-ok' : 'fill-warn'" :style="{ width: `${Math.round(g.progress * 100)}%` }" /></div>
       <span class="hx-muted small">目标 {{ g.targetText }}<span v-if="g.met" class="goal-ok">已达成</span></span>
     </div>
-    <p v-for="(m, i) in milestones" :key="i" class="ms">🏅 {{ m }}</p>
+    <p v-for="(m, i) in milestones" :key="i" class="ms">{{ m }}</p>
   </section>
 
   <section v-if="rewards" class="block ach-block">
@@ -149,10 +149,10 @@ function barWidth(rate?: number | null) {
       <div><strong>+{{ rewards.points }}</strong><small>健康豆</small></div>
       <div><strong>{{ rewards.activeDays }}</strong><small>打卡天数</small></div>
       <div><strong>{{ rewards.fullDays }}</strong><small>全勤天数</small></div>
-      <div><strong>🔥{{ rewards.streak }}</strong><small>连续天数</small></div>
+      <div><strong>{{ rewards.streak }}</strong><small>连续天数</small></div>
     </div>
     <div v-if="rewards.newBadges?.length" class="ach-badges">
-      <span v-for="(b, i) in rewards.newBadges" :key="i" class="ach-badge">{{ b.icon }} {{ b.name }}</span>
+      <span v-for="(b, i) in rewards.newBadges" :key="i" class="ach-badge">{{ b.name }}</span>
     </div>
   </section>
 
@@ -343,7 +343,7 @@ function barWidth(rate?: number | null) {
   margin-bottom: 4px;
   font-size: 12px;
   font-weight: 700;
-  color: var(--hx-muted, #6b7a87);
+  color: var(--hx-muted);
 }
 .chart-fig :deep(svg) {
   width: 100%;
@@ -352,16 +352,16 @@ function barWidth(rate?: number | null) {
 }
 .kpi-grid,
 .block {
-  --mark: #ffd84d;
-  --good: #0b7a66;
-  --good-bg: #e3f6ef;
-  --bad: #e0435a;
-  --bad-bg: #fde7ea;
-  --warn: #b07400;
-  --warn-bg: #fff1d6;
-  --info: #2f5fb3;
-  --info-bg: #e6eefc;
-  --soft: #f4f8f9;
+  --mark: var(--hx-mark);
+  --good: var(--hx-ok);
+  --good-bg: var(--hx-ok-soft);
+  --bad: var(--hx-danger);
+  --bad-bg: var(--hx-danger-soft);
+  --warn: var(--hx-warn-ink);
+  --warn-bg: var(--hx-warn-soft);
+  --info: var(--hx-info);
+  --info-bg: var(--hx-info-soft);
+  --soft: var(--hx-surface-soft);
 }
 .kpi-grid {
   display: grid;
@@ -375,14 +375,14 @@ function barWidth(rate?: number | null) {
   align-items: flex-start;
   padding: 12px 14px;
   border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 6px 18px rgba(19, 34, 46, 0.06);
+  background: var(--hx-surface);
+  box-shadow: var(--hx-shadow-soft);
 }
 .kpi--wide {
   grid-column: span 2;
 }
 .ach-block {
-  background: linear-gradient(135deg, #fff6ea, #ffffff 70%);
+  background: var(--hx-orange-soft);
 }
 .ach-grid {
   display: grid;
@@ -393,11 +393,11 @@ function barWidth(rate?: number | null) {
   display: block;
   font-size: 18px;
   font-weight: 800;
-  color: #e0632a;
+  color: var(--hx-streak);
 }
 .ach-grid small {
   font-size: 11px;
-  color: #8a96a3;
+  color: var(--hx-muted);
 }
 .ach-badges {
   display: flex;
@@ -408,19 +408,19 @@ function barWidth(rate?: number | null) {
 .ach-badge {
   padding: 2px 8px;
   border-radius: 999px;
-  background: #fff4e0;
-  color: #8a5a2b;
+  background: var(--hx-orange-soft);
+  color: var(--hx-warn-ink);
   font-size: 12px;
 }
 .kpi-label,
 .rate-label {
   font-size: 12px;
   font-weight: 700;
-  color: #5b6b7a;
+  color: var(--hx-text);
 }
 .kpi-value {
   margin-top: 2px;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 900;
   line-height: 1.15;
   letter-spacing: -0.02em;
@@ -454,25 +454,25 @@ function barWidth(rate?: number | null) {
   background: var(--bad-bg);
 }
 .delta-chip.trend--flat {
-  background: #eef2f4;
+  background: var(--hx-surface-soft);
 }
 
 .block {
   margin: 0 16px 14px;
   padding: 16px;
   border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 8px 22px rgba(19, 34, 46, 0.06);
+  background: var(--hx-surface);
+  box-shadow: var(--hx-shadow-soft);
 }
 .block h3 {
   margin: 0 0 12px;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 900;
   color: var(--hx-ink);
 }
 .block h3 span {
-  padding: 0 3px;
-  background: linear-gradient(transparent 62%, var(--mark) 62%);
+  padding: 0 4px;
+  background: var(--hx-mark);
 }
 .block p {
   margin: 4px 0 0;
@@ -513,7 +513,7 @@ function barWidth(rate?: number | null) {
 .hl-tag {
   flex: none;
   margin-top: 2px;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 6px;
   background: var(--hl-bg);
   color: var(--hl);
@@ -570,7 +570,7 @@ function barWidth(rate?: number | null) {
 }
 .rate-value {
   margin: 2px 0 6px;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 900;
   line-height: 1.15;
   color: var(--rate);
@@ -586,7 +586,7 @@ function barWidth(rate?: number | null) {
   height: 8px;
   margin: 4px 0 2px;
   border-radius: 999px;
-  background: #e8eef1;
+  background: var(--hx-surface-soft);
   overflow: hidden;
 }
 .track.thin {
@@ -658,7 +658,7 @@ function barWidth(rate?: number | null) {
   gap: 4px;
 }
 .med-day small {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--hx-muted);
 }
 .med-dot {
@@ -672,7 +672,7 @@ function barWidth(rate?: number | null) {
 }
 .med-dot--ok {
   background: var(--hx-teal);
-  color: #fff;
+  color: var(--hx-on-accent);
   font-size: 15px;
 }
 .med-dot--miss {
@@ -697,7 +697,7 @@ function barWidth(rate?: number | null) {
   color: var(--hx-ink);
 }
 .pill {
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 800;
@@ -715,7 +715,7 @@ function barWidth(rate?: number | null) {
   color: var(--bad);
 }
 .pill--empty {
-  background: #eef2f4;
+  background: var(--hx-surface-soft);
   color: var(--hx-muted);
 }
 .stat-row {
@@ -733,7 +733,7 @@ function barWidth(rate?: number | null) {
   background: var(--soft);
 }
 .stat-cell b {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 900;
   color: var(--hx-ink);
 }
@@ -761,8 +761,8 @@ function barWidth(rate?: number | null) {
   color: var(--hx-ink);
 }
 .slot--warn {
-  background: #fff6f7;
-  box-shadow: 0 0 0 1px #f6d3d8 inset;
+  background: var(--hx-danger-soft);
+  box-shadow: 0 0 0 1px var(--hx-danger-ring) inset;
 }
 .abn-list {
   margin: 8px 0 0;
@@ -780,7 +780,7 @@ function barWidth(rate?: number | null) {
 }
 .ls-box b {
   margin-top: 2px;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 900;
   color: var(--hx-ink);
 }
@@ -805,7 +805,7 @@ function barWidth(rate?: number | null) {
   position: relative;
   height: 8px;
   border-radius: 999px;
-  background: #e8eef1;
+  background: var(--hx-surface-soft);
 }
 .macro-fill {
   position: absolute;
@@ -815,7 +815,7 @@ function barWidth(rate?: number | null) {
 }
 .macro-target {
   position: absolute;
-  top: -3px;
+  top: -4px;
   width: 2px;
   height: 14px;
   background: var(--hx-ink);
@@ -829,7 +829,7 @@ function barWidth(rate?: number | null) {
 .fu {
   position: relative;
   padding: 0 0 12px 16px;
-  border-left: 2px solid #dbe8e8;
+  border-left: 2px solid var(--hx-line);
   font-size: 13px;
 }
 .fu:last-child {
@@ -840,7 +840,7 @@ function barWidth(rate?: number | null) {
   content: '';
   position: absolute;
   top: 4px;
-  left: -7px;
+  left: -8px;
   width: 12px;
   height: 12px;
   border-radius: 50%;
@@ -859,7 +859,7 @@ function barWidth(rate?: number | null) {
   font-size: 13px;
 }
 .line {
-  padding: 7px 0;
+  padding: 8px 0;
   border-top: 1px dashed var(--hx-line);
 }
 .right {
@@ -889,7 +889,7 @@ function barWidth(rate?: number | null) {
 .chip {
   font-size: 12px;
   font-weight: 600;
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   background: var(--hx-teal-light);
   color: var(--hx-teal-deep);

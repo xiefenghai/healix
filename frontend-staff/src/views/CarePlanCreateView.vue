@@ -612,14 +612,14 @@ onMounted(loadTaskAndBundle)
   margin: 10px 0;
   padding: 12px 10px 8px;
   border-radius: 14px;
-  background: #f7fafb;
+  background: var(--hx-surface-soft);
 }
 .block.goal {
-  background: linear-gradient(145deg, var(--hx-teal-light) 0%, #f3fbfb 100%);
-  border: 1px solid rgba(31, 143, 143, 0.14);
+  background: var(--hx-teal-light);
+  border: 1px solid var(--hx-teal-mist);
 }
 .block.summary {
-  background: #f4f7f8;
+  background: var(--hx-surface-soft);
 }
 .block.caution {
   background: var(--hx-orange-soft);
@@ -627,7 +627,7 @@ onMounted(loadTaskAndBundle)
 .block-label {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin: 0 6px 4px;
   font-size: 12px;
   font-weight: 700;
@@ -635,7 +635,7 @@ onMounted(loadTaskAndBundle)
   color: var(--hx-teal-deep);
 }
 .block.caution .block-label {
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 .energy-meta {
   margin: 2px 6px 4px;
@@ -653,7 +653,7 @@ onMounted(loadTaskAndBundle)
   color: var(--hx-muted);
 }
 .block :deep(.van-field) {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--hx-surface);
   border-radius: 12px;
   margin-bottom: 6px;
   padding: 8px 12px;
@@ -671,7 +671,7 @@ onMounted(loadTaskAndBundle)
   padding: 6px 0;
 }
 .task-edit + .task-edit {
-  border-top: 1px solid rgba(20, 40, 48, 0.05);
+  border-top: 1px solid var(--hx-line);
 }
 .idx {
   flex: 0 0 22px;
@@ -701,10 +701,10 @@ onMounted(loadTaskAndBundle)
   font-size: 11px;
   font-weight: 600;
   color: var(--hx-muted);
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--hx-surface);
   border: 1px solid var(--hx-line);
   border-radius: 999px;
-  padding: 1px 7px;
+  padding: 2px 8px;
 }
 .rm {
   border: 0;
@@ -723,22 +723,22 @@ onMounted(loadTaskAndBundle)
   gap: 8px;
   align-items: flex-start;
   margin-top: 4px;
-  padding: 11px 12px;
+  padding: 12px;
   border-radius: 12px;
   font-size: 12px;
   line-height: 1.5;
 }
 .flags .van-icon {
-  margin-top: 1px;
+  margin-top: 2px;
   flex-shrink: 0;
 }
 .flags.error {
-  background: #fdecec;
+  background: var(--hx-danger-soft);
   color: var(--hx-danger);
 }
 .flags.warn {
   background: var(--hx-orange-soft);
-  color: #9a6508;
+  color: var(--hx-warn-ink);
 }
 .actions {
   display: grid;
