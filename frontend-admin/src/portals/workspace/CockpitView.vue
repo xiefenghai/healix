@@ -1456,31 +1456,6 @@ const hiddenStageQuickActionCount = computed(() =>
   Math.max(0, secondaryQuickActions.value.length - visibleSecondaryQuickActions.value.length),
 )
 
-function quickActionIconPath(icon?: QuickActionItem['icon']): string {
-  switch (icon) {
-    case 'followup':
-      return 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
-    case 'med':
-      return 'M9 3h6v4H9zM10 7h4v14h-4zM7 11h10'
-    case 'obs':
-      return 'M12 20V10M18 20V4M6 20v-4'
-    case 'intake':
-      return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8'
-    case 'archive':
-      return 'M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'
-    case 'plan':
-      return 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 12h6M9 16h6'
-    case 'report':
-      return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5'
-    case 'assess':
-      return 'M22 12h-4l-3 9L9 3l-3 9H2'
-    case 'assign':
-      return 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'
-    default:
-      return 'M12 5v14M5 12h14'
-  }
-}
-
 const hasOpenIntakeTodo = computed(() =>
   (focus.value?.openTasks || []).some(
     (t) =>
@@ -1763,12 +1738,6 @@ const intakeCompleteness = computed(() => {
   }
 })
 const assessmentTags = computed(() => focus.value?.assessmentTags || [])
-/** 档案几乎空白且无评估结果时，不展示「空标签」误导，明示待评估 */
-const assessmentPending = computed(() => {
-  if (assessmentTags.value.length) return false
-  const pct = focus.value?.archiveCompletenessPercent
-  return pct == null || pct <= 0
-})
 const assessmentAlert = computed(() => assessmentTags.value.some((t) => t.tone === 'danger'))
 
 /** 首条真「今日简报」进固定区；切焦点等 system notice 进对话流。 */
@@ -2450,63 +2419,6 @@ function cardMeta(card: PriorityCard) {
   return parts.join(' · ')
 }
 
-function cardTags(card: PriorityCard) {
-  // 未分组：右上角角标已是「待分组」，不再叠一层同义标签 / 待首诊
-  if (isUnassignedCard(card)) return []
-  // 已有节点角标（风险待确认 / 方案待生成）时，底下不再堆「评估升级、制定方案」
-  if (cardNodeBadge(card)) return []
-
-  const labels = card.taskTypeLabels || []
-  if (labels.length) return labels.slice(0, 4)
-
-  const tags: string[] = []
-  for (const t of card.taskTypes || []) {
-    if (!tags.includes(t)) tags.push(t)
-  }
-  if (!tags.length) {
-    const badgeAllow = new Set([
-      'PLAN_NUDGE',
-      'FOLLOW_UP',
-      'PLAN_CREATE',
-      'METRIC_ALERT',
-      'EXERCISE_ALERT',
-      'REPORT_REVIEW',
-      'TEAM_ASSIGN',
-      'PLAN_REVIEW',
-      'MED_VERIFY',
-      'ASSESSMENT_ESCALATION',
-      'ASSESSMENT_SUSPECTED',
-      'ARCHIVE_SELF_REPORT',
-      'QUESTIONNAIRE_EXPIRED',
-    ])
-    for (const b of card.badges || []) {
-      if (badgeAllow.has(b) && !tags.includes(b)) tags.push(b)
-    }
-  }
-  if ((card.badges || []).includes('WATCHED') && !tags.includes('重点关注')) {
-    tags.unshift('重点关注')
-  }
-  // 新档尚无任务标签时：有任何方案阶段角标不再写「未评估」；真正空白才提示
-  if (!tags.length) {
-    const b = card.badges || []
-    if (b.includes('PLAN_ACTIVE') || b.includes('PLAN_IN_PROGRESS') || b.includes('PLAN_DRAFT')) {
-      return []
-    }
-    return ['未评估']
-  }
-  // 右上角状态已表达跟进/首诊/方案阶段，底下不再重复「首诊」
-  const status = riskBadge(card).text
-  const deduped =
-    status === '待跟进' ||
-    status === '待首诊' ||
-    status === '日常跟进' ||
-    status === '方案确认中' ||
-    status === '方案草稿'
-      ? tags.filter((t) => t !== '首诊' && t !== '待首诊' && t !== 'ONBOARDING' && t !== '日常跟进')
-      : tags
-  return deduped.slice(0, 3)
-}
-
 function overdueDayCount(iso?: string | null): number {
   if (!iso) return 0
   const d = new Date(iso)
@@ -2614,43 +2526,6 @@ function footerNote(card: PriorityCard) {
   if (b.includes('MED_INCOMPLETE')) return '今日服药未确认'
   if (b.includes('PLAN_INCOMPLETE')) return '今日方案未打完'
   return '需关注'
-}
-
-/** 流程态角标（待分组/待首诊）不再内嵌圆点；可点 CTA 也不带圆点 */
-function riskBadgeShowDot(card: PriorityCard) {
-  if (cardNodeBadge(card)?.action) return false
-  const t = riskBadge(card).text
-  return (
-    t !== '待分组' &&
-    t !== '待首诊' &&
-    t !== '待确认评估' &&
-    t !== '待评估' &&
-    t !== '待跟进' &&
-    t !== '日常跟进'
-  )
-}
-
-function priorityLabel(p?: string) {
-  if (p === 'HIGH') return '高优'
-  if (p === 'MEDIUM') return '中优'
-  if (p === 'LOW') return '低优'
-  return ''
-}
-
-function taskMeta(card: PriorityCard) {
-  // 已有清晰节点角标时，不再叠「中优 · 待办 2」
-  if (cardNodeBadge(card)) {
-    const overdue = card.overdueTaskCount ?? 0
-    return overdue > 0 ? `超期 ${overdue}` : ''
-  }
-  const open = card.openTaskCount ?? 0
-  const overdue = card.overdueTaskCount ?? 0
-  const pri = priorityLabel(card.maxTaskPriority)
-  const parts: string[] = []
-  if (open > 0) parts.push(`${open} 待办`)
-  if (overdue > 0) parts.push(`${overdue} 超期`)
-  if (pri) parts.push(pri)
-  return parts.join(' · ')
 }
 
 async function loadSummary() {
