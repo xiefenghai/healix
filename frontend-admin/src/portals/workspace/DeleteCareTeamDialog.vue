@@ -147,7 +147,7 @@ async function confirmDelete() {
   font-size: 14px;
 }
 .warn.soft {
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
 }
 .stats {
   margin: 0 0 16px;
@@ -155,26 +155,26 @@ async function confirmDelete() {
   border-radius: 8px;
 }
 .stats.danger {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--rose-100);
+  border: 1px solid var(--rose-200);
 }
 .stats.empty {
-  background: #f8f9fa;
-  border: 1px solid #e5e7eb;
+  background: var(--ink-35);
+  border: 1px solid var(--gray-200);
 }
 .stat-line {
   margin: 0;
-  padding: 3px 0;
+  padding: 4px 0;
   font-size: 14px;
   line-height: 1.5;
-  color: #7f1d1d;
+  color: var(--auto-7f1d1d);
   font-weight: 600;
 }
 .empty-msg {
   margin: 0;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
   font-weight: 500;
 }
 .tip {
@@ -185,19 +185,19 @@ async function confirmDelete() {
 /* 未匹配：置灰不可点；组名完全一致：高亮危险红 */
 .confirm-delete-btn.is-disabled,
 .confirm-delete-btn:disabled {
-  background: #e5e7eb !important;
-  border-color: #e5e7eb !important;
-  color: #9ca3af !important;
+  background: var(--gray-200) !important;
+  border-color: var(--gray-200) !important;
+  color: var(--gray-400) !important;
   opacity: 1 !important;
   cursor: not-allowed;
 }
 .confirm-delete-btn.ready:not(.is-disabled):not(:disabled) {
-  background: #f56c6c !important;
-  border-color: #f56c6c !important;
-  color: #fff !important;
+  background: var(--danger-soft) !important;
+  border-color: var(--danger-soft) !important;
+  color: var(--white) !important;
 }
 .confirm-delete-btn.ready:not(.is-disabled):not(:disabled):hover {
-  background: #f78989 !important;
-  border-color: #f78989 !important;
+  background: var(--auto-f78989) !important;
+  border-color: var(--auto-f78989) !important;
 }
 </style>

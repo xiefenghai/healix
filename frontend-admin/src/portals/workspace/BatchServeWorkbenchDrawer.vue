@@ -491,7 +491,7 @@ async function confirmTransfer() {
     toast.success(
       failNames.length
         ? `已成功将 ${okIds.length} 位患者转移至「${toName}」，${failNames.length} 人失败`
-        : `✅ 已成功将 ${okIds.length} 位患者转移至「${toName}」`,
+        : ` 已成功将 ${okIds.length} 位患者转移至「${toName}」`,
     )
     transferOpen.value = false
     transferTargetId.value = null
@@ -675,7 +675,7 @@ async function confirmTransfer() {
           :disabled="!selectedCount"
           @click="openTransferDialog"
         >
-          🔄 批量转移组
+           批量转移组
           <template v-if="selectedCount"> ({{ selectedCount }})</template>
         </el-button>
         <el-button
@@ -751,7 +751,7 @@ async function confirmTransfer() {
   margin: 0;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
 }
 .wb-team-select {
   width: min(220px, 100%);
@@ -762,14 +762,14 @@ async function confirmTransfer() {
   min-width: 180px;
 }
 .wb-lead-text strong {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 .wb-team-opt-name {
   float: left;
 }
 .wb-team-opt-count {
   float: right;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
   font-size: 12px;
   margin-left: 12px;
 }
@@ -785,19 +785,19 @@ async function confirmTransfer() {
   flex-wrap: wrap;
 }
 .wb-filter {
-  border: 1px solid var(--ink-200, #e2e8f0);
+  border: 1px solid var(--ink-200);
   border-radius: 8px;
   padding: 6px 10px;
-  background: #fff;
-  color: var(--ink-600, #475569);
-  font-size: 12.5px;
+  background: var(--white);
+  color: var(--ink-600);
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 .wb-filter.active {
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: var(--blue-300);
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 .wb-search {
   flex: 1;
@@ -817,24 +817,24 @@ async function confirmTransfer() {
 .link {
   border: 0;
   background: transparent;
-  color: var(--brand-600, #2563eb);
-  font-size: 12.5px;
+  color: var(--brand-600, var(--blue-600));
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   padding: 0;
 }
 .link:disabled {
-  color: var(--ink-300, #cbd5e1);
+  color: var(--ink-300);
   cursor: not-allowed;
 }
 .wb-mixed-hint {
   margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #b91c1c;
-  font-size: 12.5px;
+  background: var(--rose-100);
+  border: 1px solid var(--rose-200);
+  color: var(--rose-700);
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
 }
@@ -852,14 +852,14 @@ async function confirmTransfer() {
   gap: 10px;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid var(--ink-100, #e5e7eb);
+  border: 1px solid var(--ink-100, var(--gray-200));
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   cursor: pointer;
 }
 .wb-row.checked {
-  border-color: #60a5fa;
-  background: #dbeafe;
+  border-color: var(--brand-400);
+  background: var(--blue-100);
 }
 .wb-avatar {
   flex: 0 0 32px;
@@ -868,13 +868,13 @@ async function confirmTransfer() {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #64748b;
-  color: #fff;
+  background: var(--ink-500);
+  color: var(--white);
   font-size: 12px;
   font-weight: 700;
 }
 .wb-row.checked .wb-avatar {
-  background: #2563eb;
+  background: var(--blue-600);
 }
 .wb-main {
   flex: 1;
@@ -886,9 +886,9 @@ async function confirmTransfer() {
 .wb-name {
   display: block;
   text-align: left;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
   line-height: 1.3;
 }
 .wb-meta {
@@ -896,34 +896,34 @@ async function confirmTransfer() {
   flex-wrap: wrap;
   gap: 6px;
   font-size: 12px;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
 }
 .wb-stage {
   font-weight: 600;
   padding: 0 6px;
   border-radius: 999px;
-  background: #f1f5f9;
+  background: var(--ink-100);
 }
 .wb-stage.new,
 .wb-stage.review {
-  background: #fff7ed;
-  color: #c2410c;
+  background: var(--orange-50);
+  color: var(--amber-700);
 }
 .wb-stage.plan {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 .wb-stage.active {
-  background: #f0fdf4;
-  color: #15803d;
+  background: var(--green-50);
+  color: var(--auto-15803d);
 }
 .wb-team-tag {
   font-weight: 500;
   padding: 0 6px;
   border-radius: 4px;
-  background: #f1f5f9;
-  color: var(--ink-500, #64748b);
-  font-size: 11.5px;
+  background: var(--ink-100);
+  color: var(--ink-500);
+  font-size: 12px;
 }
 .wb-cta-btn {
   flex-shrink: 0;
@@ -933,9 +933,9 @@ async function confirmTransfer() {
   border: 0;
   background: transparent;
   padding: 2px 0;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--brand-600, #2563eb);
+  color: var(--brand-600, var(--blue-600));
   cursor: pointer;
   text-decoration: none;
   border-radius: 0;
@@ -948,23 +948,23 @@ async function confirmTransfer() {
 }
 .wb-cta-btn:hover {
   background: transparent;
-  color: var(--brand-700, #1d4ed8);
+  color: var(--brand-700, var(--brand-800));
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .wb-more {
-  border: 1px dashed var(--ink-200, #e2e8f0);
+  border: 1px dashed var(--ink-200);
   border-radius: 10px;
   padding: 10px;
-  background: #f8fafc;
-  color: var(--brand-600, #2563eb);
-  font-size: 12.5px;
+  background: var(--ink-50);
+  color: var(--brand-600, var(--blue-600));
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 .wb-more:hover {
-  background: #eff6ff;
-  border-color: #93c5fd;
+  background: var(--blue-50);
+  border-color: var(--blue-300);
 }
 .wb-footer {
   display: flex;
@@ -985,10 +985,10 @@ async function confirmTransfer() {
   margin: 0 0 14px;
   font-size: 14px;
   line-height: 1.55;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
 }
 .transfer-copy strong {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 .transfer-team-select {
   width: 100%;

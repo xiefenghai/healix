@@ -3,6 +3,7 @@
  * 智能驾驶舱三栏页：左优先名单 · 中机构/患者会话 · 右焦点快照。
  * 顶栏 chips 由 WorkspaceLayout 注入 cockpitChipHandler 回调。
  */
+import { avatarGradients, palette } from '../../shared/palette'
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, type Ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -297,14 +298,7 @@ type ChipKind = 'tasks' | 'overdue'
 const FORM_CLOSE_TASK_TYPES = new Set(['PLAN_NUDGE', 'METRIC_ALERT', 'EXERCISE_ALERT', 'FOLLOW_UP'])
 const DRAFT_TASK_TYPES = new Set(['PLAN_CREATE', 'PLAN_REVIEW', 'REPORT_REVIEW'])
 
-const AVATAR_TONES = [
-  'linear-gradient(135deg,#3B82F6,#1D4ED8)',
-  'linear-gradient(135deg,#8B5CF6,#6D28D9)',
-  'linear-gradient(135deg,#F59E0B,#EA580C)',
-  'linear-gradient(135deg,#EC4899,#BE185D)',
-  'linear-gradient(135deg,#10B981,#0F766E)',
-  'linear-gradient(135deg,#2C7EF8,#00B8A9)',
-]
+const AVATAR_TONES = [...avatarGradients]
 
 const MED_FREQUENCY_CODES = new Set(MED_FREQUENCY_FALLBACK.map((o) => o.value))
 const MED_DOSE_UNIT_CODES = new Set(MED_DOSE_UNIT_FALLBACK.map((o) => o.value))
@@ -968,10 +962,10 @@ watch(isColdStart, (cold, wasCold) => {
 })
 
 const contextHint = computed(() => {
-  if (focus.value) return `当前患者：${focus.value.displayName}`
-  if (needsPrimaryTeam.value) return '机构级会话 · 请先按左侧步骤创建健管组'
-  if (isColdStart.value) return '机构级会话 · 可以建档或点下方卡片'
-  return '机构级会话 · 点左侧名单或下方快捷开始'
+  if (focus.value) return focus.value.displayName
+  if (needsPrimaryTeam.value) return '请先创建健管组'
+  if (isColdStart.value) return '建档或点下方卡片'
+  return '点左侧名单开始'
 })
 
 /** 右栏无焦点时的副标题：0 患者勿再催「点左侧名单」 */
@@ -990,7 +984,7 @@ const onboardingSteps = computed(() => {
     {
       key: 'team' as const,
       title: hasTeam ? '专属健管组' : '创建您的专属健管组',
-      desc: hasTeam ? '✅ 已创建专属组' : '用于客户分组，并可邀请团队共同协管',
+      desc: hasTeam ? ' 已创建专属组' : '用于客户分组，并可邀请团队共同协管',
       status: hasTeam ? ('done' as const) : ('active' as const),
       cta: hasTeam ? null : '先创建我的健管组',
     },
@@ -1000,7 +994,7 @@ const onboardingSteps = computed(() => {
       desc: !hasTeam
         ? '请先完成上一步'
         : hasPatient
-          ? '✅ 已录入患者'
+          ? ' 已录入患者'
           : '可打开表单或直接对话建档',
       status: !hasTeam
         ? ('locked' as const)
@@ -1033,17 +1027,6 @@ watch(
   { immediate: true },
 )
 
-/** 激励条：全 0 时隐藏，避免新人挫败；有数时用「健康豆」通俗说法 */
-const hasRewardStats = computed(() => {
-  const s = summary.value
-  if (s.rewardWeekPoints == null) return false
-  return (
-    (s.rewardWeekPoints ?? 0) > 0 ||
-    (s.rewardFullDayCount ?? 0) > 0 ||
-    (s.rewardActiveTodayCount ?? 0) > 0
-  )
-})
-
 type EmptyStarter = {
   label: string
   text: string
@@ -1054,41 +1037,20 @@ type EmptyStarter = {
   action?: 'open-unassigned' | 'show-today'
 }
 
-/** 空会话可点示例（机构会话、尚无对话时）；无主责组时建档卡锁定，避免与左侧重复抢焦点 */
+/** 空会话可点示例：最多 2 条；冷启动由左侧清单承接，这里不重复 */
 const emptyStarters = computed((): EmptyStarter[] => {
-  if (focusPeopleId.value) return []
-  if (needsPrimaryTeam.value) {
-    return [
-      {
-        label: '健管组是干什么的？',
-        text: '为什么要创建健管组？怎么给患者分组？',
-        capability: 'GENERAL_CHAT',
-      },
-      {
-        label: '怎么录入体检数据',
-        text: '建档后怎么录入体检和检验数据？',
-        capability: 'GENERAL_CHAT',
-      },
-      {
-        label: '新建患者档案',
-        text: '帮我建档',
-        capability: 'CREATE_ARCHIVE',
-        locked: true,
-        lockHint: '请先在左侧创建您的专属健管组',
-      },
-    ]
-  }
+  if (focusPeopleId.value || isColdStart.value) return []
   if (unassignedGuideCount.value > 0) {
     return [
       {
-        label: '如何批量分配健管组？',
-        text: '有一批患者还没分组，怎么批量分配到健管组？请用大白话说明操作路径。',
-        capability: 'GENERAL_CHAT',
-      },
-      {
-        label: '帮我看一下今天的待办',
+        label: '看今日待办',
         text: '',
         action: 'show-today',
+      },
+      {
+        label: '怎么批量分配？',
+        text: '有一批患者还没分组，怎么批量分配到健管组？请用大白话说明操作路径。',
+        capability: 'GENERAL_CHAT',
       },
     ]
   }
@@ -1099,15 +1061,8 @@ const emptyStarters = computed((): EmptyStarter[] => {
       capability: 'CREATE_ARCHIVE',
     },
     {
-      label: '如何批量分配健管组？',
-      text: '建档后如何给患者分配健管组？可以批量操作吗？',
-      capability: 'GENERAL_CHAT',
-    },
-    {
-      label: '帮我看一下今天的待办',
-      text: isColdStart.value
-        ? '我已经建好健管组了，接下来最该先做什么？'
-        : '请根据今日优先名单，给出我现在可推进的工作建议',
+      label: '今日该做什么？',
+      text: '请根据今日优先名单，给出我现在可推进的工作建议',
       capability: 'GENERAL_CHAT',
     },
   ]
@@ -1196,12 +1151,7 @@ function standbyWelcomeText() {
   return `${hello}。今天有 ${intake} 位已入组患者需要首诊评估。点左侧名字就能开始。`
 }
 
-const emptyStartersLead = computed(() => {
-  if (needsPrimaryTeam.value) return '新手常见问题，点一条开始了解'
-  // 简报已经把分组和逾期说清，这里不再重复一大段，避免和左栏各说各的
-  if (standbyWelcomeText()) return '点一条直接开始'
-  return '不知道聊什么？点一条直接开始'
-})
+const emptyStartersLead = computed(() => '试试')
 
 /** 与后端 fillServiceStages 对齐的本地兜底路径 */
 const SERVICE_FLOW_FALLBACK = [
@@ -1485,6 +1435,27 @@ const stageQuickActions = computed((): QuickActionItem[] => {
     .filter((item): item is QuickActionItem => !!item)
 })
 
+/** 右栏主 CTA：取 stage 列表里第一个 primary，否则取第一项 */
+const primaryQuickAction = computed((): QuickActionItem | null => {
+  const all = stageQuickActions.value
+  if (!all.length) return null
+  return all.find((a) => a.primary) || all[0] || null
+})
+
+/** 次要快捷：排除主 CTA；默认只露少量，其余折叠 */
+const secondaryQuickActions = computed(() => {
+  const primary = primaryQuickAction.value
+  return stageQuickActions.value.filter((a) => a.key !== primary?.key)
+})
+const visibleSecondaryQuickActions = computed(() => {
+  const all = secondaryQuickActions.value
+  if (quickActionsExpanded.value || all.length <= QUICK_ACTION_PREVIEW) return all
+  return all.slice(0, QUICK_ACTION_PREVIEW)
+})
+const hiddenStageQuickActionCount = computed(() =>
+  Math.max(0, secondaryQuickActions.value.length - visibleSecondaryQuickActions.value.length),
+)
+
 function quickActionIconPath(icon?: QuickActionItem['icon']): string {
   switch (icon) {
     case 'followup':
@@ -1545,17 +1516,19 @@ function chipStageTone(code: string): 'now' | 'later' | '' {
   return ''
 }
 
-const urgentShare = computed(() => {
-  const total = summary.value.openTaskCount || 0
-  if (!total) return '—'
-  const urgent = summary.value.overdueCount
-  return `≈ ${Math.round((urgent / Math.max(total, 1)) * 100)}%`
+/** 立即处理副文案：给可执行数字，不写「占比」玄学 */
+const leftUrgentSub = computed(() => {
+  const overdue = summary.value.overdueCount || 0
+  const urgent = summary.value.urgentCount || 0
+  if (overdue > 0) return `逾期待办 ${overdue}`
+  if (urgent > 0) return `待办 ${urgent}`
+  return '按紧急度排序'
 })
 
 const todoTasks = computed(() => focus.value?.openTasks || [])
 const pendingDrafts = computed(() => focus.value?.pendingDrafts || [])
 const pendingDraftCount = computed(() => pendingDrafts.value.length)
-const FOCUS_LIST_LIMIT = 3
+const FOCUS_LIST_LIMIT = 2
 const pendingDraftsExpanded = ref(false)
 const todoTasksExpanded = ref(false)
 const visiblePendingDrafts = computed(() =>
@@ -1998,8 +1971,17 @@ const briefingUiActions = computed(() => {
   })
 })
 
-/** 有对话 / 空态引导卡时默认收起简报，突出下方可点卡片；可手动展开 */
-const briefingCollapsed = ref(false)
+/** 默认收起简报，把视线留给名单与对话；可手动展开 */
+const briefingCollapsed = ref(true)
+/** 服务进度条默认收成「当前环节」，展开才看全流程 */
+const serviceFlowExpanded = ref(false)
+/** 底部能力芯 / 右侧快捷办理：次要项折叠 */
+const quickRailExpanded = ref(false)
+const quickActionsExpanded = ref(false)
+/** 右栏指标详情（备注/链接）默认收起 */
+const focusMetricsExpanded = ref(false)
+const QUICK_RAIL_PREVIEW = 3
+const QUICK_ACTION_PREVIEW = 3
 /** 刷新简报请求中（防连点，并配合占位打字动画） */
 const briefingLoading = ref(false)
 const briefingShownText = computed(() => {
@@ -2129,6 +2111,11 @@ function continueHintPatient() {
 watch(input, () => debouncedComposerNameHint())
 watch(focusPeopleId, (id) => {
   if (id) composerNameHint.value = null
+  quickRailExpanded.value = false
+  quickActionsExpanded.value = false
+  focusMetricsExpanded.value = false
+  serviceFlowExpanded.value = false
+  expandedActionKeys.value = {}
 })
 
 const diseaseText = computed(() => {
@@ -2237,6 +2224,7 @@ function cardSopStage(card: PriorityCard): 'unassigned' | 'new' | 'review' | 'pl
     return 'active'
   }
   if (
+    cardHasTask(card, 'ONBOARDING', '首诊评估') ||
     cardHasTask(card, 'ONBOARDING', '首诊') ||
     badges.includes('ONBOARDING') ||
     !(card.openTaskCount && card.openTaskCount > 0)
@@ -2254,32 +2242,88 @@ function cardNodeBadge(
 ): { text: string; tone: string; action?: CardNodeAction } | null {
   if (isUnassignedCard(card)) return null
   if (cardHasTask(card, 'ASSESSMENT_ESCALATION', '评估升级') || cardHasTask(card, 'ASSESSMENT_SUSPECTED')) {
-    return { text: '点击确认风险', tone: 'cta-danger', action: 'assess' }
+    return { text: '确认风险', tone: 'cta-danger', action: 'assess' }
   }
   const stage = cardSopStage(card)
   if (stage === 'review') {
-    return { text: '待确认评估', tone: 'high', action: 'intake-review' }
+    return { text: '确认评估', tone: 'high', action: 'intake-review' }
   }
   if (stage === 'active') {
     return { text: '日常跟进', tone: 'cta-muted', action: 'follow' }
   }
   if (stage === 'plan') {
     if (cardHasTask(card, 'PLAN_REVIEW') || (card.badges || []).includes('PLAN_IN_PROGRESS')) {
-      return { text: '去确认方案', tone: 'cta', action: 'plan-review' }
+      return { text: '确认方案', tone: 'cta', action: 'plan-review' }
     }
-    return { text: '去生成方案', tone: 'cta', action: 'plan' }
+    return { text: '生成方案', tone: 'cta', action: 'plan' }
   }
   if (cardHasTask(card, 'REPORT_REVIEW')) {
-    return { text: '点击审阅报告', tone: 'cta', action: 'report' }
+    return { text: '审阅报告', tone: 'cta', action: 'report' }
   }
   // 新建 / 待评估：首诊为主入口
   if (stage === 'new' || stage === 'other') {
-    if (cardHasTask(card, 'ONBOARDING', '首诊') || (card.badges || []).includes('ONBOARDING')) {
-      return { text: '点击开始首诊', tone: 'cta-mid', action: 'intake' }
+    if (
+      cardHasTask(card, 'ONBOARDING', '首诊评估') ||
+      cardHasTask(card, 'ONBOARDING', '首诊') ||
+      (card.badges || []).includes('ONBOARDING')
+    ) {
+      return { text: '开始首诊', tone: 'cta-mid', action: 'intake' }
     }
     // 已入组但暂无待办：仍给服务入口，避免空白卡
-    return { text: '点击开始首诊', tone: 'cta-mid', action: 'intake' }
+    return { text: '开始首诊', tone: 'cta-mid', action: 'intake' }
   }
+  return null
+}
+
+/** 名单卡右侧只留高价值动作；逾期主因已够时不再叠 CTA；日常跟进不抢戏 */
+function cardListAction(
+  card: PriorityCard,
+): { text: string; tone: string; action: CardNodeAction } | null {
+  if (overdueIntakeHeadline(card)) return null
+  const node = cardNodeBadge(card)
+  if (!node?.action || node.action === 'follow') return null
+  return { text: node.text, tone: node.tone, action: node.action }
+}
+
+/** 无动作时的弱状态；与主因行重复则不展示 */
+function cardListStatus(card: PriorityCard): { text: string; tone: string } | null {
+  if (cardListAction(card) || overdueIntakeHeadline(card)) return null
+  const rb = riskBadge(card)
+  if (
+    rb.text === '日常跟进' ||
+    rb.text === '待跟进' ||
+    rb.text === '关注' ||
+    rb.text === '待评估'
+  ) {
+    return null
+  }
+  return { text: rb.text, tone: rb.tone }
+}
+
+/** 名单卡唯一第二行：逾期主因 > 超期数 > 非重复备注 > 待办数 */
+function cardPrimaryReason(card: PriorityCard): { text: string; alert: boolean } | null {
+  const overdue = overdueIntakeHeadline(card)
+  if (overdue) return { text: overdue, alert: true }
+
+  const overdueN = card.overdueTaskCount ?? 0
+  if (overdueN > 0) {
+    return {
+      text: overdueN === 1 ? '有 1 项超期待办' : `${overdueN} 项超期待办`,
+      alert: true,
+    }
+  }
+
+  if (cardListAction(card)) {
+    const note = footerNote(card)
+    if (note && note.length <= 18) return { text: note, alert: false }
+    return null
+  }
+
+  const note = footerNote(card)
+  if (note && note !== '需关注') return { text: note, alert: false }
+
+  const open = card.openTaskCount ?? 0
+  if (open > 0) return { text: `${open} 项待办`, alert: false }
   return null
 }
 
@@ -2492,7 +2536,8 @@ function overdueIntakeDayCount(card: PriorityCard): number {
 function overdueIntakeHeadline(card: PriorityCard): string {
   const labels = card.taskTypeLabels || []
   const badges = card.badges || []
-  const intake = labels.includes('首诊') || badges.includes('ONBOARDING')
+  const intake =
+    labels.includes('首诊评估') || labels.includes('首诊') || badges.includes('ONBOARDING')
   const overdue = (card.overdueTaskCount || 0) > 0 || badges.includes('OVERDUE')
   if (!intake || !overdue || isUnassignedCard(card)) return ''
   const days = overdueIntakeDayCount(card)
@@ -2509,7 +2554,12 @@ function cardAttentionRank(card: PriorityCard): number {
   ) {
     return 2
   }
-  if ((card.badges || []).includes('ONBOARDING') || (card.taskTypeLabels || []).includes('首诊')) return 3
+  if (
+    (card.badges || []).includes('ONBOARDING') ||
+    (card.taskTypeLabels || []).includes('首诊评估') ||
+    (card.taskTypeLabels || []).includes('首诊')
+  )
+    return 3
   if ((card.openTaskCount || 0) > 0) return 4
   return 5
 }
@@ -2750,12 +2800,26 @@ async function searchPatients() {
 const debouncedSearchPatients = debounce(() => void searchPatients(), 320)
 
 function onSearchInput() {
-  if (tab.value !== 'mine') tab.value = 'mine'
-  debouncedSearchPatients()
+  if (tab.value === 'mine') debouncedSearchPatients()
 }
 
-/** 左栏当前 Tab 的患者卡列表 */
-const listCards = computed(() => (tab.value === 'mine' ? searchResults.value : cards.value))
+function onSearchEnter() {
+  if (tab.value === 'mine') void searchPatients()
+}
+
+/** 左栏当前 Tab 的患者卡列表；立即处理 / 我的关注按姓名本地筛选 */
+const listCards = computed(() => {
+  if (tab.value === 'mine') return searchResults.value
+  const q = searchKeyword.value.trim().toLowerCase()
+  if (!q) return cards.value
+  return cards.value.filter((c) => (c.displayName || '').toLowerCase().includes(q))
+})
+
+const listSearchPlaceholder = computed(() => {
+  if (tab.value === 'watch') return '在我的关注中筛选姓名…'
+  if (tab.value === 'urgent') return '在立即处理中筛选姓名…'
+  return '在我的患者中筛选姓名…'
+})
 
 /** 折叠的健管组 id。用户点过标题后以手动状态为准。 */
 const collapsedMineTeams = ref<Set<string>>(new Set())
@@ -3543,7 +3607,7 @@ async function onUnassignedBatchAssigned(payload: {
     actions.push({
       type: 'NAVIGATE',
       path: 'batch-serve-workbench',
-      label: `📦 去服务这批患者`,
+      label: ` 去服务这批患者`,
       payload: {
         peopleIds: teamPeopleIds,
         careTeamName: team,
@@ -3554,14 +3618,14 @@ async function onUnassignedBatchAssigned(payload: {
     actions.push({
       type: 'CALL_API',
       path: 'BATCH_COPY_INTAKE_LINKS',
-      label: '📨 批量发送首诊问卷',
+      label: ' 批量发送首诊问卷',
       payload: { peopleIds: payload.peopleIds, careTeamName: team },
     })
     if (teamStats.stock > 0) {
       actions.push({
         type: 'NAVIGATE',
         path: 'batch-serve-workbench',
-        label: '📦 批量处理存量患者',
+        label: ' 批量处理存量患者',
         payload: {
           peopleIds: teamPeopleIds,
           careTeamName: team,
@@ -3575,7 +3639,7 @@ async function onUnassignedBatchAssigned(payload: {
     actions.push({
       type: 'NAVIGATE',
       path: 'batch-serve-workbench',
-      label: `👤 去服务这 ${n} 位患者`,
+      label: ` 去服务这 ${n} 位患者`,
       payload: {
         peopleIds: teamPeopleIds,
         careTeamName: team,
@@ -4671,7 +4735,7 @@ async function copyIntakeFillLink(peopleId: string) {
   const choice = { prefillMode: 'KEEP' as 'KEEP' | 'CLEAR' }
   try {
     await ElMessageBox.confirm(
-      `<div style="line-height:1.65;color:#334155">
+      `<div style="line-height:1.65;color:${palette.ink700}">
         <p style="margin:0 0 10px">重新发送前，请选择带给患者的内容：</p>
         <label style="display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;cursor:pointer">
           <input type="radio" name="hx-cockpit-prefill-mode" value="KEEP" checked style="margin-top:4px" />
@@ -4732,7 +4796,7 @@ function onArchivePendingAssign(payload: { peopleId: string; displayName: string
   messages.value.push({
     role: 'assistant',
     content:
-      `✅ 患者「${display}」已建档成功！接下来请为他分配健管组，入组后即可开启首诊评估。`,
+      ` 患者「${display}」已建档成功！接下来请为他分配健管组，入组后即可开启首诊评估。`,
     actions: [
       { type: 'NAVIGATE', path: 'archive-confirm-assign', label: '确认分配', peopleId: pid },
       { type: 'NAVIGATE', path: 'archive-skip-assign', label: '暂不分配', peopleId: pid },
@@ -4987,6 +5051,9 @@ async function clearFocus() {
 function onChip(_kind: ChipKind) {
   tab.value = 'urgent'
   void loadPriority()
+  void nextTick(() => {
+    document.querySelector('.col.left')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
 }
 
 async function loadCapabilities() {
@@ -5040,14 +5107,14 @@ const orgCapabilityChips = computed((): QuickChip[] => {
   return [
     {
       code: 'ORG_BRIEFING',
-      label: '📊 机构简报',
+      label: ' 机构简报',
       hint: '展开今日机构简报，查看优先与待办摘要',
       needsPatient: false,
       enabled: true,
     },
     {
       code: 'BATCH_SERVE',
-      label: '📦 批量管理',
+      label: ' 批量管理',
       hint:
         patientTotal <= 0
           ? '系统内暂无患者，请先建档后再批量管理'
@@ -5057,7 +5124,7 @@ const orgCapabilityChips = computed((): QuickChip[] => {
     },
     {
       code: 'OPS_STATS',
-      label: '📈 运营统计',
+      label: ' 运营统计',
       hint: '即将上线',
       needsPatient: false,
       enabled: false,
@@ -5152,6 +5219,33 @@ const capabilityChips = computed((): QuickChip[] => {
   }
   return orgCapabilityChips.value
 })
+
+/** 底部能力芯：当前环节优先，默认 3 个；锁定项先藏进「更多」 */
+const rankedCapabilityChips = computed(() => {
+  const score = (c: QuickChip) => {
+    if (isQuickChipLocked(c)) return 3
+    const tone = chipStageTone(c.code)
+    if (tone === 'now') return 0
+    if (tone === 'later') return 2
+    return 1
+  }
+  // 问卷已在右栏打开时，不再挂「评估」抢焦点
+  const list = capabilityChips.value.filter(
+    (c) => !(intakeDocked.value && c.code === 'INTAKE_ASSESS'),
+  )
+  return [...list].sort((a, b) => score(a) - score(b))
+})
+const visibleCapabilityChips = computed(() => {
+  const all = rankedCapabilityChips.value
+  if (quickRailExpanded.value) return all
+  const unlocked = all.filter((c) => !isQuickChipLocked(c))
+  const pool = unlocked.length ? unlocked : all
+  if (pool.length <= QUICK_RAIL_PREVIEW) return pool
+  return pool.slice(0, QUICK_RAIL_PREVIEW)
+})
+const hiddenCapabilityChipCount = computed(() =>
+  Math.max(0, rankedCapabilityChips.value.length - visibleCapabilityChips.value.length),
+)
 
 /** 方案/点评多轮修订：无显式能力时沿用上一轮 */
 const stickyCapability = ref<string | null>(null)
@@ -5431,12 +5525,23 @@ function visibleActions(msg: ChatMessage) {
         return false
       }
     }
+    // 问卷已打开：隐藏「立即开始首诊代填 / 打开问卷」同类入口
+    if (intakeDocked.value) {
+      const path = (action.path || '').toLowerCase()
+      if (
+        action.type === 'OPEN_SHEET' &&
+        (path === 'intake' || path.includes('intake'))
+      ) {
+        return false
+      }
+      if (action.type === 'OPEN_INTAKE_CONFIRM') return false
+    }
     return true
   })
 }
 
-/** 气泡动作过多时默认只展示前几条，其余折叠 */
-const ACTION_CHIP_PREVIEW = 3
+/** 气泡动作过多时默认只展示前 2 条，其余折叠 */
+const ACTION_CHIP_PREVIEW = 2
 const expandedActionKeys = ref<Record<string, boolean>>({})
 
 function actionListKey(scope: string, idx: number) {
@@ -5498,8 +5603,15 @@ function displayActions(actions: AgentAction[]) {
   return collapseSameSheetActions(actions)
 }
 
+function rankBubbleAction(a: AgentAction) {
+  if (a.runState === 'done') return 3
+  if (a.type === 'CALL_API' || a.type === 'COMPLETE_TASK' || a.type === 'ACK_TASK') return 0
+  if (a.type === 'OPEN_SHEET' || a.type === 'TRIGGER_CAPABILITY') return 1
+  return 2
+}
+
 function shownActions(actions: AgentAction[], scope: string, idx: number) {
-  const list = displayActions(actions)
+  const list = [...displayActions(actions)].sort((a, b) => rankBubbleAction(a) - rankBubbleAction(b))
   if (isActionListExpanded(scope, idx) || list.length <= ACTION_CHIP_PREVIEW) return list
   return list.slice(0, ACTION_CHIP_PREVIEW)
 }
@@ -5727,7 +5839,7 @@ function isUnassignedWorkbenchAction(a: AgentAction) {
 
 const BUBBLE_ACTION_LOCK_HINT = '请先创建至少一个健管组'
 const CREATE_TEAM_DONE_HINT = '已创建成功，请勿重复创建'
-const CREATE_TEAM_DONE_LABEL = '✅ 已成功创建'
+const CREATE_TEAM_DONE_LABEL = ' 已成功创建'
 
 /** 仅「真实建组成功」事件打标后才灰态；勿因已有组就锁死新建入口 */
 function isCreateCareTeamDoneAction(a: AgentAction) {
@@ -7762,7 +7874,7 @@ function onIntakeCoach(payload: { key: string; text: string }) {
 }
 
 function announceIntakeOpened() {
-  upsertIntakeCheckin('✅ 已为您打开首诊问卷。\n按左侧模块往下填，填到过敏史时我会提醒。')
+  upsertIntakeCheckin(' 已为您打开首诊问卷。\n按左侧模块往下填，填到过敏史时我会提醒。')
 }
 
 function beginIntake(peopleId?: string, followupRecordId?: string | null) {
@@ -8093,8 +8205,7 @@ function isPreliminaryPlanContext(f: Focus | null | undefined) {
 
 function draftMetaLine(d: PendingDraft) {
   if (d.kind === 'CARE_PLAN' && isPreliminaryPlanContext(focus.value)) {
-    const base = '初版预方案 · 基于基础信息，首诊后可再调整'
-    return d.summary ? `${base} · ${d.summary}` : base
+    return d.summary ? `初版 · ${d.summary}` : '初版预方案'
   }
   const kind = pendingKindLabel(d.kind)
   return d.summary ? `${kind} · ${d.summary}` : kind
@@ -8108,6 +8219,15 @@ function draftTitleLine(d: PendingDraft) {
     return `[初版预方案] ${t}`
   }
   return d.title
+}
+
+/** 右栏/收件箱 CTA：去掉「去」前缀，压到短动作词 */
+function shortDraftCta(label?: string | null, fallback = '审阅') {
+  let s = String(label || fallback).trim().replace(/^去/, '')
+  if (s === '审阅方案' || s === '审阅初版' || s === '审阅报告') return '审阅'
+  if (s === '补点评' || s === '去补点评') return '点评'
+  if (s.length > 4) s = s.slice(0, 4)
+  return s || fallback
 }
 
 function openPendingDraft(d: PendingDraft) {
@@ -8236,7 +8356,7 @@ async function startFreshOrgSessionForNewDay(): Promise<boolean> {
     if (seq !== focusSwitchSeq || focusPeopleId.value) return true
     revokeMessageBlobs()
     applySessionBundle(res.data, null, { force: true })
-    briefingCollapsed.value = false
+    briefingCollapsed.value = true
     await loadBriefing(true)
   } catch (e) {
     // 新建失败则降级拉简报，避免白屏；日期标已写，不会死循环狂建
@@ -8454,7 +8574,7 @@ onUnmounted(() => {
                       ? '主责健管组 · 可搜索'
                       : tab === 'watch'
                         ? '个人重点关注患者'
-                        : `智能排序 · 占比 ${urgentShare}`
+                        : leftUrgentSub
               }}
             </p>
           </div>
@@ -8497,7 +8617,7 @@ onUnmounted(() => {
               ]"
             >
               <span class="ob-mark" aria-hidden="true">
-                <template v-if="step.status === 'done'">✓</template>
+                <template v-if="step.status === 'done'"></template>
                 <template v-else-if="step.status === 'locked'">
                   <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
                     <path d="M4.5 7V5.5a3.5 3.5 0 0 1 7 0V7h.75A1.75 1.75 0 0 1 14 8.75v4.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-4.5A1.75 1.75 0 0 1 3.75 7H4.5Zm1.5 0h4V5.5a2 2 0 1 0-4 0V7Z" />
@@ -8569,34 +8689,19 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <div
-            v-if="hasRewardStats"
-            class="reward-week"
-            title="本机构开启激励的患者本周汇总（健康豆为患者打卡积分）"
-          >
-            <span v-if="(summary.rewardWeekPoints ?? 0) > 0">
-              本周 {{ summary.rewardWeekPoints }} 健康豆
-            </span>
-            <span v-if="(summary.rewardFullDayCount ?? 0) > 0">
-              全勤 {{ summary.rewardFullDayCount }} 人次
-            </span>
-            <span v-if="(summary.rewardActiveTodayCount ?? 0) > 0">
-              今日打卡 {{ summary.rewardActiveTodayCount }} 人
-            </span>
-          </div>
-
-          <div v-if="tab === 'mine'" class="search-box">
+          <div class="search-box">
             <div class="search-row">
               <input
                 v-model="searchKeyword"
                 type="search"
                 class="search-input"
-                placeholder="在我的患者中筛选姓名…"
+                :placeholder="listSearchPlaceholder"
                 autocomplete="off"
                 @input="onSearchInput"
-                @keydown.enter.prevent="searchPatients"
+                @keydown.enter.prevent="onSearchEnter"
               />
               <button
+                v-if="tab === 'mine'"
                 type="button"
                 class="new-team-btn"
                 title="新建健管组"
@@ -8743,99 +8848,43 @@ onUnmounted(() => {
                       >
                         {{ nameInitial(block.card.displayName) }}
                       </span>
-                      <strong class="name">{{ block.card.displayName || block.card.peopleId }}</strong>
+                      <div class="card-id">
+                        <strong class="name">{{
+                          block.card.displayName || block.card.peopleId
+                        }}</strong>
+                        <span v-if="cardMeta(block.card)" class="card-meta">{{
+                          cardMeta(block.card)
+                        }}</span>
+                      </div>
                       <span
-                        v-if="
-                          overdueIntakeHeadline(block.card) &&
-                          priorityLabel(block.card.maxTaskPriority)
-                        "
-                        class="name-pri"
-                        :class="(block.card.maxTaskPriority || '').toLowerCase()"
-                      >{{ priorityLabel(block.card.maxTaskPriority) }}</span>
-                      <span v-if="cardMeta(block.card)" class="card-meta">{{
-                        cardMeta(block.card)
-                      }}</span>
-                      <span
-                        v-if="!overdueIntakeHeadline(block.card) && cardNodeBadge(block.card)?.action"
+                        v-if="cardListAction(block.card)"
                         role="button"
                         tabindex="0"
                         class="risk risk-cta"
-                        :class="cardNodeBadge(block.card)!.tone"
-                        :title="cardNodeBadge(block.card)!.text"
+                        :class="cardListAction(block.card)!.tone"
+                        :title="cardListAction(block.card)!.text"
                         @click="onCardNodeAction($event, block.card)"
                         @keydown.enter.prevent="onCardNodeAction($event, block.card)"
                       >
-                        {{ cardNodeBadge(block.card)!.text }}
+                        {{ cardListAction(block.card)!.text }}
                       </span>
                       <span
-                        v-else-if="!overdueIntakeHeadline(block.card)"
-                        class="risk"
-                        :class="[
-                          riskBadge(block.card).tone,
-                          { plain: !riskBadgeShowDot(block.card) },
-                        ]"
+                        v-else-if="cardListStatus(block.card)"
+                        class="risk plain"
+                        :class="cardListStatus(block.card)!.tone"
                       >
-                        <i v-if="riskBadgeShowDot(block.card)" class="dot" />
-                        {{ riskBadge(block.card).text }}
+                        {{ cardListStatus(block.card)!.text }}
                       </span>
                     </div>
-                    <p v-if="overdueIntakeHeadline(block.card)" class="card-alert">
-                      <i class="dot" />{{ overdueIntakeHeadline(block.card) }}
-                    </p>
-                    <div
-                      v-else-if="
-                        cardTags(block.card).length ||
-                        (taskMeta(block.card) && !isUnassignedCard(block.card))
-                      "
-                      class="card-chips"
-                    >
-                      <div v-if="cardTags(block.card).length" class="tag-row">
-                        <span
-                          v-for="t in cardTags(block.card)"
-                          :key="t"
-                          class="tag"
-                          :class="t === '待分组' || t === 'TEAM_ASSIGN' ? 'warn' : 'brand'"
-                        >
-                          {{ t === 'TEAM_ASSIGN' ? '待分组' : t }}
-                        </span>
-                      </div>
-                      <div
-                        v-if="taskMeta(block.card) && !isUnassignedCard(block.card)"
-                        class="task-meta"
-                      >
-                        <span
-                          v-if="priorityLabel(block.card.maxTaskPriority)"
-                          class="pri"
-                          :class="(block.card.maxTaskPriority || '').toLowerCase()"
-                        >
-                          {{ priorityLabel(block.card.maxTaskPriority) }}
-                        </span>
-                        <span>待办 {{ block.card.openTaskCount ?? 0 }}</span>
-                        <span v-if="(block.card.overdueTaskCount ?? 0) > 0" class="overdue">
-                          超期 {{ block.card.overdueTaskCount }}
-                        </span>
-                      </div>
-                    </div>
                     <p
-                      v-if="footerNote(block.card) && !overdueIntakeHeadline(block.card)"
-                      class="note"
+                      v-if="cardPrimaryReason(block.card)"
+                      class="card-reason"
+                      :class="{ alert: cardPrimaryReason(block.card)!.alert }"
                     >
-                      {{ footerNote(block.card) }}
+                      <i v-if="cardPrimaryReason(block.card)!.alert" class="dot" />
+                      {{ cardPrimaryReason(block.card)!.text }}
                     </p>
-                    <div class="card-foot" :class="{ 'only-more': !hasPlanRate(block.card) }">
-                      <div
-                        v-if="hasPlanRate(block.card)"
-                        class="progress"
-                        title="近 7 日方案完成率"
-                      >
-                        <div class="bar">
-                          <div
-                            class="fill"
-                            :style="{ width: `${ratePct(block.card.planRate7d)}%` }"
-                          />
-                        </div>
-                        <span class="pct">{{ rateText(block.card.planRate7d) }}</span>
-                      </div>
+                    <div class="card-foot only-more">
                       <el-dropdown
                         trigger="click"
                         @command="(cmd: string | number) => onPersonCardMenu(cmd, block.card)"
@@ -8909,62 +8958,38 @@ onUnmounted(() => {
                   <span class="avatar" :style="{ background: avatarTone(c.peopleId || c.displayName) }">
                     {{ nameInitial(c.displayName) }}
                   </span>
-                  <strong class="name">{{ c.displayName || c.peopleId }}</strong>
+                  <div class="card-id">
+                    <strong class="name">{{ c.displayName || c.peopleId }}</strong>
+                    <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
+                  </div>
                   <span
-                    v-if="overdueIntakeHeadline(c) && priorityLabel(c.maxTaskPriority)"
-                    class="name-pri"
-                    :class="(c.maxTaskPriority || '').toLowerCase()"
-                  >{{ priorityLabel(c.maxTaskPriority) }}</span>
-                  <span v-if="cardMeta(c)" class="card-meta">{{ cardMeta(c) }}</span>
-                  <span
-                    v-if="!overdueIntakeHeadline(c) && cardNodeBadge(c)?.action"
+                    v-if="cardListAction(c)"
                     role="button"
                     tabindex="0"
                     class="risk risk-cta"
-                    :class="cardNodeBadge(c)!.tone"
-                    :title="cardNodeBadge(c)!.text"
+                    :class="cardListAction(c)!.tone"
+                    :title="cardListAction(c)!.text"
                     @click="onCardNodeAction($event, c)"
                     @keydown.enter.prevent="onCardNodeAction($event, c)"
                   >
-                    {{ cardNodeBadge(c)!.text }}
+                    {{ cardListAction(c)!.text }}
                   </span>
                   <span
-                    v-else-if="!overdueIntakeHeadline(c)"
-                    class="risk"
-                    :class="[riskBadge(c).tone, { plain: !riskBadgeShowDot(c) }]"
+                    v-else-if="cardListStatus(c)"
+                    class="risk plain"
+                    :class="cardListStatus(c)!.tone"
                   >
-                    <i v-if="riskBadgeShowDot(c)" class="dot" />
-                    {{ riskBadge(c).text }}
+                    {{ cardListStatus(c)!.text }}
                   </span>
                 </div>
-                <p v-if="overdueIntakeHeadline(c)" class="card-alert">
-                  <i class="dot" />{{ overdueIntakeHeadline(c) }}
+                <p
+                  v-if="cardPrimaryReason(c)"
+                  class="card-reason"
+                  :class="{ alert: cardPrimaryReason(c)!.alert }"
+                >
+                  <i v-if="cardPrimaryReason(c)!.alert" class="dot" />
+                  {{ cardPrimaryReason(c)!.text }}
                 </p>
-                <div v-else-if="cardTags(c).length || taskMeta(c)" class="card-chips">
-                  <div class="tag-row" v-if="cardTags(c).length">
-                    <span v-for="t in cardTags(c)" :key="t" class="tag brand">{{ t }}</span>
-                  </div>
-                  <div class="task-meta" v-if="taskMeta(c)">
-                  <span
-                    class="pri"
-                    :class="(c.maxTaskPriority || '').toLowerCase()"
-                    v-if="priorityLabel(c.maxTaskPriority)"
-                  >
-                    {{ priorityLabel(c.maxTaskPriority) }}
-                  </span>
-                  <span>待办 {{ c.openTaskCount ?? 0 }}</span>
-                  <span v-if="(c.overdueTaskCount ?? 0) > 0" class="overdue">
-                    超期 {{ c.overdueTaskCount }}
-                  </span>
-                  </div>
-                </div>
-                <p v-if="footerNote(c) && !overdueIntakeHeadline(c)" class="note">{{ footerNote(c) }}</p>
-                <div v-if="hasPlanRate(c)" class="progress" title="近 7 日方案完成率">
-                  <div class="bar">
-                    <div class="fill" :style="{ width: `${ratePct(c.planRate7d)}%` }" />
-                  </div>
-                  <span class="pct">{{ rateText(c.planRate7d) }}</span>
-                </div>
               </button>
             </template>
             <el-empty
@@ -8992,9 +9017,11 @@ onUnmounted(() => {
             <el-empty
               v-else-if="tab !== 'mine' && !loading && !listCards.length"
               :description="
-                tab === 'watch'
-                  ? '暂无重点关注患者，可在患者详情页添加'
-                  : '暂无待办。点对话里的「建档」，或选「我的患者」继续服务'
+                searchKeyword.trim()
+                  ? '未找到匹配患者'
+                  : tab === 'watch'
+                    ? '暂无重点关注患者，可在患者详情页添加'
+                    : '暂无待办。点对话里的「建档」，或选「我的患者」继续服务'
               "
               :image-size="52"
             />
@@ -9035,14 +9062,8 @@ onUnmounted(() => {
               <img :src="AGENT_LOGO" :alt="AGENT_NAME" class="ai-logo" />
             </div>
             <div class="ai-info">
-              <div class="ai-name">
-                {{ AGENT_NAME }}
-                <span class="beta">BETA</span>
-              </div>
-              <div class="ctx">
-                <i class="pulse" />
-                {{ contextHint }}
-              </div>
+              <div class="ai-name">{{ AGENT_NAME }}</div>
+              <div class="ctx">{{ contextHint }}</div>
             </div>
             <div class="chat-head-actions">
               <button type="button" class="icon-btn" title="历史会话" @click="openHistory">
@@ -9064,7 +9085,7 @@ onUnmounted(() => {
               </button>
               <button
                 type="button"
-                class="icon-btn"
+                class="icon-btn quiet"
                 title="刷新简报（重新开启会话，不带入上一轮对话）"
                 :disabled="briefingLoading || sending"
                 @click="refreshBriefing"
@@ -9079,10 +9100,20 @@ onUnmounted(() => {
           <div
             v-if="focusPeopleId && serviceFlowSteps.length"
             class="service-flow"
+            :class="{ expanded: serviceFlowExpanded }"
             :title="serviceFlowLabel ? `当前环节：${serviceFlowLabel}` : '标准服务流程'"
           >
-            <span class="sf-caption">服务进度</span>
-            <div class="sf-track" role="list">
+            <button
+              type="button"
+              class="sf-summary"
+              :aria-expanded="serviceFlowExpanded"
+              @click="serviceFlowExpanded = !serviceFlowExpanded"
+            >
+              <span class="sf-caption">当前</span>
+              <strong class="sf-now">{{ serviceFlowLabel || '服务中' }}</strong>
+              <span class="sf-expand">{{ serviceFlowExpanded ? '收起' : '全流程' }}</span>
+            </button>
+            <div v-if="serviceFlowExpanded" class="sf-track" role="list">
               <template v-for="(step, si) in serviceFlowSteps" :key="step.code">
                 <button
                   type="button"
@@ -9214,7 +9245,7 @@ onUnmounted(() => {
                   @click="runAction(a)"
                 >
                   <span class="action-chip-text">
-                    <template v-if="a.runState === 'done'">✓ </template>{{
+                    <template v-if="a.runState === 'done'"> </template>{{
                       a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
                     }}
                   </span>
@@ -9357,7 +9388,7 @@ onUnmounted(() => {
                     @click="runAction(step.action)"
                   >
                     <span class="action-step-title">
-                      <template v-if="step.action.runState === 'done'">✓ </template>
+                      <template v-if="step.action.runState === 'done'"> </template>
                       {{
                         step.action.runState === 'busy' ? '处理中…' : step.title
                       }}
@@ -9380,7 +9411,7 @@ onUnmounted(() => {
                     @click="runAction(a)"
                   >
                     <span class="action-chip-text">
-                      <template v-if="a.runState === 'done'">✓ </template>{{
+                      <template v-if="a.runState === 'done'"> </template>{{
                         a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
                       }}
                     </span>
@@ -9424,7 +9455,7 @@ onUnmounted(() => {
                         @click="onBubbleActionClick(a)"
                       >
                         <span class="action-chip-text">
-                          <template v-if="a.runState === 'done'">✓ </template>{{
+                          <template v-if="a.runState === 'done'"> </template>{{
                             a.runState === 'busy' ? '处理中…' : bubbleActionChipLabel(a)
                           }}
                         </span>
@@ -9507,7 +9538,7 @@ onUnmounted(() => {
             :aria-label="currentPatient ? '患者快捷能力' : '机构快捷能力'"
           >
             <el-tooltip
-              v-for="(cap, ci) in capabilityChips"
+              v-for="(cap, ci) in visibleCapabilityChips"
               :key="cap.code"
               :disabled="!isQuickChipLocked(cap)"
               :content="quickChipLockHint(cap)"
@@ -9539,6 +9570,15 @@ onUnmounted(() => {
                 </button>
               </span>
             </el-tooltip>
+            <button
+              v-if="hiddenCapabilityChipCount > 0 || quickRailExpanded"
+              type="button"
+              class="quick-chip more"
+              :aria-expanded="quickRailExpanded"
+              @click="quickRailExpanded = !quickRailExpanded"
+            >
+              {{ quickRailExpanded ? '收起' : `更多 ${hiddenCapabilityChipCount}` }}
+            </button>
           </TransitionGroup>
           <div
             v-if="composerNameHint"
@@ -9575,9 +9615,10 @@ onUnmounted(() => {
               <div class="composer-send">
                 <span class="hint">{{ composerSendHint }}</span>
                 <button
+                  v-if="input.trim()"
                   type="button"
                   class="send-btn ghost"
-                  :disabled="sending || uploading || isArchivedSession || !input.trim()"
+                  :disabled="sending || uploading || isArchivedSession"
                   :title="
                     input.trim().length > 80
                       ? '长文字点这里，由智能体识别建档或提取'
@@ -9585,7 +9626,7 @@ onUnmounted(() => {
                   "
                   @click="organizeRecord"
                 >
-                  整理这段记录
+                  整理
                 </button>
                 <button
                   type="button"
@@ -9730,10 +9771,10 @@ onUnmounted(() => {
                     </div>
                     <div class="focus-name-actions">
                       <button type="button" class="focus-contact-link" @click="openPatientDetail">
-                        详情
+                        档案
                       </button>
                       <button type="button" class="focus-contact-link" @click="goContactPatient">
-                        联系
+                        沟通
                       </button>
                     </div>
                   </div>
@@ -9745,11 +9786,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <div class="focus-eval">
-                <div class="eval-label" :class="{ alert: assessmentAlert }">
-                  <span v-if="assessmentAlert" class="eval-dot" aria-hidden="true" />
-                  评估标签
-                </div>
+              <div v-if="assessmentTags.length || assessmentAlert" class="focus-eval">
                 <div v-if="assessmentTags.length" class="eval-tags">
                   <span
                     v-for="t in assessmentTags"
@@ -9759,30 +9796,32 @@ onUnmounted(() => {
                     :title="t.title || t.text"
                   >{{ t.text }}</span>
                 </div>
-                <p v-else class="eval-empty">{{ assessmentPending ? '待评估' : '暂无评估结果' }}</p>
+                <p v-else-if="assessmentAlert" class="eval-empty alert">待确认评估</p>
               </div>
 
-              <div class="focus-metrics">
+              <div class="focus-metrics" :class="{ expanded: focusMetricsExpanded }">
                 <div
-                  class="metric"
+                  class="metric metric--primary"
                   :class="intakeCompleteness.tone"
                   :title="intakeCompleteness.hint"
                 >
-                  <div class="metric-label">首诊评估完成度</div>
+                  <div class="metric-label">首诊评估</div>
                   <div class="metric-val">{{ intakeCompleteness.label }}</div>
                   <div class="metric-bar" aria-hidden="true">
                     <i :style="{ width: `${intakeCompleteness.bar}%` }" />
                   </div>
-                  <p v-if="intakeCompleteness.note" class="metric-note">{{ intakeCompleteness.note }}</p>
-                  <button
-                    v-if="focus.intakeSubmitted"
-                    type="button"
-                    class="metric-link"
-                    :disabled="intakeDetailLoading"
-                    @click="openIntakeDetail"
-                  >
-                    查看首诊问卷
-                  </button>
+                  <template v-if="focusMetricsExpanded">
+                    <p v-if="intakeCompleteness.note" class="metric-note">{{ intakeCompleteness.note }}</p>
+                    <button
+                      v-if="focus.intakeSubmitted"
+                      type="button"
+                      class="metric-link"
+                      :disabled="intakeDetailLoading"
+                      @click="openIntakeDetail"
+                    >
+                      查看首诊问卷
+                    </button>
+                  </template>
                 </div>
                 <div
                   class="metric"
@@ -9797,7 +9836,7 @@ onUnmounted(() => {
                   "
                   :title="archiveHint"
                 >
-                  <div class="metric-label">健康档案完整度</div>
+                  <div class="metric-label">档案</div>
                   <div class="metric-val">{{ archivePercentLabel }}</div>
                   <div class="metric-bar" aria-hidden="true">
                     <i :style="{ width: `${archivePercent ?? 0}%` }" />
@@ -9827,10 +9866,28 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
+              <button
+                v-if="intakeCompleteness.note || focus.intakeSubmitted"
+                type="button"
+                class="metrics-toggle"
+                :aria-expanded="focusMetricsExpanded"
+                @click="focusMetricsExpanded = !focusMetricsExpanded"
+              >
+                {{ focusMetricsExpanded ? '收起指标说明' : '指标说明' }}
+              </button>
 
-              <dl class="focus-facts">
+              <dl
+                v-if="
+                  focus.bloodPressure ||
+                  executionText ||
+                  (focus.allergyText &&
+                    focus.allergyText !== '无已知过敏' &&
+                    focus.allergyText !== '未询问')
+                "
+                class="focus-facts"
+              >
                 <template v-if="focus.bloodPressure">
-                  <dt>最近血压</dt>
+                  <dt>血压</dt>
                   <dd :class="{ bad: focus.bloodPressureHigh }">
                     {{ focus.bloodPressure }}<template v-if="focus.bloodPressureHigh"> ↑</template>
                     <small v-if="focus.bloodPressureAt">{{ shortWhen(focus.bloodPressureAt) }}</small>
@@ -9840,11 +9897,15 @@ onUnmounted(() => {
                   <dt>近 7 天</dt>
                   <dd>{{ executionText }}</dd>
                 </template>
-                <template v-if="focus.allergyText">
-                  <dt>过敏史</dt>
-                  <dd :class="{ bad: focus.allergyText !== '无已知过敏' && focus.allergyText !== '未询问' }">
-                    {{ focus.allergyText }}
-                  </dd>
+                <template
+                  v-if="
+                    focus.allergyText &&
+                    focus.allergyText !== '无已知过敏' &&
+                    focus.allergyText !== '未询问'
+                  "
+                >
+                  <dt>过敏</dt>
+                  <dd class="bad">{{ focus.allergyText }}</dd>
                 </template>
               </dl>
             </div>
@@ -9865,21 +9926,17 @@ onUnmounted(() => {
                     :title="`${d.title}${d.summary ? ' · ' + d.summary : ''}`"
                     @click="openPendingDraft(d)"
                   >
-                    <span class="draft-icon warn">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                      </svg>
-                    </span>
                     <span class="draft-body">
                       <span class="draft-title">{{ draftTitleLine(d) }}</span>
                       <span class="draft-meta">{{ draftMetaLine(d) }}</span>
                     </span>
                     <span class="draft-cta">
                       {{
-                        d.kind === 'CARE_PLAN' && isPreliminaryPlanContext(focus)
-                          ? '审阅初版'
-                          : d.actionLabel || '去审阅'
+                        shortDraftCta(
+                          d.kind === 'CARE_PLAN' && isPreliminaryPlanContext(focus)
+                            ? '审阅'
+                            : d.actionLabel,
+                        )
                       }}
                     </span>
                   </button>
@@ -9908,29 +9965,19 @@ onUnmounted(() => {
                     :key="t.id"
                     type="button"
                     class="draft-item"
-                    :class="{ draft: isDraftTask(t) }"
+                    :class="{ draft: isDraftTask(t), overdue: t.overdue }"
                     :title="`${t.taskTypeLabel} · ${t.summary || '待处理'}${t.overdue ? ' · 超期' : ''}`"
                     @click="openTodoTask(t)"
                   >
-                    <span class="draft-icon" :class="{ warn: t.overdue }">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path
-                          v-if="isDraftTask(t)"
-                          d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-                        />
-                        <path
-                          v-else
-                          d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                        />
-                      </svg>
-                    </span>
                     <span class="draft-body">
                       <span class="draft-title">{{ todoTaskTitle(t) }}</span>
                       <span class="draft-meta">
                         {{ todoTaskMeta(t) }}
-                        <template v-if="isDraftTask(t) && !t.overdue"> · AI 草稿</template>
+                        <template v-if="t.overdue"> · 超期</template>
+                        <template v-else-if="isDraftTask(t)"> · 草稿</template>
                       </span>
                     </span>
+                    <span class="draft-cta">办理</span>
                   </button>
                   <button
                     v-if="todoTaskMore > 0"
@@ -9948,31 +9995,41 @@ onUnmounted(() => {
             </div>
 
             <div class="section quick-actions">
-              <div class="section-title">
-                快捷办理
-                <span v-if="focus.displayName" class="section-sub">
-                  针对 {{ focus.displayName }}
-                  <template v-if="serviceFlowLabel"> · {{ serviceFlowLabel }}</template>
-                </span>
-              </div>
-              <div class="quick-grid">
+              <button
+                v-if="primaryQuickAction"
+                type="button"
+                class="quick-primary"
+                :title="primaryQuickAction.label"
+                @click="primaryQuickAction.run()"
+              >
+                <span class="quick-primary-label">{{ primaryQuickAction.label }}</span>
+                <span class="quick-primary-go" aria-hidden="true">→</span>
+              </button>
+              <div v-if="visibleSecondaryQuickActions.length" class="quick-grid">
                 <button
-                  v-for="qa in stageQuickActions"
+                  v-for="qa in visibleSecondaryQuickActions"
                   :key="qa.key"
                   type="button"
                   class="quick-tile"
-                  :class="{ primary: qa.primary }"
                   :title="qa.label"
                   @click="qa.run()"
                 >
-                  <span class="quick-ico" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path :d="quickActionIconPath(qa.icon)" />
-                    </svg>
-                  </span>
                   <span class="quick-tile-label">{{ qa.shortLabel || qa.label }}</span>
                 </button>
               </div>
+              <button
+                v-if="hiddenStageQuickActionCount > 0 || quickActionsExpanded"
+                type="button"
+                class="list-expand quick-more"
+                :aria-expanded="quickActionsExpanded"
+                @click="quickActionsExpanded = !quickActionsExpanded"
+              >
+                {{
+                  quickActionsExpanded
+                    ? '收起'
+                    : `更多 ${hiddenStageQuickActionCount}`
+                }}
+              </button>
             </div>
           </div>
         </template>
@@ -10019,12 +10076,6 @@ onUnmounted(() => {
                 :title="`${item.displayName} · ${item.taskTypeLabel}${item.summary ? ' · ' + item.summary : ''}`"
                 @click="openInboxItem(item)"
               >
-                <span class="draft-icon" :class="{ warn: item.overdue }">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
-                </span>
                 <span class="draft-body">
                   <span class="draft-title">{{ item.displayName }} · {{ item.taskTypeLabel }}</span>
                   <span class="draft-meta">
@@ -10032,7 +10083,7 @@ onUnmounted(() => {
                     <template v-if="inboxDueLabel(item)"> · {{ inboxDueLabel(item) }}</template>
                   </span>
                 </span>
-                <span class="draft-cta">{{ item.actionLabel }}</span>
+                <span class="draft-cta">{{ shortDraftCta(item.actionLabel) }}</span>
               </button>
             </div>
           </div>
@@ -10205,7 +10256,7 @@ onUnmounted(() => {
   height: 100%;
   min-height: 0;
   padding: 16px 24px;
-  background: var(--admin-bg, #f5f7fb);
+  background: var(--admin-bg);
   color: var(--ink-800);
   overflow: hidden;
 }
@@ -10254,7 +10305,7 @@ onUnmounted(() => {
 }
 
 .col.right.is-intake {
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
 }
 
 .intake-dock {
@@ -10281,10 +10332,10 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--admin-card, #fff);
+  background: var(--admin-card, var(--white));
   border: 1px solid var(--ink-200);
   border-radius: 14px;
-  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  box-shadow: none;
 }
 
 .col.left {
@@ -10294,11 +10345,11 @@ onUnmounted(() => {
 
 .col.left.is-onboarding {
   border-radius: 14px;
-  border-color: rgba(15, 23, 42, 0.06);
+  border-color: var(--ink-a06);
   box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.04),
-    0 10px 28px rgba(15, 23, 42, 0.07);
-  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+    0 1px 2px var(--ink-a04),
+    0 10px 28px var(--auto-rgba-152342007);
+  background: linear-gradient(180deg, var(--white) 0%, var(--ink-25) 100%);
 }
 
 .left-boot {
@@ -10323,7 +10374,7 @@ onUnmounted(() => {
 }
 
 .col.center.drop-active .chat-stage-inner {
-  border-color: var(--brand-500, #2c7ef8);
+  border-color: var(--brand-500);
 }
 
 .drop-mask {
@@ -10334,10 +10385,10 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  border: 2px dashed var(--brand-500, #2c7ef8);
+  border: 2px dashed var(--brand-500);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--brand-700, #1d4ed8);
+  background: var(--auto-rgba-255255255094);
+  color: var(--brand-700, var(--brand-800));
   font-size: 16px;
   font-weight: 600;
   text-align: center;
@@ -10350,7 +10401,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 8px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--ink-100);
+  border-bottom: 0 solid var(--ink-100);
   flex-shrink: 0;
 }
 
@@ -10369,7 +10420,7 @@ onUnmounted(() => {
 
 .col-head .sub {
   margin: 2px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-500);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10396,7 +10447,7 @@ onUnmounted(() => {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  color: #999;
+  color: var(--gray-999);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -10407,7 +10458,7 @@ onUnmounted(() => {
 
 .list-refresh:hover:not(:disabled) {
   background: transparent;
-  color: #4b5563;
+  color: var(--ink-650);
 }
 
 .list-refresh:focus,
@@ -10476,7 +10527,7 @@ onUnmounted(() => {
   min-width: 0;
   border: 0;
   background: transparent;
-  padding: 6px 1px;
+  padding: 6px 0px;
   font-size: 11px;
   font-weight: 500;
   color: var(--ink-500);
@@ -10486,7 +10537,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: 2px;
 }
 
 .priority-tabs .tab-label {
@@ -10494,19 +10545,6 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.reward-week {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin: 0 12px 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: linear-gradient(90deg, #fff6ea, #f4fbf8);
-  font-size: 12px;
-  font-weight: 600;
-  color: #5b6b7a;
 }
 
 /* 聊天时左栏也保持可滚动，新手三步曲钉住不丢；撑满高度避免「断截」感 */
@@ -10517,7 +10555,7 @@ onUnmounted(() => {
   flex-direction: column;
   overflow-y: auto;
   scrollbar-width: thin;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.35) 0%, transparent 42%);
+  background: linear-gradient(180deg, var(--auto-rgba-248250252035) 0%, transparent 42%);
 }
 
 .onboarding-checklist {
@@ -10536,14 +10574,14 @@ onUnmounted(() => {
   align-items: flex-start;
   padding: 12px 12px 14px;
   border-radius: 12px;
-  border: 1px solid var(--ink-100, #e5e7eb);
-  background: #fff;
+  border: 1px solid var(--ink-100, var(--gray-200));
+  background: var(--white);
 }
 
 .ob-step.active {
-  border-color: #bfdbfe;
-  background: linear-gradient(160deg, #f5f9ff 0%, #fff 72%);
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.06);
+  border-color: var(--brand-200);
+  background: linear-gradient(160deg, var(--auto-f5f9ff) 0%, var(--white) 72%);
+  box-shadow: 0 1px 2px var(--brand-a06);
 }
 
 .ob-step.active.pulse {
@@ -10553,47 +10591,47 @@ onUnmounted(() => {
 @keyframes ob-step-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.2);
-    border-color: #bfdbfe;
+    box-shadow: 0 0 0 0 var(--ink-a12);
+    border-color: var(--brand-200);
   }
   50% {
-    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.12);
-    border-color: #60a5fa;
+    box-shadow: 0 0 0 6px var(--brand-a12);
+    border-color: var(--brand-400);
   }
 }
 
 .ob-step.done {
-  border-color: #d1fae5;
-  background: #f8fffb;
+  border-color: var(--auto-d1fae5);
+  background: var(--auto-f8fffb);
 }
 
 .ob-step.locked {
   opacity: 0.72;
-  background: #f9fafb;
+  background: var(--gray-50);
 }
 
 .ob-mark {
   flex: 0 0 24px;
   width: 24px;
   height: 24px;
-  margin-top: 1px;
+  margin-top: 0;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
   font-weight: 700;
-  color: #fff;
-  background: var(--brand-500, #3b82f6);
+  color: var(--white);
+  background: var(--brand-500, var(--blue-500));
 }
 
 .ob-step.done .ob-mark {
-  background: #10b981;
+  background: var(--success-500);
 }
 
 .ob-step.locked .ob-mark {
-  background: #d1d5db;
-  color: #6b7280;
+  background: var(--gray-300);
+  color: var(--gray-500);
 }
 
 .ob-body {
@@ -10603,9 +10641,9 @@ onUnmounted(() => {
 
 .ob-title {
   display: block;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
-  color: var(--ink-900, #111827);
+  color: var(--ink-900, var(--ink-950));
   line-height: 1.35;
 }
 
@@ -10613,7 +10651,7 @@ onUnmounted(() => {
   margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--ink-600, #4b5563);
+  color: var(--ink-600, var(--ink-650));
 }
 
 .ob-step.active .ob-desc {
@@ -10626,8 +10664,8 @@ onUnmounted(() => {
   padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
-  color: #fff;
-  background: var(--brand-600, #2563eb);
+  color: var(--white);
+  background: var(--brand-600, var(--blue-600));
   cursor: pointer;
 }
 
@@ -10638,24 +10676,24 @@ onUnmounted(() => {
 .empty-starter.locked {
   opacity: 0.5;
   cursor: not-allowed;
-  color: var(--ink-400, #9ca3af);
-  background: #f3f4f6;
+  color: var(--ink-400, var(--gray-400));
+  background: var(--gray-100);
   border-style: dashed;
   box-shadow: none;
   filter: grayscale(0.35);
 }
 
 .empty-starter.locked:hover {
-  border-color: var(--ink-200, #e5e7eb);
-  background: #f3f4f6;
-  color: var(--ink-400, #9ca3af);
+  border-color: var(--ink-200, var(--gray-200));
+  background: var(--gray-100);
+  color: var(--ink-400, var(--gray-400));
 }
 
 .empty-starter-lock {
   display: inline-flex;
   margin-right: 4px;
   vertical-align: -1px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 
 .composer-name-hint {
@@ -10666,22 +10704,22 @@ onUnmounted(() => {
   margin: 0 0 8px;
   padding: 8px 12px;
   border-radius: 10px;
-  background: linear-gradient(90deg, #eef6ff, #f4fbf8);
-  border: 1px solid #d7e6f8;
-  font-size: 12.5px;
+  background: linear-gradient(90deg, var(--auto-eef6ff), var(--auto-f4fbf8));
+  border: 1px solid var(--auto-d7e6f8);
+  font-size: 12px;
   line-height: 1.45;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
 }
 
 .composer-name-hint-btn {
   flex-shrink: 0;
   border: 0;
   border-radius: 999px;
-  padding: 5px 12px;
-  font-size: 12.5px;
+  padding: 6px 12px;
+  font-size: 12px;
   font-weight: 600;
-  color: #fff;
-  background: var(--brand-600, #2563eb);
+  color: var(--white);
+  background: var(--brand-600, var(--blue-600));
   cursor: pointer;
 }
 
@@ -10696,41 +10734,39 @@ onUnmounted(() => {
 
 .empty-starters {
   margin: 4px 0 12px;
-  padding: 14px 14px;
-  border-radius: 12px;
-  background: #f8fafc;
-  border: 1px dashed var(--ink-200);
+  padding: 0;
+  border: 0;
+  background: transparent;
   box-sizing: border-box;
 }
 
-/* 欢迎气泡下方的「新手常见问题」拉开间距，避免贴住气泡 */
 .empty-starters.after-welcome {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .empty-starters-title {
-  margin: 0 0 10px;
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.55;
-  color: var(--ink-600);
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink-400);
 }
 
 .empty-starter-list {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .empty-starter {
   text-align: left;
   border: 1px solid var(--ink-200);
-  background: #fff;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 13px;
+  background: var(--white);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
   font-weight: 500;
-  color: var(--ink-800);
+  color: var(--ink-700);
   cursor: pointer;
   transition: var(--admin-transition);
 }
@@ -10764,16 +10800,16 @@ onUnmounted(() => {
   border: 1px solid var(--ink-200);
   border-radius: 8px;
   padding: 8px 10px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-800);
-  background: #fff;
+  background: var(--white);
   outline: none;
   transition: var(--admin-transition);
 }
 
 .search-input:focus {
-  border-color: var(--brand-400, #60a5fa);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px var(--blue-a12);
 }
 
 .search-input::placeholder {
@@ -10784,8 +10820,8 @@ onUnmounted(() => {
   flex-shrink: 0;
   border: 0;
   background: transparent;
-  color: var(--brand-600, #2563eb);
-  font-size: 12.5px;
+  color: var(--brand-600, var(--blue-600));
+  font-size: 12px;
   font-weight: 600;
   padding: 6px 4px;
   cursor: pointer;
@@ -10795,8 +10831,8 @@ onUnmounted(() => {
 }
 
 .new-team-btn:hover {
-  color: var(--brand-700, #1d4ed8);
-  background: var(--brand-50, #eff6ff);
+  color: var(--brand-700, var(--brand-800));
+  background: var(--brand-50, var(--blue-50));
 }
 
 /* 未分组入口：折起时只占一行，不把健管组顶出视口 */
@@ -10808,12 +10844,12 @@ onUnmounted(() => {
   flex-shrink: 0;
   /* 与下方 card-list 贴紧，避免「待分组横幅」和组头之间再空一截 */
   margin: 8px 12px 6px;
-  padding: 11px 14px;
-  border: 1px solid #fdba74;
+  padding: 12px 14px;
+  border: 1px solid var(--orange-100);
   border-radius: 10px;
-  background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
-  color: #c2410c;
-  font-size: 12.5px;
+  background: linear-gradient(180deg, var(--orange-50) 0%, var(--orange-100) 100%);
+  color: var(--amber-700);
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   text-align: left;
@@ -10821,15 +10857,15 @@ onUnmounted(() => {
 }
 
 .unassigned-banner:hover:not(:disabled) {
-  border-color: #fb923c;
-  background: #ffedd5;
+  border-color: var(--auto-fb923c);
+  background: var(--orange-100);
 }
 
 .unassigned-banner.busy,
 .unassigned-banner:disabled {
-  border-color: var(--ink-200, #e2e8f0);
-  background: #f1f5f9;
-  color: var(--ink-500, #64748b);
+  border-color: var(--ink-200);
+  background: var(--ink-100);
+  color: var(--ink-500);
   cursor: default;
   opacity: 1;
 }
@@ -10848,9 +10884,9 @@ onUnmounted(() => {
 }
 
 .priority-tabs button.active {
-  background: #fff;
+  background: var(--white);
   color: var(--ink-800);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px var(--ink-a06);
 }
 
 .priority-tabs .count {
@@ -10861,8 +10897,8 @@ onUnmounted(() => {
   min-width: 16px;
   height: 16px;
   background: var(--rose-500);
-  color: #fff;
-  font-size: 10px;
+  color: var(--white);
+  font-size: 11px;
   padding: 0 4px;
   border-radius: 8px;
   font-weight: 600;
@@ -10872,14 +10908,14 @@ onUnmounted(() => {
 .priority-tabs .count.muted,
 .priority-tabs button:not(.active) .count {
   background: var(--ink-300);
-  color: #fff;
+  color: var(--white);
 }
 
 .priority-tabs .count.warn,
 .priority-tabs button:not(.active) .count.warn,
 .priority-tabs button.active .count.warn {
-  background: #ea580c;
-  color: #fff;
+  background: var(--orange-600);
+  color: var(--white);
 }
 
 .priority-tabs button.active .count:not(.muted):not(.warn) {
@@ -10890,7 +10926,7 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  /* 顶距交给 sticky 组头自己的 padding，避免 top:0 吸顶后上方留缝、卡片从缝里钻出来 */
+  /* 顶距交给 sticky 组头自己的 padding，避免 top: 0 吸顶后上方留缝、卡片从缝里钻出来 */
   padding: 0 12px 14px;
   display: flex;
   flex-direction: column;
@@ -10923,9 +10959,9 @@ onUnmounted(() => {
   /* 左右拉满滚动区，盖住卡片边框；背景必须实心 */
   margin: 0 -12px;
   padding: 10px 12px 8px;
-  background: var(--admin-card, #fff);
+  background: var(--admin-card, var(--white));
   border-radius: 0;
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 0 var(--ink-a06);
 }
 
 .team-group + .team-group > .team-group-head-row {
@@ -10957,7 +10993,7 @@ onUnmounted(() => {
 }
 
 .team-group-head:hover {
-  background: #eef2f7;
+  background: var(--ink-150);
 }
 
 .team-group-add {
@@ -10969,7 +11005,7 @@ onUnmounted(() => {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--brand-600, #2563eb);
+  color: var(--brand-600, var(--blue-600));
   font-size: 18px;
   font-weight: 600;
   line-height: 1;
@@ -10986,7 +11022,7 @@ onUnmounted(() => {
 }
 
 .team-group-add:hover {
-  background: #e0ecff;
+  background: var(--auto-e0ecff);
 }
 
 .team-group-caret {
@@ -10994,7 +11030,7 @@ onUnmounted(() => {
   place-items: center;
   width: 14px;
   height: 14px;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
   flex-shrink: 0;
   transition: transform 0.15s ease;
 }
@@ -11011,7 +11047,7 @@ onUnmounted(() => {
 .team-group-name {
   font-size: 12px;
   font-weight: 700;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
   letter-spacing: 0.02em;
 }
 
@@ -11019,15 +11055,15 @@ onUnmounted(() => {
   margin-left: 2px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
 }
 
 .team-group-count.warn {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 
 .team-group.unassigned .team-group-name {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 
 .team-group-empty {
@@ -11038,14 +11074,14 @@ onUnmounted(() => {
   margin: 0;
   padding: 8px 10px 10px 28px;
   font-size: 12px;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
 }
 
 .team-group-empty-add {
   border: 0;
   padding: 0;
   background: transparent;
-  color: var(--brand-500, #3b82f6);
+  color: var(--brand-500, var(--blue-500));
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -11066,73 +11102,73 @@ onUnmounted(() => {
   padding: 6px 4px;
   border: 0;
   background: transparent;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   border-radius: 6px;
 }
 .stage-bucket-head:hover {
-  background: #f8fafc;
-  color: var(--ink-800, #1f2937);
+  background: var(--ink-50);
+  color: var(--ink-800, var(--gray-800));
 }
 .stage-bucket-caret {
   width: 12px;
-  font-size: 9px;
-  color: var(--ink-400, #94a3b8);
+  font-size: 11px;
+  color: var(--ink-400);
 }
 .stage-bucket-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #94a3b8;
+  background: var(--ink-400);
 }
 .stage-bucket-head.tone-intake .stage-bucket-dot {
-  background: #f97316;
+  background: var(--auto-f97316);
 }
 .stage-bucket-head.tone-intake {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 .stage-bucket-head.tone-plan .stage-bucket-dot {
-  background: #3b82f6;
+  background: var(--blue-500);
 }
 .stage-bucket-head.tone-plan {
-  color: #1d4ed8;
+  color: var(--brand-800);
 }
 .stage-bucket-head.tone-follow .stage-bucket-dot {
-  background: #22c55e;
+  background: var(--auto-22c55e);
 }
 .stage-bucket-head.tone-follow {
-  color: #15803d;
+  color: var(--auto-15803d);
 }
 .stage-bucket-head.tone-other .stage-bucket-dot {
-  background: #94a3b8;
+  background: var(--ink-400);
 }
 .stage-bucket-count {
   font-weight: 600;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
 }
 .team-expand-more {
   display: block;
   width: 100%;
   margin: 4px 0 8px;
   padding: 8px 10px;
-  border: 1px dashed var(--ink-200, #e2e8f0);
+  border: 1px dashed var(--ink-200);
   border-radius: 8px;
-  background: #f8fafc;
-  color: var(--brand-600, #2563eb);
+  background: var(--ink-50);
+  color: var(--brand-600, var(--blue-600));
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 .team-expand-more:hover {
-  background: #eff6ff;
-  border-color: #93c5fd;
+  background: var(--blue-50);
+  border-color: var(--blue-300);
 }
 .team-group-empty-hint {
   font-size: 12px;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
   white-space: nowrap;
 }
 
@@ -11148,7 +11184,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   text-align: left;
   border: 1px solid var(--ink-200);
-  background: #fff;
+  background: var(--white);
   border-radius: var(--admin-radius, 12px);
   padding: 12px;
   cursor: pointer;
@@ -11165,24 +11201,14 @@ onUnmounted(() => {
   z-index: 0;
   border-color: var(--brand-500);
   background: var(--brand-50);
-}
-
-.person-card.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--brand-500);
-  border-radius: 12px 0 0 12px;
+  box-shadow: inset 0 0 0 1px var(--brand-400, var(--brand-500));
 }
 
 .card-top {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .avatar {
@@ -11191,14 +11217,22 @@ onUnmounted(() => {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--white);
   font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
+.card-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.card-id .name,
 .card-top .name {
-  flex: 0 1 auto;
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
@@ -11208,49 +11242,31 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.name-pri,
-.name-pri.medium {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.4;
-  padding: 0 6px;
-  border-radius: 999px;
-  color: #475569;
-  background: #e8edf3;
-}
-
-.name-pri.high {
-  color: #b91c1c;
-  background: #fee2e2;
-}
-
-.name-pri.low {
-  color: #4b5563;
-  background: #f3f4f6;
-}
-
-.card-alert {
+.card-reason {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 6px 0 0;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.4;
-  color: #b91c1c;
+  color: var(--ink-600);
 }
 
-.card-alert .dot {
+.card-reason.alert {
+  font-weight: 600;
+  color: var(--rose-700);
+}
+
+.card-reason .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #dc2626;
+  background: var(--rose-600);
   flex-shrink: 0;
 }
 
 .card-meta {
-  flex: 1;
   min-width: 0;
   font-size: 11px;
   color: var(--ink-500);
@@ -11262,9 +11278,9 @@ onUnmounted(() => {
 .risk {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 10.5px;
-  padding: 2px 7px;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
   border-radius: 4px;
   font-weight: 600;
   flex-shrink: 0;
@@ -11284,8 +11300,8 @@ onUnmounted(() => {
 }
 
 .risk.mid {
-  background: #f5f5f4;
-  color: #78716c;
+  background: var(--auto-f5f5f4);
+  color: var(--auto-78716c);
 }
 
 .risk.plain {
@@ -11293,13 +11309,13 @@ onUnmounted(() => {
 }
 
 .risk.low {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--ink-100);
+  color: var(--ink-500);
 }
 
 .risk.muted {
-  background: #f8fafc;
-  color: #64748b;
+  background: var(--ink-50);
+  color: var(--ink-500);
   font-weight: 500;
 }
 
@@ -11335,9 +11351,9 @@ onUnmounted(() => {
 }
 
 .risk.cta {
-  background: #eff6ff;
-  color: #2563eb;
-  border-color: #bfdbfe;
+  background: var(--blue-50);
+  color: var(--blue-600);
+  border-color: var(--brand-200);
   box-shadow: none;
   padding: 2px 8px;
   border-radius: 999px;
@@ -11345,15 +11361,15 @@ onUnmounted(() => {
 }
 
 .risk.cta:hover {
-  background: #dbeafe;
-  border-color: #93c5fd;
-  color: #1d4ed8;
+  background: var(--blue-100);
+  border-color: var(--blue-300);
+  color: var(--brand-800);
 }
 
 .risk.cta-danger {
-  background: #fff1f2;
-  color: #e11d48;
-  border-color: #fecdd3;
+  background: var(--auto-fff1f2);
+  color: var(--rose-600);
+  border-color: var(--auto-fecdd3);
   box-shadow: none;
   padding: 2px 8px;
   border-radius: 999px;
@@ -11361,14 +11377,14 @@ onUnmounted(() => {
 }
 
 .risk.cta-danger:hover {
-  background: #ffe4e6;
-  border-color: #fda4af;
+  background: var(--auto-ffe4e6);
+  border-color: var(--auto-fda4af);
 }
 
 .risk.cta-mid {
-  background: #fff7ed;
-  color: #c2410c;
-  border-color: #fed7aa;
+  background: var(--orange-50);
+  color: var(--amber-700);
+  border-color: var(--orange-100);
   box-shadow: none;
   padding: 2px 8px;
   border-radius: 999px;
@@ -11376,13 +11392,13 @@ onUnmounted(() => {
 }
 
 .risk.cta-mid:hover {
-  background: #ffedd5;
+  background: var(--orange-100);
 }
 
 .risk.cta-muted {
-  background: #f8fafc;
-  color: #334155;
-  border-color: #e2e8f0;
+  background: var(--ink-50);
+  color: var(--ink-700);
+  border-color: var(--ink-200);
   box-shadow: none;
   padding: 2px 8px;
   border-radius: 999px;
@@ -11390,9 +11406,9 @@ onUnmounted(() => {
 }
 
 .risk.cta-muted:hover {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-  color: #0f172a;
+  background: var(--ink-100);
+  border-color: var(--ink-300);
+  color: var(--ink-900);
 }
 
 .tag-row {
@@ -11404,26 +11420,26 @@ onUnmounted(() => {
 
 .tag {
   display: inline-block;
-  font-size: 10.5px;
-  padding: 2px 7px;
+  font-size: 11px;
+  padding: 2px 6px;
   border-radius: 4px;
   font-weight: 600;
 }
 
 .tag.brand {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--ink-100);
+  color: var(--ink-500);
   font-weight: 500;
 }
 
 .tag.warn {
-  background: #ffedd5;
-  color: #c2410c;
+  background: var(--orange-100);
+  color: var(--amber-700);
 }
 
 .tag.teal {
   background: var(--teal-50);
-  color: #0f766e;
+  color: var(--teal-600);
 }
 
 .tag.rose {
@@ -11438,7 +11454,7 @@ onUnmounted(() => {
 
 .note {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-500);
   line-height: 1.5;
   word-break: break-word;
@@ -11456,7 +11472,7 @@ onUnmounted(() => {
 
 .task-meta .pri {
   font-weight: 600;
-  padding: 1px 6px;
+  padding: 2px 6px;
   border-radius: 4px;
   background: var(--ink-100);
   color: var(--ink-600);
@@ -11468,13 +11484,13 @@ onUnmounted(() => {
 }
 
 .task-meta .pri.medium {
-  background: #f5f5f4;
-  color: #78716c;
+  background: var(--auto-f5f5f4);
+  color: var(--auto-78716c);
 }
 
 .task-meta .pri.low {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--ink-100);
+  color: var(--ink-500);
 }
 
 .task-meta .overdue {
@@ -11509,7 +11525,7 @@ onUnmounted(() => {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -11528,8 +11544,8 @@ onUnmounted(() => {
 }
 
 .card-more:hover {
-  background: var(--ink-100, #e2e8f0);
-  color: var(--ink-700, #334155);
+  background: var(--ink-100, var(--ink-200));
+  color: var(--ink-700);
 }
 
 .progress {
@@ -11564,9 +11580,9 @@ onUnmounted(() => {
 
 .view-all {
   border: 0;
-  border-top: 1px solid var(--ink-100);
-  background: #fff;
-  padding: 11px 16px;
+  border-top: 0 solid var(--ink-100);
+  background: var(--white);
+  padding: 12px 16px;
   text-align: left;
   color: var(--brand-500);
   font-size: 12px;
@@ -11584,9 +11600,9 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: stretch;
   gap: 0;
-  padding-top: 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--ink-100);
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom: 0 solid var(--ink-100);
   flex-shrink: 0;
   box-sizing: border-box;
 }
@@ -11594,38 +11610,81 @@ onUnmounted(() => {
 .chat-head > .chat-read-rail {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chat-head-main {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   width: 100%;
 }
 
 .service-flow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
   width: 100%;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 4px 8px;
   border-radius: 8px;
-  background: var(--ink-50, #f8fafc);
-  border: 1px solid var(--ink-100, #f1f5f9);
+  background: var(--ink-50);
+  border: 1px solid var(--ink-100);
   font-size: 12px;
   line-height: 1.2;
   box-sizing: border-box;
+}
+
+.service-flow.expanded {
+  padding-bottom: 8px;
+}
+
+.sf-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
 .sf-caption {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
   letter-spacing: 0.02em;
+}
+
+.sf-now {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand-800, var(--ink-800));
+}
+
+.sf-expand {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-400);
+}
+
+.sf-summary:hover .sf-expand {
+  color: var(--brand-700, var(--brand-800));
 }
 
 .sf-track {
@@ -11633,8 +11692,9 @@ onUnmounted(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 0;
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
+  padding-top: 2px;
 }
 
 .sf-step {
@@ -11646,7 +11706,7 @@ onUnmounted(() => {
   border-radius: 999px;
   border: none;
   background: transparent;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
   font: inherit;
   font-style: normal;
   cursor: pointer;
@@ -11683,21 +11743,21 @@ onUnmounted(() => {
 }
 
 .sf-step.done {
-  color: var(--ink-600, #4b5563);
+  color: var(--ink-600, var(--ink-650));
 }
 
 .sf-step.done .sf-mark {
-  color: #059669;
+  color: var(--green-600);
 }
 
 .sf-step.broken {
-  color: #b91c1c;
-  background: #fee2e2;
-  box-shadow: 0 0 0 1px #fecaca inset;
+  color: var(--rose-700);
+  background: var(--rose-150);
+  box-shadow: none;
 }
 
 .sf-step.broken .sf-mark {
-  color: #dc2626;
+  color: var(--rose-600);
 }
 
 .sf-step.broken .sf-label {
@@ -11705,9 +11765,9 @@ onUnmounted(() => {
 }
 
 .sf-step.current {
-  color: #1d4ed8;
-  background: #dbeafe;
-  box-shadow: 0 0 0 1px #bfdbfe inset;
+  color: var(--brand-800);
+  background: var(--blue-100);
+  box-shadow: none;
 }
 
 .sf-step.current .sf-label {
@@ -11715,39 +11775,39 @@ onUnmounted(() => {
 }
 
 .sf-step.current .sf-dot {
-  background: #2563eb;
+  background: var(--blue-600);
   opacity: 1;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 0 0 2px var(--brand-a18);
 }
 
 .sf-step.todo {
-  color: var(--ink-300, #d1d5db);
+  color: var(--ink-300, var(--gray-300));
 }
 
 .sf-sep {
   width: 10px;
   height: 1px;
-  margin: 0 1px;
-  background: var(--ink-200, #e5e7eb);
+  margin: 0 0px;
+  background: var(--ink-200, var(--gray-200));
   flex-shrink: 0;
   align-self: center;
 }
 
 .sf-sep.broken {
-  background: #fca5a5;
+  background: var(--rose-300);
 }
 
 .sf-sep.done,
 .sf-sep.current {
-  background: var(--ink-300, #d1d5db);
+  background: var(--ink-300, var(--gray-300));
 }
 
 .sf-assign {
   flex-shrink: 0;
   margin-left: auto;
-  border: 1px solid #f59e0b;
-  background: #fffbeb;
-  color: #b45309;
+  border: 1px solid var(--amber-500);
+  background: var(--amber-100);
+  color: var(--amber-600);
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 11px;
@@ -11756,7 +11816,7 @@ onUnmounted(() => {
 }
 
 .sf-assign:hover {
-  background: #fef3c7;
+  background: var(--amber-150);
 }
 
 .chat-head-actions {
@@ -11789,10 +11849,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background: var(--admin-card, #fff);
+  background: var(--admin-card, var(--white));
   border: 1px solid var(--ink-200);
   border-radius: 14px;
-  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -11817,7 +11877,7 @@ onUnmounted(() => {
   padding-top: 8px;
   padding-bottom: 8px;
   border-radius: 0;
-  background: var(--brand-50, #eff6ff);
+  background: var(--brand-50, var(--blue-50));
   color: var(--ink-700);
   font-size: 12px;
   flex-shrink: 0;
@@ -11835,8 +11895,8 @@ onUnmounted(() => {
   border: 0;
   border-radius: 6px;
   padding: 4px 10px;
-  background: var(--brand-500, #3b82f6);
-  color: #fff;
+  background: var(--brand-500, var(--blue-500));
+  color: var(--white);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -11873,7 +11933,7 @@ onUnmounted(() => {
   border-radius: 6px;
   padding: 4px 10px;
   background: var(--ink-800);
-  color: #fff;
+  color: var(--white);
   font-size: 12px;
   cursor: pointer;
 }
@@ -11888,20 +11948,20 @@ onUnmounted(() => {
   text-align: left;
   border: 1px solid var(--ink-100);
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   padding: 10px 12px;
   cursor: pointer;
   transition: var(--admin-transition);
 }
 
 .history-item:hover:not(:disabled) {
-  border-color: var(--brand-300, #93c5fd);
-  background: var(--brand-50, #eff6ff);
+  border-color: var(--brand-300, var(--blue-300));
+  background: var(--brand-50, var(--blue-50));
 }
 
 .history-item.active {
-  border-color: var(--brand-500, #3b82f6);
-  box-shadow: 0 0 0 1px var(--brand-200, #bfdbfe);
+  border-color: var(--brand-500, var(--blue-500));
+  box-shadow: none;
 }
 
 .history-item:disabled {
@@ -11927,21 +11987,21 @@ onUnmounted(() => {
 
 .history-status {
   flex-shrink: 0;
-  font-size: 10px;
-  padding: 1px 6px;
+  font-size: 11px;
+  padding: 2px 6px;
   border-radius: 999px;
   border: 1px solid transparent;
 }
 
 .history-status.on {
-  color: #047857;
-  background: #ecfdf5;
-  border-color: #a7f3d0;
+  color: var(--success-600);
+  background: var(--success-50);
+  border-color: var(--green-200);
 }
 
 .history-status.off {
   color: var(--ink-500);
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
   border-color: var(--ink-100);
 }
 
@@ -11966,10 +12026,10 @@ onUnmounted(() => {
 
 .ai-avatar {
   position: relative;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--white);
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -11983,19 +12043,7 @@ onUnmounted(() => {
   object-fit: cover;
   object-position: center;
   display: block;
-  background: #fff;
-}
-
-.ai-avatar::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 12px;
-  height: 12px;
-  background: #10b981;
-  border: 2px solid #fff;
-  border-radius: 50%;
+  background: var(--white);
 }
 
 .ai-info {
@@ -12004,55 +12052,34 @@ onUnmounted(() => {
 }
 
 .ai-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ink-800);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.beta {
-  font-size: 10px;
-  background: linear-gradient(90deg, var(--violet-500), var(--brand-500));
-  color: #fff;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-weight: 600;
+  line-height: 1.2;
 }
 
 .ctx {
   margin-top: 1px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-500);
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.ctx .pulse {
-  width: 6px;
-  height: 6px;
-  background: #10b981;
-  border-radius: 50%;
-  animation: pulse 2s infinite;
+.icon-btn.quiet {
+  opacity: 0.55;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
+.icon-btn.quiet:hover {
+  opacity: 1;
 }
 
 .briefing {
   flex-shrink: 0;
   margin: 0 0 4px;
   padding: 12px 14px;
-  background: linear-gradient(135deg, var(--violet-50) 0%, #f8fafc 100%);
+  background: linear-gradient(135deg, var(--violet-50) 0%, var(--ink-50) 100%);
   border: 1px solid color-mix(in srgb, var(--violet-500) 18%, var(--ink-100));
   border-radius: 12px;
 }
@@ -12107,7 +12134,7 @@ onUnmounted(() => {
   color: var(--ink-500);
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--auto-rgba-25525525508);
   border: 1px solid var(--ink-100);
 }
 
@@ -12137,7 +12164,7 @@ onUnmounted(() => {
 
 .briefing-loading-hint {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-500);
 }
 
@@ -12162,7 +12189,7 @@ onUnmounted(() => {
   padding-bottom: 14px;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, #fbfcfe 0%, #fff 100%);
+  background: linear-gradient(180deg, var(--ink-25) 0%, var(--white) 100%);
   box-sizing: border-box;
 }
 
@@ -12194,7 +12221,7 @@ onUnmounted(() => {
 
 .chat-body::-webkit-scrollbar-thumb {
   background: var(--ink-200);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .chat-end {
@@ -12253,14 +12280,14 @@ onUnmounted(() => {
 .msg-avatar {
   width: 40px;
   height: 40px;
-  border-radius: 11px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
 }
 
 .msg-avatar.ai {
-  background: #fff;
+  background: var(--white);
   overflow: hidden;
   box-shadow: 0 0 0 1px var(--ink-100);
 }
@@ -12271,7 +12298,7 @@ onUnmounted(() => {
   object-fit: cover;
   object-position: center;
   display: block;
-  background: #fff;
+  background: var(--white);
 }
 
 .bubble {
@@ -12279,7 +12306,7 @@ onUnmounted(() => {
   max-width: 100%;
   padding: 10px 14px;
   border-radius: 12px;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.35;
 }
 
@@ -12291,12 +12318,12 @@ onUnmounted(() => {
 
 .bubble.user {
   background: var(--brand-500);
-  color: #fff;
+  color: var(--white);
   border-bottom-right-radius: 4px;
 }
 
 .bubble.user .md-body {
-  color: #fff;
+  color: var(--white);
   white-space: normal;
   word-break: break-word;
   line-height: 1.45;
@@ -12324,7 +12351,7 @@ onUnmounted(() => {
   font-style: normal;
   font-weight: 400;
   color: var(--ink-400);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .bubble-text {
@@ -12337,7 +12364,7 @@ onUnmounted(() => {
   font-size: 11px;
   line-height: 1.55;
   font-weight: 400;
-  color: #999;
+  color: var(--gray-999);
 }
 
 .bubble-text.stream-live::after {
@@ -12345,7 +12372,7 @@ onUnmounted(() => {
   display: inline-block;
   margin-left: 2px;
   animation: stream-caret 0.9s steps(1) infinite;
-  color: var(--brand-500, #0d9488);
+  color: var(--brand-500, var(--teal-700));
 }
 
 @keyframes stream-caret {
@@ -12362,17 +12389,17 @@ onUnmounted(() => {
 .msg-image {
   display: block;
   margin: 0 0 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--auto-rgba-255255255018);
   border-radius: 10px;
   overflow: hidden;
   max-width: 220px;
   padding: 0;
-  background: #0f172a;
+  background: var(--ink-900);
   cursor: zoom-in;
 }
 
 .msg-row.user .msg-image {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--auto-rgba-25525525502);
 }
 
 .msg-image img {
@@ -12387,7 +12414,7 @@ onUnmounted(() => {
   padding: 12px;
   border: 1px solid var(--ink-200);
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -12443,7 +12470,7 @@ onUnmounted(() => {
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--ink-200);
-  background: #f8fafc;
+  background: var(--ink-50);
   padding: 0;
   margin: 0;
   line-height: 0;
@@ -12452,7 +12479,7 @@ onUnmounted(() => {
 }
 
 .ocr-origin:hover {
-  border-color: var(--brand-300, #93c5fd);
+  border-color: var(--brand-300, var(--blue-300));
 }
 
 .ocr-origin img {
@@ -12460,7 +12487,7 @@ onUnmounted(() => {
   width: 100%;
   max-height: 200px;
   object-fit: contain;
-  background: #f8fafc;
+  background: var(--ink-50);
 }
 
 .ocr-meta {
@@ -12468,7 +12495,7 @@ onUnmounted(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-500);
 }
 
@@ -12508,8 +12535,8 @@ onUnmounted(() => {
 
 .ocr-table th,
 .ocr-table td {
-  padding: 7px 8px;
-  border-bottom: 1px solid var(--ink-100);
+  padding: 8px 8px;
+  border-bottom: 0 solid var(--ink-100);
   text-align: left;
   vertical-align: top;
   white-space: nowrap;
@@ -12526,12 +12553,12 @@ onUnmounted(() => {
 }
 
 .ocr-table td.hi {
-  color: #dc2626;
+  color: var(--rose-600);
   font-weight: 600;
 }
 
 .ocr-table td.lo {
-  color: #2563eb;
+  color: var(--blue-600);
   font-weight: 600;
 }
 
@@ -12544,7 +12571,7 @@ onUnmounted(() => {
   padding: 4px 6px;
   font-size: 12px;
   color: var(--ink-800);
-  background: #fff;
+  background: var(--white);
   box-sizing: border-box;
 }
 
@@ -12615,8 +12642,8 @@ onUnmounted(() => {
 
 .ocr-warn {
   margin: 0;
-  font-size: 11.5px;
-  color: #b45309;
+  font-size: 12px;
+  color: var(--amber-600);
   line-height: 1.45;
 }
 
@@ -12630,7 +12657,7 @@ onUnmounted(() => {
 .ocr-status.ok {
   margin: 0;
   font-size: 12px;
-  color: #059669;
+  color: var(--green-600);
   font-weight: 600;
 }
 
@@ -12638,7 +12665,7 @@ onUnmounted(() => {
 .briefing-text.md-body {
   white-space: normal;
   word-break: break-word;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.65;
   color: var(--ink-700);
 }
@@ -12652,22 +12679,22 @@ onUnmounted(() => {
 .briefing-text.md-body :deep(.reply-sec) {
   margin: 0;
   padding: 0 0 0 10px;
-  border-left: 2px solid color-mix(in srgb, var(--brand-500, #0d9488) 42%, var(--ink-200));
+  border-left: 2px solid color-mix(in srgb, var(--brand-500, var(--teal-700)) 42%, var(--ink-200));
 }
 
 .bubble.assistant .md-body :deep(.reply-sec + .reply-sec),
 .briefing-text.md-body :deep(.reply-sec + .reply-sec) {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--ink-200) 88%, transparent);
-  border-left-color: color-mix(in srgb, var(--brand-500, #0d9488) 28%, var(--ink-200));
+  border-top: 0 solid color-mix(in srgb, var(--ink-200) 88%, transparent);
+  border-left-color: color-mix(in srgb, var(--brand-500, var(--teal-700)) 28%, var(--ink-200));
 }
 
 .bubble.assistant .md-body :deep(.section-title),
 .briefing-text.md-body :deep(.section-title) {
   display: flex;
   align-items: baseline;
-  gap: 1px;
+  gap: 2px;
   margin: 0 0 6px;
   line-height: 1.35;
   color: var(--ink-900);
@@ -12678,13 +12705,13 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: 13px;
   font-weight: 700;
-  color: var(--brand-600, #0f766e);
+  color: var(--brand-600, var(--teal-600));
   letter-spacing: 0.02em;
 }
 
 .bubble.assistant .md-body :deep(.sec-name),
 .briefing-text.md-body :deep(.sec-name) {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.01em;
 }
@@ -12694,7 +12721,7 @@ onUnmounted(() => {
   margin: 0;
   padding: 2px 0;
   line-height: 1.55;
-  color: #475569;
+  color: var(--ink-600);
 }
 
 .bubble.assistant .md-body :deep(.reply-line.is-item),
@@ -12713,7 +12740,7 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: var(--brand-500, #0d9488);
+  color: var(--brand-500, var(--teal-700));
   line-height: 1.55;
 }
 
@@ -12732,11 +12759,11 @@ onUnmounted(() => {
 .bubble.assistant .bubble-actions {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--ink-200) 90%, transparent);
+  border-top: 0 solid color-mix(in srgb, var(--ink-200) 90%, transparent);
 }
 
 .report-status {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-600);
   margin-bottom: 8px;
 }
@@ -12744,7 +12771,7 @@ onUnmounted(() => {
 .report-card {
   border: 1px solid var(--ink-200);
   border-radius: 12px;
-  background: #fff;
+  background: var(--white);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -12756,8 +12783,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  background: linear-gradient(180deg, #f8fafc, #fff);
-  border-bottom: 1px solid var(--ink-100);
+  background: linear-gradient(180deg, var(--ink-50), var(--white));
+  border-bottom: 0 solid var(--ink-100);
 }
 
 .report-card-head strong {
@@ -12773,27 +12800,27 @@ onUnmounted(() => {
 }
 
 .report-chip {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 2px 7px;
+  padding: 2px 6px;
   border-radius: 999px;
   background: var(--ink-100);
   color: var(--ink-600);
 }
 
 .report-chip.ai {
-  background: color-mix(in srgb, var(--brand-500, #0d9488) 14%, #fff);
-  color: var(--brand-700, #0f766e);
+  background: color-mix(in srgb, var(--brand-500, var(--teal-700)) 14%, var(--white));
+  color: var(--brand-700, var(--teal-600));
 }
 
 .report-chip.tpl {
-  background: #fff7ed;
-  color: #c2410c;
+  background: var(--orange-50);
+  color: var(--amber-700);
 }
 
 .report-sec {
   padding: 10px 12px;
-  border-top: 1px solid var(--ink-100);
+  border-top: 0 solid var(--ink-100);
 }
 
 .report-sec:first-of-type,
@@ -12805,19 +12832,19 @@ onUnmounted(() => {
   margin: 0 0 6px;
   font-size: 12px;
   font-weight: 700;
-  color: var(--brand-700, #0f766e);
+  color: var(--brand-700, var(--teal-600));
 }
 
 .report-sec p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--ink-800);
   white-space: pre-wrap;
 }
 
 .report-sec.focus {
-  background: color-mix(in srgb, var(--brand-500, #0d9488) 6%, #fff);
+  background: color-mix(in srgb, var(--brand-500, var(--teal-700)) 6%, var(--white));
 }
 
 .report-sec ol {
@@ -12829,7 +12856,7 @@ onUnmounted(() => {
 }
 
 .report-sec li {
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--ink-800);
 }
@@ -12837,9 +12864,9 @@ onUnmounted(() => {
 .report-note {
   margin: 0;
   padding: 8px 12px 10px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-500);
-  border-top: 1px solid var(--ink-100);
+  border-top: 0 solid var(--ink-100);
 }
 
 .md-body :deep(.field-label) {
@@ -12888,53 +12915,53 @@ onUnmounted(() => {
 }
 
 .action-step.primary {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  border-color: #2563eb;
-  color: #fff;
+  background: linear-gradient(135deg, var(--blue-500) 0%, var(--blue-600) 100%);
+  border-color: var(--blue-600);
+  color: var(--white);
   box-shadow:
-    0 0 0 1px rgba(59, 130, 246, 0.18),
-    0 8px 22px -6px rgba(37, 99, 235, 0.65);
+    0 0 0 1px var(--blue-a18),
+    0 8px 22px -6px var(--auto-rgba-3799235065);
   animation: cta-glow 2.4s ease-in-out infinite;
 }
 
 .action-step.primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-  border-color: #1d4ed8;
+  background: linear-gradient(135deg, var(--blue-600) 0%, var(--brand-800) 100%);
+  border-color: var(--brand-800);
   box-shadow:
-    0 0 0 1px rgba(37, 99, 235, 0.25),
-    0 10px 26px -6px rgba(29, 78, 216, 0.7);
+    0 0 0 1px var(--auto-rgba-3799235025),
+    0 10px 26px -6px var(--auto-rgba-297821607);
 }
 
 @keyframes cta-glow {
   0%,
   100% {
     box-shadow:
-      0 0 0 1px rgba(59, 130, 246, 0.18),
-      0 8px 22px -6px rgba(37, 99, 235, 0.55);
+      0 0 0 1px var(--blue-a18),
+      0 8px 22px -6px var(--auto-rgba-3799235055);
   }
   50% {
     box-shadow:
-      0 0 0 2px rgba(59, 130, 246, 0.28),
-      0 10px 28px -4px rgba(37, 99, 235, 0.75);
+      0 0 0 2px var(--auto-rgba-59130246028),
+      0 10px 28px -4px var(--auto-rgba-3799235075);
   }
 }
 
 .action-step.secondary {
-  background: #fff;
-  border-color: var(--brand-200, #bfdbfe);
-  color: var(--brand-700, #1d4ed8);
+  background: var(--white);
+  border-color: var(--brand-200);
+  color: var(--brand-700, var(--brand-800));
 }
 
 .action-step.secondary:hover:not(:disabled) {
-  background: var(--brand-50, #eff6ff);
-  border-color: var(--brand-400, #60a5fa);
+  background: var(--brand-50, var(--blue-50));
+  border-color: var(--brand-400);
 }
 
 .action-step.done,
 .action-step.done:hover {
-  background: #ecfdf5;
-  color: #047857;
-  border-color: #a7f3d0;
+  background: var(--success-50);
+  color: var(--success-600);
+  border-color: var(--green-200);
   box-shadow: none;
   cursor: default;
 }
@@ -12950,10 +12977,10 @@ onUnmounted(() => {
 
 .action-chip {
   border: 1px solid var(--ink-200);
-  background: #fff;
+  background: var(--white);
   color: var(--ink-700);
   border-radius: 999px;
-  padding: 5px 11px;
+  padding: 6px 10px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -12979,17 +13006,17 @@ onUnmounted(() => {
 
 .action-chip.primary {
   background: var(--brand-500);
-  color: #fff;
+  color: var(--white);
   border-color: var(--brand-500);
 }
 
 .action-chip.primary:hover {
   background: var(--brand-600);
-  color: #fff;
+  color: var(--white);
 }
 
 .action-chip.do:not(.primary) {
-  border-color: var(--brand-300, #93c5fd);
+  border-color: var(--brand-300, var(--blue-300));
   color: var(--brand-600);
   background: var(--brand-50);
 }
@@ -13020,9 +13047,9 @@ onUnmounted(() => {
 }
 
 .action-chip.more:hover {
-  color: var(--brand-700, #0f766e);
-  border-color: var(--brand-400, #2dd4bf);
-  background: color-mix(in srgb, var(--brand-500, #0d9488) 6%, #fff);
+  color: var(--brand-700, var(--teal-600));
+  border-color: var(--brand-400);
+  background: color-mix(in srgb, var(--brand-500, var(--teal-700)) 6%, var(--white));
 }
 
 .action-chip:disabled {
@@ -13040,9 +13067,9 @@ onUnmounted(() => {
 .action-chip.locked:disabled:hover {
   opacity: 0.55;
   cursor: not-allowed;
-  color: var(--ink-400, #9ca3af);
-  background: #f3f4f6;
-  border-color: var(--ink-200, #e5e7eb);
+  color: var(--ink-400, var(--gray-400));
+  background: var(--gray-100);
+  border-color: var(--ink-200, var(--gray-200));
   box-shadow: none;
   filter: grayscale(0.35);
   transform: none;
@@ -13050,9 +13077,9 @@ onUnmounted(() => {
 
 .action-chip.done,
 .action-chip.done:hover {
-  background: #ecfdf5;
-  color: #047857;
-  border-color: #a7f3d0;
+  background: var(--success-50);
+  color: var(--success-600);
+  border-color: var(--green-200);
   cursor: default;
   font-weight: 500;
   box-shadow: none;
@@ -13061,7 +13088,7 @@ onUnmounted(() => {
 
 .typing {
   display: inline-flex;
-  gap: 3px;
+  gap: 4px;
   padding: 4px 0;
 }
 
@@ -13070,34 +13097,38 @@ onUnmounted(() => {
   height: 6px;
   background: var(--ink-400);
   border-radius: 50%;
-  animation: bounce 1.4s infinite;
+  animation: typing-pulse 1.2s ease-in-out infinite;
 }
 
 .typing span:nth-child(2) {
-  animation-delay: 0.2s;
+  animation-delay: 0.15s;
 }
 
 .typing span:nth-child(3) {
-  animation-delay: 0.4s;
+  animation-delay: 0.3s;
 }
 
-@keyframes bounce {
+@keyframes typing-pulse {
   0%,
-  80%,
   100% {
-    transform: translateY(0);
-    opacity: 0.4;
+    opacity: 0.35;
   }
-  40% {
-    transform: translateY(-5px);
+  50% {
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing span {
+    animation: none;
+    opacity: 0.7;
   }
 }
 
 .composer {
   flex-shrink: 0;
-  border-top: 1px solid var(--ink-100);
-  background: #fff;
+  border-top: 0 solid var(--ink-100);
+  background: var(--white);
   padding-top: 12px;
   padding-bottom: 14px;
   box-sizing: border-box;
@@ -13139,24 +13170,35 @@ onUnmounted(() => {
   transition: transform 0.22s ease;
 }
 
+.quick-chip.more {
+  border-style: dashed;
+  color: var(--ink-600);
+  background: transparent;
+}
+
+.quick-more {
+  margin-top: 8px;
+  width: 100%;
+}
+
 .quick-chip {
   border: 1px solid var(--ink-200);
-  background: #fff;
+  background: var(--white);
   color: var(--ink-800);
   border-radius: 999px;
-  padding: 7px 14px;
+  padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: var(--admin-transition);
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: none;
 }
 
 .quick-chip.primary {
-  border-color: var(--brand-400, #60a5fa);
-  background: var(--brand-50, #eff6ff);
-  color: var(--brand-700, #1d4ed8);
+  border-color: var(--brand-400);
+  background: var(--brand-50, var(--blue-50));
+  color: var(--brand-700, var(--brand-800));
 }
 
 .quick-chip.pulse {
@@ -13166,11 +13208,11 @@ onUnmounted(() => {
 @keyframes archive-chip-pulse {
   0%,
   100% {
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    box-shadow: 0 1px 2px var(--ink-a04);
   }
   50% {
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.28);
-    border-color: var(--brand-500, #2563eb);
+    box-shadow: 0 0 0 3px var(--ink-a14);
+    border-color: var(--brand-500, var(--blue-600));
   }
 }
 
@@ -13181,29 +13223,29 @@ onUnmounted(() => {
 }
 
 .quick-chip.primary:hover:not(:disabled) {
-  background: var(--brand-100, #dbeafe);
+  background: var(--brand-100, var(--blue-100));
 }
 
 .quick-chip.later {
-  color: var(--ink-400, #94a3b8);
-  background: #f8fafc;
-  border-color: var(--ink-100, #f1f5f9);
+  color: var(--ink-400);
+  background: var(--ink-50);
+  border-color: var(--ink-100);
   font-weight: 500;
 }
 
 .quick-chip.later:hover:not(:disabled) {
-  color: var(--ink-500, #64748b);
-  background: #f8fafc;
-  border-color: var(--ink-200, #e2e8f0);
+  color: var(--ink-500);
+  background: var(--ink-50);
+  border-color: var(--ink-200);
 }
 
 .quick-chip:disabled,
 .quick-chip.locked {
   opacity: 0.5;
   cursor: not-allowed;
-  color: var(--ink-400, #9ca3af);
-  background: #f3f4f6;
-  border-color: var(--ink-200, #e5e7eb);
+  color: var(--ink-400, var(--gray-400));
+  background: var(--gray-100);
+  border-color: var(--ink-200, var(--gray-200));
   box-shadow: none;
   filter: grayscale(0.35);
 }
@@ -13211,9 +13253,9 @@ onUnmounted(() => {
 .quick-chip.locked:hover,
 .quick-chip.primary.locked:hover,
 .quick-chip.later.locked:hover {
-  border-color: var(--ink-200, #e5e7eb);
-  background: #f3f4f6;
-  color: var(--ink-400, #9ca3af);
+  border-color: var(--ink-200, var(--gray-200));
+  background: var(--gray-100);
+  color: var(--ink-400, var(--gray-400));
 }
 
 .composer-box {
@@ -13225,9 +13267,9 @@ onUnmounted(() => {
 }
 
 .composer-box:focus-within {
-  background: #fff;
+  background: var(--white);
   border-color: var(--brand-500);
-  box-shadow: 0 0 0 3px rgba(44, 126, 248, 0.1);
+  box-shadow: 0 0 0 3px var(--auto-rgba-4412624801);
 }
 
 .composer-box :deep(.el-textarea__inner) {
@@ -13235,7 +13277,7 @@ onUnmounted(() => {
   border: 0 !important;
   background: transparent !important;
   padding: 0 !important;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.55;
   color: var(--ink-800);
 }
@@ -13261,11 +13303,11 @@ onUnmounted(() => {
 .send-btn {
   height: 32px;
   padding: 0 14px;
-  background: #e5e7eb;
-  color: #9ca3af;
+  background: var(--gray-200);
+  color: var(--gray-400);
   border: 0;
   border-radius: 8px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
@@ -13276,7 +13318,7 @@ onUnmounted(() => {
 
 .send-btn.ready {
   background: var(--brand-500);
-  color: #fff;
+  color: var(--white);
   cursor: pointer;
 }
 
@@ -13285,26 +13327,26 @@ onUnmounted(() => {
 }
 
 .send-btn:disabled {
-  background: #e5e7eb !important;
-  color: #9ca3af !important;
+  background: var(--gray-200) !important;
+  color: var(--gray-400) !important;
   opacity: 1;
   cursor: not-allowed;
 }
 
 .send-btn.ghost:disabled {
-  background: #f3f4f6;
-  color: #9ca3af;
-  border-color: #e5e7eb;
+  background: var(--gray-100);
+  color: var(--gray-400);
+  border-color: var(--gray-200);
 }
 
 .send-btn.ghost {
-  background: #fff;
-  color: var(--brand-600, #1d4ed8);
-  border: 1px solid var(--brand-200, #bfdbfe);
+  background: var(--white);
+  color: var(--brand-600, var(--brand-800));
+  border: 1px solid var(--brand-200);
 }
 
 .send-btn.ghost:hover:not(:disabled) {
-  background: var(--brand-50, #eff6ff);
+  background: var(--brand-50, var(--blue-50));
 }
 
 .send-btn svg {
@@ -13335,7 +13377,8 @@ onUnmounted(() => {
   flex-shrink: 0;
   margin: 8px 10px 0;
   padding: 10px 12px;
-  background: linear-gradient(135deg, var(--brand-50) 0%, var(--teal-50) 100%);
+  background: var(--ink-50);
+  border: 1px solid var(--ink-100);
   border-radius: var(--admin-radius, 12px);
 }
 
@@ -13357,10 +13400,10 @@ onUnmounted(() => {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--white);
   font-weight: 600;
   font-size: 14px;
-  box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.3);
+  box-shadow: var(--admin-shadow-md, 0 1px 3px var(--ink-a06), 0 8px 24px -8px var(--ink-a08));
   flex-shrink: 0;
 }
 
@@ -13394,8 +13437,8 @@ onUnmounted(() => {
 }
 
 .live.on {
-  background: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+  background: var(--success-500);
+  box-shadow: 0 0 0 3px var(--auto-rgba-16185129018);
 }
 
 .focus-meta {
@@ -13423,7 +13466,7 @@ onUnmounted(() => {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  color: var(--brand-600, #2563eb);
+  color: var(--brand-600, var(--blue-600));
   cursor: pointer;
 }
 
@@ -13432,29 +13475,35 @@ onUnmounted(() => {
 }
 
 .focus-eval {
-  margin-bottom: 8px;
+  margin: 0 0 8px;
+}
+
+.focus-eval .eval-empty.alert {
+  margin: 0;
+  color: var(--rose-600);
+  font-weight: 600;
 }
 
 .eval-label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--ink-500);
   margin-bottom: 4px;
 }
 
 .eval-label.alert {
-  color: var(--rose-600, #e11d48);
+  color: var(--rose-600);
 }
 
 .eval-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--rose-500, #f43f5e);
-  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.18);
+  background: var(--rose-500, var(--rose-600));
+  box-shadow: 0 0 0 3px var(--auto-rgba-2446394018);
 }
 
 .eval-tags {
@@ -13466,58 +13515,77 @@ onUnmounted(() => {
 .eval-tag {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
+  padding: 2px 6px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
   border: 1px solid transparent;
 }
 
 .eval-tag.danger {
-  color: #be123c;
-  background: #fff1f2;
-  border-color: #fecdd3;
+  color: var(--rose-800);
+  background: var(--auto-fff1f2);
+  border-color: var(--auto-fecdd3);
 }
 
 .eval-tag.warning {
-  color: #b45309;
-  background: #fffbeb;
-  border-color: #fde68a;
+  color: var(--amber-600);
+  background: var(--amber-100);
+  border-color: var(--amber-200);
 }
 
 .eval-tag.success {
-  color: #047857;
-  background: #ecfdf5;
-  border-color: #a7f3d0;
+  color: var(--success-600);
+  background: var(--success-50);
+  border-color: var(--green-200);
 }
 
 .eval-tag.info {
-  color: #1d4ed8;
-  background: #eff6ff;
-  border-color: #bfdbfe;
+  color: var(--brand-800);
+  background: var(--blue-50);
+  border-color: var(--brand-200);
 }
 
 .eval-tag.muted {
   color: var(--ink-500);
-  background: #f8fafc;
-  border-color: #e2e8f0;
+  background: var(--ink-50);
+  border-color: var(--ink-200);
 }
 
 .eval-empty {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-400);
 }
 
 .focus-metrics {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
-.focus-metrics .metric:first-child {
-  grid-column: 1 / -1;
+.focus-metrics .metric {
+  min-width: 0;
+}
+
+.metrics-toggle {
+  display: block;
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-500);
+  cursor: pointer;
+  text-align: left;
+}
+
+.metrics-toggle:hover {
+  color: var(--brand-700, var(--brand-800));
 }
 
 .focus-facts {
@@ -13525,7 +13593,7 @@ onUnmounted(() => {
   grid-template-columns: auto 1fr;
   gap: 4px 10px;
   margin: 8px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .focus-facts dt {
@@ -13539,7 +13607,7 @@ onUnmounted(() => {
 }
 
 .focus-facts dd.bad {
-  color: var(--rose-500, #f43f5e);
+  color: var(--rose-500, var(--rose-600));
 }
 
 .focus-facts dd small {
@@ -13549,13 +13617,13 @@ onUnmounted(() => {
 }
 
 .metric {
-  background: #fff;
+  background: var(--white);
   border-radius: 8px;
-  padding: 7px 8px;
+  padding: 8px 8px;
 }
 
 .metric-label {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-500);
   margin-bottom: 2px;
 }
@@ -13570,10 +13638,10 @@ onUnmounted(() => {
 
 .metric-note {
   margin: 4px 0 0;
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.35;
   font-weight: 500;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
 }
 
 .metric-link {
@@ -13582,7 +13650,7 @@ onUnmounted(() => {
   padding: 0;
   border: 0;
   background: none;
-  color: #2563eb;
+  color: var(--blue-600);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -13590,7 +13658,7 @@ onUnmounted(() => {
 }
 
 .metric-link:hover {
-  color: #1d4ed8;
+  color: var(--brand-800);
   text-decoration: underline;
 }
 
@@ -13604,10 +13672,10 @@ onUnmounted(() => {
 }
 
 .metric-bar {
-  margin-top: 5px;
+  margin-top: 4px;
   height: 3px;
   border-radius: 999px;
-  background: #eef2f7;
+  background: var(--ink-150);
   overflow: hidden;
 }
 
@@ -13615,48 +13683,48 @@ onUnmounted(() => {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--brand-500, #3b82f6);
+  background: var(--brand-500, var(--blue-500));
   transition: width 0.2s ease;
 }
 
 .metric.good .metric-val {
-  color: #047857;
+  color: var(--success-600);
 }
 
 .metric.good .metric-bar i {
-  background: #10b981;
+  background: var(--success-500);
 }
 
 .metric.fair .metric-val {
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .metric.fair .metric-bar i {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 
 /* 完整度偏低：橙黄提醒，避免新患者 0% 大红压迫 */
 .metric.poor .metric-val,
 .metric.poor .metric-val.bad {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 
 .metric.poor .metric-bar i {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 
 .metric.poor .metric-bar {
-  background: #ffedd5;
+  background: var(--orange-100);
 }
 
 .metric.pending .metric-val.muted {
-  color: #94a3b8;
+  color: var(--ink-400);
   font-size: 13px;
   font-weight: 700;
 }
 
 .metric.pending .metric-bar {
-  background: #f1f5f9;
+  background: var(--ink-100);
 }
 
 .metric.pending .metric-bar i {
@@ -13672,7 +13740,7 @@ onUnmounted(() => {
 
 .section {
   padding: 10px 12px;
-  border-bottom: 1px solid var(--ink-100);
+  border-bottom: 0 solid var(--ink-100);
 }
 
 .section.compact {
@@ -13681,91 +13749,72 @@ onUnmounted(() => {
 }
 
 .section.quick-actions {
-  flex: 1 1 auto;
-  flex-shrink: 0;
+  flex: 0 0 auto;
   margin: 0;
   padding: 10px 12px 12px;
   border-bottom: 0;
-  border-top: 1px solid var(--ink-100);
-  background: #fff;
+  background: var(--white);
 }
 
-.section.quick-actions .section-title {
-  margin-bottom: 8px;
+.quick-primary {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--brand-200);
+  border-radius: 10px;
+  background: var(--blue-50);
+  color: var(--brand-800);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--admin-transition);
 }
 
-.section.quick-actions .section-sub {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--ink-400, #94a3b8);
+.quick-primary:hover {
+  background: var(--blue-100, var(--brand-100));
+  border-color: var(--blue-300, var(--brand-300));
+}
+
+.quick-primary-go {
+  color: var(--brand-600, var(--blue-600));
+  font-weight: 600;
 }
 
 .quick-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .quick-tile {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 72px;
-  padding: 10px 6px;
+  min-height: 36px;
+  padding: 6px 4px;
   margin: 0;
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 8px;
   font: inherit;
-  color: var(--ink-800);
+  color: var(--ink-700);
   cursor: pointer;
   transition: var(--admin-transition);
 }
 
-.quick-tile.primary {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1d4ed8;
-}
-
 .quick-tile:hover {
-  background: var(--brand-50, #eff6ff);
-  border-color: var(--brand-200, #bfdbfe);
-  color: var(--brand-700, #1d4ed8);
-}
-
-.quick-tile:hover .quick-ico {
-  background: #fff;
-  color: var(--brand-600, #2563eb);
-}
-
-.quick-ico {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  background: #fff;
-  border: 1px solid var(--ink-100, #eef2f7);
-  color: var(--brand-600, #2563eb);
-  flex-shrink: 0;
-  transition: var(--admin-transition);
-}
-
-.quick-ico svg {
-  width: 14px;
-  height: 14px;
+  background: var(--brand-50, var(--blue-50));
+  border-color: var(--brand-200);
+  color: var(--brand-700, var(--brand-800));
 }
 
 .quick-tile-label {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.2;
   text-align: center;
 }
@@ -13775,7 +13824,7 @@ onUnmounted(() => {
 }
 
 .section-title {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink-700);
   margin-bottom: 6px;
@@ -13785,7 +13834,7 @@ onUnmounted(() => {
 }
 
 .section-title .count {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-500);
   font-weight: 500;
 }
@@ -13802,7 +13851,7 @@ onUnmounted(() => {
 .draft-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .draft-item {
@@ -13811,10 +13860,10 @@ onUnmounted(() => {
   gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 6px 8px;
-  background: linear-gradient(90deg, var(--violet-50) 0%, transparent 100%);
-  border: 1px solid var(--violet-50);
-  border-radius: 8px;
+  padding: 5px 8px;
+  background: var(--white);
+  border: 1px solid var(--ink-100);
+  border-radius: 6px;
   cursor: pointer;
   transition: var(--admin-transition);
   font: inherit;
@@ -13822,37 +13871,18 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.draft-item:not(.draft) {
-  background: #fff;
-  border-color: var(--ink-200);
+.draft-item.draft {
+  border-color: var(--ink-150, var(--ink-100));
+  background: var(--ink-50);
+}
+
+.draft-item.overdue .draft-meta {
+  color: var(--rose-600);
 }
 
 .draft-item:hover {
-  border-color: var(--violet-500);
-}
-
-.draft-item:not(.draft):hover {
-  border-color: var(--brand-500);
-}
-
-.draft-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--violet-500);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-}
-
-.draft-icon.warn {
-  background: var(--rose-500);
-}
-
-.draft-icon svg {
-  width: 11px;
-  height: 11px;
+  border-color: var(--brand-300);
+  background: var(--brand-50);
 }
 
 .draft-body {
@@ -13866,7 +13896,7 @@ onUnmounted(() => {
 
 .draft-title {
   flex-shrink: 0;
-  max-width: 42%;
+  max-width: 48%;
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-800);
@@ -13890,13 +13920,8 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
-  color: var(--brand-600, #2c7ef8);
+  color: var(--brand-700, var(--brand-600));
   white-space: nowrap;
-}
-
-.draft-item.plan .draft-cta,
-.draft-item.report .draft-cta {
-  color: var(--brand-600, #2c7ef8);
 }
 
 .list-expand {
@@ -13905,7 +13930,7 @@ onUnmounted(() => {
   justify-content: center;
   width: 100%;
   border: 1px dashed var(--ink-200);
-  background: #fff;
+  background: var(--white);
   border-radius: 8px;
   padding: 4px 8px;
   margin: 0;
@@ -13920,9 +13945,9 @@ onUnmounted(() => {
 }
 
 .list-expand:hover {
-  border-color: var(--brand-400, #60a5fa);
-  color: var(--brand-600, #2563eb);
-  background: #f8fbff;
+  border-color: var(--brand-400);
+  color: var(--brand-600, var(--blue-600));
+  background: var(--ink-25);
 }
 
 .empty-hint {

@@ -19,19 +19,315 @@
   /* Healix B 端 · docs/ui-redesign 设计系统 */
   --brand-50: #eaf2ff;
   --brand-100: #d6e6ff;
+  --brand-200: #bfdbfe;
   --brand-300: #7ba9fb;
+  --brand-400: #60a5fa;
   --brand-500: #2c7ef8;
   --brand-600: #1e63d9;
   --brand-700: #174db0;
+  --brand-800: #1d4ed8;
+  --brand-900: #1e40af;
 
   --teal-500: #00b8a9;
+  --teal-600: #0f766e;
   --teal-50: #e6faf7;
+  --teal-100: #ecfdf5;
   --amber-500: #f59e0b;
+  --amber-600: #b45309;
+  --amber-700: #c2410c;
   --amber-50: #fef6e2;
+  --amber-100: #fffbeb;
+  --amber-200: #fde68a;
   --rose-500: #ef4444;
+  --rose-600: #dc2626;
+  --rose-700: #b91c1c;
   --rose-50: #fee9e7;
+  --rose-100: #fef2f2;
   --violet-500: #8b5cf6;
   --violet-50: #f1ecfe;
+  --success-500: #10b981;
+  --success-600: #047857;
+  --success-50: #ecfdf5;
+  --white: #ffffff;
+  --hx-n-100: var(--ink-100);
+  --hx-n-700: var(--ink-700);
+  --hx-n-800: var(--ink-800);
+  --line-100: var(--ink-100);
+  --auto-0369a1: #0369a1;
+  --auto-064e3b: #064e3b;
+  --auto-075985: #075985;
+  --auto-115e59: #115e59;
+  --auto-143f96: #143f96;
+  --auto-14532d: #14532d;
+  --auto-14b8a6: #14b8a6;
+  --auto-15803d: #15803d;
+  --auto-166534: #166534;
+  --auto-1e3a8a: #1e3a8a;
+  --auto-1f6b5c: #1f6b5c;
+  --auto-22c55e: #22c55e;
+  --auto-2a3b4c: #2a3b4c;
+  --auto-2a7a5a: #2a7a5a;
+  --auto-2b9e9e: #2b9e9e;
+  --auto-2c3e50: #2c3e50;
+  --auto-2f5f7a: #2f5f7a;
+  --auto-303133: #303133;
+  --auto-3a2a10: #3a2a10;
+  --auto-3d5a73: #3d5a73;
+  --auto-425566: #425566;
+  --auto-4a657a: #4a657a;
+  --auto-4ade80: #4ade80;
+  --auto-5a4a28: #5a4a28;
+  --auto-5a6b7a: #5a6b7a;
+  --auto-5a7a90: #5a7a90;
+  --auto-5b21b6: #5b21b6;
+  --auto-5b6b7a: #5b6b7a;
+  --auto-606266: #606266;
+  --auto-6ee7b7: #6ee7b7;
+  --auto-78350f: #78350f;
+  --auto-78716c: #78716c;
+  --auto-7a8896: #7a8896;
+  --auto-7c2d12: #7c2d12;
+  --auto-7c3aed: #7c3aed;
+  --auto-7f1d1d: #7f1d1d;
+  --auto-8090a0: #8090a0;
+  --auto-86efac: #86efac;
+  --auto-8a5a2b: #8a5a2b;
+  --auto-8a98a6: #8a98a6;
+  --auto-9a6700: #9a6700;
+  --auto-9b2c2c: #9b2c2c;
+  --auto-9d174d: #9d174d;
+  --auto-9fd6cb: #9fd6cb;
+  --auto-a07830: #a07830;
+  --auto-a0aec0: #a0aec0;
+  --auto-a16207: #a16207;
+  --auto-a21caf: #a21caf;
+  --auto-a33b2c: #a33b2c;
+  --auto-a8b0bd: #a8b0bd;
+  --auto-b06055: #b06055;
+  --auto-b42318: #b42318;
+  --auto-bae6fd: #bae6fd;
+  --auto-bbf7d0: #bbf7d0;
+  --auto-bfbfbf: #bfbfbf;
+  --auto-c026d3: #c026d3;
+  --auto-c0c4cc: #c0c4cc;
+  --auto-c5d8e8: #c5d8e8;
+  --auto-cccccc: #cccccc;
+  --auto-cce8e1: #cce8e1;
+  --auto-d0d5dd: #d0d5dd;
+  --auto-d1fae5: #d1fae5;
+  --auto-d4b56a: #d4b56a;
+  --auto-d5dee6: #d5dee6;
+  --auto-d5e0e8: #d5e0e8;
+  --auto-d5e8f5: #d5e8f5;
+  --auto-d6efff: #d6efff;
+  --auto-d7e2ec: #d7e2ec;
+  --auto-d7e6f8: #d7e6f8;
+  --auto-d9d9d9: #d9d9d9;
+  --auto-dbe7f3: #dbe7f3;
+  --auto-dcfce7: #dcfce7;
+  --auto-e0632a: #e0632a;
+  --auto-e0ecff: #e0ecff;
+  --auto-e0edff: #e0edff;
+  --auto-e0f2fe: #e0f2fe;
+  --auto-e6eef2: #e6eef2;
+  --auto-e6f7f3: #e6f7f3;
+  --auto-e6f7ff: #e6f7ff;
+  --auto-e8b931: #e8b931;
+  --auto-e8d2a0: #e8d2a0;
+  --auto-e8e8e8: #e8e8e8;
+  --auto-e8edf3: #e8edf3;
+  --auto-e8eef5: #e8eef5;
+  --auto-e8f1fe: #e8f1fe;
+  --auto-e8f1ff: #e8f1ff;
+  --auto-e9f8f1: #e9f8f1;
+  --auto-eab308: #eab308;
+  --auto-ede9fe: #ede9fe;
+  --auto-eeeeee: #eeeeee;
+  --auto-eef2f5: #eef2f5;
+  --auto-eef3f7: #eef3f7;
+  --auto-eef5ff: #eef5ff;
+  --auto-eef6ff: #eef6ff;
+  --auto-f0c0b8: #f0c0b8;
+  --auto-f0d59a: #f0d59a;
+  --auto-f0f0f0: #f0f0f0;
+  --auto-f0f7ff: #f0f7ff;
+  --auto-f0f9ff: #f0f9ff;
+  --auto-f1ebe3: #f1ebe3;
+  --auto-f2f6f8: #f2f6f8;
+  --auto-f3e7d8: #f3e7d8;
+  --auto-f3e8ff: #f3e8ff;
+  --auto-f3f7fb: #f3f7fb;
+  --auto-f3f8fc: #f3f8fc;
+  --auto-f3fbf9: #f3fbf9;
+  --auto-f4fbf8: #f4fbf8;
+  --auto-f5c2c2: #f5c2c2;
+  --auto-f5d0fe: #f5d0fe;
+  --auto-f5d78e: #f5d78e;
+  --auto-f5f3ff: #f5f3ff;
+  --auto-f5f5f4: #f5f5f4;
+  --auto-f5f9ff: #f5f9ff;
+  --auto-f5fbfb: #f5fbfb;
+  --auto-f6e3cf: #f6e3cf;
+  --auto-f78989: #f78989;
+  --auto-f87171: #f87171;
+  --auto-f8fffb: #f8fffb;
+  --auto-f97316: #f97316;
+  --auto-f9a8d4: #f9a8d4;
+  --auto-fae8ff: #fae8ff;
+  --auto-fafbfc: #fafbfc;
+  --auto-fb923c: #fb923c;
+  --auto-fbbf24: #fbbf24;
+  --auto-fbfdfe: #fbfdfe;
+  --auto-fce7f3: #fce7f3;
+  --auto-fda4af: #fda4af;
+  --auto-fde2e2: #fde2e2;
+  --auto-fdf2f8: #fdf2f8;
+  --auto-fdf4ff: #fdf4ff;
+  --auto-fecdd3: #fecdd3;
+  --auto-fef9c3: #fef9c3;
+  --auto-fefce8: #fefce8;
+  --auto-ffd5ce: #ffd5ce;
+  --auto-ffe4e6: #ffe4e6;
+  --auto-ffe58a: #ffe58a;
+  --auto-ffe8b0: #ffe8b0;
+  --auto-fff1f2: #fff1f2;
+  --auto-fff4e0: #fff4e0;
+  --auto-fff5f3: #fff5f3;
+  --auto-fff5f5: #fff5f5;
+  --auto-fff6e0: #fff6e0;
+  --auto-fff6ea: #fff6ea;
+  --auto-fff7ee: #fff7ee;
+  --auto-fff7f7: #fff7f7;
+  --auto-fff8f8: #fff8f8;
+  --auto-fff9eb: #fff9eb;
+  --auto-fffaf3: #fffaf3;
+  --auto-fffaf5: #fffaf5;
+  --auto-fffbe6: #fffbe6;
+  --auto-fffdf7: #fffdf7;
+  --auto-fffdf8: #fffdf8;
+  --auto-fffdfc: #fffdfc;
+  --auto-rgba-000005: rgba(0, 0, 0, 0.05);
+  --auto-rgba-000018: rgba(0, 0, 0, 0.18);
+  --auto-rgba-102030035: rgba(10, 20, 30, 0.35);
+  --auto-rgba-100116139055: rgba(100, 116, 139, 0.55);
+  --auto-rgba-138900004: rgba(138, 90, 0, 0.04);
+  --auto-rgba-138900012: rgba(138, 90, 0, 0.12);
+  --auto-rgba-15118110012: rgba(15, 118, 110, 0.12);
+  --auto-rgba-15118110018: rgba(15, 118, 110, 0.18);
+  --auto-rgba-1523420: rgba(15, 23, 42, 0);
+  --auto-rgba-152342007: rgba(15, 23, 42, 0.07);
+  --auto-rgba-152342025: rgba(15, 23, 42, 0.25);
+  --auto-rgba-152342072: rgba(15, 23, 42, 0.72);
+  --auto-rgba-154060002: rgba(15, 40, 60, 0.02);
+  --auto-rgba-16185129018: rgba(16, 185, 129, 0.18);
+  --auto-rgba-1857070012: rgba(185, 70, 70, 0.12);
+  --auto-rgba-2216374006: rgba(22, 163, 74, 0.06);
+  --auto-rgba-2216374008: rgba(22, 163, 74, 0.08);
+  --auto-rgba-2216374012: rgba(22, 163, 74, 0.12);
+  --auto-rgba-2203838008: rgba(220, 38, 38, 0.08);
+  --auto-rgba-22623224007: rgba(226, 232, 240, 0.7);
+  --auto-rgba-22623224008: rgba(226, 232, 240, 0.8);
+  --auto-rgba-2396868045: rgba(239, 68, 68, 0.45);
+  --auto-rgba-240253244055: rgba(240, 253, 244, 0.55);
+  --auto-rgba-2446394018: rgba(244, 63, 94, 0.18);
+  --auto-rgba-24515811016: rgba(245, 158, 11, 0.16);
+  --auto-rgba-245158111: rgba(245, 158, 11, 1);
+  --auto-rgba-2482502520: rgba(248, 250, 252, 0);
+  --auto-rgba-248250252035: rgba(248, 250, 252, 0.35);
+  --auto-rgba-25020421022: rgba(250, 204, 21, 0.22);
+  --auto-rgba-25020421028: rgba(250, 204, 21, 0.28);
+  --auto-rgba-25020421038: rgba(250, 204, 21, 0.38);
+  --auto-rgba-25020421095: rgba(250, 204, 21, 0.95);
+  --auto-rgba-25420220207: rgba(254, 202, 202, 0.7);
+  --auto-rgba-254226226035: rgba(254, 226, 226, 0.35);
+  --auto-rgba-254243199022: rgba(254, 243, 199, 0.22);
+  --auto-rgba-2552552550: rgba(255, 255, 255, 0);
+  --auto-rgba-255255255018: rgba(255, 255, 255, 0.18);
+  --auto-rgba-25525525502: rgba(255, 255, 255, 0.2);
+  --auto-rgba-25525525507: rgba(255, 255, 255, 0.7);
+  --auto-rgba-25525525508: rgba(255, 255, 255, 0.8);
+  --auto-rgba-255255255088: rgba(255, 255, 255, 0.88);
+  --auto-rgba-255255255092: rgba(255, 255, 255, 0.92);
+  --auto-rgba-255255255094: rgba(255, 255, 255, 0.94);
+  --auto-rgba-297821607: rgba(29, 78, 216, 0.7);
+  --auto-rgba-3110792012: rgba(31, 107, 92, 0.12);
+  --auto-rgba-3110792014: rgba(31, 107, 92, 0.14);
+  --auto-rgba-37992350: rgba(37, 99, 235, 0);
+  --auto-rgba-3799235008: rgba(37, 99, 235, 0.08);
+  --auto-rgba-3799235014: rgba(37, 99, 235, 0.14);
+  --auto-rgba-3799235025: rgba(37, 99, 235, 0.25);
+  --auto-rgba-3799235045: rgba(37, 99, 235, 0.45);
+  --auto-rgba-3799235055: rgba(37, 99, 235, 0.55);
+  --auto-rgba-3799235065: rgba(37, 99, 235, 0.65);
+  --auto-rgba-3799235075: rgba(37, 99, 235, 0.75);
+  --auto-rgba-44126248004: rgba(44, 126, 248, 0.04);
+  --auto-rgba-4412624801: rgba(44, 126, 248, 0.1);
+  --auto-rgba-44126248035: rgba(44, 126, 248, 0.35);
+  --auto-rgba-59130246006: rgba(59, 130, 246, 0.06);
+  --auto-rgba-59130246028: rgba(59, 130, 246, 0.28);
+
+  --teal-700: #0d9488;
+  --teal-25: #f0fdfa;
+  --green-50: #f0fdf4;
+  --green-600: #059669;
+  --green-200: #a7f3d0;
+  --rose-200: #fecaca;
+  --rose-150: #fee2e2;
+  --rose-300: #fca5a5;
+  --rose-800: #9f1239;
+  --amber-800: #92400e;
+  --amber-150: #fef3c7;
+  --orange-100: #ffedd5;
+  --orange-600: #ea580c;
+  --orange-800: #9a3412;
+  --amber-550: #d97706;
+  --violet-700: #6d28d9;
+  --pink-700: #be185d;
+  --ink-950: #111827;
+  --ink-650: #4b5563;
+  --ink-750: #374151;
+  --ink-150: #eef2f7;
+  --ink-125: #eef2f6;
+  --ink-25: #f8fbff;
+  --ink-35: #f8f9fa;
+  --ink-5: #fafafa;
+  --ink-450: #8a94a6;
+  --danger-soft: #f56c6c;
+  --gray-999: #999999;
+
+  --ink-a04: rgba(15, 23, 42, 0.04);
+  --ink-a06: rgba(15, 23, 42, 0.06);
+  --ink-a08: rgba(15, 23, 42, 0.08);
+  --ink-a12: rgba(15, 23, 42, 0.12);
+  --ink-a14: rgba(15, 23, 42, 0.14);
+  --ink-a18: rgba(15, 23, 42, 0.18);
+  --ink-a20: rgba(15, 23, 42, 0.2);
+  --ink-a28: rgba(15, 23, 42, 0.28);
+  --brand-a06: rgba(37, 99, 235, 0.06);
+  --brand-a08: rgba(44, 126, 248, 0.08);
+  --brand-a12: rgba(37, 99, 235, 0.12);
+  --brand-a18: rgba(37, 99, 235, 0.18);
+  --blue-a12: rgba(59, 130, 246, 0.12);
+  --blue-a18: rgba(59, 130, 246, 0.18);
+  --rose-a16: rgba(239, 68, 68, 0.16);
+  --white-a96: rgba(255, 255, 255, 0.96);
+  --white-a72: rgba(255, 255, 255, 0.72);
+  --black-a04: rgba(0, 0, 0, 0.04);
+  --black-a10: rgba(0, 0, 0, 0.1);
+  --blue-50: #eff6ff;
+  --blue-100: #dbeafe;
+  --blue-200: #bfdbfe;
+  --blue-300: #93c5fd;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+  --gray-50: #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-300: #d1d5db;
+  --gray-400: #9ca3af;
+  --gray-500: #6b7280;
+  --gray-800: #1f2937;
+  --orange-50: #fff7ed;
 
   --ink-900: #0f172a;
   --ink-800: #1e293b;
@@ -68,12 +364,12 @@
   --admin-border: var(--ink-200);
 
   --admin-warning: var(--amber-500);
-  --admin-success: #10b981;
+  --admin-success: var(--success-500);
   --admin-danger: var(--rose-500);
   --admin-radius: 12px;
   --admin-radius-sm: 8px;
-  --admin-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --admin-shadow-md: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
+  --admin-shadow: 0 1px 2px var(--ink-a04);
+  --admin-shadow-md: 0 1px 3px var(--ink-a06), 0 8px 24px -8px var(--ink-a08);
   --admin-transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* 宽屏 Layout（大屏分级延展，勿一刀切去掉 max-width） */
@@ -105,9 +401,21 @@
   --el-text-color-primary: var(--ink-800);
   --el-text-color-regular: var(--ink-700);
   --el-text-color-secondary: var(--ink-500);
-  --el-fill-color-blank: #fff;
-  --el-bg-color: #fff;
+  --el-fill-color-blank: var(--white);
+  --el-fill-color-light: var(--ink-50);
+  --el-fill-color-lighter: var(--ink-100);
+  --el-bg-color: var(--white);
   --el-bg-color-page: var(--admin-bg);
+  --el-border-color-lighter: var(--ink-100);
+  --el-border-color-extra-light: var(--ink-50);
+  --el-color-danger: var(--rose-500);
+  --el-color-danger-light-3: #f89898;
+  --el-color-danger-light-9: #fef0f0;
+  --el-color-warning: var(--amber-500);
+  --el-color-success: var(--success-500);
+  --el-color-info: var(--ink-500);
+  --el-disabled-border-color: var(--ink-200);
+  --el-text-color-placeholder: var(--ink-400);
 }
 
 @media (min-width: 1536px) {
@@ -133,7 +441,7 @@
 /* 全局细滚动条：轨道透明、滑块浅灰蓝圆角 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: var(--ink-300) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -146,13 +454,13 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--ink-300);
   border-radius: 8px;
   border: none;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--ink-400);
 }
 
 *::-webkit-scrollbar-button {
@@ -295,7 +603,7 @@ a:hover {
 
 .el-input__wrapper:focus-within,
 .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px var(--brand-500), 0 0 0 3px rgba(44, 126, 248, 0.12) !important;
+  box-shadow: 0 0 0 1px var(--brand-500), 0 0 0 3px var(--admin-primary-muted) !important;
 }
 
 .el-dialog {
@@ -649,7 +957,7 @@ a:hover {
 
 .summary-card.is-active {
   border-color: var(--brand-500);
-  background: linear-gradient(180deg, #f8fbff, #fff);
+  background: linear-gradient(180deg, var(--ink-25), var(--white));
 }
 
 .summary-card.is-active::after {
@@ -663,7 +971,7 @@ a:hover {
 }
 
 .summary-value {
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: -0.04em;
@@ -677,14 +985,14 @@ a:hover {
 
 .summary-label {
   margin-top: 4px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 560;
   color: var(--ink-500);
 }
 
 .summary-hint {
   margin-top: 6px;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--ink-400);
 }
 

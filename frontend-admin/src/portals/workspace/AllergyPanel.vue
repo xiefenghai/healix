@@ -552,7 +552,7 @@ onMounted(() => void load())
   padding: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .ag-body {
@@ -580,7 +580,7 @@ onMounted(() => void load())
 .ag-table {
   width: 100%;
   margin-bottom: 8px;
-  --el-table-header-bg-color: #f8fafc;
+  --el-table-header-bg-color: var(--ink-50);
 }
 
 .ag-add-dash {
@@ -590,10 +590,10 @@ onMounted(() => void load())
   width: 100%;
   min-height: 40px;
   padding: 8px 12px;
-  border: 1px dashed #cbd5e1;
+  border: 1px dashed var(--ink-300);
   border-radius: 8px;
-  background: #f8fafc;
-  color: #2563eb;
+  background: var(--ink-50);
+  color: var(--blue-600);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -601,16 +601,16 @@ onMounted(() => void load())
 }
 
 .ag-add-dash:hover {
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: var(--blue-300);
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 
 .ag-reaction-missing {
   border: 0;
   padding: 0;
   background: transparent;
-  color: #b45309;
+  color: var(--amber-600);
   font-size: 12px;
   font-weight: 600;
   text-decoration: underline;
@@ -622,11 +622,11 @@ onMounted(() => void load())
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--admin-muted, #64748b);
+  color: var(--admin-muted, var(--ink-500));
 }
 
 .ag-table :deep(.ag-row-risk) {
-  --el-table-tr-bg-color: #fef2f2;
+  --el-table-tr-bg-color: var(--rose-100);
 }
 
 .ag-table :deep(.ag-row-inactive) {
@@ -652,7 +652,7 @@ onMounted(() => void load())
 }
 
 .ag-status-warn {
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .ag-status-muted {
@@ -685,11 +685,11 @@ onMounted(() => void load())
 }
 
 .ag-risk-option :deep(.el-checkbox__label) {
-  color: #dc2626;
+  color: var(--rose-600);
 }
 
 .ag-risk-alert {
-  margin: -6px 0 14px 88px;
+  margin: -6px 0 14px 80px;
   width: auto;
 }
 

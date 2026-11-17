@@ -395,8 +395,8 @@ watch(
   appearance: none;
   width: 100%;
   min-height: 76px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
+  border: 1px solid var(--gray-200);
+  background: var(--white);
   border-radius: 8px;
   padding: 16px 24px;
   text-align: left;
@@ -405,7 +405,7 @@ watch(
   transition: border-color 0.15s, background 0.15s;
 }
 .sum-card:hover {
-  border-color: #cbd5e1;
+  border-color: var(--ink-300);
 }
 .sum-card.active {
   border-color: var(--el-color-primary);
@@ -416,30 +416,30 @@ watch(
   font-size: 24px;
   font-weight: 700;
   line-height: 1.1;
-  color: #111827;
+  color: var(--ink-950);
 }
 .sum-label {
   margin-top: 4px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .pending {
   width: 100%;
   margin-bottom: 14px;
   padding: 12px 24px !important;
-  background: rgba(254, 243, 199, 0.22) !important;
-  border: 1px solid #e5e7eb !important;
+  background: var(--auto-rgba-254243199022) !important;
+  border: 1px solid var(--gray-200) !important;
   border-radius: 8px;
   box-shadow: none;
 }
 .pending :deep(.el-alert__title) {
-  color: #b45309;
+  color: var(--amber-600);
   font-weight: 600;
 }
 .pending-period {
   font-weight: 400;
-  color: #92400e;
+  color: var(--amber-800);
 }
 .pending-actions {
   display: flex;
@@ -447,7 +447,7 @@ watch(
   flex-wrap: wrap;
   margin-top: 4px;
   font-size: 13px;
-  color: #78716c;
+  color: var(--auto-78716c);
 }
 .pending-go {
   margin-left: 24px;
@@ -461,9 +461,9 @@ watch(
   margin-top: 8px;
   padding: 48px 24px;
   text-align: center;
-  border: 1px dashed #e5e7eb;
+  border: 1px dashed var(--gray-200);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
   box-shadow: none;
 }
 .empty-title {
@@ -490,20 +490,20 @@ watch(
   justify-content: space-between;
   gap: 20px;
   padding: 16px 24px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
   box-shadow: none;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 .card:hover {
-  border-color: #cbd5e1;
+  border-color: var(--ink-300);
 }
 .card--draft {
-  border-color: #e5e7eb;
-  background: #fff;
-  box-shadow: inset 3px 0 0 #f59e0b;
+  border-color: var(--gray-200);
+  background: var(--white);
+  border-left: 4px solid var(--amber-500);
 }
 .card-main {
   min-width: 0;
@@ -524,7 +524,7 @@ watch(
   font-size: 15px;
   font-weight: 600;
   line-height: 1.4;
-  color: #1f2937;
+  color: var(--gray-800);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -540,24 +540,24 @@ watch(
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--gray-100);
+  color: var(--ink-650);
 }
 .rp-tag[data-tone='draft'] {
-  background: #fff7ed;
-  color: #c2410c;
+  background: var(--orange-50);
+  color: var(--amber-700);
 }
 .rp-tag[data-tone='published'] {
-  background: #ecfdf5;
-  color: #059669;
+  background: var(--success-50);
+  color: var(--green-600);
 }
 .rp-tag[data-tone='skipped'] {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--gray-100);
+  color: var(--gray-500);
 }
 .rp-tag[data-tone='period'] {
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--gray-100);
+  color: var(--ink-650);
 }
 .card-meta {
   margin-top: 8px;
@@ -565,7 +565,7 @@ watch(
   flex-wrap: wrap;
   gap: 8px 14px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 .card-actions {
   display: flex;
@@ -588,13 +588,13 @@ watch(
   border: 0;
   background: transparent;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--gray-400);
   cursor: pointer;
   line-height: 1;
   transition: color 0.15s;
 }
 .void-link:hover {
-  color: #ef4444;
+  color: var(--rose-500);
 }
 
 @media (max-width: 900px) {

@@ -617,7 +617,7 @@ function gridCellText(c?: AdherenceCell) {
   switch (c.status) {
     case 'TAKEN': {
       const time = c.takenAt ? c.takenAt.slice(11, 16) : ''
-      const mark = time ? `✓ ${time}` : '✓'
+      const mark = time ? ` ${time}` : ''
       return mark + (c.backfill ? '补' : '')
     }
     case 'MISSED':
@@ -1193,7 +1193,7 @@ watch(peopleId, async (id, prev) => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1204,13 +1204,13 @@ watch(peopleId, async (id, prev) => {
 }
 
 .list-tab:hover {
-  color: var(--ink-800, #1e293b);
-  background: #f8fafc;
+  color: var(--ink-800);
+  background: var(--ink-50);
 }
 
 .list-tab.active {
-  color: #1d4ed8;
-  background: #eff6ff;
+  color: var(--brand-800);
+  background: var(--blue-50);
   box-shadow: none;
 }
 
@@ -1226,9 +1226,9 @@ watch(peopleId, async (id, prev) => {
   height: 32px;
   padding: 0 14px;
   border-radius: 8px;
-  border: 1px solid #93c5fd;
-  background: #eff6ff;
-  color: var(--brand-600, #1e63d9);
+  border: 1px solid var(--blue-300);
+  background: var(--blue-50);
+  color: var(--brand-600);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -1239,16 +1239,16 @@ watch(peopleId, async (id, prev) => {
 }
 
 .add-med-btn:hover {
-  background: #dbeafe;
-  border-color: #60a5fa;
-  color: #1d4ed8;
+  background: var(--blue-100);
+  border-color: var(--brand-400);
+  color: var(--brand-800);
 }
 
 .med-panel {
-  background: #fff;
+  background: var(--white);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: none;
+  border: 1px solid var(--auto-rgba-22623224008);
   overflow: hidden;
   padding: 4px 4px 8px;
 }
@@ -1280,8 +1280,8 @@ watch(peopleId, async (id, prev) => {
   padding: 0 10px;
   border: none;
   border-radius: 6px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--blue-50);
+  color: var(--brand-800);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1289,7 +1289,7 @@ watch(peopleId, async (id, prev) => {
 }
 
 .verify-btn:hover {
-  background: #dbeafe;
+  background: var(--blue-100);
 }
 
 .action-edit,
@@ -1302,7 +1302,7 @@ watch(peopleId, async (id, prev) => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--brand-600, #1e63d9);
+  color: var(--brand-600);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -1317,7 +1317,7 @@ watch(peopleId, async (id, prev) => {
 
 .action-edit:hover,
 .action-link:hover {
-  color: #1d4ed8;
+  color: var(--brand-800);
   opacity: 0.85;
 }
 
@@ -1332,7 +1332,7 @@ watch(peopleId, async (id, prev) => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #94a3b8;
+  color: var(--ink-400);
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 1px;
@@ -1342,12 +1342,12 @@ watch(peopleId, async (id, prev) => {
 }
 
 .more-btn:hover {
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--ink-100);
+  color: var(--ink-500);
 }
 
 :deep(.danger-item) {
-  color: #dc2626 !important;
+  color: var(--rose-600) !important;
 }
 
 .dose-row {
@@ -1416,7 +1416,7 @@ watch(peopleId, async (id, prev) => {
   width: 100%;
   padding: 10px 12px;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--ink-50);
   border: 1px dashed var(--admin-border);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
@@ -1428,7 +1428,7 @@ watch(peopleId, async (id, prev) => {
 .med-table {
   width: 100%;
   --el-table-border-color: transparent;
-  --el-table-row-hover-bg-color: #f9fafb;
+  --el-table-row-hover-bg-color: var(--gray-50);
 }
 
 .med-table :deep(.el-table__inner-wrapper::before),
@@ -1441,20 +1441,20 @@ watch(peopleId, async (id, prev) => {
 .med-table :deep(.el-table__cell) {
   padding: 14px 12px;
   border-right: none !important;
-  border-bottom: 1px solid #f0f0f0 !important;
+  border-bottom: 0 solid var(--auto-f0f0f0) !important;
   vertical-align: middle;
 }
 
 .med-table :deep(.el-table__header .el-table__cell) {
-  background: #fff;
-  border-bottom: 1px solid #eef2f7 !important;
+  background: var(--white);
+  border-bottom: 0 solid var(--ink-150) !important;
 }
 
 .med-table :deep(.el-table__header .cell) {
   white-space: nowrap;
   font-weight: 600;
   font-size: 13px;
-  color: var(--admin-text-secondary, #64748b);
+  color: var(--admin-text-secondary, var(--ink-500));
   text-align: left;
 }
 
@@ -1462,16 +1462,16 @@ watch(peopleId, async (id, prev) => {
   line-height: 1.45;
   text-align: left;
   font-size: 13px;
-  color: #334155;
+  color: var(--ink-700);
 }
 
 .med-table :deep(.el-table__fixed-right .el-table__cell),
 .med-table :deep(.el-table__fixed-right-patch) {
-  background: #fff;
+  background: var(--white);
 }
 
 .med-table :deep(.el-table__body tr:hover > td.el-table__cell) {
-  background: #f9fafb !important;
+  background: var(--gray-50) !important;
 }
 
 .drug-cell {
@@ -1487,8 +1487,8 @@ watch(peopleId, async (id, prev) => {
   height: 8px;
   margin-top: 6px;
   border-radius: 50%;
-  background: #f59e0b;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+  background: var(--amber-500);
+  box-shadow: 0 0 0 3px var(--auto-rgba-24515811016);
 }
 
 .drug-cell-text {
@@ -1515,17 +1515,17 @@ watch(peopleId, async (id, prev) => {
 }
 
 .cell-empty {
-  color: #cbd5e1;
+  color: var(--ink-300);
   font-weight: 400;
 }
 
 .cell-timing {
-  color: #334155;
+  color: var(--ink-700);
   font-weight: 500;
 }
 
 .cell-adverse-yes {
-  color: #dc2626;
+  color: var(--rose-600);
   font-weight: 600;
 }
 
@@ -1543,23 +1543,23 @@ watch(peopleId, async (id, prev) => {
 }
 
 .soft-tag--ok {
-  background: #ecfdf5;
-  color: #059669;
+  background: var(--success-50);
+  color: var(--green-600);
 }
 
 .soft-tag--warn {
-  background: #fef9c3;
-  color: #a16207;
+  background: var(--auto-fef9c3);
+  color: var(--auto-a16207);
 }
 
 .soft-tag--info {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 
 .soft-tag--muted {
-  background: #f1f5f9;
-  color: #475569;
+  background: var(--ink-100);
+  color: var(--ink-600);
 }
 
 .flag-line {
@@ -1568,7 +1568,7 @@ watch(peopleId, async (id, prev) => {
   color: var(--admin-muted);
 }
 .flag-line.danger {
-  color: #dc2626;
+  color: var(--rose-600);
   font-weight: 600;
 }
 .slot-hint {
@@ -1582,8 +1582,8 @@ watch(peopleId, async (id, prev) => {
   gap: 0 16px;
   padding: 6px 12px;
   border-radius: 8px;
-  background: #f8fafc;
-  border: 1px solid #eef2f7;
+  background: var(--ink-50);
+  border: 1px solid var(--ink-150);
 }
 
 .stat-item {
@@ -1598,14 +1598,14 @@ watch(peopleId, async (id, prev) => {
 .stat-label {
   font-size: 12px;
   font-weight: 500;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.2;
 }
 
 .stat-value {
   font-size: 15px;
   font-weight: 700;
-  color: #374151;
+  color: var(--ink-750);
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
@@ -1614,7 +1614,7 @@ watch(peopleId, async (id, prev) => {
   width: auto;
   height: auto;
   background: transparent;
-  color: #d1d5db;
+  color: var(--gray-300);
   font-size: 12px;
   line-height: 1;
   flex-shrink: 0;
@@ -1637,50 +1637,50 @@ watch(peopleId, async (id, prev) => {
 
 .adh-grid th,
 .adh-grid td {
-  border-right: 1px solid #f1f5f9;
-  border-bottom: 1px solid #f1f5f9;
+  border-right: 0 solid var(--ink-100);
+  border-bottom: 0 solid var(--ink-100);
   padding: 8px 6px;
   text-align: center;
   white-space: nowrap;
   min-width: 52px;
-  background: #fff;
+  background: var(--white);
 }
 
 .adh-grid th {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #f9fafb;
+  background: var(--gray-50);
   font-weight: 600;
-  color: #64748b;
-  border-bottom: 1px solid #e5e7eb;
+  color: var(--ink-500);
+  border-bottom: 0 solid var(--gray-200);
 }
 
 .adh-grid .sticky {
   position: sticky;
   left: 0;
   z-index: 1;
-  background: #fff;
+  background: var(--white);
   text-align: left;
   min-width: 180px;
   width: 180px;
   max-width: 220px;
   padding-left: 12px;
   padding-right: 12px;
-  border-right: 1px solid #e5e7eb;
-  box-shadow: 4px 0 8px -6px rgba(15, 23, 42, 0.12);
+  border-right: 0 solid var(--gray-200);
+  box-shadow: 4px 0 8px -6px var(--ink-a12);
 }
 
 .adh-grid th.sticky {
   z-index: 3;
-  background: #f9fafb;
+  background: var(--gray-50);
 }
 
 .g-drug {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
   white-space: normal;
 }
@@ -1688,7 +1688,7 @@ watch(peopleId, async (id, prev) => {
 .g-name {
   font-weight: 600;
   font-size: 13px;
-  color: #1f2937;
+  color: var(--gray-800);
   line-height: 1.35;
   word-break: break-word;
 }
@@ -1696,38 +1696,38 @@ watch(peopleId, async (id, prev) => {
 .g-slot {
   font-size: 12px;
   font-weight: 500;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.2;
 }
 
 .g-taken {
-  background: #ecfdf5 !important;
-  color: #059669;
+  background: var(--success-50) !important;
+  color: var(--green-600);
   font-weight: 700;
 }
 
 .g-missed {
-  background: #fff7ed !important;
-  color: #c2410c;
+  background: var(--orange-50) !important;
+  color: var(--amber-700);
   font-weight: 700;
 }
 
 .g-skipped {
-  background: #f8fafc !important;
-  color: #94a3b8;
+  background: var(--ink-50) !important;
+  color: var(--ink-400);
 }
 
 .g-unrecorded {
-  background: #f9fafb !important;
-  color: #d1d5db;
+  background: var(--gray-50) !important;
+  color: var(--gray-300);
   font-size: 11px;
   font-weight: 500;
 }
 
 .g-na,
 .g-pending {
-  background: #fff !important;
-  color: #d1d5db;
+  background: var(--white) !important;
+  color: var(--gray-300);
   font-size: 12px;
   font-weight: 500;
 }
@@ -1739,18 +1739,18 @@ watch(peopleId, async (id, prev) => {
   gap: 10px 18px;
   margin: 12px 8px 4px;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--gray-500);
 }
 
 .leg {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #6b7280;
+  color: var(--gray-500);
 }
 
 .leg.muted {
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .swatch {
@@ -1763,23 +1763,23 @@ watch(peopleId, async (id, prev) => {
 }
 
 .swatch.taken {
-  background: #10b981;
+  background: var(--success-500);
 }
 
 .swatch.unrecorded {
-  background: #d1d5db;
+  background: var(--gray-300);
 }
 
 .swatch.missed {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 
 .swatch.skipped {
-  background: #94a3b8;
+  background: var(--ink-400);
 }
 
 .swatch.empty {
-  background: #e5e7eb;
+  background: var(--gray-200);
 }
 
 .intake-list {
@@ -1793,7 +1793,7 @@ watch(peopleId, async (id, prev) => {
   justify-content: space-between;
   align-items: center;
   padding: 10px 0;
-  border-bottom: 1px solid var(--admin-border);
+  border-bottom: 0 solid var(--admin-border);
   font-size: 13px;
 }
 </style>

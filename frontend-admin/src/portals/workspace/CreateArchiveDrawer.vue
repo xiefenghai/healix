@@ -1352,7 +1352,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   font-size: 13px;
   line-height: 1.5;
   font-weight: 400;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 .form-hint {
   margin: 0 0 16px;
@@ -1364,14 +1364,14 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   margin: 0;
   font-size: 13px;
   line-height: 1.45;
-  color: #999999;
+  color: var(--gray-999);
   font-weight: 400;
 }
 .form-hint-team {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #999999;
+  color: var(--gray-999);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1383,9 +1383,9 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   height: 20px;
   padding: 0 8px;
   border-radius: 4px;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  color: #4b5563;
+  background: var(--gray-100);
+  border: 1px solid var(--gray-200);
+  color: var(--ink-650);
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
@@ -1395,24 +1395,24 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 }
 .hint.assign-ok {
   margin: 0;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
   font-weight: 500;
 }
 .hint.assign-ok strong {
   font-weight: 700;
-  color: var(--ink-900, #111827);
+  color: var(--ink-900, var(--ink-950));
 }
 .hint.assign-sub {
   margin: 6px 0 0;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 400;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
 }
 .assign-empty {
   margin-top: 4px;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
 }
 .opt {
   display: flex;
@@ -1424,11 +1424,11 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 .opt-name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 .opt-meta {
   font-size: 12px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 .dialog-body {
   min-height: 0;
@@ -1469,7 +1469,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.2;
-  color: var(--el-color-primary, #409eff);
+  color: var(--el-color-primary, var(--brand-500));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1477,7 +1477,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   text-decoration: underline;
 }
 .birthday-mode-mini:disabled {
-  color: #c0c4cc;
+  color: var(--auto-c0c4cc);
   cursor: not-allowed;
   text-decoration: none;
 }
@@ -1498,7 +1498,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 .age-suffix {
-  color: #999999;
+  color: var(--gray-999);
   font-size: 13px;
   line-height: 1;
   padding-right: 2px;
@@ -1518,7 +1518,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   margin: 0;
   font-size: 12px;
   line-height: 1.35;
-  color: #999;
+  color: var(--gray-999);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1535,13 +1535,13 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 }
 .birthday-est-hint {
   font-size: 12px;
-  color: #999;
+  color: var(--gray-999);
   line-height: 1.4;
 }
 .birthday-est-tag {
-  --el-tag-bg-color: #fffbeb;
-  --el-tag-border-color: #fde68a;
-  --el-tag-text-color: #b45309;
+  --el-tag-bg-color: var(--amber-100);
+  --el-tag-border-color: var(--amber-200);
+  --el-tag-text-color: var(--amber-600);
   height: 20px;
   padding: 0 6px;
   font-size: 11px;
@@ -1551,7 +1551,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 .id-toggle {
   margin-top: 4px;
@@ -1582,7 +1582,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 .dup-tip {
   margin: 0 0 12px;
   font-size: 13px;
-  color: var(--ink-600, #4b5563);
+  color: var(--ink-600, var(--ink-650));
   line-height: 1.5;
 }
 .dup-item {
@@ -1591,7 +1591,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 0;
-  border-bottom: 1px solid var(--line-100, #eef0f4);
+  border-bottom: 0 solid var(--line-100);
 }
 .dup-item:last-child {
   border-bottom: none;
@@ -1604,11 +1604,11 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 }
 .dup-meta {
   font-size: 12px;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
 }
 .dup-in-org {
   font-size: 12px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
   white-space: nowrap;
 }
 </style>
@@ -1646,7 +1646,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   border-radius: 12px;
   overflow: hidden;
   position: relative;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 30px var(--black-a10);
 }
 .create-archive-dialog .el-dialog__header {
   flex-shrink: 0;
@@ -1656,7 +1656,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 .create-archive-dialog .el-dialog__title {
   font-size: 16px;
   font-weight: 600;
-  color: var(--ink-900, #111827);
+  color: var(--ink-900, var(--ink-950));
   line-height: 1.4;
 }
 .create-archive-dialog .el-dialog__headerbtn {
@@ -1678,8 +1678,8 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  border-top: 1px solid var(--ink-100, #e5e7eb);
-  background: #fff;
+  border-top: 0 solid var(--ink-100, var(--gray-200));
+  background: var(--white);
   padding: 16px 32px 32px !important;
 }
 .create-archive-dialog .form .el-form-item {
@@ -1713,7 +1713,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
   padding: 0 !important;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
   line-height: 1.4;
   height: auto !important;
   display: inline-flex !important;
@@ -1767,17 +1767,17 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 .create-archive-dialog .form .el-date-editor .el-input__inner {
   font-size: 14px;
   font-weight: 400;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 .create-archive-dialog .form .el-input__wrapper,
 .create-archive-dialog .form .el-select__wrapper {
   min-height: 36px;
-  background-color: #fff !important;
-  box-shadow: 0 0 0 1px var(--ink-200, #e2e8f0) inset !important;
+  background-color: var(--white) !important;
+  box-shadow: 0 0 0 1px var(--ink-200) inset !important;
 }
 .create-archive-dialog .form .el-input__wrapper.is-focus,
 .create-archive-dialog .form .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px var(--brand-500, #2c7ef8) inset !important;
+  box-shadow: 0 0 0 1px var(--ink-a20) inset !important;
 }
 /* 出生日期：仅日期模式下日历图标靠右；年龄模式使用正常 suffix */
 .create-archive-dialog .field-birthday .el-date-editor.el-input {
@@ -1802,7 +1802,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 }
 .create-archive-dialog .field-birthday .el-date-editor .el-input__suffix {
   position: absolute;
-  right: 34px;
+  right: 32px;
   top: 50%;
   transform: translateY(-50%);
   margin-right: 8px;

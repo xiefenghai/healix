@@ -3,6 +3,7 @@
  * 首诊问卷工作台：模块导航 + 表单 + BMI/高亮追问。
  * 可独立路由页，也可 embedded 嵌入驾驶舱抽屉。
  */
+import { palette } from '../../shared/palette'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -617,7 +618,7 @@ function checkpointText() {
   } else if (mod?.code === 'ALLERGY_DIET_RESTRICTION') {
     next = '接下来填【过敏与忌口】。勾选海鲜后，方案会自动排除海鲜类食谱。'
   }
-  return `✅ 已为您打开首诊问卷。首诊评估问卷完整度 ${pct}%。\n${next}`
+  return ` 已为您打开首诊问卷。首诊评估问卷完整度 ${pct}%。\n${next}`
 }
 
 function publishCheckpoint() {
@@ -974,6 +975,11 @@ const riskFieldSet = computed(() => new Set(riskUnasked.value.map((it) => it.fie
 
 function isRiskGap(field: string) {
   return riskFieldSet.value.has(field)
+}
+
+/** 模块内未问的「影响方案」题数，侧栏安静角标用 */
+function moduleRiskCount(mod: IntakeModuleView) {
+  return mod.items.reduce((n, it) => n + (isRiskGap(it.field) ? 1 : 0), 0)
 }
 
 function moduleTitleOf(field: string) {
@@ -1726,8 +1732,8 @@ const aiSummaryActionLabel = computed(() => {
     const c = localCompleteness.value
     return `请先完成必收项（${c.requiredDone || 0}/${c.requiredTotal || 0}）`
   }
-  if (hasAiSummary.value) return '🔄 重新生成总结'
-  return '✨ 点击生成 AI 总结'
+  if (hasAiSummary.value) return ' 重新生成总结'
+  return ' 点击生成 AI 总结'
 })
 
 const aiSummaryGenReady = computed(
@@ -1983,14 +1989,14 @@ function conflictLine(row: ExtractReviewRow) {
   const name = row.label.length <= 8 ? row.label : '说法'
   if (row.keptText && other) {
     if (plainExtractText(row.value) === row.keptText) {
-      return `⚠️ 原文提及两个${name}（${row.keptText}/${other}），当前保留 ${row.keptText}`
+      return ` 原文提及两个${name}（${row.keptText}/${other}），当前保留 ${row.keptText}`
     }
-    return `⚠️ 原文还提到另一个${name}：${other}`
+    return ` 原文还提到另一个${name}：${other}`
   }
   const quote = hits.map((item) => item.quote).find(Boolean)
-  if (quote) return `⚠️ 原文还有另一种说法：${quote}`
+  if (quote) return ` 原文还有另一种说法：${quote}`
   const reason = hits.map((item) => item.reason).find(Boolean)
-  return reason ? `⚠️ ${reason}` : ''
+  return reason ? ` ${reason}` : ''
 }
 
 function restoreExtractRow(row: ExtractReviewRow) {
@@ -2182,7 +2188,7 @@ async function copyPatientFillLink() {
   const choice = { prefillMode: 'KEEP' as 'KEEP' | 'CLEAR' }
   try {
     await ElMessageBox.confirm(
-      `<div style="line-height:1.65;color:#334155">
+      `<div style="line-height:1.65;color:${palette.ink700}">
         <p style="margin:0 0 10px">重新发送前，请选择带给患者的内容：</p>
         <label style="display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;cursor:pointer">
           <input type="radio" name="hx-prefill-mode" value="KEEP" checked style="margin-top:4px" />
@@ -2377,7 +2383,7 @@ onBeforeUnmount(() => {
           <button type="button" :class="{ on: !quickMode }" @click="quickMode = false">完整</button>
         </div>
         <span class="save" :class="{ err: !!saveError, ok: !saving && !saveError && !!lastSavedAt }">
-          <i v-if="!saving && !saveError && lastSavedAt" class="save-check" aria-hidden="true">✓</i>
+          <i v-if="!saving && !saveError && lastSavedAt" class="save-check" aria-hidden="true"></i>
           {{ saveStatusText }}
         </span>
         <el-button
@@ -2413,7 +2419,18 @@ onBeforeUnmount(() => {
       </p>
     </div>
 
-    <div v-if="!loading && status === 'DRAFT' && isEmbedded && showPasteHint && !extractReview" class="paste-hint">
+    <div
+      v-if="
+        !loading &&
+        status === 'DRAFT' &&
+        isEmbedded &&
+        showPasteHint &&
+        !extractReview &&
+        !requiredMissingCount &&
+        !riskUnasked.length
+      "
+      class="paste-hint"
+    >
       <p>有面诊记录或聊天记录，贴到左侧输入框，再点「整理这段记录」。核对后才会写入。</p>
       <button type="button" class="paste-go" @click="emit('focusPaste')">去粘贴</button>
       <button type="button" class="paste-dismiss" @click="dismissPasteHint">知道了</button>
@@ -2424,12 +2441,23 @@ onBeforeUnmount(() => {
     >
       <p class="gap-line-text">
         还有 <strong>{{ requiredMissingCount }}</strong> 道必填题未填，提交前需要补齐。
+        <button
+          v-if="riskUnasked.length"
+          type="button"
+          class="gap-inline"
+          @click="goFirstRisk()"
+        >
+          另有 {{ riskUnasked.length }} 题影响方案 ›
+        </button>
       </p>
       <button type="button" class="gap-go" @click="goFirstRequiredMissing()">去补全</button>
     </div>
-    <div v-if="!loading && status === 'DRAFT' && riskUnasked.length" class="gap-line risk">
+    <div
+      v-else-if="!loading && status === 'DRAFT' && riskUnasked.length"
+      class="gap-line risk"
+    >
       <p class="gap-line-text">
-        还有 {{ riskUnasked.length }} 题会影响到方案，还没填。如果暂时不清楚也可以先跳过。
+        还有 {{ riskUnasked.length }} 题会影响方案，不清楚可先跳过。
       </p>
       <button type="button" class="gap-go" @click="goFirstRisk()">去补录</button>
     </div>
@@ -2470,19 +2498,19 @@ onBeforeUnmount(() => {
         <div class="nav-head">
           <span>模块</span>
           <span class="nav-legend">
-            <i class="nav-mark miss" aria-hidden="true" />必填
-            <i class="nav-mark suggest" aria-hidden="true" />建议完善
+            <i class="nav-mark miss" aria-hidden="true" />必填未齐
           </span>
         </div>
         <button
-          v-if="status === 'DRAFT' && requiredMissingCount"
+          v-if="status === 'DRAFT' && riskUnasked.length"
           type="button"
-          class="nav-required-entry"
-          @click="goFirstRequiredMissing()"
+          class="nav-risk-entry"
+          title="连续点击可逐题跳转"
+          @click="goFirstRisk()"
         >
-          <span class="nav-required-label">必填未填</span>
-          <span class="nav-required-count">{{ requiredMissingCount }}</span>
-          <span class="nav-required-go">定位 ›</span>
+          <span class="nav-risk-label">影响方案</span>
+          <span class="nav-risk-count">{{ riskUnasked.length }}</span>
+          <span class="nav-risk-go">定位 ›</span>
         </button>
         <button
           v-for="m in visibleModules"
@@ -2500,13 +2528,17 @@ onBeforeUnmount(() => {
             <span v-if="modulePatientFillHint(m)" class="nav-prov">{{ modulePatientFillHint(m) }}</span>
           </span>
           <span class="nav-marks">
-            <span v-if="moduleTone(m) === 'green'" class="nav-mark ok" aria-label="已填完">✓</span>
+            <span v-if="moduleTone(m) === 'green'" class="nav-mark ok" aria-label="已填完"></span>
             <i
-              v-else-if="moduleTone(m) === 'red' || (m.code === coachModule()?.code && m.code !== activeModule)"
+              v-else-if="moduleTone(m) === 'red'"
               class="nav-mark miss"
-              :aria-label="moduleTone(m) === 'red' ? '必填未填' : '下一步要填'"
+              aria-label="必填未填"
             />
-            <i v-else-if="moduleTone(m) === 'orange'" class="nav-mark suggest" aria-label="建议未填" />
+            <span
+              v-else-if="moduleRiskCount(m)"
+              class="nav-risk-hint"
+              :aria-label="`影响方案未填 ${moduleRiskCount(m)} 题`"
+            >{{ moduleRiskCount(m) }}</span>
           </span>
         </button>
         <p v-if="!visibleModules.length" class="empty-nav">当前模式无可见模块</p>
@@ -2590,24 +2622,12 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <template v-else-if="currentModule">
-          <div class="form-head">
+            <div class="form-head">
             <div class="form-head-text">
               <p class="mod-kicker">
                 模块 {{ currentModuleIndex + 1 }} / {{ visibleModules.length }}
               </p>
               <h2 class="mod-title">{{ currentModule.title }}</h2>
-            </div>
-            <div class="form-nav">
-              <el-button size="small" :disabled="currentModuleIndex <= 0" @click="goPrevModule">
-                上一模块
-              </el-button>
-              <el-button
-                size="small"
-                :disabled="currentModuleIndex < 0 || currentModuleIndex >= visibleModules.length - 1"
-                @click="goNextModule"
-              >
-                下一模块
-              </el-button>
             </div>
           </div>
           <div
@@ -2620,7 +2640,7 @@ onBeforeUnmount(() => {
             </span>
             <p>{{ displayScript(currentModule.script) }}</p>
           </div>
-          <p v-if="modulePrivacyNotice" class="mod-privacy">🔒 本模块涉及患者隐私</p>
+          <p v-if="modulePrivacyNotice" class="mod-privacy"> 本模块涉及患者隐私</p>
 
           <div v-if="currentModule.code === 'INTAKE_AI_SUMMARY'" class="ai-summary-bar">
             <div class="ai-summary-actions">
@@ -2684,7 +2704,7 @@ onBeforeUnmount(() => {
                 <button type="button" class="ai-fill-link" @click="goFirstRequiredMissing()">去补全</button>
               </template>
               <template v-else>
-                点击「✨ 点击生成 AI 总结」后将按概况、要点、风险与下一步分节展示。
+                点击「 点击生成 AI 总结」后将按概况、要点、风险与下一步分节展示。
               </template>
             </p>
           </div>
@@ -2744,14 +2764,13 @@ onBeforeUnmount(() => {
                         </el-tooltip>
                       </template>
                     </template>
-                    <span v-if="isRiskGap(it.field)" class="tag tag-risk">影响方案</span>
                     <button
                       v-if="isRiskGap(it.field)"
                       type="button"
                       class="skip-q"
                       @click="skipRiskQuestion(it.field)"
                     >
-                      跳过此题
+                      跳过
                     </button>
                     <span v-else-if="it.level === 'FIRST_VISIT' && !itemRequired(it)" class="tag tag-soft">首诊建议</span>
                     <span v-else-if="it.level === 'LATER' && !itemRequired(it)" class="tag tag-later">可后补</span>
@@ -2763,15 +2782,6 @@ onBeforeUnmount(() => {
                   <button type="button" class="restore" @click="restorePrefill(it.field)">
                     恢复
                   </button>
-                </div>
-                <div
-                  v-else-if="isPrefillTone(it.field) && fieldProvenance(it.field)?.kind === 'ARCHIVE'"
-                  class="prefill-note"
-                >
-                  预填 · {{ formatPrefillSource(prefill[it.field]?.sourceBizCode) }}
-                  <template v-if="prefill[it.field]?.gmtModified">
-                    · {{ String(prefill[it.field]?.gmtModified).replace('T', ' ').slice(0, 16) }}
-                  </template>
                 </div>
                 <p v-if="it.field === FIELD_STAFF_AI_SUMMARY" class="ai-edit-hint">
                   按【要点】【风险与禁忌】【建议下一步】分节书写时，上方会自动拆成要点展示。
@@ -2810,7 +2820,6 @@ onBeforeUnmount(() => {
                 <p v-if="requiredHoldFields.includes(it.field) && !isFilled(it.field)" class="metric-warn">
                   这题是必填，填完才能进入下一模块
                 </p>
-                <p v-if="isRiskGap(it.field)" class="risk-gap-hint">不填也能继续。填了会按答案调整方案。</p>
                 <p v-if="adherenceNote(it.field)" class="adhere-hint">{{ adherenceNote(it.field) }}</p>
                 <p v-if="fieldHint(it.field)" class="metric-warn">{{ fieldHint(it.field) }}</p>
                 <p v-if="it.field === 'measure.method' && answers['measure.method'] === 'SELF_REPORT'" class="self-report-hint">
@@ -3001,7 +3010,7 @@ onBeforeUnmount(() => {
       destroy-on-close
     >
       <div class="sum">
-        <p v-if="!(localCompleteness.requiredMissing?.length)" class="sum-ok-line">✅ 必收项已填齐</p>
+        <p v-if="!(localCompleteness.requiredMissing?.length)" class="sum-ok-line"> 必收项已填齐</p>
         <section v-else class="sum-miss">
           <h4>必收缺项（{{ localCompleteness.requiredMissing.length }}）</h4>
           <div class="sum-risk-list">
@@ -3043,7 +3052,7 @@ onBeforeUnmount(() => {
 
         <section class="sum-ai">
           <div class="sum-ai-head">
-            <span class="sum-ai-tag">✨ AI 智能生成</span>
+            <span class="sum-ai-tag"> AI 智能生成</span>
             <button
               v-if="riskUnasked.length"
               type="button"
@@ -3177,8 +3186,8 @@ onBeforeUnmount(() => {
   gap: 16px;
   flex-wrap: wrap;
   padding: 10px 16px;
-  background: #fff;
-  border-bottom: 1px solid var(--ink-200);
+  background: var(--white);
+  border-bottom: 0 solid var(--ink-200);
   flex-shrink: 0;
 }
 
@@ -3191,7 +3200,7 @@ onBeforeUnmount(() => {
 
 .back {
   border: 1px solid var(--ink-200);
-  background: #fff;
+  background: var(--white);
   color: var(--ink-600);
   cursor: pointer;
   font-size: 13px;
@@ -3250,7 +3259,7 @@ onBeforeUnmount(() => {
   max-width: 160px;
   height: 6px;
   border-radius: 999px;
-  background: #e2e8f0;
+  background: var(--ink-200);
   overflow: hidden;
 }
 
@@ -3258,18 +3267,18 @@ onBeforeUnmount(() => {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #ef4444;
+  background: var(--rose-500);
 }
 
 .archive-meter.done .archive-meter-track i {
-  background: #10b981;
+  background: var(--success-500);
 }
 
 .mode-mini {
   display: inline-flex;
   padding: 2px;
   border-radius: 999px;
-  background: var(--ink-100, #f1f5f9);
+  background: var(--ink-100);
   border: 1px solid var(--ink-200);
 }
 
@@ -3281,15 +3290,15 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
-  padding: 5px 8px;
+  padding: 6px 8px;
   border-radius: 999px;
   cursor: pointer;
 }
 
 .mode-mini button.on {
-  background: #fff;
+  background: var(--white);
   color: var(--ink-800);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px var(--ink-a08);
 }
 
 .confirm-patient-banner {
@@ -3297,9 +3306,9 @@ onBeforeUnmount(() => {
   margin: 8px 12px 0;
   padding: 10px 12px;
   border-radius: 8px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  color: #1e3a8a;
+  background: var(--blue-50);
+  border: 1px solid var(--brand-200);
+  color: var(--auto-1e3a8a);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -3315,8 +3324,8 @@ onBeforeUnmount(() => {
   margin: 8px 12px 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #f0fdfa;
-  border: 1px solid #99f6e4;
+  background: var(--teal-25);
+  border: 1px solid var(--teal-25);
 }
 
 .paste-hint p {
@@ -3325,7 +3334,7 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #115e59;
+  color: var(--auto-115e59);
 }
 
 .paste-go,
@@ -3340,14 +3349,14 @@ onBeforeUnmount(() => {
 
 .paste-go {
   border: 0;
-  background: #0f766e;
-  color: #fff;
+  background: var(--teal-600);
+  color: var(--white);
 }
 
 .paste-dismiss {
-  border: 1px solid #99f6e4;
-  background: #fff;
-  color: #115e59;
+  border: 1px solid var(--teal-25);
+  background: var(--white);
+  color: var(--auto-115e59);
 }
 
 .gap-line {
@@ -3358,34 +3367,34 @@ onBeforeUnmount(() => {
   margin: 8px 12px 0;
   padding: 6px 10px;
   border-radius: 8px;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  background: var(--amber-100);
+  border: 1px solid var(--amber-200);
 }
 
 .gap-line.required {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: var(--rose-100);
+  border-color: var(--rose-200);
 }
 
 .gap-line.required .gap-line-text {
-  color: #9f1239;
+  color: var(--rose-800);
 }
 
 .gap-line.required .gap-go {
-  border-color: #fca5a5;
-  color: #b91c1c;
-  background: #fff;
+  border-color: var(--rose-300);
+  color: var(--rose-700);
+  background: var(--white);
 }
 
 .gap-line.soft {
-  background: #f8fafc;
-  border-color: #e2e8f0;
+  background: var(--ink-50);
+  border-color: var(--ink-200);
 }
 
 .gap-line.soft .gap-line-text,
 .gap-line.soft .gap-go {
-  color: #475569;
-  border-color: #e2e8f0;
+  color: var(--ink-600);
+  border-color: var(--ink-200);
 }
 
 .gap-line-text {
@@ -3394,10 +3403,14 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #8a5a00;
+  color: var(--amber-800);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.gap-line.required .gap-line-text {
+  white-space: normal;
 }
 
 .gap-line-text strong {
@@ -3406,15 +3419,42 @@ onBeforeUnmount(() => {
 
 .gap-go {
   flex-shrink: 0;
-  border: 1px solid #f5d78e;
-  background: #fff;
-  color: #8a5a00;
+  border: 1px solid var(--auto-f5d78e);
+  background: var(--white);
+  color: var(--amber-800);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
-  padding: 5px 10px;
+  padding: 6px 10px;
   border-radius: 999px;
   cursor: pointer;
+}
+
+.gap-inline {
+  appearance: none;
+  border: none;
+  background: transparent;
+  margin-left: 6px;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--amber-800);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.gap-inline:hover {
+  color: var(--amber-900);
+}
+
+.gap-line.required .gap-inline {
+  color: var(--rose-700);
+}
+
+.gap-line.required .gap-inline:hover {
+  color: var(--rose-800);
 }
 
 .gap-go:disabled {
@@ -3423,31 +3463,31 @@ onBeforeUnmount(() => {
 }
 
 .gap-line.check-tour {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: var(--rose-100);
+  border-color: var(--rose-200);
 }
 
 .gap-line.check-tour .gap-line-text {
-  color: #9f1239;
+  color: var(--rose-800);
   white-space: normal;
 }
 
 .gap-line.check-tour .gap-go {
-  border-color: #fca5a5;
-  color: #b91c1c;
-  background: #fff;
+  border-color: var(--rose-300);
+  color: var(--rose-700);
+  background: var(--white);
 }
 
 .gap-line.check-tour .gap-go-done {
-  background: #b91c1c;
-  border-color: #b91c1c;
-  color: #fff;
+  background: var(--rose-700);
+  border-color: var(--rose-700);
+  color: var(--white);
 }
 
 .gap-line.check-tour .gap-go-done:hover {
-  background: #991b1b;
-  border-color: #991b1b;
-  color: #fff;
+  background: var(--rose-800);
+  border-color: var(--rose-800);
+  color: var(--white);
 }
 
 .guard-copy {
@@ -3460,7 +3500,7 @@ onBeforeUnmount(() => {
 .guard-note {
   margin: 8px 0 0;
   font-size: 13px;
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .guard-check {
@@ -3477,13 +3517,13 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 700;
-  color: #64748b;
-  background: #f1f5f9;
+  color: var(--ink-500);
+  background: var(--ink-100);
 }
 
 .ai-source.llm {
-  color: #6d28d9;
-  background: #ede9fe;
+  color: var(--violet-700);
+  background: var(--auto-ede9fe);
 }
 
 .track-hint.inline {
@@ -3499,14 +3539,14 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   padding: 4px 8px 4px 10px;
   border-radius: 12px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: var(--blue-50);
+  border: 1px solid var(--brand-200);
 }
 
 .track-switch-label {
   font-size: 12px;
   font-weight: 600;
-  color: #1d4ed8;
+  color: var(--brand-800);
   white-space: nowrap;
 }
 
@@ -3518,9 +3558,9 @@ onBeforeUnmount(() => {
 
 .track-btn {
   appearance: none;
-  border: 1px solid #93c5fd;
-  background: #fff;
-  color: #1e40af;
+  border: 1px solid var(--blue-300);
+  background: var(--white);
+  color: var(--brand-900);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.2;
@@ -3535,21 +3575,21 @@ onBeforeUnmount(() => {
 }
 
 .track-btn.on {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
+  background: var(--blue-600);
+  border-color: var(--blue-600);
+  color: var(--white);
 }
 
 .track-btn-none.on {
-  background: #64748b;
-  border-color: #64748b;
+  background: var(--ink-500);
+  border-color: var(--ink-500);
 }
 
 .track-hint {
   appearance: none;
   border: none;
   background: transparent;
-  color: #b45309;
+  color: var(--amber-600);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -3564,14 +3604,14 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 4px 6px 4px 10px;
   border-radius: 12px;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
+  background: var(--success-50);
+  border: 1px solid var(--green-200);
 }
 
 .mode-switch-label {
   font-size: 12px;
   font-weight: 600;
-  color: #047857;
+  color: var(--success-600);
   white-space: nowrap;
 }
 
@@ -3579,14 +3619,14 @@ onBeforeUnmount(() => {
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
+  gap: 2px;
   height: auto;
   min-height: 40px;
   padding: 6px 14px;
   line-height: 1.15;
   border-radius: 0 !important;
-  border-color: #6ee7b7 !important;
-  background: #fff;
+  border-color: var(--auto-6ee7b7) !important;
+  background: var(--white);
   box-shadow: none !important;
 }
 
@@ -3599,9 +3639,9 @@ onBeforeUnmount(() => {
 }
 
 .mode-switch-group :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: #059669 !important;
-  border-color: #059669 !important;
-  color: #fff !important;
+  background: var(--green-600) !important;
+  border-color: var(--green-600) !important;
+  color: var(--white) !important;
 }
 
 .mode-btn-title {
@@ -3645,15 +3685,15 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   margin: 0 16px;
   padding: 10px 12px;
-  border: 1px solid #f0d59a;
+  border: 1px solid var(--auto-f0d59a);
   border-radius: 10px;
-  background: #fff9eb;
+  background: var(--auto-fff9eb);
 }
 
 .gap-banner-title {
   font-size: 12px;
   font-weight: 700;
-  color: #8a5a00;
+  color: var(--amber-800);
   margin-bottom: 6px;
 }
 
@@ -3668,41 +3708,41 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  border: 1px solid #e8d2a0;
-  background: #fff;
+  border: 1px solid var(--auto-e8d2a0);
+  background: var(--white);
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 12px;
-  color: #5a4a28;
+  color: var(--auto-5a4a28);
   cursor: pointer;
 }
 
 .gap-chip:hover {
-  border-color: #d4b56a;
-  background: #fffdf7;
+  border-color: var(--auto-d4b56a);
+  background: var(--auto-fffdf7);
 }
 
 .gap-chip em {
   font-style: normal;
   font-size: 11px;
-  color: #a07830;
+  color: var(--auto-a07830);
 }
 
 .gap-more {
   font-size: 12px;
-  color: #a07830;
+  color: var(--auto-a07830);
 }
 
 .pill.warn {
-  color: #b91c1c;
-  background: #fef2f2;
-  border-color: #fecaca;
+  color: var(--rose-700);
+  background: var(--rose-100);
+  border-color: var(--rose-200);
 }
 
 .pill.soft {
-  color: #b45309;
-  background: #fffbeb;
-  border-color: #fde68a;
+  color: var(--amber-600);
+  background: var(--amber-100);
+  border-color: var(--amber-200);
 }
 
 .pill.pct {
@@ -3748,7 +3788,7 @@ onBeforeUnmount(() => {
 }
 
 .save.ok {
-  color: #059669;
+  color: var(--green-600);
 }
 
 .save-check {
@@ -3758,16 +3798,16 @@ onBeforeUnmount(() => {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #059669;
-  color: #fff;
-  font-size: 9px;
+  background: var(--green-600);
+  color: var(--white);
+  font-size: 11px;
   font-style: normal;
   font-weight: 700;
   line-height: 1;
 }
 
 .save.err {
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .body {
@@ -3780,8 +3820,8 @@ onBeforeUnmount(() => {
 .nav {
   overflow: auto;
   padding: 12px 10px;
-  border-right: 1px solid var(--ink-200);
-  background: #fff;
+  border-right: 0 solid var(--ink-200);
+  background: var(--white);
 }
 
 .nav-head {
@@ -3804,7 +3844,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   letter-spacing: 0;
   text-transform: none;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--ink-400);
   white-space: nowrap;
@@ -3814,49 +3854,62 @@ onBeforeUnmount(() => {
   margin-left: 8px;
 }
 
-.nav-required-entry {
+.nav-risk-entry {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 0 8px;
-  padding: 8px 10px;
-  border: 1px solid #fecaca;
+  padding: 7px 10px;
+  border: 1px solid var(--amber-200);
   border-radius: 10px;
-  background: #fef2f2;
+  background: var(--amber-50);
   cursor: pointer;
   font: inherit;
   text-align: left;
 }
 
-.nav-required-entry:hover {
-  background: #fee2e2;
+.nav-risk-entry:hover {
+  background: var(--amber-100);
 }
 
-.nav-required-label {
+.nav-risk-label {
   font-size: 12px;
-  font-weight: 700;
-  color: #b91c1c;
+  font-weight: 650;
+  color: var(--amber-800);
 }
 
-.nav-required-count {
+.nav-risk-count {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: #ef4444;
-  color: #fff;
+  background: var(--amber-500);
+  color: var(--white);
   font-size: 11px;
   font-weight: 700;
   line-height: 18px;
   text-align: center;
 }
 
-.nav-required-go {
+.nav-risk-go {
   margin-left: auto;
   font-size: 12px;
   font-weight: 600;
-  color: #b91c1c;
+  color: var(--amber-800);
+}
+
+.nav-risk-hint {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--ink-100);
+  color: var(--ink-500);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 16px;
+  text-align: center;
 }
 
 .nav-item {
@@ -3881,16 +3934,19 @@ onBeforeUnmount(() => {
 
 .nav-item.on,
 .nav-item.on:hover {
-  background: #e8f1fe;
-  color: #1e40af;
+  background: var(--auto-e8f1fe);
+  color: var(--brand-900);
   font-weight: 500;
   box-shadow: none;
-  outline: none;
+}
+.nav-item:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
 }
 
 .nav-item.next {
-  background: #fff7ed;
-  color: #9a3412;
+  background: var(--orange-50);
+  color: var(--orange-800);
   font-weight: 600;
 }
 
@@ -3903,7 +3959,7 @@ onBeforeUnmount(() => {
 }
 
 .nav-mark.ok {
-  color: #059669;
+  color: var(--green-600);
   font-weight: 700;
 }
 
@@ -3913,11 +3969,11 @@ onBeforeUnmount(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #ef4444;
+  background: var(--rose-500);
 }
 
 .nav-mark.suggest {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 
 .nav-marks {
@@ -3932,21 +3988,21 @@ onBeforeUnmount(() => {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 .med-nudge {
   margin: 0 0 8px;
   font-size: 12px;
   line-height: 1.45;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 .metric-warn {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #dc2626;
+  color: var(--rose-600);
 }
 
 .nav-idx {
@@ -3973,7 +4029,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .nav-title {
@@ -4002,7 +4058,7 @@ onBeforeUnmount(() => {
 
 .nav-item.on .nav-fill,
 .nav-item.on .nav-prov {
-  color: #3b82f6;
+  color: var(--blue-500);
 }
 
 .nav-item .dot {
@@ -4014,15 +4070,15 @@ onBeforeUnmount(() => {
 }
 
 .nav-item.red .dot {
-  background: #ef4444;
+  background: var(--rose-500);
 }
 
 .nav-item.orange .dot {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 
 .nav-item.green .dot {
-  background: #10b981;
+  background: var(--success-500);
 }
 
 .empty-nav {
@@ -4071,23 +4127,23 @@ onBeforeUnmount(() => {
 .script {
   font-size: 13px;
   color: var(--ink-600);
-  background: #fff;
+  background: var(--white);
   border: 1px solid var(--ink-200);
-  border-left: 3px solid var(--brand-400);
-  border-radius: 10px;
+  border-left: 4px solid var(--brand-400);
+  border-radius: 0;
   padding: 12px 14px;
   margin-bottom: 16px;
   line-height: 1.55;
 }
 
 .script.internal {
-  border-left-color: #94a3b8;
-  background: #f8fafc;
+  border-left-color: var(--ink-400);
+  background: var(--ink-50);
   color: var(--ink-500);
 }
 
 .script.internal .script-label {
-  color: #64748b;
+  color: var(--ink-500);
 }
 
 .script-label {
@@ -4102,9 +4158,9 @@ onBeforeUnmount(() => {
 .ai-summary-bar {
   margin-bottom: 14px;
   padding: 12px 14px;
-  border: 1px solid #99f6e4;
+  border: 1px solid var(--teal-25);
   border-radius: 12px;
-  background: #f0fdfa;
+  background: var(--teal-25);
 }
 
 .ai-summary-actions {
@@ -4121,10 +4177,10 @@ onBeforeUnmount(() => {
 @keyframes ai-gen-breathe {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.18);
+    box-shadow: 0 0 0 0 var(--brand-a18);
   }
   50% {
-    box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.06);
+    box-shadow: 0 0 0 5px var(--brand-a06);
   }
 }
 
@@ -4136,7 +4192,7 @@ onBeforeUnmount(() => {
 .ai-summary-blocks {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid rgba(15, 118, 110, 0.12);
+  border-top: 0 solid var(--auto-rgba-15118110012);
 }
 
 .ai-summary-snapshot {
@@ -4152,7 +4208,7 @@ onBeforeUnmount(() => {
   gap: 6px 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #0f766e;
+  color: var(--teal-600);
   user-select: none;
 }
 
@@ -4163,11 +4219,11 @@ onBeforeUnmount(() => {
 .ai-summary-snapshot-hint {
   font-size: 12px;
   font-weight: 400;
-  color: #64748b;
+  color: var(--ink-500);
 }
 
 .ai-summary-snapshot[open] .ai-summary-blocks {
-  border-top-color: rgba(15, 118, 110, 0.18);
+  border-top-color: var(--auto-rgba-15118110018);
 }
 
 .ai-empty-hint {
@@ -4188,7 +4244,7 @@ onBeforeUnmount(() => {
   padding: 0;
   font: inherit;
   font-weight: 600;
-  color: #2563eb;
+  color: var(--blue-600);
   cursor: pointer;
 }
 
@@ -4202,7 +4258,7 @@ onBeforeUnmount(() => {
   z-index: 40;
   display: grid;
   place-items: center;
-  background: rgba(15, 23, 42, 0.28);
+  background: var(--ink-a28);
   backdrop-filter: blur(1px);
 }
 
@@ -4215,8 +4271,8 @@ onBeforeUnmount(() => {
   max-width: min(92vw, 360px);
   padding: 22px 24px;
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+  background: var(--white);
+  box-shadow: 0 12px 40px var(--ink-a18);
   text-align: center;
 }
 
@@ -4224,15 +4280,15 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
   line-height: 1.45;
 }
 
 .ai-final-mask-spinner {
   width: 28px;
   height: 28px;
-  border: 2.5px solid #dbeafe;
-  border-top-color: #2563eb;
+  border: 2.5px solid var(--blue-100);
+  border-top-color: var(--blue-600);
   border-radius: 50%;
   animation: ai-final-spin 0.8s linear infinite;
 }
@@ -4272,7 +4328,7 @@ onBeforeUnmount(() => {
 }
 
 .q {
-  background: #fff;
+  background: var(--white);
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   padding: 14px 14px 12px;
@@ -4283,12 +4339,12 @@ onBeforeUnmount(() => {
 }
 
 .q.prefill {
-  background: color-mix(in srgb, var(--ink-50) 70%, #fff);
+  background: color-mix(in srgb, var(--ink-50) 70%, var(--white));
 }
 
 .q.dirty {
-  background: #fffbeb;
-  border-color: #fde68a;
+  background: var(--amber-100);
+  border-color: var(--amber-200);
 }
 
 .form.is-review {
@@ -4304,12 +4360,12 @@ onBeforeUnmount(() => {
   margin: 0 0 8px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-700, #344054);
+  color: var(--ink-700);
 }
 
 .q.extract-row {
-  background: #fff;
-  border-left: 3px solid #e8b931;
+  background: var(--amber-50);
+  border-color: var(--amber-200);
 }
 
 .extract-review-foot {
@@ -4322,8 +4378,8 @@ onBeforeUnmount(() => {
   gap: 16px;
   margin: 0 -24px;
   padding: 12px 24px 10px;
-  background: rgba(255, 255, 255, 0.96);
-  border-top: 1px solid var(--ink-200);
+  background: var(--white-a96);
+  border-top: 0 solid var(--ink-200);
 }
 
 .extract-discard {
@@ -4331,7 +4387,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #b42318;
+  color: var(--auto-b42318);
   font-size: 12px;
   line-height: 1.4;
   cursor: pointer;
@@ -4342,13 +4398,13 @@ onBeforeUnmount(() => {
 }
 
 .extract-discard:disabled {
-  color: #d0d5dd;
+  color: var(--auto-d0d5dd);
   cursor: not-allowed;
 }
 
 .extract-conflict {
   margin: 0 0 8px;
-  color: #b42318;
+  color: var(--auto-b42318);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -4360,13 +4416,13 @@ onBeforeUnmount(() => {
 
 .extract-quote {
   margin: 0 0 8px;
-  color: var(--ink-500, #667085);
+  color: var(--ink-500);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .tag-mod {
-  color: var(--ink-500, #667085);
+  color: var(--ink-500);
   font-style: normal;
   font-size: 12px;
 }
@@ -4374,83 +4430,82 @@ onBeforeUnmount(() => {
 .text-btn {
   border: 0;
   background: transparent;
-  color: #0f766e;
+  color: var(--teal-600);
   font-size: 12px;
   cursor: pointer;
 }
 
 .q.hit {
-  background: #f8fafc;
+  background: var(--ink-50);
   border-color: var(--ink-200);
   box-shadow: none;
 }
 
 .q.req.hit {
-  background: #f8fafc;
+  background: var(--ink-50);
   border-color: var(--ink-200);
   box-shadow: none;
 }
 
 .q.risk-gap,
 .q.risk-gap.focus {
-  border-color: #fde68a;
-  background: #fff;
-  box-shadow: inset 3px 0 0 #f59e0b;
+  border-color: var(--amber-200);
+  background: var(--amber-50);
 }
 
 .q.focus {
-  border-color: #0d9488;
+  border-color: var(--teal-700);
   box-shadow:
-    0 0 0 2px color-mix(in srgb, #0d9488 45%, transparent),
-    0 0 0 6px color-mix(in srgb, #0d9488 16%, transparent);
+    0 0 0 2px color-mix(in srgb, var(--teal-700) 45%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--teal-700) 16%, transparent);
   animation: q-focus-pulse 1.2s ease-out 1;
 }
 
 .q.risk-flash,
 .q.focus.risk-flash {
-  border-color: #ef4444;
-  background: #fef2f2;
+  border-color: var(--rose-500);
+  background: var(--rose-100);
   box-shadow:
-    0 0 0 2px color-mix(in srgb, #ef4444 45%, transparent),
-    0 0 0 6px color-mix(in srgb, #ef4444 16%, transparent);
+    0 0 0 2px color-mix(in srgb, var(--rose-500) 45%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--rose-500) 16%, transparent);
   animation: q-risk-pulse 0.9s ease-out 2;
 }
 
 .q.check-pending {
-  border-color: #fca5a5;
-  background: #fff7f7;
+  border-color: var(--rose-300);
+  background: var(--auto-fff7f7);
 }
 
 .q.check-current {
-  border-color: #ef4444;
+  border-color: var(--rose-500);
   box-shadow:
-    0 0 0 2px color-mix(in srgb, #ef4444 40%, transparent),
-    0 0 0 6px color-mix(in srgb, #ef4444 14%, transparent);
+    0 0 0 2px color-mix(in srgb, var(--rose-500) 40%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--rose-500) 14%, transparent);
 }
 
 @keyframes q-risk-pulse {
   0% {
     box-shadow:
-      0 0 0 2px color-mix(in srgb, #ef4444 55%, transparent),
-      0 0 0 10px color-mix(in srgb, #ef4444 22%, transparent);
+      0 0 0 2px color-mix(in srgb, var(--rose-500) 55%, transparent),
+      0 0 0 10px color-mix(in srgb, var(--rose-500) 22%, transparent);
   }
   100% {
     box-shadow:
-      0 0 0 2px color-mix(in srgb, #ef4444 35%, transparent),
-      0 0 0 6px color-mix(in srgb, #ef4444 12%, transparent);
+      0 0 0 2px color-mix(in srgb, var(--rose-500) 35%, transparent),
+      0 0 0 6px color-mix(in srgb, var(--rose-500) 12%, transparent);
   }
 }
 
 @keyframes q-focus-pulse {
   0% {
     box-shadow:
-      0 0 0 2px color-mix(in srgb, #0d9488 55%, transparent),
-      0 0 0 10px color-mix(in srgb, #0d9488 22%, transparent);
+      0 0 0 2px color-mix(in srgb, var(--teal-700) 55%, transparent),
+      0 0 0 10px color-mix(in srgb, var(--teal-700) 22%, transparent);
   }
   100% {
     box-shadow:
-      0 0 0 2px color-mix(in srgb, #0d9488 45%, transparent),
-      0 0 0 6px color-mix(in srgb, #0d9488 16%, transparent);
+      0 0 0 2px color-mix(in srgb, var(--teal-700) 45%, transparent),
+      0 0 0 6px color-mix(in srgb, var(--teal-700) 16%, transparent);
   }
 }
 
@@ -4472,12 +4527,12 @@ onBeforeUnmount(() => {
   color: var(--ink-500);
   background: var(--ink-100);
   flex-shrink: 0;
-  margin-top: 1px;
+  margin-top: 0;
 }
 
 .q.filled .q-no {
-  color: #047857;
-  background: #d1fae5;
+  color: var(--success-600);
+  background: var(--auto-d1fae5);
 }
 
 .q-main {
@@ -4513,7 +4568,7 @@ onBeforeUnmount(() => {
   border: 0;
   background: transparent;
   padding: 0;
-  color: #b45309;
+  color: var(--amber-600);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
@@ -4522,11 +4577,11 @@ onBeforeUnmount(() => {
 }
 
 .skip-q:hover {
-  color: #92400e;
+  color: var(--amber-800);
 }
 
 .star {
-  color: #ef4444;
+  color: var(--rose-500);
   font-style: normal;
   margin-right: 2px;
 }
@@ -4543,7 +4598,7 @@ onBeforeUnmount(() => {
 .prov-tag {
   font-size: 11px;
   line-height: 1;
-  padding: 4px 7px;
+  padding: 4px 6px;
   border-radius: 999px;
   white-space: nowrap;
   font-weight: 600;
@@ -4551,23 +4606,23 @@ onBeforeUnmount(() => {
 }
 
 .prov-patient {
-  color: #475569;
-  background: #f1f5f9;
+  color: var(--ink-600);
+  background: var(--ink-100);
 }
 
 .prov-staff {
-  color: #0f766e;
-  background: #ecfdf5;
+  color: var(--teal-600);
+  background: var(--success-50);
 }
 
 .prov-ai {
-  color: #6d28d9;
-  background: #f5f3ff;
+  color: var(--violet-700);
+  background: var(--auto-f5f3ff);
 }
 
 .prov-archive {
-  color: #64748b;
-  background: #f8fafc;
+  color: var(--ink-500);
+  background: var(--ink-50);
 }
 
 .prov-dim {
@@ -4575,15 +4630,15 @@ onBeforeUnmount(() => {
 }
 
 .prov-edited {
-  color: #c2410c;
-  background: #fff7ed;
+  color: var(--amber-700);
+  background: var(--orange-50);
   font-weight: 650;
 }
 
 .tag {
   font-size: 11px;
   line-height: 1;
-  padding: 4px 7px;
+  padding: 4px 6px;
   border-radius: 999px;
   color: var(--ink-600);
   background: var(--ink-100);
@@ -4591,18 +4646,18 @@ onBeforeUnmount(() => {
 }
 
 .tag-soft {
-  color: #b45309;
-  background: #fffbeb;
+  color: var(--amber-600);
+  background: var(--amber-100);
 }
 
 .tag-later {
-  color: #64748b;
-  background: #f1f5f9;
+  color: var(--ink-500);
+  background: var(--ink-100);
 }
 
 .tag-risk {
-  color: #b45309;
-  background: #fffbeb;
+  color: var(--amber-600);
+  background: var(--amber-100);
   font-weight: 650;
 }
 
@@ -4610,14 +4665,14 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #92400e;
+  color: var(--amber-800);
 }
 
 .adhere-hint {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .prefill-note {
@@ -4630,7 +4685,7 @@ onBeforeUnmount(() => {
 }
 
 .dirty-note {
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .restore {
@@ -4653,14 +4708,14 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid var(--ink-200);
+  border-top: 0 solid var(--ink-200);
 }
 
 .side {
   overflow: auto;
   padding: 12px;
-  border-left: 1px solid var(--ink-200);
-  background: #fff;
+  border-left: 0 solid var(--ink-200);
+  background: var(--white);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -4671,7 +4726,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   padding: 12px;
-  background: #fff;
+  background: var(--white);
 }
 
 .panel h3 {
@@ -4702,13 +4757,13 @@ onBeforeUnmount(() => {
   justify-content: center;
   font-size: 11px;
   font-weight: 700;
-  color: #92400e;
-  background: #fef3c7;
+  color: var(--amber-800);
+  background: var(--amber-150);
 }
 
 .bmi-panel {
   flex-shrink: 0;
-  background: linear-gradient(180deg, #f8fafc 0%, #fff 70%);
+  background: linear-gradient(180deg, var(--ink-50) 0%, var(--white) 70%);
 }
 
 .bmi-hero {
@@ -4720,7 +4775,7 @@ onBeforeUnmount(() => {
 }
 
 .bmi-value {
-  font-size: 36px;
+  font-size: 40px;
   font-weight: 700;
   line-height: 1;
   color: var(--ink-800);
@@ -4740,32 +4795,32 @@ onBeforeUnmount(() => {
 .bmi-band {
   font-size: 11px;
   font-weight: 600;
-  padding: 3px 8px;
+  padding: 4px 8px;
   border-radius: 999px;
   background: var(--ink-100);
   color: var(--ink-600);
 }
 
 .bmi-band.ok {
-  background: #d1fae5;
-  color: #047857;
+  background: var(--auto-d1fae5);
+  color: var(--success-600);
 }
 
 .bmi-band.warn {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--amber-150);
+  color: var(--amber-600);
 }
 
 .bmi-band.danger {
-  background: #fee2e2;
-  color: #b91c1c;
+  background: var(--rose-150);
+  color: var(--rose-700);
 }
 
 .bmi-caution {
   margin: 10px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #b91c1c;
+  color: var(--rose-700);
 }
 
 .bmi-rows {
@@ -4824,13 +4879,13 @@ onBeforeUnmount(() => {
 }
 
 .hit-card.sev-danger {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: var(--rose-100);
+  border-color: var(--rose-200);
 }
 
 .hit-card.sev-warn {
-  background: #fffbeb;
-  border-color: #fde68a;
+  background: var(--amber-100);
+  border-color: var(--amber-200);
 }
 
 .hit-card.sev-info {
@@ -4873,38 +4928,38 @@ onBeforeUnmount(() => {
 
 .required-panel {
   flex-shrink: 0;
-  border-color: #fecaca;
-  background: #fef2f2;
+  border-color: var(--rose-200);
+  background: var(--rose-100);
 }
 
 .required-panel .risk-panel-tip {
-  color: #9f1239;
+  color: var(--rose-800);
 }
 
 .required-panel .risk-idx {
-  background: #fecaca;
-  color: #9f1239;
+  background: var(--rose-200);
+  color: var(--rose-800);
 }
 
 .required-panel .risk-label {
-  color: #9f1239;
+  color: var(--rose-800);
 }
 
 .required-panel .risk-item:hover,
 .required-panel .risk-item.is-here {
-  border-color: #fca5a5;
-  background: #fff;
+  border-color: var(--rose-300);
+  background: var(--white);
 }
 
 .required-panel-go {
   display: block;
   width: 100%;
   margin-top: 8px;
-  padding: 7px 10px;
-  border: 1px solid #fca5a5;
+  padding: 8px 10px;
+  border: 1px solid var(--rose-300);
   border-radius: 8px;
-  background: #fff;
-  color: #b91c1c;
+  background: var(--white);
+  color: var(--rose-700);
   font: inherit;
   font-size: 12px;
   font-weight: 700;
@@ -4912,19 +4967,19 @@ onBeforeUnmount(() => {
 }
 
 .required-panel-go:hover {
-  background: #fee2e2;
+  background: var(--rose-150);
 }
 
 .risk-panel {
   flex-shrink: 0;
-  border-color: #fde68a;
-  background: #fffbeb;
+  border-color: var(--amber-200);
+  background: var(--amber-100);
 }
 
 .risk-panel-tip {
   margin: -2px 0 8px;
   font-size: 12px;
-  color: #92400e;
+  color: var(--amber-800);
 }
 
 .risk-list,
@@ -4945,7 +5000,7 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--white-a72);
   text-align: left;
   cursor: pointer;
   color: var(--ink-800);
@@ -4955,23 +5010,23 @@ onBeforeUnmount(() => {
 
 .risk-item:hover,
 .sum-risk-item:hover {
-  border-color: #fcd34d;
-  background: #fff;
+  border-color: var(--amber-200);
+  background: var(--white);
 }
 
 .risk-item.is-here {
-  border-color: #fecaca;
-  background: #fff;
+  border-color: var(--rose-200);
+  background: var(--white);
 }
 
 .risk-idx {
   flex: 0 0 auto;
   min-width: 18px;
   height: 18px;
-  margin-top: 1px;
+  margin-top: 0;
   border-radius: 999px;
-  background: #fde68a;
-  color: #92400e;
+  background: var(--amber-200);
+  color: var(--amber-800);
   font-size: 11px;
   font-weight: 700;
   line-height: 18px;
@@ -4981,7 +5036,7 @@ onBeforeUnmount(() => {
 .risk-label {
   flex: 1;
   min-width: 0;
-  color: var(--brand-700, #0f766e);
+  color: var(--brand-700, var(--teal-600));
 }
 
 .risk-mod {
@@ -4993,7 +5048,7 @@ onBeforeUnmount(() => {
 }
 
 .sum-risk-item {
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
 }
 
 .sum-risk-item:hover {
@@ -5022,7 +5077,7 @@ onBeforeUnmount(() => {
   margin: 0 0 12px;
   font-size: 13px;
   font-weight: 600;
-  color: #059669;
+  color: var(--green-600);
 }
 
 .sum-miss h4,
@@ -5033,8 +5088,8 @@ onBeforeUnmount(() => {
 .sum-warn-box {
   padding: 10px 12px;
   border-radius: 10px;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  background: var(--amber-100);
+  border: 1px solid var(--amber-200);
 }
 
 .sum-warn-head {
@@ -5046,7 +5101,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #92400e;
+  color: var(--amber-800);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -5055,7 +5110,7 @@ onBeforeUnmount(() => {
 .sum-warn-head span:last-child {
   font-size: 12px;
   font-weight: 600;
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .sum-scroll {
@@ -5073,15 +5128,15 @@ onBeforeUnmount(() => {
   margin: 0 0 4px;
   font-size: 12px;
   font-weight: 600;
-  color: #92400e;
+  color: var(--amber-800);
 }
 
 .sum-ai {
   margin-bottom: 12px;
   padding: 12px;
   border-radius: 10px;
-  background: #eff6ff;
-  border: 1px solid #dbeafe;
+  background: var(--blue-50);
+  border: 1px solid var(--blue-100);
 }
 
 .sum-ai-head {
@@ -5098,8 +5153,8 @@ onBeforeUnmount(() => {
   height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: var(--blue-100);
+  color: var(--brand-800);
   font-size: 12px;
   font-weight: 700;
 }
@@ -5114,7 +5169,7 @@ onBeforeUnmount(() => {
   margin: 0 0 8px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
 }
 
 .change-list,
@@ -5134,10 +5189,10 @@ onBeforeUnmount(() => {
   gap: 8px 12px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--ink-50);
+  border: 1px solid var(--ink-200);
   font-size: 13px;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
 }
 
 .change-label {
@@ -5153,30 +5208,30 @@ onBeforeUnmount(() => {
 }
 
 .change-from {
-  color: #94a3b8;
+  color: var(--ink-400);
   text-decoration-thickness: 1px;
 }
 
 .change-from-hint {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 .change-arrow {
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 .change-new-tag {
   font-size: 11px;
   font-weight: 600;
-  color: #0369a1;
-  background: #e0f2fe;
+  color: var(--auto-0369a1);
+  background: var(--auto-e0f2fe);
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 2px 6px;
 }
 
 .change-to {
-  color: #0f766e;
+  color: var(--teal-600);
   font-weight: 700;
 }
 
@@ -5186,18 +5241,18 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid #fde68a;
-  background: #fffbeb;
+  border: 1px solid var(--amber-200);
+  background: var(--amber-100);
 }
 
 .check-item.tone-danger {
-  border-color: #fecaca;
-  background: #fef2f2;
+  border-color: var(--rose-200);
+  background: var(--rose-100);
 }
 
 .check-item.tone-info {
-  border-color: #bfdbfe;
-  background: #eff6ff;
+  border-color: var(--brand-200);
+  background: var(--blue-50);
 }
 
 .check-body {
@@ -5209,27 +5264,27 @@ onBeforeUnmount(() => {
   display: block;
   font-size: 13px;
   font-weight: 700;
-  color: #92400e;
+  color: var(--amber-800);
   line-height: 1.35;
 }
 
 .check-item.tone-danger .check-title {
-  color: #b91c1c;
+  color: var(--rose-700);
 }
 
 .check-item.tone-info .check-title {
-  color: #1d4ed8;
+  color: var(--brand-800);
 }
 
 .check-detail {
   margin: 2px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #78716c;
+  color: var(--auto-78716c);
 }
 
 .check-item.tone-danger .check-detail {
-  color: #9f1239;
+  color: var(--rose-800);
 }
 
 .check-cta {
@@ -5237,9 +5292,9 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px solid #f59e0b;
-  background: #fff;
-  color: #b45309;
+  border: 1px solid var(--amber-500);
+  background: var(--white);
+  color: var(--amber-600);
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
@@ -5247,25 +5302,25 @@ onBeforeUnmount(() => {
 }
 
 .check-item.tone-danger .check-cta {
-  border-color: #f87171;
-  color: #b91c1c;
+  border-color: var(--auto-f87171);
+  color: var(--rose-700);
 }
 
 .check-item.tone-info .check-cta {
-  border-color: #60a5fa;
-  color: #1d4ed8;
+  border-color: var(--brand-400);
+  color: var(--brand-800);
 }
 
 .check-cta:hover {
-  background: #fff7ed;
+  background: var(--orange-50);
 }
 
 .check-item.tone-danger .check-cta:hover {
-  background: #fef2f2;
+  background: var(--rose-100);
 }
 
 .check-item.tone-info .check-cta:hover {
-  background: #eff6ff;
+  background: var(--blue-50);
 }
 
 .sum-foot {
@@ -5287,7 +5342,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #2563eb;
+  color: var(--blue-600);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -5296,7 +5351,7 @@ onBeforeUnmount(() => {
 }
 
 .sum-foot-link:hover {
-  color: #1d4ed8;
+  color: var(--brand-800);
 }
 
 .sum-foot-actions {
@@ -5320,13 +5375,13 @@ onBeforeUnmount(() => {
 .sum .ok {
   margin: 0;
   font-size: 13px;
-  color: #059669;
+  color: var(--green-600);
 }
 
 .sum .sum-warn {
   margin: 0 0 6px;
   font-size: 13px;
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .link {

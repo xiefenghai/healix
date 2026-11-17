@@ -290,7 +290,7 @@ function goCreateTeam() {
     </p>
 
     <div v-if="aiHint" class="ai-hint">
-      <span class="ai-hint-text">💡 AI 建议：{{ aiHint.text }}</span>
+      <span class="ai-hint-text"> AI 建议：{{ aiHint.text }}</span>
       <el-button size="small" type="primary" plain @click="applyAiTeam">一键选中该组</el-button>
     </div>
 
@@ -358,7 +358,7 @@ function goCreateTeam() {
             <span class="assign-label">选择目标组：</span>
             <!-- 仅 1 个组：只读展示，避免无效下拉点击 -->
             <div v-if="singleTeamOnly && soleTeam" class="target-readonly" :title="soleTeam.name">
-              <span class="target-icon" aria-hidden="true">📁</span>
+              <span class="target-icon" aria-hidden="true"></span>
               <strong class="target-name">{{ soleTeam.name }}</strong>
             </div>
             <el-select
@@ -379,10 +379,10 @@ function goCreateTeam() {
               }"
             >
               <template #prefix>
-                <span class="target-icon" aria-hidden="true">📁</span>
+                <span class="target-icon" aria-hidden="true"></span>
               </template>
               <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id">
-                <span class="opt-name">📁 {{ t.name }}</span>
+                <span class="opt-name"> {{ t.name }}</span>
                 <span class="opt-meta">
                   {{ (t.primaryCareManagerName || '').trim() || '未指定主责' }} ·
                   {{ t.memberCount ?? 0 }} 位患者
@@ -420,10 +420,10 @@ function goCreateTeam() {
   margin: 0 0 12px;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
 }
 .hint strong {
-  color: #c2410c;
+  color: var(--amber-700);
   font-weight: 700;
 }
 .ai-hint {
@@ -434,15 +434,15 @@ function goCreateTeam() {
   margin: 0 0 12px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: var(--blue-50);
+  border: 1px solid var(--brand-200);
 }
 .ai-hint-text {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.5;
-  color: #1e40af;
+  color: var(--brand-900);
 }
 .search {
   margin: 0 0 10px;
@@ -467,20 +467,20 @@ function goCreateTeam() {
   gap: 12px;
   margin: 0;
   padding: 12px 14px;
-  border: 1px solid var(--ink-100, #e5e7eb);
+  border: 1px solid var(--ink-100, var(--gray-200));
   border-radius: 12px;
-  background: #fff;
+  background: var(--white);
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .row:hover {
-  border-color: var(--ink-200, #e2e8f0);
-  background: #f8fafc;
+  border-color: var(--ink-200);
+  background: var(--ink-50);
 }
 .row.checked {
-  border-color: #60a5fa;
-  background: #dbeafe;
-  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+  border-color: var(--brand-400);
+  background: var(--blue-100);
+  box-shadow: inset 0 0 0 1px var(--brand-a12);
 }
 .avatar {
   flex: 0 0 34px;
@@ -489,13 +489,13 @@ function goCreateTeam() {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #64748b;
-  color: #fff;
+  background: var(--ink-500);
+  color: var(--white);
   font-size: 13px;
   font-weight: 700;
 }
 .row.checked .avatar {
-  background: #2563eb;
+  background: var(--blue-600);
 }
 .body {
   flex: 1;
@@ -508,7 +508,7 @@ function goCreateTeam() {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 .meta {
   display: flex;
@@ -517,10 +517,10 @@ function goCreateTeam() {
   gap: 6px;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
 }
 .demo.muted {
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 .tags {
   display: inline-flex;
@@ -532,17 +532,17 @@ function goCreateTeam() {
 .tags.with-demo::before {
   content: '·';
   margin-right: 2px;
-  color: var(--ink-300, #cbd5e1);
+  color: var(--ink-300);
 }
 .tag {
   display: inline-flex;
   align-items: center;
   max-width: 7.5em;
-  padding: 1px 7px;
+  padding: 2px 6px;
   border-radius: 999px;
-  background: #f1f5f9;
-  color: #475569;
-  font-size: 11.5px;
+  background: var(--ink-100);
+  color: var(--ink-600);
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.55;
   white-space: nowrap;
@@ -550,17 +550,17 @@ function goCreateTeam() {
   text-overflow: ellipsis;
 }
 .row.checked .tag {
-  background: #bfdbfe;
-  color: #1e40af;
+  background: var(--brand-200);
+  color: var(--brand-900);
 }
 .tag.more {
-  background: #e2e8f0;
-  color: #64748b;
+  background: var(--ink-200);
+  color: var(--ink-500);
   max-width: none;
 }
 .row.checked .tag.more {
-  background: #93c5fd;
-  color: #1e3a8a;
+  background: var(--blue-300);
+  color: var(--auto-1e3a8a);
 }
 .footer {
   width: 100%;
@@ -582,7 +582,7 @@ function goCreateTeam() {
   margin-right: 8px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   white-space: nowrap;
   line-height: 36px;
 }
@@ -601,14 +601,14 @@ function goCreateTeam() {
   box-sizing: border-box;
   padding: 8px 12px;
   border-radius: 8px;
-  background: #f8f9fa;
-  border: 1px solid #e5e7eb;
+  background: var(--ink-35);
+  border: 1px solid var(--gray-200);
 }
 .target-readonly .target-name {
   min-width: 0;
   font-size: 14px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--ink-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -627,23 +627,23 @@ function goCreateTeam() {
   gap: 8px;
   margin-top: 8px;
   font-size: 13px;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
 }
 .opt-name {
   font-weight: 600;
-  color: #0f172a;
+  color: var(--ink-900);
 }
 .opt-meta {
   float: right;
   margin-left: 12px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
   font-size: 12px;
 }
 .batch-assign-btn.is-disabled,
 .batch-assign-btn:disabled {
-  background: #e2e8f0 !important;
-  border-color: #e2e8f0 !important;
-  color: #94a3b8 !important;
+  background: var(--ink-200) !important;
+  border-color: var(--ink-200) !important;
+  color: var(--ink-400) !important;
   opacity: 1;
 }
 </style>
@@ -653,8 +653,8 @@ function goCreateTeam() {
   padding-top: 8px;
 }
 .unassigned-assign-drawer.el-drawer .el-drawer__footer {
-  border-top: 1px solid var(--ink-100, #e5e7eb);
-  background: #fff;
+  border-top: 0 solid var(--ink-100, var(--gray-200));
+  background: var(--white);
   padding: 12px 16px;
   /* 给下拉留出层级，避免被列表盖住 */
   position: relative;
@@ -663,12 +663,12 @@ function goCreateTeam() {
 .unassigned-assign-select-popper.el-select__popper,
 .unassigned-assign-select-popper {
   z-index: 4000 !important;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14) !important;
+  box-shadow: 0 10px 28px var(--ink-a14) !important;
 }
 /* 目标组下拉：浅底容器感 + 选中组名加粗加深 */
 .unassigned-assign-drawer .target-select .el-select__wrapper {
-  background: #f8f9fa !important;
-  box-shadow: 0 0 0 1px #d1d5db inset !important;
+  background: var(--ink-35) !important;
+  box-shadow: 0 0 0 1px var(--gray-300) inset !important;
   min-height: 36px;
 }
 .unassigned-assign-drawer .target-select .el-select__wrapper.is-focused {
@@ -680,26 +680,26 @@ function goCreateTeam() {
 }
 .unassigned-assign-drawer .target-select .el-select__selected-item {
   font-weight: 700 !important;
-  color: #0f172a !important;
+  color: var(--ink-900) !important;
 }
 .unassigned-assign-drawer .target-select .el-select__prefix {
   color: inherit;
 }
 /* 下拉列表中当前选中项：浅蓝高亮，便于二次确认 */
 .unassigned-assign-select-popper .el-select-dropdown__item.is-selected {
-  background: #eff6ff !important;
-  color: #1e40af !important;
+  background: var(--blue-50) !important;
+  color: var(--brand-900) !important;
   font-weight: 700;
 }
 .unassigned-assign-select-popper .el-select-dropdown__item.is-selected .opt-name {
-  color: #1e40af;
+  color: var(--brand-900);
 }
 .unassigned-assign-select-popper .el-select-dropdown__item.is-hovering,
 .unassigned-assign-select-popper .el-select-dropdown__item:hover {
-  background: #f1f5f9;
+  background: var(--ink-100);
 }
 .unassigned-assign-select-popper .el-select-dropdown__item.is-selected.is-hovering,
 .unassigned-assign-select-popper .el-select-dropdown__item.is-selected:hover {
-  background: #dbeafe !important;
+  background: var(--blue-100) !important;
 }
 </style>

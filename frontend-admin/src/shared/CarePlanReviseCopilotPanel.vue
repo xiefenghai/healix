@@ -111,7 +111,7 @@ defineExpose({ focusInput })
         <h4 class="revise-panel__title">AI 方案修订助手</h4>
       </div>
       <p class="revise-panel__sub">
-        {{ disabled ? '手动编辑中，完成后可再使用 AI 修订' : '支持局部修改，安全红线自动拦截' }}
+        {{ disabled ? '手动编辑中，完成后可再使用 AI 修订' : '局部修改 · 安全红线自动拦截' }}
       </p>
     </header>
 

@@ -263,7 +263,7 @@ async function submit() {
   margin: 0 0 16px;
   font-size: 13px;
   line-height: 1.45;
-  color: #999999;
+  color: var(--gray-999);
   font-weight: 400;
 }
 .form {
@@ -273,7 +273,7 @@ async function submit() {
   margin-left: 4px;
   font-size: 12px;
   font-weight: 400;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 .footer {
   display: flex;
@@ -302,7 +302,7 @@ async function submit() {
   border-radius: 12px;
   overflow: hidden;
   padding: 0 !important;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 30px var(--black-a10);
 }
 .create-care-team-dialog .el-dialog__header {
   flex-shrink: 0;
@@ -312,7 +312,7 @@ async function submit() {
 .create-care-team-dialog .el-dialog__title {
   font-size: 16px;
   font-weight: 600;
-  color: var(--ink-900, #111827);
+  color: var(--ink-900, var(--ink-950));
   line-height: 1.4;
 }
 .create-care-team-dialog .el-dialog__headerbtn {
@@ -331,8 +331,8 @@ async function submit() {
 .create-care-team-dialog .el-dialog__footer {
   flex: none;
   flex-shrink: 0;
-  border-top: 1px solid var(--ink-100, #e5e7eb);
-  background: #fff;
+  border-top: 0 solid var(--ink-100, var(--gray-200));
+  background: var(--white);
   padding: 16px 32px 32px !important;
 }
 .create-care-team-dialog .form .el-form-item {
@@ -343,7 +343,7 @@ async function submit() {
   padding: 0 !important;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
   line-height: 1.4;
   height: auto !important;
 }
@@ -352,17 +352,17 @@ async function submit() {
 .create-care-team-dialog .form .el-select__placeholder {
   font-size: 14px;
   font-weight: 400;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 .create-care-team-dialog .form .el-input__wrapper,
 .create-care-team-dialog .form .el-select__wrapper {
   min-height: 36px;
-  background-color: #fff !important;
-  box-shadow: 0 0 0 1px var(--ink-200, #e2e8f0) inset !important;
+  background-color: var(--white) !important;
+  box-shadow: 0 0 0 1px var(--ink-200) inset !important;
 }
 .create-care-team-dialog .form .el-input__wrapper.is-focus,
 .create-care-team-dialog .form .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px var(--brand-500, #2c7ef8) inset !important;
+  box-shadow: 0 0 0 1px var(--ink-a20) inset !important;
 }
 /* 有字时显示极小清空按钮，与字数统计并排不抢视觉 */
 .create-care-team-dialog .form .el-input__clear {
@@ -370,9 +370,9 @@ async function submit() {
   width: 14px;
   height: 14px;
   margin-right: 2px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 .create-care-team-dialog .form .el-input__clear:hover {
-  color: var(--ink-600, #4b5563);
+  color: var(--ink-600, var(--ink-650));
 }
 </style>

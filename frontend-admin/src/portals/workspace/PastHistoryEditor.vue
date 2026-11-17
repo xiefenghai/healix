@@ -512,9 +512,9 @@ function confirmDialog() {
   font-size: 18px;
   font-weight: 500;
   line-height: 1;
-  color: #6b7280;
-  background: #fff;
-  border: 1px dashed #d1d5db;
+  color: var(--gray-500);
+  background: var(--white);
+  border: 1px dashed var(--gray-300);
   border-radius: 6px;
   cursor: pointer;
   transition:
@@ -524,16 +524,16 @@ function confirmDialog() {
 }
 
 .ph-add:hover {
-  color: #2563eb;
-  border-color: #93c5fd;
-  background: #eff6ff;
+  color: var(--blue-600);
+  border-color: var(--blue-300);
+  background: var(--blue-50);
 }
 
 .ph-hint {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .ph-unsaved-hint {
@@ -541,9 +541,9 @@ function confirmDialog() {
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.45;
-  color: #b45309;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  color: var(--amber-600);
+  background: var(--amber-100);
+  border: 1px solid var(--amber-200);
   border-radius: 6px;
 }
 
@@ -561,7 +561,7 @@ function confirmDialog() {
   padding: 12px;
   border: 1px solid var(--admin-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
 }
 
 .ph-col-title {
@@ -591,11 +591,11 @@ function confirmDialog() {
   width: 100%;
   padding: 10px 12px;
   text-align: left;
-  background: #f8fafc;
+  background: var(--ink-50);
   border: 1px solid var(--admin-border);
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
 .ph-type-btn:hover {
@@ -608,7 +608,7 @@ function confirmDialog() {
 }
 
 .ph-type-btn.active.warning .ph-type-label {
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .ph-type-label {

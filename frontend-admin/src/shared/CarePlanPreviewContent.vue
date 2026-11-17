@@ -608,7 +608,7 @@ defineExpose({
         <details
           v-if="showStaffRationale && (data.rationaleOverview || editable)"
           class="staff-rationale-details"
-          :open="stacked || editable || undefined"
+          :open="editable || undefined"
         >
           <summary class="staff-rationale-summary">
             <span class="rationale-label">生成依据</span>
@@ -1702,12 +1702,12 @@ defineExpose({
   padding: 10px 12px;
   border-radius: 8px;
   background: #f9fafb;
-  border-left: 3px solid #94a3b8;
+  border: 1px solid #e2e8f0;
 }
 
 .info-block--danger {
-  background: #fef2f2; /* red-50 */
-  border-left: 4px solid #ef4444; /* red-500：医疗禁忌强调 */
+  background: #fef2f2;
+  border-color: #fecaca;
 }
 
 .info-block--danger .info-block-title {
@@ -1715,8 +1715,8 @@ defineExpose({
 }
 
 .info-block--caution {
-  background: #fefce8; /* yellow-50 */
-  border-left: 4px solid #eab308;
+  background: #fefce8;
+  border-color: #fde68a;
 }
 
 .info-block--caution .info-block-title {
@@ -1725,7 +1725,7 @@ defineExpose({
 
 .info-block--tip {
   background: #eff6ff;
-  border-left-color: #3b82f6;
+  border-color: #bfdbfe;
 }
 
 .info-block--tip .info-block-title {

@@ -162,7 +162,7 @@ defineExpose({ load })
           <el-popover v-model:visible="kudosOpen" placement="bottom-end" :width="300" trigger="click">
             <template #reference>
               <el-button type="warning" plain size="small" :disabled="view.kudosSentToday && !kudosOpen">
-                {{ view.kudosSentToday ? '今日已点赞' : '👍 点赞鼓励' }}
+                {{ view.kudosSentToday ? '今日已点赞' : ' 点赞鼓励' }}
               </el-button>
             </template>
             <div class="kudos-pop">
@@ -214,7 +214,7 @@ defineExpose({ load })
       <div class="rp-stats">
         <div class="stat flame">
           <span class="lbl">连续打卡</span>
-          <strong>🔥 {{ s.streak }}<em>天</em></strong>
+          <strong> {{ s.streak }}<em>天</em></strong>
           <span class="sub">最长 {{ s.bestStreak }} 天 · 保护卡 {{ s.freezeCards }}/2</span>
         </div>
         <div class="stat">
@@ -222,7 +222,7 @@ defineExpose({ load })
           <strong :class="{ muted: !s.todayActive }">{{ s.todayActive ? '已打卡' : '未打卡' }}</strong>
           <span class="sub">+{{ s.todayPoints }} 豆 · {{ s.todayActions }} 项</span>
         </div>
-        <div class="stat">
+        <div class="stat stat--points">
           <span class="lbl">健康豆</span>
           <strong class="stat-hero">{{ s.points }}</strong>
           <span class="sub">本周 +{{ s.weekPoints }}</span>
@@ -238,7 +238,7 @@ defineExpose({ load })
         <div v-if="view.challenge" class="rp-row">
           <span class="row-lbl">本周挑战</span>
           <div class="challenge">
-            <strong>🎯 {{ view.challenge.title }}</strong>
+            <strong> {{ view.challenge.title }}</strong>
             <span>
               {{ view.challenge.progress }}/{{ view.challenge.target }}
               <template v-if="view.challenge.status === 'DONE'"> · 已达成</template>
@@ -334,8 +334,8 @@ defineExpose({ load })
   margin-bottom: 14px;
   padding: 14px 16px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #fff7ee 0%, #ffffff 60%);
-  border: 1px solid #f6e3cf;
+  background: linear-gradient(135deg, var(--auto-fff7ee) 0%, var(--white) 60%);
+  border: 1px solid var(--auto-f6e3cf);
 }
 .rp-head {
   display: flex;
@@ -349,11 +349,11 @@ defineExpose({ load })
   font-weight: 800;
 }
 .rp-head h3 span {
-  background: linear-gradient(transparent 60%, #ffe58a 60%);
+  background: linear-gradient(transparent 60%, var(--auto-ffe58a) 60%);
 }
 .rp-hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--gray-500);
 }
 .rp-actions {
   margin-left: auto;
@@ -367,7 +367,7 @@ defineExpose({ load })
 .rp-off {
   margin-top: 10px;
   font-size: 13px;
-  color: #909399;
+  color: var(--gray-500);
 }
 .rp-stats {
   display: grid;
@@ -378,8 +378,8 @@ defineExpose({ load })
 .stat {
   padding: 10px 12px;
   border-radius: 10px;
-  background: #fff;
-  border: 1px solid #f1ebe3;
+  background: var(--white);
+  border: 1px solid var(--auto-f1ebe3);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -387,35 +387,35 @@ defineExpose({ load })
 }
 .stat .lbl {
   font-size: 12px;
-  color: #909399;
+  color: var(--gray-500);
   line-height: 1.2;
 }
 .stat strong {
   font-size: 20px;
   font-weight: 800;
-  color: #303133;
+  color: var(--auto-303133);
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
 .stat-hero {
-  font-size: 26px !important;
+  font-size: 24px !important;
   letter-spacing: -0.02em;
 }
 .stat strong em {
   font-style: normal;
   font-size: 12px;
   margin-left: 2px;
-  color: #909399;
+  color: var(--gray-500);
 }
 .stat.flame strong {
-  color: #e0632a;
+  color: var(--auto-e0632a);
 }
 .stat strong.muted {
-  color: #c0c4cc;
+  color: var(--auto-c0c4cc);
 }
 .stat .sub {
   font-size: 11px;
-  color: #909399;
+  color: var(--gray-500);
   line-height: 1.3;
 }
 .rp-meta {
@@ -430,10 +430,10 @@ defineExpose({ load })
   align-items: baseline;
   gap: 6px 10px;
   font-size: 13px;
-  color: #606266;
+  color: var(--auto-606266);
 }
 .challenge strong {
-  color: #303133;
+  color: var(--auto-303133);
   font-weight: 700;
 }
 .rp-row {
@@ -455,7 +455,7 @@ defineExpose({ load })
   flex-shrink: 0;
   width: 64px;
   font-size: 12px;
-  color: #909399;
+  color: var(--gray-500);
   line-height: 24px;
 }
 @media (max-width: 900px) {
@@ -477,15 +477,15 @@ defineExpose({ load })
   flex-shrink: 0;
   padding: 2px 10px;
   border-radius: 999px;
-  background: #fff4e0;
-  color: #8a5a2b;
+  background: var(--auto-fff4e0);
+  color: var(--auto-8a5a2b);
   font-size: 12px;
   line-height: 20px;
   white-space: nowrap;
 }
 .badge.outcome {
-  background: #e9f8f1;
-  color: #2a7a5a;
+  background: var(--auto-e9f8f1);
+  color: var(--auto-2a7a5a);
 }
 .kudos-list {
   display: flex;
@@ -497,23 +497,23 @@ defineExpose({ load })
 .kudos {
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fffaf3;
-  border: 1px solid #f3e7d8;
+  background: var(--auto-fffaf3);
+  border: 1px solid var(--auto-f3e7d8);
 }
 .kudos-meta {
   display: block;
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.3;
 }
 .kudos-msg {
   margin: 4px 0 0;
   font-size: 13px;
   line-height: 1.45;
-  color: #4b5563;
+  color: var(--ink-650);
 }
 .muted {
-  color: #c0c4cc;
+  color: var(--auto-c0c4cc);
   font-size: 12px;
 }
 .ledger-toggle-row {
@@ -525,14 +525,14 @@ defineExpose({ load })
   padding: 0;
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: var(--gray-500);
   font-size: 13px;
   font-weight: 500;
   line-height: 1.3;
   cursor: pointer;
 }
 .ledger-toggle:hover {
-  color: #2563eb;
+  color: var(--blue-600);
 }
 .ledger {
   display: flex;
@@ -546,8 +546,8 @@ defineExpose({ load })
 .ledger-day {
   width: 100%;
   border-radius: 10px;
-  background: #fff;
-  border: 1px solid #f1ebe3;
+  background: var(--white);
+  border: 1px solid var(--auto-f1ebe3);
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -564,34 +564,34 @@ defineExpose({ load })
   box-sizing: border-box;
 }
 .ld-head:hover {
-  background: #fffaf5;
+  background: var(--auto-fffaf5);
 }
 .ld-chevron {
   width: 14px;
-  color: #9ca3af;
+  color: var(--gray-400);
   font-size: 12px;
   line-height: 1;
 }
 .ld-date {
   font-size: 13px;
   font-weight: 700;
-  color: #303133;
+  color: var(--auto-303133);
 }
 .ld-total {
   margin-left: auto;
   font-size: 14px;
   font-weight: 800;
-  color: #e0632a;
+  color: var(--auto-e0632a);
   font-variant-numeric: tabular-nums;
 }
 .ld-count {
   font-style: normal;
   font-size: 11px;
   font-weight: 400;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 .ld-body {
-  border-top: 1px solid #f3f4f6;
+  border-top: 0 solid var(--gray-100);
   padding: 0 14px;
   max-height: 300px;
   overflow-y: auto;
@@ -604,7 +604,7 @@ defineExpose({ load })
   width: 100%;
   min-height: 38px;
   padding: 8px 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 0 solid var(--gray-100);
   font-size: 13px;
   box-sizing: border-box;
 }
@@ -626,14 +626,14 @@ defineExpose({ load })
   font-style: normal;
   font-size: 12px;
   font-weight: 400;
-  color: #9ca3af;
+  color: var(--gray-400);
   white-space: nowrap;
 }
 .ld-sep {
   flex-shrink: 0;
   font-style: normal;
-  color: #d1d5db;
-  font-size: 10px;
+  color: var(--gray-300);
+  font-size: 11px;
   line-height: 1;
 }
 .ld-detail {
@@ -642,7 +642,7 @@ defineExpose({ load })
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
-  color: #1f2937;
+  color: var(--gray-800);
 }
 .ld-pts {
   flex-shrink: 0;
@@ -653,25 +653,25 @@ defineExpose({ load })
   height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--gray-100);
+  color: var(--gray-500);
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 .ld-pts--neg {
-  color: #9ca3af;
-  background: #f9fafb;
+  color: var(--gray-400);
+  background: var(--gray-50);
 }
 .ld-more {
   display: block;
   width: 100%;
   padding: 10px 0 12px;
   border: none;
-  border-top: 1px solid #f3f4f6;
+  border-top: 0 solid var(--gray-100);
   background: transparent;
-  color: #2563eb;
+  color: var(--blue-600);
   font-size: 12px;
   font-weight: 500;
   text-align: center;

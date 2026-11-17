@@ -248,12 +248,22 @@ onBeforeUnmount(() => {
     @switch-org="switchOrg"
   >
     <template v-if="isCockpit" #chips>
-      <button type="button" class="sum-chip" @click="onChip('tasks')">
-        <i class="dot todo" />
+      <button
+        v-if="summary.openTaskCount > 0"
+        type="button"
+        class="sum-chip"
+        title="查看立即处理名单"
+        @click="onChip('tasks')"
+      >
         待办 <strong>{{ summary.openTaskCount }}</strong>
       </button>
-      <button type="button" class="sum-chip warn" @click="onChip('overdue')">
-        <i class="dot overdue" />
+      <button
+        v-if="summary.overdueCount > 0"
+        type="button"
+        class="sum-chip warn"
+        title="查看逾期待办名单"
+        @click="onChip('overdue')"
+      >
         超期 <strong>{{ summary.overdueCount }}</strong>
       </button>
     </template>
@@ -266,51 +276,39 @@ onBeforeUnmount(() => {
 .sum-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  border: 1px solid var(--ink-200);
-  background: #fff;
-  border-radius: 999px;
-  padding: 5px 11px;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
   font-size: 12px;
-  color: var(--ink-500);
+  font-weight: 500;
+  color: var(--ink-600);
   cursor: pointer;
   white-space: nowrap;
-  transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: var(--admin-transition, 150ms ease);
 }
 
 .sum-chip:hover {
-  border-color: var(--brand-300);
-  background: var(--brand-50);
-}
-
-.sum-chip .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--brand-500);
-}
-
-.sum-chip .dot.todo {
-  background: var(--rose-500);
-}
-
-.sum-chip .dot.overdue {
-  background: var(--rose-500);
+  background: var(--ink-50);
+  color: var(--ink-800);
 }
 
 .sum-chip strong {
-  margin-left: 2px;
-  color: var(--ink-800);
+  color: var(--ink-900);
   font-size: 13px;
+  font-weight: 700;
 }
 
 .sum-chip.warn {
+  color: var(--amber-700);
+}
+
+.sum-chip.warn:hover {
   background: var(--amber-50);
-  border-color: #fde68a;
-  color: #b45309;
 }
 
 .sum-chip.warn strong {
-  color: #b45309;
+  color: var(--amber-700);
 }
 </style>

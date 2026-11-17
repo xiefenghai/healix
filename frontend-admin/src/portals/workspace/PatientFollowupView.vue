@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -113,18 +114,18 @@ function cardTitle(row: FollowupItem) {
 function methodIcon(channel?: string) {
   switch (channel) {
     case 'PHONE':
-      return '📞'
+      return ''
     case 'SMS':
-      return '📱'
+      return ''
     case 'FACE_TO_FACE':
     case 'CLINIC':
     case 'HOME':
-      return '💬'
+      return ''
     case 'ONLINE':
     case 'WECHAT':
-      return '💬'
+      return ''
     default:
-      return '📋'
+      return ''
   }
 }
 
@@ -516,7 +517,7 @@ onMounted(async () => {
         :key="row.id"
         :timestamp="formatTime(row.completedAt || row.plannedAt || row.gmtCreated)"
         placement="top"
-        color="#D1D5DB"
+        :color="palette.gray300"
       >
         <div
           class="card"
@@ -800,26 +801,26 @@ onMounted(async () => {
   padding-left: 22px;
 }
 .fu-timeline :deep(.el-timeline-item__tail) {
-  border-left: 1px dashed #E5E7EB;
+  border-left: 0 dashed var(--gray-200);
 }
 .fu-timeline :deep(.el-timeline-item__node) {
   width: 10px;
   height: 10px;
   left: 0;
-  background-color: #E5E7EB !important;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #D1D5DB;
+  background-color: var(--gray-200) !important;
+  border: 2px solid var(--white);
+  box-shadow: 0 0 0 1px var(--gray-300);
   box-sizing: content-box;
 }
 .fu-timeline :deep(.el-timeline-item:first-child .el-timeline-item__node) {
   background-color: var(--el-color-primary) !important;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--el-color-primary) 35%, #fff);
+  border: 2px solid var(--white);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--el-color-primary) 35%, var(--white));
 }
 .fu-timeline :deep(.el-timeline-item__timestamp) {
   font-size: 13px;
   font-weight: 600;
-  color: #4B5563;
+  color: var(--ink-650);
   padding-top: 0;
 }
 .fu-timeline :deep(.el-timeline-item__timestamp.is-top) {
@@ -841,8 +842,8 @@ onMounted(async () => {
   transition: border-color 0.15s, background 0.15s;
 }
 .card:hover {
-  border-color: #cbd5e1;
-  background: #fafbfc;
+  border-color: var(--ink-300);
+  background: var(--auto-fafbfc);
 }
 .card:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--el-color-primary) 45%, transparent);
@@ -868,7 +869,7 @@ onMounted(async () => {
   min-width: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--gray-800);
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -878,7 +879,7 @@ onMounted(async () => {
   flex-shrink: 0;
   font-size: 12px;
   font-weight: 400;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.35;
 }
 .meta {
@@ -888,20 +889,20 @@ onMounted(async () => {
   gap: 6px 10px;
   margin-top: 6px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.4;
   min-height: 17px;
 }
 .meta > span + span::before {
   content: '·';
   margin-right: 10px;
-  color: #d1d5db;
+  color: var(--gray-300);
 }
 .summary-text {
   margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.5;
-  color: #4b5563;
+  color: var(--ink-650);
   word-break: break-word;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -924,20 +925,20 @@ onMounted(async () => {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--gray-100);
+  color: var(--gray-500);
 }
 .status-pill[data-tone='done'] {
-  background: #ecfdf5;
-  color: #059669;
+  background: var(--success-50);
+  color: var(--green-600);
 }
 .status-pill[data-tone='open'] {
-  background: #fff7ed;
-  color: #c2410c;
+  background: var(--orange-50);
+  color: var(--amber-700);
 }
 .status-pill[data-tone='cancelled'] {
-  background: #f3f4f6;
-  color: #9ca3af;
+  background: var(--gray-100);
+  color: var(--gray-400);
 }
 .detail-link {
   display: inline-flex;
@@ -948,7 +949,7 @@ onMounted(async () => {
   border: 0;
   background: transparent;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--gray-400);
   cursor: pointer;
   line-height: 1.4;
   white-space: nowrap;
@@ -959,7 +960,7 @@ onMounted(async () => {
 .detail-chevron {
   font-size: 15px;
   line-height: 1;
-  margin-left: 1px;
+  margin-left: 0;
 }
 .actions {
   margin-top: 8px;

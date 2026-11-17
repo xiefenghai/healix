@@ -416,9 +416,9 @@ onMounted(async () => {
   margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fff7ed;
-  color: #9a3412;
-  font-size: 12.5px;
+  background: var(--orange-50);
+  color: var(--orange-800);
+  font-size: 12px;
 }
 
 .empty {
@@ -429,7 +429,7 @@ onMounted(async () => {
   padding: 12px 14px;
   border: 1px dashed var(--ink-200);
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
 }
 
 .empty p {
@@ -441,7 +441,7 @@ onMounted(async () => {
 .card {
   border: 1px solid var(--ink-200);
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   padding: 10px 12px 4px;
 }
 
@@ -465,7 +465,7 @@ onMounted(async () => {
 }
 
 .summary:hover {
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
 }
 
 .summary-idx {
@@ -473,8 +473,8 @@ onMounted(async () => {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: var(--ink-100, #f1f5f9);
-  color: var(--ink-600, #475569);
+  background: var(--ink-100);
+  color: var(--ink-600);
   font-size: 12px;
   font-weight: 700;
   display: inline-flex;
@@ -501,7 +501,7 @@ onMounted(async () => {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 700;
-  color: var(--rose-600, #e11d48);
+  color: var(--rose-600);
 }
 
 .summary-hint {
@@ -543,7 +543,7 @@ onMounted(async () => {
 .risk {
   margin-left: 8px;
   font-size: 12px;
-  color: var(--rose-600, #e11d48);
+  color: var(--rose-600);
   font-weight: 600;
 }
 

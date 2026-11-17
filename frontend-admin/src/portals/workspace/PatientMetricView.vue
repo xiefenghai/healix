@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -304,12 +305,12 @@ function sortMetricsAsc(rows: Metric[]) {
 
 function trendBaseOption(unit: string) {
   return {
-    color: ['#ef4444', '#2c7ef8', '#00b8a9', '#8b5cf6'],
+    color: [palette.rose500, palette.brand500, palette.teal500, palette.violet500],
     tooltip: {
       trigger: 'axis' as const,
-      backgroundColor: '#0F172A',
-      borderColor: '#0F172A',
-      textStyle: { color: '#fff', fontSize: 11 },
+      backgroundColor: palette.ink900,
+      borderColor: palette.ink900,
+      textStyle: { color: palette.white, fontSize: 11 },
       valueFormatter: (v: unknown) => (v == null || v === '' ? '-' : unit ? `${v} ${unit}` : String(v)),
     },
     legend: {
@@ -318,7 +319,7 @@ function trendBaseOption(unit: string) {
       icon: 'circle',
       itemWidth: 10,
       itemHeight: 10,
-      textStyle: { color: '#64748b', fontSize: 11 },
+      textStyle: { color: palette.ink500, fontSize: 11 },
     },
     grid: { left: 40, right: 28, top: 32, bottom: 58, containLabel: true },
     dataZoom: [
@@ -328,19 +329,19 @@ function trendBaseOption(unit: string) {
         height: 14,
         bottom: 2,
         brushSelect: false,
-        borderColor: '#E2E8F0',
-        fillerColor: 'rgba(44, 126, 248, 0.12)',
+        borderColor: palette.ink200,
+        fillerColor: palette.brandMuted,
         handleSize: 14,
-        textStyle: { color: '#94A3B8', fontSize: 10 },
+        textStyle: { color: palette.ink400, fontSize: 10 },
       },
     ],
     xAxis: {
       type: 'category' as const,
       boundaryGap: false,
-      axisLine: { lineStyle: { color: '#E2E8F0' } },
+      axisLine: { lineStyle: { color: palette.ink200 } },
       axisLabel: {
         hideOverlap: true,
-        color: '#94A3B8',
+        color: palette.ink400,
         fontSize: 10,
         margin: 10,
         showMinLabel: true,
@@ -352,9 +353,9 @@ function trendBaseOption(unit: string) {
       type: 'value' as const,
       scale: true,
       name: unit || undefined,
-      nameTextStyle: { padding: [0, 0, 0, 4], color: '#94A3B8', fontSize: 10 },
-      axisLabel: { color: '#94A3B8', fontSize: 10 },
-      splitLine: { lineStyle: { color: '#F1F5F9' } },
+      nameTextStyle: { padding: [0, 0, 0, 4], color: palette.ink400, fontSize: 10 },
+      axisLabel: { color: palette.ink400, fontSize: 10 },
+      splitLine: { lineStyle: { color: palette.ink100 } },
     },
   }
 }
@@ -379,7 +380,7 @@ function renderTrendLine(
             text: historyEmptyText.value,
             left: 'center',
             top: 'middle',
-            textStyle: { color: '#94a3b8', fontSize: 13, fontWeight: 400 },
+            textStyle: { color: palette.ink400, fontSize: 13, fontWeight: 400 },
           }
         : { show: false },
       xAxis: { ...base.xAxis, data: categories },
@@ -1056,7 +1057,7 @@ onBeforeUnmount(() => {
           @click="openOcrPicker"
         >
           <span v-if="ocrLoading" class="ocr-btn-loading">识别中…</span>
-          <span v-else>📷 上传化验单/OCR识别</span>
+          <span v-else> 上传化验单/OCR识别</span>
         </button>
         <input
           ref="ocrFileInputRef"
@@ -1265,7 +1266,7 @@ onBeforeUnmount(() => {
                 :aria-selected="historyViewMode === 'list'"
                 @click="historyViewMode = 'list'"
               >
-                📄 列表
+                 列表
               </button>
               <button
                 type="button"
@@ -1275,7 +1276,7 @@ onBeforeUnmount(() => {
                 :aria-selected="historyViewMode === 'trend'"
                 @click="historyViewMode = 'trend'"
               >
-                📈 趋势
+                 趋势
               </button>
             </div>
             <div class="records-filters">
@@ -1448,9 +1449,9 @@ onBeforeUnmount(() => {
   height: 32px;
   padding: 0 12px;
   border-radius: 8px;
-  border: 1px solid var(--admin-border, #e2e8f0);
-  background: #fff;
-  color: var(--ink-700, #334155);
+  border: 1px solid var(--admin-border, var(--ink-200));
+  background: var(--white);
+  color: var(--ink-700);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -1462,9 +1463,9 @@ onBeforeUnmount(() => {
 }
 
 .history-entry-btn:hover {
-  color: var(--brand-600, #1e63d9);
-  border-color: #93c5fd;
-  background: #eff6ff;
+  color: var(--brand-600);
+  border-color: var(--blue-300);
+  background: var(--blue-50);
 }
 
 .history-entry-count {
@@ -1473,18 +1474,18 @@ onBeforeUnmount(() => {
   justify-content: center;
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: 999px;
-  background: #e2e8f0;
-  color: #475569;
+  background: var(--ink-200);
+  color: var(--ink-600);
   font-size: 11px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
 .history-entry-btn:hover .history-entry-count {
-  background: #bfdbfe;
-  color: #1d4ed8;
+  background: var(--brand-200);
+  color: var(--brand-800);
 }
 
 .entry-shell {
@@ -1498,12 +1499,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: visible;
   background:
-    linear-gradient(180deg, #ffffff 0%, #f8fafc 72%, #f1f5f9 100%);
+    linear-gradient(180deg, var(--white) 0%, var(--ink-50) 72%, var(--ink-100) 100%);
   border-radius: 12px;
-  border: 1px solid rgba(226, 232, 240, 0.7);
-  box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.03),
-    inset 0 -24px 40px -28px rgba(15, 23, 42, 0.06);
+  border: 1px solid var(--auto-rgba-22623224007);
+  box-shadow: none;
   padding: 12px 14px 14px;
   box-sizing: border-box;
 }
@@ -1514,7 +1513,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #fff;
+  background: var(--white);
 }
 
 .records-card--drawer {
@@ -1532,7 +1531,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   flex-wrap: wrap;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  border-bottom: 0 solid var(--ink-100);
 }
 
 .records-scroll {
@@ -1546,7 +1545,7 @@ onBeforeUnmount(() => {
 .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   letter-spacing: -0.01em;
 }
 
@@ -1558,17 +1557,17 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   margin-bottom: 10px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  border-bottom: 0 solid var(--ink-100);
   flex: 0 0 auto;
 }
 
 .ocr-btn {
   margin: 0;
-  padding: 7px 12px;
+  padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid transparent;
-  background: #e6f7ff;
-  color: var(--brand-700, #174db0);
+  background: var(--auto-e6f7ff);
+  color: var(--brand-700);
   font-size: 13px;
   font-weight: 550;
   line-height: 1.3;
@@ -1580,9 +1579,9 @@ onBeforeUnmount(() => {
 }
 
 .ocr-btn:hover:not(:disabled) {
-  background: #d6efff;
-  border-color: var(--brand-200, #bfdbfe);
-  color: var(--brand-700, #174db0);
+  background: var(--auto-d6efff);
+  border-color: var(--brand-200);
+  color: var(--brand-700);
 }
 
 .ocr-btn:disabled {
@@ -1614,8 +1613,8 @@ onBeforeUnmount(() => {
   padding: 2px;
   gap: 2px;
   border-radius: 8px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--ink-100);
+  border: 1px solid var(--ink-200);
 }
 
 .view-tab {
@@ -1625,7 +1624,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #64748b;
+  color: var(--ink-500);
   font-size: 12px;
   font-weight: 500;
   line-height: 28px;
@@ -1634,14 +1633,14 @@ onBeforeUnmount(() => {
 }
 
 .view-tab.active {
-  background: #fff;
-  color: var(--brand-600, #1e63d9);
+  background: var(--white);
+  color: var(--brand-600);
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px var(--ink-a08);
 }
 
 .view-tab:hover:not(.active) {
-  color: #334155;
+  color: var(--ink-700);
 }
 
 .records-filters {
@@ -1684,6 +1683,12 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .trend-panel {
+    animation: none;
+  }
+}
+
 .trend-panel-head {
   flex: 0 0 auto;
   margin-bottom: 8px;
@@ -1692,15 +1697,15 @@ onBeforeUnmount(() => {
 .trend-panel-title {
   font-size: 13px;
   font-weight: 600;
-  color: #475569;
+  color: var(--ink-600);
 }
 
 .trend-chart-wrap {
   flex: 1 1 auto;
   min-height: 280px;
-  border: 1px solid #eef2f7;
+  border: 1px solid var(--ink-150);
   border-radius: 10px;
-  background: #fafbfc;
+  background: var(--auto-fafbfc);
   overflow: hidden;
 }
 
@@ -1722,7 +1727,7 @@ onBeforeUnmount(() => {
 
 .records-empty :deep(.el-empty__description p) {
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 /* 日期侧栏 + 6 列表格：时间/来源 | 指标 | 数值 | 状态 | 参考 | 操作 */
@@ -1736,11 +1741,11 @@ onBeforeUnmount(() => {
   align-items: center;
   margin: 0 -10px;
   padding: 8px 10px;
-  background: #fff;
-  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  background: var(--white);
+  border-bottom: 0 solid var(--ink-100);
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
 }
 
 .records-table-head .col-actions {
@@ -1760,7 +1765,7 @@ onBeforeUnmount(() => {
   top: 10px;
   bottom: 14px;
   width: 1px;
-  background: #d0d5dd;
+  background: var(--auto-d0d5dd);
   z-index: 0;
   pointer-events: none;
 }
@@ -1799,10 +1804,10 @@ onBeforeUnmount(() => {
   height: 8px;
   margin-top: 2px;
   border-radius: 50%;
-  background: #fff;
-  border: 2px solid var(--brand-500, #2c7ef8);
+  background: var(--white);
+  border: 2px solid var(--brand-500);
   box-sizing: border-box;
-  box-shadow: 0 0 0 2px #fff;
+  box-shadow: 0 0 0 2px var(--white);
 }
 
 .day-meta {
@@ -1817,13 +1822,13 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   line-height: 1.3;
 }
 
 .day-rel {
   font-size: 11px;
-  color: var(--brand-600, #1e63d9);
+  color: var(--brand-600);
   font-weight: 550;
 }
 
@@ -1840,19 +1845,19 @@ onBeforeUnmount(() => {
   column-gap: 10px;
   align-items: center;
   min-height: 32px;
-  padding: 5px 8px;
+  padding: 6px 8px;
   border-radius: 6px;
-  background: #f8fafc;
+  background: var(--ink-50);
 }
 
 .metric-line--abnormal {
-  background: #fef2f2;
+  background: var(--rose-100);
 }
 
 .metric-line .col-time {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -1860,13 +1865,13 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   line-height: 1.2;
 }
 
 .line-source {
-  font-size: 10px;
-  color: #a0aec0;
+  font-size: 11px;
+  color: var(--auto-a0aec0);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
@@ -1876,7 +1881,7 @@ onBeforeUnmount(() => {
 .metric-line .col-name {
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1886,12 +1891,12 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--ink-900, #0f172a);
+  color: var(--ink-900);
   white-space: nowrap;
 }
 
 .value-abnormal {
-  color: var(--admin-danger, #dc2626) !important;
+  color: var(--admin-danger, var(--rose-600)) !important;
 }
 
 .metric-line .col-status {
@@ -1905,31 +1910,31 @@ onBeforeUnmount(() => {
   justify-content: center;
   min-width: 32px;
   min-height: 18px;
-  padding: 0 5px;
-  border-radius: 3px;
-  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
 }
 
 .status-tag--bad {
-  color: #b91c1c;
-  background: #fee2e2;
+  color: var(--rose-700);
+  background: var(--rose-150);
 }
 
 .status-tag--ok {
-  color: #0f766e;
-  background: #ccfbf1;
+  color: var(--teal-600);
+  background: var(--teal-25);
 }
 
 .status-empty {
   font-size: 11px;
-  color: #cbd5e1;
+  color: var(--ink-300);
 }
 
 .metric-line .col-ref {
   font-size: 11px;
-  color: #a8b0bd;
+  color: var(--auto-a8b0bd);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1942,7 +1947,7 @@ onBeforeUnmount(() => {
 }
 
 .metric-line .col-actions :deep(.el-button) {
-  padding: 0 3px;
+  padding: 0 2px;
   height: 20px;
   font-size: 11px;
 }
@@ -1999,7 +2004,7 @@ onBeforeUnmount(() => {
 
 .entry-meta-item :deep(.el-form-item__label) {
   font-size: 13px;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
   font-weight: 450;
 }
 
@@ -2009,11 +2014,11 @@ onBeforeUnmount(() => {
   padding-top: 2px;
   font-size: 12px;
   line-height: 1.2;
-  color: #f56c6c;
+  color: var(--danger-soft);
 }
 
 .entry-form :deep(.entry-meta-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before) {
-  color: #f56c6c;
+  color: var(--danger-soft);
   margin-right: 2px;
 }
 
@@ -2031,12 +2036,12 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #f8f9fa;
+  background: var(--ink-35);
   box-sizing: border-box;
 }
 
 .entry-form :deep(.entry-note) {
-  background: #f8f9fa;
+  background: var(--ink-35);
   width: 100%;
 }
 
@@ -2058,7 +2063,7 @@ onBeforeUnmount(() => {
   padding: 0;
   height: 36px;
   line-height: 36px;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
   font-weight: 500;
   text-align: right;
   box-sizing: border-box;
@@ -2078,16 +2083,16 @@ onBeforeUnmount(() => {
   width: 100%;
   min-width: 0;
   height: 36px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--auto-d9d9d9);
   border-radius: 6px;
-  background: #fff;
+  background: var(--white);
   overflow: hidden;
   box-sizing: border-box;
   transition: border-color 0.15s ease;
 }
 
 .input-group:focus-within {
-  border-color: var(--brand-500, #2c7ef8);
+  border-color: var(--brand-500);
 }
 
 .input-group--simple .group-part {
@@ -2109,7 +2114,7 @@ onBeforeUnmount(() => {
   flex: 0 0 1px;
   width: 1px;
   align-self: stretch;
-  background: #e8e8e8;
+  background: var(--auto-e8e8e8);
 }
 
 .group-addon {
@@ -2119,9 +2124,9 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 0 10px;
   font-size: 12px;
-  color: #999;
-  background: #fafafa;
-  border-left: 1px solid #eee;
+  color: var(--gray-999);
+  background: var(--ink-5);
+  border-left: 0 solid var(--auto-eeeeee);
   white-space: nowrap;
   line-height: 1;
 }
@@ -2131,15 +2136,15 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   padding: 0 8px 0 0;
-  color: var(--brand-600, #1e63d9);
+  color: var(--brand-600);
   font-weight: 600;
   font-size: 12px;
   white-space: nowrap;
-  background: #fafafa;
+  background: var(--ink-5);
 }
 
 .unit {
-  color: #999;
+  color: var(--gray-999);
   font-size: 13px;
   line-height: 1;
   white-space: nowrap;
@@ -2164,17 +2169,17 @@ onBeforeUnmount(() => {
 .entry-form :deep(.el-date-editor .el-input__wrapper) {
   min-height: 36px;
   height: 36px;
-  padding-left: 11px;
-  padding-right: 11px;
+  padding-left: 12px;
+  padding-right: 12px;
   border-radius: 6px;
   box-shadow: none !important;
-  border: 1px solid #d9d9d9;
-  background: #fff;
+  border: 1px solid var(--auto-d9d9d9);
+  background: var(--white);
 }
 
 .entry-form :deep(.el-input__wrapper:hover),
 .entry-form :deep(.el-select__wrapper:hover) {
-  border-color: #bfbfbf;
+  border-color: var(--auto-bfbfbf);
 }
 
 .entry-form :deep(.el-input__wrapper.is-focus),
@@ -2185,7 +2190,7 @@ onBeforeUnmount(() => {
 
 .entry-form :deep(.el-input__wrapper.is-focus),
 .entry-form :deep(.el-select__wrapper.is-focused) {
-  border-color: var(--brand-500, #2c7ef8);
+  border-color: var(--brand-500);
 }
 
 /* 复合组内部：去掉各自边框，交给外框 */
@@ -2200,7 +2205,7 @@ onBeforeUnmount(() => {
 }
 
 .entry-form :deep(.input-group .group-prefix .el-select__wrapper) {
-  background: #fafafa;
+  background: var(--ink-5);
   padding-left: 10px;
   padding-right: 6px;
 }
@@ -2211,7 +2216,7 @@ onBeforeUnmount(() => {
   max-height: 88px !important;
   border-radius: 6px;
   box-shadow: none !important;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--auto-d9d9d9);
   resize: none;
 }
 

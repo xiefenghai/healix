@@ -659,7 +659,7 @@ function detailTitle() {
 .text-block {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--el-border-color-extra-light);
+  border-top: 0 solid var(--el-border-color-extra-light);
 }
 .text-block-label {
   margin-bottom: 6px;
@@ -676,8 +676,8 @@ function detailTitle() {
 .hits {
   margin: 0 0 16px;
   border: 1px solid var(--el-border-color-lighter);
-  border-left: 3px solid var(--el-color-danger-light-3);
-  border-radius: 8px;
+  border-left: 4px solid var(--el-color-danger-light-3);
+  border-radius: 0;
   background: var(--el-fill-color-blank);
   overflow: hidden;
 }
@@ -687,7 +687,7 @@ function detailTitle() {
   gap: 8px;
   padding: 8px 12px;
   background: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color-extra-light);
+  border-bottom: 0 solid var(--el-border-color-extra-light);
 }
 .hits-title {
   font-size: 13px;
@@ -717,7 +717,7 @@ function detailTitle() {
   line-height: 1.45;
 }
 .hit-row + .hit-row {
-  border-top: 1px solid var(--el-border-color-extra-light);
+  border-top: 0 solid var(--el-border-color-extra-light);
 }
 .hit-main {
   flex: 1;
@@ -740,7 +740,7 @@ function detailTitle() {
   flex-direction: column;
   gap: 10px;
   padding-top: 4px;
-  border-top: 1px solid var(--el-border-color-extra-light);
+  border-top: 0 solid var(--el-border-color-extra-light);
 }
 .footer-row {
   display: grid;

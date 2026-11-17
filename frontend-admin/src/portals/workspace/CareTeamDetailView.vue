@@ -570,48 +570,48 @@ onMounted(async () => {
 
 .btn-back {
   height: 32px;
-  border: 1px solid #e5e7eb;
-  background: #f9fafb;
-  color: #374151;
+  border: 1px solid var(--gray-200);
+  background: var(--gray-50);
+  color: var(--ink-750);
 }
 
 .btn-back:hover {
-  border-color: #d1d5db;
-  background: #f3f4f6;
-  color: #111827;
+  border-color: var(--gray-300);
+  background: var(--gray-100);
+  color: var(--ink-950);
 }
 
 .btn-delete {
   height: 32px;
   border: none;
-  background: #fef2f2;
-  color: #dc2626;
+  background: var(--rose-100);
+  color: var(--rose-600);
 }
 
 .btn-delete:hover {
-  background: #fee2e2;
-  color: #b91c1c;
+  background: var(--rose-150);
+  color: var(--rose-700);
 }
 
 .btn-secondary {
   height: 32px;
-  border: 1px solid #bfdbfe;
+  border: 1px solid var(--brand-200);
   border-radius: 6px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 
 .btn-secondary:hover {
-  border-color: #93c5fd;
-  background: #dbeafe;
-  color: #1e40af;
+  border-color: var(--blue-300);
+  background: var(--blue-100);
+  color: var(--brand-900);
 }
 
 .block {
   margin-bottom: 16px;
   padding: 24px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
 }
 
@@ -619,7 +619,7 @@ onMounted(async () => {
   margin: 0 0 16px;
   font-size: 15px;
   font-weight: 650;
-  color: var(--ink-900, #111827);
+  color: var(--ink-900, var(--ink-950));
 }
 
 .name-row {
@@ -650,7 +650,7 @@ onMounted(async () => {
 .field-label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-600, #4b5563);
+  color: var(--ink-600, var(--ink-650));
   line-height: 1.2;
 }
 
@@ -686,9 +686,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   padding: 16px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
 }
 
 .col-head {
@@ -704,7 +704,7 @@ onMounted(async () => {
 .col-title {
   font-size: 13px;
   font-weight: 650;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 
 .patient-search {
@@ -717,23 +717,23 @@ onMounted(async () => {
   min-height: 32px;
   padding: 0 10px;
   box-shadow: none !important;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--gray-200);
   border-radius: 6px;
-  background: #fff;
+  background: var(--white);
   transition:
     border-color 140ms,
     box-shadow 140ms;
 }
 
 .patient-search :deep(.el-input__wrapper:hover) {
-  border-color: #d1d5db;
+  border-color: var(--gray-300);
   box-shadow: none !important;
 }
 
 .patient-search :deep(.el-input__wrapper.is-focus),
 .patient-search :deep(.el-input__wrapper:focus-within) {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
+  border-color: var(--blue-300);
+  box-shadow: 0 0 0 2px var(--ink-a12) !important;
 }
 
 .patient-search :deep(.el-input__inner) {
@@ -751,9 +751,9 @@ onMounted(async () => {
 
 .members-table {
   width: 100%;
-  --el-table-row-hover-bg-color: #f3f4f6;
-  --el-table-striped-bg-color: #f9fafb;
-  --el-table-border-color: #f3f4f6;
+  --el-table-row-hover-bg-color: var(--gray-100);
+  --el-table-striped-bg-color: var(--gray-50);
+  --el-table-border-color: var(--gray-100);
 }
 
 /* 去掉 el-table 底部那根异常粗线 */
@@ -765,10 +765,10 @@ onMounted(async () => {
 
 .members-table :deep(.el-table__header th) {
   height: 40px;
-  background: #f9fafb !important;
-  color: #6b7280;
+  background: var(--gray-50) !important;
+  color: var(--gray-500);
   font-weight: 600;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 0 solid var(--gray-100);
 }
 
 .members-table :deep(.el-table__header .cell) {
@@ -817,19 +817,19 @@ onMounted(async () => {
   display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 1px;
+  gap: 2px;
   line-height: 1.25;
 }
 
 .joined-date {
   font-size: 13px;
-  color: var(--ink-700, #374151);
+  color: var(--ink-700, var(--ink-750));
   white-space: nowrap;
 }
 
 .joined-time {
   font-size: 12px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
   white-space: nowrap;
 }
 
@@ -847,8 +847,8 @@ onMounted(async () => {
 }
 
 .type-pill.staff {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 
 .remove-btn {
@@ -857,14 +857,14 @@ onMounted(async () => {
   padding: 0;
   font: inherit;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--gray-400);
   cursor: pointer;
   white-space: nowrap;
   transition: color 140ms;
 }
 
 .remove-btn:hover {
-  color: #dc2626;
+  color: var(--rose-600);
 }
 
 .add-row {

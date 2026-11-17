@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -349,7 +350,7 @@ onUnmounted(() => {
         :key="b.batchId"
         :timestamp="formatDateTime(b.gmtCreated)"
         placement="top"
-        :color="idx === 0 ? 'var(--el-color-primary)' : '#D1D5DB'"
+        :color="idx === 0 ? 'var(--el-color-primary)' : palette.gray300"
       >
         <div
           class="rev-card"
@@ -365,7 +366,7 @@ onUnmounted(() => {
             <div class="rev-action">{{ summarizeRevisionChanges(b.items, b.bizType, b.bizKey) }}</div>
             <div class="rev-meta">
               <span class="rev-operator" :title="operatorRole(b)">
-                <span class="op-ico" aria-hidden="true">👤</span>
+                <span class="op-ico" aria-hidden="true"></span>
                 操作人：{{ operatorName(b) }}
               </span>
               <span class="rev-biz-tag">{{ formatRevisionBizLabel(b.bizType, b.bizKey) }}</span>
@@ -452,13 +453,13 @@ onUnmounted(() => {
   margin: 0;
   font-size: 16px;
   font-weight: 700;
-  color: #111827;
+  color: var(--ink-950);
   line-height: 1.3;
 }
 
 .section-sub {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.4;
 }
 
@@ -488,7 +489,7 @@ onUnmounted(() => {
 .rev-timeline :deep(.el-timeline-item__tail) {
   /* 从主标题附近的圆点向下连续延伸 */
   top: 40px;
-  border-left: 1px dashed #e5e7eb;
+  border-left: 0 dashed var(--gray-200);
 }
 
 .rev-timeline :deep(.el-timeline-item__node) {
@@ -497,20 +498,20 @@ onUnmounted(() => {
   left: 0;
   /* 越过顶部时间戳，对齐卡片内主标题行 */
   top: 36px;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #d1d5db;
+  border: 2px solid var(--white);
+  box-shadow: 0 0 0 1px var(--gray-300);
   box-sizing: content-box;
 }
 
 .rev-timeline :deep(.el-timeline-item:first-child .el-timeline-item__node) {
   background-color: var(--el-color-primary) !important;
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--el-color-primary) 35%, #fff);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--el-color-primary) 35%, var(--white));
 }
 
 .rev-timeline :deep(.el-timeline-item__timestamp) {
   font-size: 13px;
   font-weight: 650;
-  color: #374151;
+  color: var(--ink-750);
   padding-top: 0;
 }
 
@@ -527,8 +528,8 @@ onUnmounted(() => {
   max-width: none;
   box-sizing: border-box;
   padding: 12px 24px 12px 16px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
   box-shadow: none;
   cursor: pointer;
@@ -536,18 +537,18 @@ onUnmounted(() => {
 }
 
 .rev-card:hover {
-  border-color: #bfdbfe;
-  background: #f8fbff;
+  border-color: var(--brand-200);
+  background: var(--ink-25);
 }
 
 .rev-card:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--el-color-primary) 45%, #fff);
+  outline: 2px solid color-mix(in srgb, var(--el-color-primary) 45%, var(--white));
   outline-offset: 2px;
 }
 
 .rev-card.is-expanded {
-  border-color: #93c5fd;
-  background: #f8fbff;
+  border-color: var(--blue-300);
+  background: var(--ink-25);
 }
 
 .rev-card-main {
@@ -558,7 +559,7 @@ onUnmounted(() => {
 .rev-action {
   font-size: 15px;
   font-weight: 700;
-  color: #1f2937;
+  color: var(--gray-800);
   line-height: 1.4;
 }
 
@@ -575,7 +576,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.4;
 }
 
@@ -592,8 +593,8 @@ onUnmounted(() => {
   padding: 0 8px;
   border: 0;
   border-radius: 999px;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: var(--blue-50);
+  color: var(--blue-500);
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
@@ -605,7 +606,7 @@ onUnmounted(() => {
   gap: 2px;
   flex: 0 0 auto;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--gray-400);
   white-space: nowrap;
   line-height: 1.4;
   pointer-events: none;
@@ -628,16 +629,16 @@ onUnmounted(() => {
   margin-bottom: 4px;
   max-width: 100%;
   padding: 12px 14px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
 }
 
 .detail-section-title {
   margin: 0 0 8px;
   font-size: 13px;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--gray-500);
 }
 
 .rev-list {
@@ -648,7 +649,7 @@ onUnmounted(() => {
 
 .rev-item {
   padding: 10px 0;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 0 solid var(--gray-200);
 }
 
 .rev-list li:last-child {
@@ -662,7 +663,7 @@ onUnmounted(() => {
 
 .rev-field {
   font-size: 13px;
-  color: #1f2937;
+  color: var(--gray-800);
   font-weight: 600;
   line-height: 1.45;
 }
@@ -675,23 +676,23 @@ onUnmounted(() => {
 }
 
 .rev-old {
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .rev-new {
-  color: #1f2937;
+  color: var(--gray-800);
   font-weight: 500;
 }
 
 .rev-arrow {
   margin: 0 8px;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .rev-quote {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
   line-height: 1.45;
 }
 </style>

@@ -1900,7 +1900,7 @@ onBeforeUnmount(() => {
         <div v-show="activeTab === 'basic' && basicSubTab === 'psych'" class="archive-panel">
         <el-card shadow="never" class="section-card">
           <p class="section-hint section-hint--block section-hint--info">
-            <span class="section-hint-icon" aria-hidden="true">ℹ️</span>
+            <span class="section-hint-icon" aria-hidden="true">ℹ</span>
             <span>敏感信息；按角色在接口层脱敏</span>
           </p>
           <div class="extra-fields extra-fields--rows">
@@ -2581,7 +2581,7 @@ onBeforeUnmount(() => {
               'basic-save-dock-status--saved': !basicDirty,
             }"
           >
-            <span v-if="!basicDirty" class="basic-save-dock-check" aria-hidden="true">✔</span>
+            <span v-if="!basicDirty" class="basic-save-dock-check" aria-hidden="true"></span>
             {{ basicDirty ? '有未保存的修改' : '已保存' }}
           </span>
           <el-button
@@ -2702,7 +2702,7 @@ onBeforeUnmount(() => {
 .nav-group + .nav-group {
   margin-top: 16px;
   padding-top: 12px;
-  border-top: 1px solid #f3f4f6;
+  border-top: 0 solid var(--gray-100);
 }
 
 .nav-group-title {
@@ -2710,7 +2710,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: #111827;
+  color: var(--ink-950);
   line-height: 1.3;
 }
 
@@ -2720,11 +2720,11 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   text-align: left;
-  padding: 9px 12px;
+  padding: 8px 12px;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
   cursor: pointer;
   box-sizing: border-box;
   transition:
@@ -2739,28 +2739,28 @@ onBeforeUnmount(() => {
 }
 
 .nav-item--add {
-  color: var(--brand-600, #1e63d9);
+  color: var(--brand-600);
   font-weight: 550;
 }
 
 .nav-item:hover {
-  color: var(--ink-800, #1e293b);
-  background: #f1f5f9;
+  color: var(--ink-800);
+  background: var(--ink-100);
 }
 
 .nav-item--add:hover {
-  color: var(--brand-700, #174db0);
-  background: var(--brand-50, #eaf2ff);
+  color: var(--brand-700);
+  background: var(--brand-50);
 }
 
 .nav-item.active {
-  color: var(--brand-600, #1e63d9);
-  background: var(--brand-50, #eaf2ff);
+  color: var(--brand-600);
+  background: var(--brand-50);
   font-weight: 600;
 }
 
 .nav-group--active .nav-group-title {
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
 }
 
 .archive-content {
@@ -2775,7 +2775,7 @@ onBeforeUnmount(() => {
 
 .archive-main--basic-dock .archive-content {
   /* 吸底「保存基础档案」栏高度 + 余量，避免过敏史表格被遮挡 */
-  padding-bottom: 100px;
+  padding-bottom: 96px;
 }
 
 .archive-panel {
@@ -2799,11 +2799,11 @@ onBeforeUnmount(() => {
   width: 100%;
   box-sizing: border-box;
   border-radius: 10px 10px 0 0;
-  border: 1px solid var(--admin-border, #e2e8f0);
+  border: 1px solid var(--admin-border, var(--ink-200));
   border-bottom: none;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--white-a96);
   backdrop-filter: blur(8px);
-  box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.1);
+  box-shadow: none;
 }
 
 .basic-save-dock-status {
@@ -2817,12 +2817,12 @@ onBeforeUnmount(() => {
 }
 
 .basic-save-dock-status--dirty {
-  color: #b45309;
+  color: var(--amber-600);
   font-weight: 500;
 }
 
 .basic-save-dock-status--saved {
-  color: #10b981;
+  color: var(--success-500);
   font-weight: 500;
 }
 
@@ -2834,7 +2834,7 @@ onBeforeUnmount(() => {
   height: 16px;
   font-size: 12px;
   line-height: 1;
-  color: #10b981;
+  color: var(--success-500);
 }
 
 .basic-save-dock-btn {
@@ -2868,27 +2868,27 @@ onBeforeUnmount(() => {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
-  border: 1px solid var(--admin-border, #e2e8f0);
+  border: 1px solid var(--admin-border, var(--ink-200));
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   padding: 6px;
 }
 
 .hx-pill-tabs :deep(.el-tabs__item) {
   height: auto !important;
   line-height: 1.25 !important;
-  padding: 7px 14px !important;
+  padding: 8px 14px !important;
   margin: 0 !important;
   border: none !important;
-  border-radius: 7px;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
 }
 
 .hx-pill-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--brand-600, #1e63d9) !important;
-  background: var(--brand-50, #eaf2ff);
+  color: var(--brand-600) !important;
+  background: var(--brand-50);
   box-shadow: none;
 }
 
@@ -2905,7 +2905,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.5;
   font-weight: 400;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .section-hint-icon {
@@ -2947,7 +2947,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 8px 0 12px;
   background: transparent;
-  border-bottom: 1px solid var(--admin-border, #e2e8f0);
+  border-bottom: 0 solid var(--admin-border, var(--ink-200));
 }
 
 .card-head-left {
@@ -2976,7 +2976,7 @@ onBeforeUnmount(() => {
 .section-hint {
   font-size: 12px;
   font-weight: 400;
-  color: var(--admin-muted, #64748b);
+  color: var(--admin-muted, var(--ink-500));
 }
 
 .section-card {
@@ -2992,14 +2992,14 @@ onBeforeUnmount(() => {
 }
 
 .disease-card.section-card {
-  border: 1px solid var(--admin-border, #e2e8f0);
-  background: #fff;
+  border: 1px solid var(--admin-border, var(--ink-200));
+  background: var(--white);
   border-radius: 8px;
 }
 
 .disease-card.section-card :deep(.el-card__header) {
   padding: 12px 16px;
-  background: #f8fafc;
+  background: var(--ink-50);
 }
 
 .disease-card.section-card :deep(.el-card__body) {
@@ -3014,7 +3014,7 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 16px 0;
   margin: 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 0 solid var(--gray-100);
   align-items: flex-start;
   box-sizing: border-box;
 }
@@ -3127,7 +3127,7 @@ onBeforeUnmount(() => {
   padding: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #9ca3af;
+  color: var(--gray-400);
   transition: opacity 0.15s ease;
 }
 
@@ -3167,9 +3167,9 @@ onBeforeUnmount(() => {
   padding: 0 14px !important;
   border-radius: 999px !important;
   border-style: dashed !important;
-  border-color: #d1d5db !important;
-  color: #6b7280 !important;
-  background: #fff !important;
+  border-color: var(--gray-300) !important;
+  color: var(--gray-500) !important;
+  background: var(--white) !important;
   font-size: 13px;
   font-weight: 500;
   line-height: 1 !important;
@@ -3177,9 +3177,9 @@ onBeforeUnmount(() => {
 }
 
 .illness-add-btn:hover {
-  color: #2563eb !important;
-  border-color: #93c5fd !important;
-  background: #eff6ff !important;
+  color: var(--blue-600) !important;
+  border-color: var(--blue-300) !important;
+  background: var(--blue-50) !important;
 }
 
 .illness-picker-panel {
@@ -3187,21 +3187,21 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   width: 100%;
-  min-width: 480px;
+  min-width: min(480px, 100%);
   max-height: 360px;
   padding: 0;
 }
 
 .illness-picker-sticky {
   flex: 0 0 auto;
-  background: #fff;
+  background: var(--white);
   z-index: 2;
 }
 
 .illness-picker-divider {
   height: 1px;
   margin: 10px 0 12px;
-  background: #f3f4f6;
+  background: var(--gray-100);
 }
 
 .illness-picker-scroll {
@@ -3223,7 +3223,7 @@ onBeforeUnmount(() => {
 .illness-check--none :deep(.el-checkbox__label) {
   font-size: 13px;
   font-weight: 500;
-  color: var(--admin-text-secondary, #64748b);
+  color: var(--admin-text-secondary, var(--ink-500));
   line-height: 22px;
   padding-left: 8px;
 }
@@ -3364,7 +3364,7 @@ onBeforeUnmount(() => {
 
 .end-stage-main {
   font-size: 13px;
-  color: var(--admin-text, #1e293b);
+  color: var(--admin-text, var(--ink-800));
 }
 
 .end-stage-sub {
@@ -3372,7 +3372,7 @@ onBeforeUnmount(() => {
   margin-left: 2px;
   font-size: 12px;
   font-weight: 400;
-  color: #6b7280;
+  color: var(--gray-500);
   line-height: 1.45;
 }
 
@@ -3381,7 +3381,7 @@ onBeforeUnmount(() => {
   padding-left: 22px;
   font-size: 12px;
   line-height: 1.6;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .disease-remark {
@@ -3421,15 +3421,15 @@ onBeforeUnmount(() => {
   height: 36px;
   min-height: 36px;
   padding: 0 12px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
   box-shadow: none !important;
 }
 
 .illness-other--line :deep(.el-input__wrapper:hover),
 .illness-other--line :deep(.el-input__wrapper.is-focus) {
-  border-color: #d1d5db;
+  border-color: var(--gray-300);
   box-shadow: none !important;
 }
 
@@ -3437,16 +3437,16 @@ onBeforeUnmount(() => {
   height: 34px;
   line-height: 34px;
   font-size: 13px;
-  color: var(--admin-text, #1e293b);
+  color: var(--admin-text, var(--ink-800));
 }
 
 .illness-other--line :deep(.el-input__inner::placeholder) {
   font-size: 13px;
-  color: #c0c4cc;
+  color: var(--auto-c0c4cc);
 }
 
 .illness-other--line :deep(.el-input__count) {
-  color: #d1d5db;
+  color: var(--gray-300);
   font-size: 11px;
   background: transparent;
 }
@@ -3454,8 +3454,8 @@ onBeforeUnmount(() => {
 /* 病种档案等仍用 textarea */
 .illness-other:not(.illness-other--line) :deep(.el-textarea__inner) {
   min-height: 60px !important;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
   box-shadow: none;
 }
@@ -3482,7 +3482,7 @@ onBeforeUnmount(() => {
 
 .lifestyle-card .row-label--section {
   font-weight: 700;
-  color: #111827;
+  color: var(--ink-950);
 }
 
 .lifestyle-fields {
@@ -3552,7 +3552,7 @@ onBeforeUnmount(() => {
 
 .unit {
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--gray-400);
   white-space: nowrap;
   line-height: 32px;
 }
@@ -3599,9 +3599,9 @@ onBeforeUnmount(() => {
   padding: 12px 20px;
   display: flex;
   justify-content: flex-end;
-  background: #fff;
-  border-top: 1px solid #f3f4f6;
-  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
+  background: var(--white);
+  border-top: 0 solid var(--gray-100);
+  box-shadow: 0 -4px 16px var(--ink-a06);
 }
 
 .save-bar--disease {
@@ -3612,9 +3612,9 @@ onBeforeUnmount(() => {
   z-index: 30;
   width: 100%;
   box-sizing: border-box;
-  background: #fff;
-  border-top: 1px solid #f3f4f6;
-  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.06);
+  background: var(--white);
+  border-top: 0 solid var(--gray-100);
+  box-shadow: 0 -4px 16px var(--ink-a06);
 }
 
 .disease-grid {
@@ -3638,7 +3638,7 @@ onBeforeUnmount(() => {
 }
 
 .disease-card .archive-row {
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 0 solid var(--gray-100);
   padding: 16px 0;
   align-items: start;
 }
@@ -3660,7 +3660,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 0 24px;
-  border-bottom: 1px solid var(--admin-border);
+  border-bottom: 0 solid var(--admin-border);
 }
 
 .disease-pair--compact {
@@ -3746,7 +3746,7 @@ onBeforeUnmount(() => {
 .nested-fields {
   margin-top: 12px;
   padding: 8px 12px 4px;
-  background: #f8fafc;
+  background: var(--ink-50);
   border: 1px solid var(--admin-border);
   border-radius: 8px;
 }
@@ -3760,7 +3760,7 @@ onBeforeUnmount(() => {
 
 .symptom-block {
   padding: 12px 0 8px;
-  border-top: 1px dashed var(--admin-border);
+  border-top: 0 dashed var(--admin-border);
 }
 
 .symptom-block + .symptom-block {
@@ -3891,19 +3891,20 @@ onBeforeUnmount(() => {
 <style>
 .illness-picker-popper.el-popper {
   z-index: 9999 !important;
-  min-width: 520px;
+  width: min(92vw, 520px);
+  min-width: 0;
   max-width: 560px;
   padding: 16px !important;
   overflow: hidden !important;
-  background: #fff !important;
-  border: 1px solid #e5e7eb !important;
+  background: var(--white) !important;
+  border: 1px solid var(--gray-200) !important;
   border-radius: 10px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+  box-shadow: none !important;
 }
 
 .illness-picker-popper .el-popper__arrow::before {
-  background: #fff !important;
-  border: 1px solid #e5e7eb;
+  background: var(--white) !important;
+  border: 1px solid var(--gray-200);
 }
 
 /* 穿透 EP 默认 checkbox 间距，保证两列 Grid 绝对对齐 */

@@ -2,6 +2,7 @@
 /**
  * 运营统计：机构健管团队供给效能回顾（非待办、非依从结果）。
  */
+import { palette } from '../../shared/palette'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -245,7 +246,7 @@ function renderSeries() {
   if (!seriesChart) seriesChart = echarts.init(seriesRef.value)
   const pts = summary.value?.series ?? []
   seriesChart.setOption({
-    color: ['#0D9488', '#2563EB'],
+    color: [palette.teal700, palette.blue600],
     grid: { left: 8, right: 12, top: 40, bottom: 4, containLabel: true },
     legend: {
       top: 0,
@@ -253,7 +254,7 @@ function renderSeries() {
       itemWidth: 14,
       itemHeight: 8,
       itemGap: 20,
-      textStyle: { color: '#64748B', fontSize: 12 },
+      textStyle: { color: palette.ink500, fontSize: 12 },
     },
     tooltip: {
       trigger: 'axis',
@@ -275,21 +276,21 @@ function renderSeries() {
     xAxis: {
       type: 'category',
       data: pts.map((p) => (p.date || '').slice(5)),
-      axisLabel: { color: '#94A3B8', fontSize: 11 },
-      axisLine: { lineStyle: { color: '#E2E8F0' } },
+      axisLabel: { color: palette.ink400, fontSize: 11 },
+      axisLine: { lineStyle: { color: palette.ink200 } },
     },
     yAxis: [
       {
         type: 'value',
         minInterval: 1,
-        axisLabel: { color: '#94A3B8', fontSize: 11 },
-        splitLine: { lineStyle: { color: '#F1F5F9' } },
+        axisLabel: { color: palette.ink400, fontSize: 11 },
+        splitLine: { lineStyle: { color: palette.ink100 } },
       },
       {
         type: 'value',
         min: 0,
         max: 100,
-        axisLabel: { color: '#94A3B8', fontSize: 11, formatter: '{value}%' },
+        axisLabel: { color: palette.ink400, fontSize: 11, formatter: '{value}%' },
         splitLine: { show: false },
       },
     ],
@@ -320,19 +321,19 @@ function renderTypes() {
   if (!typeChart) typeChart = echarts.init(typeRef.value)
   const rows = [...types.value].slice(0, 8).reverse()
   typeChart.setOption({
-    color: ['#0F766E'],
+    color: [palette.teal600],
     grid: { left: 88, right: 24, top: 12, bottom: 24 },
     tooltip: { trigger: 'axis' },
     xAxis: {
       type: 'value',
       minInterval: 1,
-      axisLabel: { color: '#94A3B8' },
-      splitLine: { lineStyle: { color: '#F1F5F9' } },
+      axisLabel: { color: palette.ink400 },
+      splitLine: { lineStyle: { color: palette.ink100 } },
     },
     yAxis: {
       type: 'category',
       data: rows.map((r) => r.taskTypeLabel || r.taskType),
-      axisLabel: { color: '#475569', fontSize: 12 },
+      axisLabel: { color: palette.ink600, fontSize: 12 },
       axisLine: { show: false },
       axisTick: { show: false },
     },
@@ -708,13 +709,13 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 22px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--ink-900);
   letter-spacing: -0.02em;
 }
 .sub {
   margin: 4px 0 0;
   font-size: 13px;
-  color: #64748b;
+  color: var(--ink-500);
 }
 .filters {
   display: flex;
@@ -723,7 +724,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .sep {
-  color: #94a3b8;
+  color: var(--ink-400);
   font-size: 12px;
 }
 .kpi-row {
@@ -738,54 +739,54 @@ onBeforeUnmount(() => {
 }
 .kpi {
   text-align: left;
-  border: 1px solid #e2e8f0;
-  background: #fff;
+  border: 1px solid var(--ink-200);
+  background: var(--white);
   border-radius: 12px;
   padding: 14px 16px;
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .kpi:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  border-color: var(--ink-300);
+  box-shadow: 0 4px 14px var(--ink-a06);
 }
 .kpi.static {
   cursor: default;
 }
 .kpi.static:hover {
-  border-color: #e2e8f0;
+  border-color: var(--ink-200);
   box-shadow: none;
 }
 .kpi-label {
   font-size: 12px;
-  color: #64748b;
+  color: var(--ink-500);
 }
 .kpi-value {
   margin-top: 6px;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--ink-900);
   letter-spacing: -0.03em;
 }
 .kpi-hint {
   margin-top: 4px;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 .kpi.teal .kpi-value {
-  color: #0f766e;
+  color: var(--teal-600);
 }
 .kpi.blue .kpi-value {
-  color: #1d4ed8;
+  color: var(--brand-800);
 }
 .kpi.rose .kpi-value {
-  color: #be123c;
+  color: var(--rose-800);
 }
 .kpi.violet .kpi-value {
-  color: #6d28d9;
+  color: var(--violet-700);
 }
 .kpi.amber .kpi-value {
-  color: #b45309;
+  color: var(--amber-600);
 }
 .mid {
   display: grid;
@@ -798,7 +799,7 @@ onBeforeUnmount(() => {
   }
 }
 .panel {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--ink-200);
   border-radius: 12px;
 }
 .panel-title {
@@ -806,12 +807,12 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--ink-900);
 }
 .muted {
   font-size: 12px;
   font-weight: 400;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 .chart {
   width: 100%;
@@ -825,7 +826,7 @@ onBeforeUnmount(() => {
 .empty {
   padding: 48px 0;
   text-align: center;
-  color: #94a3b8;
+  color: var(--ink-400);
   font-size: 13px;
 }
 .compare {
@@ -837,30 +838,30 @@ onBeforeUnmount(() => {
 }
 .compare-vs {
   align-self: center;
-  color: #94a3b8;
+  color: var(--ink-400);
   font-size: 13px;
   font-weight: 600;
 }
 .compare-card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--ink-200);
   border-radius: 12px;
   padding: 16px;
-  background: #f8fafc;
+  background: var(--ink-50);
 }
 .compare-card.self {
-  background: linear-gradient(160deg, #f0fdfa, #fff);
-  border-color: #99f6e4;
+  background: linear-gradient(160deg, var(--teal-25), var(--white));
+  border-color: var(--teal-25);
 }
 .compare-label {
   font-size: 11px;
-  color: #64748b;
+  color: var(--ink-500);
   text-transform: none;
 }
 .compare-name {
   margin-top: 4px;
   font-size: 16px;
   font-weight: 650;
-  color: #0f172a;
+  color: var(--ink-900);
 }
 .compare-metrics {
   margin-top: 14px;
@@ -871,17 +872,17 @@ onBeforeUnmount(() => {
 .compare-metrics span {
   display: block;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 .compare-metrics b {
   font-size: 18px;
-  color: #0f172a;
+  color: var(--ink-900);
 }
 .footnote {
   margin: 0;
   font-size: 12px;
   line-height: 1.6;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 .drill-head {
   display: flex;
@@ -889,7 +890,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   margin-bottom: 10px;
   font-size: 13px;
-  color: #475569;
+  color: var(--ink-600);
 }
 .drill-kinds {
   margin-bottom: 12px;
@@ -900,11 +901,11 @@ onBeforeUnmount(() => {
   margin-top: 12px;
 }
 .late {
-  color: #be123c;
+  color: var(--rose-800);
   font-weight: 650;
 }
 .ok {
-  color: #0f766e;
+  color: var(--teal-600);
   font-weight: 650;
 }
 </style>

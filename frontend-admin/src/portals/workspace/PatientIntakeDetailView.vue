@@ -301,8 +301,8 @@ watch(responseId, (id, prev) => {
   justify-content: space-between;
   gap: 16px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--ink-200);
-  background: #fff;
+  border-bottom: 0 solid var(--ink-200);
+  background: var(--white);
 }
 
 .intake-detail.embedded .top {
@@ -350,8 +350,8 @@ watch(responseId, (id, prev) => {
 .nav {
   overflow: auto;
   padding: 12px;
-  border-right: 1px solid var(--ink-200);
-  background: #fff;
+  border-right: 0 solid var(--ink-200);
+  background: var(--white);
 }
 
 .nav-item {
@@ -406,7 +406,7 @@ watch(responseId, (id, prev) => {
 }
 
 .card {
-  background: #fff;
+  background: var(--white);
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   padding: 14px 16px;
@@ -420,13 +420,13 @@ watch(responseId, (id, prev) => {
 }
 
 .ai-card {
-  border-color: #99f6e4;
-  background: #f0fdfa;
+  border-color: var(--teal-25);
+  background: var(--teal-25);
 }
 
 .q {
   padding: 10px 0;
-  border-top: 1px solid var(--ink-100);
+  border-top: 0 solid var(--ink-100);
 }
 
 .q:first-of-type {
@@ -454,30 +454,30 @@ watch(responseId, (id, prev) => {
 .prov-tag {
   font-size: 11px;
   line-height: 1;
-  padding: 3px 7px;
+  padding: 4px 6px;
   border-radius: 999px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .prov-patient {
-  color: #475569;
-  background: #f1f5f9;
+  color: var(--ink-600);
+  background: var(--ink-100);
 }
 
 .prov-staff {
-  color: #0f766e;
-  background: #ecfdf5;
+  color: var(--teal-600);
+  background: var(--success-50);
 }
 
 .prov-ai {
-  color: #6d28d9;
-  background: #f5f3ff;
+  color: var(--violet-700);
+  background: var(--auto-f5f3ff);
 }
 
 .prov-archive {
-  color: #64748b;
-  background: #f8fafc;
+  color: var(--ink-500);
+  background: var(--ink-50);
 }
 
 .tag {

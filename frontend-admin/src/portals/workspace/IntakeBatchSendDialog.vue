@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { api, getCurrentOrgName } from '../../shared/http'
@@ -123,7 +124,7 @@ watch([mode, qrIndex, links], async () => {
     qrDataUrl.value = await QRCode.toDataURL(row.url, {
       width: 220,
       margin: 2,
-      color: { dark: '#0f172a', light: '#ffffff' },
+      color: { dark: palette.ink900, light: palette.white },
     })
   } catch {
     qrDataUrl.value = ''
@@ -140,7 +141,7 @@ function formatOneScript(row: IssuedLink, style: ScriptStyle): string {
     return (
       `${address}您好，${staffLine}。\n` +
       `很高兴为您服务！为了帮您精准找到健康提升的切入点，我为您准备了一份专属的初步健康测评。\n` +
-      `👉 戳这里开始：${url}\n` +
+      ` 戳这里开始：${url}\n` +
       `题目都很简单，几分钟就能搞定。有任何疑问随时给我发微信哦！`
     )
   }
@@ -157,7 +158,7 @@ function formatOneScript(row: IssuedLink, style: ScriptStyle): string {
   return (
     `${address}您好，${staffLine}。\n` +
     `为了能给您制定更适合的健康管理方案，劳烦您花约 2 分钟填写基础健康问卷（7天内有效，信息严格保密）。\n` +
-    `👉 点击填写：${url}\n` +
+    ` 点击填写：${url}\n` +
     `填写完成后，我会尽快为您出具健康管理建议。祝您生活愉快！`
   )
 }
@@ -314,7 +315,7 @@ function previewSnippet(text: string, max = 72) {
           :aria-selected="mode === 'wechat'"
           @click="mode = 'wechat'"
         >
-          💬 复制到微信
+           复制到微信
         </button>
         <button
           type="button"
@@ -324,7 +325,7 @@ function previewSnippet(text: string, max = 72) {
           :aria-selected="mode === 'sms'"
           @click="mode = 'sms'"
         >
-          📱 系统短信
+           系统短信
         </button>
         <button
           type="button"
@@ -334,7 +335,7 @@ function previewSnippet(text: string, max = 72) {
           :aria-selected="mode === 'qr'"
           @click="mode = 'qr'"
         >
-          🔗 生成活码
+           生成活码
         </button>
       </div>
 
@@ -462,10 +463,10 @@ function previewSnippet(text: string, max = 72) {
   margin: 0 0 14px;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
 }
 .ai-line strong {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 .mode-tabs {
   display: flex;
@@ -474,25 +475,25 @@ function previewSnippet(text: string, max = 72) {
 }
 .mode-tab {
   flex: 1;
-  border: 1px solid var(--ink-200, #e2e8f0);
+  border: 1px solid var(--ink-200);
   border-radius: 10px;
   padding: 10px 8px;
-  background: #fff;
-  color: var(--ink-600, #475569);
-  font-size: 12.5px;
+  background: var(--white);
+  color: var(--ink-600);
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 .mode-tab.active {
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: var(--blue-300);
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 .section-hint {
   margin: 0 0 8px;
   font-size: 12px;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
   line-height: 1.45;
 }
 .style-tabs {
@@ -502,20 +503,20 @@ function previewSnippet(text: string, max = 72) {
 }
 .style-tab {
   flex: 1;
-  border: 1px solid var(--ink-200, #e2e8f0);
+  border: 1px solid var(--ink-200);
   border-radius: 8px;
-  padding: 7px 6px;
-  background: #fff;
-  color: var(--ink-600, #475569);
+  padding: 8px 6px;
+  background: var(--white);
+  color: var(--ink-600);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 .style-tab.active {
-  border-color: #fdba74;
-  background: #fff7ed;
-  color: #c2410c;
+  border-color: var(--orange-100);
+  background: var(--orange-50);
+  color: var(--amber-700);
 }
 .script-list {
   display: flex;
@@ -530,14 +531,14 @@ function previewSnippet(text: string, max = 72) {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid var(--ink-100, #e5e7eb);
+  border: 1px solid var(--ink-100, var(--gray-200));
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .script-row.copied {
-  border-color: #86efac;
-  background: #f0fdf4;
+  border-color: var(--auto-86efac);
+  background: var(--green-50);
 }
 .script-main {
   flex: 1;
@@ -553,9 +554,9 @@ function previewSnippet(text: string, max = 72) {
   min-width: 0;
 }
 .script-name {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -564,16 +565,16 @@ function previewSnippet(text: string, max = 72) {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
-  color: #1d4ed8;
-  background: #eff6ff;
+  color: var(--brand-800);
+  background: var(--blue-50);
   border-radius: 999px;
-  padding: 1px 7px;
+  padding: 2px 6px;
 }
 .script-preview {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -583,11 +584,11 @@ function previewSnippet(text: string, max = 72) {
 .script-copy-btn {
   flex-shrink: 0;
   min-width: 64px;
-  border: 1px solid #93c5fd;
+  border: 1px solid var(--blue-300);
   border-radius: 6px;
-  padding: 5px 12px;
-  background: #fff;
-  color: #2563eb;
+  padding: 6px 12px;
+  background: var(--white);
+  color: var(--blue-600);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
@@ -595,21 +596,21 @@ function previewSnippet(text: string, max = 72) {
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .script-copy-btn:hover {
-  background: #eff6ff;
-  border-color: #60a5fa;
+  background: var(--blue-50);
+  border-color: var(--brand-400);
 }
 .script-copy-btn:active {
-  background: #dbeafe;
+  background: var(--blue-100);
 }
 /* 已复制：保持白底可点，2s 后复位；绝不锁成深蓝实心 */
 .script-copy-btn.done {
-  border-color: #86efac;
-  background: #fff;
-  color: #15803d;
+  border-color: var(--auto-86efac);
+  background: var(--white);
+  color: var(--auto-15803d);
 }
 .script-copy-btn.done:hover {
-  background: #f0fdf4;
-  border-color: #4ade80;
+  background: var(--green-50);
+  border-color: var(--auto-4ade80);
 }
 .actions {
   display: flex;
@@ -620,29 +621,29 @@ function previewSnippet(text: string, max = 72) {
 .sms-box {
   padding: 16px;
   border-radius: 12px;
-  background: #f8fafc;
-  border: 1px dashed var(--ink-200, #e2e8f0);
+  background: var(--ink-50);
+  border: 1px dashed var(--ink-200);
 }
 .sms-title {
   margin: 0 0 8px !important;
   font-size: 14px !important;
   font-weight: 700;
-  color: var(--ink-800, #1f2937) !important;
+  color: var(--ink-800, var(--gray-800)) !important;
 }
 .sms-box p {
   margin: 0 0 12px;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
 }
 .sms-box strong {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 .sms-names {
   margin: 0 0 14px;
   padding: 0 0 0 18px;
-  color: var(--ink-600, #475569);
-  font-size: 12.5px;
+  color: var(--ink-600);
+  font-size: 12px;
   line-height: 1.6;
 }
 .qr-nav {
@@ -655,7 +656,7 @@ function previewSnippet(text: string, max = 72) {
 .qr-name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 .qr-card {
   display: flex;
@@ -664,8 +665,8 @@ function previewSnippet(text: string, max = 72) {
   gap: 8px;
   padding: 16px;
   border-radius: 12px;
-  background: #fff;
-  border: 1px solid var(--ink-100, #e5e7eb);
+  background: var(--white);
+  border: 1px solid var(--ink-100, var(--gray-200));
 }
 .qr-img {
   width: 220px;
@@ -674,11 +675,11 @@ function previewSnippet(text: string, max = 72) {
 .qr-empty {
   margin: 40px 0;
   font-size: 13px;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
 }
 .qr-tip {
   margin: 0;
   font-size: 12px;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
 }
 </style>

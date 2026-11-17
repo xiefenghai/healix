@@ -6,6 +6,7 @@ import type { CareChatSseEvent, CareChatSseHandler } from '../../shared/care-cha
 import { api } from '../../shared/http'
 import { takeAgentDraft } from '../../shared/agent-draft-bus'
 import { startVisiblePoll } from '../../shared/visible-poll'
+import { avatarGradients } from '../../shared/palette'
 
 interface Thread {
   id: string
@@ -101,15 +102,7 @@ const avatarTone = computed(() => {
   const s = peopleId.value || patientName.value || ''
   let h = 0
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
-  const tones = [
-    'linear-gradient(135deg,#3B82F6,#1D4ED8)',
-    'linear-gradient(135deg,#8B5CF6,#6D28D9)',
-    'linear-gradient(135deg,#F59E0B,#EA580C)',
-    'linear-gradient(135deg,#EC4899,#BE185D)',
-    'linear-gradient(135deg,#10B981,#0F766E)',
-    'linear-gradient(135deg,#2C7EF8,#00B8A9)',
-  ]
-  return tones[h % tones.length]
+  return avatarGradients[h % avatarGradients.length]
 })
 const assessmentTags = computed(() => focus.value?.assessmentTags || [])
 const assessmentAlert = computed(() => assessmentTags.value.some((t) => t.tone === 'danger'))
@@ -474,7 +467,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   height: 100%;
-  background: #f9fafb;
+  background: var(--gray-50);
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   overflow: hidden;
@@ -484,8 +477,8 @@ onBeforeUnmount(() => {
 .patient-banner {
   flex-shrink: 0;
   padding: 12px 16px 10px;
-  border-bottom: 1px solid var(--ink-100);
-  background: #fff;
+  border-bottom: 0 solid var(--ink-100);
+  background: var(--white);
 }
 
 .id-row {
@@ -501,10 +494,10 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--white);
   font-size: 15px;
   font-weight: 700;
-  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 0 0 1px var(--ink-a06);
 }
 
 .id-main {
@@ -530,7 +523,7 @@ onBeforeUnmount(() => {
 .link-pill {
   display: inline-flex;
   align-items: center;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
@@ -538,15 +531,15 @@ onBeforeUnmount(() => {
 }
 
 .link-pill.on {
-  color: #047857;
-  background: #ecfdf5;
-  border-color: #a7f3d0;
+  color: var(--success-600);
+  background: var(--success-50);
+  border-color: var(--green-200);
 }
 
 .link-pill.off {
-  color: #b45309;
-  background: #fffbeb;
-  border-color: #fde68a;
+  color: var(--amber-600);
+  background: var(--amber-100);
+  border-color: var(--amber-200);
 }
 
 .meta-row {
@@ -558,26 +551,26 @@ onBeforeUnmount(() => {
 }
 
 .meta-text {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-500);
 }
 
 .meta-chip {
   display: inline-flex;
   align-items: center;
-  padding: 1px 7px;
+  padding: 2px 6px;
   border-radius: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 550;
   color: var(--ink-600);
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
   border: 1px solid var(--ink-100);
 }
 
 .meta-chip.clinical {
-  color: #1d4ed8;
-  background: #eff6ff;
-  border-color: #bfdbfe;
+  color: var(--brand-800);
+  background: var(--blue-50);
+  border-color: var(--brand-200);
 }
 
 .tags-block {
@@ -588,13 +581,13 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid var(--ink-50, #f1f5f9);
+  border-top: 0 solid var(--ink-50, var(--ink-100));
 }
 
 .block-label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   color: var(--ink-400);
@@ -602,21 +595,21 @@ onBeforeUnmount(() => {
 }
 
 .block-label.alert {
-  color: #b91c1c;
+  color: var(--rose-700);
 }
 
 .alert-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+  background: var(--rose-500);
+  box-shadow: 0 0 0 3px var(--rose-a16);
 }
 
 .tag-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
 }
 
 .eval-chip {
@@ -624,7 +617,7 @@ onBeforeUnmount(() => {
   max-width: 140px;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 550;
   line-height: 1.35;
   background: var(--ink-100);
@@ -635,27 +628,27 @@ onBeforeUnmount(() => {
 }
 
 .eval-chip.danger {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--rose-100);
+  color: var(--rose-700);
 }
 
 .eval-chip.warning {
-  background: #fff7ed;
-  color: #c2410c;
+  background: var(--orange-50);
+  color: var(--amber-700);
 }
 
 .eval-chip.success {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--success-50);
+  color: var(--success-600);
 }
 
 .eval-chip.info {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 
 .eval-chip.muted {
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
   color: var(--ink-500);
 }
 
@@ -669,8 +662,8 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   gap: 8px;
   padding: 10px 16px;
-  background: #fff;
-  border-bottom: 1px solid var(--ink-100);
+  background: var(--white);
+  border-bottom: 0 solid var(--ink-100);
 }
 
 .metric-pill {
@@ -681,13 +674,13 @@ onBeforeUnmount(() => {
   flex: 0 1 160px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
 }
 
 .metric-k {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--gray-400);
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -701,7 +694,7 @@ onBeforeUnmount(() => {
 }
 
 .metric-v.bad {
-  color: #dc2626;
+  color: var(--rose-600);
 }
 
 .metric-track {
@@ -710,7 +703,7 @@ onBeforeUnmount(() => {
   min-width: 36px;
   height: 4px;
   border-radius: 999px;
-  background: #e5e7eb;
+  background: var(--gray-200);
   overflow: hidden;
 }
 
@@ -718,27 +711,27 @@ onBeforeUnmount(() => {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--brand-500, #3b82f6);
+  background: var(--brand-500, var(--blue-500));
 }
 
 .metric-pill.good .metric-track i {
-  background: #10b981;
+  background: var(--success-500);
 }
 
 .metric-pill.fair .metric-track i {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 
 .metric-pill.poor .metric-track i {
-  background: #ef4444;
+  background: var(--rose-500);
 }
 
 .metric-pill.good .metric-v {
-  color: #047857;
+  color: var(--success-600);
 }
 
 .metric-pill.poor .metric-v {
-  color: #dc2626;
+  color: var(--rose-600);
 }
 
 .chat-list {
@@ -746,7 +739,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   padding: 16px 18px;
-  background: #f9fafb;
+  background: var(--gray-50);
 }
 
 .bubble-row {
@@ -760,28 +753,28 @@ onBeforeUnmount(() => {
 
 .bubble {
   max-width: 60%;
-  padding: 9px 12px;
+  padding: 8px 12px;
   border-radius: 14px;
-  background: #fff;
-  border: 1px solid rgba(15, 23, 42, 0.04);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  background: var(--white);
+  border: 1px solid var(--ink-a04);
+  box-shadow: none;
 }
 
 .bubble-row.mine .bubble {
-  background: #e8f1ff;
+  background: var(--auto-e8f1ff);
   border-color: transparent;
 }
 
 .bubble .meta {
   display: flex;
   gap: 8px;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
   font-size: 11px;
   color: var(--ink-400);
 }
 
 .bubble .text {
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--ink-800);
   white-space: pre-wrap;
@@ -791,8 +784,8 @@ onBeforeUnmount(() => {
 .composer {
   flex-shrink: 0;
   padding: 10px 16px 12px;
-  border-top: 1px solid var(--ink-100);
-  background: #fff;
+  border-top: 0 solid var(--ink-100);
+  background: var(--white);
 }
 
 .block-tip {
@@ -801,17 +794,17 @@ onBeforeUnmount(() => {
 
 .composer-box {
   position: relative;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--gray-200);
   border-radius: 10px;
-  background: #f9fafb;
+  background: var(--gray-50);
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .composer-box:focus-within {
-  border-color: #93c5fd;
-  background: #fff;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  border-color: var(--blue-300);
+  background: var(--white);
+  box-shadow: 0 0 0 3px var(--blue-a12);
 }
 
 .composer-box :deep(.el-textarea__inner) {
@@ -820,7 +813,7 @@ onBeforeUnmount(() => {
   background: transparent !important;
   padding: 10px 12px 4px !important;
   min-height: 56px !important;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.5;
   resize: none;
 }
@@ -835,7 +828,7 @@ onBeforeUnmount(() => {
 
 .word-count {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
   font-variant-numeric: tabular-nums;
 }
 
@@ -847,6 +840,6 @@ onBeforeUnmount(() => {
   margin: 8px 0 0;
   font-size: 11px;
   line-height: 1.45;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 </style>

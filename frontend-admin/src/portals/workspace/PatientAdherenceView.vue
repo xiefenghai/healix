@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -237,13 +238,13 @@ function renderChart() {
   const empty = days.length === 0
   chart.setOption(
     {
-      color: ['#3b82f6', '#10b981'],
+      color: [palette.blue500, palette.success500],
       title: empty
         ? {
             text: '暂无数据',
             left: 'center',
             top: 'middle',
-            textStyle: { color: '#94a3b8', fontSize: 14, fontWeight: 400 },
+            textStyle: { color: palette.ink400, fontSize: 14, fontWeight: 400 },
           }
         : { show: false },
       tooltip: {
@@ -262,7 +263,7 @@ function renderChart() {
         min: 0,
         max: 100,
         name: '%',
-        splitLine: { lineStyle: { type: 'dashed', color: '#e5e7eb' } },
+        splitLine: { lineStyle: { type: 'dashed', color: palette.gray200 } },
       },
       series: [
         {
@@ -345,7 +346,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="summary-row">
-      <div class="summary-card">
+      <div class="summary-card summary-card--status">
         <div class="summary-label">执行跟进</div>
         <div class="summary-value">
           <span class="follow-pill" :data-tone="followupTag.tone">{{ followupTag.text }}</span>
@@ -530,9 +531,9 @@ onBeforeUnmount(() => {
   width: 32px;
   height: 32px;
   padding: 0;
-  border-color: #e5e7eb;
-  color: #6b7280;
-  background: #f9fafb;
+  border-color: var(--gray-200);
+  color: var(--gray-500);
+  background: var(--gray-50);
 }
 
 .toolbar-links {
@@ -546,13 +547,13 @@ onBeforeUnmount(() => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--gray-400);
   font-size: 13px;
   cursor: pointer;
 }
 
 .toolbar-link:hover {
-  color: #6b7280;
+  color: var(--gray-500);
   text-decoration: underline;
 }
 
@@ -569,16 +570,16 @@ onBeforeUnmount(() => {
   flex-direction: column;
   min-height: 128px;
   padding: 14px 16px;
-  border: 1px solid #eef2f6;
+  border: 1px solid var(--ink-125);
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   overflow: hidden;
   box-sizing: border-box;
 }
 
 .summary-label {
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--gray-400);
   margin-bottom: 8px;
 }
 
@@ -590,19 +591,19 @@ onBeforeUnmount(() => {
   font-size: 20px;
   font-weight: 600;
   line-height: 1.3;
-  color: #111827;
+  color: var(--ink-950);
 }
 
 .summary-value b {
   font-weight: 700;
-  color: #111827;
+  color: var(--ink-950);
 }
 
 .value-suffix {
   font-style: normal;
   font-size: 13px;
   font-weight: 500;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .follow-pill {
@@ -614,32 +615,32 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--gray-100);
+  color: var(--ink-650);
 }
 
 .follow-pill[data-tone='good'] {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--success-50);
+  color: var(--success-600);
 }
 
 .follow-pill[data-tone='soft'] {
-  background: #fff7ed;
-  color: #9a3412;
+  background: var(--orange-50);
+  color: var(--orange-800);
 }
 
 .follow-pill[data-tone='alert'] {
-  background: #fff1f2;
-  color: #be123c;
+  background: var(--auto-fff1f2);
+  color: var(--rose-800);
 }
 
 .follow-pill[data-tone='neutral'] {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--gray-100);
+  color: var(--gray-500);
 }
 
 .warn {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 
 .rate-cell {
@@ -653,7 +654,7 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   line-height: 1.2;
-  color: #111827;
+  color: var(--ink-950);
 }
 
 .rate-pct-lg {
@@ -663,7 +664,7 @@ onBeforeUnmount(() => {
 .rate-track {
   height: 4px;
   border-radius: 999px;
-  background: #ecfdf5;
+  background: var(--success-50);
   overflow: hidden;
   max-width: 120px;
 }
@@ -671,7 +672,7 @@ onBeforeUnmount(() => {
 .rate-track-lg {
   height: 6px;
   max-width: 160px;
-  background: #ecfdf5;
+  background: var(--success-50);
 }
 
 .rate-fill {
@@ -683,37 +684,37 @@ onBeforeUnmount(() => {
 
 .rate-good .rate-pct,
 .rate-good .rate-fill {
-  color: #059669;
+  color: var(--green-600);
 }
 
 .rate-fair .rate-pct,
 .rate-fair .rate-fill {
-  color: #2563eb;
+  color: var(--blue-600);
 }
 
 .rate-concern .rate-pct,
 .rate-concern .rate-fill {
-  color: #d97706;
+  color: var(--amber-550);
 }
 
 .rate-poor .rate-pct,
 .rate-poor .rate-fill {
-  color: #ea580c;
+  color: var(--orange-600);
 }
 
 .rate-empty .rate-pct {
-  color: #9ca3af;
+  color: var(--gray-400);
   font-weight: 500;
 }
 
 .cheer {
-  color: #94a3b8;
+  color: var(--ink-400);
   font-weight: 400;
 }
 
 .cheer--inline {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 .summary-hint {
@@ -721,7 +722,7 @@ onBeforeUnmount(() => {
   padding-top: 10px;
   font-size: 12px;
   line-height: 1.45;
-  color: #9ca3af;
+  color: var(--gray-400);
   word-break: break-word;
 }
 

@@ -465,10 +465,10 @@ onMounted(() => {
   padding: 8px 0 24px;
 }
 .shell-card {
-  background: #fff;
+  background: var(--white);
   border-radius: 8px;
   padding: 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 2px 8px var(--black-a04);
 }
 .head {
   display: flex;
@@ -488,7 +488,7 @@ onMounted(() => {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   white-space: nowrap;
 }
 .request-status {
@@ -531,9 +531,9 @@ onMounted(() => {
   gap: 8px;
   min-height: 40px;
   padding: 6px 12px;
-  border: 1px solid #fde68a;
+  border: 1px solid var(--amber-200);
   border-radius: 10px;
-  background: #fffbeb;
+  background: var(--amber-100);
 }
 .attention-name {
   flex-shrink: 0;
@@ -576,15 +576,15 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
   border: 1px dashed var(--el-border-color);
   border-radius: 8px;
-  background: #fafbfc;
+  background: var(--auto-fafbfc);
 }
 .snap-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border: 1px solid var(--admin-border, #e2e8f0);
+  border: 1px solid var(--admin-border, var(--ink-200));
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
   padding: 14px 16px 10px;
 }
 .snap-main {
@@ -606,7 +606,7 @@ onMounted(() => {
 .snap-time {
   font-size: 14px;
   font-weight: 650;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   line-height: 1.4;
 }
 .snap-body {
@@ -627,7 +627,7 @@ onMounted(() => {
   background: transparent;
   padding: 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary, #94a3b8);
+  color: var(--el-text-color-secondary, var(--ink-400));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -650,7 +650,7 @@ onMounted(() => {
 .disease-name {
   font-size: 13px;
   font-weight: 650;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   white-space: nowrap;
 }
 .disease-score {
@@ -672,7 +672,7 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   padding-top: 2px;
-  border-top: 1px dashed var(--el-border-color-extra-light, #eef2f7);
+  border-top: 0 dashed var(--el-border-color-extra-light, var(--ink-150));
 }
 .basis-link {
   border: 0;
@@ -680,7 +680,7 @@ onMounted(() => {
   padding: 2px 0;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--el-text-color-secondary, #94a3b8);
+  color: var(--el-text-color-secondary, var(--ink-400));
   cursor: pointer;
 }
 .basis-link:hover {
@@ -704,7 +704,7 @@ onMounted(() => {
 .basis-block + .basis-block {
   margin-top: 18px;
   padding-top: 16px;
-  border-top: 1px dashed var(--el-border-color-lighter);
+  border-top: 0 dashed var(--el-border-color-lighter);
 }
 .basis-block-head {
   display: flex;

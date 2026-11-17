@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -217,15 +218,15 @@ function checkinTone(status?: string | null, taskPresent?: boolean) {
 /** 心情柱：浅蓝→琥珀，避免医疗场景的大面积红色 */
 function moodBarColor(score: number, isToday: boolean) {
   const stops = [
-    ['#bfdbfe', '#93c5fd'],
-    ['#93c5fd', '#60a5fa'],
-    ['#7dd3fc', '#38bdf8'],
-    ['#fde68a', '#fbbf24'],
-    ['#fdba74', '#f97316'],
+    [palette.brand200, palette.blue300],
+    [palette.blue300, palette.brand400],
+    [palette.sky200, palette.sky400],
+    [palette.amber200, palette.amber400],
+    [palette.orange200, palette.orange400],
   ]
   const pair = stops[Math.max(0, Math.min(4, (score || 1) - 1))]
   if (isToday) return `linear-gradient(180deg, ${pair[0]} 0%, ${pair[1]} 100%)`
-  return `linear-gradient(180deg, #e2e8f0 0%, #cbd5e1 100%)`
+  return `linear-gradient(180deg, ${palette.ink200} 0%, ${palette.ink300} 100%)`
 }
 
 async function load() {
@@ -769,7 +770,7 @@ onMounted(load)
 }
 .block {
   border-radius: 12px;
-  border: 1px solid #eef2f6;
+  border: 1px solid var(--ink-125);
 }
 .block :deep(.el-card__header) {
   padding: 12px 16px 8px;
@@ -790,7 +791,7 @@ onMounted(load)
   min-height: 28px;
   font-size: 14px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--ink-900);
   line-height: 28px;
 }
 .head-right {
@@ -809,20 +810,20 @@ onMounted(load)
   border: none;
   border-radius: 0;
   background: transparent;
-  color: #9ca3af;
+  color: var(--gray-400);
   font-size: 12px;
   font-weight: 400;
   line-height: 28px;
 }
 .status-pill[data-tone='done'] {
-  color: #059669;
+  color: var(--green-600);
 }
 .status-pill[data-tone='warn'] {
-  color: #c2410c;
+  color: var(--amber-700);
 }
 .status-pill[data-tone='muted'],
 .status-pill[data-tone='pending'] {
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 .proxy-link {
   display: inline-flex;
@@ -831,7 +832,7 @@ onMounted(load)
   padding: 0;
   border: none;
   background: transparent;
-  color: #2563eb;
+  color: var(--blue-600);
   font-size: 13px;
   font-weight: 500;
   line-height: 28px;
@@ -841,26 +842,26 @@ onMounted(load)
   text-decoration: underline;
 }
 .proxy-link--danger {
-  color: #dc2626;
+  color: var(--rose-600);
 }
 .hero {
   display: flex;
   align-items: baseline;
   gap: 4px;
   min-height: 36px;
-  color: #64748b;
+  color: var(--ink-500);
 }
 .hero strong {
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 800;
-  color: #0f172a;
+  color: var(--ink-900);
   letter-spacing: -0.02em;
   line-height: 1;
 }
 .hero em {
   font-style: normal;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 .meta {
   display: flex;
@@ -873,20 +874,20 @@ onMounted(load)
   padding: 0;
   font-size: 12px;
   line-height: 1.4;
-  color: #9ca3af;
+  color: var(--gray-400);
   text-align: left;
 }
 .meta-num {
   font-size: 14px;
   font-weight: 700;
-  color: #374151;
+  color: var(--ink-750);
 }
 .meta-unit,
 .meta-label {
   font-style: normal;
   font-size: 12px;
   font-weight: 400;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 .spark {
   margin-top: 12px;
@@ -924,10 +925,10 @@ onMounted(load)
   transition: height 0.15s ease;
 }
 .spark-bar--hist {
-  background: #94a3b8;
+  background: var(--ink-400);
 }
 .spark-bar--today {
-  background: #0d9488;
+  background: var(--teal-700);
 }
 .spark-dot {
   display: block;
@@ -935,29 +936,29 @@ onMounted(load)
   height: 4px;
   margin-top: 4px;
   border-radius: 999px;
-  background: #e5e7eb;
+  background: var(--gray-200);
   flex-shrink: 0;
 }
 .spark-dot--on {
-  background: #94a3b8;
+  background: var(--ink-400);
 }
 .empty-inline {
   margin: 10px 0 0;
   padding: 8px 0;
   font-size: 12px;
   line-height: 1.4;
-  color: #9ca3af;
+  color: var(--gray-400);
   text-align: center;
 }
 .rows {
   margin-top: 10px;
-  border-top: 1px solid #f3f4f6;
+  border-top: 0 solid var(--gray-100);
 }
 .row {
   display: flex;
   justify-content: space-between;
   padding: 8px 0;
-  border-bottom: 1px solid var(--el-border-color-extra-light);
+  border-bottom: 0 solid var(--el-border-color-extra-light);
   font-size: 13px;
   font-weight: 600;
 }
@@ -975,14 +976,14 @@ onMounted(load)
 }
 .seg-list {
   margin-top: 10px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 0 solid var(--el-border-color-lighter);
 }
 .seg-row {
   display: flex;
   align-items: baseline;
   gap: 8px;
   padding: 8px 0;
-  border-bottom: 1px solid var(--el-border-color-extra-light);
+  border-bottom: 0 solid var(--el-border-color-extra-light);
   font-size: 13px;
 }
 .seg-row:last-child {

@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
 import { checkinStatus } from '../../shared/rewards'
+import { avatarGradients } from '../../shared/palette'
 import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
 import CreateArchiveDrawer from './CreateArchiveDrawer.vue'
 import UnassignedAssignDrawer, { type UnassignedPatientRow } from './UnassignedAssignDrawer.vue'
@@ -40,16 +41,7 @@ interface CareTeamListItem {
   name: string
 }
 
-const AVATAR_COLORS = [
-  'linear-gradient(135deg,#3B82F6,#1D4ED8)',
-  'linear-gradient(135deg,#8B5CF6,#6D28D9)',
-  'linear-gradient(135deg,#F59E0B,#EA580C)',
-  'linear-gradient(135deg,#EC4899,#BE185D)',
-  'linear-gradient(135deg,#10B981,#0F766E)',
-  'linear-gradient(135deg,#06B6D4,#0E7490)',
-  'linear-gradient(135deg,#F43F5E,#9F1239)',
-  'linear-gradient(135deg,#84CC16,#3F6212)',
-]
+const AVATAR_COLORS = [...avatarGradients]
 
 const router = useRouter()
 const loading = ref(false)
@@ -626,7 +618,7 @@ onMounted(async () => {
                     v-if="row.streakDays"
                     class="flame-inline"
                     :title="`连续打卡 ${row.streakDays} 天`"
-                  >🔥{{ row.streakDays }}</span>
+                  >{{ row.streakDays }}</span>
                 </div>
                 <div class="patient-meta">{{ patientMeta(row) }}</div>
               </div>
@@ -824,7 +816,7 @@ onMounted(async () => {
 
 .list-card :deep(.patients-table) {
   width: 100%;
-  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-row-hover-bg-color: var(--ink-50);
 }
 .list-card :deep(.patients-table .el-table__header th.el-table__cell) {
   background: var(--el-table-header-bg-color, var(--ink-50));
@@ -857,15 +849,15 @@ onMounted(async () => {
 
 .batch-assign-btn.is-disabled,
 .batch-assign-btn:disabled {
-  background: #e5e7eb !important;
-  border-color: #e5e7eb !important;
-  color: #9ca3af !important;
+  background: var(--gray-200) !important;
+  border-color: var(--gray-200) !important;
+  color: var(--gray-400) !important;
   opacity: 1 !important;
 }
 .batch-assign-btn.ready:not(.is-disabled):not(:disabled) {
-  background: var(--el-color-primary, #409eff) !important;
-  border-color: var(--el-color-primary, #409eff) !important;
-  color: #fff !important;
+  background: var(--el-color-primary, var(--brand-500)) !important;
+  border-color: var(--el-color-primary, var(--brand-500)) !important;
+  color: var(--white) !important;
 }
 
 .patient-cell {
@@ -881,7 +873,7 @@ onMounted(async () => {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--white);
   font-weight: 600;
   font-size: 13px;
   flex-shrink: 0;
@@ -915,7 +907,7 @@ onMounted(async () => {
   flex-shrink: 0;
   font-size: 12px;
   font-weight: 500;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 .watch-tag {
@@ -924,13 +916,13 @@ onMounted(async () => {
 .flame-inline {
   font-size: 12px;
   font-weight: 700;
-  color: #e0632a;
+  color: var(--auto-e0632a);
   font-variant-numeric: tabular-nums;
 }
 
 .patient-meta {
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-400);
   white-space: nowrap;
   overflow: hidden;
@@ -947,40 +939,40 @@ onMounted(async () => {
 .tag-disease {
   display: inline-flex;
   align-items: center;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
-  color: #1d4ed8;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  color: var(--brand-800);
+  background: var(--blue-50);
+  border: 1px solid var(--brand-200);
 }
 .tag-risk {
   display: inline-flex;
   align-items: center;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
-  color: #b91c1c;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  color: var(--rose-700);
+  background: var(--rose-100);
+  border: 1px solid var(--rose-200);
 }
 .tag-risk.mild {
-  color: #c2410c;
-  background: #fff7ed;
-  border-color: #fed7aa;
+  color: var(--amber-700);
+  background: var(--orange-50);
+  border-color: var(--orange-100);
 }
 
 .team-name {
   font-size: 13px;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
 }
 .team-unassigned {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 .row-actions {
@@ -994,13 +986,13 @@ onMounted(async () => {
   margin-left: 0;
 }
 .more-btn {
-  color: #94a3b8 !important;
+  color: var(--ink-400) !important;
 }
 .more-btn:hover {
   color: var(--el-color-primary) !important;
 }
 :deep(.danger-item) {
-  color: #f56c6c !important;
+  color: var(--danger-soft) !important;
 }
 :deep(.col-actions .cell) {
   overflow: visible;
@@ -1028,7 +1020,7 @@ onMounted(async () => {
 .archive-bar {
   height: 4px;
   border-radius: 999px;
-  background: #e8eef5;
+  background: var(--auto-e8eef5);
   overflow: hidden;
 }
 
@@ -1036,31 +1028,31 @@ onMounted(async () => {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #94a3b8;
+  background: var(--ink-400);
 }
 
 .archive-cell.good .archive-val {
-  color: #059669;
+  color: var(--green-600);
 }
 
 .archive-cell.good .archive-bar > i {
-  background: #10b981;
+  background: var(--success-500);
 }
 
 .archive-cell.fair .archive-val {
-  color: #d97706;
+  color: var(--amber-550);
 }
 
 .archive-cell.fair .archive-bar > i {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 
 .archive-cell.poor .archive-val {
-  color: #e11d48;
+  color: var(--rose-600);
 }
 
 .archive-cell.poor .archive-bar > i {
-  background: #f43f5e;
+  background: var(--rose-600);
 }
 
 .hint {

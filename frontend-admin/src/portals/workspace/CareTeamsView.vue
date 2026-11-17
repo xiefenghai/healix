@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { api, getCurrentOrgId, getCurrentOrgName, getStaffId } from '../../shared/http'
 import { StaffRole } from '../../shared/enums'
+import { avatarGradients } from '../../shared/palette'
 import DeleteCareTeamDialog, { type DeleteCareTeamTarget } from './DeleteCareTeamDialog.vue'
 
 interface CareTeamListItem {
@@ -98,14 +99,7 @@ const displayList = computed(() => {
   return list.value.filter((t) => !hasDoctor(t))
 })
 
-const AVATAR_GRADIENTS = [
-  'linear-gradient(135deg,#3B82F6,#1D4ED8)',
-  'linear-gradient(135deg,#8B5CF6,#6D28D9)',
-  'linear-gradient(135deg,#F59E0B,#EA580C)',
-  'linear-gradient(135deg,#10B981,#0F766E)',
-  'linear-gradient(135deg,#EC4899,#BE185D)',
-  'linear-gradient(135deg,#06B6D4,#0E7490)',
-]
+const AVATAR_GRADIENTS = [...avatarGradients]
 
 function avatarChar(name?: string) {
   const t = (name || '').trim()
@@ -277,7 +271,7 @@ watch(keyword, () => {
     </div>
 
     <div class="summary-row">
-      <div class="stat-card">
+      <div class="stat-card stat-card--primary">
         <div class="stat-icon tone-brand">组</div>
         <div>
           <div class="stat-label">健管组总数</div>
@@ -498,19 +492,19 @@ watch(keyword, () => {
 
 .create-care-team-form :deep(.el-form-item__label) {
   font-weight: 600;
-  color: var(--ink-700, #374151);
+  color: var(--ink-700, var(--ink-750));
 }
 
 .field-hint {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 
 .em.warn,
 .stat-val.warn {
-  color: #dc2626;
+  color: var(--rose-600);
 }
 
 .summary-row {
@@ -543,8 +537,8 @@ watch(keyword, () => {
 
 .stat-card.clickable:hover,
 .stat-card.clickable.active {
-  border-color: #fca5a5;
-  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.08);
+  border-color: var(--rose-300);
+  box-shadow: 0 0 0 3px var(--auto-rgba-2203838008);
 }
 
 .stat-icon {
@@ -559,28 +553,28 @@ watch(keyword, () => {
 }
 
 .stat-icon.tone-brand {
-  background: #eaf2ff;
-  color: #2c7ef8;
+  background: var(--brand-50);
+  color: var(--brand-500);
 }
 
 .stat-icon.tone-teal {
-  background: #e6faf7;
-  color: #0f766e;
+  background: var(--teal-50);
+  color: var(--teal-600);
 }
 
 .stat-icon.tone-amber {
-  background: #fef6e2;
-  color: #b45309;
+  background: var(--amber-50);
+  color: var(--amber-600);
 }
 
 .stat-icon.tone-violet {
-  background: #f1ecfe;
-  color: #6d28d9;
+  background: var(--violet-50);
+  color: var(--violet-700);
 }
 
 .stat-icon.tone-rose {
-  background: #fef2f2;
-  color: #dc2626;
+  background: var(--rose-100);
+  color: var(--rose-600);
 }
 
 .stat-label {
@@ -593,7 +587,7 @@ watch(keyword, () => {
   font-size: 18px;
   font-weight: 700;
   color: var(--ink-900);
-  margin-top: 1px;
+  margin-top: 0;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
@@ -633,8 +627,8 @@ watch(keyword, () => {
 .team-card {
   width: 100%;
   max-width: 350px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
   border-radius: 12px;
   padding: 14px 16px 0;
   cursor: pointer;
@@ -647,12 +641,12 @@ watch(keyword, () => {
 }
 
 .team-card:hover {
-  border-color: var(--brand-500, #2c7ef8);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border-color: var(--brand-500);
+  box-shadow: 0 4px 12px var(--auto-rgba-000005);
 }
 
 .team-card:hover .foot-link {
-  color: var(--brand-500, #2c7ef8);
+  color: var(--brand-500);
 }
 
 .team-head {
@@ -674,7 +668,7 @@ watch(keyword, () => {
 .team-meta {
   margin-top: -4px;
   font-size: 12px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
   line-height: 1.4;
 }
 
@@ -698,12 +692,12 @@ watch(keyword, () => {
 }
 
 .more-btn:hover {
-  background: #f3f4f6;
+  background: var(--gray-100);
   color: var(--ink-700);
 }
 
 .danger {
-  color: var(--rose-500, #ef4444);
+  color: var(--rose-500);
 }
 
 .collab-row {
@@ -722,7 +716,7 @@ watch(keyword, () => {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--white);
   font-size: 11px;
   font-weight: 600;
   flex-shrink: 0;
@@ -731,7 +725,7 @@ watch(keyword, () => {
 .lead-avatar.sm {
   width: 22px;
   height: 22px;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .collab-row .name {
@@ -747,13 +741,13 @@ watch(keyword, () => {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  color: #1d4ed8;
-  background: #eff6ff;
+  color: var(--brand-800);
+  background: var(--blue-50);
 }
 
 .role-chip.muted {
   color: var(--ink-500);
-  background: #f3f4f6;
+  background: var(--gray-100);
 }
 
 .collab-row .dot {
@@ -761,7 +755,7 @@ watch(keyword, () => {
 }
 
 .no-doctor {
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
   font-size: 12px;
 }
 
@@ -774,13 +768,13 @@ watch(keyword, () => {
 .tag-patients {
   display: inline-flex;
   align-items: center;
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: var(--blue-50);
+  color: var(--brand-800);
 }
 
 .team-foot {
@@ -791,7 +785,7 @@ watch(keyword, () => {
   margin-left: -16px;
   margin-right: -16px;
   padding: 10px 16px;
-  border-top: 1px solid #f3f4f6;
+  border-top: 0 solid var(--gray-100);
   font-size: 12px;
 }
 

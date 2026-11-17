@@ -180,7 +180,7 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
 
 .obs-side-nav {
   position: sticky;
-  top: 52px;
+  top: 56px;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -202,11 +202,11 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
   border: none;
   background: transparent;
   text-align: left;
-  padding: 9px 12px 9px 14px;
+  padding: 8px 12px 8px 14px;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-600, #475569);
+  color: var(--ink-600);
   cursor: pointer;
   box-sizing: border-box;
   position: relative;
@@ -216,13 +216,13 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
 }
 
 .nav-item:hover {
-  color: var(--ink-800, #1e293b);
-  background: #f1f5f9;
+  color: var(--ink-800);
+  background: var(--ink-100);
 }
 
 .nav-item.active {
-  color: var(--brand-600, #1e63d9);
-  background: var(--brand-50, #eaf2ff);
+  color: var(--brand-600);
+  background: var(--brand-50);
   font-weight: 600;
 }
 
@@ -234,7 +234,7 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
   bottom: 8px;
   width: 3px;
   border-radius: 999px;
-  background: var(--brand-500, #2c7ef8);
+  background: var(--brand-500);
 }
 
 .obs-content {
@@ -299,8 +299,8 @@ function onGlobalSearchSelect(hit: ObservationSearchHit) {
 
 @keyframes obs-focus-pulse {
   0% {
-    box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.55);
-    background-color: #dbeafe !important;
+    box-shadow: inset 0 0 0 2px var(--ink-a28);
+    background-color: var(--blue-100) !important;
   }
   100% {
     box-shadow: inset 0 0 0 0 transparent;

@@ -475,7 +475,7 @@ function onClosed() {
                   :disabled="aiLoading || submitting"
                   @click="generateAiSummary"
                 >
-                  <span aria-hidden="true">✨</span>
+                  <span aria-hidden="true"></span>
                   {{ aiLoading ? '生成中…' : 'AI 生成点评' }}
                 </button>
               </div>
@@ -633,7 +633,7 @@ function onClosed() {
   gap: 4px;
   width: 84px;
   padding-left: 0;
-  border-left: 2px solid #e5e7eb;
+  border-left: 2px solid var(--gray-200);
   overflow-y: auto;
 }
 .sec-item {
@@ -642,23 +642,23 @@ function onClosed() {
   margin-left: -2px;
   border: none;
   border-left: 2px solid transparent;
-  border-radius: 0 8px 8px 0;
+  border-radius: 0;
   background: transparent;
-  color: #6b7280;
+  color: var(--gray-500);
   font-size: 13px;
   text-align: left;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .sec-item:hover {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--gray-100);
+  color: var(--ink-750);
 }
 .sec-item.on {
-  background: #eff6ff;
-  color: var(--el-color-primary, #2563eb);
+  background: var(--blue-50);
+  color: var(--el-color-primary, var(--blue-600));
   font-weight: 600;
-  border-left-color: var(--el-color-primary, #2563eb);
+  border-left-color: var(--el-color-primary, var(--blue-600));
 }
 .body-scroll {
   min-height: 0;
@@ -703,17 +703,17 @@ function onClosed() {
   gap: 4px;
   margin: 0;
   padding: 2px 8px;
-  border: 1px solid #dbeafe;
+  border: 1px solid var(--blue-100);
   border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
+  background: var(--blue-50);
+  color: var(--blue-600);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
   cursor: pointer;
 }
 .ai-gen-btn:hover:not(:disabled) {
-  background: #dbeafe;
+  background: var(--blue-100);
 }
 .ai-gen-btn:disabled {
   opacity: 0.55;
@@ -726,22 +726,22 @@ function onClosed() {
 .ai-hint-line {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--gray-500);
   line-height: 1.4;
 }
 .publish-hint {
   margin: 6px 0 0;
   font-size: 12px;
   font-weight: 500;
-  color: #dc2626;
+  color: var(--rose-600);
   line-height: 1.4;
 }
 .assess {
   margin-bottom: 14px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
 }
 .assess-row {
   display: flex;
@@ -754,7 +754,7 @@ function onClosed() {
 .assess-name {
   flex: 1;
   min-width: 0;
-  color: #4b5563;
+  color: var(--ink-650);
 }
 .assess-tags {
   display: flex;
@@ -768,24 +768,24 @@ function onClosed() {
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--gray-100);
+  color: var(--ink-650);
   font-size: 11px;
   font-weight: 600;
   line-height: 1.3;
 }
 .assess-tag[data-tone='danger'],
 .assess-tag[data-tone='warning'] {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--rose-100);
+  color: var(--rose-700);
 }
 .assess-tag[data-tone='success'] {
-  background: #ecfdf5;
-  color: #059669;
+  background: var(--success-50);
+  color: var(--green-600);
 }
 .assess-tag[data-tone='info'] {
-  background: #eff6ff;
-  color: #2563eb;
+  background: var(--blue-50);
+  color: var(--blue-600);
 }
 .review-form-title {
   font-size: 13px;
@@ -796,7 +796,7 @@ function onClosed() {
   margin-top: 8px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
   font-size: 12px;
   line-height: 1.55;
   color: var(--el-text-color-regular);
@@ -837,7 +837,7 @@ function onClosed() {
   padding: 0 4px;
   border: 0;
   background: transparent;
-  color: #6b7280;
+  color: var(--gray-500);
   font-size: 13px;
   cursor: pointer;
   line-height: 32px;
@@ -850,12 +850,12 @@ function onClosed() {
   cursor: not-allowed;
 }
 .footer-secondary {
-  --el-button-bg-color: #fff;
-  --el-button-border-color: #e5e7eb;
-  --el-button-text-color: #4b5563;
-  --el-button-hover-bg-color: #f9fafb;
-  --el-button-hover-border-color: #d1d5db;
-  --el-button-hover-text-color: #111827;
+  --el-button-bg-color: var(--white);
+  --el-button-border-color: var(--gray-200);
+  --el-button-text-color: var(--ink-650);
+  --el-button-hover-bg-color: var(--gray-50);
+  --el-button-hover-border-color: var(--gray-300);
+  --el-button-hover-text-color: var(--ink-950);
 }
 .footer-primary {
   min-height: 36px;

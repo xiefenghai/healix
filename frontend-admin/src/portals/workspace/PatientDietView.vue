@@ -719,7 +719,7 @@ onMounted(() => {
         </div>
 
         <div v-if="!day.meals.length" class="diet-empty">
-          <div class="diet-empty-icon" aria-hidden="true">🍽</div>
+          <div class="diet-empty-icon" aria-hidden="true"></div>
           <p class="diet-empty-title">当天没有饮食记录</p>
           <p class="diet-empty-desc">记录后可对照热量目标查看摄入进度</p>
           <el-button v-if="canProxy" type="primary" @click="openMealDialog()">+ 记录饮食</el-button>
@@ -974,7 +974,7 @@ onMounted(() => {
 }
 .section-card {
   margin-bottom: 0;
-  border: 1px solid #eef2f6;
+  border: 1px solid var(--ink-125);
   border-radius: 12px;
 }
 .section-card :deep(.el-card__header) {
@@ -1001,14 +1001,14 @@ onMounted(() => {
 .section-title {
   font-size: 15px;
   font-weight: 700;
-  color: var(--admin-text, #1e293b);
+  color: var(--admin-text, var(--ink-800));
 }
 .head-actions {
   display: flex;
   gap: 8px;
 }
 .muted {
-  color: #8a94a6;
+  color: var(--ink-450);
   font-size: 12px;
 }
 
@@ -1032,21 +1032,21 @@ onMounted(() => {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  color: #94a3b8;
+  color: var(--ink-400);
   font-size: 13px;
   line-height: 1;
 }
 .kcal strong {
-  font-size: 36px;
+  font-size: 40px;
   font-weight: 700;
   line-height: 1;
-  color: #0f766e;
+  color: var(--teal-600);
   letter-spacing: -0.02em;
 }
 .kcal span {
   font-size: 13px;
   font-weight: 500;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 .goal-tags {
   display: flex;
@@ -1073,12 +1073,12 @@ onMounted(() => {
   white-space: nowrap;
 }
 .source-pill--staff {
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--amber-600);
+  background: var(--amber-150);
 }
 .source-pill--self {
-  color: #0369a1;
-  background: #e0f2fe;
+  color: var(--auto-0369a1);
+  background: var(--auto-e0f2fe);
 }
 .goal-macros {
   display: flex;
@@ -1096,19 +1096,19 @@ onMounted(() => {
   width: 140px;
   min-width: 120px;
   padding: 12px 16px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--ink-100);
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--ink-50);
 }
 .macro-card span {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--ink-400);
   line-height: 1.2;
 }
 .macro-card strong {
   font-size: 18px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--ink-900);
   line-height: 1.2;
 }
 .goal-basis {
@@ -1118,14 +1118,14 @@ onMounted(() => {
   margin-top: 16px;
   font-size: 12px;
   line-height: 1.5;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .stats {
   display: flex;
   gap: 16px;
   font-size: 13px;
-  color: #8a94a6;
+  color: var(--ink-450);
 }
 .stats strong {
   color: var(--admin-text);
@@ -1160,7 +1160,7 @@ onMounted(() => {
   cursor: pointer;
 }
 .axis-cell.active {
-  background: #f0fdfa;
+  background: var(--teal-25);
 }
 .bar-col {
   flex: 1 1 0;
@@ -1173,7 +1173,7 @@ onMounted(() => {
   border-radius: 8px;
 }
 .bar-col.active {
-  background: #f0fdfa;
+  background: var(--teal-25);
 }
 .bar-area {
   position: relative;
@@ -1189,7 +1189,7 @@ onMounted(() => {
   left: 0;
   right: 0;
   z-index: 2;
-  border-top: 1.5px dashed #f59e0b;
+  border-top: 2px dashed var(--amber-500);
   pointer-events: none;
 }
 .target-line-label {
@@ -1199,57 +1199,57 @@ onMounted(() => {
   padding: 0 4px;
   font-size: 11px;
   line-height: 1;
-  color: #d97706;
-  background: #fff;
+  color: var(--amber-550);
+  background: var(--white);
 }
 .bar {
   width: 20px;
   max-width: 70%;
   border-radius: 4px;
-  background: #14b8a6;
+  background: var(--auto-14b8a6);
   transition:
     height 0.15s ease,
     background 0.15s ease;
 }
 .bar.ok {
-  background: #14b8a6;
+  background: var(--auto-14b8a6);
 }
 .bar.low {
-  background: #cbd5e1;
+  background: var(--ink-300);
 }
 .bar.over {
-  background: #f59e0b;
+  background: var(--amber-500);
 }
 .bar.danger {
-  background: #ef4444;
+  background: var(--rose-500);
 }
 .bar-empty {
   width: 20px;
   max-width: 70%;
   height: 3px !important;
   border-radius: 2px;
-  background: #e2e8f0;
+  background: var(--ink-200);
 }
 .bar-label {
   font-size: 11px;
-  color: #8a94a6;
+  color: var(--ink-450);
   white-space: nowrap;
 }
 .bar-dot {
   width: 6px;
   height: 6px;
-  margin-top: 3px;
+  margin-top: 2px;
   border-radius: 50%;
   background: transparent;
 }
 .bar-dot.on {
-  background: #10b981;
+  background: var(--success-500);
 }
 .legend {
   margin: 12px 0 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #8a94a6;
+  color: var(--ink-450);
 }
 
 .day-progress-card {
@@ -1259,9 +1259,9 @@ onMounted(() => {
   gap: 10px;
   margin-bottom: 16px;
   padding: 14px 16px;
-  border: 1px solid #eef2f6;
+  border: 1px solid var(--ink-125);
   border-radius: 12px;
-  background: #f8fafc;
+  background: var(--ink-50);
   box-sizing: border-box;
 }
 .day-progress-top {
@@ -1280,29 +1280,29 @@ onMounted(() => {
 .day-progress-pct {
   font-size: 13px;
   font-weight: 600;
-  color: #0f766e;
+  color: var(--teal-600);
 }
 .day-progress-kcal {
   font-size: 13px;
-  color: #64748b;
+  color: var(--ink-500);
 }
 .day-progress-kcal strong {
   font-size: 20px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--ink-900);
 }
 .day-progress-bar {
   position: relative;
   height: 10px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e2e8f0;
+  background: var(--ink-200);
 }
 .day-progress-bar > i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #0d9488, #0f766e);
+  background: linear-gradient(90deg, var(--teal-700), var(--teal-600));
   transition: width 0.2s ease;
 }
 .day-progress-meta {
@@ -1311,7 +1311,7 @@ onMounted(() => {
   gap: 12px;
   flex-wrap: wrap;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 .day-progress-flags {
   display: flex;
@@ -1356,7 +1356,7 @@ onMounted(() => {
   text-align: center;
 }
 .diet-empty-icon {
-  font-size: 48px;
+  font-size: 40px;
   line-height: 1;
   opacity: 0.85;
 }
@@ -1364,12 +1364,12 @@ onMounted(() => {
   margin: 4px 0 0;
   font-size: 16px;
   font-weight: 600;
-  color: #334155;
+  color: var(--ink-700);
 }
 .diet-empty-desc {
   margin: 0 0 8px;
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 
 @media (max-width: 900px) {
@@ -1402,9 +1402,9 @@ onMounted(() => {
   height: 100%;
   min-width: 0;
   padding: 16px 16px 12px;
-  border: 1px solid #f3f4f6;
+  border: 1px solid var(--gray-100);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
   box-sizing: border-box;
 }
 .meal-card-body {
@@ -1454,14 +1454,14 @@ onMounted(() => {
 .meal-hint {
   font-size: 11px;
   line-height: 1.2;
-  color: #9ca3af;
+  color: var(--gray-400);
   white-space: nowrap;
 }
 .meal-note {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.4;
-  color: #94a3b8;
+  color: var(--ink-400);
 }
 .items-table-wrap {
   width: 100%;
@@ -1471,8 +1471,8 @@ onMounted(() => {
 }
 .items-table {
   width: 100% !important;
-  min-width: 420px;
-  --el-table-row-hover-bg-color: #f8fafc;
+  min-width: 26rem;
+  --el-table-row-hover-bg-color: var(--ink-50);
 }
 .items-table :deep(.el-table__inner-wrapper) {
   width: 100% !important;
@@ -1494,8 +1494,8 @@ onMounted(() => {
 .items-table :deep(.el-table__header th.el-table__cell) {
   font-size: 12px;
   font-weight: 600;
-  color: #64748b;
-  background: #f8fafc;
+  color: var(--ink-500);
+  background: var(--ink-50);
 }
 /* 去掉 Element Plus 右侧滚动条占位空白 */
 .items-table :deep(.el-table__header .el-table__cell.gutter),
@@ -1544,16 +1544,16 @@ onMounted(() => {
   word-break: break-word;
 }
 .advice-tag--red {
-  color: #7c2d12;
-  background: #fff7ed;
+  color: var(--auto-7c2d12);
+  background: var(--orange-50);
 }
 .advice-tag--yellow {
-  color: #78350f;
-  background: #fffbeb;
+  color: var(--auto-78350f);
+  background: var(--amber-100);
 }
 .advice-tag--info {
-  color: #064e3b;
-  background: #f0fdf4;
+  color: var(--auto-064e3b);
+  background: var(--green-50);
 }
 .comment-block {
   flex-shrink: 0;
@@ -1565,7 +1565,7 @@ onMounted(() => {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #6b7280;
+  color: var(--gray-500);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
@@ -1575,14 +1575,14 @@ onMounted(() => {
     background 0.15s ease;
 }
 .comment-add-btn:hover {
-  color: #2563eb;
-  background: #f3f4f6;
+  color: var(--blue-600);
+  background: var(--gray-100);
   text-decoration: none;
 }
 .comment-view {
   padding: 8px 10px;
   border-radius: 6px;
-  background: #f1f5f9;
+  background: var(--ink-100);
 }
 .comment-view-head {
   display: flex;
@@ -1594,13 +1594,13 @@ onMounted(() => {
 .comment-view-label {
   font-size: 12px;
   font-weight: 600;
-  color: #64748b;
+  color: var(--ink-500);
 }
 .comment-edit-btn {
   padding: 0;
   border: none;
   background: transparent;
-  color: #2563eb;
+  color: var(--blue-600);
   font-size: 12px;
   cursor: pointer;
 }
@@ -1611,7 +1611,7 @@ onMounted(() => {
   margin: 0;
   font-size: 13px;
   line-height: 1.55;
-  color: #334155;
+  color: var(--ink-700);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1633,16 +1633,16 @@ onMounted(() => {
 .preview {
   padding: 12px 16px;
   border-radius: 8px;
-  background: #f5fbfb;
+  background: var(--auto-f5fbfb);
   font-size: 13px;
   line-height: 1.8;
 }
 .preview strong {
   font-size: 18px;
-  color: #2b9e9e;
+  color: var(--auto-2b9e9e);
 }
 .preview .error {
-  color: #e11d48;
+  color: var(--rose-600);
 }
 .draft-list {
   display: flex;
@@ -1662,13 +1662,13 @@ onMounted(() => {
   width: 84px;
 }
 .unit {
-  color: #8a94a6;
+  color: var(--ink-450);
   font-size: 12px;
 }
 .opt-kcal {
   float: right;
   margin-left: 12px;
-  color: #8a94a6;
+  color: var(--ink-450);
   font-size: 12px;
 }
 </style>

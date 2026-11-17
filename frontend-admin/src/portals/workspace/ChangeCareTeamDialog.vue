@@ -299,11 +299,11 @@ function goCreate() {
 .hint {
   margin: 0 0 8px;
   font-size: 13px;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 .hint.muted {
   margin-bottom: 16px;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
   font-size: 12px;
   line-height: 1.5;
 }
@@ -316,7 +316,7 @@ function goCreate() {
   gap: 8px;
   margin-top: 4px;
   font-size: 13px;
-  color: var(--ink-500, #6b7280);
+  color: var(--ink-500, var(--gray-500));
 }
 </style>
 
@@ -331,11 +331,9 @@ function goCreate() {
 .care-team-select-popper.el-popper,
 .care-team-select-popper {
   max-width: min(440px, 92vw);
-  border: 1px solid var(--ink-100, #e5e7eb) !important;
+  border: 1px solid var(--ink-100, var(--gray-200)) !important;
   border-radius: 10px !important;
-  box-shadow:
-    0 4px 6px -1px rgba(15, 23, 42, 0.06),
-    0 10px 24px -4px rgba(15, 23, 42, 0.12) !important;
+  box-shadow: none !important;
   overflow: hidden;
 }
 .care-team-select-popper .el-scrollbar__view,
@@ -356,7 +354,7 @@ function goCreate() {
 }
 .care-team-select-popper .el-scrollbar__thumb {
   border-radius: 999px;
-  background: rgba(100, 116, 139, 0.55) !important;
+  background: var(--auto-rgba-100116139055) !important;
 }
 .care-team-select-popper .opt {
   display: flex;
@@ -373,30 +371,30 @@ function goCreate() {
 }
 .care-team-select-popper .el-select-dropdown__item.is-hovering,
 .care-team-select-popper .el-select-dropdown__item:hover {
-  background: #eef5ff !important;
+  background: var(--auto-eef5ff) !important;
 }
 .care-team-select-popper .el-select-dropdown__item.is-selected {
-  background: #e0edff !important;
-  color: #1d4ed8;
+  background: var(--auto-e0edff) !important;
+  color: var(--brand-800);
   font-weight: 600;
 }
 .care-team-select-popper .el-select-dropdown__item.is-selected .opt-name {
-  color: #1d4ed8;
+  color: var(--brand-800);
 }
 .care-team-select-popper .el-select-dropdown__item.is-selected .opt-meta {
-  color: #64748b;
+  color: var(--ink-500);
 }
 .care-team-select-popper .opt-name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-800, #1f2937);
+  color: var(--ink-800, var(--gray-800));
 }
 .care-team-select-popper .opt-meta {
   font-size: 12px;
-  color: var(--ink-400, #9ca3af);
+  color: var(--ink-400, var(--gray-400));
 }
 .care-team-select-popper .hit {
-  color: #dc2626;
+  color: var(--rose-600);
   font-style: normal;
   font-weight: 700;
 }
@@ -411,7 +409,7 @@ function goCreate() {
   right: 0;
   bottom: 0;
   height: 18px;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.92));
+  background: linear-gradient(to bottom, var(--auto-rgba-2552552550), var(--auto-rgba-255255255092));
   border-radius: 0 0 10px 10px;
 }
 .change-care-team-dialog .el-form-item__error {

@@ -139,22 +139,22 @@ function anomalyParts(text: string) {
   margin: 0;
   padding: 10px 12px;
   border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #eef2f6;
+  background: var(--ink-50);
+  border: 1px solid var(--ink-125);
 }
 
 .ai-sec.risks {
-  background: #fff7ed;
-  border-color: #ffedd5;
+  background: var(--orange-50);
+  border-color: var(--orange-100);
 }
 
 .ai-sec.next {
-  background: #f0fdf4;
-  border-color: #dcfce7;
+  background: var(--green-50);
+  border-color: var(--auto-dcfce7);
 }
 
 .anomaly {
-  color: #b91c1c;
+  color: var(--rose-700);
   font-weight: 700;
 }
 
@@ -176,7 +176,7 @@ function anomalyParts(text: string) {
   flex: 0 0 auto;
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink-400, #94a3b8);
+  color: var(--ink-400);
 }
 
 .ai-sec-title {
@@ -193,15 +193,15 @@ function anomalyParts(text: string) {
 
 .ai-sec.overview .ai-sec-title,
 .ai-sec.points .ai-sec-title {
-  color: var(--brand-700, #0f766e);
+  color: var(--brand-700, var(--teal-600));
 }
 
 .ai-sec.risks .ai-sec-title {
-  color: #b45309;
+  color: var(--amber-600);
 }
 
 .ai-sec.next .ai-sec-title {
-  color: var(--brand-700, #0f766e);
+  color: var(--brand-700, var(--teal-600));
 }
 
 .ai-sec-body {
@@ -229,7 +229,7 @@ function anomalyParts(text: string) {
 }
 
 .ai-sec.risks .ai-sec-list {
-  color: #92400e;
+  color: var(--amber-800);
 }
 
 .ai-sec.points .ai-sec-list li,

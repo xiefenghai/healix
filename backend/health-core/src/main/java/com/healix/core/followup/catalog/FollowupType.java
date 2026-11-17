@@ -31,8 +31,8 @@ public enum FollowupType {
             case PLAN_ADHERENCE -> "方案执行随访";
             case MEDICATION -> "用药随访";
             case SYMPTOM_METRIC -> "指标/症状随访";
-            /** 与驾驶舱 SOP「首诊」对齐，避免「首诊」与「首诊随访」两套说法 */
-            case ONBOARDING -> "首诊";
+            /** 与驾驶舱 SOP「首诊评估」对齐 */
+            case ONBOARDING -> "首诊评估";
             case PLAN_COMMUNICATION -> "方案沟通";
             case OTHER -> "其他随访";
         };

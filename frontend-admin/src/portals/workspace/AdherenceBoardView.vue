@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { avatarGradients, palette } from '../../shared/palette'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -223,14 +224,7 @@ const filterTitle = computed(() => {
   }
 })
 
-const AVATAR_GRADIENTS = [
-  'linear-gradient(135deg,#3B82F6,#1D4ED8)',
-  'linear-gradient(135deg,#8B5CF6,#6D28D9)',
-  'linear-gradient(135deg,#EC4899,#BE185D)',
-  'linear-gradient(135deg,#F59E0B,#EA580C)',
-  'linear-gradient(135deg,#06B6D4,#0E7490)',
-  'linear-gradient(135deg,#10B981,#0F766E)',
-]
+const AVATAR_GRADIENTS = [...avatarGradients]
 
 function avatarChar(name?: string) {
   const t = (name || '').trim()
@@ -334,29 +328,29 @@ function renderTrend() {
   const pct = (v?: number | null) => (v == null ? null : Math.round(v * 100))
   trendChart.setOption(
     {
-      color: ['#2C7EF8', '#00B8A9'],
+      color: [palette.brand500, palette.teal500],
       title: points.length
         ? { show: false }
         : {
             text: '暂无快照数据（次日凌晨生成）',
             left: 'center',
             top: 'middle',
-            textStyle: { color: '#94a3b8', fontSize: 14, fontWeight: 400 },
+            textStyle: { color: palette.ink400, fontSize: 14, fontWeight: 400 },
           },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#fff',
-        borderColor: '#E2E8F0',
-        textStyle: { color: '#1E293B', fontSize: 12 },
+        backgroundColor: palette.white,
+        borderColor: palette.ink200,
+        textStyle: { color: palette.ink800, fontSize: 12 },
         valueFormatter: (value: unknown) => (value == null || value === '' ? '—' : `${value}%`),
       },
-      legend: { top: 0, right: 0, textStyle: { color: '#64748B', fontSize: 12 } },
+      legend: { top: 0, right: 0, textStyle: { color: palette.ink500, fontSize: 12 } },
       grid: { left: 48, right: 16, top: 36, bottom: 32 },
       xAxis: {
         type: 'category',
         data: cats,
-        axisLabel: { hideOverlap: true, color: '#64748B', fontSize: 11 },
-        axisLine: { lineStyle: { color: '#E2E8F0' } },
+        axisLabel: { hideOverlap: true, color: palette.ink500, fontSize: 11 },
+        axisLine: { lineStyle: { color: palette.ink200 } },
         axisTick: { show: false },
       },
       yAxis: {
@@ -364,8 +358,8 @@ function renderTrend() {
         min: 0,
         max: 100,
         name: '%',
-        axisLabel: { color: '#64748B', fontSize: 11 },
-        splitLine: { lineStyle: { type: 'dashed', color: '#F1F5F9' } },
+        axisLabel: { color: palette.ink500, fontSize: 11 },
+        splitLine: { lineStyle: { type: 'dashed', color: palette.ink100 } },
       },
       series: [
         {
@@ -383,8 +377,8 @@ function renderTrend() {
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: 'rgba(44,126,248,.22)' },
-                { offset: 1, color: 'rgba(44,126,248,0)' },
+                { offset: 0, color: palette.brandMutedSoft },
+                { offset: 1, color: palette.brandMutedFade },
               ],
             },
           },
@@ -1048,15 +1042,15 @@ onBeforeUnmount(() => {
 
 .date-pills {
   display: inline-flex;
-  background: var(--ink-100, #f1f5f9);
+  background: var(--ink-100);
   border-radius: 8px;
-  padding: 3px;
+  padding: 4px;
   gap: 2px;
 }
 
 .date-pills button {
   padding: 6px 12px;
-  font-size: 12.5px;
+  font-size: 12px;
   border-radius: 6px;
   color: var(--ink-500);
   font-weight: 500;
@@ -1067,9 +1061,9 @@ onBeforeUnmount(() => {
 }
 
 .date-pills button.active {
-  background: #fff;
+  background: var(--white);
   color: var(--ink-800);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px var(--ink-a06);
 }
 
 .summary-row {
@@ -1085,7 +1079,7 @@ onBeforeUnmount(() => {
 
 .rate-hero,
 .rate-aside {
-  background: var(--admin-card, #fff);
+  background: var(--admin-card, var(--white));
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   box-shadow: var(--admin-shadow);
@@ -1093,18 +1087,18 @@ onBeforeUnmount(() => {
 }
 
 .rate-kicker {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-500);
   font-weight: 600;
 }
 
 .rate-num {
   margin-top: 6px;
-  font-size: 36px;
+  font-size: 40px;
   font-weight: 700;
   letter-spacing: -0.6px;
   line-height: 1.1;
-  color: var(--ink-900, #0f172a);
+  color: var(--ink-900);
 }
 
 .rate-of {
@@ -1115,16 +1109,16 @@ onBeforeUnmount(() => {
 
 .rate-detail {
   margin-top: 8px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-500);
 }
 
-.band-good .rate-num { color: #047857; }
-.band-fair .rate-num { color: #1d4ed8; }
-.band-concern .rate-num { color: #b45309; }
-.band-poor .rate-num { color: #b91c1c; }
+.band-good .rate-num { color: var(--success-600); }
+.band-fair .rate-num { color: var(--brand-800); }
+.band-concern .rate-num { color: var(--amber-600); }
+.band-poor .rate-num { color: var(--rose-700); }
 .band-empty .rate-num,
-.band-people .rate-num { color: var(--ink-900, #0f172a); }
+.band-people .rate-num { color: var(--ink-900); }
 
 .rate-aside {
   display: flex;
@@ -1149,7 +1143,7 @@ onBeforeUnmount(() => {
 .team-board {
   margin-bottom: 14px;
   padding: 14px 16px 8px;
-  background: var(--admin-card, #fff);
+  background: var(--admin-card, var(--white));
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   box-shadow: var(--admin-shadow);
@@ -1165,13 +1159,13 @@ onBeforeUnmount(() => {
 
 .scope-clear {
   border: 1px solid var(--ink-200);
-  background: #fff;
+  background: var(--white);
   border-radius: 8px;
   padding: 6px 12px;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--brand-600, #1e63d9);
+  color: var(--brand-600);
   cursor: pointer;
 }
 
@@ -1199,12 +1193,12 @@ onBeforeUnmount(() => {
 }
 
 .team-row:hover {
-  background: var(--ink-50, #f8fafc);
+  background: var(--ink-50);
 }
 
 .team-row.active {
-  border-color: var(--brand-100, #d6e6ff);
-  background: #f8fbff;
+  border-color: var(--brand-100);
+  background: var(--ink-25);
 }
 
 .team-name {
@@ -1218,7 +1212,7 @@ onBeforeUnmount(() => {
 .team-bar {
   height: 8px;
   border-radius: 999px;
-  background: var(--ink-100, #f1f5f9);
+  background: var(--ink-100);
   overflow: hidden;
 }
 
@@ -1228,36 +1222,36 @@ onBeforeUnmount(() => {
   border-radius: inherit;
 }
 
-.fill-good { background: #10b981; }
-.fill-fair { background: #3b82f6; }
-.fill-concern { background: #f59e0b; }
-.fill-poor { background: #ef4444; }
-.fill-empty { background: var(--ink-300, #cbd5e1); width: 0; }
+.fill-good { background: var(--success-500); }
+.fill-fair { background: var(--blue-500); }
+.fill-concern { background: var(--amber-500); }
+.fill-poor { background: var(--rose-500); }
+.fill-empty { background: var(--ink-300); width: 0; }
 
 .team-rate {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
-.tone-good { color: #047857; }
-.tone-fair { color: #1d4ed8; }
-.tone-concern { color: #b45309; }
-.tone-poor { color: #b91c1c; }
+.tone-good { color: var(--success-600); }
+.tone-fair { color: var(--brand-800); }
+.tone-concern { color: var(--amber-600); }
+.tone-poor { color: var(--rose-700); }
 .tone-empty { color: var(--ink-400); }
 
 .team-meta {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-500);
   font-variant-numeric: tabular-nums;
 }
 
 .team-meta.warn {
-  color: #b91c1c;
+  color: var(--rose-700);
   font-weight: 650;
 }
 
 .tone-slate .summary-value {
-  color: #475569;
+  color: var(--ink-600);
 }
 
 .ls-cell {
@@ -1273,19 +1267,19 @@ onBeforeUnmount(() => {
 }
 
 .tone-teal .summary-value {
-  color: var(--teal-500, #00b8a9);
+  color: var(--teal-500);
 }
 
 .tone-amber .summary-value {
-  color: var(--amber-500, #f59e0b);
+  color: var(--amber-500);
 }
 
 .tone-rose .summary-value {
-  color: var(--rose-500, #ef4444);
+  color: var(--rose-500);
 }
 
 .tone-violet .summary-value {
-  color: var(--violet-500, #8b5cf6);
+  color: var(--violet-500);
 }
 
 .toolbar-search {
@@ -1311,7 +1305,7 @@ onBeforeUnmount(() => {
 }
 
 .card-title {
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--ink-800);
 }
@@ -1371,7 +1365,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--white);
   font-weight: 600;
   font-size: 12px;
   flex-shrink: 0;
@@ -1389,22 +1383,22 @@ onBeforeUnmount(() => {
 
 .patient-meta {
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-400);
 }
 
 .is-warn {
-  color: var(--rose-500, #ef4444);
+  color: var(--rose-500);
   font-weight: 600;
 }
 
 .is-ok {
-  color: var(--teal-500, #00b8a9);
+  color: var(--teal-500);
   font-weight: 550;
 }
 
 .recent-hint {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-500);
 }
 
@@ -1457,7 +1451,7 @@ onBeforeUnmount(() => {
 }
 
 .col-hint {
-  border-bottom: 1px dashed var(--el-border-color);
+  border-bottom: 0 dashed var(--el-border-color);
   cursor: help;
 }
 
@@ -1477,8 +1471,8 @@ onBeforeUnmount(() => {
 
 .rate-track {
   height: 5px;
-  border-radius: 3px;
-  background: var(--ink-100, #f1f5f9);
+  border-radius: 4px;
+  background: var(--ink-100);
   overflow: hidden;
 }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -141,14 +142,14 @@ const trendPanels = computed((): TrendPanel[] => {
           name: '收缩压',
           data: bpTimes.map((t) => (sysMap.has(t) ? sysMap.get(t)! : null)),
           times: bpTimes,
-          color: '#b91c1c',
+          color: palette.rose700,
           area: false,
         },
         {
           name: '舒张压',
           data: bpTimes.map((t) => (diaMap.has(t) ? diaMap.get(t)! : null)),
           times: bpTimes,
-          color: '#1d4ed8',
+          color: palette.brand800,
           area: false,
         },
       ],
@@ -165,7 +166,7 @@ const trendPanels = computed((): TrendPanel[] => {
           name: '指尖血糖',
           data: glucose.map((m) => Number(m.value)),
           times: glucose.map((m) => m.recordedAt || null),
-          color: '#b91c1c',
+          color: palette.rose700,
           area: false,
         },
       ],
@@ -182,7 +183,7 @@ const trendPanels = computed((): TrendPanel[] => {
           name: '心率',
           data: hr.map((m) => Number(m.value)),
           times: hr.map((m) => m.recordedAt || null),
-          color: '#b91c1c',
+          color: palette.rose700,
           area: false,
         },
       ],
@@ -199,7 +200,7 @@ const trendPanels = computed((): TrendPanel[] => {
           name: 'BMI',
           data: bmi.map((p) => p.value),
           times: bmi.map((p) => p.time || null),
-          color: '#b91c1c',
+          color: palette.rose700,
           area: false,
         },
       ],
@@ -289,8 +290,8 @@ onMounted(() => {
 }
 
 .section-card {
-  background: #fff;
-  border: 1px solid var(--admin-border, #e2e8f0);
+  background: var(--white);
+  border: 1px solid var(--admin-border, var(--ink-200));
   border-radius: var(--admin-radius, 12px);
   box-shadow: var(--admin-shadow);
   overflow: hidden;
@@ -308,7 +309,7 @@ onMounted(() => {
 .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   letter-spacing: -0.01em;
 }
 
@@ -321,14 +322,14 @@ onMounted(() => {
 
 .panel-head {
   padding: 8px 12px;
-  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+  border-bottom: 0 solid var(--ink-100);
 }
 
 .chart-title {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
 }
 
 .chart-body {

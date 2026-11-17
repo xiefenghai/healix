@@ -6,6 +6,7 @@ import type { CareChatSseEvent, CareChatSseHandler } from '../../shared/care-cha
 import { debounce } from '../../shared/debounce'
 import { api } from '../../shared/http'
 import { startVisiblePoll } from '../../shared/visible-poll'
+import { avatarGradients } from '../../shared/palette'
 import PatientChatView from './PatientChatView.vue'
 
 interface PatientItem {
@@ -63,12 +64,7 @@ interface Focus {
 type ListMode = 'recent' | 'teams'
 
 const AVATAR_TONES = [
-  'linear-gradient(135deg,#3B82F6,#1D4ED8)',
-  'linear-gradient(135deg,#8B5CF6,#6D28D9)',
-  'linear-gradient(135deg,#F59E0B,#EA580C)',
-  'linear-gradient(135deg,#EC4899,#BE185D)',
-  'linear-gradient(135deg,#10B981,#0F766E)',
-  'linear-gradient(135deg,#2C7EF8,#00B8A9)',
+  ...avatarGradients,
 ]
 
 const route = useRoute()
@@ -572,7 +568,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #fff;
+  background: var(--white);
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   overflow: hidden;
@@ -596,7 +592,7 @@ onBeforeUnmount(() => {
 
 .inbox-head p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-500);
 }
 
@@ -624,7 +620,7 @@ onBeforeUnmount(() => {
   background: var(--ink-50);
   color: var(--ink-600);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
@@ -642,9 +638,9 @@ onBeforeUnmount(() => {
 .tab-count {
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: 999px;
-  background: rgba(44, 126, 248, 0.12);
+  background: var(--admin-primary-muted);
   color: var(--brand-600);
   font-size: 11px;
   line-height: 18px;
@@ -693,7 +689,7 @@ onBeforeUnmount(() => {
 }
 
 .group-head:hover {
-  background: #f9fafb;
+  background: var(--gray-50);
 }
 
 .group-left {
@@ -718,7 +714,7 @@ onBeforeUnmount(() => {
   height: 0;
   border-top: 4px solid transparent;
   border-bottom: 4px solid transparent;
-  border-left: 5px solid var(--ink-400);
+  border-left: 4px solid var(--ink-400);
   transition: transform 160ms ease;
 }
 
@@ -731,7 +727,7 @@ onBeforeUnmount(() => {
   height: 8px;
   border-radius: 50%;
   background: var(--rose-500);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+  box-shadow: 0 0 0 3px var(--rose-a16);
   flex-shrink: 0;
 }
 
@@ -765,12 +761,12 @@ onBeforeUnmount(() => {
 }
 
 .patient:hover {
-  background: #f9fafb;
+  background: var(--gray-50);
 }
 
 .patient.active {
-  background: #eff6ff;
-  box-shadow: inset 3px 0 0 var(--brand-500, #3b82f6);
+  background: var(--blue-50);
+  border-left: 4px solid var(--brand-500);
 }
 
 .patient.unread .name {
@@ -784,8 +780,8 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  background: linear-gradient(135deg, #2c7ef8, #00b8a9);
-  color: #fff;
+  background: linear-gradient(135deg, var(--brand-500), var(--teal-500));
+  color: var(--white);
   font-size: 12px;
   font-weight: 700;
 }
@@ -814,13 +810,13 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 16px;
-  color: #9ca3af;
-  background: #f3f4f6;
+  color: var(--gray-400);
+  background: var(--gray-100);
 }
 
 .time {
@@ -847,10 +843,10 @@ onBeforeUnmount(() => {
 .badge {
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: 999px;
   background: var(--rose-500);
-  color: #fff;
+  color: var(--white);
   font-size: 11px;
   font-weight: 700;
   display: inline-grid;
@@ -878,7 +874,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-content: center;
   text-align: center;
-  background: #fff;
+  background: var(--white);
   border: 1px dashed var(--ink-200);
   border-radius: 12px;
   color: var(--ink-500);
@@ -900,7 +896,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #fff;
+  background: var(--white);
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   overflow: hidden;
@@ -909,7 +905,7 @@ onBeforeUnmount(() => {
 
 .snap-head {
   padding: 14px 14px 10px;
-  border-bottom: 1px solid var(--ink-100);
+  border-bottom: 0 solid var(--ink-100);
 }
 
 .snap-head h3 {
@@ -944,7 +940,7 @@ onBeforeUnmount(() => {
 
 .snap-block {
   padding: 14px 14px 16px;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 0 solid var(--gray-100);
 }
 
 .snap-block--last {
@@ -958,13 +954,13 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
   font-size: 12px;
   font-weight: 700;
-  color: #6b7280;
+  color: var(--gray-500);
   letter-spacing: 0.02em;
 }
 
 .block-label .count {
   font-weight: 500;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .focus-top {
@@ -979,7 +975,7 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--white);
   font-size: 16px;
   font-weight: 700;
   flex-shrink: 0;
@@ -1008,8 +1004,8 @@ onBeforeUnmount(() => {
 }
 
 .live.on {
-  background: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+  background: var(--success-500);
+  outline: 2px solid var(--ink-a12);
 }
 
 .focus-meta {
@@ -1023,7 +1019,7 @@ onBeforeUnmount(() => {
 
 .focus-team {
   margin-top: 4px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-400);
 }
 
@@ -1051,13 +1047,13 @@ onBeforeUnmount(() => {
 }
 
 .tag.teal {
-  background: #e6f7f3;
-  color: #0f766e;
+  background: var(--auto-e6f7f3);
+  color: var(--teal-600);
 }
 
 .tag.rose {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--rose-100);
+  color: var(--rose-700);
 }
 
 .tag.muted {
@@ -1074,8 +1070,8 @@ onBeforeUnmount(() => {
 .metric {
   padding: 8px;
   border-radius: 8px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
 }
 
 .metric-label {
@@ -1107,9 +1103,9 @@ onBeforeUnmount(() => {
 .draft-item {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
   text-align: left;
   cursor: pointer;
   font: inherit;
@@ -1130,7 +1126,7 @@ onBeforeUnmount(() => {
 .draft-meta {
   display: block;
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-500);
 }
 
@@ -1144,7 +1140,7 @@ onBeforeUnmount(() => {
   margin: 14px 0 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--gray-400);
 }
 
 .quick-list {
@@ -1157,11 +1153,11 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 9px 2px;
+  padding: 8px 2px;
   border: 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 0 solid var(--gray-100);
   background: transparent;
-  color: #374151;
+  color: var(--ink-750);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -1174,17 +1170,17 @@ onBeforeUnmount(() => {
 }
 
 .quick-link:hover {
-  color: var(--brand-600, #2563eb);
+  color: var(--brand-600, var(--blue-600));
 }
 
 .quick-link .chev {
-  color: #d1d5db;
+  color: var(--gray-300);
   font-size: 16px;
   line-height: 1;
 }
 
 .quick-link:hover .chev {
-  color: var(--brand-500, #3b82f6);
+  color: var(--brand-500, var(--blue-500));
 }
 
 @media (max-width: 1200px) {

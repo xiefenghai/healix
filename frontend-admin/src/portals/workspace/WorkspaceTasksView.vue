@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { palette } from '../../shared/palette'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -79,10 +80,13 @@ const pageSize = ref(10)
 const FULL_LIST_THRESHOLD = 20
 const DEFAULT_PAGE_SIZE = 10
 const summary = ref<WorkspaceTaskSummary | null>(null)
+const overdueCount = ref(0)
 const teams = ref<CareTeamListItem[]>([])
 const staff = ref<OrgStaffItem[]>([])
 
 const pool = ref<Pool>('MINE')
+/** 点「逾期」卡：在我的待办中只看已逾期 */
+const focusOverdue = ref(false)
 const taskType = ref('')
 const status = ref('')
 const careTeamId = ref('')
@@ -118,8 +122,12 @@ function ensureOrg() {
 }
 
 async function loadSummary() {
-  const res = await api<{ data: WorkspaceTaskSummary }>('/api/b/v1/workspace/tasks/summary')
-  summary.value = res.data
+  const [taskRes, cockpitRes] = await Promise.all([
+    api<{ data: WorkspaceTaskSummary }>('/api/b/v1/workspace/tasks/summary'),
+    api<{ data: { overdueCount?: number } }>('/api/b/v1/cockpit/summary').catch(() => null),
+  ])
+  summary.value = taskRes.data
+  overdueCount.value = cockpitRes?.data?.overdueCount ?? 0
 }
 
 function buildListQuery(pageNo: number, size: number) {
@@ -141,9 +149,63 @@ async function fetchListPage(pageNo: number, size: number) {
   return res.data
 }
 
-const showPagination = computed(() => total.value >= FULL_LIST_THRESHOLD)
+/** 逾期聚焦：先拉我的待办全集（上限），本地筛逾期后再分页 */
+const OVERDUE_FETCH_SIZE = 200
+/** 逾期模式下的全量缓存，翻页只切切片不重拉 */
+const overdueCache = ref<WorkspaceTaskItem[]>([])
+
+const showPagination = computed(() => {
+  if (focusOverdue.value) return total.value > pageSize.value
+  return total.value >= FULL_LIST_THRESHOLD
+})
+
+function applyOverduePage() {
+  const start = (page.value - 1) * pageSize.value
+  items.value = overdueCache.value.slice(start, start + pageSize.value)
+  total.value = overdueCache.value.length
+}
+
+async function loadOverdueList(opts?: { resetPage?: boolean }) {
+  pool.value = 'MINE'
+  if (opts?.resetPage !== false) page.value = 1
+  if (pageSize.value !== DEFAULT_PAGE_SIZE) pageSize.value = DEFAULT_PAGE_SIZE
+
+  const probe = await fetchListPage(1, 1)
+  const fetchSize = Math.min(Math.max(probe.total || 0, DEFAULT_PAGE_SIZE), OVERDUE_FETCH_SIZE)
+  const data = await fetchListPage(1, fetchSize || OVERDUE_FETCH_SIZE)
+  overdueCache.value = (data.items ?? []).filter((r) => isDueOverdue(r))
+  const maxPage = Math.max(1, Math.ceil(overdueCache.value.length / pageSize.value) || 1)
+  if (page.value > maxPage) page.value = maxPage
+  applyOverduePage()
+}
+
+function onPageChange() {
+  clearSelection()
+  if (focusOverdue.value) {
+    applyOverduePage()
+    return
+  }
+  void loadList()
+}
+
+function onPageSizeChange() {
+  page.value = 1
+  clearSelection()
+  if (focusOverdue.value) {
+    applyOverduePage()
+    return
+  }
+  void loadList()
+}
 
 async function loadList() {
+  if (focusOverdue.value) {
+    await loadOverdueList({ resetPage: true })
+    return
+  }
+
+  overdueCache.value = []
+
   // 未知或小列表：先按阈值抓取，避免 17 条被默认 15 截断
   const probing = total.value < FULL_LIST_THRESHOLD
   const reqPage = probing ? 1 : page.value
@@ -191,17 +253,32 @@ async function loadStaff() {
 }
 
 function onSearch() {
+  focusOverdue.value = false
   page.value = 1
   total.value = 0
   void load()
 }
 
 function switchPool(next: Pool) {
+  focusOverdue.value = false
   pool.value = next
   page.value = 1
   total.value = 0
   selectedRows.value = []
   // 摘要卡按全量统计；切池时清掉列表筛，避免「有数但列表为空」
+  taskType.value = ''
+  careTeamId.value = ''
+  keyword.value = ''
+  status.value = ''
+  void load()
+}
+
+function showOverdueFocus() {
+  focusOverdue.value = true
+  pool.value = 'MINE'
+  page.value = 1
+  total.value = 0
+  selectedRows.value = []
   taskType.value = ''
   careTeamId.value = ''
   keyword.value = ''
@@ -282,12 +359,12 @@ function isDueOverdue(row: WorkspaceTaskItem) {
 function dueTimeStyle(row: WorkspaceTaskItem): Record<string, string> {
   const tone = dueTone(row)
   if (tone === 'overdue') {
-    return { color: '#EF4444', fontWeight: '600', fontSize: '12px' }
+    return { color: palette.rose500, fontWeight: '600', fontSize: '12px' }
   }
   if (tone === 'soon') {
-    return { color: '#D97706', fontWeight: '600', fontSize: '12px' }
+    return { color: palette.amber500, fontWeight: '600', fontSize: '12px' }
   }
-  return { color: '#6B7280', fontWeight: '500', fontSize: '12px' }
+  return { color: palette.gray500, fontWeight: '500', fontSize: '12px' }
 }
 
 function dueCellClass(row: WorkspaceTaskItem) {
@@ -336,6 +413,7 @@ function poolTagType(row: WorkspaceTaskItem): 'warning' | 'info' {
 const POOL_COLUMN_HINT = '任务归属：公共=无人领取，个人=已有归属人'
 
 const poolTitle = computed(() => {
+  if (focusOverdue.value) return '逾期待办'
   switch (pool.value) {
     case 'PUBLIC':
       return '公共任务池'
@@ -354,33 +432,77 @@ const overdueInList = computed(
   () => items.value.filter((r) => isDueOverdue(r)).length,
 )
 
-const summaryCards = computed(() => [
+type SummaryCard =
+  | {
+      kind: 'pool'
+      key: Pool
+      label: string
+      value: number
+      hint: string
+      tone: 'brand' | 'muted' | 'teal' | 'danger'
+    }
+  | {
+      kind: 'overdue'
+      key: 'OVERDUE'
+      label: string
+      value: number
+      hint: string
+      tone: 'danger'
+    }
+
+const summaryCards = computed((): SummaryCard[] => [
   {
-    key: 'MINE' as const,
+    kind: 'pool',
+    key: 'MINE',
     label: '我的待办',
     value: summary.value?.mineOpenCount ?? 0,
     hint: '已领取未办结',
-    tone: 'brand' as const,
+    tone: 'brand',
   },
   {
-    key: 'PUBLIC' as const,
+    kind: 'overdue',
+    key: 'OVERDUE',
+    label: '逾期',
+    value: overdueCount.value,
+    hint: '已超期未办结',
+    tone: 'danger',
+  },
+  {
+    kind: 'pool',
+    key: 'PUBLIC',
     label: '公共任务池',
     value: summary.value?.publicOpenCount ?? 0,
     hint: '待领取',
-    tone: 'muted' as const,
+    tone: 'muted',
   },
   {
-    key: 'DONE' as const,
+    kind: 'pool',
+    key: 'DONE',
     label: '今日已办',
     value: summary.value?.doneTodayCount ?? 0,
     hint: '本人今日办结',
-    tone: 'teal' as const,
+    tone: 'teal',
   },
 ])
 
+function isCardActive(card: SummaryCard) {
+  if (card.kind === 'overdue') return focusOverdue.value
+  return !focusOverdue.value && pool.value === card.key
+}
+
+function onSummaryCardClick(card: SummaryCard) {
+  if (card.kind === 'overdue') showOverdueFocus()
+  else switchPool(card.key)
+}
+
+function displayTaskTypeLabel(label?: string) {
+  if (!label) return ''
+  return label === '首诊' ? '首诊评估' : label
+}
+
 function taskLineTitle(row: WorkspaceTaskItem) {
   const bits = [
-    row.taskTypeLabel || '',
+    displayTaskTypeLabel(row.taskTypeLabel) || '',
     row.peopleName || '',
     ...(row.diseaseLabels || []).slice(0, 3),
   ].filter(Boolean)
@@ -1135,8 +1257,8 @@ onUnmounted(() => {
         :key="card.key"
         type="button"
         class="summary-card summary-card--compact"
-        :class="[`tone-${card.tone}`, { 'is-active': pool === card.key }]"
-        @click="switchPool(card.key)"
+        :class="[`tone-${card.tone}`, { 'is-active': isCardActive(card) }]"
+        @click="onSummaryCardClick(card)"
       >
         <div class="summary-label">{{ card.label }}</div>
         <div class="summary-meta">
@@ -1148,12 +1270,12 @@ onUnmounted(() => {
         v-if="isAdmin"
         type="button"
         class="summary-card summary-card--compact tone-violet"
-        :class="{ 'is-active': pool === 'ALL' }"
+        :class="{ 'is-active': !focusOverdue && pool === 'ALL' }"
         @click="switchPool('ALL')"
       >
         <div class="summary-label">全部任务</div>
         <div class="summary-meta">
-          <span class="summary-value">{{ pool === 'ALL' ? total : '—' }}</span>
+          <span class="summary-value">{{ pool === 'ALL' && !focusOverdue ? total : '—' }}</span>
           <span class="summary-hint">管理员</span>
         </div>
       </button>
@@ -1167,8 +1289,17 @@ onUnmounted(() => {
               {{ poolTitle }}
               <span class="count">
                 · {{ total }} 项
-                <template v-if="overdueInList > 0 && (pool === 'PUBLIC' || pool === 'MINE')">
-                  · {{ overdueInList }} 项逾期（本页）
+                <template
+                  v-if="
+                    !focusOverdue &&
+                    overdueInList > 0 &&
+                    (pool === 'PUBLIC' || pool === 'MINE')
+                  "
+                >
+                  ·
+                  <button type="button" class="overdue-link" @click="showOverdueFocus">
+                    {{ overdueInList }} 项逾期（本页）
+                  </button>
                 </template>
               </span>
             </div>
@@ -1255,9 +1386,9 @@ onUnmounted(() => {
               <span
                 class="type-pill"
                 :class="`tone-${taskTypeTone(row.taskType)}`"
-                :title="row.taskTypeLabel"
+                :title="displayTaskTypeLabel(row.taskTypeLabel)"
               >
-                {{ row.taskTypeLabel }}
+                {{ displayTaskTypeLabel(row.taskTypeLabel) }}
               </span>
               <span class="task-patient">{{ row.peopleName || '-' }}</span>
               <span
@@ -1413,7 +1544,13 @@ onUnmounted(() => {
       </el-table>
       <el-empty
         v-if="!loading && items.length === 0"
-        :description="pool === 'DONE' ? '今日暂无你办结的任务' : '暂无任务'"
+        :description="
+          focusOverdue
+            ? '暂无逾期任务'
+            : pool === 'DONE'
+              ? '今日暂无你办结的任务'
+              : '暂无任务'
+        "
       />
       <div v-if="total > 0" class="list-pagination">
         <template v-if="showPagination">
@@ -1425,19 +1562,8 @@ onUnmounted(() => {
             layout="total, sizes, prev, pager, next"
             background
             class="list-pagination-bar"
-            @current-change="
-              () => {
-                clearSelection()
-                void loadList()
-              }
-            "
-            @size-change="
-              () => {
-                page = 1
-                clearSelection()
-                void loadList()
-              }
-            "
+            @current-change="onPageChange"
+            @size-change="onPageSizeChange"
           />
         </template>
         <div v-else class="list-total-only">共 {{ total }} 条</div>
@@ -1684,13 +1810,32 @@ onUnmounted(() => {
 }
 
 .tone-teal .summary-value {
-  color: var(--teal-500, #00b8a9);
+  color: var(--teal-500);
 }
 .tone-brand.is-active .summary-value {
   color: var(--brand-600);
 }
 .tone-violet .summary-value {
-  color: var(--violet-500, #8b5cf6);
+  color: var(--violet-500);
+}
+.tone-danger .summary-value {
+  color: var(--rose-500);
+}
+.tone-danger.is-active {
+  border-color: var(--auto-rgba-2396868045);
+  background: var(--rose-100);
+}
+.overdue-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--rose-500);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.overdue-link:hover {
+  text-decoration: underline;
 }
 
 .toolbar {
@@ -1716,14 +1861,14 @@ onUnmounted(() => {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #94a3b8;
+  color: var(--ink-400);
   cursor: pointer;
   flex-shrink: 0;
   transition: color 0.15s ease, background 0.15s ease;
 }
 .toolbar-refresh:hover:not(:disabled) {
-  color: var(--el-color-primary, #409eff);
-  background: #f1f5f9;
+  color: var(--el-color-primary, var(--brand-500));
+  background: var(--ink-100);
 }
 .toolbar-refresh:disabled {
   opacity: 0.5;
@@ -1765,15 +1910,15 @@ onUnmounted(() => {
   width: 100%;
   height: auto;
   margin-bottom: 40px;
-  background: #fff;
+  background: var(--white);
   border: none;
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 2px 8px var(--black-a04);
   overflow: hidden;
 }
 .list-card :deep(.el-card__header) {
   padding: 14px 18px !important;
-  border-bottom: 1px solid var(--ink-100, #eef2f4);
+  border-bottom: 0 solid var(--ink-100);
 }
 .list-card :deep(.el-card__body) {
   padding: 0 18px 8px !important;
@@ -1793,7 +1938,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: 14px;
   font-weight: 700;
-  color: var(--ink-900, #0f172a);
+  color: var(--ink-900);
   line-height: 1.2;
   letter-spacing: 0.01em;
 }
@@ -1801,14 +1946,14 @@ onUnmounted(() => {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
-  color: #64748b;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  color: var(--ink-500);
+  background: var(--ink-50);
+  border: 1px solid var(--ink-200);
 }
 
 .muted {
@@ -1822,7 +1967,7 @@ onUnmounted(() => {
   justify-content: center;
   flex-shrink: 0;
   box-sizing: border-box;
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
@@ -1833,38 +1978,38 @@ onUnmounted(() => {
 }
 /* 报告审阅：浅蓝底 + 深蓝字 */
 .type-pill.tone-report {
-  color: #1e40af;
-  background: #dbeafe;
+  color: var(--brand-900);
+  background: var(--blue-100);
 }
 /* 制定方案：浅紫底 + 深紫字 */
 .type-pill.tone-plan {
-  color: #5b21b6;
-  background: #ede9fe;
+  color: var(--auto-5b21b6);
+  background: var(--auto-ede9fe);
 }
 /* 评估升级：浅橙底 + 深橙字 */
 .type-pill.tone-assess {
-  color: #9a3412;
-  background: #ffedd5;
+  color: var(--orange-800);
+  background: var(--orange-100);
 }
 .type-pill.tone-assign {
-  color: #115e59;
-  background: #ccfbf1;
+  color: var(--auto-115e59);
+  background: var(--teal-25);
 }
 .type-pill.tone-followup {
-  color: #5b21b6;
-  background: #ede9fe;
+  color: var(--auto-5b21b6);
+  background: var(--auto-ede9fe);
 }
 .type-pill.tone-alert {
-  color: #991b1b;
-  background: #fecaca;
+  color: var(--rose-800);
+  background: var(--rose-200);
 }
 .type-pill.tone-intake {
-  color: #075985;
-  background: #bae6fd;
+  color: var(--auto-075985);
+  background: var(--auto-bae6fd);
 }
 .type-pill.tone-default {
-  color: #334155;
-  background: #e2e8f0;
+  color: var(--ink-700);
+  background: var(--ink-200);
 }
 
 .due-cell {
@@ -1881,15 +2026,15 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .due-cell.is-overdue .due-time {
-  color: #ef4444 !important;
+  color: var(--rose-500) !important;
   font-weight: 600 !important;
 }
 .due-cell.is-soon .due-time {
-  color: #d97706 !important;
+  color: var(--amber-550) !important;
   font-weight: 600 !important;
 }
 .due-cell.is-normal .due-time {
-  color: #6b7280 !important;
+  color: var(--gray-500) !important;
   font-weight: 500 !important;
 }
 .due-mark {
@@ -1897,12 +2042,12 @@ onUnmounted(() => {
   align-items: center;
   flex-shrink: 0;
   margin-left: 8px;
-  padding: 1px 7px;
+  padding: 2px 6px;
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
-  color: #ef4444;
-  background: #fef2f2;
+  color: var(--rose-500);
+  background: var(--rose-100);
   border: none;
   line-height: 1.4;
   white-space: nowrap;
@@ -1910,24 +2055,24 @@ onUnmounted(() => {
 
 .batch-claim-btn.is-disabled,
 .batch-claim-btn:disabled {
-  background: #e5e7eb !important;
-  border-color: #e5e7eb !important;
-  color: #9ca3af !important;
+  background: var(--gray-200) !important;
+  border-color: var(--gray-200) !important;
+  color: var(--gray-400) !important;
   opacity: 1 !important;
   cursor: not-allowed;
 }
 .batch-claim-btn.ready:not(.is-disabled):not(:disabled) {
-  background: var(--el-color-primary, #409eff) !important;
-  border-color: var(--el-color-primary, #409eff) !important;
-  color: #fff !important;
-  box-shadow: 0 1px 2px rgba(64, 158, 255, 0.35);
+  background: var(--el-color-primary, var(--brand-500)) !important;
+  border-color: var(--el-color-primary, var(--brand-500)) !important;
+  color: var(--white) !important;
+  box-shadow: var(--admin-shadow, 0 1px 2px var(--ink-a04));
 }
 
 .time-cell {
   display: inline-block;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  color: var(--ink-700, #334155);
+  color: var(--ink-700);
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
@@ -1958,19 +2103,19 @@ onUnmounted(() => {
 .row-actions :deep(.el-button.action-primary) {
   height: 28px !important;
   padding: 0 12px !important;
-  border: 1px solid #bfdbfe !important;
+  border: 1px solid var(--brand-200) !important;
   border-radius: 6px !important;
-  background: #eff6ff !important;
-  color: #2563eb !important;
+  background: var(--blue-50) !important;
+  color: var(--blue-600) !important;
   font-size: 13px !important;
   font-weight: 600 !important;
   line-height: 26px !important;
 }
 .row-actions :deep(.el-button.action-primary:hover),
 .row-actions :deep(.el-button.action-primary:focus) {
-  background: #dbeafe !important;
-  border-color: #93c5fd !important;
-  color: #1d4ed8 !important;
+  background: var(--blue-100) !important;
+  border-color: var(--blue-300) !important;
+  color: var(--brand-800) !important;
 }
 
 .action-link {
@@ -1979,7 +2124,7 @@ onUnmounted(() => {
   background: transparent;
   padding: 0;
   margin: 0;
-  color: #6b7280 !important;
+  color: var(--gray-500) !important;
   font-size: 13px;
   line-height: 28px;
   height: 28px;
@@ -1990,15 +2135,15 @@ onUnmounted(() => {
   transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 .action-link:hover {
-  color: var(--el-color-primary, #409eff) !important;
+  color: var(--el-color-primary, var(--brand-500)) !important;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .action-link--danger {
-  color: #9ca3af !important;
+  color: var(--gray-400) !important;
 }
 .action-link--danger:hover {
-  color: #ef4444 !important;
+  color: var(--rose-500) !important;
 }
 
 .assessment-task-body {
@@ -2008,19 +2153,19 @@ onUnmounted(() => {
   margin: 0 0 8px;
   font-size: 14px;
   font-weight: 600;
-  color: var(--ink-900, #0f172a);
+  color: var(--ink-900);
   line-height: 1.45;
 }
 .assessment-advice {
   margin: 0 0 10px;
   font-size: 13px;
-  color: var(--ink-800, #1e293b);
+  color: var(--ink-800);
   line-height: 1.5;
 }
 .assessment-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
   line-height: 1.5;
 }
 
@@ -2028,7 +2173,7 @@ onUnmounted(() => {
   margin: 0 0 12px;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--hx-n-700, #3d5160);
+  color: var(--hx-n-700);
 }
 .self-report-list { min-height: 48px; }
 .self-report-row {
@@ -2036,11 +2181,11 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 2px;
   padding: 8px 0;
-  border-top: 1px solid var(--hx-n-100, #eef2f4);
+  border-top: 0 solid var(--hx-n-100);
 }
 .self-report-row b { font-size: 13px; }
-.self-report-row span { font-size: 13px; color: var(--hx-n-800, #243642); }
-.self-report-fallback { margin: 0; font-size: 13px; color: var(--hx-n-700, #3d5160); }
+.self-report-row span { font-size: 13px; color: var(--hx-n-800); }
+.self-report-fallback { margin: 0; font-size: 13px; color: var(--hx-n-700); }
 
 /* 类型列允许胶囊省略，避免挤占生成时间 */
 :deep(.col-tag .cell) {
@@ -2062,7 +2207,7 @@ onUnmounted(() => {
 }
 
 .col-hint {
-  border-bottom: 1px dashed var(--el-border-color);
+  border-bottom: 0 dashed var(--el-border-color);
   cursor: help;
 }
 
@@ -2097,14 +2242,14 @@ onUnmounted(() => {
   width: 100%;
   text-align: right;
   font-size: 13px;
-  color: var(--ink-500, #64748b);
+  color: var(--ink-500);
   line-height: 28px;
   padding: 0;
 }
 
 .list-card :deep(.tasks-table) {
   width: 100% !important;
-  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-row-hover-bg-color: var(--ink-50);
 }
 .list-card :deep(.tasks-table .el-table__inner-wrapper),
 .list-card :deep(.tasks-table .el-table__header-wrapper),
@@ -2125,7 +2270,7 @@ onUnmounted(() => {
 .list-card :deep(.tasks-table .el-table__body td.el-table__cell) {
   font-size: 13px;
   padding: 12px 8px !important;
-  border-bottom: 1px solid #f3f4f6 !important;
+  border-bottom: 0 solid var(--gray-100) !important;
 }
 /* 任务列：左侧多留一点，标签不贴边 */
 .list-card :deep(th.col-task.el-table__cell),

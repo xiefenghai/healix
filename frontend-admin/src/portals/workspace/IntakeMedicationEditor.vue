@@ -458,7 +458,7 @@ onMounted(() => {
       :class="{ collapsed: expandedIdx !== idx }"
     >
       <div v-if="expandedIdx !== idx" class="med-line">
-        <span class="med-pill" aria-hidden="true">💊</span>
+        <span class="med-pill" aria-hidden="true"></span>
         <span class="med-line-name" :class="{ placeholder: !row.drugName.trim() }">
           {{ row.drugName.trim() || '未命名药品' }}
         </span>
@@ -771,9 +771,9 @@ onMounted(() => {
   margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fff7ed;
-  color: #9a3412;
-  font-size: 12.5px;
+  background: var(--orange-50);
+  color: var(--orange-800);
+  font-size: 12px;
 }
 
 .empty {
@@ -784,7 +784,7 @@ onMounted(() => {
   padding: 12px 14px;
   border: 1px dashed var(--ink-200);
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
 }
 
 .empty p {
@@ -796,7 +796,7 @@ onMounted(() => {
 .med-card {
   border: 1px solid var(--ink-200);
   border-radius: 10px;
-  background: #fff;
+  background: var(--white);
   padding: 10px 12px 4px;
 }
 
@@ -849,7 +849,7 @@ onMounted(() => {
   flex: none;
   border: none;
   background: transparent;
-  color: var(--brand-600, #2563eb);
+  color: var(--brand-600, var(--blue-600));
   font-size: 12px;
   cursor: pointer;
   padding: 0 2px;
@@ -870,13 +870,13 @@ onMounted(() => {
   height: 28px;
   border: none;
   border-radius: 8px;
-  background: #fef2f2;
-  color: #dc2626;
+  background: var(--rose-100);
+  color: var(--rose-600);
   cursor: pointer;
 }
 
 .med-trash:hover:not(:disabled) {
-  background: #fee2e2;
+  background: var(--rose-150);
 }
 
 .quick {
@@ -899,7 +899,7 @@ onMounted(() => {
 
 .chip {
   border: 1px solid var(--ink-200);
-  background: #fff;
+  background: var(--white);
   color: var(--ink-700);
   border-radius: 999px;
   padding: 4px 10px;
@@ -908,16 +908,16 @@ onMounted(() => {
 }
 
 .chip.on {
-  border-color: var(--brand-500, #2563eb);
-  background: var(--brand-50, #eff6ff);
-  color: var(--brand-700, #1d4ed8);
+  border-color: var(--brand-500, var(--blue-600));
+  background: var(--brand-50, var(--blue-50));
+  color: var(--brand-700, var(--brand-800));
   font-weight: 600;
 }
 
 .adv-toggle {
   border: none;
   background: transparent;
-  color: var(--brand-600, #2563eb);
+  color: var(--brand-600, var(--blue-600));
   font-size: 12px;
   cursor: pointer;
   padding: 0 0 8px;
@@ -961,7 +961,7 @@ onMounted(() => {
 }
 
 .dose-input :deep(.el-input__inner::placeholder) {
-  color: #cbd5e1;
+  color: var(--ink-300);
 }
 
 .timing-block {

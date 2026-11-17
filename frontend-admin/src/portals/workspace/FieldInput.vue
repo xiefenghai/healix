@@ -584,7 +584,7 @@ function onYearChange(v: string | null) {
 }
 
 .field-input.is-dirty {
-  background: #fef9c3;
+  background: var(--auto-fef9c3);
 }
 
 .illness-toolbar {
@@ -603,16 +603,19 @@ function onYearChange(v: string | null) {
   padding: 0 10px;
   border: 1px solid var(--ink-200);
   border-radius: 8px;
-  background: #fff;
+  background: var(--white);
   color: var(--ink-800);
   font: inherit;
   font-size: 13px;
-  outline: none;
 }
 
 .illness-search:focus {
   border-color: var(--brand-400);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 0 0 3px var(--brand-a12);
+}
+.illness-search:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 1px;
 }
 
 .illness-search:disabled {
@@ -626,7 +629,7 @@ function onYearChange(v: string | null) {
   background: transparent;
   color: var(--brand-600);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   padding: 0;
   cursor: pointer;
@@ -662,7 +665,7 @@ function onYearChange(v: string | null) {
   gap: 6px;
   margin: 0;
   border: 1px solid var(--ink-200);
-  background: #fff;
+  background: var(--white);
   color: var(--ink-700);
   border-radius: 8px;
   padding: 6px 12px;
@@ -682,17 +685,17 @@ function onYearChange(v: string | null) {
   font-size: 11px;
   font-weight: 500;
   line-height: 1.2;
-  padding: 1px 5px;
+  padding: 2px 4px;
   border-radius: 4px;
-  color: #92400e;
-  background: #fef3c7;
-  border: 1px solid #fcd34d;
+  color: var(--amber-800);
+  background: var(--amber-150);
+  border: 1px solid var(--amber-200);
 }
 
 .opt-btn.on .opt-badge {
-  color: #78350f;
-  background: #fde68a;
-  border-color: #fbbf24;
+  color: var(--auto-78350f);
+  background: var(--amber-200);
+  border-color: var(--auto-fbbf24);
 }
 
 .btn-group.is-compact .opt-btn {
@@ -729,13 +732,13 @@ function onYearChange(v: string | null) {
 }
 
 .field-input.is-anomaly :deep(.el-input__wrapper) {
-  box-shadow: 0 0 0 1px #dc2626 inset;
+  box-shadow: 0 0 0 1px var(--auto-rgba-152342025) inset;
 }
 
 .num-clear {
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--ink-400);
   font-size: 16px;
   line-height: 1;
   padding: 0 2px;
@@ -743,7 +746,7 @@ function onYearChange(v: string | null) {
 }
 
 .num-clear:hover {
-  color: #64748b;
+  color: var(--ink-500);
 }
 
 .unit {
