@@ -41,8 +41,20 @@ function onDateConfirm({ selectedValues }: { selectedValues: string[] }) {
   showDate.value = false
 }
 
+/** 与后端 PeopleNames 一致：中文/英文人名，拒绝纯数字等脏输入 */
+function isValidPeopleName(raw: string): boolean {
+  const n = String(raw || '').trim()
+  if (n.length < 2 || n.length > 64) return false
+  if (!/^[\u4e00-\u9fffA-Za-z·•\-\s]+$/.test(n)) return false
+  if (!/[\u4e00-\u9fffA-Za-z]/.test(n)) return false
+  return n.replace(/[·•\-\s]/g, '').length >= 2
+}
+
 function validate(): string | null {
-  if (!name.value.trim()) return '请填写姓名'
+  const n = name.value.trim()
+  if (!n) return '请填写姓名'
+  if (n.length < 2) return '姓名至少2个字'
+  if (!isValidPeopleName(n)) return '姓名格式不正确'
   if (!gender.value) return '请选择性别'
   if (!birthday.value) return '请选择出生日期'
   const m = mobile.value.trim()

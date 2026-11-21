@@ -144,8 +144,12 @@ export type CarePlanPreviewPatch =
   | { field: 'taskTitle' | 'taskRationale'; index: number; value: string }
   | { field: 'weekItemNote'; day: string; index: number; value: string }
 
+export type CarePlanSampleMealSlot = 'breakfast' | 'lunch' | 'dinner' | 'snacks'
+
 const emit = defineEmits<{
   patch: [payload: CarePlanPreviewPatch]
+  /** 全屏手动编辑：点击一周饮食示例某餐，由父级打开单餐编辑弹窗 */
+  editSampleMeal: [payload: { day: string; slot: CarePlanSampleMealSlot }]
 }>()
 
 function patchField(
@@ -217,7 +221,7 @@ function splitSentences(list: string[] | string | undefined, sep: RegExp): strin
 const dietPrinciples = computed(() => splitSentences(props.data?.diet?.principles, /[；;]/))
 const dietNotes = computed(() => patientDietNoteLines(props.data?.diet?.notes || ''))
 
-const SAMPLE_MEAL_LABELS: Array<{ key: string; label: string }> = [
+const SAMPLE_MEAL_LABELS: Array<{ key: CarePlanSampleMealSlot; label: string }> = [
   { key: 'breakfast', label: '早餐' },
   { key: 'lunch', label: '午餐' },
   { key: 'dinner', label: '晚餐' },
@@ -244,14 +248,16 @@ function mealsFromSample(raw: unknown) {
 
 const sampleWeekTable = computed(() => {
   const sw = props.data?.diet?.sampleWeek
-  if (!sw || typeof sw !== 'object') return []
+  const hasWeek = !!sw && typeof sw === 'object'
+  if (!hasWeek && !props.editable) return []
   return Object.entries(DAY_LABELS)
     .map(([code, label]) => {
-      const meals = mealsFromSample((sw as Record<string, unknown>)[code])
+      const meals = hasWeek ? mealsFromSample((sw as Record<string, unknown>)[code]) : []
       const pick = (name: string) => meals.find((meal) => meal.label === name)
       const cell = (name: string) => pick(name)?.text || ''
       const swap = (name: string) => pick(name)?.swapHint || ''
       return {
+        dayCode: code,
         day: label,
         breakfast: cell('早餐'),
         breakfastSwap: swap('早餐'),
@@ -263,8 +269,38 @@ const sampleWeekTable = computed(() => {
         snacksSwap: swap('加餐'),
       }
     })
-    .filter((row) => row.breakfast || row.lunch || row.dinner || row.snacks)
+    .filter(
+      (row) =>
+        props.editable || row.breakfast || row.lunch || row.dinner || row.snacks,
+    )
 })
+
+function mealTextOf(
+  row: { breakfast: string; lunch: string; dinner: string; snacks: string },
+  slot: CarePlanSampleMealSlot,
+) {
+  return row[slot] || ''
+}
+
+function mealSwapOf(
+  row: {
+    breakfastSwap: string
+    lunchSwap: string
+    dinnerSwap: string
+    snacksSwap: string
+  },
+  slot: CarePlanSampleMealSlot,
+) {
+  if (slot === 'breakfast') return row.breakfastSwap
+  if (slot === 'lunch') return row.lunchSwap
+  if (slot === 'dinner') return row.dinnerSwap
+  return row.snacksSwap
+}
+
+function onEditSampleMeal(dayCode: string, slot: CarePlanSampleMealSlot) {
+  if (!props.editable) return
+  emit('editSampleMeal', { day: dayCode, slot })
+}
 
 const WEEK_DAY_ORDER = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 
@@ -973,7 +1009,7 @@ defineExpose({
               </el-tag>
             </div>
 
-            <div v-if="sampleWeekTable.length" class="week-plan">
+            <div v-if="sampleWeekTable.length || editable" class="week-plan">
               <button
                 type="button"
                 class="week-plan-toggle"
@@ -982,6 +1018,7 @@ defineExpose({
               >
                 <span class="info-block-title">一周饮食示例</span>
                 <span class="week-plan-toggle-meta">
+                  <span v-if="editable" class="week-plan-edit-hint">点击餐次可改</span>
                   {{ sampleWeekExpanded ? '收起' : '展开' }}
                   <el-icon
                     class="week-plan-toggle-icon"
@@ -997,37 +1034,42 @@ defineExpose({
                 :data="sampleWeekTable"
                 size="small"
                 class="task-table week-plan-table week-plan-table--diet"
+                :class="{ 'is-editable': editable }"
               >
                 <el-table-column prop="day" label="星期" width="56" />
-                <el-table-column label="早餐" min-width="140">
+                <el-table-column
+                  v-for="slot in SAMPLE_MEAL_LABELS"
+                  :key="slot.key"
+                  :label="slot.label"
+                  :min-width="slot.key === 'snacks' ? 120 : 140"
+                >
                   <template #default="{ row }">
-                    <div class="preview-meal-cell">
-                      <CarePlanMealStruct :text="row.breakfast" />
-                      <div v-if="row.breakfastSwap" class="swap-hint">可替换：{{ row.breakfastSwap }}</div>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="午餐" min-width="140">
-                  <template #default="{ row }">
-                    <div class="preview-meal-cell">
-                      <CarePlanMealStruct :text="row.lunch" />
-                      <div v-if="row.lunchSwap" class="swap-hint">可替换：{{ row.lunchSwap }}</div>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="晚餐" min-width="140">
-                  <template #default="{ row }">
-                    <div class="preview-meal-cell">
-                      <CarePlanMealStruct :text="row.dinner" />
-                      <div v-if="row.dinnerSwap" class="swap-hint">可替换：{{ row.dinnerSwap }}</div>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="加餐" min-width="120">
-                  <template #default="{ row }">
-                    <div class="preview-meal-cell">
-                      <CarePlanMealStruct :text="row.snacks" snackish />
-                      <div v-if="row.snacksSwap" class="swap-hint">可替换：{{ row.snacksSwap }}</div>
+                    <button
+                      v-if="editable"
+                      type="button"
+                      class="preview-meal-cell preview-meal-cell--editable"
+                      :title="mealTextOf(row, slot.key) ? `点击修改${slot.label}` : `点击添加${slot.label}`"
+                      @click="onEditSampleMeal(row.dayCode, slot.key)"
+                    >
+                      <CarePlanMealStruct
+                        v-if="mealTextOf(row, slot.key)"
+                        :text="mealTextOf(row, slot.key)"
+                        :snackish="slot.key === 'snacks'"
+                      />
+                      <span v-else class="preview-meal-empty">点击添加</span>
+                      <div v-if="mealSwapOf(row, slot.key)" class="swap-hint">
+                        可替换：{{ mealSwapOf(row, slot.key) }}
+                      </div>
+                    </button>
+                    <div v-else class="preview-meal-cell">
+                      <CarePlanMealStruct
+                        v-if="mealTextOf(row, slot.key)"
+                        :text="mealTextOf(row, slot.key)"
+                        :snackish="slot.key === 'snacks'"
+                      />
+                      <div v-if="mealSwapOf(row, slot.key)" class="swap-hint">
+                        可替换：{{ mealSwapOf(row, slot.key) }}
+                      </div>
                     </div>
                   </template>
                 </el-table-column>
@@ -1760,6 +1802,39 @@ defineExpose({
   min-width: 0;
   font-size: 12px;
   line-height: 1.4;
+}
+.preview-meal-cell--editable {
+  width: 100%;
+  margin: 0;
+  padding: 4px 6px;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+.preview-meal-cell--editable:hover,
+.preview-meal-cell--editable:focus-visible {
+  border-color: #93c5fd;
+  background: #f8fbff;
+  outline: none;
+}
+.preview-meal-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.week-plan-edit-hint {
+  margin-right: 4px;
+  color: #2563eb;
+  font-weight: 600;
+}
+.week-plan-table--diet.is-editable :deep(td) {
+  vertical-align: top;
 }
 .preview-meal-cell :deep(.meal-struct) {
   gap: 2px;

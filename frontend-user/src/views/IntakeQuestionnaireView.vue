@@ -21,6 +21,7 @@ import {
   cOptionLabel,
   initAnswers,
   isAnswerEmpty,
+  isCOptionalFreeText,
   isShortTextField,
   isStaffSuggestedField,
   matchShowIf,
@@ -184,19 +185,17 @@ function onMetricWheelConfirm({ selectedValues }: { selectedValues: string[] }) 
   metricWheelOpen.value = false
 }
 
-/** 未选/未填时禁用「下一题」，避免空值溜走（尤其 ENUM 声称点选即跳却仍可点下一步） */
+/** 未选/未填时禁用「下一题」；与后端 depthMissingFields 对齐（非选填 TEXT 均须填） */
 const canAdvance = computed(() => {
   if (submitting.value) return false
   const step = currentStep.value
   if (!step) return false
   const items = step.kind === 'single' ? [step.item] : step.items
   for (const it of items) {
-    if (it.type === 'ENUM' && isAnswerEmpty(it, answers[it.field])) return false
     if (it.field === 'allergy.status' && String(answers[it.field] ?? '') === 'HAS') {
       if (!allergyDetailFilled.value) return false
     }
-    const must = step.kind === 'bundle' || it.level === 'REQUIRED'
-    if (!must) continue
+    if (isCOptionalFreeText(it)) continue
     if (it.type === 'NUMBER') {
       if (numberError(it, answers[it.field])) return false
     } else if (isAnswerEmpty(it, answers[it.field])) {
@@ -570,11 +569,11 @@ const multiSelectedNone = computed(() => {
   return cur.some((c) => ex.includes(c))
 })
 
-/** 选填且未答：只显示「跳过」；已答则隐藏跳过、显示下一题 */
+/** 仅非 REQUIRED 的 TEXT 可跳过（与后端 isOptionalFreeTextField 一致） */
 const showSkipOptional = computed(() => {
   const it = currentSingle.value?.item
   if (!it) return false
-  if (it.level === 'REQUIRED' || it.type === 'ENUM') return false
+  if (!isCOptionalFreeText(it)) return false
   return isAnswerEmpty(it, answers[it.field])
 })
 
@@ -583,9 +582,9 @@ const showNextButton = computed(() => {
   if (!step) return false
   if (step.kind === 'bundle') return true
   const it = step.item
-  // ENUM：未选显示灰「请选择一项」；已选显示「下一题」（点选仍会自动跳；返回本页不致卡死）
+  // ENUM / 必填类：未选显示灰「请选择一项」；已选显示「下一题」
   if (it.type === 'ENUM') return true
-  if (it.level === 'REQUIRED') return true
+  if (!isCOptionalFreeText(it)) return true
   return !isAnswerEmpty(it, answers[it.field])
 })
 
@@ -1076,8 +1075,8 @@ function skipOptional() {
   const step = currentStep.value
   if (!step) return
   if (step.kind === 'single') {
-    if (step.item.level === 'REQUIRED') return
-    answers[step.field] = step.item.type === 'MULTI' ? [] : ''
+    if (!isCOptionalFreeText(step.item)) return
+    answers[step.field] = ''
   } else {
     return
   }
@@ -1207,7 +1206,17 @@ async function submit() {
     }
     for (const it of items) {
       if (it.type === 'NUMBER') continue
-      if (it.level === 'REQUIRED' && isAnswerEmpty(it, answers[it.field])) {
+      if (isCOptionalFreeText(it)) continue
+      if (it.field === 'allergy.status' && String(answers[it.field] ?? '') === 'HAS') {
+        if (!allergyDetailFilled.value) {
+          stepIndex.value = i
+          fieldError.value = '请选择过敏原'
+          showToast('还有必填题未填')
+          return
+        }
+        continue
+      }
+      if (isAnswerEmpty(it, answers[it.field])) {
         stepIndex.value = i
         fieldError.value = `请填写${cLabel(it)}`
         showToast('还有必填题未填')

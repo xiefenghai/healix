@@ -538,7 +538,18 @@ public class QuestionnaireResponseService {
         Function<String, JsonNode> lookup = answersLookup(answers);
         List<String> missing = depthMissingFields(q, lookup, d);
         if (!missing.isEmpty()) {
-            throw new BusinessException(400, "还有必填项未完成，请补全后再提交");
+            List<String> labels = new ArrayList<>();
+            for (String code : missing) {
+                labels.add(fieldCatalog.find(code).map(FieldDef::label).orElse(code));
+                if (labels.size() >= 3) {
+                    break;
+                }
+            }
+            String detail = String.join("、", labels);
+            if (missing.size() > labels.size()) {
+                detail = detail + "等" + missing.size() + "项";
+            }
+            throw new BusinessException(400, "还有必填项未完成（" + detail + "），请补全后再提交");
         }
 
         ObjectNode prefill = asObject(row.getPrefillJson());

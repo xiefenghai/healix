@@ -95,9 +95,27 @@ function openEdit() {
   dialogVisible.value = true
 }
 
+/** 与后端 PeopleNames 一致：中文/英文人名，拒绝纯数字等脏输入 */
+function isValidPeopleName(raw: string): boolean {
+  const n = String(raw || '').trim()
+  if (n.length < 2 || n.length > 64) return false
+  if (!/^[\u4e00-\u9fffA-Za-z·•\-\s]+$/.test(n)) return false
+  if (!/[\u4e00-\u9fffA-Za-z]/.test(n)) return false
+  return n.replace(/[·•\-\s]/g, '').length >= 2
+}
+
 async function save() {
-  if (!form.displayName.trim()) {
+  const displayName = form.displayName.trim()
+  if (!displayName) {
     ElMessage.warning('请填写姓名')
+    return
+  }
+  if (displayName.length < 2) {
+    ElMessage.warning('姓名至少2个字')
+    return
+  }
+  if (!isValidPeopleName(displayName)) {
+    ElMessage.warning('姓名格式不正确')
     return
   }
   saving.value = true
@@ -107,7 +125,7 @@ async function save() {
       {
         method: 'PUT',
         body: JSON.stringify({
-          displayName: form.displayName.trim(),
+          displayName,
           mobile: form.mobile.trim() || null,
           mobileOwner: form.mobile.trim() ? form.mobileOwner : null,
           address: form.address.trim() || null,

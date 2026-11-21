@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api, getToken, setToken } from '../api/http'
-import { resolveTenantId } from '../shared/tenant'
+import { setCachedTenantId } from '../shared/tenant'
 import LegalConsent from '../shared/LegalConsent.vue'
 
 const router = useRouter()
@@ -40,6 +40,7 @@ onMounted(() => {
 interface TokenData {
   accessToken: string
   patientCardId?: string
+  tenantId?: string
 }
 
 interface MergeCandidate {
@@ -87,16 +88,23 @@ async function offerMergeSelfCard(cardId?: string) {
 }
 
 async function sendCode() {
+  if (!activationCode.value.trim()) {
+    showToast('请先填写激活码')
+    return
+  }
   if (!/^1\d{10}$/.test(mobile.value.trim())) {
     showToast('请输入 11 位手机号')
     return
   }
   sending.value = true
   try {
-    const tenantId = await resolveTenantId(api)
+    // 租户由激活码反查，不依赖本地缓存租户
     await api('/api/c/v1/auth/mobile-otp', {
       method: 'POST',
-      body: JSON.stringify({ tenantId, mobile: mobile.value.trim() }),
+      body: JSON.stringify({
+        activationCode: activationCode.value.trim(),
+        mobile: mobile.value.trim(),
+      }),
     })
     showToast('验证码已发送')
   } catch (e) {
@@ -107,6 +115,10 @@ async function sendCode() {
 }
 
 async function submit() {
+  if (!activationCode.value.trim()) {
+    showToast('请填写激活码')
+    return
+  }
   if (!displayName.value.trim() || !birthday.value) {
     showToast('请填写档案姓名和出生日期')
     return
@@ -125,10 +137,9 @@ async function submit() {
   }
   loading.value = true
   try {
-    const tenantId = await resolveTenantId(api)
+    // 方案 A：不传 tenantId，由后端按激活码定租户；已登录跨租户会切/建同手机号账号
     const body: Record<string, string | undefined> = {
-      tenantId,
-      activationCode: activationCode.value,
+      activationCode: activationCode.value.trim(),
       displayName: displayName.value.trim(),
       birthday: birthday.value,
     }
@@ -141,6 +152,7 @@ async function submit() {
       body: JSON.stringify(body),
     })
     setToken(res.data.accessToken)
+    if (res.data.tenantId) setCachedTenantId(res.data.tenantId)
     showToast('激活成功')
     await offerMergeSelfCard(res.data.patientCardId)
     await router.replace('/home')
@@ -156,7 +168,9 @@ async function submit() {
   <div class="auth">
     <van-nav-bar title="激活账号" left-arrow @click-left="router.back()" />
     <div class="card">
-      <p class="hint">健管师已为你建档时，用激活码开通，并绑定到同一份档案。</p>
+      <p class="hint">
+        健管师已为你建档时，用激活码开通并绑定到同一份档案。激活码会自动识别所属机构，即使当前登录的是其它机构也可绑定。
+      </p>
       <van-field v-model="activationCode" label="激活码" placeholder="如 A3K9-7X2M" />
       <van-field v-model="displayName" label="档案姓名" placeholder="与建档姓名一致" />
       <van-field
@@ -177,7 +191,7 @@ async function submit() {
         <LegalConsent v-model:terms="agreeTerms" v-model:sensitive="agreeSensitive" />
       </template>
       <van-button round block type="primary" :loading="loading" @click="submit">
-        {{ loggedIn ? '绑定到当前账号' : '激活并登录' }}
+        {{ loggedIn ? '激活并绑定' : '激活并登录' }}
       </van-button>
       <button v-if="!loggedIn" class="link" type="button" @click="router.push('/register')">
         没有激活码？先注册账号

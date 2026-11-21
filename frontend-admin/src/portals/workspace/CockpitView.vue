@@ -1944,12 +1944,10 @@ const briefingUiActions = computed(() => {
 const briefingCollapsed = ref(true)
 /** 服务进度条默认收成「当前环节」，展开才看全流程 */
 const serviceFlowExpanded = ref(false)
-/** 底部能力芯 / 右侧快捷办理：次要项折叠 */
-const quickRailExpanded = ref(false)
+/** 右侧快捷办理：次要项折叠 */
 const quickActionsExpanded = ref(false)
 /** 右栏指标详情（备注/链接）默认收起 */
 const focusMetricsExpanded = ref(false)
-const QUICK_RAIL_PREVIEW = 3
 const QUICK_ACTION_PREVIEW = 3
 /** 刷新简报请求中（防连点，并配合占位打字动画） */
 const briefingLoading = ref(false)
@@ -2080,7 +2078,6 @@ function continueHintPatient() {
 watch(input, () => debouncedComposerNameHint())
 watch(focusPeopleId, (id) => {
   if (id) composerNameHint.value = null
-  quickRailExpanded.value = false
   quickActionsExpanded.value = false
   focusMetricsExpanded.value = false
   serviceFlowExpanded.value = false
@@ -5007,13 +5004,14 @@ const orgCapabilityChips = computed((): QuickChip[] => {
   ]
 })
 
-/** 患者会话：建档 / 评估 / 方案 / 报告 / 单据 / 建议 / 待办 */
+/** 患者会话固定 SOP 顺序：建档→评估→方案→报告→单据→待办→建议 */
 const patientCapabilityChips = computed((): QuickChip[] => {
   const byCode = new Map(
     capabilities.value.filter((c) => c.code !== 'CHAT_EXTRACT').map((c) => [c.code, c]),
   )
   const labelOf = (code: string, fallback: string) => byCode.get(code)?.label || fallback
-  const chips: QuickChip[] = [
+  const todoCount = todoTasks.value.length
+  return [
     {
       code: 'CREATE_ARCHIVE',
       label: '建档',
@@ -5063,6 +5061,17 @@ const patientCapabilityChips = computed((): QuickChip[] => {
       enabled: true,
     },
     {
+      code: 'COMPLETE_TODOS',
+      label: todoCount > 0 ? `完成待办(${todoCount})` : '完成待办',
+      hint: needsPrimaryTeam.value
+        ? '请先完成左侧新手引导的第一步（创建健管组）'
+        : todoCount > 0
+          ? `请模型给出办理建议，并挂出 ${todoCount} 项办结入口`
+          : '当前患者暂无工作台待办',
+      needsPatient: true,
+      enabled: true,
+    },
+    {
       code: 'GENERAL_CHAT',
       label: '今日建议',
       hint: '根据当前患者档案与近期情况给出管理建议',
@@ -5070,19 +5079,6 @@ const patientCapabilityChips = computed((): QuickChip[] => {
       enabled: true,
     },
   ]
-  const todoCount = todoTasks.value.length
-  chips.push({
-    code: 'COMPLETE_TODOS',
-    label: todoCount > 0 ? `完成待办(${todoCount})` : '完成待办',
-    hint: needsPrimaryTeam.value
-      ? '请先完成左侧新手引导的第一步（创建健管组）'
-      : todoCount > 0
-        ? `请模型给出办理建议，并挂出 ${todoCount} 项办结入口`
-        : '当前患者暂无工作台待办',
-    needsPatient: true,
-    enabled: true,
-  })
-  return chips
 })
 
 /** 按会话上下文切换：机构态 / 患者态两套能力芯；无组或无患者时隐藏机构芯 */
@@ -5095,31 +5091,10 @@ const capabilityChips = computed((): QuickChip[] => {
   return orgCapabilityChips.value
 })
 
-/** 底部能力芯：当前环节优先，默认 3 个；锁定项先藏进「更多」 */
-const rankedCapabilityChips = computed(() => {
-  const score = (c: QuickChip) => {
-    if (isQuickChipLocked(c)) return 3
-    const tone = chipStageTone(c.code)
-    if (tone === 'now') return 0
-    if (tone === 'later') return 2
-    return 1
-  }
+/** 底部能力芯：固定顺序全部展示；当前环节只靠高亮，不挪位置 */
+const rankedCapabilityChips = computed(() =>
   // 问卷已在右栏打开时，不再挂「评估」抢焦点
-  const list = capabilityChips.value.filter(
-    (c) => !(intakeDocked.value && c.code === 'INTAKE_ASSESS'),
-  )
-  return [...list].sort((a, b) => score(a) - score(b))
-})
-const visibleCapabilityChips = computed(() => {
-  const all = rankedCapabilityChips.value
-  if (quickRailExpanded.value) return all
-  const unlocked = all.filter((c) => !isQuickChipLocked(c))
-  const pool = unlocked.length ? unlocked : all
-  if (pool.length <= QUICK_RAIL_PREVIEW) return pool
-  return pool.slice(0, QUICK_RAIL_PREVIEW)
-})
-const hiddenCapabilityChipCount = computed(() =>
-  Math.max(0, rankedCapabilityChips.value.length - visibleCapabilityChips.value.length),
+  capabilityChips.value.filter((c) => !(intakeDocked.value && c.code === 'INTAKE_ASSESS')),
 )
 
 /** 方案/点评多轮修订：无显式能力时沿用上一轮 */
@@ -9413,7 +9388,7 @@ onUnmounted(() => {
             :aria-label="currentPatient ? '患者快捷能力' : '机构快捷能力'"
           >
             <el-tooltip
-              v-for="(cap, ci) in visibleCapabilityChips"
+              v-for="(cap, ci) in rankedCapabilityChips"
               :key="cap.code"
               :disabled="!isQuickChipLocked(cap)"
               :content="quickChipLockHint(cap)"
@@ -9445,15 +9420,6 @@ onUnmounted(() => {
                 </button>
               </span>
             </el-tooltip>
-            <button
-              v-if="hiddenCapabilityChipCount > 0 || quickRailExpanded"
-              type="button"
-              class="quick-chip more"
-              :aria-expanded="quickRailExpanded"
-              @click="quickRailExpanded = !quickRailExpanded"
-            >
-              {{ quickRailExpanded ? '收起' : `更多 ${hiddenCapabilityChipCount}` }}
-            </button>
           </TransitionGroup>
           <div
             v-if="composerNameHint"
@@ -13043,12 +13009,6 @@ onUnmounted(() => {
 }
 .quick-chip-fade-move {
   transition: transform 0.22s ease;
-}
-
-.quick-chip.more {
-  border-style: dashed;
-  color: var(--ink-600);
-  background: transparent;
 }
 
 .quick-more {

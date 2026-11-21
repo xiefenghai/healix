@@ -68,6 +68,7 @@ import {
 import CarePlanPreviewDialog, { type CarePlanPreviewData } from '../../shared/CarePlanPreviewDialog.vue'
 import CarePlanPreviewContent, {
   type CarePlanPreviewPatch,
+  type CarePlanSampleMealSlot,
 } from '../../shared/CarePlanPreviewContent.vue'
 import CarePlanBriefingDrawer, {
   type CarePlanBriefingSubmitPayload,
@@ -3486,6 +3487,89 @@ const weekMealEdit = reactive({
   text: '',
 })
 
+/** 单餐弹窗：按主食/蛋白/蔬菜分类编辑（与 text 双向同步） */
+const weekMealEditFields = reactive({
+  staple: '',
+  protein: '',
+  veg: '',
+  soup: '',
+  other: '',
+  fruit: '',
+  nut: '',
+  dairy: '',
+  snack: '',
+  tip: '',
+})
+
+const WEEK_MEAL_EDIT_MAIN_ROWS: Array<{
+  key: 'staple' | 'protein' | 'veg' | 'soup'
+  label: string
+  placeholder: string
+  optional?: boolean
+}> = [
+  { key: 'staple', label: '主食', placeholder: '如：全麦馒头约70g（1个）' },
+  { key: 'protein', label: '蛋白', placeholder: '如：鸡胸肉约80g、豆腐炖白菜约150g' },
+  { key: 'veg', label: '蔬菜', placeholder: '如：清炒胡萝卜约100g' },
+  { key: 'soup', label: '汤', placeholder: '可选，如：紫菜蛋花汤', optional: true },
+]
+
+const WEEK_MEAL_EDIT_SNACK_ROWS: Array<{
+  key: 'fruit' | 'dairy' | 'nut' | 'snack' | 'staple' | 'protein'
+  label: string
+  placeholder: string
+  optional?: boolean
+}> = [
+  { key: 'fruit', label: '水果', placeholder: '如：苹果约150g（中等1个）' },
+  { key: 'dairy', label: '奶制品', placeholder: '如：无糖原味酸奶约150g' },
+  { key: 'nut', label: '坚果', placeholder: '如：原味坚果约10g', optional: true },
+  { key: 'protein', label: '蛋白', placeholder: '可选，如：水煮鸡蛋1个', optional: true },
+  { key: 'staple', label: '主食类', placeholder: '可选，如：全麦饼干约20g', optional: true },
+  { key: 'snack', label: '其他', placeholder: '其他加餐', optional: true },
+]
+
+const weekMealEditFieldRows = computed(() =>
+  weekMealEdit.slot === 'snacks' ? WEEK_MEAL_EDIT_SNACK_ROWS : WEEK_MEAL_EDIT_MAIN_ROWS,
+)
+
+function resetWeekMealEditFields() {
+  weekMealEditFields.staple = ''
+  weekMealEditFields.protein = ''
+  weekMealEditFields.veg = ''
+  weekMealEditFields.soup = ''
+  weekMealEditFields.other = ''
+  weekMealEditFields.fruit = ''
+  weekMealEditFields.nut = ''
+  weekMealEditFields.dairy = ''
+  weekMealEditFields.snack = ''
+  weekMealEditFields.tip = ''
+}
+
+function syncWeekMealEditFieldsFromText() {
+  resetWeekMealEditFields()
+  const struct = parseMealStructure(weekMealEdit.text, { slot: weekMealEdit.slot })
+  for (const part of struct.parts) {
+    const key = part.kind as keyof typeof weekMealEditFields
+    if (!(key in weekMealEditFields)) continue
+    const cur = weekMealEditFields[key]
+    weekMealEditFields[key] = cur ? `${cur}、${part.text}` : part.text
+  }
+}
+
+function syncWeekMealEditTextFromFields() {
+  const lines: string[] = []
+  for (const row of weekMealEditFieldRows.value) {
+    const t = String(weekMealEditFields[row.key] || '').trim()
+    if (t) lines.push(t)
+  }
+  if (weekMealEdit.slot !== 'snacks') {
+    const other = weekMealEditFields.other.trim()
+    if (other) lines.push(other)
+  }
+  const tip = weekMealEditFields.tip.trim()
+  if (tip) lines.push(tip)
+  weekMealEdit.text = formatMealTextLines(lines.join('\n'))
+}
+
 const SAMPLE_DAY_EDIT_KEY = '__SAMPLE__'
 
 const weekMealEditTitle = computed(() => {
@@ -3555,11 +3639,14 @@ function openWeekMealEdit(day: string, slot: (typeof SAMPLE_MEAL_SLOTS)[number][
   weekMealEdit.day = day
   weekMealEdit.slot = slot
   weekMealEdit.text = formatMealTextLines(sampleWeekMealText(day, slot))
+  syncWeekMealEditFieldsFromText()
   weekMealEditVisible.value = true
 }
 
 function applyWeekMealQuickPick(kind: 'staple' | 'protein' | 'veg', label: string) {
+  syncWeekMealEditTextFromFields()
   weekMealEdit.text = formatMealTextLines(appendMealKindLine(weekMealEdit.text, kind, label))
+  syncWeekMealEditFieldsFromText()
 }
 
 const mealRandomPool = computed(() => {
@@ -3600,6 +3687,7 @@ const mealRandomPool = computed(() => {
 
 /** 只补缺失结构，不整段盲盒重写 */
 function aiFillWeekMealGaps() {
+  syncWeekMealEditTextFromFields()
   let text = weekMealEdit.text
   const avoid = mealEditAvoidKeywords.value
   const before = text
@@ -3641,6 +3729,7 @@ function aiFillWeekMealGaps() {
     return
   }
   weekMealEdit.text = text
+  syncWeekMealEditFieldsFromText()
   const left = assessMainMealGaps(text).missing
   ElMessage.success(left.length ? `已补齐部分结构，仍缺：${left.map((k) => ({ staple: '主食', protein: '蛋白', veg: '蔬菜' })[k]).join('、')}` : '已补齐缺失的主食/蛋白/蔬菜')
 }
@@ -3650,10 +3739,12 @@ function openSampleDayMealEdit(slot: (typeof SAMPLE_MEAL_CARD_SLOTS)[number]['ke
   weekMealEdit.day = SAMPLE_DAY_EDIT_KEY
   weekMealEdit.slot = slot
   weekMealEdit.text = formatMealTextLines(editForm.sampleDay[slot].text || '')
+  syncWeekMealEditFieldsFromText()
   weekMealEditVisible.value = true
 }
 
 function confirmWeekMealEdit() {
+  syncWeekMealEditTextFromFields()
   const formatted = formatMealTextLines(weekMealEdit.text)
   if (weekMealEdit.slot !== 'snacks') {
     const gaps = assessMainMealGaps(formatted)
@@ -5286,6 +5377,11 @@ function toggleComposeFineTune() {
   }
 }
 
+function onComposeEditSampleMeal(payload: { day: string; slot: CarePlanSampleMealSlot }) {
+  if (!composeCanFineTune.value) return
+  openWeekMealEdit(payload.day, payload.slot)
+}
+
 function onComposePreviewPatch(payload: CarePlanPreviewPatch) {
   switch (payload.field) {
     case 'title':
@@ -6516,6 +6612,7 @@ watch(
           :reset-key="bundle?.draft?.id || 'compose-draft-preview'"
           :ai-highlight-sections="reviseAiHighlightSections"
           @patch="onComposePreviewPatch"
+          @edit-sample-meal="onComposeEditSampleMeal"
         />
       </div>
 
@@ -8305,7 +8402,7 @@ watch(
       append-to-body
     >
       <p class="week-meal-edit-hint">
-        建议按行填写：主食 / 蛋白质 / 蔬菜 / 汤（可选）。主食尽量写克数，如「杂粮饭约150g（熟重）」
+        已按主食 / 蛋白 / 蔬菜分类展示；主食尽量写克数。也可点下方标签快速补齐。
       </p>
       <el-alert
         v-if="weekMealEdit.slot !== 'snacks' && weekMealEditGaps.missing.length"
@@ -8323,13 +8420,40 @@ watch(
             : '')
         "
       />
-      <el-input
-        v-model="weekMealEdit.text"
-        type="textarea"
-        :autosize="carePlanTextareaAutosizeLg"
-        placeholder="杂粮饭约150g（熟重）&#10;清蒸鸡腿约80g（去皮）&#10;蒜蓉空心菜约150g"
-        class="week-meal-edit-input"
-      />
+      <div class="week-meal-edit-fields">
+        <div
+          v-for="row in weekMealEditFieldRows"
+          :key="row.key"
+          class="week-meal-edit-field"
+          :data-kind="row.key"
+          :class="{ optional: row.optional && !weekMealEditFields[row.key] }"
+        >
+          <span class="week-meal-edit-field-lab">{{ row.label }}</span>
+          <el-input
+            v-model="weekMealEditFields[row.key]"
+            :placeholder="row.placeholder"
+            clearable
+            class="week-meal-edit-field-input"
+            @change="syncWeekMealEditTextFromFields"
+            @blur="syncWeekMealEditTextFromFields"
+          />
+        </div>
+        <div
+          v-if="weekMealEdit.slot !== 'snacks' && weekMealEditFields.other"
+          class="week-meal-edit-field"
+          data-kind="other"
+        >
+          <span class="week-meal-edit-field-lab">其他</span>
+          <el-input
+            v-model="weekMealEditFields.other"
+            placeholder="未归类内容"
+            clearable
+            class="week-meal-edit-field-input"
+            @change="syncWeekMealEditTextFromFields"
+            @blur="syncWeekMealEditTextFromFields"
+          />
+        </div>
+      </div>
       <div class="week-meal-edit-actions">
         <el-button type="primary" plain @click="aiFillWeekMealGaps"> AI 帮我补齐</el-button>
       </div>
@@ -13304,10 +13428,80 @@ watch(
   color: var(--ink-500);
 }
 
-.week-meal-edit-input :deep(.el-textarea__inner) {
-  font-size: 14px;
-  line-height: 1.65;
-  white-space: pre-wrap;
+.week-meal-edit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.week-meal-edit-field {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.week-meal-edit-field.optional {
+  opacity: 0.72;
+}
+
+.week-meal-edit-field-lab {
+  margin-top: 7px;
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.week-meal-edit-field[data-kind='staple'] .week-meal-edit-field-lab {
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.week-meal-edit-field[data-kind='protein'] .week-meal-edit-field-lab {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.week-meal-edit-field[data-kind='veg'] .week-meal-edit-field-lab {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.week-meal-edit-field[data-kind='soup'] .week-meal-edit-field-lab {
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.week-meal-edit-field[data-kind='fruit'] .week-meal-edit-field-lab {
+  color: #9d174d;
+  background: #fce7f3;
+}
+
+.week-meal-edit-field[data-kind='dairy'] .week-meal-edit-field-lab {
+  color: #c026d3;
+  background: #fae8ff;
+}
+
+.week-meal-edit-field[data-kind='nut'] .week-meal-edit-field-lab {
+  color: #7c3aed;
+  background: #f3e8ff;
+}
+
+.week-meal-edit-field[data-kind='snack'] .week-meal-edit-field-lab,
+.week-meal-edit-field[data-kind='other'] .week-meal-edit-field-lab {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.week-meal-edit-field-input :deep(.el-input__wrapper) {
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .week-meal-gap-alert {

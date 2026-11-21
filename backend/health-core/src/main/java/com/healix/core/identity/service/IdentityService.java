@@ -140,6 +140,19 @@ public class IdentityService {
         return account;
     }
 
+    /** 目标租户下按手机号取账号；没有则静默注册（激活码跨租户切号用）。 */
+    @Transactional
+    public PeopleAccount findOrRegisterByMobile(String tenantId, String mobile) {
+        PeopleAccount existing = peopleAccountMapper.findByTenantAndUsername(tenantId, mobile);
+        if (existing != null) {
+            if (!EnableStatusEnum.ACTIVE.matches(existing.getStatus())) {
+                throw new BusinessException(401, "账号不可用");
+            }
+            return existing;
+        }
+        return registerByMobile(tenantId, mobile);
+    }
+
     public PeopleAccount requirePeopleAccountById(String accountId) {
         PeopleAccount account = peopleAccountMapper.findById(accountId);
         if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {

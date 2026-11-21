@@ -108,6 +108,9 @@ public class PatientActivationService {
 
     /**
      * 激活：冷启动可建账号；热启动仅加卡片。返回 account + card。
+     *
+     * <p>租户以激活码为准（方案 A）：请求里的 tenantId 仅作提示，不一致时按码所属租户执行；
+     * 已登录账号若属其它租户，则用同手机号在目标租户查找或创建账号并换会话。
      */
     @Transactional
     public ActivateResult activate(
@@ -120,9 +123,8 @@ public class PatientActivationService {
             String relation,
             String existingAccountId) {
         PeopleActivationInvite invite = requireUsableInvite(activationCode);
-        if (StringUtils.hasText(tenantId) && !tenantId.equals(invite.getTenantId())) {
-            throw new BusinessException(403, "租户不匹配");
-        }
+        // 激活码定租户；请求 tenantId 可忽略（C 端缓存/bootstrap 常不准）
+        String inviteTenantId = invite.getTenantId();
         PeopleProfile people = peopleProfileMapper.findById(invite.getPeopleId());
         if (people == null) {
             throw new BusinessException(404, "患者不存在");
@@ -140,24 +142,18 @@ public class PatientActivationService {
 
         PeopleAccount account;
         if (StringUtils.hasText(existingAccountId)) {
-            account = peopleAccountMapper.findById(existingAccountId);
-            if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
-                throw new BusinessException(401, "未登录或账号无效");
-            }
-            if (!invite.getTenantId().equals(account.getTenantId())) {
-                throw new BusinessException(403, "租户不匹配");
-            }
+            account = resolveAccountForInviteTenant(existingAccountId, inviteTenantId);
         } else {
             if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {
                 throw new BusinessException(400, "请设置用户名和密码");
             }
-            account = identityService.registerAccount(invite.getTenantId(), username, password);
+            account = identityService.registerAccount(inviteTenantId, username, password);
         }
 
         AccountPatient card = patientCardService.linkExistingPeople(
-                invite.getTenantId(), account.getId(), people, relation, people.getDisplayName());
+                inviteTenantId, account.getId(), people, relation, people.getDisplayName());
 
-        ensureMembership(invite.getOrgId(), invite.getTenantId(), people.getId(), invite.getCreatedByStaffId());
+        ensureMembership(invite.getOrgId(), inviteTenantId, people.getId(), invite.getCreatedByStaffId());
 
         LocalDateTime now = LocalDateTime.now();
         invite.setUsedAt(now);
@@ -169,7 +165,7 @@ public class PatientActivationService {
                 PortalEnum.C.code(),
                 account.getId(),
                 "PEOPLE",
-                invite.getTenantId(),
+                inviteTenantId,
                 AuditActionEnum.PATIENT_CARD_ACTIVATE.name(),
                 "account_patient",
                 card.getId(),
@@ -179,7 +175,28 @@ public class PatientActivationService {
         return new ActivateResult(account, card, people);
     }
 
-    private PeopleActivationInvite requireUsableInvite(String activationCode) {
+    /**
+     * 已登录账号对齐到激活码租户：同租户直接用；跨租户则用同手机号在目标租户找/建账号。
+     */
+    private PeopleAccount resolveAccountForInviteTenant(String existingAccountId, String inviteTenantId) {
+        PeopleAccount account = peopleAccountMapper.findById(existingAccountId);
+        if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
+            throw new BusinessException(401, "未登录或账号无效");
+        }
+        if (inviteTenantId.equals(account.getTenantId())) {
+            return account;
+        }
+        String mobile = com.healix.core.people.support.MobileNumbers.trySelf(account.getUsername());
+        if (mobile == null) {
+            throw new BusinessException(
+                    403,
+                    "激活码属于另一家机构体系，当前登录不是手机号账号，请退出后用手机号验证再激活");
+        }
+        return identityService.findOrRegisterByMobile(inviteTenantId, mobile);
+    }
+
+    /** 供 Controller：先反查可用激活码以确定租户（发 OTP / 激活共用）。 */
+    public PeopleActivationInvite requireUsableInvite(String activationCode) {
         if (!StringUtils.hasText(activationCode)) {
             throw new BusinessException(400, "请输入激活码");
         }

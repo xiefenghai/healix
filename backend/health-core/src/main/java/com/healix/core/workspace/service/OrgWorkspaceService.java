@@ -46,6 +46,7 @@ import com.healix.core.people.enums.EducationLevelEnum;
 import com.healix.core.people.enums.MaritalStatusEnum;
 import com.healix.core.people.enums.MobileOwnerEnum;
 import com.healix.core.people.support.MobileNumbers;
+import com.healix.core.people.support.PeopleNames;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
@@ -1068,9 +1069,7 @@ public class OrgWorkspaceService {
         requireOrgWorkspaceAccess(orgId);
         String tenantId = requireTenantId();
         String staffId = requireStaffId();
-        if (!StringUtils.hasText(name)) {
-            throw new BusinessException(400, "请填写姓名");
-        }
+        name = PeopleNames.requireDisplayName(name);
         boolean noSelf = noMobile;
         String mobileNorm;
         String ownerNorm;
@@ -1429,13 +1428,7 @@ public class OrgWorkspaceService {
         if (membership == null || !MembershipStatusEnum.ACTIVE.matches(membership.getStatus())) {
             throw new BusinessException(403, "患者未在本机构有效入组");
         }
-        if (!StringUtils.hasText(displayName)) {
-            throw new BusinessException(400, "请填写姓名");
-        }
-        String name = displayName.trim();
-        if (name.length() > 64) {
-            throw new BusinessException(400, "姓名过长");
-        }
+        String name = PeopleNames.requireDisplayName(displayName);
         String mobileNorm = normalizeBlank(mobile);
         if (mobileNorm != null) {
             if (mobileNorm.length() > 32) {

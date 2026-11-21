@@ -16,6 +16,7 @@ import com.healix.core.ops.dto.TenantListItem;
 import com.healix.core.patient.domain.PatientOrgMembership;
 import com.healix.core.patient.service.MembershipService;
 import com.healix.core.patientcard.domain.AccountPatient;
+import com.healix.core.patientcard.domain.PeopleActivationInvite;
 import com.healix.core.patientcard.service.MobileOtpService;
 import com.healix.core.patientcard.service.PatientActivationService;
 import com.healix.core.patientcard.service.PatientCardMergeService;
@@ -89,7 +90,13 @@ public class CPortalController {
     /** 发送登录或添加就诊人验证码。开发环境验证码固定为 123456。 */
     @PostMapping("/auth/mobile-otp")
     public ApiResult<Void> sendLoginOtp(@RequestBody @Validated MobileOtpRequest request) {
-        String tenantId = resolveTenantId(request.tenantId());
+        // 激活页可带 activationCode：以码所属租户发 OTP，避免缓存租户发错号
+        String tenantId;
+        if (StringUtils.hasText(request.activationCode())) {
+            tenantId = patientActivationService.requireUsableInvite(request.activationCode()).getTenantId();
+        } else {
+            tenantId = resolveTenantId(request.tenantId());
+        }
         mobileOtpService.send(tenantId, "login", request.mobile());
         return ApiResult.ok(null);
     }
@@ -124,7 +131,7 @@ public class CPortalController {
         return ApiResult.ok(java.util.Map.of("mobile", account.getUsername()));
     }
 
-    /** 激活码绑定就诊人（冷启动可同时建账号）。 */
+    /** 激活码绑定就诊人（冷启动可同时建账号）。租户以激活码为准。 */
     @PostMapping("/auth/activate")
     public ApiResult<TokenResponse> activate(@RequestBody @Validated ActivateRequest request) {
         String existingAccountId = null;
@@ -132,7 +139,9 @@ public class CPortalController {
         if (ctx != null && ctx.getAccountId() != null) {
             existingAccountId = ctx.getAccountId();
         }
-        String tenantId = resolveTenantId(request.tenantId());
+        // 方案 A：激活码反查租户，不依赖 C 端缓存 / bootstrap
+        PeopleActivationInvite invite = patientActivationService.requireUsableInvite(request.activationCode());
+        String tenantId = invite.getTenantId();
         if (existingAccountId == null) {
             String mobile = mobileOtpService.verify(tenantId, "login", request.mobile(), request.otpCode());
             PeopleAccount account;
@@ -366,7 +375,8 @@ public class CPortalController {
      */
     public record BootstrapResponse(String tenantId, BrandingView branding, List<FlagView> flags) {}
 
-    public record MobileOtpRequest(String tenantId, @NotBlank String mobile) {}
+    /** activationCode 可选：激活页带码时按码所属租户发验证码。 */
+    public record MobileOtpRequest(String tenantId, String activationCode, @NotBlank String mobile) {}
 
     public record MobileAuthRequest(String tenantId, @NotBlank String mobile, @NotBlank String otpCode) {}
 

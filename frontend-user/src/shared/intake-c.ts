@@ -132,6 +132,7 @@ export const C_LABEL_OVERRIDES: Record<string, string> = {
   'goal.mode': '这次你最看重哪一类目标？',
   'goal.doctorAdvised': '是医生建议你来做这次管理的吗？',
   'goal.constraints': '执行健康计划时，最大的阻力是什么？（可多选）',
+  'basic.diet.cook': '平时主要谁做饭？',
   'basic.exercise.availableSlots': '一般什么时候方便运动？（可多选）',
   'allergy.foodTags': '对哪些食物过敏或不耐受？（可多选）',
   'allergy.drugTags': '对哪些药物过敏？（可多选）',
@@ -252,6 +253,7 @@ export function cOptionLabel(
 /**
  * C 端「极简 / C_FAST」白名单（与后端 PatientCFastFields 对齐）。
  * Magic Link 默认只渲染这些题。
+ * v4：外卖频次并入「谁做饭 / 执行阻力」，不再单独问 takeoutFrequency。
  */
 export const C_FAST_FIELDS = new Set<string>([
   'profile.displayName',
@@ -260,8 +262,8 @@ export const C_FAST_FIELDS = new Set<string>([
   'profile.mobile',
   'metric.HEIGHT',
   'metric.WEIGHT',
-  'measure.method',
   'goal.primaryAppeal',
+  'goal.constraints',
   'basic.presentIllness',
   'basic.medical.exerciseRestriction',
   'allergy.status',
@@ -271,7 +273,7 @@ export const C_FAST_FIELDS = new Set<string>([
   'profile.workSchedule',
   'basic.lifestyle.activityLevel',
   'basic.diet.mealRegularity',
-  'basic.diet.takeoutFrequency',
+  'basic.diet.cook',
 ])
 
 /**
@@ -284,23 +286,17 @@ export const C_QUICK_FIELDS = new Set<string>([
   'goal.mode',
   'goal.targetWeightKg',
   'goal.targetDate',
-  'goal.exerciseMinutesPerDay',
-  'goal.dietEffort',
-  'goal.followupChannel',
-  'goal.followupFrequency',
   'goal.constraints',
   'profile.displayName',
   'profile.gender',
   'profile.birthday',
   'profile.mobile',
-  'profile.occupation',
   'profile.workSchedule',
   'metric.HEIGHT',
   'metric.WEIGHT',
   'metric.WAIST',
   'metric.BLOOD_PRESSURE_SYS',
   'metric.BLOOD_PRESSURE_DIA',
-  'measure.method',
   'basic.presentIllness',
   'basic.medicationFlags',
   'medication.mealRelation',
@@ -327,7 +323,6 @@ export const C_QUICK_FIELDS = new Set<string>([
   'basic.weightHistory.expectedPace',
   'basic.psych.eatingDisorderHistory',
   'basic.diet.mealRegularity',
-  'basic.diet.takeoutFrequency',
   'basic.diet.snackNight',
   'basic.diet.sugaryDrinks',
   'basic.diet.taste',
@@ -341,11 +336,17 @@ export const C_QUICK_FIELDS = new Set<string>([
   'basic.lifestyle.activityLevel',
   'basic.sleep.hours',
   'basic.sleep.refreshed',
-  'basic.sleep.quality',
+  'basic.sleep.disorder',
   'basic.psych.stressLevel',
-  'basic.psych.stressEating',
+  'basic.psych.emotionalEating',
   'basic.psych.readiness',
+  'basic.psych.willingToRecord',
 ])
+
+/** 与后端 isOptionalFreeTextField 对齐：非 REQUIRED 的 TEXT 可跳过，不挡提交 */
+export function isCOptionalFreeText(item: IntakeItem): boolean {
+  return item.level !== 'REQUIRED' && item.type === 'TEXT'
+}
 
 export function cLabel(item: IntakeItem): string {
   return C_LABEL_OVERRIDES[item.field] || item.label

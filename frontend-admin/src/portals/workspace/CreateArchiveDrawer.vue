@@ -472,8 +472,38 @@ function onBirthdayBlur() {
   void formRef.value?.clearValidate('birthday')
 }
 
+/** 与后端 PeopleNames 一致：中文/英文人名，拒绝纯数字等脏输入 */
+function isValidPeopleName(raw: string): boolean {
+  const name = String(raw || '').trim()
+  if (name.length < 2 || name.length > 64) return false
+  if (!/^[\u4e00-\u9fffA-Za-z·•\-\s]+$/.test(name)) return false
+  if (!/[\u4e00-\u9fffA-Za-z]/.test(name)) return false
+  return name.replace(/[·•\-\s]/g, '').length >= 2
+}
+
 const rules: FormRules = {
-  name: [{ required: true, whitespace: true, message: '请输入姓名', trigger: 'blur' }],
+  name: [
+    { required: true, whitespace: true, message: '请输入姓名', trigger: 'blur' },
+    {
+      validator: (_rule, value, callback) => {
+        const v = String(value || '').trim()
+        if (!v) {
+          callback()
+          return
+        }
+        if (v.length < 2) {
+          callback(new Error('姓名至少2个字'))
+          return
+        }
+        if (!isValidPeopleName(v)) {
+          callback(new Error('姓名格式不正确'))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur',
+    },
+  ],
   gender: [{ required: true, message: '请选择性别', trigger: 'change' }],
   birthday: [
     {
