@@ -142,6 +142,7 @@ export type CarePlanPreviewPatch =
       value: string
     }
   | { field: 'taskTitle' | 'taskRationale'; index: number; value: string }
+  | { field: 'taskRemove'; index: number }
   | { field: 'weekItemNote'; day: string; index: number; value: string }
 
 export type CarePlanSampleMealSlot = 'breakfast' | 'lunch' | 'dinner' | 'snacks'
@@ -1117,36 +1118,40 @@ defineExpose({
               stripe
               class="task-table"
             >
-              <el-table-column label="任务" min-width="180">
+              <el-table-column label="任务" min-width="260">
                 <template #default="{ row, $index }">
-                  <span v-if="!editable">{{ row.title }}</span>
-                  <AutosizeTextarea
-                    v-else
-                    class="table-cell-edit"
-                    :model-value="row.title || ''"
-                    :min-height="36"
-                    :rows="1"
-                    placeholder="任务标题"
-                    @update:model-value="
-                      emit('patch', { field: 'taskTitle', index: $index, value: $event })
-                    "
-                  />
-                </template>
-              </el-table-column>
-              <el-table-column label="依据" min-width="160">
-                <template #default="{ row, $index }">
-                  <span v-if="!editable">{{ row.rationale || '—' }}</span>
-                  <AutosizeTextarea
-                    v-else
-                    class="table-cell-edit"
-                    :model-value="row.rationale || ''"
-                    :min-height="36"
-                    :rows="1"
-                    placeholder="任务依据"
-                    @update:model-value="
-                      emit('patch', { field: 'taskRationale', index: $index, value: $event })
-                    "
-                  />
+                  <div class="task-cell">
+                    <span v-if="!editable" class="task-cell-title">{{ row.title }}</span>
+                    <AutosizeTextarea
+                      v-else
+                      class="table-cell-edit"
+                      :model-value="row.title || ''"
+                      :min-height="36"
+                      :rows="1"
+                      placeholder="任务标题"
+                      @update:model-value="
+                        emit('patch', { field: 'taskTitle', index: $index, value: $event })
+                      "
+                    />
+                    <p
+                      v-if="!editable && row.rationale"
+                      class="task-cell-rationale"
+                      :title="row.rationale"
+                    >
+                      {{ row.rationale }}
+                    </p>
+                    <AutosizeTextarea
+                      v-else-if="editable"
+                      class="table-cell-edit table-cell-edit--rationale"
+                      :model-value="row.rationale || ''"
+                      :min-height="44"
+                      :rows="2"
+                      placeholder="填写任务依据（仅健管师可见）"
+                      @update:model-value="
+                        emit('patch', { field: 'taskRationale', index: $index, value: $event })
+                      "
+                    />
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column label="类别" width="96">
@@ -1162,6 +1167,24 @@ defineExpose({
               </el-table-column>
               <el-table-column label="时段" width="100">
                 <template #default="{ row }">{{ formatCarePlanTimeSlot(row.timeSlot) }}</template>
+              </el-table-column>
+              <el-table-column v-if="editable" label="" width="52" align="center" fixed="right">
+                <template #default="{ $index }">
+                  <button
+                    type="button"
+                    class="task-row-del"
+                    title="删除任务"
+                    aria-label="删除任务"
+                    @click="emit('patch', { field: 'taskRemove', index: $index })"
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9zm-1 12h12a1 1 0 0 0 1-1V7H5v13a1 1 0 0 0 1 1z"
+                      />
+                    </svg>
+                  </button>
+                </template>
               </el-table-column>
             </el-table>
             <p v-else class="section-lead muted">（暂无任务）</p>
@@ -1568,6 +1591,68 @@ defineExpose({
   font-size: 13px;
   line-height: 1.45;
   min-height: 36px;
+}
+:deep(.hx-autosize-textarea.table-cell-edit--rationale) {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-color: transparent;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+:deep(.hx-autosize-textarea.table-cell-edit--rationale:hover) {
+  border-color: #e2e8f0;
+}
+:deep(.hx-autosize-textarea.table-cell-edit--rationale:focus) {
+  border-color: #93c5fd;
+  background: #fff;
+  color: #334155;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+.task-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+  min-width: 0;
+}
+.task-cell-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--admin-text, #111827);
+}
+.task-cell-rationale {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #64748b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.task-row-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.task-row-del:hover,
+.task-row-del:focus-visible {
+  color: #be123c;
+  background: #ffe4e6;
+  outline: none;
 }
 .rationale-label {
   display: inline-flex;

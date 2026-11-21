@@ -5182,6 +5182,7 @@ function addTask() {
   editForm.tasks.push({
     code: `TASK_${editForm.tasks.length + 1}`,
     title: '',
+    rationale: '',
     category: 'OTHER',
     frequency: 'QD',
     timeSlot: 'EVENING',
@@ -5436,6 +5437,9 @@ function onComposePreviewPatch(payload: CarePlanPreviewPatch) {
       if (row) row.rationale = payload.value
       break
     }
+    case 'taskRemove':
+      removeTask(payload.index)
+      break
     case 'weekItemNote': {
       const day = editForm.weeklyPlan.find(
         (d) => String(d.day || '').toUpperCase() === String(payload.day || '').toUpperCase(),
@@ -7882,7 +7886,15 @@ watch(
                       </svg>
                     </button>
                   </div>
-                  <p v-if="row.rationale" class="task-rationale" :title="row.rationale">
+                  <el-input
+                    v-if="composeCanFineTune"
+                    v-model="row.rationale"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 6 }"
+                    placeholder="填写任务依据（仅健管师可见）"
+                    class="task-rationale-input"
+                  />
+                  <p v-else-if="row.rationale" class="task-rationale" :title="row.rationale">
                     {{ row.rationale }}
                   </p>
                   <div class="exec-task-card-meta">
@@ -10735,13 +10747,35 @@ watch(
 .task-rationale {
   margin: 0;
   padding: 0 2px;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--ink-400);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-500, #64748b);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.task-rationale-input {
+  margin-top: 2px;
+}
+
+.task-rationale-input :deep(.el-textarea__inner) {
+  padding: 8px 10px;
+  border-color: transparent;
+  background: var(--slate-50, #f8fafc);
+  color: var(--ink-600, #475569);
+  font-size: 12px;
+  line-height: 1.55;
+  box-shadow: none;
+}
+
+.task-rationale-input :deep(.el-textarea__inner:hover) {
+  border-color: var(--slate-200, #e2e8f0);
+}
+
+.task-rationale-input :deep(.el-textarea__inner:focus) {
+  border-color: var(--blue-300, #93c5fd);
+  background: var(--white, #fff);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
 .page-empty {
@@ -12201,7 +12235,8 @@ watch(
   background: var(--rose-100);
 }
 
-.exec-task-card .task-rationale {
+.exec-task-card .task-rationale,
+.exec-task-card .task-rationale-input {
   margin-top: 6px;
   padding-left: 56px;
 }
