@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
+import { api, getCurrentOrgId } from '../../shared/http'
 import { formatGender } from '../../shared/enums'
 import { checkinStatus } from '../../shared/rewards'
 import { avatarGradients } from '../../shared/palette'
@@ -120,7 +120,6 @@ const showPrimaryManagerColumn = computed(() => {
 
 
 const totalCount = computed(() => stats.value.total)
-const unassignedCount = computed(() => stats.value.unassigned)
 const monthNewCount = computed(() => stats.value.monthNew)
 const todayNewCount = computed(() => stats.value.todayNew)
 const clientLinkedCount = computed(() => stats.value.clientLinked)
