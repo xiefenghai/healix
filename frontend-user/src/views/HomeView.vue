@@ -7,15 +7,12 @@ import {
   CARE_PLAN_TIME_SLOT_LABELS,
   carePlanCategoryTone,
   carePlanTaskCategoryLabel,
-  carePlanTaskRecordLabel,
   carePlanTaskRecordPath,
   formatCarePlanLabel,
 } from '../shared/care-plan-labels'
-import { exerciseHowTo } from '../shared/exercise'
 import {
   MED_SLOT_TITLES,
   type MedicationSchedule,
-  type ScheduleSlot,
 } from '../shared/medication-labels'
 import ScienceSheet from '../shared/ScienceSheet.vue'
 import { claimScienceOffer, type ScienceToday } from '../shared/science'
@@ -38,10 +35,6 @@ import {
   type AbnormalFlag,
 } from '../shared/metric-ranges'
 import { loadRewardSummary, type RewardBadge, type RewardSummary } from '../shared/rewards'
-import {
-  formatHealthReportPeriodType,
-  formatReportDate,
-} from '../shared/management-report-labels'
 import { ymd } from '../shared/diet'
 
 interface TodayTask {
@@ -90,15 +83,6 @@ const medSchedule = ref<MedicationSchedule | null>(null)
 const latestMetrics = ref<MetricLatest[]>([])
 const reward = ref<RewardSummary | null>(null)
 const badges = ref<RewardBadge[]>([])
-const earnedBadgeCount = computed(() => badges.value.filter((b) => b.earned).length)
-/** 首页一排：已点亮在前，未点亮在后 */
-const homeBadges = computed(() =>
-  badges.value
-    .map((b, i) => ({ b, i }))
-    .sort((a, c) => Number(c.b.earned) - Number(a.b.earned) || a.i - c.i)
-    .map(({ b }) => b),
-)
-
 interface LatestReport {
   id: string
   title?: string
@@ -278,25 +262,6 @@ function onQuickTap(key: string) {
   }
 }
 
-/** 首页周报复盘条：优先最近周报，否则取最近一份已发布报告 */
-const reportReview = computed(() => {
-  const row = latestReport.value
-  if (!row) return null
-  const kind = formatHealthReportPeriodType(row.periodType)
-  const range =
-    row.periodStart && row.periodEnd
-      ? `${formatReportDate(row.periodStart)} ~ ${formatReportDate(row.periodEnd)}`
-      : ''
-  const spanHint =
-    kind === '周报' ? '看看这一周的变化与建议' : kind === '月报' ? '看看这个月的变化与建议' : '看看这一阶段的变化与建议'
-  return {
-    id: row.id,
-    eye: kind === '周报' ? '本周复盘' : `${kind}复盘`,
-    title: row.title?.trim() || `${kind}已更新`,
-    hint: range ? `${range} · ${spanHint}` : spanHint,
-  }
-})
-
 async function loadReward() {
   reward.value = await loadRewardSummary()
   if (!reward.value) {
@@ -323,28 +288,12 @@ async function loadLatestReport() {
   }
 }
 
-function openLatestReport() {
-  if (latestReport.value?.id) {
-    void router.push(`/management-reports/${latestReport.value.id}`)
-    return
-  }
-  void router.push('/management-reports')
-}
-
 /** 首页只展示各时段完成情况，具体服药在用药管理页操作。 */
 const medSlots = computed(() => medSchedule.value?.slots || [])
 const medAllDone = computed(() => {
   const s = medSchedule.value?.summary
   return !!s && s.due > 0 && s.taken === s.due
 })
-
-function medSlotTone(slot: ScheduleSlot) {
-  if (!slot.items.length) return 'todo'
-  if (slot.items.every((it) => it.status === 'TAKEN')) return 'done'
-  if (slot.items.some((it) => it.status === 'MISSED') || (slot.past && slot.pendingCount)) return 'late'
-  if (slot.items.every((it) => it.status)) return 'done'
-  return 'todo'
-}
 
 const medNextLine = computed(() => {
   const schedule = medSchedule.value
@@ -403,21 +352,6 @@ const greetingTail = computed(() => {
   if (h < 18) return '下午好呀'
   return isWeekend(now) ? '晚上好呀' : '辛苦啦'
 })
-const greetingSub = computed(() => {
-  const now = new Date()
-  const h = now.getHours()
-  const weekend = isWeekend(now)
-  if (h < 11) {
-    return weekend ? '周末早晨，早饭吃饱，元气满满' : '早饭吃饱呀，今天元气满满'
-  }
-  if (h < 14) {
-    return weekend ? '周末中午啦，先歇歇，午餐吃饱' : '忙了一上午，歇口气，午餐吃饱'
-  }
-  if (h < 18) {
-    return weekend ? '下午也喝点水，眼睛累了看看远处' : '喝口水吧，眼睛累了就歇一歇'
-  }
-  return weekend ? '周末晚上了，晚饭吃饱，睡个好觉' : '忙完这一天，晚饭吃好，早点歇'
-})
 
 const planProgressPct = computed(() => {
   const t = todayPlan.value
@@ -425,30 +359,8 @@ const planProgressPct = computed(() => {
   return Math.min(100, Math.round((t.doneTasks / t.totalTasks) * 100))
 })
 
-/** 今日方案环（薄荷式进度主视觉） */
-const RING_R = 40
-const RING_C = 2 * Math.PI * RING_R
-const ringDashOffset = computed(() => RING_C * (1 - planProgressPct.value / 100))
-
 const dietToday = ref<{ intake: number; goal: number | null }>({ intake: 0, goal: null })
 const exerciseTodayKcal = ref(0)
-
-const dietBarPct = computed(() => {
-  const g = dietToday.value.goal
-  if (!g || g <= 0) return dietToday.value.intake > 0 ? 40 : 0
-  return Math.min(100, Math.round((dietToday.value.intake / g) * 100))
-})
-
-/** 左侧火苗副文：不重复右侧「健康豆」数字 */
-const rewardHeroCap = computed(() => {
-  const r = reward.value
-  if (!r) return '完成 1 项即可点亮'
-  if (r.streak > 0 && r.todayActive) return r.level?.title || '今天已打卡'
-  if (r.streak > 0 && r.freezeCards > 0) return `保护卡 ${r.freezeCards} 张备用`
-  if (r.streak > 0) return '完成 1 项即可续火苗'
-  if (r.bestStreak > 0) return '断了也没关系，重新开始'
-  return '完成 1 项即可点亮'
-})
 
 function taskPending(task: TodayTask) {
   return task.checkinStatus !== 'DONE' && task.checkinStatus !== 'SKIPPED'
@@ -611,8 +523,6 @@ const metricTiles = computed(() => {
     },
   ]
 })
-
-const bpTile = computed(() => metricTiles.value.find((m) => m.key === 'bp') || null)
 
 const recordOpen = ref(false)
 const recordKey = ref<'bmi' | 'bp' | 'glucose' | 'heart' | null>(null)
@@ -843,13 +753,6 @@ async function submitRecord() {
     recordSaving.value = false
   }
 }
-
-/** 首页条带：优先首诊核心诉求，无则回落方案 goalSummary */
-const cycleGoal = computed(() => {
-  const appeal = todayPlan.value?.primaryAppealText?.trim()
-  if (appeal) return appeal
-  return todayPlan.value?.goalSummary?.trim() || ''
-})
 
 function consumeRecordQuery() {
   const raw = String(route.query.record || '')
