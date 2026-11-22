@@ -107,9 +107,6 @@ public class WorkspaceTaskService {
         orgWorkspaceService.requireOrgWorkspaceAccess(orgId);
         String staffId = requireStaffId();
         String resolvedPool = normalizePool(pool);
-        if ("ALL".equals(resolvedPool) && !isTenantAdmin()) {
-            throw new BusinessException(403, "仅租户管理员可查看全部任务");
-        }
         int safePage = Math.max(1, page);
         int safeSize = Math.min(100, Math.max(1, size));
         WorkspaceTaskQuery q = new WorkspaceTaskQuery();

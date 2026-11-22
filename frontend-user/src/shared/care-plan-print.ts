@@ -439,7 +439,7 @@ function allergenKeywordsOf(plan: PrintableCarePlan): string[] {
   }
   for (const item of plan.diet?.allergensAvoid || []) {
     const n = foodLabel(item).trim()
-    if (n && n !== '无已知过敏') words.add(n)
+    if (n && n !== '无已知过敏' && n !== '没有过敏') words.add(n)
   }
   return [...words]
 }

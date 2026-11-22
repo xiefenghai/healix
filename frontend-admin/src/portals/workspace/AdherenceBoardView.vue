@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { avatarGradients, palette } from '../../shared/palette'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts/core'
-import { LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components'
+import { BarChart, LineChart } from 'echarts/charts'
+import {
+  GridComponent,
+  LegendComponent,
+  TitleComponent,
+  TooltipComponent,
+} from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsType } from 'echarts/core'
-import { api, getCurrentOrgId, getCurrentOrgName } from '../../shared/http'
+import { api, getCurrentOrgId } from '../../shared/http'
 import {
   formatPlanRatePct,
   planRateBand,
@@ -16,7 +21,15 @@ import {
   PLAN_RATE_COLUMN_HINT,
 } from '../../shared/adherence-rate'
 
-echarts.use([LineChart, GridComponent, LegendComponent, TitleComponent, TooltipComponent, CanvasRenderer])
+echarts.use([
+  LineChart,
+  BarChart,
+  GridComponent,
+  LegendComponent,
+  TitleComponent,
+  TooltipComponent,
+  CanvasRenderer,
+])
 
 interface CareTeamListItem {
   id: string
@@ -119,6 +132,8 @@ type AdherenceFilter =
   | 'STREAK_GE_3'
   | 'LIFESTYLE_INACTIVE'
 
+type KpiFilter = Exclude<AdherenceFilter, '' | 'LIFESTYLE_INACTIVE'>
+
 function formatLocalYmd(d: Date) {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -138,7 +153,26 @@ function defaultBoardDate() {
   return shiftLocalYmd(new Date(), -1)
 }
 
+const route = useRoute()
 const router = useRouter()
+
+const ADHERENCE_FILTERS: AdherenceFilter[] = [
+  'FOLLOW_UP',
+  'PLAN_INCOMPLETE',
+  'MED_INCOMPLETE',
+  'STREAK_GE_3',
+  'LIFESTYLE_INACTIVE',
+]
+
+function applyRouteFilterQuery() {
+  const raw = typeof route.query.filter === 'string' ? route.query.filter.toUpperCase() : ''
+  if (ADHERENCE_FILTERS.includes(raw as AdherenceFilter)) {
+    filter.value = raw as AdherenceFilter
+  } else {
+    filter.value = ''
+  }
+}
+
 const loading = ref(false)
 const teams = ref<CareTeamListItem[]>([])
 const overview = ref<AdherenceOverview | null>(null)
@@ -148,16 +182,19 @@ const page = ref(1)
 const pageSize = ref(10)
 
 const trendLoading = ref(false)
-const trendDays = ref(30)
+const trendDays = ref(14)
 const trend = ref<AdherenceTrendPoint[]>([])
 const trendRef = ref<HTMLDivElement | null>(null)
 let trendChart: EChartsType | null = null
+
+const teamRef = ref<HTMLDivElement | null>(null)
+let teamChart: EChartsType | null = null
 
 const date = ref(defaultBoardDate())
 const careTeamId = ref<string | ''>('')
 const unassignedOnly = ref(false)
 const keyword = ref('')
-/** 默认看全机构；点下方卡片再收成某一类缺口。 */
+/** 默认看全机构；点 KPI 再收成某一类缺口。 */
 const filter = ref<AdherenceFilter>('')
 
 const todayYmd = computed(() => shiftLocalYmd(new Date(), 0))
@@ -169,62 +206,111 @@ const dayScopeLabel = computed(() => {
   return '该日'
 })
 
-const summaryCards = computed(() => [
-  {
-    key: 'STREAK_GE_3' as const,
-    label: '连续打卡 ≥ 3 天',
-    value: overview.value?.streakGe3Count ?? 0,
-    hint: `截至${dayScopeLabel.value}连续未执行`,
-    tone: 'teal' as const,
+const universeCount = computed(() => overview.value?.universeCount ?? 0)
+
+function pctOfUniverse(n: number) {
+  if (!universeCount.value) return null
+  return Math.round((n * 1000) / universeCount.value) / 10
+}
+
+const summaryCards = computed(() => {
+  const streak = overview.value?.streakGe3Count ?? 0
+  const streakPct = pctOfUniverse(streak)
+  return [
+    {
+      key: 'STREAK_GE_3' as const,
+      label: '连续打卡 ≥ 3 天',
+      value: streak,
+      foot: streakPct == null ? `${dayScopeLabel.value}连续未执行` : `占比 ${streakPct}%`,
+      tone: 'teal' as const,
+    },
+    {
+      key: 'PLAN_INCOMPLETE' as const,
+      label: '方案未完成',
+      value: overview.value?.planIncompleteCount ?? 0,
+      foot: `${dayScopeLabel.value}应打任务未打完`,
+      tone: 'amber' as const,
+    },
+    {
+      key: 'MED_INCOMPLETE' as const,
+      label: '用药未完成',
+      value: overview.value?.medIncompleteCount ?? 0,
+      foot: `${dayScopeLabel.value}在用药未打卡`,
+      tone: 'rose' as const,
+    },
+    {
+      key: 'FOLLOW_UP' as const,
+      label: '待跟进',
+      value: overview.value?.followUpCount ?? 0,
+      foot: `高风险 · 连续≥3 ${overview.value?.streakGe3Count ?? 0} 人`,
+      tone: 'violet' as const,
+    },
+  ]
+})
+
+const lifestyleOnly = computed({
+  get: () => filter.value === 'LIFESTYLE_INACTIVE',
+  set: (v: boolean) => {
+    filter.value = v ? 'LIFESTYLE_INACTIVE' : filter.value === 'LIFESTYLE_INACTIVE' ? '' : filter.value
+    page.value = 1
+    void loadList()
   },
-  {
-    key: 'PLAN_INCOMPLETE' as const,
-    label: '方案未完成',
-    value: overview.value?.planIncompleteCount ?? 0,
-    hint: `${dayScopeLabel.value}应打任务未打完`,
-    tone: 'amber' as const,
-  },
-  {
-    key: 'MED_INCOMPLETE' as const,
-    label: '用药未完成',
-    value: overview.value?.medIncompleteCount ?? 0,
-    hint: `${dayScopeLabel.value}在用药未打卡`,
-    tone: 'rose' as const,
-  },
-  {
-    key: 'FOLLOW_UP' as const,
-    label: '待跟进',
-    value: overview.value?.followUpCount ?? 0,
-    hint: '高风险（未完成或连续≥3）',
-    tone: 'violet' as const,
-  },
-  {
-    key: 'LIFESTYLE_INACTIVE' as const,
-    label: '饮食运动无记录',
-    value: overview.value?.lifestyleInactiveCount ?? 0,
-    hint: `截至${dayScopeLabel.value}近 7 天`,
-    tone: 'slate' as const,
-  },
-])
+})
 
 const filterTitle = computed(() => {
   switch (filter.value) {
     case 'STREAK_GE_3':
-      return '连续≥3天'
+      return '连续≥3天患者'
     case 'PLAN_INCOMPLETE':
       return '方案未完成'
     case 'MED_INCOMPLETE':
       return '用药未完成'
     case 'FOLLOW_UP':
-      return '待跟进患者'
+      return '待跟进患者名单'
     case 'LIFESTYLE_INACTIVE':
       return '近 7 天饮食运动无记录'
     default:
-      return '全机构患者'
+      return '患者名单'
   }
 })
 
+const scopeName = computed(() => {
+  if (unassignedOnly.value) return '未入组'
+  return teams.value.find((t) => t.id === careTeamId.value)?.name || ''
+})
+
+const listHeading = computed(() => {
+  const scope = scopeName.value
+  return scope ? `${scope} · ${filterTitle.value}` : filterTitle.value
+})
+
+const teamCountLabel = computed(() => {
+  const n = (overview.value?.teams || []).length
+  return n ? `${n} 个组 · ${dayScopeLabel.value}方案完成率` : `${dayScopeLabel.value}方案完成率`
+})
+
+const sortedTeams = computed(() => {
+  const list = [...(overview.value?.teams || [])]
+  list.sort((a, b) => {
+    const ar = a.planRate == null ? 2 : a.planRate
+    const br = b.planRate == null ? 2 : b.planRate
+    if (ar !== br) return ar - br
+    return (a.careTeamName || '').localeCompare(b.careTeamName || '', 'zh')
+  })
+  return list
+})
+
 const AVATAR_GRADIENTS = [...avatarGradients]
+const TEAM_BAR_COLORS = [
+  palette.rose500,
+  palette.blue500,
+  palette.success500,
+  palette.violet500,
+  palette.teal600,
+  palette.amber500,
+  palette.cyan500,
+  palette.lime400,
+]
 
 function avatarChar(name?: string) {
   const t = (name || '').trim()
@@ -244,6 +330,34 @@ function recentIncompleteHint(row: AdherencePatientItem) {
   if (row.med?.todayIncomplete) return `${dayScopeLabel.value}用药未完成`
   if (!row.clientLinked) return 'C 端未关联'
   return '—'
+}
+
+function dayRate(done: number, due: number): number | null {
+  if (due <= 0) return null
+  return Math.max(0, Math.min(1, done / due))
+}
+
+function planDayRate(plan?: PlanMetrics): number | null {
+  if (!plan?.hasActivePlan) return null
+  return dayRate(plan.done, plan.due)
+}
+
+function medDayRate(med?: MedMetrics): number | null {
+  if (!med || med.activeCount === 0 || !med.dueDoseCount) return null
+  return dayRate(med.takenDoseCount, med.dueDoseCount)
+}
+
+function progressTone(rate?: number | null): 'high' | 'mid' | 'low' | 'empty' {
+  const band = planRateBand(rate)
+  if (band === 'good') return 'high'
+  if (band === 'fair' || band === 'concern') return 'mid'
+  if (band === 'poor') return 'low'
+  return 'empty'
+}
+
+function formatDayProgress(rate?: number | null, emptyText = '—') {
+  if (rate == null) return emptyText
+  return `${Math.round(rate * 100)}%`
 }
 
 async function ensureOrg() {
@@ -272,21 +386,13 @@ function buildQuery(extra?: Record<string, string>) {
   return q
 }
 
-const scopeName = computed(() => {
-  if (unassignedOnly.value) return '未入组'
-  return teams.value.find((t) => t.id === careTeamId.value)?.name || ''
-})
-
-const listHeading = computed(() => {
-  const scope = scopeName.value
-  return scope ? `${scope} · ${filterTitle.value}` : filterTitle.value
-})
-
 async function loadOverview() {
   const q = new URLSearchParams()
   if (date.value) q.set('date', date.value)
   const res = await api<{ data: AdherenceOverview }>(`/api/b/v1/adherence/overview?${q}`)
   overview.value = res.data
+  await nextTick()
+  renderTeamChart()
 }
 
 async function loadList() {
@@ -328,7 +434,7 @@ function renderTrend() {
   const pct = (v?: number | null) => (v == null ? null : Math.round(v * 100))
   trendChart.setOption(
     {
-      color: [palette.brand500, palette.teal500],
+      color: [palette.brand500, palette.teal500, palette.amber500],
       title: points.length
         ? { show: false }
         : {
@@ -342,10 +448,9 @@ function renderTrend() {
         backgroundColor: palette.white,
         borderColor: palette.ink200,
         textStyle: { color: palette.ink800, fontSize: 12 },
-        valueFormatter: (value: unknown) => (value == null || value === '' ? '—' : `${value}%`),
       },
-      legend: { top: 0, right: 0, textStyle: { color: palette.ink500, fontSize: 12 } },
-      grid: { left: 48, right: 16, top: 36, bottom: 32 },
+      legend: { show: false },
+      grid: { left: 44, right: 44, top: 16, bottom: 28 },
       xAxis: {
         type: 'category',
         data: cats,
@@ -353,14 +458,29 @@ function renderTrend() {
         axisLine: { lineStyle: { color: palette.ink200 } },
         axisTick: { show: false },
       },
-      yAxis: {
-        type: 'value',
-        min: 0,
-        max: 100,
-        name: '%',
-        axisLabel: { color: palette.ink500, fontSize: 11 },
-        splitLine: { lineStyle: { type: 'dashed', color: palette.ink100 } },
-      },
+      yAxis: [
+        {
+          type: 'value',
+          min: 0,
+          max: 100,
+          axisLabel: {
+            color: palette.ink500,
+            fontSize: 11,
+            formatter: '{value}%',
+          },
+          axisLine: { show: false },
+          axisTick: { show: false },
+          splitLine: { lineStyle: { type: 'dashed', color: palette.ink100 } },
+        },
+        {
+          type: 'value',
+          min: 0,
+          axisLabel: { color: palette.ink500, fontSize: 11 },
+          axisLine: { show: false },
+          axisTick: { show: false },
+          splitLine: { show: false },
+        },
+      ],
       series: [
         {
           name: '方案完成率',
@@ -368,7 +488,9 @@ function renderTrend() {
           smooth: true,
           showSymbol: true,
           symbolSize: 6,
-          lineStyle: { width: 2.5 },
+          yAxisIndex: 0,
+          lineStyle: { width: 2.5, color: palette.brand500 },
+          itemStyle: { color: palette.brand500, borderColor: palette.white, borderWidth: 2 },
           areaStyle: {
             color: {
               type: 'linear',
@@ -383,6 +505,10 @@ function renderTrend() {
             },
           },
           data: points.map((p) => pct(p.planRate)),
+          tooltip: {
+            valueFormatter: (value: unknown) =>
+              value == null || value === '' ? '—' : `${value}%`,
+          },
         },
         {
           name: '用药达标率',
@@ -390,8 +516,129 @@ function renderTrend() {
           smooth: true,
           showSymbol: true,
           symbolSize: 6,
-          lineStyle: { width: 2.5 },
+          yAxisIndex: 0,
+          lineStyle: { width: 2.5, color: palette.teal500 },
+          itemStyle: { color: palette.teal500, borderColor: palette.white, borderWidth: 2 },
           data: points.map((p) => pct(p.medRate)),
+          tooltip: {
+            valueFormatter: (value: unknown) =>
+              value == null || value === '' ? '—' : `${value}%`,
+          },
+        },
+        {
+          name: '待跟进',
+          type: 'line',
+          smooth: true,
+          showSymbol: true,
+          symbolSize: 6,
+          yAxisIndex: 1,
+          lineStyle: { width: 2, type: 'dashed', color: palette.amber500 },
+          itemStyle: { color: palette.amber500, borderColor: palette.white, borderWidth: 2 },
+          data: points.map((p) => p.followUpCount ?? 0),
+          tooltip: {
+            valueFormatter: (value: unknown) =>
+              value == null || value === '' ? '—' : `${value} 人`,
+          },
+        },
+      ],
+    },
+    true,
+  )
+}
+
+function renderTeamChart() {
+  const el = teamRef.value
+  if (!el) return
+  if (!teamChart) {
+    teamChart = echarts.init(el)
+    teamChart.on('click', (params) => {
+      const idx = typeof params.dataIndex === 'number' ? params.dataIndex : -1
+      const slice = sortedTeams.value[idx]
+      if (slice) selectTeam(slice)
+    })
+  }
+  const rows = sortedTeams.value
+  const names = rows.map((t) => t.careTeamName || '未命名')
+  const rates = rows.map((t) =>
+    t.planRate == null || Number.isNaN(t.planRate) ? 0 : Math.round(t.planRate * 100),
+  )
+  const activeId = unassignedOnly.value ? '__none__' : careTeamId.value || ''
+
+  teamChart.setOption(
+    {
+      title: rows.length
+        ? { show: false }
+        : {
+            text: overview.value?.universeCount
+              ? '这一天没有可对比的分组'
+              : '这一天还没有在管患者',
+            left: 'center',
+            top: 'middle',
+            textStyle: { color: palette.ink400, fontSize: 14, fontWeight: 400 },
+          },
+      grid: { left: 96, right: 48, top: 8, bottom: 16 },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        backgroundColor: palette.white,
+        borderColor: palette.ink200,
+        textStyle: { color: palette.ink800, fontSize: 12 },
+        formatter: (params: unknown) => {
+          const arr = Array.isArray(params) ? params : [params]
+          const p = arr[0] as { dataIndex?: number; name?: string; value?: number }
+          const slice = rows[p.dataIndex ?? -1]
+          if (!slice) return ''
+          const rate = formatPlanRatePct(slice.planRate)
+          return [
+            `<div style="font-weight:600;margin-bottom:4px">${slice.careTeamName}</div>`,
+            `方案完成 ${rate}`,
+            `用药 ${formatPlanRatePct(slice.medRate)}`,
+            `${slice.patientCount} 人 · 待跟进 ${slice.followUpCount}`,
+          ].join('<br/>')
+        },
+      },
+      xAxis: {
+        type: 'value',
+        max: 100,
+        show: false,
+      },
+      yAxis: {
+        type: 'category',
+        data: names,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: {
+          color: palette.ink700,
+          fontSize: 12,
+          width: 88,
+          overflow: 'truncate',
+        },
+      },
+      series: [
+        {
+          type: 'bar',
+          data: rates.map((v, i) => {
+            const slice = rows[i]
+            const id = slice?.careTeamId || (slice ? '__none__' : '')
+            const active = !!activeId && id === activeId
+            return {
+              value: v,
+              itemStyle: {
+                color: TEAM_BAR_COLORS[i % TEAM_BAR_COLORS.length],
+                borderRadius: [0, 7, 7, 0],
+                opacity: activeId && !active ? 0.45 : 1,
+              },
+            }
+          }),
+          barWidth: 14,
+          label: {
+            show: true,
+            position: 'right',
+            color: palette.ink600,
+            fontSize: 11,
+            fontWeight: 600,
+            formatter: '{c}%',
+          },
         },
       ],
     },
@@ -411,7 +658,7 @@ async function load() {
   }
 }
 
-function applyFilter(next: AdherenceFilter) {
+function applyFilter(next: KpiFilter) {
   filter.value = filter.value === next ? '' : next
   page.value = 1
   void loadList()
@@ -429,6 +676,7 @@ function onTeamSelect() {
   unassignedOnly.value = false
   page.value = 1
   void loadList()
+  renderTeamChart()
 }
 
 function clearScope() {
@@ -436,6 +684,7 @@ function clearScope() {
   unassignedOnly.value = false
   page.value = 1
   void loadList()
+  renderTeamChart()
 }
 
 function selectTeam(slice: AdherenceTeamSlice) {
@@ -453,14 +702,10 @@ function selectTeam(slice: AdherenceTeamSlice) {
   }
   page.value = 1
   void loadList()
+  renderTeamChart()
   void nextTick(() => {
     ignoreTeamSelect.value = false
   })
-}
-
-function teamActive(slice: AdherenceTeamSlice) {
-  if (!slice.careTeamId) return unassignedOnly.value
-  return !unassignedOnly.value && careTeamId.value === slice.careTeamId
 }
 
 function riskLabel(level?: string) {
@@ -469,27 +714,10 @@ function riskLabel(level?: string) {
   return '低'
 }
 
-function riskTagType(level?: string) {
-  if (level === 'HIGH') return 'danger'
-  if (level === 'MEDIUM') return 'warning'
-  return 'success'
-}
-
-function formatPlanDay(plan?: PlanMetrics) {
-  if (!plan?.hasActivePlan) return '无方案'
-  if (plan.due === 0) return '当日无任务'
-  const base = `${plan.done}/${plan.due}`
-  if (plan.todayIncomplete) return `${base} 未完成`
-  if (plan.skipped > 0 && plan.done === 0) return `${base} 已跳过`
-  return `${base} 已完成`
-}
-
-function formatMedDay(med?: MedMetrics) {
-  if (!med || med.activeCount === 0) return '无在用药'
-  // 只有按需服药（PRN）时应服次数为 0：无固定医嘱次数，不判漏服
-  if (!med.dueDoseCount) return `${med.activeCount} 种按需`
-  const base = `${med.takenDoseCount}/${med.dueDoseCount} 次`
-  return med.todayIncomplete ? `${base} 未完成` : `${base} 已完成`
+function riskTone(level?: string) {
+  if (level === 'HIGH') return 'rose'
+  if (level === 'MEDIUM') return 'amber'
+  return 'teal'
 }
 
 function setQuickDate(ymd: string) {
@@ -502,27 +730,9 @@ function formatRate7d(rate?: number | null) {
   return formatPlanRatePct(rate)
 }
 
-function rateCellClass(rate?: number | null) {
-  return `rate-cell rate-${planRateBand(rate)}`
-}
-
 function openAdherence(row: AdherencePatientItem) {
   router.push({
     path: `/workspace/patients/${row.peopleId}/adherence`,
-    query: { name: row.displayName },
-  })
-}
-
-function openCarePlan(row: AdherencePatientItem) {
-  router.push({
-    path: `/workspace/patients/${row.peopleId}/care-plan`,
-    query: { name: row.displayName, mainTab: 'checkins' },
-  })
-}
-
-function openMedications(row: AdherencePatientItem) {
-  router.push({
-    path: `/workspace/patients/${row.peopleId}/medications`,
     query: { name: row.displayName },
   })
 }
@@ -649,21 +859,42 @@ function onPageChange(p: number) {
   void loadList()
 }
 
-function onTrendResize() {
+function onExportClick() {
+  ElMessage.info('导出即将开放')
+}
+
+function onBatchClick(kind: 'nudge' | 'call') {
+  ElMessage.info(kind === 'nudge' ? '批量站内信即将开放' : '批量催办即将开放')
+}
+
+function onChartsResize() {
   trendChart?.resize()
+  teamChart?.resize()
 }
 
 onMounted(async () => {
   if (!(await ensureOrg())) return
-  window.addEventListener('resize', onTrendResize)
+  window.addEventListener('resize', onChartsResize)
+  applyRouteFilterQuery()
   await loadTeams()
   await load()
 })
 
+watch(
+  () => route.query.filter,
+  () => {
+    applyRouteFilterQuery()
+    page.value = 1
+    void loadList()
+  },
+)
+
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', onTrendResize)
+  window.removeEventListener('resize', onChartsResize)
   trendChart?.dispose()
   trendChart = null
+  teamChart?.dispose()
+  teamChart = null
 })
 </script>
 
@@ -673,13 +904,12 @@ onBeforeUnmount(() => {
       <div>
         <h1>依从性看板</h1>
         <p>
-          {{ dayScopeLabel }}机构整体
-          · 在管 <strong class="em">{{ overview?.universeCount ?? 0 }}</strong> 人
-          · {{ date || '-' }}
-          · {{ getCurrentOrgName() || '-' }}
+          共 <strong class="em">{{ universeCount.toLocaleString('zh-CN') }}</strong> 位患者数据
+          · 数据日期 <strong class="em">{{ date || '-' }}</strong>
+          · {{ dayScopeLabel }}
         </p>
       </div>
-      <div class="actions">
+      <div class="head-actions">
         <div class="date-pills">
           <button
             type="button"
@@ -704,131 +934,66 @@ onBeforeUnmount(() => {
           style="width: 150px"
           @change="load"
         />
-        <el-button @click="load">刷新</el-button>
+        <button type="button" class="btn btn-ghost" @click="onExportClick">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          导出
+        </button>
       </div>
     </div>
 
-    <section v-loading="loading" class="org-hero">
-      <div class="rate-hero" :class="`band-${planRateBand(overview?.planRate)}`">
-        <div class="rate-kicker">方案完成率</div>
-        <div class="rate-num">{{ formatRate7d(overview?.planRate) }}</div>
-        <div class="rate-detail">
-          <template v-if="overview?.planRate == null">{{ dayScopeLabel }}没有应打的方案任务</template>
-          <template v-else>完成 {{ overview?.planDoneSum ?? 0 }} / 应打 {{ overview?.planDueSum ?? 0 }} 项</template>
-        </div>
-      </div>
-      <div class="rate-hero" :class="`band-${planRateBand(overview?.medRate)}`">
-        <div class="rate-kicker">用药达标率</div>
-        <div class="rate-num">{{ formatRate7d(overview?.medRate) }}</div>
-        <div class="rate-detail">
-          <template v-if="overview?.medRate == null">{{ dayScopeLabel }}没有应服次数</template>
-          <template v-else>已服 {{ overview?.medTakenDoseSum ?? 0 }} / 应服 {{ overview?.medDueDoseSum ?? 0 }} 次</template>
-        </div>
-      </div>
-      <div class="rate-hero band-people">
-        <div class="rate-kicker">待跟进</div>
-        <div class="rate-num">
-          {{ overview?.followUpCount ?? 0 }}
-          <span class="rate-of">/ {{ overview?.universeCount ?? 0 }}</span>
-        </div>
-        <div class="rate-detail">
-          高风险 · 连续未执行 {{ overview?.streakGe3Count ?? 0 }} 人
-        </div>
-      </div>
-      <div class="rate-aside">
-        <div class="aside-line">
-          <span>方案未完成</span>
-          <strong>{{ overview?.planIncompleteCount ?? 0 }} 人</strong>
-        </div>
-        <div class="aside-line">
-          <span>用药未完成</span>
-          <strong>{{ overview?.medIncompleteCount ?? 0 }} 人</strong>
-        </div>
-        <div class="aside-line">
-          <span>{{ dayScopeLabel }}饮食记录</span>
-          <strong>{{ overview?.dietLoggedCount ?? 0 }} 人</strong>
-        </div>
-        <div class="aside-line">
-          <span>{{ dayScopeLabel }}运动记录</span>
-          <strong>{{ overview?.exerciseLoggedCount ?? 0 }} 人</strong>
-        </div>
-      </div>
-    </section>
-
-    <section class="team-board">
-      <div class="team-head">
-        <div>
-          <div class="card-title">各组对比</div>
-          <div class="card-sub">按方案完成率从低到高。点一组，下面只看这组的人。</div>
-        </div>
-        <button v-if="scopeName" type="button" class="scope-clear" @click="clearScope">看全机构</button>
-      </div>
-      <div v-if="overview && !(overview.teams || []).length" class="team-empty">
-        {{ overview.universeCount ? '这一天没有可对比的分组' : '这一天还没有在管患者' }}
-      </div>
-      <button
-        v-for="team in overview?.teams || []"
-        :key="team.careTeamId || 'none'"
-        type="button"
-        class="team-row"
-        :class="{ active: teamActive(team) }"
-        @click="selectTeam(team)"
-      >
-        <span class="team-name">{{ team.careTeamName }}</span>
-        <span class="team-bar" aria-hidden="true">
-          <i :class="`fill-${planRateBand(team.planRate)}`" :style="{ width: `${planRateBarWidth(team.planRate)}%` }" />
-        </span>
-        <span class="team-rate" :class="`tone-${planRateBand(team.planRate)}`">{{ formatRate7d(team.planRate) }}</span>
-        <span class="team-meta">用药 {{ formatRate7d(team.medRate) }}</span>
-        <span class="team-meta">{{ team.patientCount }} 人</span>
-        <span class="team-meta" :class="{ warn: team.followUpCount > 0 }">待跟进 {{ team.followUpCount }}</span>
-      </button>
-    </section>
-
-    <div v-loading="loading" class="summary-row">
+    <section v-loading="loading && !overview" class="kpi-grid">
       <button
         v-for="card in summaryCards"
         :key="card.key"
         type="button"
-        class="summary-card"
+        class="kpi"
         :class="[`tone-${card.tone}`, { 'is-active': filter === card.key }]"
         @click="applyFilter(card.key)"
       >
-        <div class="summary-label">{{ card.label }}</div>
-        <div class="summary-value">{{ card.value }}</div>
-        <div class="summary-hint">{{ card.hint }}</div>
+        <div class="kpi-head">
+          <span class="kpi-label">{{ card.label }}</span>
+          <span class="kpi-icon" aria-hidden="true">
+            <svg v-if="card.key === 'STREAK_GE_3'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <svg v-else-if="card.key === 'PLAN_INCOMPLETE'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            <svg v-else-if="card.key === 'MED_INCOMPLETE'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.5 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7l5 5v3" />
+              <circle cx="13" cy="13" r="2" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </span>
+        </div>
+        <div class="kpi-val">{{ card.value }}</div>
+        <div class="kpi-foot">{{ card.foot }}</div>
       </button>
-    </div>
+    </section>
 
-    <el-card shadow="never" class="filter-card">
-      <div class="toolbar">
-        <el-select
-          v-model="careTeamId"
-          clearable
-          placeholder="健管组: 全部"
-          style="width: 180px"
-          @change="onTeamSelect"
-        >
-          <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
-        </el-select>
-        <el-input
-          v-model="keyword"
-          placeholder="搜索患者姓名"
-          clearable
-          class="toolbar-search"
-          @keyup.enter="onListQuery"
-        />
-        <el-button type="primary" @click="onListQuery">查询</el-button>
-      </div>
-    </el-card>
-
-    <el-card shadow="never" class="trend-card">
-      <template #header>
-        <div class="trend-head">
+    <section class="charts-row">
+      <div class="chart-card">
+        <div class="card-head">
           <div>
-            <div class="card-title">依从率趋势</div>
-            <div class="card-sub">机构整体的方案完成率和用药达标率 · 来自每日快照</div>
+            <h3>依从率趋势</h3>
+            <p class="sub">近 {{ trendDays }} 天 · 方案完成率 / 用药达标率 / 待跟进人数</p>
           </div>
+          <div class="chart-legends">
+            <span><i class="dot brand" />方案完成</span>
+            <span><i class="dot teal" />用药达标</span>
+            <span><i class="dot amber" />待跟进</span>
+          </div>
+        </div>
+        <div class="card-pad">
           <div class="trend-actions">
             <el-radio-group v-model="trendDays" size="small" @change="loadTrend">
               <el-radio-button :value="14">近 14 天</el-radio-button>
@@ -836,23 +1001,70 @@ onBeforeUnmount(() => {
               <el-radio-button :value="90">近 90 天</el-radio-button>
             </el-radio-group>
           </div>
+          <div v-loading="trendLoading" ref="trendRef" class="chart" />
         </div>
-      </template>
-      <div v-loading="trendLoading" class="trend-chart" ref="trendRef" />
-    </el-card>
+      </div>
 
-    <el-card shadow="never" class="list-card">
+      <div class="chart-card">
+        <div class="card-head">
+          <div>
+            <h3>健管组依从率排行</h3>
+            <p class="sub">{{ teamCountLabel }}</p>
+          </div>
+          <button v-if="scopeName" type="button" class="scope-clear" @click="clearScope">看全机构</button>
+        </div>
+        <div class="card-pad">
+          <div ref="teamRef" class="chart" />
+        </div>
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <el-select
+        v-model="careTeamId"
+        clearable
+        placeholder="健管组: 全部"
+        class="filter-ctl"
+        style="width: 160px"
+        :disabled="unassignedOnly"
+        @change="onTeamSelect"
+      >
+        <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
+      </el-select>
+      <el-input
+        v-model="keyword"
+        placeholder="搜索患者姓名"
+        clearable
+        class="toolbar-search"
+        @keyup.enter="onListQuery"
+        @clear="onListQuery"
+      />
+      <label class="toggle">
+        <input v-model="lifestyleOnly" type="checkbox" />
+        仅饮食运动无记录
+        <span v-if="(overview?.lifestyleInactiveCount ?? 0) > 0" class="toggle-count">
+          {{ overview?.lifestyleInactiveCount }}
+        </span>
+      </label>
+      <el-button type="primary" class="search-btn" @click="onListQuery">查询</el-button>
+    </div>
+
+    <el-card v-loading="loading" shadow="never" class="list-card">
       <template #header>
         <div class="table-head-bar">
           <div class="table-title">
             {{ listHeading }}
             <span class="count">· {{ total }} 位 · 按优先级排序</span>
           </div>
+          <div class="table-head-actions">
+            <button type="button" class="btn btn-ghost btn-sm" @click="onBatchClick('nudge')">批量站内信</button>
+            <button type="button" class="btn btn-ghost btn-sm" @click="onBatchClick('call')">批量催办</button>
+          </div>
         </div>
       </template>
 
-      <el-table :data="items" stripe>
-        <el-table-column label="患者" min-width="160">
+      <el-table :data="items" class="adherence-table" stripe>
+        <el-table-column label="患者" min-width="150">
           <template #default="{ row }">
             <div class="patient-cell">
               <div class="patient-av" :style="avatarStyle(row.displayName)">
@@ -867,68 +1079,68 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="所属健管组" min-width="130">
+
+        <el-table-column label="所属健管组" min-width="120">
           <template #default="{ row }">
-            <el-tag v-if="row.careTeamName" size="small" effect="light" type="primary">
-              {{ row.careTeamName }}
-            </el-tag>
-            <el-tag v-else size="small" effect="plain" type="info">未入组</el-tag>
+            <span v-if="row.careTeamName" class="tag brand">{{ row.careTeamName }}</span>
+            <span v-else class="tag muted">未入组</span>
           </template>
         </el-table-column>
+
         <el-table-column label="风险" width="72">
           <template #default="{ row }">
-            <el-tag size="small" :type="riskTagType(row.riskLevel)" effect="light">
-              {{ riskLabel(row.riskLevel) }}
-            </el-tag>
+            <span class="tag" :class="riskTone(row.riskLevel)">{{ riskLabel(row.riskLevel) }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="`${dayScopeLabel}方案`" min-width="130">
+
+        <el-table-column :label="`${dayScopeLabel}方案`" min-width="120">
           <template #default="{ row }">
-            <span
-              :class="{
-                'is-warn': row.plan?.todayIncomplete,
-                'is-ok': row.plan?.hasActivePlan && row.plan?.due > 0 && !row.plan?.todayIncomplete,
-              }"
+            <div
+              v-if="planDayRate(row.plan) != null"
+              class="progress"
             >
-              {{ formatPlanDay(row.plan) }}
+              <div class="bar">
+                <div
+                  class="fill"
+                  :class="progressTone(planDayRate(row.plan))"
+                  :style="{ width: `${planRateBarWidth(planDayRate(row.plan))}%` }"
+                />
+              </div>
+              <div class="pct">{{ formatDayProgress(planDayRate(row.plan)) }}</div>
+            </div>
+            <span v-else class="empty-cell">
+              {{ row.plan?.hasActivePlan ? (row.plan.due === 0 ? '当日无任务' : '—') : '无方案' }}
             </span>
           </template>
         </el-table-column>
+
         <el-table-column :label="`${dayScopeLabel}用药`" min-width="120">
           <template #default="{ row }">
-            <span
-              :class="{
-                'is-warn': row.med?.todayIncomplete,
-                'is-ok': (row.med?.activeCount || 0) > 0 && !row.med?.todayIncomplete,
-              }"
+            <div
+              v-if="medDayRate(row.med) != null"
+              class="progress"
             >
-              {{ formatMedDay(row.med) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column width="132">
-          <template #header>
-            <el-tooltip content="近 7 天（含统计日）有记录的天数；运动附活动分钟" placement="top">
-              <span class="col-hint">7 天饮食 / 运动</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <div class="ls-cell" :class="{ 'is-warn': !row.lifestyle?.dietDays7d && !row.lifestyle?.exerciseDays7d }">
-              <span>饮食 {{ row.lifestyle?.dietDays7d ?? 0 }} 天</span>
-              <span>
-                运动 {{ row.lifestyle?.exerciseDays7d ?? 0 }} 天
-                <template v-if="row.lifestyle?.activeMin7d"> · {{ row.lifestyle.activeMin7d }} 分</template>
-              </span>
+              <div class="bar">
+                <div
+                  class="fill"
+                  :class="progressTone(medDayRate(row.med))"
+                  :style="{ width: `${planRateBarWidth(medDayRate(row.med))}%` }"
+                />
+              </div>
+              <div class="pct">{{ formatDayProgress(medDayRate(row.med)) }}</div>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="连续未执行" width="110">
-          <template #default="{ row }">
-            <span :class="{ 'is-warn': (row.plan?.streakDays || 0) >= 3 }">
-              {{ row.plan?.streakDays ?? 0 }} 天
+            <span v-else class="empty-cell">
+              {{
+                !row.med || row.med.activeCount === 0
+                  ? '无在用药'
+                  : !row.med.dueDoseCount
+                    ? `${row.med.activeCount} 种按需`
+                    : '—'
+              }}
             </span>
           </template>
         </el-table-column>
+
         <el-table-column width="128">
           <template #header>
             <el-tooltip :content="PLAN_RATE_COLUMN_HINT" placement="top">
@@ -936,14 +1148,23 @@ onBeforeUnmount(() => {
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <div :class="rateCellClass(row.plan?.rate7d)">
-              <span class="rate-pct">{{ formatRate7d(row.plan?.rate7d) }}</span>
-              <div v-if="row.plan?.rate7d != null" class="rate-track" aria-hidden="true">
-                <i class="rate-fill" :style="{ width: `${planRateBarWidth(row.plan?.rate7d)}%` }" />
+            <div
+              v-if="row.plan?.rate7d != null"
+              class="progress"
+            >
+              <div class="bar">
+                <div
+                  class="fill"
+                  :class="progressTone(row.plan?.rate7d)"
+                  :style="{ width: `${planRateBarWidth(row.plan?.rate7d)}%` }"
+                />
               </div>
+              <div class="pct">{{ formatRate7d(row.plan?.rate7d) }}</div>
             </div>
+            <span v-else class="empty-cell">—</span>
           </template>
         </el-table-column>
+
         <el-table-column label="最近未完成" min-width="140">
           <template #default="{ row }">
             <span
@@ -959,35 +1180,41 @@ onBeforeUnmount(() => {
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="248" align="right" fixed="right">
+
+        <el-table-column label="操作" width="220" align="right" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button
-                type="primary"
-                size="small"
-                :loading="escalatingId === row.peopleId"
+              <button
+                type="button"
+                class="act primary"
                 :disabled="escalatingId === row.peopleId"
                 @click="oneClickEscalate(row)"
               >
-                催办
-              </el-button>
-              <el-button link type="primary" @click="openAdherence(row)">依从</el-button>
-              <el-button link type="primary" @click="openCarePlan(row)">方案</el-button>
-              <el-button link type="primary" @click="openMedications(row)">用药</el-button>
+                去随访
+              </button>
+              <button
+                type="button"
+                class="act"
+                :disabled="escalatingId === row.peopleId || !row.clientLinked"
+                :title="row.clientLinked ? '发站内信提醒' : '未关联 C 端，不可发'"
+                @click="remindPatient(row)"
+              >
+                站内信
+              </button>
+              <button type="button" class="act" @click="openAdherence(row)">查看</button>
               <el-dropdown
                 trigger="click"
                 :disabled="escalatingId === row.peopleId"
                 @command="(cmd: string) => onEscalateCommand(cmd, row)"
               >
-                <el-button
-                  link
-                  type="danger"
-                  class="op-more"
+                <button
+                  type="button"
+                  class="act more"
                   :disabled="escalatingId === row.peopleId"
                   aria-label="更多催办方式"
                 >
                   ▾
-                </el-button>
+                </button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="all">
@@ -1015,6 +1242,7 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
       </el-table>
+
       <el-empty v-if="!loading && items.length === 0" description="暂无符合条件的患者" />
       <div v-if="total > 0" class="list-pagination">
         <el-pagination
@@ -1033,26 +1261,34 @@ onBeforeUnmount(() => {
 <style scoped>
 .adherence-board {
   width: 100%;
+  padding-bottom: 24px;
 }
 
 .em {
-  color: var(--ink-800);
+  color: #1e293b;
   font-weight: 600;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .date-pills {
   display: inline-flex;
-  background: var(--ink-100);
+  background: #f1f5f9;
   border-radius: 8px;
-  padding: 4px;
+  padding: 3px;
   gap: 2px;
 }
 
 .date-pills button {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 12.5px;
   border-radius: 6px;
-  color: var(--ink-500);
+  color: #64748b;
   font-weight: 500;
   border: none;
   background: transparent;
@@ -1061,225 +1297,276 @@ onBeforeUnmount(() => {
 }
 
 .date-pills button.active {
-  background: var(--white);
-  color: var(--ink-800);
-  box-shadow: 0 1px 2px var(--ink-a06);
+  background: #fff;
+  color: #1e293b;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
-.summary-row {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.org-hero {
-  display: grid;
-  grid-template-columns: 1.1fr 1.1fr 0.9fr 1fr;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.rate-hero,
-.rate-aside {
-  background: var(--admin-card, var(--white));
-  border: 1px solid var(--ink-200);
-  border-radius: 12px;
-  box-shadow: var(--admin-shadow);
-  padding: 16px 18px;
-}
-
-.rate-kicker {
-  font-size: 12px;
-  color: var(--ink-500);
-  font-weight: 600;
-}
-
-.rate-num {
-  margin-top: 6px;
-  font-size: 40px;
-  font-weight: 700;
-  letter-spacing: -0.6px;
-  line-height: 1.1;
-  color: var(--ink-900);
-}
-
-.rate-of {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--ink-400);
-}
-
-.rate-detail {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--ink-500);
-}
-
-.band-good .rate-num { color: var(--success-600); }
-.band-fair .rate-num { color: var(--brand-800); }
-.band-concern .rate-num { color: var(--amber-600); }
-.band-poor .rate-num { color: var(--rose-700); }
-.band-empty .rate-num,
-.band-people .rate-num { color: var(--ink-900); }
-
-.rate-aside {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+.btn {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-}
-
-.aside-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 8px;
   font-size: 13px;
-  color: var(--ink-500);
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  background: none;
+  transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.aside-line strong {
-  color: var(--ink-800);
-  font-weight: 650;
+.btn svg {
+  width: 15px;
+  height: 15px;
 }
 
-.team-board {
-  margin-bottom: 14px;
-  padding: 14px 16px 8px;
-  background: var(--admin-card, var(--white));
-  border: 1px solid var(--ink-200);
+.btn-ghost {
+  background: #fff;
+  color: #334155;
+  border-color: #e2e8f0;
+}
+
+.btn-ghost:hover {
+  background: #f8fafc;
+}
+
+.btn-sm {
+  height: 32px;
+  font-size: 12px;
+  padding: 0 12px;
+}
+
+/* —— KPI —— */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.kpi {
+  background: #fff;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
-  box-shadow: var(--admin-shadow);
+  padding: 18px;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  font-family: inherit;
+  transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
-.team-head {
+.kpi:hover {
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.06),
+    0 8px 24px -8px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.kpi.is-active {
+  border-color: #2c7ef8;
+  background: linear-gradient(180deg, #f8fbff, #fff);
+}
+
+.kpi.is-active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: #2c7ef8;
+}
+
+.kpi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.kpi-label {
+  font-size: 12.5px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.kpi-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+}
+
+.kpi-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.kpi.tone-teal .kpi-icon {
+  background: #e6faf7;
+  color: #0f766e;
+}
+.kpi.tone-amber .kpi-icon {
+  background: #fef6e2;
+  color: #b45309;
+}
+.kpi.tone-rose .kpi-icon {
+  background: #fee9e7;
+  color: #ef4444;
+}
+.kpi.tone-violet .kpi-icon {
+  background: #f1ecfe;
+  color: #6d28d9;
+}
+
+.kpi-val {
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi.tone-teal .kpi-val {
+  color: #00b8a9;
+}
+.kpi.tone-amber .kpi-val {
+  color: #f59e0b;
+}
+.kpi.tone-rose .kpi-val {
+  color: #ef4444;
+}
+.kpi.tone-violet .kpi-val {
+  color: #8b5cf6;
+}
+
+.kpi-foot {
+  font-size: 11.5px;
+  color: #94a3b8;
+  margin-top: 6px;
+}
+
+/* —— Charts —— */
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.card-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid #f1f5f9;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+}
+
+.card-head h3 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.card-head .sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.chart-legends {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #64748b;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chart-legends span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chart-legends .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.chart-legends .dot.brand {
+  background: #2c7ef8;
+}
+.chart-legends .dot.teal {
+  background: #00b8a9;
+}
+.chart-legends .dot.amber {
+  background: #f59e0b;
+}
+
+.card-pad {
+  padding: 12px 16px 16px;
+}
+
+.trend-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.chart {
+  height: 280px;
 }
 
 .scope-clear {
-  border: 1px solid var(--ink-200);
-  background: var(--white);
+  border: 1px solid #e2e8f0;
+  background: #fff;
   border-radius: 8px;
   padding: 6px 12px;
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  color: var(--brand-600);
+  color: #1e63d9;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
-.team-empty {
-  padding: 12px 0 16px;
-  color: var(--ink-400);
-  font-size: 13px;
+.scope-clear:hover {
+  background: #f8fafc;
 }
 
-.team-row {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 140px minmax(80px, 1fr) 52px 88px 64px 88px;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 8px;
-  margin-bottom: 4px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  color: var(--ink-700);
-}
-
-.team-row:hover {
-  background: var(--ink-50);
-}
-
-.team-row.active {
-  border-color: var(--brand-100);
-  background: var(--ink-25);
-}
-
-.team-name {
-  font-weight: 650;
-  color: var(--ink-800);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.team-bar {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--ink-100);
-  overflow: hidden;
-}
-
-.team-bar i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-}
-
-.fill-good { background: var(--success-500); }
-.fill-fair { background: var(--blue-500); }
-.fill-concern { background: var(--amber-500); }
-.fill-poor { background: var(--rose-500); }
-.fill-empty { background: var(--ink-300); width: 0; }
-
-.team-rate {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.tone-good { color: var(--success-600); }
-.tone-fair { color: var(--brand-800); }
-.tone-concern { color: var(--amber-600); }
-.tone-poor { color: var(--rose-700); }
-.tone-empty { color: var(--ink-400); }
-
-.team-meta {
-  font-size: 12px;
-  color: var(--ink-500);
-  font-variant-numeric: tabular-nums;
-}
-
-.team-meta.warn {
-  color: var(--rose-700);
-  font-weight: 650;
-}
-
-.tone-slate .summary-value {
-  color: var(--ink-600);
-}
-
-.ls-cell {
+/* —— Toolbar —— */
+.toolbar {
   display: flex;
-  flex-direction: column;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.summary-card .summary-label {
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-.tone-teal .summary-value {
-  color: var(--teal-500);
-}
-
-.tone-amber .summary-value {
-  color: var(--amber-500);
-}
-
-.tone-rose .summary-value {
-  color: var(--rose-500);
-}
-
-.tone-violet .summary-value {
-  color: var(--violet-500);
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  margin-bottom: 16px;
 }
 
 .toolbar-search {
@@ -1288,68 +1575,133 @@ onBeforeUnmount(() => {
   max-width: 280px;
 }
 
-.trend-card {
-  margin-bottom: 14px;
+.toolbar :deep(.el-input__wrapper),
+.toolbar :deep(.el-select__wrapper) {
+  min-height: 36px;
+  border-radius: 8px;
 }
 
-.trend-card :deep(.el-card__header) {
-  padding: 16px 20px !important;
+.filter-ctl {
+  flex-shrink: 0;
 }
 
-.trend-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-800);
-}
-
-.card-sub {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--ink-500);
-}
-
-.trend-actions {
-  display: flex;
+.toggle {
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
 }
 
-.trend-chart {
-  height: 280px;
+.toggle input {
+  width: 32px;
+  height: 18px;
+  appearance: none;
+  background: #cbd5e1;
+  border-radius: 9px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.18s ease;
+  flex-shrink: 0;
+}
+
+.toggle input:checked {
+  background: #2c7ef8;
+}
+
+.toggle input::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  transition: left 0.18s ease;
+}
+
+.toggle input:checked::before {
+  left: 16px;
+}
+
+.toggle-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.search-btn {
+  margin-left: auto;
+}
+
+/* —— Table —— */
+.list-card {
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.list-card :deep(.el-card__header) {
+  padding: 14px 20px !important;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.list-card :deep(.el-card__body) {
+  padding: 0 !important;
 }
 
 .table-head-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .table-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--ink-800);
+  color: #1e293b;
 }
 
 .table-title .count {
-  color: var(--ink-400);
+  color: #94a3b8;
   font-weight: 500;
-  margin-left: 4px;
+  margin-left: 6px;
 }
 
-.list-card :deep(.el-card__header) {
-  padding: 14px 18px !important;
+.table-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
-.list-card :deep(.el-card__body) {
-  padding-top: 0 !important;
+.list-card :deep(.adherence-table) {
+  width: 100%;
+  --el-table-row-hover-bg-color: #fbfcfe;
+  --el-table-header-bg-color: #f8fafc;
+}
+
+.list-card :deep(.adherence-table .el-table__header th.el-table__cell) {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 12px 14px;
+}
+
+.list-card :deep(.adherence-table .el-table__body td.el-table__cell) {
+  padding: 14px;
+  font-size: 13px;
 }
 
 .patient-cell {
@@ -1365,7 +1717,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: var(--white);
+  color: #fff;
   font-weight: 600;
   font-size: 12px;
   flex-shrink: 0;
@@ -1377,63 +1729,157 @@ onBeforeUnmount(() => {
 
 .patient-name {
   font-weight: 600;
-  color: var(--ink-800);
+  color: #1e293b;
   line-height: 1.3;
 }
 
 .patient-meta {
   margin-top: 2px;
-  font-size: 12px;
-  color: var(--ink-400);
+  font-size: 11.5px;
+  color: #94a3b8;
 }
 
-.is-warn {
-  color: var(--rose-500);
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
   font-weight: 600;
 }
 
-.is-ok {
-  color: var(--teal-500);
-  font-weight: 550;
+.tag.brand {
+  background: #eaf2ff;
+  color: #1e63d9;
+}
+.tag.teal {
+  background: #e6faf7;
+  color: #0f766e;
+}
+.tag.amber {
+  background: #fef6e2;
+  color: #b45309;
+}
+.tag.rose {
+  background: #fee9e7;
+  color: #ef4444;
+}
+.tag.muted {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+  min-width: 0;
+}
+
+.progress .bar {
+  flex: 1;
+  height: 5px;
+  background: #f1f5f9;
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 48px;
+}
+
+.progress .fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.progress .fill.high {
+  background: linear-gradient(90deg, #10b981, #0f766e);
+}
+.progress .fill.mid {
+  background: linear-gradient(90deg, #f59e0b, #ea580c);
+}
+.progress .fill.low {
+  background: linear-gradient(90deg, #ef4444, #be123c);
+}
+.progress .fill.empty {
+  background: #cbd5e1;
+}
+
+.progress .pct {
+  font-weight: 600;
+  min-width: 32px;
+  text-align: right;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-cell {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .recent-hint {
   font-size: 12px;
-  color: var(--ink-500);
+  color: #64748b;
+  font-weight: 500;
+}
+
+.recent-hint.is-warn {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.col-hint {
+  cursor: help;
 }
 
 .row-actions {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
+  gap: 4px;
   flex-wrap: nowrap;
   white-space: nowrap;
 }
 
-.row-actions :deep(.el-button) {
-  margin: 0;
-}
-
-.row-actions :deep(.el-button + .el-button) {
-  margin-left: 0;
-}
-
-.row-actions :deep(.el-dropdown) {
-  display: inline-flex;
-  vertical-align: middle;
-}
-
-.op-more {
-  padding: 0 2px !important;
-  min-width: 16px;
+.act {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
   font-size: 12px;
-  line-height: 1;
-  opacity: 0.75;
+  font-weight: 500;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: 180ms;
 }
 
-.op-more:hover {
-  opacity: 1;
+.act:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.act.primary {
+  background: #2c7ef8;
+  color: #fff;
+}
+
+.act.primary:hover:not(:disabled) {
+  background: #1e63d9;
+}
+
+.act:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.act.more {
+  padding: 0 6px;
+  min-width: 20px;
+  opacity: 0.75;
 }
 
 .escalate-item {
@@ -1450,99 +1896,26 @@ onBeforeUnmount(() => {
   font-weight: 400;
 }
 
-.col-hint {
-  border-bottom: 0 dashed var(--el-border-color);
-  cursor: help;
-}
-
-.rate-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 72px;
-}
-
-.rate-pct {
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  line-height: 1.2;
-  letter-spacing: 0.02em;
-}
-
-.rate-track {
-  height: 5px;
-  border-radius: 4px;
-  background: var(--ink-100);
-  overflow: hidden;
-}
-
-.rate-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: currentColor;
-}
-
-.rate-good .rate-pct,
-.rate-good .rate-fill {
-  color: var(--el-color-success);
-}
-
-.rate-fair .rate-pct,
-.rate-fair .rate-fill {
-  color: var(--el-color-primary);
-}
-
-.rate-concern .rate-pct,
-.rate-concern .rate-fill {
-  color: var(--el-color-warning);
-}
-
-.rate-poor .rate-pct,
-.rate-poor .rate-fill {
-  color: var(--el-color-danger);
-}
-
-.rate-empty .rate-pct {
-  color: var(--el-text-color-secondary);
-  font-weight: 500;
-}
-
 .list-pagination {
   display: flex;
   justify-content: flex-end;
-  margin-top: 16px;
-  padding: 0 4px 4px;
+  padding: 14px 20px;
+  border-top: 1px solid #f1f5f9;
 }
 
 @media (max-width: 1280px) {
-  .summary-row,
-  .org-hero {
+  .kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .team-row {
-    grid-template-columns: 120px minmax(60px, 1fr) 48px 72px;
-  }
-
-  .team-row .team-meta:nth-child(n + 5) {
-    display: none;
+  .charts-row {
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 960px) {
-  .org-hero,
-  .summary-row {
+  .kpi-grid {
     grid-template-columns: 1fr;
-  }
-
-  .team-row {
-    grid-template-columns: 1fr auto;
-  }
-
-  .team-bar,
-  .team-meta {
-    display: none;
   }
 }
 </style>

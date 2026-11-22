@@ -1,8 +1,10 @@
 package com.healix.config;
 
 import com.healix.core.assessment.support.AssessmentLegacyMigrator;
+import com.healix.core.identity.service.IdentityService;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -598,6 +600,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "people_profile",
                 "occupation",
                 "ALTER TABLE people_profile ADD COLUMN occupation VARCHAR(64) NULL COMMENT '职业' AFTER marital_status");
+        backfillPeopleNamePinyin();
 
         ensureTable(
                 "account_mfa",
@@ -1761,6 +1764,63 @@ public class SchemaEnsureRunner implements ApplicationRunner {
      *   <li>fact 表仅尝试删除（事实已并入元数据；值换算见 {@link AssessmentLegacyMigrator}）
      * </ul>
      */
+    /**
+     * 把 people_profile.name_pinyin 回填为「全拼 + 首字母」（如 {@code zhangjianguo zjg}）。
+     * <p>幂等：已是正确键则跳过；新建/改名路径仍走 {@link IdentityService#toPinyinKey}。
+     */
+    private void backfillPeopleNamePinyin() {
+        Integer table = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(1) FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'people_profile'
+                """,
+                Integer.class);
+        if (table == null || table == 0) {
+            return;
+        }
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList(
+                    """
+                    SELECT id, display_name, name_pinyin
+                    FROM people_profile
+                    WHERE is_deleted = 0
+                    """);
+        } catch (Exception ex) {
+            log.warn("Skip name_pinyin backfill (query failed): {}", ex.getMessage());
+            return;
+        }
+        int updated = 0;
+        for (Map<String, Object> row : rows) {
+            String id = row.get("id") == null ? null : String.valueOf(row.get("id"));
+            String displayName = row.get("display_name") == null ? null : String.valueOf(row.get("display_name"));
+            String stored = row.get("name_pinyin") == null ? null : String.valueOf(row.get("name_pinyin"));
+            if (id == null || id.isBlank()) {
+                continue;
+            }
+            String next = IdentityService.toPinyinKey(displayName);
+            if (next == null || Objects.equals(stored, next)) {
+                continue;
+            }
+            try {
+                jdbcTemplate.update(
+                        """
+                        UPDATE people_profile
+                        SET name_pinyin = ?, gmt_modified = NOW()
+                        WHERE id = ? AND is_deleted = 0
+                        """,
+                        next,
+                        id);
+                updated++;
+            } catch (Exception ex) {
+                log.warn("Skip name_pinyin backfill for {}: {}", id, ex.getMessage());
+            }
+        }
+        if (updated > 0) {
+            log.warn("Backfilled people_profile.name_pinyin for {} row(s)", updated);
+        }
+    }
+
     private void migrateAssessmentQuestionnaireLegacy() {
         try {
             Integer reqTable = jdbcTemplate.queryForObject(

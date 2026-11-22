@@ -57,7 +57,7 @@ public class CockpitFocusDto {
     private LocalDateTime bloodPressureAt;
     /** 最近血压 ≥140/90 */
     private boolean bloodPressureHigh;
-    /** 过敏史：有过敏时列名称，否则「无已知过敏 / 未询问」 */
+    /** 过敏史：有过敏时列名称，否则「没有过敏 / 未采集」 */
     private String allergyText;
     /** 近 7 天饮食 / 运动记录摘要（助手上下文用） */
     private String lifestyleSummary;

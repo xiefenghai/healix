@@ -95,6 +95,74 @@ export async function fetchAllergySummary(peopleId: string): Promise<AllergySumm
   return res.data
 }
 
+export type AllergyBrief = {
+  status: AllergyStatus
+  /** 展示文案：未选=未采集；NKA=没有过敏；HAS=过敏原名或「有过敏」 */
+  text: string
+  /** 已显式采集（NKA 或 HAS）；未选中不算 */
+  collected: boolean
+  hasAllergy: boolean
+  tone: 'danger' | 'muted'
+}
+
+/**
+ * 过敏史展示语义（禁止用「条目为空」推断无过敏）：
+ * - 未选中 / UNKNOWN → 未采集
+ * - 显式选了「无已知过敏」NKA → 没有过敏
+ * - HAS → 过敏原列表
+ */
+export function formatAllergyBrief(
+  status?: string | null,
+  allergenNames?: Array<string | null | undefined> | null,
+): AllergyBrief {
+  const st = String(status || 'UNKNOWN').toUpperCase()
+  if (st === 'HAS') {
+    const names = (allergenNames || [])
+      .map((x) => String(x || '').trim())
+      .filter(Boolean)
+    return {
+      status: 'HAS',
+      text: names.length ? names.join('、') : '有过敏',
+      collected: true,
+      hasAllergy: true,
+      tone: 'danger',
+    }
+  }
+  if (st === 'NKA') {
+    return {
+      status: 'NKA',
+      text: '没有过敏',
+      collected: true,
+      hasAllergy: false,
+      tone: 'muted',
+    }
+  }
+  return {
+    status: 'UNKNOWN',
+    text: '未采集',
+    collected: false,
+    hasAllergy: false,
+    tone: 'muted',
+  }
+}
+
+/** 驾驶舱等接口可能仍返回「未询问」旧文案 */
+export function isAllergyUncollectedText(text?: string | null) {
+  const t = String(text || '').trim()
+  return !t || t === '未采集' || t === '未询问' || t === '待确认'
+}
+
+/** NKA 展示文案（含历史用词） */
+export function isAllergyNkaText(text?: string | null) {
+  const t = String(text || '').trim()
+  return (
+    t === '没有过敏' ||
+    t === '无已知过敏' ||
+    t === '暂无已知过敏' ||
+    t === '否认已知过敏'
+  )
+}
+
 export function emptyAllergyForm(): AllergyForm {
   return {
     category: 'DRUG',

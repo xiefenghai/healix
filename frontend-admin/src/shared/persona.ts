@@ -17,6 +17,9 @@ export type PersonaDimensions = {
   risk?: { tags?: Array<Record<string, unknown>> }
   constraints?: {
     allergens?: string[]
+    /** UNKNOWN=未采集；NKA=没有过敏；HAS=有过敏 */
+    allergyStatus?: string
+    allergyStatusLabel?: string
     highlightCodes?: string[]
     notes?: string[]
   }

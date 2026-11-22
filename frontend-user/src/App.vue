@@ -19,14 +19,14 @@ const TABS = [
   { key: 'me', label: '我的', to: '/me', match: ['/me'] },
 ] as const
 
+/** v11：记一笔 4×2，顺序对齐原型 */
 const PLUS_ITEMS = [
-  { key: 'diet', label: '饮食', icon: 'food', path: '/diet', tone: 't-teal' },
-  { key: 'med', label: '用药', icon: 'pill', path: '/medications', tone: 't-warn', tag: '服药' },
-  { key: 'bp', label: '血压', icon: 'activity', path: '/home', query: { record: 'bp' }, tone: 't-info', tag: '测量' },
-  { key: 'glucose', label: '血糖', icon: 'drop', path: '/home', query: { record: 'glucose' }, tone: 't-warn' },
-  { key: 'exercise', label: '运动', icon: 'walk', path: '/exercise', tone: 't-mint' },
-  { key: 'bmi', label: '体重', icon: 'balance', path: '/home', query: { record: 'bmi' }, tone: 't-teal' },
-  { key: 'water', label: '喝水', icon: 'cup', path: '/water', tone: 't-water' },
+  { key: 'bmi', label: '体重', icon: 'balance', path: '/home', query: { record: 'bmi' }, tone: 't-weight' },
+  { key: 'bp', label: '血压', icon: 'activity', path: '/home', query: { record: 'bp' }, tone: 't-bp' },
+  { key: 'glucose', label: '血糖', icon: 'drop', path: '/home', query: { record: 'glucose' }, tone: 't-sugar' },
+  { key: 'med', label: '用药', icon: 'pill', path: '/medications', tone: 't-med' },
+  { key: 'diet', label: '饮食', icon: 'food', path: '/diet', tone: 't-diet' },
+  { key: 'exercise', label: '运动', icon: 'walk', path: '/exercise', tone: 't-move' },
   { key: 'sleep', label: '睡眠', icon: 'moon', path: '/sleep', tone: 't-sleep' },
   { key: 'mood', label: '心情', icon: 'smile', path: '/mood', tone: 't-mood' },
 ] as const
@@ -145,7 +145,8 @@ onBeforeUnmount(() => {
     >
       <div class="plus-sheet">
         <div class="plus-handle" />
-        <h3>快速记录</h3>
+        <h3>记一笔</h3>
+        <p class="plus-sub">选一项，快速完成记录</p>
         <div class="plus-grid">
           <button
             v-for="item in PLUS_ITEMS"
@@ -154,16 +155,13 @@ onBeforeUnmount(() => {
             class="plus-item"
             @click="onPlusItem(item)"
           >
-            <span v-if="'tag' in item && item.tag" class="plus-tag">{{ item.tag }}</span>
             <span class="plus-ico" :class="item.tone" aria-hidden="true">
               <svg class="plus-ic" viewBox="0 0 24 24" v-html="PLUS_ICONS[item.icon]" />
             </span>
             <em>{{ item.label }}</em>
           </button>
         </div>
-        <button type="button" class="plus-scan" @click="plusOpen = false; router.push('/medications/scan')">
-          扫药品
-        </button>
+        <button type="button" class="plus-close" @click="plusOpen = false">关闭</button>
       </div>
     </van-popup>
 
@@ -225,7 +223,8 @@ onBeforeUnmount(() => {
   min-height: 100vh;
 }
 .with-tab .page-body {
-  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  /* dock 74 + FAB 上凸约 28，避免末卡被 + 挡住 */
+  padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
 }
 
 .dock {
@@ -236,7 +235,7 @@ onBeforeUnmount(() => {
   width: min(100%, 375px);
   z-index: 30;
   display: grid;
-  grid-template-columns: 1fr 1fr 64px 1fr 1fr;
+  grid-template-columns: 1fr 1fr 72px 1fr 1fr;
   align-items: end;
   gap: 0;
   padding: 6px 4px calc(8px + env(safe-area-inset-bottom, 0px));
@@ -255,15 +254,15 @@ onBeforeUnmount(() => {
   padding: 4px 0 2px;
   border: 0;
   background: transparent;
-  color: var(--hx-n-500);
-  font-size: 10px;
-  font-weight: 700;
+  color: var(--hx-n-700);
+  font-size: 11px;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
 }
 .dock-tab.on {
   color: var(--hx-teal-700);
-  font-weight: 900;
+  font-weight: 800;
 }
 .dock-ic {
   width: 22px;
@@ -294,19 +293,19 @@ onBeforeUnmount(() => {
 }
 
 .dock-plus {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 10px;
+  width: 56px;
+  height: 56px;
+  margin: -16px auto 6px;
   border: 0;
   border-radius: 50%;
   background: var(--hx-teal-600);
   color: #fff;
   display: grid;
   place-items: center;
-  box-shadow: 0 4px 14px rgba(14, 159, 131, 0.28);
+  box-shadow: var(--hx-elev-brand);
   cursor: pointer;
   padding: 0;
-  transition: background 0.15s ease, transform 0.15s ease;
+  transition: background 0.15s ease, transform 0.15s ease, opacity 0.2s ease;
 }
 .dock-plus svg {
   width: 22px;
@@ -322,90 +321,84 @@ onBeforeUnmount(() => {
 }
 
 .plus-sheet h3 {
-  margin: 0 0 14px;
+  margin: 0 0 4px;
   text-align: center;
   font-size: 17px;
-  font-weight: 900;
+  font-weight: 800;
+}
+.plus-sub {
+  margin: 0 0 14px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--hx-n-700);
 }
 .plus-handle {
-  width: 40px;
+  width: 36px;
   height: 4px;
   border-radius: 99px;
   background: var(--hx-n-200);
-  margin: 0 auto 12px;
+  margin: 6px auto 14px;
 }
 .plus-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px 6px;
 }
 .plus-item {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 14px 6px 12px;
+  padding: 8px 4px;
   border: 0;
-  border-radius: 18px;
-  background: var(--hx-teal-50);
+  border-radius: 14px;
+  background: transparent;
   font-family: inherit;
   cursor: pointer;
 }
 .plus-item em {
   font-style: normal;
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--hx-n-900);
 }
 .plus-ico {
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   border-radius: 14px;
   display: grid;
   place-items: center;
 }
 .plus-ic {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   stroke: currentColor;
   fill: none;
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.plus-ico.t-teal { background: var(--hx-teal-100); color: var(--hx-teal-700); }
-.plus-ico.t-mint { background: var(--hx-mint-bg); color: var(--hx-teal-700); }
-.plus-ico.t-warn { background: var(--hx-warn-bg); color: var(--hx-warn-text); }
-.plus-ico.t-info { background: var(--hx-info-bg); color: var(--hx-info-text); }
-.plus-ico.t-water { background: var(--hx-water-soft); color: var(--hx-water); }
-.plus-ico.t-sleep { background: var(--hx-sleep-soft); color: var(--hx-sleep); }
-.plus-ico.t-mood { background: var(--hx-mood-soft); color: var(--hx-mood); }
-.plus-tag {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 9px;
-  background: var(--hx-warn-bg);
-  color: var(--hx-warn-text);
-  font-size: 10px;
-  font-weight: 900;
-  display: grid;
-  place-items: center;
-}
-.plus-scan {
+.plus-ico.t-weight { background: var(--hx-c-weight-bg); color: var(--hx-c-weight); }
+.plus-ico.t-bp { background: var(--hx-c-bp-bg); color: var(--hx-c-bp); }
+.plus-ico.t-sugar { background: var(--hx-c-sugar-bg); color: var(--hx-c-sugar); }
+.plus-ico.t-med { background: var(--hx-c-med-bg); color: var(--hx-c-med); }
+.plus-ico.t-diet { background: var(--hx-c-diet-bg); color: var(--hx-c-diet); }
+.plus-ico.t-move { background: var(--hx-c-move-bg); color: var(--hx-c-move); }
+.plus-ico.t-sleep { background: var(--hx-c-sleep-bg); color: var(--hx-c-sleep); }
+.plus-ico.t-mood { background: var(--hx-c-mood-bg); color: var(--hx-c-mood); }
+.plus-close {
   display: block;
   width: 100%;
   margin-top: 14px;
   border: 0;
   background: var(--hx-n-100);
   border-radius: 999px;
-  padding: 10px;
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--hx-muted);
+  padding: 12px;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--hx-n-700);
   font-family: inherit;
   cursor: pointer;
 }

@@ -19,6 +19,7 @@ import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.mapper.PeopleAccountMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.patientcard.mapper.AccountPatientMapper;
+import com.github.promeg.pinyinhelper.Pinyin;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -229,7 +230,8 @@ public class IdentityService {
     }
 
     public List<PeopleProfile> searchPeople(String tenantId, String keyword, int limit) {
-        return peopleProfileMapper.searchByTenant(tenantId, keyword, limit);
+        String kw = StringUtils.hasText(keyword) ? keyword.trim().toLowerCase(Locale.ROOT) : keyword;
+        return peopleProfileMapper.searchByTenant(tenantId, kw, limit);
     }
 
 
@@ -252,10 +254,91 @@ public class IdentityService {
         opsAccountMapper.insert(account);
     }
 
+    /**
+     * 姓名检索键：全拼 + 首字母，空格分隔，如 {@code zhangjianguo zjg}。
+     * <p>写入 {@code people_profile.name_pinyin}；检索只读该字段。
+     */
     public static String toPinyinKey(String name) {
         if (!StringUtils.hasText(name)) {
             return null;
         }
-        return name.trim().toLowerCase(Locale.ROOT);
+        String trimmed = name.trim();
+        StringBuilder full = new StringBuilder();
+        StringBuilder initials = new StringBuilder();
+        for (int i = 0; i < trimmed.length(); ) {
+            int cp = trimmed.codePointAt(i);
+            i += Character.charCount(cp);
+            if (Character.isWhitespace(cp) || isNamePunctuation(cp)) {
+                continue;
+            }
+            if (cp <= 0xFFFF && Pinyin.isChinese((char) cp)) {
+                String py = Pinyin.toPinyin((char) cp).toLowerCase(Locale.ROOT);
+                full.append(py);
+                if (!py.isEmpty()) {
+                    initials.append(py.charAt(0));
+                }
+            } else if (Character.isLetterOrDigit(cp)) {
+                int lower = Character.toLowerCase(cp);
+                full.appendCodePoint(lower);
+                initials.appendCodePoint(lower);
+            }
+        }
+        if (full.isEmpty()) {
+            return trimmed.toLowerCase(Locale.ROOT);
+        }
+        String fullKey = full.toString();
+        String initialKey = initials.toString();
+        if (!StringUtils.hasText(initialKey) || initialKey.equals(fullKey)) {
+            return fullKey;
+        }
+        return fullKey + " " + initialKey;
+    }
+
+    /**
+     * 关键字是否命中已落库的 {@code name_pinyin}（全拼或首字母）。
+     * <p>检索热路径只读库字段，不在内存里即时转拼音；存量靠启动回填写入。
+     */
+    public static boolean matchesNamePinyin(String storedPinyin, String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return false;
+        }
+        String q = normalizePinyinQuery(keyword);
+        if (!StringUtils.hasText(q)) {
+            return false;
+        }
+        return pinyinKeyContains(storedPinyin, q);
+    }
+
+    private static String normalizePinyinQuery(String keyword) {
+        StringBuilder sb = new StringBuilder();
+        String raw = keyword.trim().toLowerCase(Locale.ROOT);
+        for (int i = 0; i < raw.length(); ) {
+            int cp = raw.codePointAt(i);
+            i += Character.charCount(cp);
+            if (Character.isWhitespace(cp) || isNamePunctuation(cp)) {
+                continue;
+            }
+            if (Character.isLetterOrDigit(cp)) {
+                sb.appendCodePoint(cp);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static boolean pinyinKeyContains(String key, String q) {
+        if (!StringUtils.hasText(key) || !StringUtils.hasText(q)) {
+            return false;
+        }
+        String lower = key.toLowerCase(Locale.ROOT);
+        for (String part : lower.split("\\s+")) {
+            if (part.contains(q)) {
+                return true;
+            }
+        }
+        return lower.replace(" ", "").contains(q);
+    }
+
+    private static boolean isNamePunctuation(int cp) {
+        return cp == '·' || cp == '•' || cp == '-' || cp == '_' || cp == '.' || cp == '．';
     }
 }

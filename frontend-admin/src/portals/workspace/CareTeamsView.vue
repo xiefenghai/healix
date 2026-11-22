@@ -2,9 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
-import { api, getCurrentOrgId, getCurrentOrgName, getStaffId } from '../../shared/http'
+import { api, getCurrentOrgId, getStaffId } from '../../shared/http'
 import { StaffRole } from '../../shared/enums'
 import { avatarGradients } from '../../shared/palette'
+import {
+  formatPlanRatePct,
+  planRateBarWidth,
+} from '../../shared/adherence-rate'
 import DeleteCareTeamDialog, { type DeleteCareTeamTarget } from './DeleteCareTeamDialog.vue'
 
 interface CareTeamListItem {
@@ -26,14 +30,30 @@ interface OrgStaffItem {
   roles: string[]
 }
 
+interface AdherenceTeamSlice {
+  careTeamId?: string | null
+  careTeamName: string
+  planRate?: number | null
+}
+
+interface AdherenceOverview {
+  planRate?: number | null
+  teams?: AdherenceTeamSlice[]
+}
+
+type SortKey = 'members' | 'created' | 'name'
+type DoctorFilter = 'all' | 'unbound'
+
 const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
 const list = ref<CareTeamListItem[]>([])
 const keyword = ref('')
-/** all | unbound */
-const doctorFilter = ref<'all' | 'unbound'>('all')
+const doctorFilter = ref<DoctorFilter>('all')
+const managerFilter = ref<string | ''>('')
+const sortKey = ref<SortKey>('members')
 const staffList = ref<OrgStaffItem[]>([])
+const overview = ref<AdherenceOverview | null>(null)
 const searchReady = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -83,20 +103,63 @@ const doctors = computed(() => staffList.value.filter((s) => s.roles?.includes(S
 
 const totalMembers = computed(() => list.value.reduce((sum, t) => sum + (t.memberCount || 0), 0))
 const careManagerCount = computed(() => {
-  const ids = new Set(
-    list.value.map((t) => t.primaryCareManagerStaffId).filter(Boolean),
-  )
+  const ids = new Set(list.value.map((t) => t.primaryCareManagerStaffId).filter(Boolean))
   return ids.size || careManagers.value.length
 })
 const unboundDoctorCount = computed(
   () => list.value.filter((t) => !t.primaryDoctorStaffId && !t.primaryDoctorName).length,
 )
+const avgPerTeam = computed(() => {
+  if (!list.value.length) return null
+  return Math.round(totalMembers.value / list.value.length)
+})
+const orgPlanRate = computed(() => overview.value?.planRate ?? null)
+
+const planRateByTeamId = computed(() => {
+  const map = new Map<string, number | null>()
+  for (const t of overview.value?.teams || []) {
+    if (t.careTeamId) map.set(t.careTeamId, t.planRate ?? null)
+  }
+  return map
+})
+
+/** 工具栏「主责健管师」选项：来自当前列表去重 */
+const managerOptions = computed(() => {
+  const seen = new Map<string, string>()
+  for (const t of list.value) {
+    const id = t.primaryCareManagerStaffId
+    if (!id || seen.has(id)) continue
+    seen.set(id, t.primaryCareManagerName || id)
+  }
+  return [...seen.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+})
 
 const onlyUnboundDoctor = computed(() => doctorFilter.value === 'unbound')
 
 const displayList = computed(() => {
-  if (!onlyUnboundDoctor.value) return list.value
-  return list.value.filter((t) => !hasDoctor(t))
+  let rows = [...list.value]
+  if (onlyUnboundDoctor.value) {
+    rows = rows.filter((t) => !hasDoctor(t))
+  }
+  if (managerFilter.value) {
+    rows = rows.filter((t) => t.primaryCareManagerStaffId === managerFilter.value)
+  }
+  rows.sort((a, b) => {
+    if (sortKey.value === 'members') {
+      const d = (b.memberCount || 0) - (a.memberCount || 0)
+      if (d !== 0) return d
+    } else if (sortKey.value === 'created') {
+      const d = String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+      if (d !== 0) return d
+    } else {
+      const d = (a.name || '').localeCompare(b.name || '', 'zh')
+      if (d !== 0) return d
+    }
+    return (a.teamCode || '').localeCompare(b.teamCode || '', 'zh')
+  })
+  return rows
 })
 
 const AVATAR_GRADIENTS = [...avatarGradients]
@@ -122,8 +185,18 @@ function hasDoctor(row: CareTeamListItem) {
   return !!(row.primaryDoctorStaffId || row.primaryDoctorName)
 }
 
-function toggleUnboundFilter() {
-  doctorFilter.value = doctorFilter.value === 'unbound' ? 'all' : 'unbound'
+function teamPlanRate(row: CareTeamListItem): number | null {
+  const v = planRateByTeamId.value.get(row.id)
+  return v === undefined ? null : v
+}
+
+function formatRate(rate?: number | null) {
+  return formatPlanRatePct(rate)
+}
+
+function isHighAdherence(row: CareTeamListItem) {
+  const r = teamPlanRate(row)
+  return r != null && r >= 0.8
 }
 
 async function ensureOrg() {
@@ -137,6 +210,15 @@ async function ensureOrg() {
 async function loadStaff() {
   const res = await api<{ data: OrgStaffItem[] }>('/api/b/v1/org-staff')
   staffList.value = res.data ?? []
+}
+
+async function loadOverview() {
+  try {
+    const res = await api<{ data: AdherenceOverview }>('/api/b/v1/adherence/overview')
+    overview.value = res.data
+  } catch {
+    overview.value = null
+  }
 }
 
 async function load() {
@@ -219,13 +301,17 @@ function openDeleteTeam(row: CareTeamListItem) {
 }
 
 async function onTeamDeleted() {
-  await load()
+  await Promise.all([load(), loadOverview()])
+}
+
+function onExportClick() {
+  ElMessage.info('导出即将开放')
 }
 
 onMounted(async () => {
   if (!(await ensureOrg())) return
   try {
-    await Promise.all([loadStaff(), load()])
+    await Promise.all([loadStaff(), load(), loadOverview()])
     await maybeOpenCreateFromQuery()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
@@ -257,72 +343,113 @@ watch(keyword, () => {
         <h1>健管组</h1>
         <p>
           共 <strong class="em">{{ list.length }}</strong> 个健管组
-          · 在管 <strong class="em">{{ totalMembers }}</strong> 位患者
+          · 在管 <strong class="em">{{ totalMembers.toLocaleString('zh-CN') }}</strong> 位患者
+          · 平均每组
+          <strong class="em">{{ avgPerTeam == null ? '—' : avgPerTeam }}</strong>
+          人
           <template v-if="unboundDoctorCount">
             · <strong class="em warn">{{ unboundDoctorCount }}</strong> 组未绑主责医生
           </template>
-          · {{ getCurrentOrgName() || '-' }}
         </p>
       </div>
-      <div class="actions">
-        <el-button @click="router.push('/workspace/orgs')">切换机构</el-button>
-        <el-button type="primary" @click="openCreate">新建健管组</el-button>
+      <div class="head-actions">
+        <button type="button" class="btn btn-ghost" @click="onExportClick">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          导出
+        </button>
+        <button type="button" class="btn btn-primary" @click="openCreate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          新建健管组
+        </button>
       </div>
     </div>
 
-    <div class="summary-row">
-      <div class="stat-card stat-card--primary">
-        <div class="stat-icon tone-brand">组</div>
+    <section class="stat-grid">
+      <div class="stat">
+        <div class="stat-icon tone-brand" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="9" cy="7" r="4" />
+            <path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" />
+          </svg>
+        </div>
         <div>
           <div class="stat-label">健管组总数</div>
           <div class="stat-val">{{ list.length }}</div>
         </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon tone-teal">员</div>
+      <div class="stat">
+        <div class="stat-icon tone-teal" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+          </svg>
+        </div>
         <div>
           <div class="stat-label">在管患者</div>
-          <div class="stat-val">{{ totalMembers }}</div>
+          <div class="stat-val">{{ totalMembers.toLocaleString('zh-CN') }}</div>
         </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon tone-amber">师</div>
+      <div class="stat">
+        <div class="stat-icon tone-amber" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="7" r="4" />
+            <path d="M5 21v-2a7 7 0 0 1 14 0v2" />
+          </svg>
+        </div>
         <div>
           <div class="stat-label">主责健管师</div>
           <div class="stat-val">{{ careManagerCount }}</div>
         </div>
       </div>
-      <button
-        type="button"
-        class="stat-card clickable"
-        :class="{ active: onlyUnboundDoctor }"
-        :title="onlyUnboundDoctor ? '点击取消筛选' : '点击筛选未绑医生的组'"
-        @click="toggleUnboundFilter"
-      >
-        <div class="stat-icon" :class="unboundDoctorCount ? 'tone-rose' : 'tone-violet'">医</div>
-        <div>
-          <div class="stat-label">未绑主责医生</div>
-          <div class="stat-val" :class="{ warn: unboundDoctorCount > 0 }">
-            {{ unboundDoctorCount }}
-          </div>
+      <div class="stat">
+        <div class="stat-icon tone-violet" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+          </svg>
         </div>
-      </button>
-    </div>
+        <div>
+          <div class="stat-label">平均依从率</div>
+          <div class="stat-val">{{ formatRate(orgPlanRate) }}</div>
+        </div>
+      </div>
+    </section>
 
     <div class="toolbar">
       <el-input
         v-model="keyword"
-        placeholder="搜索健管组名称"
+        placeholder="搜索健管组名称 / 编码"
         clearable
         class="toolbar-search"
       />
       <el-select
-        v-model="doctorFilter"
-        class="toolbar-filter"
-        placeholder="筛选"
+        v-model="managerFilter"
+        clearable
+        placeholder="主责健管师: 全部"
+        class="filter-ctl"
+        style="width: 160px"
       >
+        <el-option
+          v-for="m in managerOptions"
+          :key="m.id"
+          :label="m.name"
+          :value="m.id"
+        />
+      </el-select>
+      <el-select v-model="sortKey" class="filter-ctl" style="width: 140px">
+        <el-option value="members" label="排序: 成员数" />
+        <el-option value="created" label="排序: 创建时间" />
+        <el-option value="name" label="排序: 名称" />
+      </el-select>
+      <el-select v-model="doctorFilter" class="filter-ctl" style="width: 150px">
         <el-option value="all" label="全部健管组" />
-        <el-option value="unbound" label="仅看未绑医生" />
+        <el-option value="unbound" label="仅未绑医生" />
       </el-select>
     </div>
 
@@ -334,10 +461,18 @@ watch(keyword, () => {
         @click="openDetail(row)"
       >
         <div class="team-head">
-          <div class="team-name">{{ row.name }}</div>
-          <div class="head-actions" @click.stop>
+          <div class="team-head-text">
+            <div class="team-name">{{ row.name }}</div>
+          </div>
+          <div class="card-more" @click.stop>
             <el-dropdown trigger="click" @command="(cmd: string) => onCardCommand(cmd, row)">
-              <button type="button" class="more-btn" aria-label="更多操作">⋯</button>
+              <button type="button" class="more-btn" aria-label="更多操作">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <circle cx="12" cy="5" r="1.5" />
+                  <circle cx="12" cy="12" r="1.5" />
+                  <circle cx="12" cy="19" r="1.5" />
+                </svg>
+              </button>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="detail">查看详情</el-dropdown-item>
@@ -350,9 +485,8 @@ watch(keyword, () => {
             </el-dropdown>
           </div>
         </div>
-        <div class="team-meta">创建于 {{ formatDate(row.createdAt) }}</div>
 
-        <div class="collab-row">
+        <div class="team-leads">
           <div
             class="lead-avatar"
             :style="avatarStyle(row.primaryCareManagerName)"
@@ -360,32 +494,57 @@ watch(keyword, () => {
           >
             {{ avatarChar(row.primaryCareManagerName) }}
           </div>
-          <span class="name">{{ row.primaryCareManagerName || '未指定' }}</span>
-          <span class="role-chip">主责</span>
-          <template v-if="hasDoctor(row)">
-            <span class="dot">·</span>
-            <div
-              class="lead-avatar sm"
-              :style="avatarStyle(row.primaryDoctorName || undefined)"
-              :title="row.primaryDoctorName || '主责医生'"
-            >
-              {{ avatarChar(row.primaryDoctorName || undefined) }}
-            </div>
-            <span class="name">{{ row.primaryDoctorName }}</span>
-            <span class="role-chip muted">医生</span>
-          </template>
-          <template v-else>
-            <span class="dot">·</span>
-            <span class="no-doctor">暂无医生</span>
-          </template>
+          <div class="lead-info">
+            <div class="name">{{ row.primaryCareManagerName || '未指定' }}</div>
+            <div class="role">主责健管师</div>
+          </div>
+          <div class="lead-stack">
+            <template v-if="hasDoctor(row)">
+              <div
+                class="av"
+                :style="avatarStyle(row.primaryDoctorName || undefined)"
+                :title="`主责医生 · ${row.primaryDoctorName}`"
+              >
+                {{ avatarChar(row.primaryDoctorName || undefined) }}
+              </div>
+            </template>
+            <div v-else class="av more-av" title="未绑主责医生">医</div>
+          </div>
         </div>
 
         <div class="team-tags">
-          <span class="tag tag-patients">{{ row.memberCount ?? 0 }} 位患者</span>
+          <span v-if="!hasDoctor(row)" class="tag rose">未绑医生</span>
+          <span v-if="isHighAdherence(row)" class="tag teal">高依从</span>
+        </div>
+
+        <div class="team-stats">
+          <div class="t-stat">
+            <div class="v">{{ row.memberCount ?? 0 }}</div>
+            <div class="l">成员</div>
+          </div>
+          <div class="t-stat">
+            <div class="v">{{ formatRate(teamPlanRate(row)) }}</div>
+            <div class="l">依从率</div>
+          </div>
+          <div class="t-stat">
+            <div class="v" :class="{ warn: !hasDoctor(row) }">
+              {{ hasDoctor(row) ? '已绑' : '未绑' }}
+            </div>
+            <div class="l">医生</div>
+          </div>
         </div>
 
         <div class="team-foot">
-          <span class="foot-link">查看详情 →</span>
+          <span>创建于 {{ formatDate(row.createdAt) }}</span>
+          <div v-if="teamPlanRate(row) != null" class="progress-mini">
+            <div class="bar">
+              <div
+                class="fill"
+                :style="{ width: `${planRateBarWidth(teamPlanRate(row))}%` }"
+              />
+            </div>
+            <span>{{ formatRate(teamPlanRate(row)) }}</span>
+          </div>
         </div>
       </article>
 
@@ -395,7 +554,9 @@ watch(keyword, () => {
         :description="
           onlyUnboundDoctor && list.length
             ? '当前没有未绑医生的健管组'
-            : '暂无健管组，点击右上角新建'
+            : managerFilter && list.length
+              ? '当前筛选下没有健管组'
+              : '暂无健管组，点击右上角新建'
         "
       />
     </div>
@@ -479,143 +640,167 @@ watch(keyword, () => {
 <style scoped>
 .care-teams {
   width: 100%;
+  padding-bottom: 24px;
 }
 
 .em {
-  color: var(--ink-800);
+  color: #1e293b;
   font-weight: 600;
-}
-
-.create-care-team-form :deep(.el-form-item) {
-  margin-bottom: 18px;
-}
-
-.create-care-team-form :deep(.el-form-item__label) {
-  font-weight: 600;
-  color: var(--ink-700, var(--ink-750));
-}
-
-.field-hint {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--ink-400, var(--gray-400));
 }
 
 .em.warn,
-.stat-val.warn {
-  color: var(--rose-600);
+.t-stat .v.warn {
+  color: #e11d48;
 }
 
-.summary-row {
+.head-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  background: none;
+  transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.btn-ghost {
+  background: #fff;
+  color: #334155;
+  border-color: #e2e8f0;
+}
+
+.btn-ghost:hover {
+  background: #f8fafc;
+}
+
+.btn-primary {
+  background: #2c7ef8;
+  color: #fff;
+  box-shadow: 0 4px 10px -2px rgba(44, 126, 248, 0.4);
+}
+
+.btn-primary:hover {
+  background: #1e63d9;
+  transform: translateY(-1px);
+}
+
+/* —— Stats —— */
+.stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 14px;
+  margin-bottom: 20px;
 }
 
-.stat-card {
+.stat {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 18px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--admin-card);
-  border: 1px solid var(--ink-200);
-  border-radius: var(--admin-radius);
-  box-shadow: var(--admin-shadow);
-  text-align: left;
-}
-
-.stat-card.clickable {
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-  transition:
-    border-color 160ms,
-    box-shadow 160ms;
-}
-
-.stat-card.clickable:hover,
-.stat-card.clickable.active {
-  border-color: var(--rose-300);
-  box-shadow: 0 0 0 3px var(--auto-rgba-2203838008);
+  gap: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .stat-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 700;
+}
+
+.stat-icon svg {
+  width: 20px;
+  height: 20px;
 }
 
 .stat-icon.tone-brand {
-  background: var(--brand-50);
-  color: var(--brand-500);
+  background: #eaf2ff;
+  color: #2c7ef8;
 }
-
 .stat-icon.tone-teal {
-  background: var(--teal-50);
-  color: var(--teal-600);
+  background: #e6faf7;
+  color: #0f766e;
 }
-
 .stat-icon.tone-amber {
-  background: var(--amber-50);
-  color: var(--amber-600);
+  background: #fef6e2;
+  color: #b45309;
 }
-
 .stat-icon.tone-violet {
-  background: var(--violet-50);
-  color: var(--violet-700);
-}
-
-.stat-icon.tone-rose {
-  background: var(--rose-100);
-  color: var(--rose-600);
+  background: #f1ecfe;
+  color: #6d28d9;
 }
 
 .stat-label {
   font-size: 12px;
-  color: var(--ink-500);
+  color: #64748b;
   font-weight: 500;
 }
 
 .stat-val {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
-  color: var(--ink-900);
-  margin-top: 0;
+  color: #0f172a;
+  margin-top: 2px;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
 
+/* —— Toolbar —— */
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
+  padding: 14px 18px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   margin-bottom: 14px;
 }
 
 .toolbar-search {
-  width: 280px;
-  max-width: 100%;
-  flex: 0 0 280px;
+  flex: 1;
+  min-width: 220px;
 }
 
-.toolbar-filter {
-  width: 160px;
-  flex: 0 0 160px;
+.toolbar :deep(.el-input__wrapper),
+.toolbar :deep(.el-select__wrapper) {
+  min-height: 36px;
+  border-radius: 8px;
 }
 
+.filter-ctl {
+  flex-shrink: 0;
+}
+
+/* —— Cards —— */
 .team-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 350px));
-  gap: 20px;
-  justify-content: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
   min-height: 120px;
 }
 
@@ -625,28 +810,21 @@ watch(keyword, () => {
 }
 
 .team-card {
-  width: 100%;
-  max-width: 350px;
-  background: var(--white);
-  border: 1px solid var(--gray-200);
+  background: #fff;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
-  padding: 14px 16px 0;
+  padding: 18px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  transition:
-    border-color 180ms ease,
-    box-shadow 180ms ease;
+  transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .team-card:hover {
-  border-color: var(--brand-500);
-  box-shadow: 0 4px 12px var(--auto-rgba-000005);
-}
-
-.team-card:hover .foot-link {
-  color: var(--brand-500);
+  border-color: #2c7ef8;
+  box-shadow: 0 4px 16px -4px rgba(44, 126, 248, 0.12);
+  transform: translateY(-2px);
 }
 
 .team-head {
@@ -654,29 +832,23 @@ watch(keyword, () => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  margin-bottom: 12px;
+}
+
+.team-head-text {
+  min-width: 0;
 }
 
 .team-name {
-  min-width: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
-  color: var(--ink-900);
+  color: #0f172a;
   line-height: 1.35;
   word-break: break-word;
 }
 
-.team-meta {
-  margin-top: -4px;
-  font-size: 12px;
-  color: var(--ink-400, var(--gray-400));
-  line-height: 1.4;
-}
-
-.head-actions {
-  display: flex;
-  align-items: center;
+.card-more {
   flex-shrink: 0;
-  margin: -4px -6px 0 0;
 }
 
 .more-btn {
@@ -685,139 +857,221 @@ watch(keyword, () => {
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: var(--ink-400);
+  color: #94a3b8;
   cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.more-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .more-btn:hover {
-  background: var(--gray-100);
-  color: var(--ink-700);
+  background: #f1f5f9;
+  color: #1e293b;
 }
 
 .danger {
-  color: var(--rose-500);
+  color: #ef4444;
 }
 
-.collab-row {
+.team-leads {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 1.3;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 12px;
 }
 
 .lead-avatar {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: var(--white);
+  color: #fff;
   font-size: 11px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
-.lead-avatar.sm {
-  width: 22px;
-  height: 22px;
-  font-size: 11px;
+.lead-info {
+  min-width: 0;
+  flex: 1;
 }
 
-.collab-row .name {
+.lead-info .name {
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--ink-800);
+  color: #1e293b;
+  line-height: 1.3;
 }
 
-.role-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 6px;
-  height: 18px;
-  border-radius: 999px;
+.lead-info .role {
   font-size: 11px;
-  font-weight: 500;
-  color: var(--brand-800);
-  background: var(--blue-50);
+  color: #64748b;
 }
 
-.role-chip.muted {
-  color: var(--ink-500);
-  background: var(--gray-100);
+.lead-stack {
+  display: flex;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
-.collab-row .dot {
-  color: var(--ink-300);
+.lead-stack .av {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  margin-left: -6px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
 }
 
-.no-doctor {
-  color: var(--ink-400, var(--gray-400));
-  font-size: 12px;
+.lead-stack .av:first-child {
+  margin-left: 0;
+}
+
+.lead-stack .more-av {
+  background: #f1f5f9;
+  color: #64748b;
 }
 
 .team-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
+  margin-bottom: 12px;
+  min-height: 0;
 }
 
-.tag-patients {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
-  background: var(--blue-50);
-  color: var(--brand-800);
+.team-tags:empty {
+  display: none;
+  margin: 0;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.tag.teal {
+  background: #e6faf7;
+  color: #0f766e;
+}
+
+.tag.rose {
+  background: #fee9e7;
+  color: #ef4444;
+}
+
+.team-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.t-stat {
+  text-align: center;
+  padding: 8px 0;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.t-stat .v {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.t-stat .l {
+  font-size: 10.5px;
+  color: #94a3b8;
+  margin-top: 2px;
 }
 
 .team-foot {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: #94a3b8;
   margin-top: auto;
-  margin-left: -16px;
-  margin-right: -16px;
-  padding: 10px 16px;
-  border-top: 0 solid var(--gray-100);
-  font-size: 12px;
+  gap: 8px;
 }
 
-.foot-link {
-  color: var(--ink-500);
-  font-weight: 500;
-  transition: color 160ms;
+.progress-mini {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.progress-mini .bar {
+  width: 60px;
+  height: 4px;
+  background: #f1f5f9;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-mini .fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2c7ef8, #00b8a9);
+  border-radius: inherit;
+}
+
+.create-care-team-form :deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
+.create-care-team-form :deep(.el-form-item__label) {
+  font-weight: 600;
+  color: #334155;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #94a3b8;
 }
 
 @media (max-width: 1280px) {
-  .summary-row {
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .team-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 720px) {
-  .summary-row {
+@media (max-width: 960px) {
+  .stat-grid,
+  .team-grid {
     grid-template-columns: 1fr;
   }
 
-  .team-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .team-card {
-    max-width: none;
-  }
-
   .toolbar-search,
-  .toolbar-filter {
+  .filter-ctl {
     flex: 1 1 100%;
-    width: 100%;
+    width: 100% !important;
   }
 }
 </style>

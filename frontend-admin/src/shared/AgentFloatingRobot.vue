@@ -36,12 +36,17 @@ function loadPos() {
     const raw = localStorage.getItem(POS_KEY)
     if (raw) {
       const p = JSON.parse(raw) as { right?: number; bottom?: number }
-      if (typeof p.right === 'number' && typeof p.bottom === 'number') return clamp(p.right, p.bottom)
+      if (typeof p.right === 'number' && typeof p.bottom === 'number') {
+        // 旧默认贴底 22px 会挡住末行操作；低于安全高度时抬升一次
+        const bottom = p.bottom < 80 ? 100 : p.bottom
+        return clamp(p.right, bottom)
+      }
     }
   } catch {
     // ignore
   }
-  return { right: 22, bottom: 22 }
+  // 抬高默认位置，避免挡住列表末行「更多」等操作
+  return { right: 22, bottom: 100 }
 }
 
 function clamp(right: number, bottom: number) {

@@ -231,12 +231,13 @@ public class BWorkspaceController {
     /**
      * 分页列出当前机构患者。
      *
-     * @param keyword    姓名等关键字
-     * @param careTeamId 按照护团队筛选
-     * @param unassigned 是否仅看未分配团队患者
-     * @param watched    是否仅看当前员工重点关注患者
-     * @param page       页码，从 1 起
-     * @param size       每页条数，最大 100
+     * @param keyword     姓名 / 拼音（全拼或首字母）/ 手机号
+     * @param careTeamId  按照护团队筛选
+     * @param unassigned  是否仅看未分配团队患者
+     * @param watched     是否仅看当前员工重点关注患者
+     * @param diseaseCode 按病种 code 筛选（与病种档案一致，如 diabetes）
+     * @param page        页码，从 1 起
+     * @param size        每页条数，最大 100
      */
     @GetMapping("/org-patients")
     public ApiResult<PageResult<OrgPatientListItem>> listOrgPatients(
@@ -244,11 +245,12 @@ public class BWorkspaceController {
             @RequestParam(required = false) String careTeamId,
             @RequestParam(required = false) Boolean unassigned,
             @RequestParam(required = false) Boolean watched,
+            @RequestParam(required = false) String diseaseCode,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
         String orgId = SecurityUtils.requireCurrentOrgId();
         return ApiResult.ok(orgWorkspaceService.pageOrgPatients(
-                orgId, keyword, careTeamId, unassigned, watched, page, size));
+                orgId, keyword, careTeamId, unassigned, watched, diseaseCode, page, size));
     }
 
     /** 患者列表顶栏 KPI（在管 / 未入组 / 关注 / 本月与今日新增）。 */

@@ -60,6 +60,7 @@ deploy/docker/certs/
 
 # Local agent / tooling
 .workbuddy/
+.agents/
 
 # Python
 **/__pycache__/
@@ -67,5 +68,7 @@ deploy/docker/certs/
 
 # Marketing / temp assets (not product code)
 docs/sales/
+docs/tmp-vid*/
+docs/tmp-voice/
 healix-xiaohongshu*_assets/
 frontend-staff-public-tmp/

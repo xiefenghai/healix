@@ -18,7 +18,7 @@ const router = useRouter()
 const BIZ_MENUS = [
   { path: '/workspace/cockpit', label: '智能驾驶舱', icon: 'dashboard', group: '' },
   { path: '/workspace/patients', label: '患者管理', icon: 'user', group: '日常工作' },
-  { path: '/workspace/tasks', label: '工作台', icon: 'ticket', group: '日常工作' },
+  { path: '/workspace/tasks', label: '工作台任务', icon: 'ticket', group: '日常工作' },
   { path: '/workspace/care-chat', label: '患者沟通', icon: 'chat', group: '日常工作' },
   { path: '/workspace/adherence', label: '依从性看板', icon: 'chart', group: '日常工作' },
   { path: '/workspace/recipes', label: '食谱库', icon: 'dish', group: '知识库' },

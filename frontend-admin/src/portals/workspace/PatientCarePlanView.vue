@@ -18,7 +18,12 @@ import { notifyCockpitTasksPossiblyChanged } from '../../shared/cockpit-tasks-re
 import CarePlanEnergyRing from '../../shared/CarePlanEnergyRing.vue'
 import AllergyPanel from './AllergyPanel.vue'
 import PatientIntakeDetailView from './PatientIntakeDetailView.vue'
-import { allergyTick, fetchAllergySummary, type AllergySummary } from '../../shared/allergy'
+import {
+  allergyTick,
+  fetchAllergySummary,
+  formatAllergyBrief,
+  type AllergySummary,
+} from '../../shared/allergy'
 import { ageYearsFromBirthday, getIntakeStatus } from '../../shared/intake'
 import {
   highlightPlanSummaryHtml,
@@ -3204,17 +3209,12 @@ async function loadComposeMetricTrends() {
 
 const composeAllergyLabel = computed(() => {
   const s = allergySummary.value
-  if (s?.status === 'NKA') return '无已知过敏'
-  if (s?.status === 'HAS') {
-    return (
-      (s.items || [])
-        .map((it) => it.allergenName)
-        .filter(Boolean)
-        .slice(0, 4)
-        .join('、') || '有过敏史'
-    )
-  }
-  return '待确认'
+  const names = (s?.items || [])
+    .filter((it) => it.effective !== false)
+    .map((it) => it.allergenName)
+    .filter(Boolean)
+    .slice(0, 4)
+  return formatAllergyBrief(s?.status, names).text
 })
 
 /** 有具体过敏原时加强警示 */
@@ -3236,7 +3236,7 @@ const allergyKeywords = computed(() => {
     if (it.allergenName) words.add(it.allergenName)
   }
   for (const lab of s.bannerLabels || []) {
-    if (lab && lab !== '无已知过敏') words.add(lab)
+    if (lab && lab !== '无已知过敏' && lab !== '没有过敏') words.add(lab)
   }
   return [...words]
 })
@@ -7543,7 +7543,7 @@ watch(
               <span v-if="!editForm.dietAllergensAvoid.length" class="food-cloud-empty">
                 {{
                   allergySummary?.status === 'NKA'
-                    ? '暂无已知过敏'
+                    ? '没有过敏'
                     : allergyUnknown
                       ? '过敏史未采集'
                       : '暂无'

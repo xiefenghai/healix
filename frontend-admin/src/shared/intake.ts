@@ -1164,7 +1164,7 @@ const OPTION_SET_FALLBACKS: Record<string, string[]> = {
     'SHOULDER=肩颈',
     'OTHER=其他',
   ],
-  allergyStatus: ['NKA=没有已知过敏', 'HAS=有'],
+  allergyStatus: ['NKA=没有过敏', 'HAS=有', 'UNKNOWN=未采集'],
   foodAllergyTags: [
     'SEAFOOD=海鲜（统称）',
     'FISH=鱼类',

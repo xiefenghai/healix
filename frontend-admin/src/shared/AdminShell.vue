@@ -494,6 +494,11 @@ function onSwitchOrg() {
   width: 68px;
 }
 
+.sider.collapsed .sider-inner {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -555,9 +560,10 @@ function onSwitchOrg() {
 
 .sider-inner {
   flex: 1;
-  padding: 8px 0 12px;
+  padding: 10px 12px 12px;
   overflow-y: auto;
   overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .nav-title {
@@ -566,7 +572,7 @@ function onSwitchOrg() {
   letter-spacing: 0.1em;
   text-transform: none;
   color: #64748b;
-  padding: 8px 18px 8px;
+  padding: 8px 6px 8px;
 }
 
 .nav-title.spaced {
@@ -577,7 +583,7 @@ function onSwitchOrg() {
 
 .nav-divider {
   height: 1px;
-  margin: 10px 14px;
+  margin: 10px 4px;
   background: rgba(148, 163, 184, 0.12);
 }
 
@@ -648,19 +654,21 @@ function onSwitchOrg() {
 :deep(.side-menu) {
   border-right: none;
   background: transparent;
-  padding: 0 10px;
+  padding: 0;
+  width: 100% !important;
+  box-sizing: border-box;
 }
 
 :deep(.side-menu.el-menu--collapse) {
-  width: 68px;
-  padding: 0 8px;
+  width: 100% !important;
+  padding: 0;
 }
 
 :deep(.side-menu .el-menu-item) {
   height: 40px;
   line-height: 40px;
-  margin: 3px 0;
-  padding: 0 12px !important;
+  margin: 2px 0;
+  padding: 0 12px 0 14px !important;
   border-radius: 10px;
   color: #94a3b8;
   font-size: 13px;
@@ -670,6 +678,10 @@ function onSwitchOrg() {
   display: flex;
   align-items: center;
   gap: 11px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
   transition:
     color 0.15s ease,
     background 0.15s ease;
@@ -705,7 +717,8 @@ function onSwitchOrg() {
   background: linear-gradient(90deg, rgba(44, 126, 248, 0.28), rgba(44, 126, 248, 0.08)) !important;
   color: #fff !important;
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
+  border-radius: 10px;
+  box-shadow: none;
 }
 
 :deep(.side-menu .el-menu-item.is-active .el-icon) {
@@ -717,11 +730,12 @@ function onSwitchOrg() {
   content: '';
   position: absolute;
   left: 0;
-  top: 10px;
-  bottom: 10px;
+  top: 9px;
+  bottom: 9px;
   width: 3px;
   background: linear-gradient(180deg, #60a5fa, #2563eb);
   border-radius: 0 3px 3px 0;
+  z-index: 1;
 }
 
 :deep(.side-menu.el-menu--collapse .el-menu-item.is-active::before) {

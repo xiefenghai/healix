@@ -82,6 +82,24 @@
   --hx-elev-3: 0 16px 32px rgba(14, 159, 131, 0.14), 0 2px 8px rgba(19, 34, 46, 0.06);
   --hx-elev-brand: 0 6px 14px rgba(14, 159, 131, 0.24);
 
+  /* v11 品类色（快记 / 速记瓷片） */
+  --hx-c-weight: #0b7a66;
+  --hx-c-weight-bg: #e3f6ef;
+  --hx-c-bp: #a8243a;
+  --hx-c-bp-bg: #fde7ea;
+  --hx-c-sugar: #8a5c00;
+  --hx-c-sugar-bg: #fff3da;
+  --hx-c-med: #2c4f8f;
+  --hx-c-med-bg: #e9f0fd;
+  --hx-c-diet: #0b7a66;
+  --hx-c-diet-bg: #eefaf4;
+  --hx-c-move: #1f7a63;
+  --hx-c-move-bg: #e4f6f1;
+  --hx-c-sleep: #5b3cc4;
+  --hx-c-sleep-bg: #ece7ff;
+  --hx-c-mood: #b03060;
+  --hx-c-mood-bg: #ffe8f0;
+
   --hx-dur-1: 120ms;
   --hx-dur-2: 200ms;
   --hx-dur-3: 320ms;

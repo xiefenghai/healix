@@ -1435,26 +1435,30 @@ const stageQuickActions = computed((): QuickActionItem[] => {
     .filter((item): item is QuickActionItem => !!item)
 })
 
-/** 右栏主 CTA：取 stage 列表里第一个 primary，否则取第一项 */
-const primaryQuickAction = computed((): QuickActionItem | null => {
-  const all = stageQuickActions.value
-  if (!all.length) return null
-  return all.find((a) => a.primary) || all[0] || null
-})
-
-/** 次要快捷：排除主 CTA；默认只露少量，其余折叠 */
-const secondaryQuickActions = computed(() => {
-  const primary = primaryQuickAction.value
-  return stageQuickActions.value.filter((a) => a.key !== primary?.key)
-})
-const visibleSecondaryQuickActions = computed(() => {
-  const all = secondaryQuickActions.value
-  if (quickActionsExpanded.value || all.length <= QUICK_ACTION_PREVIEW) return all
-  return all.slice(0, QUICK_ACTION_PREVIEW)
-})
-const hiddenStageQuickActionCount = computed(() =>
-  Math.max(0, secondaryQuickActions.value.length - visibleSecondaryQuickActions.value.length),
-)
+function quickActionIconPath(icon?: QuickActionItem['icon']): string {
+  switch (icon) {
+    case 'followup':
+      return 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
+    case 'med':
+      return 'M9 3h6v4H9zM10 7h4v14h-4zM7 11h10'
+    case 'obs':
+      return 'M12 20V10M18 20V4M6 20v-4'
+    case 'intake':
+      return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8'
+    case 'archive':
+      return 'M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'
+    case 'plan':
+      return 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 12h6M9 16h6'
+    case 'report':
+      return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5'
+    case 'assess':
+      return 'M22 12h-4l-3 9L9 3l-3 9H2'
+    case 'assign':
+      return 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'
+    default:
+      return 'M12 5v14M5 12h14'
+  }
+}
 
 const hasOpenIntakeTodo = computed(() =>
   (focus.value?.openTasks || []).some(
@@ -1942,13 +1946,8 @@ const briefingUiActions = computed(() => {
 
 /** 默认收起简报，把视线留给名单与对话；可手动展开 */
 const briefingCollapsed = ref(true)
-/** 服务进度条默认收成「当前环节」，展开才看全流程 */
-const serviceFlowExpanded = ref(false)
-/** 右侧快捷办理：次要项折叠 */
-const quickActionsExpanded = ref(false)
 /** 右栏指标详情（备注/链接）默认收起 */
 const focusMetricsExpanded = ref(false)
-const QUICK_ACTION_PREVIEW = 3
 /** 刷新简报请求中（防连点，并配合占位打字动画） */
 const briefingLoading = ref(false)
 const briefingShownText = computed(() => {
@@ -2078,9 +2077,7 @@ function continueHintPatient() {
 watch(input, () => debouncedComposerNameHint())
 watch(focusPeopleId, (id) => {
   if (id) composerNameHint.value = null
-  quickActionsExpanded.value = false
   focusMetricsExpanded.value = false
-  serviceFlowExpanded.value = false
   expandedActionKeys.value = {}
 })
 
@@ -8950,20 +8947,9 @@ onUnmounted(() => {
           <div
             v-if="focusPeopleId && serviceFlowSteps.length"
             class="service-flow"
-            :class="{ expanded: serviceFlowExpanded }"
             :title="serviceFlowLabel ? `当前环节：${serviceFlowLabel}` : '标准服务流程'"
           >
-            <button
-              type="button"
-              class="sf-summary"
-              :aria-expanded="serviceFlowExpanded"
-              @click="serviceFlowExpanded = !serviceFlowExpanded"
-            >
-              <span class="sf-caption">当前</span>
-              <strong class="sf-now">{{ serviceFlowLabel || '服务中' }}</strong>
-              <span class="sf-expand">{{ serviceFlowExpanded ? '收起' : '全流程' }}</span>
-            </button>
-            <div v-if="serviceFlowExpanded" class="sf-track" role="list">
+            <div class="sf-track" role="list">
               <template v-for="(step, si) in serviceFlowSteps" :key="step.code">
                 <button
                   type="button"
@@ -9723,7 +9709,9 @@ onUnmounted(() => {
                   executionText ||
                   (focus.allergyText &&
                     focus.allergyText !== '无已知过敏' &&
-                    focus.allergyText !== '未询问')
+                    focus.allergyText !== '没有过敏' &&
+                    focus.allergyText !== '未询问' &&
+                    focus.allergyText !== '未采集')
                 "
                 class="focus-facts"
               >
@@ -9742,7 +9730,9 @@ onUnmounted(() => {
                   v-if="
                     focus.allergyText &&
                     focus.allergyText !== '无已知过敏' &&
-                    focus.allergyText !== '未询问'
+                    focus.allergyText !== '没有过敏' &&
+                    focus.allergyText !== '未询问' &&
+                    focus.allergyText !== '未采集'
                   "
                 >
                   <dt>过敏</dt>
@@ -9836,41 +9826,31 @@ onUnmounted(() => {
             </div>
 
             <div class="section quick-actions">
-              <button
-                v-if="primaryQuickAction"
-                type="button"
-                class="quick-primary"
-                :title="primaryQuickAction.label"
-                @click="primaryQuickAction.run()"
-              >
-                <span class="quick-primary-label">{{ primaryQuickAction.label }}</span>
-                <span class="quick-primary-go" aria-hidden="true">→</span>
-              </button>
-              <div v-if="visibleSecondaryQuickActions.length" class="quick-grid">
+              <div class="section-title">
+                快捷办理
+                <span v-if="focus.displayName" class="section-sub">
+                  针对 {{ focus.displayName }}
+                  <template v-if="serviceFlowLabel"> · {{ serviceFlowLabel }}</template>
+                </span>
+              </div>
+              <div class="quick-grid">
                 <button
-                  v-for="qa in visibleSecondaryQuickActions"
+                  v-for="qa in stageQuickActions"
                   :key="qa.key"
                   type="button"
                   class="quick-tile"
+                  :class="{ primary: qa.primary }"
                   :title="qa.label"
                   @click="qa.run()"
                 >
+                  <span class="quick-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path :d="quickActionIconPath(qa.icon)" />
+                    </svg>
+                  </span>
                   <span class="quick-tile-label">{{ qa.shortLabel || qa.label }}</span>
                 </button>
               </div>
-              <button
-                v-if="hiddenStageQuickActionCount > 0 || quickActionsExpanded"
-                type="button"
-                class="list-expand quick-more"
-                :aria-expanded="quickActionsExpanded"
-                @click="quickActionsExpanded = !quickActionsExpanded"
-              >
-                {{
-                  quickActionsExpanded
-                    ? '收起'
-                    : `更多 ${hiddenStageQuickActionCount}`
-                }}
-              </button>
             </div>
           </div>
         </template>
@@ -11469,7 +11449,7 @@ onUnmounted(() => {
   gap: 6px 8px;
   width: 100%;
   min-width: 0;
-  padding: 4px 8px;
+  padding: 6px 8px;
   border-radius: 8px;
   background: var(--ink-50);
   border: 1px solid var(--ink-100);
@@ -11478,64 +11458,13 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-.service-flow.expanded {
-  padding-bottom: 8px;
-}
-
-.sf-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-  margin: 0;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.sf-caption {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink-500, var(--gray-500));
-  letter-spacing: 0.02em;
-}
-
-.sf-now {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--brand-800, var(--ink-800));
-}
-
-.sf-expand {
-  flex-shrink: 0;
-  margin-left: auto;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink-400);
-}
-
-.sf-summary:hover .sf-expand {
-  color: var(--brand-700, var(--brand-800));
-}
-
 .sf-track {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 0;
-  flex: 1 1 100%;
+  flex: 1 1 auto;
   min-width: 0;
-  padding-top: 2px;
 }
 
 .sf-step {
@@ -13584,72 +13513,91 @@ onUnmounted(() => {
 }
 
 .section.quick-actions {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  flex-shrink: 0;
   margin: 0;
   padding: 10px 12px 12px;
   border-bottom: 0;
-  background: var(--white);
+  border-top: 1px solid var(--ink-100);
+  background: #fff;
 }
 
-.quick-primary {
+.section.quick-actions .section-title {
+  margin-bottom: 8px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin: 0 0 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--brand-200);
-  border-radius: 10px;
-  background: var(--blue-50);
-  color: var(--brand-800);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: var(--admin-transition);
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.quick-primary:hover {
-  background: var(--blue-100, var(--brand-100));
-  border-color: var(--blue-300, var(--brand-300));
-}
-
-.quick-primary-go {
-  color: var(--brand-600, var(--blue-600));
-  font-weight: 600;
+.section.quick-actions .section-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-400, #94a3b8);
 }
 
 .quick-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
 }
 
 .quick-tile {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
-  padding: 6px 4px;
+  gap: 6px;
+  min-height: 72px;
+  padding: 10px 6px;
   margin: 0;
-  background: var(--ink-50);
+  background: var(--ink-50, #f8fafc);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 12px;
   font: inherit;
-  color: var(--ink-700);
+  color: var(--ink-800);
   cursor: pointer;
   transition: var(--admin-transition);
 }
 
+.quick-tile.primary {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
 .quick-tile:hover {
-  background: var(--brand-50, var(--blue-50));
-  border-color: var(--brand-200);
-  color: var(--brand-700, var(--brand-800));
+  background: var(--brand-50, #eff6ff);
+  border-color: var(--brand-200, #bfdbfe);
+  color: var(--brand-700, #1d4ed8);
+}
+
+.quick-tile:hover .quick-ico {
+  background: #fff;
+  color: var(--brand-600, #2563eb);
+}
+
+.quick-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 1px solid var(--ink-100, #eef2f7);
+  color: var(--brand-600, #2563eb);
+  flex-shrink: 0;
+  transition: var(--admin-transition);
+}
+
+.quick-ico svg {
+  width: 14px;
+  height: 14px;
 }
 
 .quick-tile-label {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
   text-align: center;
 }

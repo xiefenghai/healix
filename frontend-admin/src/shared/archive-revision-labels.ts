@@ -160,7 +160,7 @@ const ALLERGY_VALUE_LABELS: Record<string, Record<string, string>> = {
   severity: { MILD: '轻度', MODERATE: '中度', SEVERE: '重度', UNKNOWN: '不详' },
   clinicalStatus: { ACTIVE: '仍过敏', RESOLVED: '已消失' },
   verification: { UNCONFIRMED: '患者自述', CONFIRMED: '已确认', REFUTED: '已排除' },
-  allergyStatus: { UNKNOWN: '未询问', NKA: '无已知过敏', HAS: '有过敏' },
+  allergyStatus: { UNKNOWN: '未采集', NKA: '没有过敏', HAS: '有过敏' },
   reactions: {
     RASH: '皮疹/荨麻疹',
     ITCH: '瘙痒',

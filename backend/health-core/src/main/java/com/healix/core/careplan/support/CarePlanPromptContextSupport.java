@@ -1187,7 +1187,7 @@ public final class CarePlanPromptContextSupport {
                 "SEDENTARY=久坐为主", "LIGHT=轻体力（站立走动较多）", "MODERATE=中等体力", "HEAVY=重体力"));
         m.put("status", parsePairs(
                 "NEVER=从不", "FORMER=已戒", "CURRENT=现在吸", "OCCASIONAL=偶尔", "REGULAR=经常",
-                "NONE=没有", "HAS=有", "NKA=没有已知过敏",
+                "NONE=没有", "HAS=有", "NKA=没有过敏", "UNKNOWN=未采集",
                 "none=没有", "has=有"));
         m.put("passive", parsePairs("YES=是", "NO=否", "UNKNOWN=不清楚"));
         m.put("quality", parsePairs("GOOD=好", "FAIR=一般", "POOR=差"));

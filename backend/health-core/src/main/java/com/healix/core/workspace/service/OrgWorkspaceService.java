@@ -772,11 +772,39 @@ public class OrgWorkspaceService {
             Boolean watched,
             int page,
             int size) {
+        return pageOrgPatients(orgId, keyword, careTeamId, unassigned, watched, null, page, size);
+    }
+
+    /**
+     * 机构患者分页列表：先按条件筛全量，再切片并只给当前页补评估标签 / 火苗。
+     *
+     * @param diseaseCode 病种 code（如 diabetes）；按病种档案展示名匹配，兼容同病种别名
+     */
+    public PageResult<OrgPatientListItem> pageOrgPatients(
+            String orgId,
+            String keyword,
+            String careTeamId,
+            Boolean unassigned,
+            Boolean watched,
+            String diseaseCode,
+            int page,
+            int size) {
         requireOrgWorkspaceAccess(orgId);
         int safePage = Math.max(1, page);
         int safeSize = Math.min(100, Math.max(1, size));
         List<OrgPatientListItem> all =
                 listOrgPatientsInternal(orgId, keyword, careTeamId, unassigned, watched, true, false);
+        if (StringUtils.hasText(diseaseCode)) {
+            String wantLabel = DiseaseCodeLabels.label(diseaseCode.trim());
+            if (!StringUtils.hasText(wantLabel)) {
+                all = List.of();
+            } else {
+                all = all.stream()
+                        .filter(item -> item.getDiseaseLabels() != null
+                                && item.getDiseaseLabels().stream().anyMatch(wantLabel::equals))
+                        .toList();
+            }
+        }
         int total = all.size();
         int from = (safePage - 1) * safeSize;
         if (from >= total) {
@@ -796,22 +824,28 @@ public class OrgWorkspaceService {
         return new PageResult<>(total, pageItems);
     }
 
-    /** 列表顶栏 KPI：在管 / 未入组 / 关注 / 本月与今日新增（不拉档案详情）。 */
+    /** 列表顶栏 KPI：在管 / 未入组 / 关注 / 本月与今日新增 / C 端激活 / 环比（不拉档案详情）。 */
     public OrgPatientListStats orgPatientStats(String orgId) {
         requireOrgWorkspaceAccess(orgId);
         Set<String> watchedPeopleIds = currentWatchPeopleIds(orgId);
         LocalDate today = LocalDate.now();
         YearMonth month = YearMonth.from(today);
+        YearMonth lastMonth = month.minusMonths(1);
+        LocalDate monthStart = month.atDay(1);
         long total = 0;
         long unassigned = 0;
         long watched = 0;
         long monthNew = 0;
         long todayNew = 0;
+        long lastMonthNew = 0;
+        long totalLastMonth = 0;
+        List<String> peopleIds = new ArrayList<>();
         for (PatientOrgMembership m : membershipMapper.listActiveByOrg(orgId)) {
             if (peopleProfileMapper.findById(m.getPeopleId()) == null) {
                 continue;
             }
             total++;
+            peopleIds.add(m.getPeopleId());
             CareTeamMember teamMember = careTeamMemberMapper.findPeopleInOrg(orgId, m.getPeopleId());
             if (teamMember == null) {
                 unassigned++;
@@ -821,15 +855,34 @@ public class OrgWorkspaceService {
             }
             if (m.getJoinedAt() != null) {
                 LocalDate joinedDay = m.getJoinedAt().toLocalDate();
-                if (YearMonth.from(joinedDay).equals(month)) {
+                YearMonth joinedMonth = YearMonth.from(joinedDay);
+                if (joinedMonth.equals(month)) {
                     monthNew++;
+                } else if (joinedMonth.equals(lastMonth)) {
+                    lastMonthNew++;
                 }
                 if (joinedDay.equals(today)) {
                     todayNew++;
                 }
+                // 上月末在管：入组日早于本月 1 日
+                if (joinedDay.isBefore(monthStart)) {
+                    totalLastMonth++;
+                }
+            } else {
+                // 无入组时间按存量计，避免环比被低估
+                totalLastMonth++;
             }
         }
-        return new OrgPatientListStats(total, unassigned, watched, monthNew, todayNew);
+        long clientLinked = 0;
+        if (!peopleIds.isEmpty()) {
+            clientLinked = accountPatientMapper.listLinkedPeopleIds(peopleIds).stream().distinct().count();
+        }
+        Double totalMomPct = null;
+        if (totalLastMonth > 0) {
+            totalMomPct = Math.round((total - totalLastMonth) * 1000.0 / totalLastMonth) / 10.0;
+        }
+        return new OrgPatientListStats(
+                total, unassigned, watched, monthNew, todayNew, clientLinked, totalMomPct, lastMonthNew);
     }
 
     /**
@@ -864,11 +917,12 @@ public class OrgWorkspaceService {
                 continue;
             }
             if (StringUtils.hasText(keyword)) {
-                String q = keyword.trim().toLowerCase();
-                boolean hitName = p.getDisplayName() != null && p.getDisplayName().contains(keyword.trim());
-                boolean hitPinyin =
-                        p.getNamePinyin() != null && p.getNamePinyin().contains(q);
-                if (!hitName && !hitPinyin) {
+                String raw = keyword.trim();
+                boolean hitName = p.getDisplayName() != null && p.getDisplayName().contains(raw);
+                boolean hitPinyin = IdentityService.matchesNamePinyin(p.getNamePinyin(), raw);
+                boolean hitMobile =
+                        p.getMobile() != null && p.getMobile().contains(raw);
+                if (!hitName && !hitPinyin && !hitMobile) {
                     continue;
                 }
             }

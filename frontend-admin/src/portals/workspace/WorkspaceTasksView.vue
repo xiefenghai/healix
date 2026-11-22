@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { palette } from '../../shared/palette'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -80,6 +79,8 @@ const pageSize = ref(10)
 const FULL_LIST_THRESHOLD = 20
 const DEFAULT_PAGE_SIZE = 10
 const summary = ref<WorkspaceTaskSummary | null>(null)
+/** 全部任务总量（独立探测，不依赖当前列表池） */
+const allTaskTotal = ref(0)
 const overdueCount = ref(0)
 const teams = ref<CareTeamListItem[]>([])
 const staff = ref<OrgStaffItem[]>([])
@@ -122,12 +123,18 @@ function ensureOrg() {
 }
 
 async function loadSummary() {
-  const [taskRes, cockpitRes] = await Promise.all([
+  const allQ = new URLSearchParams()
+  allQ.set('pool', 'ALL')
+  allQ.set('page', '1')
+  allQ.set('size', '1')
+  const [taskRes, cockpitRes, allRes] = await Promise.all([
     api<{ data: WorkspaceTaskSummary }>('/api/b/v1/workspace/tasks/summary'),
     api<{ data: { overdueCount?: number } }>('/api/b/v1/cockpit/summary').catch(() => null),
+    api<{ data: { total: number } }>(`/api/b/v1/workspace/tasks?${allQ}`).catch(() => null),
   ])
   summary.value = taskRes.data
   overdueCount.value = cockpitRes?.data?.overdueCount ?? 0
+  if (allRes?.data) allTaskTotal.value = allRes.data.total ?? 0
 }
 
 function buildListQuery(pageNo: number, size: number) {
@@ -213,6 +220,9 @@ async function loadList() {
   let data = await fetchListPage(reqPage, reqSize)
   total.value = data.total
   items.value = data.items ?? []
+  if (pool.value === 'ALL' && !focusOverdue.value) {
+    allTaskTotal.value = data.total
+  }
 
   if (total.value >= FULL_LIST_THRESHOLD) {
     // 大列表：固定默认 15/页；若刚才是探测请求则按正式分页重拉
@@ -224,6 +234,9 @@ async function loadList() {
       data = await fetchListPage(page.value, pageSize.value)
       total.value = data.total
       items.value = data.items ?? []
+      if (pool.value === 'ALL' && !focusOverdue.value) {
+        allTaskTotal.value = data.total
+      }
     }
   } else if (total.value > 0) {
     page.value = 1
@@ -355,18 +368,6 @@ function isDueOverdue(row: WorkspaceTaskItem) {
   return dueTone(row) === 'overdue'
 }
 
-/** 强制内联色：避免被表格全局灰字盖掉 */
-function dueTimeStyle(row: WorkspaceTaskItem): Record<string, string> {
-  const tone = dueTone(row)
-  if (tone === 'overdue') {
-    return { color: palette.rose500, fontWeight: '600', fontSize: '12px' }
-  }
-  if (tone === 'soon') {
-    return { color: palette.amber500, fontWeight: '600', fontSize: '12px' }
-  }
-  return { color: palette.gray500, fontWeight: '500', fontSize: '12px' }
-}
-
 function dueCellClass(row: WorkspaceTaskItem) {
   const tone = dueTone(row)
   return tone ? `is-${tone}` : ''
@@ -401,16 +402,62 @@ function taskTypeTone(taskType?: string): string {
   }
 }
 
+/** 设计稿按类型换图标（仅视觉，不改业务） */
+function taskTypeIcon(taskType?: string): 'doc' | 'phone' | 'edit' | 'clock' | 'book' | 'upload' | 'user' {
+  switch (taskType) {
+    case 'FOLLOW_UP':
+    case 'PLAN_NUDGE':
+      return 'phone'
+    case 'PLAN_CREATE':
+      return 'edit'
+    case 'REPORT_REVIEW':
+      return 'doc'
+    case 'TEAM_ASSIGN':
+      return 'book'
+    case 'METRIC_ALERT':
+    case 'EXERCISE_ALERT':
+    case 'MED_FEEDBACK':
+    case 'MED_VERIFY':
+    case 'ASSESSMENT_ESCALATION':
+    case 'ASSESSMENT_SUSPECTED':
+      return 'clock'
+    case 'QUESTIONNAIRE_EXPIRED':
+      return 'upload'
+    case 'ARCHIVE_SELF_REPORT':
+    case 'PROFILE_LINK':
+      return 'user'
+    default:
+      return 'doc'
+  }
+}
+
 function poolLabel(row: WorkspaceTaskItem) {
-  // 任务归属池：无处理人=公共，有领取人=个人
-  return row.assigneeStaffId ? '个人' : '公共'
+  // 与设计稿「归属池: 我的 / 公共」对齐
+  return row.assigneeStaffId ? '我的' : '公共'
 }
 
-function poolTagType(row: WorkspaceTaskItem): 'warning' | 'info' {
-  return row.assigneeStaffId ? 'warning' : 'info'
+/** 状态胶囊色：逾期待处理偏红，即将到期偏琥珀 */
+function statusPillTone(row: WorkspaceTaskItem): string {
+  const s = String(row.status || '').toUpperCase()
+  if (s === 'DONE') return 'teal'
+  if (s === 'CANCELLED') return 'muted'
+  if (s === 'EXPIRED') return 'rose'
+  if (s === 'OPEN') {
+    const tone = dueTone(row)
+    if (tone === 'overdue') return 'rose'
+    if (tone === 'soon') return 'amber'
+    return 'brand'
+  }
+  return 'muted'
 }
 
-const POOL_COLUMN_HINT = '任务归属：公共=无人领取，个人=已有归属人'
+function primaryActionLabel(row: WorkspaceTaskItem) {
+  if (canClaim(row)) return '领取'
+  if (isDueOverdue(row)) return '立即处理'
+  return '处理'
+}
+
+const POOL_COLUMN_HINT = '任务归属：公共=无人领取，我的=已有归属人'
 
 const poolTitle = computed(() => {
   if (focusOverdue.value) return '逾期待办'
@@ -428,47 +475,17 @@ const poolTitle = computed(() => {
   }
 })
 
-const overdueInList = computed(
-  () => items.value.filter((r) => isDueOverdue(r)).length,
-)
+type SummaryCard = {
+  key: Pool
+  label: string
+  value: number
+  hint: string
+  tone: 'brand' | 'muted' | 'teal' | 'violet'
+}
 
-type SummaryCard =
-  | {
-      kind: 'pool'
-      key: Pool
-      label: string
-      value: number
-      hint: string
-      tone: 'brand' | 'muted' | 'teal' | 'danger'
-    }
-  | {
-      kind: 'overdue'
-      key: 'OVERDUE'
-      label: string
-      value: number
-      hint: string
-      tone: 'danger'
-    }
-
+/** 与设计稿 KPI 顺序一致：公共 → 我的 → 今日已办 → 全部任务 */
 const summaryCards = computed((): SummaryCard[] => [
   {
-    kind: 'pool',
-    key: 'MINE',
-    label: '我的待办',
-    value: summary.value?.mineOpenCount ?? 0,
-    hint: '已领取未办结',
-    tone: 'brand',
-  },
-  {
-    kind: 'overdue',
-    key: 'OVERDUE',
-    label: '逾期',
-    value: overdueCount.value,
-    hint: '已超期未办结',
-    tone: 'danger',
-  },
-  {
-    kind: 'pool',
     key: 'PUBLIC',
     label: '公共任务池',
     value: summary.value?.publicOpenCount ?? 0,
@@ -476,23 +493,96 @@ const summaryCards = computed((): SummaryCard[] => [
     tone: 'muted',
   },
   {
-    kind: 'pool',
+    key: 'MINE',
+    label: '我的待办',
+    value: summary.value?.mineOpenCount ?? 0,
+    hint: '已领取未办结',
+    tone: 'brand',
+  },
+  {
     key: 'DONE',
     label: '今日已办',
     value: summary.value?.doneTodayCount ?? 0,
     hint: '本人今日办结',
     tone: 'teal',
   },
+  {
+    key: 'ALL',
+    label: '全部任务',
+    value: allTaskTotal.value,
+    hint: '机构全量',
+    tone: 'violet',
+  },
 ])
 
+const pageSubtitle = computed(() => {
+  const org = getCurrentOrgName() || ''
+  const open =
+    (summary.value?.mineOpenCount ?? 0) + (summary.value?.publicOpenCount ?? 0)
+  const overdue = overdueCount.value
+  const bits = ['点击上方卡片可快速切换任务池']
+  if (open > 0) bits.push(`共 ${open} 项进行中`)
+  if (overdue > 0) bits.push(`${overdue} 项逾期`)
+  return (org ? `${org} · ` : '') + bits.join(' · ')
+})
+
 function isCardActive(card: SummaryCard) {
-  if (card.kind === 'overdue') return focusOverdue.value
+  if (card.key === 'MINE') return pool.value === 'MINE'
   return !focusOverdue.value && pool.value === card.key
 }
 
 function onSummaryCardClick(card: SummaryCard) {
-  if (card.kind === 'overdue') showOverdueFocus()
-  else switchPool(card.key)
+  switchPool(card.key)
+}
+
+/** 到期相对文案：逾期 X / 还有 X（设计稿两行副文案） */
+function dueRelativeText(row: WorkspaceTaskItem): string {
+  void nowMs.value
+  if (!row.dueAt || isClosedTask(row)) return ''
+  const due = parseDueMs(row.dueAt)
+  if (!Number.isFinite(due)) return ''
+  const diff = due - Date.now()
+  const abs = Math.abs(diff)
+  const mins = Math.round(abs / 60_000)
+  const hours = Math.round(abs / 3_600_000)
+  const days = Math.round(abs / 86_400_000)
+  const span =
+    mins < 60 ? `${Math.max(1, mins)} 分钟` : hours < 48 ? `${hours} 小时` : `${days} 天`
+  return diff < 0 ? `逾期 ${span}` : `还有 ${span}`
+}
+
+/** 到期主行：今天/昨天/明天 + 时刻，贴近设计稿 */
+function formatDueShort(v?: string): string {
+  if (!v) return '-'
+  const due = parseDueMs(v)
+  if (!Number.isFinite(due)) return formatTime(v)
+  const d = new Date(due)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  const time = `${hh}:${mm}`
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  const day = new Date(d)
+  day.setHours(0, 0, 0, 0)
+  const delta = Math.round((day.getTime() - start.getTime()) / 86_400_000)
+  if (delta === 0) return `今天 ${time}`
+  if (delta === -1) return `昨天 ${time}`
+  if (delta === 1) return `明天 ${time}`
+  return formatTime(v)
+}
+
+function taskPrimaryTitle(row: WorkspaceTaskItem) {
+  const summaryText = (row.summary || '').trim()
+  if (summaryText) return summaryText
+  return displayTaskTypeLabel(row.taskTypeLabel) || '工作台任务'
+}
+
+function taskMetaLine(row: WorkspaceTaskItem) {
+  const bits = [
+    row.peopleName || '',
+    ...(row.diseaseLabels || []).slice(0, 2),
+  ].filter(Boolean)
+  return bits.join(' · ')
 }
 
 function displayTaskTypeLabel(label?: string) {
@@ -621,21 +711,6 @@ function statusLabel(status?: string) {
       return '已过期'
     default:
       return status || '-'
-  }
-}
-
-function statusTagType(status?: string) {
-  switch (status) {
-    case 'OPEN':
-      return 'warning'
-    case 'DONE':
-      return 'success'
-    case 'CANCELLED':
-      return 'info'
-    case 'EXPIRED':
-      return 'danger'
-    default:
-      return 'info'
   }
 }
 
@@ -1214,11 +1289,7 @@ function applyRouteQuery() {
   const q = route.query
   const p = typeof q.pool === 'string' ? q.pool.toUpperCase() : ''
   if (p === 'PUBLIC' || p === 'MINE' || p === 'DONE' || p === 'ALL') {
-    if (p === 'ALL' && !isAdmin.value) {
-      pool.value = 'MINE'
-    } else {
-      pool.value = p
-    }
+    pool.value = p
   }
   if (typeof q.status === 'string' && q.status) status.value = q.status
   if (typeof q.taskType === 'string') taskType.value = q.taskType
@@ -1244,122 +1315,134 @@ onUnmounted(() => {
 
 <template>
   <div class="workspace-tasks">
-    <div class="page-title page-title--compact">
+    <div class="page-title">
       <div>
         <h1>工作台任务</h1>
-        <p>{{ getCurrentOrgName() || '-' }} · 点击卡片切换任务池</p>
+        <p>{{ pageSubtitle }}</p>
+      </div>
+      <div class="head-actions">
+        <button
+          type="button"
+          class="btn btn-ghost"
+          :disabled="loading"
+          @click="load"
+        >
+          <svg
+            class="refresh-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
+          </svg>
+          刷新
+        </button>
       </div>
     </div>
 
-    <div v-loading="loading" class="summary-row summary-row--compact">
+    <div v-loading="loading" class="kpi-grid">
       <button
         v-for="card in summaryCards"
         :key="card.key"
         type="button"
-        class="summary-card summary-card--compact"
+        class="kpi"
         :class="[`tone-${card.tone}`, { 'is-active': isCardActive(card) }]"
         @click="onSummaryCardClick(card)"
       >
-        <div class="summary-label">{{ card.label }}</div>
-        <div class="summary-meta">
-          <span class="summary-value">{{ card.value }}</span>
-          <span class="summary-hint">{{ card.hint }}</span>
+        <div class="kpi-head">
+          <span class="kpi-label">{{ card.label }}</span>
+          <span class="kpi-icon" aria-hidden="true">
+            <svg v-if="card.key === 'PUBLIC'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3h18v18H3z" /><path d="M3 9h18M9 21V9" />
+            </svg>
+            <svg v-else-if="card.key === 'MINE'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            <svg v-else-if="card.key === 'DONE'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+            </svg>
+          </span>
         </div>
-      </button>
-      <button
-        v-if="isAdmin"
-        type="button"
-        class="summary-card summary-card--compact tone-violet"
-        :class="{ 'is-active': !focusOverdue && pool === 'ALL' }"
-        @click="switchPool('ALL')"
-      >
-        <div class="summary-label">全部任务</div>
-        <div class="summary-meta">
-          <span class="summary-value">{{ pool === 'ALL' && !focusOverdue ? total : '—' }}</span>
-          <span class="summary-hint">管理员</span>
+        <div class="kpi-val">{{ card.value }}</div>
+        <div class="kpi-foot">
+          <template v-if="card.key === 'MINE' && overdueCount > 0">
+            <button type="button" class="overdue-link" @click.stop="showOverdueFocus">
+              {{ overdueCount }} 项逾期
+            </button>
+            <span v-if="focusOverdue" class="kpi-foot-hint"> · 仅看逾期</span>
+          </template>
+          <template v-else>{{ card.hint }}</template>
         </div>
       </button>
     </div>
 
+    <div class="filter-bar">
+      <el-select v-model="taskType" clearable placeholder="类型: 全部" class="filter-ctl" style="width: 148px">
+        <el-option v-for="t in TASK_TYPES" :key="t.value" :label="t.label" :value="t.value" />
+      </el-select>
+      <el-select
+        v-if="pool === 'ALL'"
+        v-model="status"
+        clearable
+        placeholder="状态: 全部"
+        class="filter-ctl"
+        style="width: 120px"
+      >
+        <el-option label="待处理" value="OPEN" />
+        <el-option label="已完成" value="DONE" />
+        <el-option label="已取消" value="CANCELLED" />
+        <el-option label="已过期" value="EXPIRED" />
+      </el-select>
+      <el-select
+        v-model="careTeamId"
+        clearable
+        placeholder="健管组: 全部"
+        class="filter-ctl"
+        style="width: 160px"
+      >
+        <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
+      </el-select>
+      <el-input
+        v-model="keyword"
+        placeholder="搜索任务 / 患者…"
+        clearable
+        class="filter-search filter-ctl"
+        @keyup.enter="onSearch"
+      />
+      <div class="filter-spacer" />
+      <el-button class="filter-query-btn" @click="onSearch">查询</el-button>
+    </div>
+
     <el-card shadow="never" class="list-card">
       <template #header>
-        <div class="list-head">
-          <div class="list-head-top">
-            <div class="table-title">
-              {{ poolTitle }}
-              <span class="count">
-                · {{ total }} 项
-                <template
-                  v-if="
-                    !focusOverdue &&
-                    overdueInList > 0 &&
-                    (pool === 'PUBLIC' || pool === 'MINE')
-                  "
-                >
-                  ·
-                  <button type="button" class="overdue-link" @click="showOverdueFocus">
-                    {{ overdueInList }} 项逾期（本页）
-                  </button>
-                </template>
-              </span>
-            </div>
-            <div class="list-head-actions">
-              <el-button
-                v-if="pool === 'PUBLIC'"
-                type="primary"
-                size="small"
-                class="batch-claim-btn"
-                :class="{ ready: canBatchClaim }"
-                :disabled="!canBatchClaim"
-                :loading="batchClaiming"
-                @click="batchClaim"
-              >
-                {{ batchClaimLabel }}
-              </el-button>
-            </div>
+        <div class="list-head-top">
+          <div class="table-title">
+            {{ poolTitle }}
+            <span class="count">· {{ total }} 项</span>
           </div>
-          <div class="toolbar">
-            <el-select v-model="taskType" clearable placeholder="类型" style="width: 132px">
-              <el-option v-for="t in TASK_TYPES" :key="t.value" :label="t.label" :value="t.value" />
-            </el-select>
-            <el-select
-              v-if="pool === 'ALL'"
-              v-model="status"
-              clearable
-              placeholder="状态"
-              style="width: 110px"
+          <div class="list-head-actions">
+            <el-button
+              v-if="pool === 'PUBLIC'"
+              type="primary"
+              size="small"
+              class="batch-claim-btn"
+              :class="{ ready: canBatchClaim }"
+              :disabled="!canBatchClaim"
+              :loading="batchClaiming"
+              @click="batchClaim"
             >
-              <el-option label="待处理" value="OPEN" />
-              <el-option label="已完成" value="DONE" />
-              <el-option label="已取消" value="CANCELLED" />
-              <el-option label="已过期" value="EXPIRED" />
-            </el-select>
-            <el-select v-model="careTeamId" clearable placeholder="健管组" style="width: 150px">
-              <el-option v-for="t in teams" :key="t.id" :label="t.name" :value="t.id" />
-            </el-select>
-            <el-input
-              v-model="keyword"
-              placeholder="搜索患者"
-              clearable
-              class="toolbar-search"
-              @keyup.enter="onSearch"
-            />
-            <el-button type="primary" @click="onSearch">查询</el-button>
-            <button
-              type="button"
-              class="toolbar-refresh"
-              title="刷新列表"
-              aria-label="刷新列表"
-              :disabled="loading"
-              @click="load"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" />
-                <path d="M3 21v-5h5" />
-                <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" />
-                <path d="M21 3v5h-5" />
-              </svg>
-            </button>
+              {{ batchClaimLabel }}
+            </el-button>
           </div>
         </div>
       </template>
@@ -1368,9 +1451,7 @@ onUnmounted(() => {
         ref="tableRef"
         :key="`${pool}-${page}-${pageSize}`"
         :data="items"
-        stripe
         class="tasks-table"
-        style="width: 100%"
         row-key="id"
         @selection-change="onSelectionChange"
       >
@@ -1380,61 +1461,144 @@ onUnmounted(() => {
           width="42"
           :selectable="(row: WorkspaceTaskItem) => canClaim(row)"
         />
-        <el-table-column label="任务" min-width="320" class-name="col-task">
+        <el-table-column label="任务" width="248" class-name="col-task">
           <template #default="{ row }">
             <div class="task-cell" :title="taskLineTitle(row)">
               <span
-                class="type-pill"
+                class="type-icon"
                 :class="`tone-${taskTypeTone(row.taskType)}`"
-                :title="displayTaskTypeLabel(row.taskTypeLabel)"
+                aria-hidden="true"
               >
-                {{ displayTaskTypeLabel(row.taskTypeLabel) }}
+                <svg
+                  v-if="taskTypeIcon(row.taskType) === 'phone'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07" />
+                  <path d="M16.71 13.11A15.05 15.05 0 0 1 10.89 7.3l2.19-2.19a1 1 0 0 0 .24-1.06L11.91 1.1a1 1 0 0 0-1.13-.67A16 16 0 0 0 1.78 10.8a1 1 0 0 0 .67 1.13l2.95.58a1 1 0 0 0 1.06-.24z" />
+                </svg>
+                <svg
+                  v-else-if="taskTypeIcon(row.taskType) === 'edit'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+                <svg
+                  v-else-if="taskTypeIcon(row.taskType) === 'clock'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v6l4 2" />
+                </svg>
+                <svg
+                  v-else-if="taskTypeIcon(row.taskType) === 'book'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                </svg>
+                <svg
+                  v-else-if="taskTypeIcon(row.taskType) === 'upload'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                <svg
+                  v-else-if="taskTypeIcon(row.taskType) === 'user'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="8.5" cy="7" r="4" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
               </span>
-              <span class="task-patient">{{ row.peopleName || '-' }}</span>
-              <span
-                v-for="d in (row.diseaseLabels || []).slice(0, 2)"
-                :key="d"
-                class="disease-chip"
-              >{{ d }}</span>
+              <div class="task-text">
+                <div class="task-title">{{ taskPrimaryTitle(row) }}</div>
+                <div v-if="taskMetaLine(row)" class="task-meta">{{ taskMetaLine(row) }}</div>
+              </div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column
-          v-if="pool !== 'PUBLIC' && pool !== 'MINE'"
-          label="状态"
-          width="84"
-          class-name="col-tag"
-        >
+        <el-table-column label="类型" width="108" class-name="col-type">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small" effect="light">
-              {{ statusLabel(row.status) }}
-            </el-tag>
+            <span class="type-pill" :class="`tone-${taskTypeTone(row.taskType)}`">
+              <span class="tag-dot" aria-hidden="true" />
+              {{ displayTaskTypeLabel(row.taskTypeLabel) || '-' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="患者" width="88" show-overflow-tooltip>
+          <template #default="{ row }">
+            <strong class="patient-name">{{ row.peopleName || '-' }}</strong>
+          </template>
+        </el-table-column>
+        <el-table-column label="健管组" width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.careTeamName" class="team-tag">{{ row.careTeamName }}</span>
+            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
         <el-table-column v-if="pool === 'ALL'" width="72" class-name="col-tag">
           <template #header>
             <el-tooltip :content="POOL_COLUMN_HINT" placement="top">
-              <span class="col-hint">归属</span>
+              <span class="col-hint">归属池</span>
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <el-tag size="small" effect="plain" :type="poolTagType(row)">
-              {{ poolLabel(row) }}
-            </el-tag>
+            <span class="pool-text">{{ poolLabel(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="pool === 'DONE'" label="处理人" width="96" show-overflow-tooltip>
+        <el-table-column
+          label="到期"
+          width="120"
+          align="left"
+          header-align="left"
+          class-name="col-due"
+        >
+          <template #default="{ row }">
+            <div class="deadline" :class="dueCellClass(row)">
+              <div class="deadline-time">{{ formatDueShort(row.dueAt) }}</div>
+              <div v-if="dueRelativeText(row)" class="deadline-rel">{{ dueRelativeText(row) }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="80" class-name="col-tag">
+          <template #default="{ row }">
+            <span class="status-pill" :class="`tone-${statusPillTone(row)}`">
+              {{ statusLabel(row.status) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="pool === 'DONE'" label="处理人" width="88" show-overflow-tooltip>
           <template #default="{ row }">{{ row.doneByName || '-' }}</template>
         </el-table-column>
-        <el-table-column
-          v-if="pool === 'MINE' || pool === 'ALL'"
-          label="归属人"
-          width="96"
-          show-overflow-tooltip
-        >
+        <el-table-column v-if="pool === 'ALL'" label="归属人" width="88" show-overflow-tooltip>
           <template #default="{ row }">{{ row.assigneeName || '-' }}</template>
         </el-table-column>
-        <el-table-column v-if="pool === 'ALL'" label="处理人" width="96" show-overflow-tooltip>
+        <el-table-column v-if="pool === 'ALL'" label="处理人" width="88" show-overflow-tooltip>
           <template #default="{ row }">
             {{
               row.status === 'DONE' || row.status === 'CANCELLED' || row.status === 'EXPIRED'
@@ -1444,34 +1608,9 @@ onUnmounted(() => {
           </template>
         </el-table-column>
         <el-table-column
-          label="生成时间"
-          width="148"
-          align="left"
-          header-align="left"
-          class-name="col-time"
-        >
-          <template #default="{ row }">
-            <span class="time-cell" :title="formatTime(row.openedAt)">{{ formatTime(row.openedAt) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column
-          label="到期"
-          width="220"
-          align="left"
-          header-align="left"
-          class-name="col-due"
-        >
-          <template #default="{ row }">
-            <div class="due-cell" :class="dueCellClass(row)">
-              <span class="due-time" :style="dueTimeStyle(row)">{{ formatTime(row.dueAt) }}</span>
-              <span v-if="isDueOverdue(row)" class="due-mark">已逾期</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column
           v-if="pool === 'DONE'"
           label="完成时间"
-          width="148"
+          width="132"
           align="left"
           header-align="left"
           class-name="col-time"
@@ -1482,7 +1621,8 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column
           label="操作"
-          :width="pool === 'PUBLIC' ? 168 : isAdmin ? 300 : 280"
+          min-width="240"
+          width="240"
           align="right"
           header-align="right"
           class-name="col-actions"
@@ -1495,7 +1635,7 @@ onUnmounted(() => {
                 class="action-primary"
                 @click="claim(row)"
               >
-                领取
+                {{ primaryActionLabel(row) }}
               </el-button>
               <el-button
                 v-if="canForm(row)"
@@ -1503,7 +1643,7 @@ onUnmounted(() => {
                 class="action-primary"
                 @click="openFormTask(row)"
               >
-                处理
+                {{ primaryActionLabel(row) }}
               </el-button>
               <el-button
                 v-if="canProcess(row)"
@@ -1511,7 +1651,7 @@ onUnmounted(() => {
                 class="action-primary"
                 @click="processTask(row)"
               >
-                处理
+                {{ primaryActionLabel(row) }}
               </el-button>
               <button type="button" class="action-link" @click="openDetail(row)">详情</button>
               <button
@@ -1735,163 +1875,244 @@ onUnmounted(() => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-bottom: 40px;
-}
-
-.page-title--compact {
-  margin-bottom: 0 !important;
-  align-items: center;
-  gap: 8px 16px;
-}
-.page-title--compact :deep(h1),
-.page-title--compact h1 {
-  margin: 0 !important;
-  font-size: 18px !important;
-  line-height: 1.25;
-}
-.page-title--compact :deep(p),
-.page-title--compact p {
-  font-size: 12px !important;
-  line-height: 1.3;
-}
-
-.summary-row {
-  display: flex !important;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  width: 100%;
-  grid-template-columns: none !important;
-}
-.summary-row--compact {
-  gap: 16px !important;
-  margin-bottom: 0 !important;
-}
-.workspace-tasks:has(.tone-violet) .summary-row {
-  grid-template-columns: none !important;
-}
-
-.summary-card--compact {
-  flex: 1 1 0;
-  width: auto;
-  min-width: 0;
-  padding: 12px 14px !important;
-  box-shadow: none !important;
+  gap: 14px;
+  padding: 8px 0 40px;
   box-sizing: border-box;
-}
-.summary-card--compact:hover {
-  transform: none !important;
-}
-.summary-card--compact .summary-label {
-  margin: 0 0 4px !important;
-  font-size: 12px;
-  line-height: 1.2;
-}
-.summary-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-.summary-card--compact .summary-value {
-  margin: 0 !important;
-  font-size: 28px !important;
-  font-weight: 800 !important;
-  line-height: 1.1;
-  letter-spacing: -0.03em;
-}
-.summary-card--compact .summary-hint {
-  margin: 0 !important;
-  font-size: 11px;
-  color: var(--ink-400);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  background: transparent;
 }
 
-.tone-teal .summary-value {
-  color: var(--teal-500);
+.head-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
 }
-.tone-brand.is-active .summary-value {
-  color: var(--brand-600);
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 550;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.tone-violet .summary-value {
-  color: var(--violet-500);
+.btn svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  overflow: visible;
 }
-.tone-danger .summary-value {
-  color: var(--rose-500);
+.btn .refresh-icon {
+  /* 箭头贴边，略放大避免 stroke 被裁切 */
+  width: 16px;
+  height: 16px;
 }
-.tone-danger.is-active {
-  border-color: var(--auto-rgba-2396868045);
-  background: var(--rose-100);
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
+.btn-ghost {
+  background: #fff;
+  color: #475569;
+  border-color: #e2e8f0;
+  box-shadow: 0 1px 2px var(--ink-a04);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: #f8fafc;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+
+/* —— KPI —— */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.kpi {
+  margin: 0;
+  padding: 16px 18px 16px 20px;
+  text-align: left;
+  border: 1px solid var(--ink-200);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 2px var(--ink-a04);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.kpi:hover {
+  border-color: var(--ink-300);
+  box-shadow: 0 1px 2px var(--ink-a06);
+}
+.kpi:focus,
+.kpi:focus-visible,
+.kpi:active {
+  outline: none;
+  border-color: var(--ink-200);
+}
+.kpi.is-active {
+  border-color: var(--ink-200) !important;
+  background: linear-gradient(90deg, rgba(239, 246, 255, 0.85) 0%, #fff 72%);
+  box-shadow:
+    0 0 0 1px rgba(37, 99, 235, 0.16),
+    0 4px 14px rgba(37, 99, 235, 0.06);
+}
+.kpi.is-active:hover {
+  border-color: var(--ink-200) !important;
+  background: linear-gradient(90deg, rgba(239, 246, 255, 0.95) 0%, #fff 72%);
+  box-shadow:
+    0 0 0 1px rgba(37, 99, 235, 0.2),
+    0 4px 16px rgba(37, 99, 235, 0.08);
+}
+.kpi.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--brand-600);
+}
+.kpi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.kpi-label {
+  font-size: 13px;
+  color: var(--ink-500);
+  font-weight: 500;
+}
+.kpi-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--ink-100);
+  color: var(--ink-600);
+}
+.kpi-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.kpi.tone-brand .kpi-icon,
+.kpi.tone-teal .kpi-icon,
+.kpi.tone-violet .kpi-icon,
+.kpi.tone-muted .kpi-icon {
+  background: var(--ink-100);
+  color: var(--ink-600);
+}
+.kpi-val {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--ink-900);
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.kpi.is-active .kpi-val,
+.kpi.tone-teal .kpi-val,
+.kpi.tone-violet .kpi-val {
+  color: var(--ink-900);
+}
+.kpi-foot {
+  font-size: 12px;
+  color: var(--ink-400);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.kpi-foot-hint {
+  color: var(--ink-400);
+}
+
 .overdue-link {
   border: 0;
   background: transparent;
   padding: 0;
-  color: var(--rose-500);
+  color: #dc2626;
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 .overdue-link:hover {
   text-decoration: underline;
 }
 
-.toolbar {
-  gap: 12px;
-}
-.toolbar-search {
-  flex: 1;
-  min-width: 160px;
-  max-width: 280px;
-}
-.toolbar :deep(.el-input__wrapper),
-.toolbar :deep(.el-select__wrapper),
-.toolbar :deep(.el-button:not(.is-link)) {
-  min-height: 32px;
-}
-.toolbar-refresh {
-  display: inline-flex;
+/* —— Filter —— */
+.filter-bar {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink-400);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.15s ease, background 0.15s ease;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid var(--ink-200);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px var(--ink-a04);
 }
-.toolbar-refresh:hover:not(:disabled) {
-  color: var(--el-color-primary, var(--brand-500));
-  background: var(--ink-100);
+.filter-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
 }
-.toolbar-refresh:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.filter-spacer {
+  flex: 1;
+  min-width: 8px;
 }
-.toolbar-refresh svg {
-  width: 16px;
-  height: 16px;
+.filter-bar :deep(.el-input__wrapper),
+.filter-bar :deep(.el-select__wrapper) {
+  min-height: 36px;
+  border-radius: 8px !important;
+  box-shadow: 0 0 0 1px var(--ink-200) inset !important;
+  background: #fff !important;
+}
+.filter-bar :deep(.el-input__wrapper:hover),
+.filter-bar :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--ink-300) inset !important;
+}
+.filter-bar :deep(.el-input__wrapper.is-focus),
+.filter-bar :deep(.el-select__wrapper.is-focused) {
+  box-shadow:
+    0 0 0 1px var(--brand-400) inset,
+    0 0 0 3px rgba(44, 126, 248, 0.12) !important;
+}
+.filter-query-btn {
+  height: 36px !important;
+  padding: 0 16px !important;
+  border: none !important;
+  border-radius: 8px !important;
+  background: var(--brand-600) !important;
+  color: #fff !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+.filter-query-btn:hover,
+.filter-query-btn:focus {
+  background: var(--brand-700) !important;
+  color: #fff !important;
 }
 
-.list-head {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 .list-head-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 0;
 }
 .list-head-actions {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 .table-title {
   font-size: 14px;
@@ -1909,174 +2130,241 @@ onUnmounted(() => {
   flex: none;
   width: 100%;
   height: auto;
-  margin-bottom: 40px;
-  background: var(--white);
-  border: none;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px var(--black-a04);
+  margin-bottom: 24px;
+  background: #fff;
+  border: 1px solid var(--ink-200);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px var(--ink-a04);
   overflow: hidden;
 }
 .list-card :deep(.el-card__header) {
-  padding: 14px 18px !important;
-  border-bottom: 0 solid var(--ink-100);
+  padding: 14px 20px 12px !important;
+  border-bottom: 1px solid #f1f5f9;
+  background: #fff;
 }
 .list-card :deep(.el-card__body) {
-  padding: 0 18px 8px !important;
+  padding: 0 !important;
   height: auto;
 }
 
 .task-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   min-width: 0;
+  min-height: 100%;
+}
+.type-icon {
+  width: 28px;
   height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: #f1f5f9;
+  color: #64748b;
+}
+.type-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.type-icon.tone-report,
+.type-icon.tone-plan,
+.type-icon.tone-followup,
+.type-icon.tone-alert,
+.type-icon.tone-assess,
+.type-icon.tone-assign,
+.type-icon.tone-intake,
+.type-icon.tone-default {
+  background: #f1f5f9;
+  color: #64748b;
+}
+.task-text {
+  min-width: 0;
+  flex: 1;
+}
+.task-title {
+  font-weight: 550;
+  color: var(--ink-900);
+  line-height: 1.3;
+  font-size: 13px;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-patient {
-  flex-shrink: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--ink-900);
-  line-height: 1.2;
-  letter-spacing: 0.01em;
+.task-meta {
+  font-size: 12px;
+  color: var(--ink-500);
+  margin-top: 2px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.disease-chip {
-  flex-shrink: 0;
+.patient-name {
+  font-weight: 550;
+  color: var(--ink-800);
+  font-size: 13px;
+}
+.team-tag {
   display: inline-flex;
   align-items: center;
-  padding: 0 4px;
+  font-size: 12px;
+  padding: 3px 10px;
   border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.35;
-  color: var(--ink-500);
-  background: var(--ink-50);
-  border: 1px solid var(--ink-200);
+  font-weight: 500;
+  background: #eff6ff;
+  color: #2563eb;
+  white-space: nowrap;
 }
-
 .muted {
   color: var(--ink-400);
 }
 
-/* 类型胶囊：浅底深字、无边框；按文案自适应宽度，避免被裁切成纯色字 */
 .type-pill {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 5px;
   flex-shrink: 0;
   box-sizing: border-box;
-  padding: 4px 10px;
-  border-radius: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
   text-align: center;
   white-space: nowrap;
   border: none;
 }
-/* 报告审阅：浅蓝底 + 深蓝字 */
+.tag-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
 .type-pill.tone-report {
-  color: var(--brand-900);
-  background: var(--blue-100);
+  color: #dc2626;
+  background: #fef2f2;
 }
-/* 制定方案：浅紫底 + 深紫字 */
-.type-pill.tone-plan {
-  color: var(--auto-5b21b6);
-  background: var(--auto-ede9fe);
+.type-pill.tone-plan,
+.type-pill.tone-intake {
+  color: #2563eb;
+  background: #eff6ff;
 }
-/* 评估升级：浅橙底 + 深橙字 */
-.type-pill.tone-assess {
-  color: var(--orange-800);
-  background: var(--orange-100);
+.type-pill.tone-assess,
+.type-pill.tone-alert {
+  color: #b45309;
+  background: #fffbeb;
 }
 .type-pill.tone-assign {
-  color: var(--auto-115e59);
-  background: var(--teal-25);
+  color: #0f766e;
+  background: #f0fdfa;
 }
 .type-pill.tone-followup {
-  color: var(--auto-5b21b6);
-  background: var(--auto-ede9fe);
-}
-.type-pill.tone-alert {
-  color: var(--rose-800);
-  background: var(--rose-200);
-}
-.type-pill.tone-intake {
-  color: var(--auto-075985);
-  background: var(--auto-bae6fd);
+  color: #6d28d9;
+  background: #f5f3ff;
 }
 .type-pill.tone-default {
-  color: var(--ink-700);
-  background: var(--ink-200);
+  color: var(--ink-600);
+  background: var(--ink-100);
 }
 
-.due-cell {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 0;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.3;
-  max-width: 100%;
+.pool-text {
+  font-size: 13px;
+  color: var(--ink-600);
+  font-weight: 500;
 }
-.due-time {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.due-cell.is-overdue .due-time {
-  color: var(--rose-500) !important;
-  font-weight: 600 !important;
-}
-.due-cell.is-soon .due-time {
-  color: var(--amber-550) !important;
-  font-weight: 600 !important;
-}
-.due-cell.is-normal .due-time {
-  color: var(--gray-500) !important;
-  font-weight: 500 !important;
-}
-.due-mark {
+
+.status-pill {
   display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
-  margin-left: 8px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--rose-500);
-  background: var(--rose-100);
-  border: none;
-  line-height: 1.4;
   white-space: nowrap;
+  line-height: 1.35;
+}
+.status-pill.tone-rose {
+  color: #dc2626;
+  background: #fef2f2;
+}
+.status-pill.tone-amber {
+  color: #b45309;
+  background: #fffbeb;
+}
+.status-pill.tone-brand {
+  color: #2563eb;
+  background: #eff6ff;
+}
+.status-pill.tone-teal {
+  color: #0f766e;
+  background: #f0fdfa;
+}
+.status-pill.tone-muted {
+  color: var(--ink-500);
+  background: var(--ink-100);
+}
+
+.deadline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+.deadline-time {
+  font-weight: 500;
+  font-size: 13px;
+  color: #475569;
+  white-space: nowrap;
+}
+.deadline-rel {
+  margin-top: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  color: #94a3b8;
+}
+.deadline.is-overdue .deadline-time {
+  color: #dc2626;
+}
+.deadline.is-overdue .deadline-rel {
+  color: #f87171;
+}
+.deadline.is-soon .deadline-time {
+  color: #b45309;
+}
+.deadline.is-soon .deadline-rel {
+  color: #d97706;
 }
 
 .batch-claim-btn.is-disabled,
 .batch-claim-btn:disabled {
-  background: var(--gray-200) !important;
-  border-color: var(--gray-200) !important;
-  color: var(--gray-400) !important;
+  background: var(--ink-100) !important;
+  border-color: var(--ink-100) !important;
+  color: var(--ink-400) !important;
   opacity: 1 !important;
   cursor: not-allowed;
 }
 .batch-claim-btn.ready:not(.is-disabled):not(:disabled) {
-  background: var(--el-color-primary, var(--brand-500)) !important;
-  border-color: var(--el-color-primary, var(--brand-500)) !important;
-  color: var(--white) !important;
-  box-shadow: var(--admin-shadow, 0 1px 2px var(--ink-a04));
+  background: var(--brand-600) !important;
+  border-color: var(--brand-600) !important;
+  color: #fff !important;
+  box-shadow: none;
 }
 
 .time-cell {
   display: inline-block;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  color: var(--ink-700);
+  color: var(--ink-600);
   white-space: nowrap;
-  overflow: visible;
-  text-overflow: clip;
-  letter-spacing: -0.01em;
 }
 
 .row-actions {
@@ -2090,32 +2378,28 @@ onUnmounted(() => {
   min-height: 28px;
   box-sizing: border-box;
 }
-
 .row-actions :deep(.el-button + .el-button) {
   margin-left: 0 !important;
 }
-
 .row-actions :deep(.el-button) {
   margin: 0 !important;
   flex-shrink: 0;
 }
-
 .row-actions :deep(.el-button.action-primary) {
   height: 28px !important;
   padding: 0 12px !important;
-  border: 1px solid var(--brand-200) !important;
+  border: none !important;
   border-radius: 6px !important;
-  background: var(--blue-50) !important;
-  color: var(--blue-600) !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  line-height: 26px !important;
+  background: var(--brand-600) !important;
+  color: #fff !important;
+  font-size: 12px !important;
+  font-weight: 550 !important;
+  line-height: 28px !important;
 }
 .row-actions :deep(.el-button.action-primary:hover),
 .row-actions :deep(.el-button.action-primary:focus) {
-  background: var(--blue-100) !important;
-  border-color: var(--blue-300) !important;
-  color: var(--brand-800) !important;
+  background: var(--brand-700) !important;
+  color: #fff !important;
 }
 
 .action-link {
@@ -2124,26 +2408,26 @@ onUnmounted(() => {
   background: transparent;
   padding: 0;
   margin: 0;
-  color: var(--gray-500) !important;
+  height: 28px;
+  border-radius: 6px;
+  color: #64748b !important;
   font-size: 13px;
   line-height: 28px;
-  height: 28px;
   cursor: pointer;
   font-weight: 500;
   flex-shrink: 0;
-  text-decoration: none;
-  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+  transition: color 0.15s ease;
 }
 .action-link:hover {
-  color: var(--el-color-primary, var(--brand-500)) !important;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  color: #2563eb !important;
+  background: transparent;
 }
 .action-link--danger {
-  color: var(--gray-400) !important;
+  color: #64748b !important;
 }
 .action-link--danger:hover {
-  color: var(--rose-500) !important;
+  color: #dc2626 !important;
+  background: transparent;
 }
 
 .assessment-task-body {
@@ -2215,9 +2499,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  margin-top: 12px;
-  padding: 0 0 12px;
+  margin-top: 0;
+  padding: 14px 20px;
   min-height: 36px;
+  border-top: 1px solid var(--ink-100);
 }
 .list-pagination-bar {
   width: 100%;
@@ -2241,7 +2526,7 @@ onUnmounted(() => {
 .list-total-only {
   width: 100%;
   text-align: right;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--ink-500);
   line-height: 28px;
   padding: 0;
@@ -2249,7 +2534,9 @@ onUnmounted(() => {
 
 .list-card :deep(.tasks-table) {
   width: 100% !important;
-  --el-table-row-hover-bg-color: var(--ink-50);
+  --el-table-border-color: transparent;
+  --el-table-header-bg-color: #fff;
+  --el-table-row-hover-bg-color: rgba(248, 250, 252, 0.92);
 }
 .list-card :deep(.tasks-table .el-table__inner-wrapper),
 .list-card :deep(.tasks-table .el-table__header-wrapper),
@@ -2259,28 +2546,54 @@ onUnmounted(() => {
 }
 .list-card :deep(.tasks-table table) {
   table-layout: fixed !important;
+  width: 100% !important;
 }
 .list-card :deep(.tasks-table .el-table__header th.el-table__cell) {
-  background: var(--el-table-header-bg-color, var(--ink-50));
-  color: var(--el-table-header-text-color, var(--ink-500)) !important;
+  background: #fff !important;
+  color: #64748b !important;
   font-size: 12px;
-  font-weight: 600;
-  padding: 12px 8px !important;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 10px 14px !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  border-top: none !important;
+  vertical-align: middle !important;
 }
 .list-card :deep(.tasks-table .el-table__body td.el-table__cell) {
   font-size: 13px;
-  padding: 12px 8px !important;
-  border-bottom: 0 solid var(--gray-100) !important;
+  padding: 12px 14px !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  color: var(--ink-700);
+  vertical-align: middle !important;
+  transition: background-color 0.2s ease;
 }
-/* 任务列：左侧多留一点，标签不贴边 */
+.list-card :deep(.tasks-table .el-table__body tr:hover > td.el-table__cell) {
+  background-color: rgba(248, 250, 252, 0.92) !important;
+}
+.list-card :deep(.tasks-table .el-table__body tr:last-child td.el-table__cell) {
+  border-bottom: 0 !important;
+}
 .list-card :deep(th.col-task.el-table__cell),
 .list-card :deep(td.col-task.el-table__cell) {
-  padding-left: 20px !important;
+  padding-right: 10px !important;
 }
-.list-card :deep(.col-task .cell) {
-  padding-left: 0;
+.list-card :deep(td.col-task .cell) {
+  display: flex !important;
+  align-items: center;
+  min-height: 100%;
 }
-/* 时间列：表头与数据统一左对齐，避免宽列里内容“悬空” */
+.list-card :deep(th.col-type.el-table__cell),
+.list-card :deep(td.col-type.el-table__cell) {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+.list-card :deep(td.col-due .cell),
+.list-card :deep(td.col-type .cell),
+.list-card :deep(td.col-tag .cell) {
+  display: flex !important;
+  align-items: center;
+}
 .list-card :deep(.col-time .cell),
 .list-card :deep(.col-due .cell) {
   text-align: left !important;
@@ -2292,23 +2605,28 @@ onUnmounted(() => {
   justify-content: flex-end;
   align-items: center;
   text-align: right;
-  padding-left: 8px !important;
-  padding-right: 12px !important;
+  padding-right: 28px !important;
+}
+.list-card :deep(th.col-actions.el-table__cell),
+.list-card :deep(td.col-actions.el-table__cell) {
+  padding-right: 28px !important;
 }
 .list-card :deep(th.col-actions .cell) {
   justify-content: flex-end;
   text-align: right !important;
 }
 
+@media (max-width: 1280px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 960px) {
-  .summary-row {
-    flex-wrap: wrap;
-  }
-  .summary-card--compact {
-    flex: 1 1 calc(50% - 8px);
-  }
   .list-head-top {
     flex-wrap: wrap;
+  }
+  .filter-bar {
+    align-items: stretch;
   }
 }
 </style>

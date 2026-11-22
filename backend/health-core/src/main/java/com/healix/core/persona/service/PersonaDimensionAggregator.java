@@ -7,7 +7,10 @@ import com.healix.common.util.JsonUtils;
 import com.healix.core.adherence.dto.AdherencePatientSummaryDto;
 import com.healix.core.adherence.service.AdherenceQueryService;
 import com.healix.core.allergy.domain.PeopleAllergy;
+import com.healix.core.allergy.enums.AllergyStatusEnum;
 import com.healix.core.allergy.mapper.PeopleAllergyMapper;
+import com.healix.core.allergy.mapper.PeopleAllergyProfileMapper;
+import com.healix.core.allergy.service.AllergyQueryService;
 import com.healix.core.assessment.dto.AssessmentTagView;
 import com.healix.core.assessment.support.AssessmentTagAssembler;
 import com.healix.core.care.domain.CareTeam;
@@ -64,6 +67,7 @@ public class PersonaDimensionAggregator {
     private final PeopleHealthGoalMapper healthGoalMapper;
     private final AssessmentTagAssembler assessmentTagAssembler;
     private final PeopleAllergyMapper allergyMapper;
+    private final PeopleAllergyProfileMapper allergyProfileMapper;
     private final AdherenceQueryService adherenceQueryService;
     private final WorkspaceTaskMapper workspaceTaskMapper;
     private final QuestionnaireResponseMapper questionnaireResponseMapper;
@@ -344,8 +348,12 @@ public class PersonaDimensionAggregator {
         ArrayNode allergens = constraints.putArray("allergens");
         ArrayNode notes = constraints.putArray("notes");
         ArrayNode highlightCodes = constraints.putArray("highlightCodes");
+        // 未选=UNKNOWN(未采集)；显式 NKA=没有过敏；勿用 allergens 空数组推断
+        AllergyStatusEnum allergyStatus = AllergyStatusEnum.UNKNOWN;
         try {
             List<PeopleAllergy> rows = allergyMapper.listByPeople(tenantId, peopleId);
+            allergyStatus = AllergyQueryService.resolveStatus(
+                    allergyProfileMapper.findByPeople(tenantId, peopleId), rows);
             for (PeopleAllergy a : rows) {
                 if (a == null || !StringUtils.hasText(a.getAllergenName())) {
                     continue;
@@ -359,6 +367,8 @@ public class PersonaDimensionAggregator {
         } catch (Exception e) {
             log.debug("[Persona] load allergy failed peopleId={}", peopleId, e);
         }
+        constraints.put("allergyStatus", allergyStatus.name());
+        constraints.put("allergyStatusLabel", allergyStatus.label());
 
         try {
             QuestionnaireResponse intake = latestSubmittedIntake(tenantId, peopleId);

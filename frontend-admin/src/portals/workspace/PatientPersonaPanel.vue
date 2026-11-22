@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { hasRole } from '../../shared/http'
 import { StaffRole, formatGender } from '../../shared/enums'
@@ -13,11 +13,38 @@ import {
   unlockPersona,
   type PersonaView,
 } from '../../shared/persona'
+import { formatAllergyBrief } from '../../shared/allergy'
+import { usePersonaHealthSnapshot } from '../../shared/usePersonaHealthSnapshot'
+import MetricSparklineChart from '../../shared/MetricSparklineChart.vue'
 
 const props = defineProps<{ peopleId?: string }>()
 
 const route = useRoute()
+const router = useRouter()
 const peopleId = computed(() => String(props.peopleId || route.params.peopleId || ''))
+
+const {
+  healthLoading,
+  bpCategories,
+  bpSeries,
+  bpHasData,
+  activeMeds,
+  medSub,
+  historyFields,
+  historyHasData,
+  labTitleDate,
+  labRows,
+  labHasData,
+  labSub,
+  planTitle,
+  planSub,
+  planColumns,
+  planHasData,
+  allergyBrief,
+  healthLoaded,
+  loadHealth,
+  resetHealth,
+} = usePersonaHealthSnapshot(peopleId)
 
 const canWrite = computed(
   () => hasRole(StaffRole.CARE_MANAGER) || hasRole(StaffRole.TENANT_ADMIN),
@@ -419,7 +446,13 @@ const dimBlocks = computed((): PersonaLayout => {
       })
     : []
 
-  const allergenText = listText(constraints.allergens)
+  // 过敏：未选=未采集；显式 NKA=没有过敏；勿用空 allergens 推断
+  const allergyFromDims = formatAllergyBrief(
+    typeof constraints.allergyStatus === 'string' ? constraints.allergyStatus : undefined,
+    constraints.allergens,
+  )
+  const allergyView = healthLoaded.value ? allergyBrief.value : allergyFromDims
+  const allergenText = allergyView.text
   const dietText = listText(behavior.diet)
   const exerciseText = listText(behavior.exercise)
   const careTracksText = formatCodedList(goals.careTracks, GOAL_SUMMARY_LABELS, '')
@@ -485,7 +518,11 @@ const dimBlocks = computed((): PersonaLayout => {
       },
     ] as DimBlock[],
     coreChips: [
-      { label: '过敏', value: allergenText, tone: allergenText !== '—' ? 'danger' : 'muted' },
+      {
+        label: '过敏',
+        value: allergenText,
+        tone: allergyView.hasAllergy ? 'danger' : 'muted',
+      },
       { label: '饮食', value: dietText, tone: dietText !== '—' ? 'accent' : 'muted' },
       { label: '运动', value: exerciseText, tone: exerciseText !== '—' ? 'accent' : 'muted' },
     ] as DimRow[],
@@ -496,13 +533,46 @@ const primaryBlocks = computed(() => dimBlocks.value.primary)
 const coreChips = computed(() => dimBlocks.value.coreChips)
 const hasSoftPanel = computed(() => coreChips.value.length > 0)
 
+function patientBasePath() {
+  return `/workspace/patients/${peopleId.value}`
+}
+
+function goMedications() {
+  if (!peopleId.value) return
+  void router.push(`${patientBasePath()}/medications`)
+}
+
+function goLabs() {
+  if (!peopleId.value) return
+  void router.push(`${patientBasePath()}/observations/labs`)
+}
+
+function goCarePlan() {
+  if (!peopleId.value) return
+  void router.push(`${patientBasePath()}/care-plan`)
+}
+
+function goArchive() {
+  if (!peopleId.value) return
+  void router.push(`${patientBasePath()}/archive`)
+}
+
 async function load() {
   if (!peopleId.value) return
   loading.value = true
   try {
-    view.value = await getPersona(peopleId.value)
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '加载用户画像失败')
+    const [personaRes] = await Promise.allSettled([
+      getPersona(peopleId.value),
+      loadHealth(),
+    ])
+    if (personaRes.status === 'fulfilled') {
+      view.value = personaRes.value
+    } else {
+      view.value = null
+      ElMessage.error(
+        personaRes.reason instanceof Error ? personaRes.reason.message : '加载用户画像失败',
+      )
+    }
   } finally {
     loading.value = false
   }
@@ -591,6 +661,7 @@ watch(
   peopleId,
   () => {
     editing.value = false
+    resetHealth()
     void load()
   },
   { immediate: true },
@@ -703,7 +774,13 @@ watch(
             :class="c.tone ? `tone-${c.tone}` : undefined"
           >
             <em>{{ c.label }}</em>
-            {{ isBlankDimValue(c.value) ? '未采集' : c.value }}
+            {{
+              c.label === '过敏'
+                ? c.value
+                : isBlankDimValue(c.value)
+                  ? '未采集'
+                  : c.value
+            }}
           </span>
         </div>
       </div>
@@ -769,6 +846,143 @@ watch(
         </section>
       </div>
     </article>
+
+    <!-- 健康数据快照：血压 / 用药 / 病史 / 化验 / 方案 -->
+    <div class="health-snap" :aria-busy="healthLoading" aria-label="健康数据快照">
+      <section class="health-row health-row--2">
+        <article class="health-card">
+          <div class="health-card-head">
+            <div>
+              <h3>血压趋势 · 近 14 天</h3>
+              <p class="health-sub">收缩压 / 舒张压</p>
+            </div>
+            <div class="health-legend" aria-hidden="true">
+              <span><i class="dot rose" />收缩压</span>
+              <span><i class="dot brand" />舒张压</span>
+            </div>
+          </div>
+          <div class="health-card-body">
+            <MetricSparklineChart
+              v-if="bpHasData"
+              class="bp-chart"
+              :categories="bpCategories"
+              :series="bpSeries"
+              unit="mmHg"
+              :precision="0"
+              panel
+              :normal-range="{ min: 90, max: 140 }"
+              empty-text="暂无血压记录"
+            />
+            <p v-else class="health-empty">暂无血压记录</p>
+          </div>
+        </article>
+
+        <article class="health-card">
+          <div class="health-card-head">
+            <div>
+              <h3>当前用药</h3>
+              <p class="health-sub">{{ medSub }}</p>
+            </div>
+            <button type="button" class="health-btn" @click="goMedications">添加</button>
+          </div>
+          <div class="health-card-body">
+            <ul v-if="activeMeds.length" class="med-list">
+              <li v-for="m in activeMeds" :key="m.id" class="med-item">
+                <div class="med-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.5 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7l5 5v3" />
+                    <circle cx="13" cy="13" r="2" />
+                  </svg>
+                </div>
+                <div class="med-body">
+                  <div class="med-name">{{ m.name }}</div>
+                  <div v-if="m.desc" class="med-desc">{{ m.desc }}</div>
+                </div>
+                <span class="med-tag">在用</span>
+              </li>
+            </ul>
+            <p v-else class="health-empty">暂无在用药物，可前往用药页添加</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="health-row health-row--2">
+        <article class="health-card">
+          <div class="health-card-head">
+            <div>
+              <h3>病史摘要</h3>
+              <p class="health-sub">{{ historyHasData ? '建档档案摘要' : '暂无病史采集' }}</p>
+            </div>
+            <button type="button" class="health-btn" @click="goArchive">查看档案</button>
+          </div>
+          <div class="health-card-body">
+            <dl class="hist-fields">
+              <div v-for="f in historyFields" :key="f.key" class="hist-field">
+                <dt>{{ f.label }}</dt>
+                <dd :class="f.tone ? `tone-${f.tone}` : undefined">
+                  <template v-if="f.chips?.length">
+                    <span v-for="c in f.chips" :key="c" class="hist-chip">{{ c }}</span>
+                  </template>
+                  <template v-else>
+                    <span :class="{ muted: f.empty }">{{ f.value }}</span>
+                  </template>
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </article>
+
+        <article class="health-card">
+          <div class="health-card-head">
+            <div>
+              <h3>最近化验{{ labTitleDate ? ` · ${labTitleDate}` : '' }}</h3>
+              <p class="health-sub">{{ labSub }}</p>
+            </div>
+            <button type="button" class="health-btn" @click="goLabs">OCR 上传</button>
+          </div>
+          <div class="health-card-body">
+            <dl v-if="labHasData && labRows.length" class="hist-fields">
+              <div v-for="row in labRows" :key="row.key" class="hist-field">
+                <dt>{{ row.name }}</dt>
+                <dd :class="row.tone ? `tone-${row.tone}` : undefined">
+                  <strong>{{ row.value }}</strong>
+                  <span v-if="row.flag" class="lab-flag">{{ row.flag }}</span>
+                </dd>
+              </div>
+            </dl>
+            <p v-else class="health-empty">暂无化验报告</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="health-row">
+        <article class="health-card">
+          <div class="health-card-head">
+            <div>
+              <h3>{{ planTitle || '当前健康方案' }}</h3>
+              <p class="health-sub">{{ planSub || '暂无生效方案' }}</p>
+            </div>
+            <div class="health-head-actions">
+              <button type="button" class="health-btn" @click="goCarePlan">查看历史版本</button>
+              <button type="button" class="health-btn health-btn--primary" @click="goCarePlan">
+                调方案
+              </button>
+            </div>
+          </div>
+          <div class="health-card-body">
+            <div v-if="planHasData && planColumns.length" class="plan-cols">
+              <div v-for="col in planColumns" :key="col.key" class="plan-col">
+                <div class="plan-col-title">{{ col.title }}</div>
+                <ul class="plan-lines">
+                  <li v-for="(line, i) in col.lines" :key="`${col.key}-${i}`">{{ line }}</li>
+                </ul>
+              </div>
+            </div>
+            <p v-else class="health-empty">暂无生效健康方案，可前往方案页制定</p>
+          </div>
+        </article>
+      </section>
+    </div>
 
     <div v-if="editing" class="persona-edit" role="dialog" aria-label="编辑叙事">
       <div class="edit-card">
@@ -1468,6 +1682,314 @@ watch(
   margin-top: 8px;
 }
 
+/* —— 健康数据快照 —— */
+.health-snap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.health-row {
+  display: grid;
+  gap: 12px;
+}
+
+.health-row--2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.health-card {
+  background: #fff;
+  border: 1px solid var(--ink-200, #e2e8f0);
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.health-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 0;
+}
+
+.health-card-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-800, #1e293b);
+}
+
+.health-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ink-500, #64748b);
+}
+
+.health-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-500, #64748b);
+  flex-shrink: 0;
+}
+
+.health-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.health-legend .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.health-legend .dot.rose {
+  background: #b91c1c;
+}
+
+.health-legend .dot.brand {
+  background: #1d4ed8;
+}
+
+.health-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.health-btn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ink-200, #e2e8f0);
+  background: #fff;
+  color: var(--ink-700, #334155);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.health-btn:hover {
+  background: var(--ink-50, #f8fafc);
+  border-color: var(--ink-300, #cbd5e1);
+}
+
+.health-btn--primary {
+  background: var(--brand-500, #2c7ef8);
+  border-color: var(--brand-500, #2c7ef8);
+  color: #fff;
+}
+
+.health-btn--primary:hover {
+  background: var(--brand-600, #1e63d9);
+  border-color: var(--brand-600, #1e63d9);
+}
+
+.health-card-body {
+  padding: 12px 16px 16px;
+}
+
+.bp-chart {
+  height: 240px;
+  width: 100%;
+  display: block;
+}
+
+.health-empty {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  color: var(--ink-400, #94a3b8);
+}
+
+.med-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.med-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink-200, #e2e8f0);
+  border-radius: 10px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.med-item:hover {
+  border-color: var(--brand-500, #2c7ef8);
+  background: #f8fbff;
+}
+
+.med-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #eaf2ff;
+  color: #2c7ef8;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.med-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.med-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.med-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-800, #1e293b);
+}
+
+.med-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-500, #64748b);
+}
+
+.med-tag {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: #e6faf7;
+  color: #0f766e;
+}
+
+.hist-fields {
+  margin: 0;
+}
+
+.hist-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ink-100, #f1f5f9);
+}
+
+.hist-field:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.hist-field:first-child {
+  padding-top: 0;
+}
+
+.hist-field dt {
+  width: 64px;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  color: var(--ink-500, #64748b);
+  line-height: 1.5;
+}
+
+.hist-field dd {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-800, #1e293b);
+  line-height: 1.5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.hist-field dd.tone-danger,
+.hist-field dd.tone-danger strong {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.hist-field dd.tone-warn,
+.hist-field dd.tone-warn strong {
+  color: #d97706;
+  font-weight: 600;
+}
+
+.hist-field dd .muted {
+  color: var(--ink-400, #94a3b8);
+  font-weight: 400;
+}
+
+.hist-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: #f1ecfe;
+  color: #6d28d9;
+}
+
+.lab-flag {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-400, #94a3b8);
+  margin-left: 2px;
+}
+
+.plan-cols {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.plan-col-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-500, #64748b);
+  margin-bottom: 8px;
+}
+
+.plan-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--ink-800, #1e293b);
+}
+
+.plan-lines li::before {
+  content: '· ';
+  color: var(--ink-400, #94a3b8);
+}
+
+@media (max-width: 960px) {
+  .health-row--2 {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .persona-toolbar {
     flex-direction: column;
@@ -1503,5 +2025,18 @@ watch(
   .archive-col .dim-row {
     grid-template-columns: 84px 1fr;
   }
+
+  .health-row--2 {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .health-card-head {
+    flex-wrap: wrap;
+  }
 }
+
 </style>
