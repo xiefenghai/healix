@@ -979,9 +979,12 @@ async function onCareTeamChanged() {
 function onBasicInfoUpdated(info: PatientBasicInfo) {
   if (!patient.value) return
   revealMobile.value = false
+  if (peopleId.value && info.birthday) clearBirthdayEstimated(peopleId.value)
   patient.value = {
     ...patient.value,
     displayName: info.displayName,
+    gender: info.gender ?? patient.value.gender,
+    birthday: info.birthday ?? patient.value.birthday,
     mobile: info.mobile,
     mobileOwner: info.mobileOwner,
     identityMask: info.identityMask ?? patient.value.identityMask,

@@ -126,6 +126,12 @@ const GENDER_LABELS: Record<string, string> = {
   UNKNOWN: '未知',
 }
 
+export const GENDER_OPTIONS = [
+  { label: GENDER_LABELS.MALE, value: 'MALE' },
+  { label: GENDER_LABELS.FEMALE, value: 'FEMALE' },
+  { label: GENDER_LABELS.UNKNOWN, value: 'UNKNOWN' },
+] as const
+
 export function formatGender(gender: string | null | undefined) {
   if (!gender) return '-'
   return GENDER_LABELS[gender] ?? gender

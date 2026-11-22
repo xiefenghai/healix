@@ -6,6 +6,7 @@ const ROLES_KEY = 'healix_admin_roles'
 const OPS_ROLE_KEY = 'healix_ops_role'
 const ORG_ID_KEY = 'healix_admin_org_id'
 const ORG_NAME_KEY = 'healix_admin_org_name'
+const STAFF_NAME_KEY = 'healix_admin_staff_name'
 const ENTRY_KEY = 'healix_admin_entry'
 
 /** 机构上下文变更时递增，供布局菜单响应式刷新 */
@@ -72,6 +73,19 @@ export function getCurrentOrgName(): string | null {
   return localStorage.getItem(ORG_NAME_KEY)
 }
 
+/** 当前登录健管师 / 员工展示名（来自 session/me）。 */
+export function getStaffDisplayName(): string | null {
+  const v = localStorage.getItem(STAFF_NAME_KEY)?.trim()
+  return v || null
+}
+
+export function setStaffDisplayName(name: string | null | undefined) {
+  const v = String(name || '').trim()
+  if (v) localStorage.setItem(STAFF_NAME_KEY, v)
+  else localStorage.removeItem(STAFF_NAME_KEY)
+  orgSessionTick.value++
+}
+
 export function setSession(opts: {
   token: string
   aud: AdminAud
@@ -80,6 +94,7 @@ export function setSession(opts: {
   opsRoleCode?: string | null
   currentOrgId?: string | number | null
   currentOrgName?: string | null
+  staffDisplayName?: string | null
 }) {
   localStorage.setItem(TOKEN_KEY, opts.token)
   localStorage.setItem(AUD_KEY, opts.aud)
@@ -100,6 +115,11 @@ export function setSession(opts: {
   } else {
     localStorage.removeItem(ORG_NAME_KEY)
   }
+  if (opts.staffDisplayName !== undefined) {
+    const v = String(opts.staffDisplayName || '').trim()
+    if (v) localStorage.setItem(STAFF_NAME_KEY, v)
+    else localStorage.removeItem(STAFF_NAME_KEY)
+  }
   orgSessionTick.value++
 }
 
@@ -117,6 +137,7 @@ export function clearSession() {
   localStorage.removeItem(OPS_ROLE_KEY)
   localStorage.removeItem(ORG_ID_KEY)
   localStorage.removeItem(ORG_NAME_KEY)
+  localStorage.removeItem(STAFF_NAME_KEY)
   localStorage.removeItem(ENTRY_KEY)
   orgSessionTick.value++
 }

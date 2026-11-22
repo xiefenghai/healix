@@ -1,7 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, useSlots } from 'vue'
+import { computed, onMounted, ref, useSlots, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { clearSession, getCurrentOrgName, getEntry } from '../shared/http'
+import {
+  api,
+  clearSession,
+  getAud,
+  getCurrentOrgName,
+  getEntry,
+  getStaffDisplayName,
+  getToken,
+  orgSessionTick,
+  setStaffDisplayName,
+} from '../shared/http'
 import brandShieldUrl from '../assets/brand-shield.png'
 
 export type ShellMenuItem = {
@@ -50,13 +60,42 @@ const router = useRouter()
 const route = useRoute()
 const collapsed = ref(false)
 const entry = computed(() => getEntry())
-const orgName = computed(() => getCurrentOrgName())
+const orgName = computed(() => {
+  void orgSessionTick.value
+  return getCurrentOrgName()
+})
+const staffName = computed(() => {
+  void orgSessionTick.value
+  return getStaffDisplayName()
+})
 const active = computed(() => {
   const path = route.path
   const matched = props.menus.find((m) => path === m.path || path.startsWith(`${m.path}/`))
   return matched?.path ?? path
 })
 const orgInitial = computed(() => (orgName.value || '机').slice(0, 1))
+const staffInitial = computed(() => (staffName.value || (entry.value === 'ops' ? '超' : '管')).slice(0, 1))
+
+async function ensureStaffDisplayName() {
+  if (getAud() !== 'b' || !getToken()) return
+  if (getStaffDisplayName()) return
+  try {
+    const res = await api<{ data: { displayName?: string | null } }>('/api/b/v1/session/me')
+    setStaffDisplayName(res.data?.displayName)
+  } catch {
+    /* 顶栏姓名非关键路径，静默即可 */
+  }
+}
+
+onMounted(() => {
+  void ensureStaffDisplayName()
+})
+watch(
+  () => [getToken(), getAud(), orgSessionTick.value] as const,
+  () => {
+    void ensureStaffDisplayName()
+  },
+)
 
 /** 按 group 聚合；无 group 的归入空标题一组 */
 const menuSections = computed(() => {
@@ -95,7 +134,7 @@ function onSwitchOrg() {
     <header v-if="!hideTopbar" class="topbar" :class="{ 'topbar-minimal': hideCrumbs }">
       <div class="left">
         <div v-if="!hideCrumbs" class="crumbs">
-          <span class="crumb-muted">机构工作台</span>
+          <span class="crumb-muted" :title="orgName || '机构工作台'">{{ orgName || '机构工作台' }}</span>
           <template v-if="crumbItems.length">
             <template v-for="(item, idx) in crumbItems" :key="`${item.label}-${idx}`">
               <span class="crumb-sep">/</span>
@@ -141,8 +180,9 @@ function onSwitchOrg() {
           </div>
         </template>
         <el-dropdown trigger="click" :teleported="true">
-          <button type="button" class="admin" aria-label="账号菜单">
-            <span class="user-avatar">管</span>
+          <button type="button" class="admin" :aria-label="staffName ? `账号菜单 · ${staffName}` : '账号菜单'">
+            <span class="user-avatar">{{ staffInitial }}</span>
+            <span v-if="staffName" class="user-name" :title="staffName">{{ staffName }}</span>
           </button>
           <template #dropdown>
             <el-dropdown-menu>
@@ -283,6 +323,9 @@ function onSwitchOrg() {
 }
 
 .crumb-muted {
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--ink-500);
 }
 
@@ -372,21 +415,31 @@ function onSwitchOrg() {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 0;
+  gap: 8px;
+  max-width: 160px;
+  padding: 4px 8px 4px 4px;
   margin: 0;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
-  line-height: 0;
+  line-height: 1.2;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.admin:hover {
+  background: var(--slate-50, #f8fafc);
+  border-color: var(--slate-200, #e2e8f0);
 }
 
 .admin:focus-visible {
   outline: 2px solid var(--brand-500);
   outline-offset: 2px;
-  border-radius: 999px;
 }
 
 .user-avatar {
+  flex: 0 0 auto;
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -396,6 +449,16 @@ function onSwitchOrg() {
   color: #fff;
   font-weight: 600;
   font-size: 12px;
+}
+
+.user-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-800, #1f2937);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .topbar-minimal .left {

@@ -8,8 +8,10 @@ import { ElMessage } from 'element-plus'
 import { api } from './http'
 import {
   EDUCATION_LEVEL_OPTIONS,
+  GENDER_OPTIONS,
   MARITAL_STATUS_OPTIONS,
   formatEducationLevel,
+  formatGender,
   formatMaritalStatus,
 } from './enums'
 import { MOBILE_OWNER_OPTIONS, mobileWithOwner } from './mobile-owner'
@@ -17,6 +19,8 @@ import { MOBILE_OWNER_OPTIONS, mobileWithOwner } from './mobile-owner'
 export interface PatientBasicInfo {
   peopleId: string
   displayName: string
+  gender?: string | null
+  birthday?: string | null
   mobile?: string | null
   mobileOwner?: string | null
   identityMask?: string | null
@@ -43,6 +47,8 @@ const dialogVisible = ref(false)
 
 const form = reactive({
   displayName: '',
+  gender: '' as string,
+  birthday: '' as string,
   mobile: '',
   mobileOwner: 'SELF',
   address: '',
@@ -51,8 +57,39 @@ const form = reactive({
   occupation: '',
 })
 
+function normalizeBirthday(raw: unknown): string {
+  if (raw == null || raw === '') return ''
+  if (Array.isArray(raw) && raw.length >= 3) {
+    const y = Number(raw[0])
+    const m = Number(raw[1])
+    const d = Number(raw[2])
+    if (!y || !m || !d) return ''
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  }
+  const s = String(raw).trim()
+  return s.length >= 10 ? s.slice(0, 10) : s
+}
+
+function mapInfo(data: PatientBasicInfo): PatientBasicInfo {
+  return {
+    peopleId: data.peopleId,
+    displayName: data.displayName,
+    gender: data.gender ?? null,
+    birthday: normalizeBirthday(data.birthday) || null,
+    mobile: data.mobile,
+    mobileOwner: data.mobileOwner,
+    identityMask: data.identityMask,
+    address: data.address,
+    educationLevel: data.educationLevel,
+    maritalStatus: data.maritalStatus,
+    occupation: data.occupation,
+  }
+}
+
 const displayRows = computed(() => [
   { label: '姓名', value: info.value?.displayName || '-' },
+  { label: '性别', value: formatGender(info.value?.gender) },
+  { label: '出生日期', value: info.value?.birthday || '-' },
   { label: '联系电话', value: mobileWithOwner(info.value?.mobile, info.value?.mobileOwner) || '-' },
   { label: '家庭住址', value: info.value?.address || '-' },
   { label: '文化程度', value: formatEducationLevel(info.value?.educationLevel) },
@@ -65,17 +102,7 @@ async function load() {
   loading.value = true
   try {
     const res = await api<{ data: PatientBasicInfo }>(`/api/b/v1/patients/${props.peopleId}`)
-    info.value = {
-      peopleId: res.data.peopleId,
-      displayName: res.data.displayName,
-      mobile: res.data.mobile,
-      mobileOwner: res.data.mobileOwner,
-      identityMask: res.data.identityMask,
-      address: res.data.address,
-      educationLevel: res.data.educationLevel,
-      maritalStatus: res.data.maritalStatus,
-      occupation: res.data.occupation,
-    }
+    info.value = mapInfo(res.data)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载基础信息失败')
   } finally {
@@ -86,6 +113,8 @@ async function load() {
 function openEdit() {
   const src = info.value
   form.displayName = src?.displayName || ''
+  form.gender = src?.gender || ''
+  form.birthday = normalizeBirthday(src?.birthday)
   form.mobile = src?.mobile || ''
   form.mobileOwner = src?.mobileOwner || 'SELF'
   form.address = src?.address || ''
@@ -118,6 +147,15 @@ async function save() {
     ElMessage.warning('姓名格式不正确')
     return
   }
+  if (!form.gender) {
+    ElMessage.warning('请选择性别')
+    return
+  }
+  const birthday = normalizeBirthday(form.birthday)
+  if (!birthday) {
+    ElMessage.warning('请选择出生日期')
+    return
+  }
   saving.value = true
   try {
     const res = await api<{ data: PatientBasicInfo }>(
@@ -126,6 +164,8 @@ async function save() {
         method: 'PUT',
         body: JSON.stringify({
           displayName,
+          gender: form.gender,
+          birthday,
           mobile: form.mobile.trim() || null,
           mobileOwner: form.mobile.trim() ? form.mobileOwner : null,
           address: form.address.trim() || null,
@@ -135,17 +175,7 @@ async function save() {
         }),
       },
     )
-    info.value = {
-      peopleId: res.data.peopleId,
-      displayName: res.data.displayName,
-      mobile: res.data.mobile,
-      mobileOwner: res.data.mobileOwner,
-      identityMask: res.data.identityMask,
-      address: res.data.address,
-      educationLevel: res.data.educationLevel,
-      maritalStatus: res.data.maritalStatus,
-      occupation: res.data.occupation,
-    }
+    info.value = mapInfo(res.data)
     dialogVisible.value = false
     ElMessage.success('基础信息已保存')
     emit('updated', info.value)
@@ -243,6 +273,21 @@ defineExpose({ openEdit, openIdentity, reload: load, info })
     <el-form label-width="88px" @submit.prevent>
       <el-form-item label="姓名" required>
         <el-input v-model="form.displayName" maxlength="64" show-word-limit />
+      </el-form-item>
+      <el-form-item label="性别" required>
+        <el-select v-model="form.gender" placeholder="请选择" style="width: 100%">
+          <el-option v-for="o in GENDER_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="出生日期" required>
+        <el-date-picker
+          v-model="form.birthday"
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="选择日期"
+          style="width: 100%"
+          :disabled-date="(d: Date) => d.getTime() > Date.now()"
+        />
       </el-form-item>
       <el-form-item label="联系电话">
         <div class="mobile-row">

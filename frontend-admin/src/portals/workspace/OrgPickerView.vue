@@ -3,7 +3,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, Loading, OfficeBuilding, Search } from '@element-plus/icons-vue'
-import { api, getCurrentOrgId, getCurrentOrgName, updateOrgSession } from '../../shared/http'
+import {
+  api,
+  getCurrentOrgId,
+  getCurrentOrgName,
+  setStaffDisplayName,
+  updateOrgSession,
+} from '../../shared/http'
 import { enableStatusTagType, formatEnableStatus, formatOrgType } from '../../shared/enums'
 import { matchOrgQuery } from '../../shared/org-search'
 
@@ -120,6 +126,7 @@ async function load() {
       }
     }>('/api/b/v1/session/me')
     displayName.value = res.data.displayName?.trim() || ''
+    setStaffDisplayName(displayName.value || null)
     orgs.value = (res.data.orgs ?? []).map((o) => ({
       ...o,
       id: String(o.id),

@@ -73,6 +73,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -1402,13 +1403,15 @@ public class OrgWorkspaceService {
     }
 
     /**
-     * 更新患者人口学基础信息（姓名、联系方式、住址、文化程度、婚姻、职业）。
+     * 更新患者人口学基础信息（姓名、性别、生日、联系方式、住址、文化程度、婚姻、职业）。
      */
     @Transactional
     public OrgPatientListItem updatePatientBasicInfo(
             String orgId,
             String peopleId,
             String displayName,
+            String gender,
+            LocalDate birthday,
             String mobile,
             String mobileOwner,
             String address,
@@ -1429,6 +1432,8 @@ public class OrgWorkspaceService {
             throw new BusinessException(403, "患者未在本机构有效入组");
         }
         String name = PeopleNames.requireDisplayName(displayName);
+        String genderNorm = requireGenderCode(gender);
+        LocalDate birthdayNorm = requireBirthday(birthday);
         String mobileNorm = normalizeBlank(mobile);
         if (mobileNorm != null) {
             if (mobileNorm.length() > 32) {
@@ -1465,6 +1470,8 @@ public class OrgWorkspaceService {
 
         profile.setDisplayName(name);
         profile.setNamePinyin(IdentityService.toPinyinKey(name));
+        profile.setGender(genderNorm);
+        profile.setBirthday(birthdayNorm);
         profile.setMobile(mobileNorm);
         profile.setMobileOwner(mobileNorm == null ? null : MobileOwnerEnum.normalize(mobileOwner));
         profile.setAddress(addressNorm);
@@ -1488,6 +1495,32 @@ public class OrgWorkspaceService {
 
         CareTeamMember tm = careTeamMemberMapper.findPeopleInOrg(orgId, peopleId);
         return toPatientItem(profile, membership, tm);
+    }
+
+    private static String requireGenderCode(String gender) {
+        String g = normalizeBlank(gender);
+        if (g == null) {
+            throw new BusinessException(400, "请选择性别");
+        }
+        String upper = g.toUpperCase(Locale.ROOT);
+        if (!"MALE".equals(upper) && !"FEMALE".equals(upper) && !"UNKNOWN".equals(upper)) {
+            throw new BusinessException(400, "性别不正确");
+        }
+        return upper;
+    }
+
+    private static LocalDate requireBirthday(LocalDate birthday) {
+        if (birthday == null) {
+            throw new BusinessException(400, "请选择出生日期");
+        }
+        LocalDate today = LocalDate.now();
+        if (birthday.isAfter(today)) {
+            throw new BusinessException(400, "出生日期不能晚于今天");
+        }
+        if (birthday.isBefore(LocalDate.of(1900, 1, 1))) {
+            throw new BusinessException(400, "出生日期过早");
+        }
+        return birthday;
     }
 
     /** 历史档案缺的人口学信息 / 联系电话用本次填写补齐，不覆盖已有值。 */

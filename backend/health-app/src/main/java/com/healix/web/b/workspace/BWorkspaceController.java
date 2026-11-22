@@ -59,7 +59,7 @@ public class BWorkspaceController {
         return ApiResult.ok(orgWorkspaceService.unwatchPatient(orgId, peopleId));
     }
 
-    /** 更新患者人口学基础信息（姓名、联系方式、住址、文化程度、婚姻、职业）。 */
+    /** 更新患者人口学基础信息（姓名、性别、生日、联系方式、住址、文化程度、婚姻、职业）。 */
     @PutMapping("/patients/{peopleId}/basic-info")
     public ApiResult<OrgPatientListItem> updatePatientBasicInfo(
             @PathVariable String peopleId, @RequestBody @Validated UpdatePatientBasicInfoRequest request) {
@@ -69,6 +69,8 @@ public class BWorkspaceController {
                 orgId,
                 peopleId,
                 request.displayName(),
+                request.gender(),
+                request.birthday(),
                 request.mobile(),
                 request.mobileOwner(),
                 request.address(),
@@ -350,6 +352,8 @@ public class BWorkspaceController {
 
     public record UpdatePatientBasicInfoRequest(
             @NotBlank @Size(max = 64) String displayName,
+            @NotBlank @Size(max = 16) String gender,
+            @NotNull java.time.LocalDate birthday,
             @Size(max = 32) String mobile,
             String mobileOwner,
             @Size(max = 256) String address,
