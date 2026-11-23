@@ -4976,14 +4976,14 @@ const orgCapabilityChips = computed((): QuickChip[] => {
   return [
     {
       code: 'ORG_BRIEFING',
-      label: ' 机构简报',
+      label: '📊 机构简报',
       hint: '展开今日机构简报，查看优先与待办摘要',
       needsPatient: false,
       enabled: true,
     },
     {
       code: 'BATCH_SERVE',
-      label: ' 批量管理',
+      label: '📦 批量管理',
       hint:
         patientTotal <= 0
           ? '系统内暂无患者，请先建档后再批量管理'
@@ -4993,7 +4993,7 @@ const orgCapabilityChips = computed((): QuickChip[] => {
     },
     {
       code: 'OPS_STATS',
-      label: ' 运营统计',
+      label: '📈 运营统计',
       hint: '即将上线',
       needsPatient: false,
       enabled: false,
@@ -8099,6 +8099,53 @@ function escapePlainHtml(text: string): string {
     .replace(/\n/g, '<br>')
 }
 
+/** 简报正文：按句分段 + 高亮人数/关键名，做成备忘录节奏 */
+function formatBriefingHtml(text: string): string {
+  const raw = (text || '').trim()
+  if (!raw) return ''
+
+  const nameSet = new Set<string>()
+  for (const c of cards.value) {
+    const n = (c.displayName || '').trim()
+    if (n.length >= 2) nameSet.add(n)
+  }
+  for (const a of briefingMsg.value?.actions || []) {
+    const m = (a.label || '').match(/生成(.+?)的/)
+    const n = (m?.[1] || '').trim()
+    if (n.length >= 2 && n.length <= 8) nameSet.add(n)
+  }
+  const names = [...nameSet].sort((a, b) => b.length - a.length)
+
+  const escapeChunk = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  const highlightInline = (escaped: string) => {
+    let s = escaped.replace(
+      /(\d+)\s*(项|位|份|人|天|个|条|次)/g,
+      '<strong class="briefing-em">$1&nbsp;$2</strong>',
+    )
+    for (const name of names) {
+      const esc = escapeChunk(name)
+      if (!esc || !s.includes(esc)) continue
+      s = s.split(esc).join(`<strong class="briefing-em">${esc}</strong>`)
+    }
+    return s
+  }
+
+  // 按句号/问号/感叹号切段；保留标点，去掉空段
+  const parts = (raw.match(/[^。！？]+[。！？]?/g) || [raw])
+    .map((p) => p.trim())
+    .filter(Boolean)
+  if (parts.length <= 1) {
+    return `<p class="briefing-para">${highlightInline(escapeChunk(raw).replace(/\n/g, '<br>'))}</p>`
+  }
+  return parts
+    .map((p) => `<p class="briefing-para">${highlightInline(escapeChunk(p))}</p>`)
+    .join('')
+}
+
+const briefingFormattedHtml = computed(() => formatBriefingHtml(briefingShownText.value))
+
 function messageHtml(msg: {
   role: ChatMessage['role']
   content?: string
@@ -9061,10 +9108,10 @@ onUnmounted(() => {
                 </div>
                 <p class="briefing-loading-hint">正在生成今日简报…</p>
               </div>
-              <div v-else class="briefing-text md-body" v-html="messageHtml({ role: 'system', content: briefingShownText })" />
+              <div v-else class="briefing-text md-body" v-html="briefingFormattedHtml" />
               <div
                 v-if="briefingUiActions.length"
-                class="bubble-actions"
+                class="bubble-actions briefing-actions"
               >
                 <button
                   v-for="(a, ai) in shownActions(briefingUiActions, 'briefing', 0)"
@@ -9072,8 +9119,8 @@ onUnmounted(() => {
                   type="button"
                   class="action-chip"
                   :class="{
-                    primary: ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
-                    do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
+                    primary: ai === 0,
+                    ghost: ai > 0,
                     done: a.runState === 'done',
                   }"
                   :title="a.label"
@@ -10554,7 +10601,7 @@ onUnmounted(() => {
 }
 
 .empty-starters {
-  margin: 4px 0 12px;
+  margin: 8px 0 16px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -10562,40 +10609,43 @@ onUnmounted(() => {
 }
 
 .empty-starters.after-welcome {
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .empty-starters-title {
-  margin: 0 0 6px;
-  font-size: 11px;
-  font-weight: 600;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.4;
-  color: var(--ink-400);
+  color: var(--ink-400, #94a3b8);
+  letter-spacing: 0.02em;
 }
 
 .empty-starter-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 12px;
 }
 
 .empty-starter {
   text-align: left;
-  border: 1px solid var(--ink-200);
-  background: var(--white);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
+  border: 1px solid var(--ink-100, #e2e8f0);
+  background: var(--ink-50, #f8fafc);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--ink-700);
   cursor: pointer;
   transition: var(--admin-transition);
+  box-shadow: none;
 }
 
 .empty-starter:hover:not(:disabled) {
-  border-color: var(--brand-300);
-  background: var(--brand-50);
-  color: var(--brand-700);
+  border-color: var(--brand-400, var(--blue-400));
+  background: var(--white);
+  color: var(--brand-700, var(--blue-700));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink-900) 6%, transparent);
 }
 
 .empty-starter:disabled {
@@ -11848,14 +11898,19 @@ onUnmounted(() => {
 .briefing {
   flex-shrink: 0;
   margin: 0 0 4px;
-  padding: 12px 14px;
-  background: linear-gradient(135deg, var(--violet-50) 0%, var(--ink-50) 100%);
-  border: 1px solid color-mix(in srgb, var(--violet-500) 18%, var(--ink-100));
-  border-radius: 12px;
+  padding: 24px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--violet-50, #f5f3ff) 88%, var(--ink-50, #f8fafc)) 0%,
+    color-mix(in srgb, var(--ink-50, #f8fafc) 70%, #eef2f7) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--violet-500, #8b5cf6) 14%, var(--ink-100, #e2e8f0));
+  border-radius: 14px;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink-900) 3%, transparent);
 }
 
 .briefing.collapsed {
-  padding: 10px 12px;
+  padding: 12px 16px;
 }
 
 .briefing-toggle {
@@ -11939,14 +11994,91 @@ onUnmounted(() => {
 }
 
 .briefing-text {
-  margin-top: 8px;
+  margin-top: 14px;
   font-size: 13px;
   color: var(--ink-700);
-  line-height: 1.35;
+  line-height: 1.65;
 }
 
-.briefing .bubble-actions {
-  margin-top: 10px;
+.briefing-text.md-body :deep(.briefing-para) {
+  margin: 0 0 8px;
+  padding: 0;
+  line-height: 1.65;
+  color: var(--ink-700);
+}
+
+.briefing-text.md-body :deep(.briefing-para:last-child) {
+  margin-bottom: 0;
+}
+
+.briefing-text.md-body :deep(.briefing-em) {
+  font-weight: 600;
+  color: var(--brand-600, var(--blue-600));
+}
+
+.briefing .briefing-actions {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--ink-200, #e2e8f0) 60%, transparent);
+  gap: 10px;
+  align-items: center;
+}
+
+.briefing .briefing-actions .action-chip {
+  max-width: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.briefing .briefing-actions .action-chip.primary {
+  background: linear-gradient(135deg, var(--blue-600, #2563eb) 0%, var(--brand-600, #1d4ed8) 100%);
+  border-color: transparent;
+  color: var(--white);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--blue-900, #1e3a8a) 18%, transparent),
+    0 4px 12px -2px color-mix(in srgb, var(--blue-600, #2563eb) 35%, transparent);
+}
+
+.briefing .briefing-actions .action-chip.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--blue-700, #1d4ed8) 0%, var(--brand-700, #1e40af) 100%);
+  color: var(--white);
+  border-color: transparent;
+}
+
+.briefing .briefing-actions .action-chip.ghost {
+  background: transparent;
+  border: 1px solid var(--ink-200, #e2e8f0);
+  color: var(--ink-700, #334155);
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.briefing .briefing-actions .action-chip.ghost:hover:not(:disabled) {
+  border-color: var(--ink-300, #cbd5e1);
+  background: color-mix(in srgb, var(--ink-100, #f1f5f9) 70%, transparent);
+  color: var(--ink-800, #1e293b);
+}
+
+.briefing .briefing-actions .action-chip.more {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--ink-500, #64748b);
+  font-weight: 500;
+  font-size: 12px;
+  padding: 6px 4px;
+  box-shadow: none;
+  max-width: none;
+}
+
+.briefing .briefing-actions .action-chip.more:hover {
+  color: var(--brand-600, var(--blue-600));
+  background: transparent;
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .chat-body {
@@ -12912,9 +13044,11 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-  min-height: 36px;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 10px;
+  margin-top: -2px;
+  min-height: 28px;
 }
 
 .quick-chip-tip-wrap {
@@ -12946,13 +13080,13 @@ onUnmounted(() => {
 }
 
 .quick-chip {
-  border: 1px solid var(--ink-200);
-  background: var(--white);
-  color: var(--ink-800);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-600, #475569);
   border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   transition: var(--admin-transition);
   white-space: nowrap;
@@ -12960,9 +13094,10 @@ onUnmounted(() => {
 }
 
 .quick-chip.primary {
-  border-color: var(--brand-400);
-  background: var(--brand-50, var(--blue-50));
-  color: var(--brand-700, var(--brand-800));
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-700, #334155);
+  font-weight: 600;
 }
 
 .quick-chip.pulse {
@@ -12972,44 +13107,44 @@ onUnmounted(() => {
 @keyframes archive-chip-pulse {
   0%,
   100% {
-    box-shadow: 0 1px 2px var(--ink-a04);
+    background: transparent;
   }
   50% {
-    box-shadow: 0 0 0 3px var(--ink-a14);
-    border-color: var(--brand-500, var(--blue-600));
+    background: var(--ink-100, #f1f5f9);
   }
 }
 
 .quick-chip:hover:not(:disabled) {
-  border-color: var(--brand-300);
-  background: var(--brand-50);
-  color: var(--brand-700);
+  border-color: transparent;
+  background: var(--ink-100, #f1f5f9);
+  color: var(--ink-800, #1e293b);
 }
 
 .quick-chip.primary:hover:not(:disabled) {
-  background: var(--brand-100, var(--blue-100));
+  background: var(--ink-100, #f1f5f9);
+  color: var(--brand-700, var(--blue-700));
 }
 
 .quick-chip.later {
   color: var(--ink-400);
-  background: var(--ink-50);
-  border-color: var(--ink-100);
+  background: transparent;
+  border-color: transparent;
   font-weight: 500;
 }
 
 .quick-chip.later:hover:not(:disabled) {
   color: var(--ink-500);
-  background: var(--ink-50);
-  border-color: var(--ink-200);
+  background: var(--ink-50, #f8fafc);
+  border-color: transparent;
 }
 
 .quick-chip:disabled,
 .quick-chip.locked {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
   color: var(--ink-400, var(--gray-400));
-  background: var(--gray-100);
-  border-color: var(--ink-200, var(--gray-200));
+  background: transparent;
+  border-color: transparent;
   box-shadow: none;
   filter: grayscale(0.35);
 }
@@ -13017,8 +13152,8 @@ onUnmounted(() => {
 .quick-chip.locked:hover,
 .quick-chip.primary.locked:hover,
 .quick-chip.later.locked:hover {
-  border-color: var(--ink-200, var(--gray-200));
-  background: var(--gray-100);
+  border-color: transparent;
+  background: transparent;
   color: var(--ink-400, var(--gray-400));
 }
 
@@ -13046,6 +13181,11 @@ onUnmounted(() => {
   color: var(--ink-800);
 }
 
+.composer-box :deep(.el-textarea__inner::placeholder) {
+  color: var(--ink-300, #cbd5e1);
+  opacity: 1;
+}
+
 .composer-bar {
   display: flex;
   align-items: center;
@@ -13065,17 +13205,17 @@ onUnmounted(() => {
 }
 
 .send-btn {
-  height: 32px;
-  padding: 0 14px;
-  background: var(--gray-200);
-  color: var(--gray-400);
+  height: 28px;
+  padding: 0 12px;
+  background: var(--ink-100, #f1f5f9);
+  color: var(--ink-300, #cbd5e1);
   border: 0;
   border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   cursor: not-allowed;
   transition: var(--admin-transition);
 }
@@ -13091,8 +13231,8 @@ onUnmounted(() => {
 }
 
 .send-btn:disabled {
-  background: var(--gray-200) !important;
-  color: var(--gray-400) !important;
+  background: var(--ink-100, #f1f5f9) !important;
+  color: var(--ink-300, #cbd5e1) !important;
   opacity: 1;
   cursor: not-allowed;
 }
@@ -13114,8 +13254,8 @@ onUnmounted(() => {
 }
 
 .send-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .disclaimer {

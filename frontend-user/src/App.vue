@@ -185,10 +185,13 @@ onBeforeUnmount(() => {
         :aria-expanded="plusOpen"
         @click="plusOpen = !plusOpen"
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path v-if="plusOpen" d="M6 6l12 12M18 6L6 18" />
-          <path v-else d="M12 5.5v13M5.5 12h13" />
-        </svg>
+        <span class="dock-plus-btn" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path v-if="plusOpen" d="M6 6l12 12M18 6L6 18" />
+            <path v-else d="M12 5.5v13M5.5 12h13" />
+          </svg>
+        </span>
+        <span>记录</span>
       </button>
 
       <button
@@ -222,25 +225,27 @@ onBeforeUnmount(() => {
   min-height: 100vh;
 }
 .with-tab .page-body {
-  /* dock 74 + FAB 上凸约 28，避免末卡被 + 挡住 */
+  /* 底栏高度（含上浮 + 按钮）+ 手势条 */
   padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
 }
 
 .dock {
   position: fixed;
   left: 50%;
+  right: auto;
   transform: translateX(-50%);
   bottom: 0;
   width: min(100%, 375px);
-  z-index: 30;
+  z-index: 50;
   display: grid;
-  grid-template-columns: 1fr 1fr 72px 1fr 1fr;
+  grid-template-columns: repeat(5, 1fr);
   align-items: end;
   gap: 0;
-  padding: 6px 4px calc(8px + env(safe-area-inset-bottom, 0px));
-  background: rgba(255, 255, 255, 0.94);
+  padding: 8px 4px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: #fff;
   backdrop-filter: blur(14px);
-  border-top: 1px solid var(--hx-n-200);
+  border-top: 1px solid rgba(14, 159, 131, 0.08);
+  box-shadow: 0 -4px 16px rgba(14, 159, 131, 0.06);
   box-sizing: border-box;
 }
 .dock-tab {
@@ -248,19 +253,20 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   min-height: 48px;
   padding: 4px 0 2px;
   border: 0;
   background: transparent;
-  color: var(--hx-n-700);
+  color: var(--hx-n-400);
   font-size: 11px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
+  transition: color 0.15s ease;
 }
 .dock-tab.on {
-  color: var(--hx-teal-700);
+  color: var(--hx-n-900);
   font-weight: 800;
 }
 .dock-ic {
@@ -271,6 +277,19 @@ onBeforeUnmount(() => {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: stroke-width 0.15s ease, fill 0.15s ease, stroke 0.15s ease;
+}
+.dock-tab.on .dock-ic {
+  stroke: var(--hx-teal-600);
+  fill: rgba(14, 159, 131, 0.2);
+  stroke-width: 2.2;
+}
+.dock-tab.on::after {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--hx-teal-600);
 }
 .dock-badge {
   position: absolute;
@@ -292,30 +311,48 @@ onBeforeUnmount(() => {
 }
 
 .dock-plus {
-  width: 56px;
-  height: 56px;
-  margin: -16px auto 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-height: 48px;
+  padding: 4px 0 2px;
   border: 0;
+  background: transparent;
+  color: var(--hx-n-400);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.dock-plus-btn {
+  width: 44px;
+  height: 44px;
+  margin-top: -12px;
   border-radius: 50%;
-  background: var(--hx-teal-600);
+  background: linear-gradient(145deg, #34d399 0%, #0e9f83 55%, #0b7a66 100%);
   color: #fff;
   display: grid;
   place-items: center;
-  box-shadow: var(--hx-elev-brand);
-  cursor: pointer;
-  padding: 0;
-  transition: background 0.15s ease, transform 0.15s ease, opacity 0.2s ease;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 .dock-plus svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   stroke: currentColor;
   fill: none;
   stroke-width: 2.2;
   stroke-linecap: round;
 }
 .dock-plus.open {
-  background: var(--hx-n-800);
+  color: var(--hx-teal-600);
+  font-weight: 800;
+}
+.dock-plus.open .dock-plus-btn {
+  background: linear-gradient(145deg, #3d4b58, #13222e);
+  box-shadow: 0 4px 14px rgba(19, 34, 46, 0.28);
   transform: rotate(90deg);
 }
 
