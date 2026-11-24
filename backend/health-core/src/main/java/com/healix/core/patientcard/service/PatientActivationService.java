@@ -109,8 +109,8 @@ public class PatientActivationService {
     /**
      * 激活：冷启动可建账号；热启动仅加卡片。返回 account + card。
      *
-     * <p>租户以激活码为准（方案 A）：请求里的 tenantId 仅作提示，不一致时按码所属租户执行；
-     * 已登录账号若属其它租户，则用同手机号在目标租户查找或创建账号并换会话。
+     * <p>C 账号已平台唯一；激活码只用于定位 people / 机构入组，不再按租户切账号。
+     * 档案已有本人手机号时，引导走「添加就诊人」手机号+姓名+OTP 对齐。
      */
     @Transactional
     public ActivateResult activate(
@@ -123,7 +123,6 @@ public class PatientActivationService {
             String relation,
             String existingAccountId) {
         PeopleActivationInvite invite = requireUsableInvite(activationCode);
-        // 激活码定租户；请求 tenantId 可忽略（C 端缓存/bootstrap 常不准）
         String inviteTenantId = invite.getTenantId();
         PeopleProfile people = peopleProfileMapper.findById(invite.getPeopleId());
         if (people == null) {
@@ -137,12 +136,12 @@ public class PatientActivationService {
         }
         if (com.healix.core.people.support.MobileNumbers.trySelf(people.getMobile()) != null
                 && "SELF".equals(people.getMobileOwner())) {
-            throw new BusinessException(400, "该档案已有本人手机号，请直接添加就诊人");
+            throw new BusinessException(400, "该档案已有本人手机号，请直接添加就诊人（手机号+姓名+验证码）");
         }
 
         PeopleAccount account;
         if (StringUtils.hasText(existingAccountId)) {
-            account = resolveAccountForInviteTenant(existingAccountId, inviteTenantId);
+            account = requireActiveAccount(existingAccountId);
         } else {
             if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {
                 throw new BusinessException(400, "请设置用户名和密码");
@@ -175,24 +174,12 @@ public class PatientActivationService {
         return new ActivateResult(account, card, people);
     }
 
-    /**
-     * 已登录账号对齐到激活码租户：同租户直接用；跨租户则用同手机号在目标租户找/建账号。
-     */
-    private PeopleAccount resolveAccountForInviteTenant(String existingAccountId, String inviteTenantId) {
+    private PeopleAccount requireActiveAccount(String existingAccountId) {
         PeopleAccount account = peopleAccountMapper.findById(existingAccountId);
         if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
             throw new BusinessException(401, "未登录或账号无效");
         }
-        if (inviteTenantId.equals(account.getTenantId())) {
-            return account;
-        }
-        String mobile = com.healix.core.people.support.MobileNumbers.trySelf(account.getUsername());
-        if (mobile == null) {
-            throw new BusinessException(
-                    403,
-                    "激活码属于另一家机构体系，当前登录不是手机号账号，请退出后用手机号验证再激活");
-        }
-        return identityService.findOrRegisterByMobile(inviteTenantId, mobile);
+        return account;
     }
 
     /** 供 Controller：先反查可用激活码以确定租户（发 OTP / 激活共用）。 */

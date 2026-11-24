@@ -2,6 +2,7 @@ package com.healix.security;
 
 import com.healix.common.context.RequestContext;
 import com.healix.common.context.RequestContextHolder;
+import com.healix.core.patientcard.service.PeopleHomeContextService;
 import com.healix.core.portal.enums.PortalEnum;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -23,6 +24,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Slf4j
@@ -37,6 +39,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             JwtAuthenticationFilter.class.getName() + ".SECURITY_CONTEXT";
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final PeopleHomeContextService peopleHomeContextService;
 
     /**
      * CareChat 等 SSE 会走 Tomcat ASYNC 分发；默认 OncePerRequestFilter 跳过 ASYNC，
@@ -121,6 +124,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             ctx.setTenantId(ctx.getHomeTenantId());
             if (ctx.getTenantId() == null) {
                 ctx.setTenantId(asString(claims.get("tenantId")));
+            }
+            // 旧 token / 纯 C 建卡后：按 membership 或档案回填家庭租户，供业务表过渡读路径
+            if (!StringUtils.hasText(ctx.getTenantId()) && StringUtils.hasText(ctx.getPatientId())) {
+                try {
+                    String resolved = peopleHomeContextService.resolveHomeTenantId(ctx.getPatientId());
+                    if (StringUtils.hasText(resolved)) {
+                        ctx.setTenantId(resolved);
+                        ctx.setHomeTenantId(resolved);
+                    }
+                } catch (Exception ex) {
+                    log.debug("Resolve C home tenant skipped: {}", ex.getMessage());
+                }
             }
             ctx.setCurrentOrgId(asString(claims.get("currentOrgId")));
             // 首诊链接 JWT：仅 ROLE_INTAKE_LINK，不可访问其余 C 接口

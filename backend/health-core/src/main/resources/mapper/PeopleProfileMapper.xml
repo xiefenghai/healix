@@ -53,6 +53,29 @@
         LIMIT 10
     </select>
 
+    <select id="listBySelfMobileGlobal" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE is_deleted = 0
+          AND merged_into_people_id IS NULL
+          AND mobile_owner = 'SELF'
+          AND mobile = #{mobile}
+        ORDER BY gmt_created ASC
+        LIMIT 20
+    </select>
+
+    <select id="findBySelfMobileAndName" resultType="com.healix.core.people.domain.PeopleProfile">
+        SELECT <include refid="cols"/>
+        FROM people_profile
+        WHERE is_deleted = 0
+          AND merged_into_people_id IS NULL
+          AND mobile_owner = 'SELF'
+          AND mobile = #{mobile}
+          AND display_name = #{displayName}
+        ORDER BY gmt_created ASC
+        LIMIT 1
+    </select>
+
     <!-- 建档查重：同名且（同生日或同号码） -->
     <select id="listPossibleDuplicates" resultType="com.healix.core.people.domain.PeopleProfile">
         SELECT <include refid="cols"/>

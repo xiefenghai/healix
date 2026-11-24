@@ -181,6 +181,50 @@ public class PatientMergeService {
         }
         PeopleProfile source = requireSameTenant(tenantId, sourcePeopleId, "被合并档案");
         PeopleProfile target = requireSameTenant(tenantId, targetPeopleId, "保留档案");
+        return mergeInternal(tenantId, source, target, actorAccountId, actorType, portal, reason);
+    }
+
+    /**
+     * 平台级合并：用于跨租户同号同名去重。不校验 source/target 同租户；
+     * 审计与评估脏标记落在目标档案租户（无则用源侧）。
+     */
+    @Transactional
+    public MergeResult mergePlatform(
+            String sourcePeopleId,
+            String targetPeopleId,
+            String actorAccountId,
+            String reason) {
+        if (!StringUtils.hasText(sourcePeopleId) || !StringUtils.hasText(targetPeopleId)) {
+            throw new BusinessException(400, "请选择要合并的两份档案");
+        }
+        if (sourcePeopleId.equals(targetPeopleId)) {
+            throw new BusinessException(400, "不能与自身合并");
+        }
+        PeopleProfile source = requireActivePeople(sourcePeopleId, "被合并档案");
+        PeopleProfile target = requireActivePeople(targetPeopleId, "保留档案");
+        String auditTenant = StringUtils.hasText(target.getTenantId())
+                ? target.getTenantId()
+                : source.getTenantId();
+        return mergeInternal(
+                auditTenant == null ? "" : auditTenant,
+                source,
+                target,
+                actorAccountId,
+                "SYSTEM",
+                "OPS",
+                reason);
+    }
+
+    private MergeResult mergeInternal(
+            String tenantId,
+            PeopleProfile source,
+            PeopleProfile target,
+            String actorAccountId,
+            String actorType,
+            String portal,
+            String reason) {
+        String sourcePeopleId = source.getId();
+        String targetPeopleId = target.getId();
         LocalDateTime now = LocalDateTime.now();
         Map<String, Integer> moved = new LinkedHashMap<>();
         List<String> dropped = new ArrayList<>();
@@ -256,7 +300,7 @@ public class PatientMergeService {
 
         mergeByCode("people_disease_archive", "disease_code", sourcePeopleId, targetPeopleId, now, moved, dropped);
         mergeByCode("people_metadata_info", "metadata_code", sourcePeopleId, targetPeopleId, now, moved, dropped);
-        mergeAssessment(tenantId, sourcePeopleId, targetPeopleId, moved);
+        mergeAssessment(source.getTenantId(), target.getTenantId(), sourcePeopleId, targetPeopleId, moved);
 
         if (mergeMapper.markMerged(sourcePeopleId, targetPeopleId, now) == 0) {
             throw new BusinessException("被合并档案状态已变化，请重试");
@@ -289,12 +333,23 @@ public class PatientMergeService {
     }
 
     /** 评估请求随人迁移；最新结果作废，目标标脏由自动任务重算。作答已在 questionnaire_response。 */
-    private void mergeAssessment(String tenantId, String sourcePeopleId, String targetPeopleId, Map<String, Integer> moved) {
-        assessmentStoreMapper.cancelPendingRequests(tenantId, sourcePeopleId);
+    private void mergeAssessment(
+            String sourceTenantId,
+            String targetTenantId,
+            String sourcePeopleId,
+            String targetPeopleId,
+            Map<String, Integer> moved) {
+        if (StringUtils.hasText(sourceTenantId)) {
+            assessmentStoreMapper.cancelPendingRequests(sourceTenantId, sourcePeopleId);
+        }
         int reqs = assessmentStoreMapper.repointRequests(sourcePeopleId, targetPeopleId);
         assessmentStoreMapper.deleteLatest(sourcePeopleId);
         assessmentStoreMapper.deleteState(sourcePeopleId);
-        assessmentDirtyMarker.mark(tenantId, targetPeopleId);
+        if (StringUtils.hasText(targetTenantId)) {
+            assessmentDirtyMarker.mark(targetTenantId, targetPeopleId);
+        } else if (StringUtils.hasText(sourceTenantId)) {
+            assessmentDirtyMarker.mark(sourceTenantId, targetPeopleId);
+        }
         if (reqs > 0) {
             moved.put("assessment_questionnaire_request", reqs);
         }
@@ -319,6 +374,14 @@ public class PatientMergeService {
     }
 
     private PeopleProfile requireSameTenant(String tenantId, String peopleId, String label) {
+        PeopleProfile profile = requireActivePeople(peopleId, label);
+        if (!StringUtils.hasText(tenantId) || !tenantId.equals(profile.getTenantId())) {
+            throw new BusinessException(403, label + "不属于当前租户");
+        }
+        return profile;
+    }
+
+    private PeopleProfile requireActivePeople(String peopleId, String label) {
         PeopleProfile profile = peopleProfileMapper.findAnyById(peopleId);
         if (profile == null) {
             throw new BusinessException(label + "不存在");
@@ -328,9 +391,6 @@ public class PatientMergeService {
         }
         if (profile.getIsDeleted() != null && profile.getIsDeleted() == 1) {
             throw new BusinessException(label + "已作废");
-        }
-        if (!StringUtils.hasText(tenantId) || !tenantId.equals(profile.getTenantId())) {
-            throw new BusinessException(403, label + "不属于当前租户");
         }
         return profile;
     }

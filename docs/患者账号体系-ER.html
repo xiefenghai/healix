@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Healix · 患者账号体系（重构目标）</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --bg: #f4f7f6;
+      --card: #ffffff;
+      --teal: #0e9f83;
+      --teal-dim: #ecfdf5;
+      --amber: #b45309;
+      --amber-dim: #fffbeb;
+      --rose: #be123c;
+      --rose-dim: #fff1f2;
+      --blue: #1d4ed8;
+      --blue-dim: #eff6ff;
+      --slate: #334155;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 420px at 0% -5%, #ccfbf1 0%, transparent 55%),
+        radial-gradient(800px 380px at 100% 0%, #e0e7ff 0%, transparent 50%),
+        var(--bg);
+      line-height: 1.55;
+    }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 36px 20px 88px; }
+    header.hero { margin-bottom: 22px; }
+    .kicker {
+      font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+      color: var(--teal); text-transform: uppercase;
+    }
+    header.hero h1 {
+      margin: 8px 0 10px; font-size: 28px; letter-spacing: -0.03em; line-height: 1.25;
+    }
+    header.hero .lead {
+      margin: 0; max-width: 780px; color: var(--muted); font-size: 15px;
+    }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .pill {
+      font-size: 12px; font-weight: 700; padding: 6px 10px; border-radius: 999px;
+      background: #fff; border: 1px solid var(--line); color: var(--muted);
+    }
+    .pill.ok { background: var(--teal-dim); border-color: #a7f3d0; color: #047857; }
+    .pill.warn { background: var(--amber-dim); border-color: #fde68a; color: var(--amber); }
+    .pill.info { background: var(--blue-dim); border-color: #bfdbfe; color: var(--blue); }
+
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 22px 22px 24px;
+      margin-top: 16px;
+    }
+    section h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: -0.02em; }
+    section .sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+
+    .layers {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 900px) { .layers { grid-template-columns: 1fr; } }
+    .layer {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fff;
+    }
+    .layer.c { background: linear-gradient(180deg, #ecfdf5 0%, #fff 55%); }
+    .layer.p { background: linear-gradient(180deg, #f0fdfa 0%, #fff 55%); border-color: #6ee7b7; }
+    .layer.b { background: linear-gradient(180deg, #eff6ff 0%, #fff 55%); }
+    .layer h3 {
+      margin: 0 0 8px; font-size: 14px; display: flex; align-items: center; gap: 8px;
+    }
+    .tag {
+      font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 999px;
+    }
+    .layer.c .tag { background: #d1fae5; color: #047857; }
+    .layer.p .tag { background: #99f6e4; color: #0f766e; }
+    .layer.b .tag { background: #dbeafe; color: var(--blue); }
+    .layer .name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px; font-weight: 800;
+    }
+    .layer ul { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--slate); }
+    .layer li { margin: 4px 0; }
+    .layer code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px; background: #f1f5f9; padding: 1px 5px; border-radius: 4px;
+    }
+
+    .bridge {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 10px;
+      align-items: stretch;
+      margin-top: 4px;
+    }
+    @media (max-width: 900px) {
+      .bridge { grid-template-columns: 1fr; }
+      .bridge .arrow { transform: rotate(90deg); justify-self: center; }
+    }
+    .bridge .box {
+      border-radius: 12px; padding: 14px; border: 1px dashed #94a3b8;
+      background: #f8fafc; text-align: center;
+    }
+    .bridge .box strong { display: block; font-size: 14px; margin-bottom: 4px; }
+    .bridge .box span { font-size: 12px; color: var(--muted); }
+    .bridge .hub {
+      border-radius: 14px; padding: 16px 14px; text-align: center;
+      background: linear-gradient(145deg, #0e9f83, #0b7a66); color: #fff;
+      box-shadow: 0 10px 24px rgba(14, 159, 131, 0.28);
+      min-width: 150px;
+    }
+    .bridge .hub strong { display: block; font-size: 14px; }
+    .bridge .hub code { font-size: 11px; opacity: 0.92; }
+    .bridge .hub small { display: block; margin-top: 6px; font-size: 11px; opacity: 0.85; }
+    .arrow { font-size: 22px; color: var(--teal); font-weight: 800; align-self: center; }
+
+    .scenario {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+      margin-top: 12px;
+      background: #fcfdff;
+    }
+    .scenario:first-of-type { margin-top: 0; }
+    .scenario .head {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      margin-bottom: 10px;
+    }
+    .scenario .head h3 { margin: 0; font-size: 15px; }
+    .badge {
+      font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 999px;
+    }
+    .badge.green { background: #d1fae5; color: #047857; }
+    .badge.blue { background: #dbeafe; color: #1d4ed8; }
+    .badge.amber { background: #fef3c7; color: #b45309; }
+
+    .flow {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    }
+    .flow .step {
+      background: #fff; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px 12px; font-size: 13px; font-weight: 650; max-width: 200px;
+    }
+    .flow .step em {
+      display: block; font-style: normal; font-size: 11px; color: var(--muted);
+      font-weight: 500; margin-top: 2px;
+    }
+    .flow .step.create { border-color: #6ee7b7; background: var(--teal-dim); }
+    .flow .step.bind { border-color: #93c5fd; background: var(--blue-dim); }
+    .flow .step.match { border-color: #fcd34d; background: var(--amber-dim); }
+    .flow .chev { color: var(--muted); font-weight: 700; }
+
+    .er-svg-wrap {
+      overflow-x: auto; border-radius: 14px; border: 1px solid var(--line);
+      background: #fcfdff; padding: 12px;
+    }
+    .er-svg-wrap svg { display: block; min-width: 980px; width: 100%; height: auto; }
+
+    .rules {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    @media (max-width: 860px) { .rules { grid-template-columns: 1fr; } }
+    .rule {
+      border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: #fff;
+    }
+    .rule h4 { margin: 0 0 6px; font-size: 14px; }
+    .rule p, .rule li { font-size: 13px; color: var(--slate); margin: 0; }
+    .rule ul { margin: 6px 0 0; padding-left: 18px; }
+    .rule li { margin: 4px 0; }
+    .rule code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px; background: #f1f5f9; padding: 1px 5px; border-radius: 4px;
+    }
+
+    table.rel {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    table.rel th, table.rel td {
+      border: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top;
+    }
+    table.rel th { background: #f1f5f9; font-size: 12px; }
+    table.rel code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px; color: #0f766e;
+    }
+
+    .diff {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    @media (max-width: 860px) { .diff { grid-template-columns: 1fr; } }
+    .diff .col {
+      border-radius: 14px; border: 1px solid var(--line); padding: 14px; background: #fff;
+    }
+    .diff .col.old { border-color: #fecdd3; background: var(--rose-dim); }
+    .diff .col.new { border-color: #a7f3d0; background: var(--teal-dim); }
+    .diff h4 { margin: 0 0 8px; font-size: 14px; }
+    .diff ul { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--slate); }
+    .diff li { margin: 4px 0; }
+    .diff code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+    }
+
+    footer.note {
+      margin-top: 18px; font-size: 12px; color: var(--muted); text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div class="kicker">Healix · Target Architecture</div>
+      <h1>患者账号体系 · 重构目标模型</h1>
+      <p class="lead">
+        核心原则：<strong>C 端没有租户</strong>。C 端是互联网账号；自然人
+        <code>people_id</code> 平台唯一；租户/机构只出现在 B 端「在管关系」上。
+        C 与 B 通过同一条 <code>people_id</code> 对齐；对齐键是<strong>手机号 + 姓名</strong>，
+        C 端添加就诊人额外要求短信 OTP。证件仅作可选档案字段，不参与对齐。
+      </p>
+      <div class="pill-row">
+        <span class="pill ok">C 账号全局唯一</span>
+        <span class="pill ok">people_id 平台级</span>
+        <span class="pill info">租户只在 B 在管关系</span>
+        <span class="pill warn">对齐：手机号 + 姓名</span>
+        <span class="pill ok">加就诊人需 OTP</span>
+      </div>
+    </header>
+
+    <!-- 1. 三层 -->
+    <section>
+      <h2>1. 三层拆开：别再把租户塞进 C</h2>
+      <p class="sub">以前失败点是把「登录账号」和「机构在管」揉进同一租户边界。重构后三者职责分离。</p>
+      <div class="layers">
+        <div class="layer c">
+          <h3><span class="tag">层 1 · C</span> 登录身份</h3>
+          <div class="name">people_account</div>
+          <ul>
+            <li><strong>无 tenant_id</strong></li>
+            <li>手机号（username）<strong>全平台唯一</strong></li>
+            <li>只负责登录 / 会话 / 家庭管理权</li>
+            <li>一个账号可挂多个就诊人</li>
+          </ul>
+        </div>
+        <div class="layer p">
+          <h3><span class="tag">层 2 · 核心</span> 自然人</h3>
+          <div class="name">people_profile</div>
+          <ul>
+            <li><code>people_id</code> B/C <strong>共用主键</strong></li>
+            <li><strong>无租户归属</strong>（平台级自然人）</li>
+            <li>对齐键：<strong>手机号 + 姓名</strong></li>
+            <li>证件可选、不参与对齐</li>
+            <li>可被 C 创建，也可被 B 创建</li>
+          </ul>
+        </div>
+        <div class="layer b">
+          <h3><span class="tag">层 3 · B</span> 在管关系</h3>
+          <div class="name">membership / care</div>
+          <ul>
+            <li><code>people_org_membership</code>：机构是否在管</li>
+            <li><code>people_care_assignment</code>：主管健管师</li>
+            <li>租户只存在于机构 / 员工侧</li>
+            <li>B 建档 ≠ 新建自然人（可复用已有 people）</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. 谁连谁 -->
+    <section>
+      <h2>2. 一眼看清：谁连谁</h2>
+      <p class="sub">中间是自然人；左边是 B 的在管边；右边是 C 的家庭卡片边。</p>
+      <div class="bridge">
+        <div class="box">
+          <strong>B 健管端</strong>
+          <span>机构在管关系<br/><code>membership</code> + 健管师</span>
+        </div>
+        <div class="arrow">⟷</div>
+        <div class="hub">
+          <strong>自然人</strong>
+          <code>people_profile</code>
+          <small>people_id · 平台唯一</small>
+        </div>
+        <div class="arrow">⟷</div>
+        <div class="box">
+          <strong>C 患者端</strong>
+          <span>账号 + 就诊人卡片<br/><code>account</code> → <code>account_patient</code></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. 三条路径 -->
+    <section>
+      <h2>3. 三条业务路径</h2>
+      <p class="sub">按「有没有健管师」和「谁先创建自然人」拆开。最终都收敛到同一个 people_id。</p>
+
+      <div class="scenario">
+        <div class="head">
+          <span class="badge green">路径 A</span>
+          <h3>自然流量 · 无健管师</h3>
+        </div>
+        <div class="flow">
+          <div class="step create">C 注册账号<em>people_account（全局）</em></div>
+          <span class="chev">→</span>
+          <div class="step create">添加就诊人<em>填手机号 + 姓名</em></div>
+          <span class="chev">→</span>
+          <div class="step match">短信验证码<em>验证该手机号归属</em></div>
+          <span class="chev">→</span>
+          <div class="step bind">写就诊人卡片<em>新建 people + account_patient</em></div>
+          <span class="chev">→</span>
+          <div class="step">自用服务<em>无 membership · B 不可见</em></div>
+        </div>
+        <p class="sub" style="margin:12px 0 0">说明：此时只有 C 账号 + 家庭就诊人。没有机构在管，也就没有租户上下文。</p>
+      </div>
+
+      <div class="scenario">
+        <div class="head">
+          <span class="badge blue">路径 B</span>
+          <h3>C 先建档 → 健管端再接入</h3>
+        </div>
+        <div class="flow">
+          <div class="step create">C 已有账号 + 就诊人<em>people_id 已存在</em></div>
+          <span class="chev">→</span>
+          <div class="step match">B 建档查重<em>手机号 + 姓名</em></div>
+          <span class="chev">→</span>
+          <div class="step bind">命中已有 people<em>不新建档案</em></div>
+          <span class="chev">→</span>
+          <div class="step bind">写机构关系<em>membership + 健管师</em></div>
+          <span class="chev">→</span>
+          <div class="step">C 自动可见在管<em>同一 people_id</em></div>
+        </div>
+        <p class="sub" style="margin:12px 0 0">关键：B「建档」变成「建立机构—自然人关系」，而不是再造一份租户内档案。</p>
+      </div>
+
+      <div class="scenario">
+        <div class="head">
+          <span class="badge amber">路径 C</span>
+          <h3>健管端先建档 → 用户后注册</h3>
+        </div>
+        <div class="flow">
+          <div class="step create">B 建档<em>新建 people + membership</em></div>
+          <span class="chev">→</span>
+          <div class="step">患者尚未有 C 账号<em>可无 account_patient</em></div>
+          <span class="chev">→</span>
+          <div class="step create">用户注册 / 登录<em>全局 people_account</em></div>
+          <span class="chev">→</span>
+          <div class="step match">添加就诊人<em>手机号+姓名查重 + OTP</em></div>
+          <span class="chev">→</span>
+          <div class="step bind">命中则复用<em>account_patient → 同一 people_id</em></div>
+        </div>
+        <p class="sub" style="margin:12px 0 0">关键：C 添加就诊人 = 平台级查重 + 对该手机号发 OTP；OTP 通过才允许绑定/新建，命中则复用，绝不静默造第二份。</p>
+      </div>
+    </section>
+
+    <!-- 4. ER -->
+    <section>
+      <h2>4. 目标 ER（可读版）</h2>
+      <p class="sub">绿色=平台级核心；蓝色=仅 B 侧租户边界。C 账号与自然人不再挂 tenant。</p>
+      <div class="er-svg-wrap">
+        <svg viewBox="0 0 1100 560" xmlns="http://www.w3.org/2000/svg" aria-label="目标 ER">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#64748b" />
+            </marker>
+            <marker id="arrowTeal" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#0e9f83" />
+            </marker>
+            <marker id="arrowBlue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#2563eb" />
+            </marker>
+          </defs>
+
+          <!-- B side tenant boundary -->
+          <rect x="24" y="24" width="300" height="512" rx="18" fill="#eff6ff" stroke="#93c5fd" stroke-dasharray="5 4" />
+          <text x="174" y="52" text-anchor="middle" font-size="12" font-weight="800" fill="#1d4ed8">B 侧 · 租户边界</text>
+
+          <rect x="54" y="78" width="240" height="64" rx="12" fill="#fff" stroke="#93c5fd" />
+          <text x="174" y="104" text-anchor="middle" font-size="13" font-weight="700">tenant</text>
+          <text x="174" y="124" text-anchor="middle" font-size="11" fill="#64748b">只约束机构 / 员工</text>
+
+          <rect x="54" y="168" width="240" height="64" rx="12" fill="#fff" stroke="#cbd5e1" />
+          <text x="174" y="194" text-anchor="middle" font-size="13" font-weight="700">organization</text>
+          <text x="174" y="214" text-anchor="middle" font-size="11" fill="#64748b">机构</text>
+
+          <rect x="54" y="258" width="240" height="64" rx="12" fill="#fff" stroke="#cbd5e1" />
+          <text x="174" y="284" text-anchor="middle" font-size="13" font-weight="700">staff_profile</text>
+          <text x="174" y="304" text-anchor="middle" font-size="11" fill="#64748b">健管师</text>
+
+          <rect x="54" y="348" width="240" height="70" rx="12" fill="#fff" stroke="#60a5fa" stroke-width="2" />
+          <text x="174" y="376" text-anchor="middle" font-size="12" font-weight="700">people_org_membership</text>
+          <text x="174" y="396" text-anchor="middle" font-size="11" fill="#64748b">org ↔ people · 在管</text>
+
+          <rect x="54" y="444" width="240" height="64" rx="12" fill="#fff" stroke="#cbd5e1" />
+          <text x="174" y="470" text-anchor="middle" font-size="12" font-weight="700">people_care_assignment</text>
+          <text x="174" y="490" text-anchor="middle" font-size="11" fill="#64748b">主管机构 / 健管师</text>
+
+          <!-- Platform people -->
+          <rect x="390" y="190" width="250" height="110" rx="16" fill="#ecfdf5" stroke="#34d399" stroke-width="2.5" />
+          <text x="515" y="228" text-anchor="middle" font-size="15" font-weight="800">people_profile</text>
+          <text x="515" y="250" text-anchor="middle" font-size="12" fill="#047857">自然人 · people_id ★</text>
+          <text x="515" y="272" text-anchor="middle" font-size="11" fill="#64748b">对齐键：手机号 + 姓名</text>
+
+          <rect x="390" y="78" width="250" height="70" rx="12" fill="#fffbeb" stroke="#fcd34d" />
+          <text x="515" y="106" text-anchor="middle" font-size="13" font-weight="700">people_identity</text>
+          <text x="515" y="126" text-anchor="middle" font-size="11" fill="#b45309">证件可选 · 不参与对齐</text>
+
+          <!-- C side -->
+          <rect x="720" y="24" width="356" height="512" rx="18" fill="#f0fdf4" stroke="#86efac" stroke-dasharray="5 4" />
+          <text x="898" y="52" text-anchor="middle" font-size="12" font-weight="800" fill="#047857">C 侧 · 无租户</text>
+
+          <rect x="760" y="190" width="276" height="100" rx="14" fill="#eff6ff" stroke="#60a5fa" stroke-width="2" />
+          <text x="898" y="228" text-anchor="middle" font-size="14" font-weight="800">people_account</text>
+          <text x="898" y="250" text-anchor="middle" font-size="11" fill="#1d4ed8">互联网登录账号</text>
+          <text x="898" y="270" text-anchor="middle" font-size="11" fill="#64748b">手机号全局唯一</text>
+
+          <rect x="760" y="78" width="276" height="80" rx="14" fill="#0e9f83" />
+          <text x="898" y="112" text-anchor="middle" font-size="14" font-weight="800" fill="#fff">account_patient</text>
+          <text x="898" y="134" text-anchor="middle" font-size="11" fill="#d1fae5">就诊人卡片 · 家庭绑定</text>
+
+          <rect x="760" y="340" width="276" height="80" rx="12" fill="#f5f3ff" stroke="#c4b5fd" />
+          <text x="898" y="372" text-anchor="middle" font-size="13" font-weight="700">JWT 会话</text>
+          <text x="898" y="394" text-anchor="middle" font-size="11" fill="#64748b">accountId + peopleId（无 tenant）</text>
+
+          <!-- lines B -->
+          <line x1="174" y1="142" x2="174" y2="168" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" />
+          <line x1="174" y1="232" x2="174" y2="258" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" />
+          <line x1="174" y1="322" x2="174" y2="348" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arrowBlue)" />
+          <line x1="174" y1="418" x2="174" y2="444" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" />
+          <line x1="294" y1="383" x2="390" y2="260" stroke="#2563eb" stroke-width="2" marker-end="url(#arrowBlue)" />
+
+          <!-- people identity -->
+          <line x1="515" y1="148" x2="515" y2="190" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" />
+
+          <!-- C binds -->
+          <line x1="640" y1="230" x2="760" y2="118" stroke="#0e9f83" stroke-width="2.5" marker-end="url(#arrowTeal)" />
+          <line x1="898" y1="158" x2="898" y2="190" stroke="#0e9f83" stroke-width="2.5" marker-end="url(#arrowTeal)" />
+          <line x1="898" y1="290" x2="898" y2="340" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" />
+
+          <text x="700" y="180" text-anchor="middle" font-size="10" fill="#0f766e">卡片绑定 people</text>
+          <text x="330" y="330" text-anchor="middle" font-size="10" fill="#1d4ed8">入组绑定 people</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 5. 对齐规则 -->
+    <section>
+      <h2>5. 跨端对齐规则</h2>
+      <p class="sub">证件敏感、弱化处理。对齐只靠「手机号 + 姓名」；C 端加就诊人必须再过一道短信 OTP，证明号在手上。</p>
+      <div class="rules">
+        <div class="rule">
+          <h4>对齐键：手机号 + 姓名</h4>
+          <ul>
+            <li>B 建档 / C 添加就诊人：按 <strong>手机号 + 姓名</strong> 平台查重</li>
+            <li>全匹配 → 复用已有 <code>people_id</code></li>
+            <li>同号但姓名不同 → 视为不同人（家庭共用号场景），各自一份 people</li>
+            <li>同号同名已存在 → 禁止再新建，走复用 / 绑定</li>
+          </ul>
+        </div>
+        <div class="rule">
+          <h4>C 加就诊人：强制 OTP</h4>
+          <ul>
+            <li>向<strong>该就诊人填写的手机号</strong>发送验证码</li>
+            <li>OTP 通过后才允许：查重命中则绑卡片，未命中则新建 people</li>
+            <li>本人（登录号 = 就诊人号）也可再验一次，规则统一、少特例</li>
+            <li>OTP 失败 / 过期 → 不写库</li>
+          </ul>
+        </div>
+        <div class="rule">
+          <h4>证件：可选、不参与对齐</h4>
+          <ul>
+            <li><code>people_identity</code> 可保留作档案补充，默认不采集</li>
+            <li><strong>不</strong>用证件哈希做查重 / 合并 / 绑定判定</li>
+            <li>B 端如需填写证件，仅展示与存储，不影响 people_id 归属</li>
+          </ul>
+        </div>
+        <div class="rule">
+          <h4>绑定 / 在管判定</h4>
+          <ul>
+            <li>C 已绑定：只认 <code>account_patient</code>；废弃 <code>people.account_id</code></li>
+            <li>B 在管：<code>membership.status = ACTIVE</code></li>
+            <li>B「C 已上线」：该 people 至少一张卡片</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. 路径决策图 -->
+    <section>
+      <h2>6. 创建 / 绑定自然人时的决策流</h2>
+      <p class="sub">B 建档只做手机号+姓名查重；C 加就诊人在查重前后都必须过 OTP。</p>
+      <div class="er-svg-wrap">
+        <svg viewBox="0 0 1040 360" xmlns="http://www.w3.org/2000/svg" aria-label="决策流">
+          <defs>
+            <marker id="a2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#64748b" />
+            </marker>
+            <marker id="a2t" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#0e9f83" />
+            </marker>
+          </defs>
+
+          <rect x="20" y="140" width="130" height="60" rx="12" fill="#fff" stroke="#cbd5e1" />
+          <text x="85" y="165" text-anchor="middle" font-size="12" font-weight="700">入口</text>
+          <text x="85" y="183" text-anchor="middle" font-size="10" fill="#64748b">填手机号+姓名</text>
+
+          <rect x="180" y="40" width="150" height="70" rx="12" fill="#ecfdf5" stroke="#34d399" />
+          <text x="255" y="70" text-anchor="middle" font-size="12" font-weight="700">C 端？</text>
+          <text x="255" y="90" text-anchor="middle" font-size="10" fill="#047857">是 → 先发 OTP</text>
+
+          <rect x="180" y="230" width="150" height="70" rx="12" fill="#eff6ff" stroke="#60a5fa" />
+          <text x="255" y="260" text-anchor="middle" font-size="12" font-weight="700">B 建档</text>
+          <text x="255" y="280" text-anchor="middle" font-size="10" fill="#1d4ed8">无需 OTP</text>
+
+          <rect x="370" y="40" width="170" height="70" rx="12" fill="#fffbeb" stroke="#fcd34d" />
+          <text x="455" y="70" text-anchor="middle" font-size="12" font-weight="700">短信 OTP</text>
+          <text x="455" y="90" text-anchor="middle" font-size="10" fill="#b45309">验证该手机号</text>
+
+          <rect x="370" y="140" width="170" height="80" rx="12" fill="#fff" stroke="#94a3b8" stroke-width="2" />
+          <text x="455" y="170" text-anchor="middle" font-size="12" font-weight="700">平台查重</text>
+          <text x="455" y="190" text-anchor="middle" font-size="10" fill="#64748b">手机号 + 姓名</text>
+
+          <rect x="590" y="60" width="180" height="70" rx="12" fill="#ecfdf5" stroke="#34d399" />
+          <text x="680" y="90" text-anchor="middle" font-size="12" font-weight="700">命中</text>
+          <text x="680" y="110" text-anchor="middle" font-size="10" fill="#047857">复用 people_id</text>
+
+          <rect x="590" y="210" width="180" height="70" rx="12" fill="#fff" stroke="#34d399" stroke-width="2" />
+          <text x="680" y="240" text-anchor="middle" font-size="12" font-weight="700">未命中</text>
+          <text x="680" y="260" text-anchor="middle" font-size="10" fill="#64748b">新建 people_profile</text>
+
+          <rect x="820" y="130" width="190" height="80" rx="12" fill="#0e9f83" />
+          <text x="915" y="162" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">写关系</text>
+          <text x="915" y="182" text-anchor="middle" font-size="10" fill="#d1fae5">B→membership / C→卡片</text>
+
+          <line x1="150" y1="160" x2="180" y2="75" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#a2)" />
+          <line x1="150" y1="180" x2="180" y2="265" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#a2)" />
+          <line x1="330" y1="75" x2="370" y2="75" stroke="#0e9f83" stroke-width="2" marker-end="url(#a2t)" />
+          <line x1="455" y1="110" x2="455" y2="140" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#a2)" />
+          <line x1="330" y1="265" x2="370" y2="200" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#a2)" />
+          <line x1="540" y1="165" x2="590" y2="95" stroke="#0e9f83" stroke-width="2" marker-end="url(#a2t)" />
+          <line x1="540" y1="195" x2="590" y2="245" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#a2)" />
+          <line x1="770" y1="95" x2="820" y2="160" stroke="#0e9f83" stroke-width="2" marker-end="url(#a2t)" />
+          <line x1="770" y1="245" x2="820" y2="180" stroke="#0e9f83" stroke-width="2" marker-end="url(#a2t)" />
+
+          <text x="160" y="30" font-size="10" fill="#047857">C 路径</text>
+          <text x="160" y="330" font-size="10" fill="#1d4ed8">B 路径</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 7. 新旧对比 -->
+    <section>
+      <h2>7. 相对现状：改什么</h2>
+      <p class="sub">对照当前线上模型（租户内账号 / bootstrap 默认租户）的关键差异。</p>
+      <div class="diff">
+        <div class="col old">
+          <h4>现状（问题源）</h4>
+          <ul>
+            <li><code>people_account(tenant_id, username)</code> 唯一 → 同号多账号</li>
+            <li><code>people_profile</code> 租户隔离 → 同一人可有多份档案</li>
+            <li>C 登录依赖 <code>/auth/bootstrap</code> 默认租户</li>
+            <li>跨端对齐依赖激活码「定租户」</li>
+            <li><code>people.account_id</code> 与卡片双轨，易误判</li>
+          </ul>
+        </div>
+        <div class="col new">
+          <h4>目标（本页）</h4>
+          <ul>
+            <li><code>people_account.username</code> 全局唯一，无租户</li>
+            <li><code>people_profile</code> 平台级，一人一份</li>
+            <li>C JWT 只有 account + 当前 people，不带租户</li>
+            <li>跨端对齐：手机号 + 姓名；C 加就诊人强制 OTP</li>
+            <li>证件弱化：可选存储，不参与对齐</li>
+            <li>只认 <code>account_patient</code>；废弃 account_id 判定</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8. 关系表 -->
+    <section>
+      <h2>8. 关系速查</h2>
+      <p class="sub">重构后怎么连。</p>
+      <table class="rel">
+        <thead>
+          <tr><th>从</th><th>到</th><th>关系</th><th>备注</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>people_account</code></td>
+            <td><code>people_profile</code></td>
+            <td>N : M</td>
+            <td>经 <code>account_patient</code>（家庭就诊人）</td>
+          </tr>
+          <tr>
+            <td><code>organization</code></td>
+            <td><code>people_profile</code></td>
+            <td>N : M</td>
+            <td>经 <code>people_org_membership</code>（在管）</td>
+          </tr>
+          <tr>
+            <td><code>tenant</code></td>
+            <td><code>organization</code> / <code>staff</code></td>
+            <td>1 : N</td>
+            <td>不再约束 C 账号与自然人</td>
+          </tr>
+          <tr>
+            <td>手机号 + 姓名</td>
+            <td><code>people_profile</code></td>
+            <td>查重键</td>
+            <td>平台级对齐；同号异名可并存（家庭共用号）</td>
+          </tr>
+          <tr>
+            <td><code>people_identity</code></td>
+            <td><code>people_profile</code></td>
+            <td>0..N : 1</td>
+            <td>可选补充字段，<strong>不</strong>参与对齐</td>
+          </tr>
+          <tr>
+            <td>B「在管」</td>
+            <td>—</td>
+            <td>派生</td>
+            <td><code>membership.status = ACTIVE</code></td>
+          </tr>
+          <tr>
+            <td>B「C 已绑定」</td>
+            <td>—</td>
+            <td>派生</td>
+            <td><code>count(account_patient where people_id) &gt; 0</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer class="note">
+      文件：<code>docs/患者账号体系-ER.html</code> · 目标模型；后端已按本页落地首批（全局账号 / 手机号+姓名 / OTP / 启动去重）· 浏览器打开即可
+    </footer>
+  </div>
+</body>
+</html>

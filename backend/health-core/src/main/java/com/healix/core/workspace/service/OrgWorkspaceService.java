@@ -1143,21 +1143,19 @@ public class OrgWorkspaceService {
                 throw new BusinessException(400, "建档请填写本人手机号");
             }
             mobileNorm = MobileNumbers.requireSelf(mobile);
-            List<PeopleProfile> holders = peopleProfileMapper.listBySelfMobile(tenantId, mobileNorm);
-            if (holders.size() > 1) {
-                throw new BusinessException(409, "这个本人号有多份档案，请租户管理员合并");
-            }
-            if (holders.size() == 1) {
-                PeopleProfile hit = holders.get(0);
-                boolean same = isSameArchivePerson(name, gender, birthday, hit);
-                if (same || hit.getId().equals(attachPeopleId)) {
-                    attachPeopleId = hit.getId();
-                } else {
-                    throw new BusinessException(
-                            409,
-                            "该本人手机号已有档案，且姓名/性别/出生日期不一致。"
-                                    + "若为同一人请确认后关联已有档案；若不是同一人请换一个本人手机号再建档"
-                                    + "（本人号在本租户只能绑定一份档案）");
+            // 平台级对齐：手机号 + 姓名；命中则复用 people_id（可跨原租户）
+            PeopleProfile byKey = peopleProfileMapper.findBySelfMobileAndName(mobileNorm, name);
+            if (byKey != null) {
+                if (attachPeopleId != null && !attachPeopleId.equals(byKey.getId())) {
+                    throw new BusinessException(409, "该手机号+姓名已对应另一份档案，请确认后关联");
+                }
+                attachPeopleId = byKey.getId();
+            } else if (attachPeopleId == null) {
+                // 同号异名允许新建；同号下若调用方未指定 attach，不因「仅同号」自动绑错人
+                List<PeopleProfile> sameMobile = peopleProfileMapper.listBySelfMobileGlobal(mobileNorm);
+                if (sameMobile.size() == 1
+                        && MobileNumbers.sameName(name, sameMobile.get(0).getDisplayName())) {
+                    attachPeopleId = sameMobile.get(0).getId();
                 }
             }
         }
@@ -1169,7 +1167,7 @@ public class OrgWorkspaceService {
 
         if (attachPeopleId != null) {
             profile = peopleProfileMapper.findById(attachPeopleId);
-            if (profile == null || !tenantId.equals(profile.getTenantId())) {
+            if (profile == null) {
                 throw new BusinessException(404, "要关联的档案不存在");
             }
             if (hasIdentity) {
@@ -1254,9 +1252,10 @@ public class OrgWorkspaceService {
     }
 
     /**
-     * 建档前查重：同本人号下，姓名+性别+出生日期全匹配可自动关联；否则需人工确认。
+     * 建档前查重：平台级按本人手机号列出候选人；手机号+姓名一致可自动关联。
      *
      * @param inCurrentOrg 已在本机构入组，无需再建
+     * @param confirmRequired 同号但姓名不同，需人工确认是否关联
      */
     public record DuplicateCandidate(
             String peopleId,
@@ -1272,15 +1271,14 @@ public class OrgWorkspaceService {
     public List<DuplicateCandidate> findPossibleDuplicates(
             String orgId, String name, String gender, LocalDate birthday, String mobile) {
         requireOrgWorkspaceAccess(orgId);
-        String tenantId = requireTenantId();
         String self = MobileNumbers.trySelf(mobile);
         if (self == null) {
             return List.of();
         }
         List<DuplicateCandidate> out = new ArrayList<>();
-        for (PeopleProfile p : peopleProfileMapper.listBySelfMobile(tenantId, self)) {
+        for (PeopleProfile p : peopleProfileMapper.listBySelfMobileGlobal(self)) {
             PatientOrgMembership m = membershipMapper.findByOrgAndPeople(orgId, p.getId());
-            boolean same = isSameArchivePerson(name, gender, birthday, p);
+            boolean same = MobileNumbers.sameName(name, p.getDisplayName());
             out.add(new DuplicateCandidate(
                     p.getId(),
                     p.getDisplayName(),
@@ -1293,16 +1291,6 @@ public class OrgWorkspaceService {
                     !same));
         }
         return out;
-    }
-
-    /** 四要素一致：姓名 + 性别 + 出生日期（联系电话由调用方按本人号先筛）。 */
-    private static boolean isSameArchivePerson(
-            String name, String gender, LocalDate birthday, PeopleProfile existing) {
-        return MobileNumbers.sameName(name, existing.getDisplayName())
-                && birthday != null
-                && birthday.equals(existing.getBirthday())
-                && StringUtils.hasText(gender)
-                && gender.equalsIgnoreCase(existing.getGender());
     }
 
     /** 已建档患者补充证件；证件属于另一份档案时提示合并，不自动处理。 */

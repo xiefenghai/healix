@@ -114,17 +114,25 @@ public class IdentityService {
         }
     }
 
-    /** 用本人登录手机号注册。用户名即规范化后的手机号，登录只校验验证码。 */
+    /** 用本人登录手机号注册。用户名即规范化后的手机号，平台唯一，不按租户隔离。 */
     @Transactional
     public PeopleAccount registerByMobile(String tenantId, String mobile) {
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new BusinessException(400, "请指定租户");
-        }
-        if (peopleAccountMapper.findByTenantAndUsername(tenantId, mobile) != null) {
+        return registerByMobileGlobal(mobile, tenantId);
+    }
+
+    /** 平台级注册：手机号全局唯一；tenantId 可空，仅兼容旧字段写入。 */
+    @Transactional
+    public PeopleAccount registerByMobileGlobal(String mobile) {
+        return registerByMobileGlobal(mobile, null);
+    }
+
+    @Transactional
+    public PeopleAccount registerByMobileGlobal(String mobile, String legacyTenantId) {
+        if (peopleAccountMapper.findByUsername(mobile) != null) {
             throw new BusinessException(409, "该手机号已注册，请直接登录");
         }
         PeopleAccount account = new PeopleAccount();
-        account.setTenantId(tenantId);
+        account.setTenantId(StringUtils.hasText(legacyTenantId) ? legacyTenantId : null);
         account.setUsername(mobile);
         account.setPasswordHash(passwordEncoder.encode(UUID.randomUUID().toString()));
         account.setStatus(EnableStatusEnum.ACTIVE.name());
@@ -134,24 +142,28 @@ public class IdentityService {
     }
 
     public PeopleAccount requireByMobile(String tenantId, String mobile) {
-        PeopleAccount account = peopleAccountMapper.findByTenantAndUsername(tenantId, mobile);
+        return requireByMobileGlobal(mobile);
+    }
+
+    public PeopleAccount requireByMobileGlobal(String mobile) {
+        PeopleAccount account = peopleAccountMapper.findByUsername(mobile);
         if (account == null || !EnableStatusEnum.ACTIVE.matches(account.getStatus())) {
             throw new BusinessException(401, "请先注册");
         }
         return account;
     }
 
-    /** 目标租户下按手机号取账号；没有则静默注册（激活码跨租户切号用）。 */
+    /** 按手机号取账号；没有则静默注册（激活等场景）。 */
     @Transactional
     public PeopleAccount findOrRegisterByMobile(String tenantId, String mobile) {
-        PeopleAccount existing = peopleAccountMapper.findByTenantAndUsername(tenantId, mobile);
+        PeopleAccount existing = peopleAccountMapper.findByUsername(mobile);
         if (existing != null) {
             if (!EnableStatusEnum.ACTIVE.matches(existing.getStatus())) {
                 throw new BusinessException(401, "账号不可用");
             }
             return existing;
         }
-        return registerByMobile(tenantId, mobile);
+        return registerByMobileGlobal(mobile, tenantId);
     }
 
     public PeopleAccount requirePeopleAccountById(String accountId) {

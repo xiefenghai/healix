@@ -12,10 +12,11 @@ const plusOpen = ref(false)
 const chatBadge = ref(0)
 let unsubChat: (() => void) | null = null
 
+/** 底栏：首页 · 沟通 · 记录+ · 健康 · 我的（中间 + 单独渲染） */
 const TABS = [
   { key: 'home', label: '首页', to: '/home', match: ['/home'] },
-  { key: 'health', label: '健康', to: '/health', match: ['/health'] },
   { key: 'chat', label: '沟通', to: '/chat', match: ['/chat', '/care-chat'] },
+  { key: 'health', label: '健康', to: '/health', match: ['/health'] },
   { key: 'me', label: '我的', to: '/me', match: ['/me'] },
 ] as const
 
@@ -225,8 +226,8 @@ onBeforeUnmount(() => {
   min-height: 100vh;
 }
 .with-tab .page-body {
-  /* 底栏高度（含上浮 + 按钮）+ 手势条 */
-  padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+  /* 底栏高度（含上浮 + 按钮）+ 手势条；避免末卡被悬浮导航遮挡 */
+  padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
 }
 
 .dock {
@@ -241,11 +242,12 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(5, 1fr);
   align-items: end;
   gap: 0;
-  padding: 8px 4px calc(10px + env(safe-area-inset-bottom, 0px));
-  background: #fff;
-  backdrop-filter: blur(14px);
-  border-top: 1px solid rgba(14, 159, 131, 0.08);
-  box-shadow: 0 -4px 16px rgba(14, 159, 131, 0.06);
+  padding: 8px 4px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 0;
+  box-shadow: 0 -8px 28px rgba(149, 157, 165, 0.1);
   box-sizing: border-box;
 }
 .dock-tab {
@@ -258,16 +260,16 @@ onBeforeUnmount(() => {
   padding: 4px 0 2px;
   border: 0;
   background: transparent;
-  color: var(--hx-n-400);
+  color: #999999;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
   transition: color 0.15s ease;
 }
 .dock-tab.on {
-  color: var(--hx-n-900);
-  font-weight: 800;
+  color: #1677FF;
+  font-weight: 700;
 }
 .dock-ic {
   width: 22px;
@@ -280,8 +282,8 @@ onBeforeUnmount(() => {
   transition: stroke-width 0.15s ease, fill 0.15s ease, stroke 0.15s ease;
 }
 .dock-tab.on .dock-ic {
-  stroke: var(--hx-teal-600);
-  fill: rgba(14, 159, 131, 0.2);
+  stroke: #1677FF;
+  fill: rgba(22, 119, 255, 0.15);
   stroke-width: 2.2;
 }
 .dock-tab.on::after {
@@ -289,7 +291,7 @@ onBeforeUnmount(() => {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--hx-teal-600);
+  background: #1677FF;
 }
 .dock-badge {
   position: absolute;
@@ -320,39 +322,54 @@ onBeforeUnmount(() => {
   padding: 4px 0 2px;
   border: 0;
   background: transparent;
-  color: var(--hx-n-400);
+  color: #999999;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
 }
 .dock-plus-btn {
-  width: 44px;
-  height: 44px;
-  margin-top: -12px;
+  width: 54px;
+  height: 54px;
+  margin-top: -20px;
   border-radius: 50%;
-  background: linear-gradient(145deg, #34d399 0%, #0e9f83 55%, #0b7a66 100%);
+  background: linear-gradient(145deg, #40a9ff 0%, #1677FF 55%, #0958D9 100%);
   color: #fff;
   display: grid;
   place-items: center;
-  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
-  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow:
+    0 6px 16px rgba(22, 119, 255, 0.4),
+    0 2px 8px rgba(22, 119, 255, 0.28),
+    0 0 0 6px rgba(22, 119, 255, 0.08);
+  transition: all 0.2s ease;
 }
 .dock-plus svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   stroke: currentColor;
   fill: none;
-  stroke-width: 2.2;
+  stroke-width: 2.4;
   stroke-linecap: round;
 }
+@media (hover: hover) {
+  .dock-plus:not(.open):hover .dock-plus-btn {
+    transform: scale(1.02);
+    box-shadow:
+      0 8px 20px rgba(22, 119, 255, 0.48),
+      0 2px 8px rgba(22, 119, 255, 0.3),
+      0 0 0 8px rgba(22, 119, 255, 0.1);
+  }
+}
+.dock-plus:not(.open):active .dock-plus-btn {
+  transform: scale(0.98);
+}
 .dock-plus.open {
-  color: var(--hx-teal-600);
-  font-weight: 800;
+  color: #1677FF;
+  font-weight: 700;
 }
 .dock-plus.open .dock-plus-btn {
-  background: linear-gradient(145deg, #3d4b58, #13222e);
-  box-shadow: 0 4px 14px rgba(19, 34, 46, 0.28);
+  background: linear-gradient(145deg, #595959, #262626);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
   transform: rotate(90deg);
 }
 

@@ -10,7 +10,7 @@ const router = useRouter()
 const rewardsOn = ref(false)
 const displayName = ref('')
 const gender = ref('')
-const homeTenantId = ref<number | null>(null)
+const inCare = ref(false)
 const saving = ref(false)
 const editOpen = ref(false)
 
@@ -25,7 +25,12 @@ onMounted(async () => {
     const res = await api<{ data: any }>('/api/c/v1/profile')
     displayName.value = res.data.displayName ?? ''
     gender.value = res.data.gender ?? ''
-    homeTenantId.value = res.data.tenantId ? 1 : null
+    try {
+      const m = await api<{ data: { inCare?: boolean } }>('/api/c/v1/membership/status')
+      inCare.value = !!m.data?.inCare
+    } catch {
+      inCare.value = false
+    }
     void loadRewardSummary().then((s) => (rewardsOn.value = !!s))
   } catch (e) {
     const msg = e instanceof Error ? e.message : ''
@@ -68,7 +73,7 @@ function logout() {
       <div class="avatar">{{ (displayName || '我').slice(0, 1) }}</div>
       <div class="meta">
         <h1>{{ displayName || '我的档案' }}</h1>
-        <p>{{ homeTenantId ? '已入组 · 核心能力已开启' : '空态 · 可完善资料与入组' }}</p>
+        <p>{{ inCare ? '已入组 · 核心能力已开启' : '空态 · 可完善资料与入组' }}</p>
         <button type="button" class="edit" @click="editOpen = !editOpen">
           {{ editOpen ? '收起资料' : '编辑资料' }}
         </button>

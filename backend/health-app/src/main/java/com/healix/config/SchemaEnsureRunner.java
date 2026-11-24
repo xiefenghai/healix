@@ -120,6 +120,18 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "people_profile",
                 "mobile_owner",
                 "ALTER TABLE people_profile ADD COLUMN mobile_owner VARCHAR(16) NULL COMMENT '号码归属：SELF/SPOUSE/CHILD/PARENT/RELATIVE/OTHER' AFTER mobile");
+
+        // C 账号全局唯一（手机号）；对齐键 people 手机号+姓名平台查重
+        ensurePeopleAccountGlobalUsername();
+        ensureIndex(
+                "people_profile",
+                "idx_people_self_mobile_name",
+                "ALTER TABLE people_profile ADD KEY idx_people_self_mobile_name (mobile, display_name)");
+        // 自然人 / 就诊人卡片租户字段过渡可空（纯 C 流量无机构归属）
+        tryExecute(
+                "ALTER TABLE people_profile MODIFY COLUMN tenant_id VARCHAR(32) NULL COMMENT '过渡字段；平台级 people 可不落租户'");
+        tryExecute(
+                "ALTER TABLE account_patient MODIFY COLUMN tenant_id VARCHAR(32) NULL COMMENT '过渡字段；可空'");
         ensureColumn(
                 "people_medication",
                 "timing_note",
@@ -2186,6 +2198,55 @@ public class SchemaEnsureRunner implements ApplicationRunner {
             log.warn("Ensured index {}.{}", table, indexName);
         } catch (Exception ex) {
             log.warn("Skip ensure index {}.{}: {}", table, indexName, ex.getMessage());
+        }
+    }
+
+    /**
+     * C 端账号按手机号全局唯一：若同号多租户重复，保留最早一条，软删其余，再换成全局唯一索引。
+     */
+    private void ensurePeopleAccountGlobalUsername() {
+        try {
+            List<Map<String, Object>> dups = jdbcTemplate.queryForList(
+                    """
+                    SELECT username
+                    FROM people_account
+                    WHERE is_deleted = 0
+                    GROUP BY username
+                    HAVING COUNT(*) > 1
+                    """);
+            for (Map<String, Object> row : dups) {
+                String username = Objects.toString(row.get("username"), null);
+                if (username == null || username.isBlank()) {
+                    continue;
+                }
+                List<String> ids = jdbcTemplate.queryForList(
+                        """
+                        SELECT id FROM people_account
+                        WHERE username = ? AND is_deleted = 0
+                        ORDER BY gmt_created ASC, pk_id ASC
+                        """,
+                        String.class,
+                        username);
+                for (int i = 1; i < ids.size(); i++) {
+                    jdbcTemplate.update(
+                            """
+                            UPDATE people_account
+                            SET is_deleted = 1, gmt_deleted = CURRENT_TIMESTAMP, gmt_modified = CURRENT_TIMESTAMP
+                            WHERE id = ? AND is_deleted = 0
+                            """,
+                            ids.get(i));
+                    log.warn("Soft-deleted duplicate people_account id={} username={}", ids.get(i), username);
+                }
+            }
+            dropObsoleteIndex("people_account", "uk_people_account_tenant_username");
+            ensureIndex(
+                    "people_account",
+                    "uk_people_account_username",
+                    "ALTER TABLE people_account ADD UNIQUE KEY uk_people_account_username (username, gmt_deleted)");
+            tryExecute(
+                    "ALTER TABLE people_account MODIFY COLUMN tenant_id VARCHAR(32) NULL COMMENT '历史字段；C 账号不再按租户隔离'");
+        } catch (Exception ex) {
+            log.warn("Skip people_account global username migration: {}", ex.getMessage());
         }
     }
 

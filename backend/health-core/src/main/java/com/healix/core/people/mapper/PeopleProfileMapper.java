@@ -21,6 +21,13 @@ public interface PeopleProfileMapper {
     List<PeopleProfile> listBySelfMobile(
             @Param("tenantId") String tenantId, @Param("mobile") String mobile);
 
+    /** 平台级：本人手机号下的档案（跨租户）。 */
+    List<PeopleProfile> listBySelfMobileGlobal(@Param("mobile") String mobile);
+
+    /** 平台级对齐键：本人手机号 + 姓名。 */
+    PeopleProfile findBySelfMobileAndName(
+            @Param("mobile") String mobile, @Param("displayName") String displayName);
+
     List<PeopleProfile> listPossibleDuplicates(
             @Param("tenantId") String tenantId,
             @Param("displayName") String displayName,

@@ -199,8 +199,8 @@ CREATE TABLE IF NOT EXISTS staff_patient_watch (
 CREATE TABLE IF NOT EXISTS people_account (
     pk_id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
     id                  VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
-    tenant_id           VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
-    username        VARCHAR(64)  NOT NULL COMMENT '登录用户名（租户内唯一）',
+    tenant_id           VARCHAR(32)  NULL COMMENT '历史字段；C 账号不再按租户隔离',
+    username        VARCHAR(64)  NOT NULL COMMENT '登录用户名（手机号，平台唯一）',
     password_hash   VARCHAR(128) NOT NULL COMMENT '密码哈希',
     status          VARCHAR(32)  NOT NULL DEFAULT 'ACTIVE' COMMENT '状态：ACTIVE/DISABLED',
     is_deleted      TINYINT      NOT NULL DEFAULT 0 COMMENT '是否删除：0未删除 1已删除',
@@ -209,14 +209,14 @@ CREATE TABLE IF NOT EXISTS people_account (
     gmt_deleted     DATETIME     NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT '记录删除时间',
     PRIMARY KEY (pk_id),
     UNIQUE KEY uk_people_account_id (id),
-    UNIQUE KEY uk_people_account_tenant_username (tenant_id, username, gmt_deleted),
+    UNIQUE KEY uk_people_account_username (username, gmt_deleted),
     KEY idx_people_account_tenant (tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='C 端登录账号（租户隔离）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='C 端登录账号（平台级，无租户）';
 
 CREATE TABLE IF NOT EXISTS people_profile (
     pk_id                  BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
     id                  VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花，people_id）',
-    tenant_id           VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    tenant_id           VARCHAR(32)  NULL COMMENT '过渡字段；平台级 people 可不落租户',
     account_id          VARCHAR(32)  NULL COMMENT '关联 people_account.id；可空',
     display_name           VARCHAR(64)  NOT NULL COMMENT '姓名',
     gender                 VARCHAR(16)  NULL COMMENT '性别：MALE/FEMALE/UNKNOWN',
@@ -242,8 +242,9 @@ CREATE TABLE IF NOT EXISTS people_profile (
     UNIQUE KEY uk_people_profile_id (id),
     UNIQUE KEY uk_people_account (account_id, gmt_deleted),
     KEY idx_people_tenant_name (tenant_id, display_name),
-    KEY idx_people_tenant_pinyin (tenant_id, name_pinyin)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患者基础信息（租户隔离）';
+    KEY idx_people_tenant_pinyin (tenant_id, name_pinyin),
+    KEY idx_people_self_mobile_name (mobile, display_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='患者基础信息（people_id 平台级；租户字段过渡保留）';
 
 CREATE TABLE IF NOT EXISTS people_identity (
     pk_id                  BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
@@ -268,7 +269,7 @@ CREATE TABLE IF NOT EXISTS people_identity (
 CREATE TABLE IF NOT EXISTS account_patient (
     pk_id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键自增',
     id                      VARCHAR(32)  NOT NULL COMMENT '业务主键（雪花）',
-    tenant_id               VARCHAR(32)  NOT NULL COMMENT '所属租户业务ID',
+    tenant_id               VARCHAR(32)  NULL COMMENT '过渡字段；可空',
     account_id              VARCHAR(32)  NOT NULL COMMENT 'C 端账号业务ID',
     people_id               VARCHAR(32)  NOT NULL COMMENT '自然人 people_id',
     display_name            VARCHAR(64)  NOT NULL COMMENT '卡片展示姓名',

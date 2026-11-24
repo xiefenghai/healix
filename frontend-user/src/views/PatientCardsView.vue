@@ -34,9 +34,10 @@ const form = ref(emptyForm())
 const loginMobile = ref('')
 const requests = ref<{ id: string; status: string; displayName: string; message: string }[]>([])
 const sending = ref(false)
-const needOtp = computed(() => {
+/** 添加就诊人一律 OTP，证明该手机号在手上（登录号本人也不豁免）。 */
+const mobileReady = computed(() => {
   const mobile = form.value.mobile.replace(/\D/g, '').replace(/^86/, '')
-  return /^1\d{10}$/.test(mobile) && mobile !== loginMobile.value
+  return /^1\d{10}$/.test(mobile)
 })
 const showIdentity = ref(false)
 const showBirthdayPicker = ref(false)
@@ -130,7 +131,10 @@ async function load() {
 }
 
 async function sendOtp() {
-  if (!needOtp.value) return
+  if (!mobileReady.value) {
+    showToast('请先填写本人手机号')
+    return
+  }
   sending.value = true
   try {
     await api('/api/c/v1/mobile-otp', {
@@ -162,9 +166,7 @@ async function addCard() {
   const f = form.value
   if (!f.displayName.trim()) return showToast('请填写姓名')
   if (f.identityValue.trim() && !parsedIdCard.value) return showToast('身份证号格式不正确')
-  if (!f.gender) return showToast('请选择性别')
-  if (!f.birthday) return showToast('请选择出生日期')
-  {
+  if (f.birthday) {
     const birth = new Date(f.birthday)
     const startToday = new Date()
     startToday.setHours(0, 0, 0, 0)
@@ -175,8 +177,8 @@ async function addCard() {
   }
   if (!f.relation) return showToast('请选择和账号的关系')
   const mobile = f.mobile.trim()
-  if (!/^1\d{10}$/.test(mobile.replace(/\D/g, '').replace(/^86/, ''))) return showToast('请填写本人手机号')
-  if (needOtp.value && !f.otpCode.trim()) return showToast('请填写验证码')
+  if (!mobileReady.value) return showToast('请填写本人手机号')
+  if (!f.otpCode.trim()) return showToast('请填写验证码')
   try {
     const res = await api<{
       data: { outcome?: string; message?: string; accessToken?: string }
@@ -184,13 +186,13 @@ async function addCard() {
       method: 'POST',
       body: JSON.stringify({
         displayName: f.displayName.trim(),
-        gender: f.gender,
-        birthday: f.birthday,
+        gender: f.gender || null,
+        birthday: f.birthday || null,
         relation: f.relation,
         identityType: f.identityValue.trim() ? f.identityType : null,
         identityValue: f.identityValue.trim() || null,
         mobile,
-        otpCode: needOtp.value ? f.otpCode.trim() : null,
+        otpCode: f.otpCode.trim(),
       }),
     })
     if (res.data.outcome === 'PENDING') {
@@ -287,7 +289,9 @@ onMounted(load)
 
     <van-popup v-model:show="showAdd" position="bottom" round :style="{ padding: '16px' }">
       <h3>添加就诊人</h3>
-      <p class="tip">请填写本人手机号、姓名、性别和出生日期。和账号的关系只用于称呼，不参与认人。号码已有档案且姓名、生日一致时会直接关联。</p>
+      <p class="tip">
+        用「本人手机号 + 姓名」认人；须短信验证该手机号。同号同名会自动关联已有档案（含健管端建档），同号异名可作家庭成员分别添加。
+      </p>
       <van-field v-model="form.displayName" label="姓名" placeholder="请输入姓名" maxlength="32" />
       <van-field
         is-link
@@ -296,7 +300,21 @@ onMounted(load)
         :model-value="relationLabelMap[form.relation] || form.relation"
         @click="showRelationSheet = true"
       />
-      <van-field label="性别">
+      <van-field v-model="form.mobile" type="tel" label="本人手机号" placeholder="11 位手机号" maxlength="11" />
+      <van-field
+        v-model="form.otpCode"
+        type="digit"
+        label="验证码"
+        placeholder="6 位验证码"
+        maxlength="6"
+      >
+        <template #button>
+          <van-button size="small" type="primary" plain :loading="sending" :disabled="!mobileReady" @click="sendOtp">
+            获取验证码
+          </van-button>
+        </template>
+      </van-field>
+      <van-field label="性别（选填）">
         <template #input>
           <van-radio-group v-model="form.gender" direction="horizontal" :disabled="!!parsedIdCard">
             <van-radio name="MALE">男</van-radio>
@@ -308,26 +326,13 @@ onMounted(load)
         :is-link="!parsedIdCard"
         readonly
         label="出生日期"
-        placeholder="请选择"
+        placeholder="选填"
         :model-value="form.birthday"
         @click="openBirthdayPicker"
       />
-      <van-field v-model="form.mobile" type="tel" label="本人手机号" placeholder="11 位手机号" maxlength="11" />
-      <van-field
-        v-if="needOtp"
-        v-model="form.otpCode"
-        type="digit"
-        label="验证码"
-        placeholder="6 位验证码"
-        maxlength="6"
-      >
-        <template #button>
-          <van-button size="small" type="primary" plain :loading="sending" @click="sendOtp">获取验证码</van-button>
-        </template>
-      </van-field>
       <van-cell
         v-if="!showIdentity"
-        title="补充身份证（选填）"
+        title="补充身份证（选填，不参与认人）"
         is-link
         @click="showIdentity = true"
       />
@@ -335,7 +340,7 @@ onMounted(load)
         v-else
         v-model="form.identityValue"
         label="身份证号"
-        placeholder="选填，填写后自动识别性别和生日"
+        placeholder="选填，填写后可自动识别性别和生日"
         maxlength="18"
       />
       <van-button block type="primary" round style="margin-top: 12px" @click="addCard">保存</van-button>

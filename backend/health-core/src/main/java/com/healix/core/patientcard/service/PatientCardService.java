@@ -86,9 +86,7 @@ public class PatientCardService {
     }
 
     /**
-     * C 端自助添加就诊人：姓名 + 性别 + 出生日期即可，证件选填。
-     *
-     * <p>不按手机号或姓名去匹配机构档案（共用号码会串档）；机构档案只能用激活码关联。
+     * C 端自助添加就诊人：对齐键为本人手机号 + 姓名（调用方已查重）；证件选填且不参与对齐。
      */
     @Transactional
     public AccountPatient createSelfServe(
@@ -117,10 +115,7 @@ public class PatientCardService {
                 : null;
         String resolvedGender = bits != null && bits.gender() != null ? bits.gender() : normalizeGender(gender);
         LocalDate resolvedBirthday = bits != null && bits.birthday() != null ? bits.birthday() : birthday;
-        if (resolvedGender == null || resolvedBirthday == null) {
-            throw new BusinessException(400, "请填写性别和出生日期");
-        }
-        if (resolvedBirthday.isAfter(LocalDate.now())) {
+        if (resolvedBirthday != null && resolvedBirthday.isAfter(LocalDate.now())) {
             throw new BusinessException(400, "出生日期不能晚于今天");
         }
         String mobileNorm = MobileNumbers.requireSelf(mobile);
@@ -128,19 +123,18 @@ public class PatientCardService {
             throw new BusinessException(400, "请填写本人手机号");
         }
 
-        if (bits != null) {
-            if (accountPatientMapper.findByAccountAndIdentityHash(accountId, bits.type().name(), bits.hash()) != null) {
-                throw new BusinessException(409, "该证件已在您的就诊人列表中");
-            }
-            if (peopleIdentityMapper.findByTenantTypeHash(tenantId, bits.type().name(), bits.hash()) != null) {
-                throw new BusinessException(409, "该就诊人已在机构建档，请使用机构发放的激活码添加");
-            }
-        }
-        if (findSamePersonCard(accountId, name, resolvedBirthday) != null) {
+        if (findSamePersonCardByMobileName(accountId, mobileNorm, name) != null) {
             throw new BusinessException(409, "「" + name + "」已在您的就诊人列表中");
         }
+        if (bits != null
+                && accountPatientMapper.findByAccountAndIdentityHash(accountId, bits.type().name(), bits.hash())
+                        != null) {
+            throw new BusinessException(409, "该证件已在您的就诊人列表中");
+        }
 
-        quotaService.assertAvailable(tenantId, QuotaKeyEnum.PATIENT_TOTAL, 1);
+        if (StringUtils.hasText(tenantId)) {
+            quotaService.assertAvailable(tenantId, QuotaKeyEnum.PATIENT_TOTAL, 1);
+        }
         PeopleProfile profile = new PeopleProfile();
         profile.setTenantId(tenantId);
         profile.setAccountId(null);
@@ -149,7 +143,7 @@ public class PatientCardService {
         profile.setGender(resolvedGender);
         profile.setBirthday(resolvedBirthday);
         profile.setMobile(mobileNorm);
-        profile.setMobileOwner(mobileNorm == null ? null : MobileOwnerEnum.normalize(mobileOwner));
+        profile.setMobileOwner(MobileOwnerEnum.normalize(mobileOwner));
         profile.setAllergensJson("[]");
         EntityMeta.onCreate(profile);
         peopleProfileMapper.insert(profile);
@@ -178,7 +172,7 @@ public class PatientCardService {
                 mobileNorm);
     }
 
-    /** 账号内同名同生日的就诊人卡片（视为同一人）。 */
+    /** 账号内同名同生日的就诊人卡片（历史兼容）。 */
     public AccountPatient findSamePersonCard(String accountId, String name, LocalDate birthday) {
         if (!StringUtils.hasText(name) || birthday == null) {
             return null;
@@ -186,6 +180,24 @@ public class PatientCardService {
         for (AccountPatient card : accountPatientMapper.listByAccount(accountId)) {
             PeopleProfile p = peopleProfileMapper.findById(card.getPeopleId());
             if (p != null && name.trim().equals(p.getDisplayName().trim()) && birthday.equals(p.getBirthday())) {
+                return card;
+            }
+        }
+        return null;
+    }
+
+    /** 账号内对齐键：本人手机号 + 姓名。 */
+    public AccountPatient findSamePersonCardByMobileName(String accountId, String mobile, String name) {
+        if (!StringUtils.hasText(mobile) || !StringUtils.hasText(name)) {
+            return null;
+        }
+        String n = name.trim();
+        for (AccountPatient card : accountPatientMapper.listByAccount(accountId)) {
+            PeopleProfile p = peopleProfileMapper.findById(card.getPeopleId());
+            if (p != null
+                    && MobileOwnerEnum.SELF.name().equals(p.getMobileOwner())
+                    && mobile.equals(p.getMobile())
+                    && MobileNumbers.sameName(n, p.getDisplayName())) {
                 return card;
             }
         }
@@ -302,7 +314,7 @@ public class PatientCardService {
             return null;
         }
         String g = gender.trim().toUpperCase(Locale.ROOT);
-        if (!g.equals("MALE") && !g.equals("FEMALE")) {
+        if (!g.equals("MALE") && !g.equals("FEMALE") && !g.equals("UNKNOWN")) {
             throw new BusinessException(400, "性别不正确");
         }
         return g;

@@ -42,7 +42,7 @@ public final class SecurityUtils {
     public static String requireTenantId() {
         String tenantId = requireContext().getTenantId();
         if (tenantId == null) {
-            throw new UnauthorizedException("缺少租户上下文");
+            throw new BusinessException(400, "当前就诊人尚未关联机构服务，部分功能暂不可用");
         }
         return tenantId;
     }

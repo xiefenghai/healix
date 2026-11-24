@@ -11,6 +11,15 @@
         LIMIT 1
     </select>
 
+    <select id="findByUsername" resultType="com.healix.core.people.domain.PeopleAccount">
+        SELECT pk_id, id, tenant_id, username, password_hash, status,
+               is_deleted, gmt_created, gmt_modified, gmt_deleted
+        FROM people_account
+        WHERE username = #{username} AND is_deleted = 0
+        ORDER BY gmt_created ASC
+        LIMIT 1
+    </select>
+
     <select id="findById" resultType="com.healix.core.people.domain.PeopleAccount">
         SELECT pk_id, id, tenant_id, username, password_hash, status,
                is_deleted, gmt_created, gmt_modified, gmt_deleted

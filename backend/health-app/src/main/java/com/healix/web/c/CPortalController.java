@@ -21,6 +21,7 @@ import com.healix.core.patientcard.service.MobileOtpService;
 import com.healix.core.patientcard.service.PatientActivationService;
 import com.healix.core.patientcard.service.PatientCardMergeService;
 import com.healix.core.patientcard.service.PatientCardService;
+import com.healix.core.patientcard.service.PeopleHomeContextService;
 import com.healix.core.patientcard.service.PeopleLinkService;
 import com.healix.core.people.domain.PeopleAccount;
 import com.healix.core.people.domain.PeopleProfile;
@@ -72,56 +73,54 @@ public class CPortalController {
     private final PatientActivationService patientActivationService;
     private final PatientCardMergeService patientCardMergeService;
     private final PeopleLinkService peopleLinkService;
+    private final PeopleHomeContextService peopleHomeContextService;
     private final MobileOtpService mobileOtpService;
     private final TenantMapper tenantMapper;
     private final TenantConfigService tenantConfigService;
     private final FeatureFlagService featureFlagService;
 
-    /** 开发期默认租户（取库中第一个），供 C 端写死/配置前使用。 */
+    /**
+     * C 端启动配置。tenantId 仅用于白标/开关，不再决定登录账号落在哪个租户。
+     */
     @GetMapping("/auth/bootstrap")
     public ApiResult<BootstrapResponse> bootstrap() {
-        String tenantId = resolveTenantId(null);
-        return ApiResult.ok(new BootstrapResponse(
-                tenantId,
-                tenantConfigService.branding(tenantId),
-                featureFlagService.list(tenantId)));
+        String tenantId = resolveOptionalTenantId(null);
+        BrandingView branding =
+                tenantId == null ? BrandingView.platformDefault() : tenantConfigService.branding(tenantId);
+        List<FlagView> flags = tenantId == null ? List.of() : featureFlagService.list(tenantId);
+        return ApiResult.ok(new BootstrapResponse(tenantId, branding, flags));
     }
 
-    /** 发送登录或添加就诊人验证码。开发环境验证码固定为 123456。 */
+    /** 发送登录或添加就诊人验证码。开发环境可用 mock-code。 */
     @PostMapping("/auth/mobile-otp")
     public ApiResult<Void> sendLoginOtp(@RequestBody @Validated MobileOtpRequest request) {
-        // 激活页可带 activationCode：以码所属租户发 OTP，避免缓存租户发错号
-        String tenantId;
-        if (StringUtils.hasText(request.activationCode())) {
-            tenantId = patientActivationService.requireUsableInvite(request.activationCode()).getTenantId();
-        } else {
-            tenantId = resolveTenantId(request.tenantId());
-        }
-        mobileOtpService.send(tenantId, "login", request.mobile());
+        String scope = otpScope(request.tenantId(), request.activationCode());
+        mobileOtpService.send(scope, "login", request.mobile());
         return ApiResult.ok(null);
     }
 
-    /** 注册：手机号 + 验证码，不创建就诊人。 */
+    /** 注册：手机号 + 验证码，平台级账号，不创建就诊人。 */
     @PostMapping("/auth/register")
     public ApiResult<TokenResponse> register(@RequestBody @Validated MobileAuthRequest request) {
-        String tenantId = resolveTenantId(request.tenantId());
-        String mobile = mobileOtpService.verify(tenantId, "login", request.mobile(), request.otpCode());
-        PeopleAccount account = identityService.registerByMobile(tenantId, mobile);
-        String token = jwtTokenProvider.createPatientToken(account.getId(), null, tenantId, null);
-        return ApiResult.ok(new TokenResponse(token, account.getId(), null, null, tenantId));
+        String scope = otpScope(request.tenantId(), null);
+        String mobile = mobileOtpService.verify(scope, "login", request.mobile(), request.otpCode());
+        PeopleAccount account = identityService.registerByMobileGlobal(mobile);
+        String token = jwtTokenProvider.createPatientToken(account.getId(), null, null, null);
+        return ApiResult.ok(new TokenResponse(token, account.getId(), null, null, null));
     }
 
-    /** 登录：手机号 + 验证码。 */
+    /** 登录：手机号 + 验证码（平台级账号）。 */
     @PostMapping("/auth/login")
     public ApiResult<TokenResponse> login(@RequestBody @Validated MobileAuthRequest request) {
-        String tenantId = resolveTenantId(request.tenantId());
-        String mobile = mobileOtpService.verify(tenantId, "login", request.mobile(), request.otpCode());
-        PeopleAccount account = identityService.requireByMobile(tenantId, mobile);
+        String scope = otpScope(request.tenantId(), null);
+        String mobile = mobileOtpService.verify(scope, "login", request.mobile(), request.otpCode());
+        PeopleAccount account = identityService.requireByMobileGlobal(mobile);
         AccountPatient card = patientCardService.findFirstCard(account.getId());
         String peopleId = card != null ? card.getPeopleId() : null;
         String cardId = card != null ? card.getId() : null;
-        String token = jwtTokenProvider.createPatientToken(account.getId(), peopleId, tenantId, cardId);
-        return ApiResult.ok(new TokenResponse(token, account.getId(), peopleId, cardId, tenantId));
+        String homeTenant = resolveHomeTenant(peopleId, card);
+        String token = jwtTokenProvider.createPatientToken(account.getId(), peopleId, homeTenant, cardId);
+        return ApiResult.ok(new TokenResponse(token, account.getId(), peopleId, cardId, homeTenant));
     }
 
     @GetMapping("/account")
@@ -139,19 +138,18 @@ public class CPortalController {
         if (ctx != null && ctx.getAccountId() != null) {
             existingAccountId = ctx.getAccountId();
         }
-        // 方案 A：激活码反查租户，不依赖 C 端缓存 / bootstrap
         PeopleActivationInvite invite = patientActivationService.requireUsableInvite(request.activationCode());
         String tenantId = invite.getTenantId();
         if (existingAccountId == null) {
             String mobile = mobileOtpService.verify(tenantId, "login", request.mobile(), request.otpCode());
             PeopleAccount account;
             try {
-                account = identityService.registerByMobile(tenantId, mobile);
+                account = identityService.registerByMobileGlobal(mobile, tenantId);
             } catch (com.healix.common.exception.BusinessException ex) {
                 if (ex.getCode() != 409) {
                     throw ex;
                 }
-                account = identityService.requireByMobile(tenantId, mobile);
+                account = identityService.requireByMobileGlobal(mobile);
             }
             existingAccountId = account.getId();
         }
@@ -164,17 +162,18 @@ public class CPortalController {
                 request.birthday(),
                 request.relation(),
                 existingAccountId);
+        String homeTenant = resolveHomeTenant(result.people().getId(), result.card());
         String token = jwtTokenProvider.createPatientToken(
                 result.account().getId(),
                 result.people().getId(),
-                result.account().getTenantId(),
+                homeTenant,
                 result.card().getId());
         return ApiResult.ok(new TokenResponse(
                 token,
                 result.account().getId(),
                 result.people().getId(),
                 result.card().getId(),
-                result.account().getTenantId()));
+                homeTenant));
     }
 
     @GetMapping("/patient-cards")
@@ -186,7 +185,12 @@ public class CPortalController {
     @PostMapping("/patient-cards")
     public ApiResult<CardSubmitResponse> createPatientCard(@RequestBody @Validated CreatePatientCardRequest request) {
         var ctx = SecurityUtils.requireContext();
-        String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : resolveTenantId(null);
+        // 新建 people 时过渡写入存储租户；对齐本身靠手机号+姓名，不依赖租户
+        String tenantId = ctx.getTenantId();
+        if (!StringUtils.hasText(tenantId)) {
+            AccountPatient first = patientCardService.findFirstCard(ctx.getAccountId());
+            tenantId = first != null ? first.getTenantId() : resolveOptionalTenantId(null);
+        }
         PeopleLinkService.CardSubmitResult result = peopleLinkService.submitCard(
                 tenantId,
                 ctx.getAccountId(),
@@ -204,7 +208,8 @@ public class CPortalController {
         if (result.card() != null) {
             peopleId = result.card().getPeopleId();
             cardId = result.card().getId();
-            token = jwtTokenProvider.createPatientToken(ctx.getAccountId(), peopleId, tenantId, cardId);
+            String homeTenant = resolveHomeTenant(peopleId, result.card());
+            token = jwtTokenProvider.createPatientToken(ctx.getAccountId(), peopleId, homeTenant, cardId);
         }
         return ApiResult.ok(new CardSubmitResponse(result.outcome(), result.message(), token, peopleId, cardId));
     }
@@ -220,12 +225,12 @@ public class CPortalController {
         return ApiResult.ok(null);
     }
 
-    /** 给其他就诊人的本人号发验证码。登录号本身不必再发。 */
+    /** 给就诊人本人号发验证码（添加就诊人强制 OTP，登录号也不豁免）。 */
     @PostMapping("/mobile-otp")
     public ApiResult<Void> sendPatientOtp(@RequestBody @Validated PatientOtpRequest request) {
         var ctx = SecurityUtils.requireContext();
-        String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : resolveTenantId(null);
-        mobileOtpService.send(tenantId, ctx.getAccountId(), request.mobile());
+        String scope = StringUtils.hasText(ctx.getTenantId()) ? ctx.getTenantId() : "platform";
+        mobileOtpService.send(scope, ctx.getAccountId(), request.mobile());
         return ApiResult.ok(null);
     }
 
@@ -241,21 +246,22 @@ public class CPortalController {
         var ctx = SecurityUtils.requireContext();
         patientCardMergeService.merge(ctx.getAccountId(), cardId, sourceCardId);
         AccountPatient card = patientCardService.requireOwnedCard(ctx.getAccountId(), cardId);
+        String homeTenant = resolveHomeTenant(card.getPeopleId(), card);
         String token = jwtTokenProvider.createPatientToken(
-                ctx.getAccountId(), card.getPeopleId(), card.getTenantId(), card.getId());
+                ctx.getAccountId(), card.getPeopleId(), homeTenant, card.getId());
         return ApiResult.ok(new TokenResponse(
-                token, ctx.getAccountId(), card.getPeopleId(), card.getId(), card.getTenantId()));
+                token, ctx.getAccountId(), card.getPeopleId(), card.getId(), homeTenant));
     }
 
     @PostMapping("/patient-cards/{cardId}/select")
     public ApiResult<TokenResponse> selectPatientCard(@PathVariable String cardId) {
         var ctx = SecurityUtils.requireContext();
         AccountPatient card = patientCardService.requireOwnedCard(ctx.getAccountId(), cardId);
-        String tenantId = card.getTenantId();
+        String homeTenant = resolveHomeTenant(card.getPeopleId(), card);
         String token = jwtTokenProvider.createPatientToken(
-                ctx.getAccountId(), card.getPeopleId(), tenantId, card.getId());
+                ctx.getAccountId(), card.getPeopleId(), homeTenant, card.getId());
         return ApiResult.ok(new TokenResponse(
-                token, ctx.getAccountId(), card.getPeopleId(), card.getId(), tenantId));
+                token, ctx.getAccountId(), card.getPeopleId(), card.getId(), homeTenant));
     }
 
     @DeleteMapping("/patient-cards/{cardId}")
@@ -265,9 +271,17 @@ public class CPortalController {
         AccountPatient next = patientCardService.findFirstCard(ctx.getAccountId());
         String peopleId = next != null ? next.getPeopleId() : null;
         String nextCardId = next != null ? next.getId() : null;
-        String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : resolveTenantId(null);
-        String token = jwtTokenProvider.createPatientToken(ctx.getAccountId(), peopleId, tenantId, nextCardId);
-        return ApiResult.ok(new TokenResponse(token, ctx.getAccountId(), peopleId, nextCardId, tenantId));
+        String homeTenant = resolveHomeTenant(peopleId, next);
+        String token = jwtTokenProvider.createPatientToken(ctx.getAccountId(), peopleId, homeTenant, nextCardId);
+        return ApiResult.ok(new TokenResponse(token, ctx.getAccountId(), peopleId, nextCardId, homeTenant));
+    }
+
+    @GetMapping("/membership/status")
+    public ApiResult<MembershipStatusResponse> membershipStatus() {
+        String peopleId = SecurityUtils.requirePatientId();
+        boolean inCare = peopleHomeContextService.hasActiveMembership(peopleId);
+        String homeTenant = peopleHomeContextService.resolveHomeTenantId(peopleId);
+        return ApiResult.ok(new MembershipStatusResponse(inCare, homeTenant));
     }
 
     @PutMapping("/profile")
@@ -358,13 +372,35 @@ public class CPortalController {
                 tenantId, peopleId, request.version(), JsonUtils.toJson(request.contentJson())));
     }
 
-    private String resolveTenantId(String tenantId) {
+    private String resolveHomeTenant(String peopleId, AccountPatient card) {
+        String fromPeople = peopleHomeContextService.resolveHomeTenantId(peopleId);
+        if (StringUtils.hasText(fromPeople)) {
+            return fromPeople;
+        }
+        if (card != null && StringUtils.hasText(card.getTenantId())) {
+            return card.getTenantId();
+        }
+        return null;
+    }
+
+    /** OTP 作用域：优先激活码租户，其次请求/会话租户，否则 platform（与账号解耦）。 */
+    private String otpScope(String tenantId, String activationCode) {
+        if (StringUtils.hasText(activationCode)) {
+            return patientActivationService.requireUsableInvite(activationCode).getTenantId();
+        }
+        if (StringUtils.hasText(tenantId)) {
+            return tenantId.trim();
+        }
+        return "platform";
+    }
+
+    private String resolveOptionalTenantId(String tenantId) {
         if (StringUtils.hasText(tenantId)) {
             return tenantId.trim();
         }
         List<TenantListItem> list = tenantMapper.list(null, 0, 1);
         if (list == null || list.isEmpty()) {
-            throw new com.healix.common.exception.BusinessException(400, "请指定租户");
+            return null;
         }
         return list.get(0).getTenantId();
     }
@@ -393,7 +429,7 @@ public class CPortalController {
             LocalDate birthday,
             String relation) {}
 
-    /** 证件选填；本人手机号、性别、出生日期必填。 */
+    /** 对齐键：手机号 + 姓名；otpCode 必填。证件/性别/生日选填，不参与对齐。 */
     public record CreatePatientCardRequest(
             @NotBlank String displayName,
             String gender,
@@ -402,7 +438,7 @@ public class CPortalController {
             String identityValue,
             String relation,
             @NotBlank String mobile,
-            String otpCode) {}
+            @NotBlank String otpCode) {}
 
     public record PatientOtpRequest(@NotBlank String mobile) {}
 
@@ -432,4 +468,6 @@ public class CPortalController {
 
     public record TokenResponse(
             String accessToken, String accountId, String peopleId, String patientCardId, String tenantId) {}
+
+    public record MembershipStatusResponse(boolean inCare, String homeTenantId) {}
 }

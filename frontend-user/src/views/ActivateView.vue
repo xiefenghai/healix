@@ -137,7 +137,6 @@ async function submit() {
   }
   loading.value = true
   try {
-    // 方案 A：不传 tenantId，由后端按激活码定租户；已登录跨租户会切/建同手机号账号
     const body: Record<string, string | undefined> = {
       activationCode: activationCode.value.trim(),
       displayName: displayName.value.trim(),
@@ -169,7 +168,7 @@ async function submit() {
     <van-nav-bar title="激活账号" left-arrow @click-left="router.back()" />
     <div class="card">
       <p class="hint">
-        健管师已为你建档时，用激活码开通并绑定到同一份档案。激活码会自动识别所属机构，即使当前登录的是其它机构也可绑定。
+        健管师已建档且尚未登记本人手机号时，可用激活码绑定。若档案已有本人手机号，请直接在「就诊人」里用同一手机号+姓名添加（需短信验证），会自动对上同一份档案。
       </p>
       <van-field v-model="activationCode" label="激活码" placeholder="如 A3K9-7X2M" />
       <van-field v-model="displayName" label="档案姓名" placeholder="与建档姓名一致" />

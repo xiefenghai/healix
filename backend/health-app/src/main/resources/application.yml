@@ -59,6 +59,9 @@ management:
       endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
 
 healix:
+  people:
+    # 启动时按「本人手机号+姓名」合并跨租户重复档案；失败只记日志
+    dedupe-on-startup: ${HEALIX_PEOPLE_DEDUPE_ON_STARTUP:true}
   public:
     # C 端用户站根地址，用于拼首诊填写短链
     user-base-url: ${HEALIX_USER_BASE_URL:http://localhost:5173}

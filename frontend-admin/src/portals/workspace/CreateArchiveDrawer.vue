@@ -1352,7 +1352,7 @@ async function saveOptionalHeight(peopleId: string, raw: string) {
 
   <el-dialog v-model="duplicateVisible" title="可能是同一人" width="520px" append-to-body>
     <p class="dup-tip">
-      这个手机号已有档案，但姓名或出生日期不一致。确认是同一人后再关联。
+      这个手机号已有档案，但姓名不一致。同号同名会自动关联；同号异名请确认是否同一人后再关联，或换姓名新建。
     </p>
     <div v-for="d in duplicates" :key="d.peopleId" class="dup-item">
       <div class="dup-main">
