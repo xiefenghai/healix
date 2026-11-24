@@ -5,8 +5,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/http'
 import {
   CARE_PLAN_TIME_SLOT_LABELS,
-  carePlanCategoryTone,
-  carePlanTaskCategoryLabel,
   carePlanTaskRecordPath,
   formatCarePlanLabel,
 } from '../shared/care-plan-labels'
@@ -129,7 +127,6 @@ const latestLab = ref<{
   sampledAt?: string
   specimenType?: string
 } | null>(null)
-const planBriefOpen = ref(false)
 /** 体重仪表盘：历史峰值/起点 + 饮食目标 */
 const weightPeakKg = ref<number | null>(null)
 const weightOldestKg = ref<number | null>(null)
@@ -488,19 +485,11 @@ const checkinGoal = computed(() => {
   }
 })
 
-/** 综合健康进度环形条 */
-const GOAL_RING_R = 26
-const GOAL_RING_C = 2 * Math.PI * GOAL_RING_R
 /** Care 目标环 ≈ 80×80；给右侧文案留宽，0% 仅顶部淡绿起点 */
 const CARE_RING_SIZE = 80
 const CARE_RING_CX = 40
 const CARE_RING_CY = 40
 const CARE_RING_R = 32
-const CARE_RING_C = 2 * Math.PI * CARE_RING_R
-const goalRingOffset = computed(() => {
-  const pct = Math.min(100, Math.max(0, checkinGoal.value.pct))
-  return GOAL_RING_C * (1 - pct / 100)
-})
 
 /** Care 迷你折线：无面积填充，蓝→绿渐变，终点实心点（右上角轻点缀） */
 function buildCareWeightSpark(raw: number[], preferDescend: boolean) {
@@ -819,72 +808,6 @@ const planBrief = computed(() => {
   }
 })
 
-/** AI / 健管师关怀提示：按数据优先级生成一句人话 */
-const careTip = computed(() => {
-  const bp = metricTiles.value.find((m) => m.key === 'bp')
-  const glu = metricTiles.value.find((m) => m.key === 'glucose')
-  const name = careManagerName.value || '健管师'
-
-  if (careUnread.value > 0) {
-    return {
-      text: `${name}发来了新消息，有关于你近期管理的叮嘱，点开看看吧。`,
-      to: '/chat',
-      tone: 'teal' as const,
-    }
-  }
-  if (latestReport.value?.id) {
-    return {
-      text: `您的健康报告已更新${latestReport.value.title ? `「${latestReport.value.title}」` : ''}，点击查看健管师解读。`,
-      to: `/management-reports/${latestReport.value.id}`,
-      tone: 'teal' as const,
-    }
-  }
-  if (assessRequest.value) {
-    return {
-      text: `${name}邀请你完善一份健康评估，约 3 分钟，帮助定制更贴合的方案。`,
-      to: '/assessment-questionnaire',
-      tone: 'mint' as const,
-    }
-  }
-  // 初步评估仅保留底部悬浮条，避免与 care-tip 重复
-  if (bp?.abnormal && bp.value) {
-    return {
-      text: `AI 助手提醒：最近血压 ${bp.value} 略有波动，建议清淡饮食、规律休息；有不适随时联系${name}。`,
-      to: '/health',
-      tone: 'sky' as const,
-    }
-  }
-  if (glu?.abnormal && glu.value) {
-    return {
-      text: `AI 助手提醒：血糖记录为 ${glu.value}，注意监测与饮食节奏，可在方案里查看控糖建议。`,
-      to: '/care-plan',
-      tone: 'sky' as const,
-    }
-  }
-  const pending = todayPlan.value?.pendingTasks ?? 0
-  if (pending > 0) {
-    return {
-      text: `今天还有 ${pending} 项待办未完成，完成打卡后会有持续的健康陪伴与反馈。`,
-      to: '#t-todo',
-      tone: 'mint' as const,
-    }
-  }
-  return {
-    text: `你好${honorific.value !== '朋友' ? '，' + honorific.value : ''}。团队在持续关注你的健康数据，有问题随时找${name}或 AI 管家。`,
-    to: '/ai',
-    tone: 'mint' as const,
-  }
-})
-
-function onCareTipTap() {
-  const to = careTip.value.to
-  if (to.startsWith('#')) {
-    document.getElementById(to.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    return
-  }
-  void router.push(to)
-}
-
 /** 最近检验异常项数（供 L1 徽章 + 底部档案入口） */
 const labAbnormalCount = computed(() => {
   const items = latestLab.value?.items || []
@@ -902,7 +825,6 @@ const labReportPath = computed(() => {
 /** 半环仪表盘：紧凑半径，首屏目标前置但不挤占待办 */
 const GAUGE_R = 58
 const GAUGE_ARC = Math.PI * GAUGE_R
-const GAUGE_PATH = `M ${100 - GAUGE_R} 100 A ${GAUGE_R} ${GAUGE_R} 0 0 1 ${100 + GAUGE_R} 100`
 
 /** 底部极简档案快捷入口（方案 B） */
 const archiveDock = computed(() => {
@@ -967,14 +889,6 @@ function sparklinePaths(seed: string, empty = false) {
   const area = `${line} L ${last.x.toFixed(1)} ${h} L ${first.x.toFixed(1)} ${h} Z`
   return { line, area }
 }
-
-const planMood = computed(() => {
-  const pct = planProgressPct.value
-  if (pct >= 80) return '🔥'
-  if (pct >= 40) return '🌱'
-  if (pct > 0) return '🌿'
-  return '🌱'
-})
 
 type GaugeMode = 'lose' | 'gain' | 'maintain' | 'glucose'
 
@@ -1295,10 +1209,6 @@ const visibleTasks = computed(() => {
   const pendingSlots = Math.max(1, TODO_VISIBLE - 1)
   return [...pending.slice(0, pendingSlots), done[0]]
 })
-
-const nextTodo = computed(
-  () => sortedTasks.value.find((t) => t.id === priorityTodoId.value) || null,
-)
 
 /** Care「管理目标」卡：左环 40% + 右大数字/下行趋势 60% */
 const careGoalCard = computed(() => {
@@ -1956,9 +1866,9 @@ async function loadLatestMetrics() {
   }
 }
 
-function formatNum(v: number | string) {
+function formatNum(v: number | string): string {
   const n = typeof v === 'number' ? v : Number(v)
-  if (!Number.isFinite(n)) return v
+  if (!Number.isFinite(n)) return String(v)
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
 }
 
