@@ -258,24 +258,28 @@ onBeforeUnmount(() => {
   position: fixed;
   left: 50%;
   right: auto;
-  transform: translateX(-50%);
+  /* translate3d：微信 WebView 需独立合成层，否则底栏常被页面底部留白抢走触摸 */
+  transform: translate3d(-50%, 0, 0);
+  -webkit-transform: translate3d(-50%, 0, 0);
   bottom: 0;
   width: min(100%, 375px);
-  z-index: 50;
+  /* 高于页面内容，低于 Vant Popup 默认 2000，避免挡住「记一笔」遮罩 */
+  z-index: 1000;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: end;
   gap: 0;
   padding: 8px 4px calc(12px + env(safe-area-inset-bottom, 0px));
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  /* 不用 backdrop-filter：微信 Android 上会导致 fixed 底栏点击穿透/失灵 */
+  background: #ffffff;
   border-top: 0;
   box-shadow: 0 -8px 28px rgba(149, 157, 165, 0.1);
   box-sizing: border-box;
+  touch-action: manipulation;
 }
 .dock-tab {
   position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -290,6 +294,8 @@ onBeforeUnmount(() => {
   font-family: inherit;
   cursor: pointer;
   transition: color 0.15s ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .dock-tab.on {
   color: #1677FF;
@@ -309,6 +315,7 @@ onBeforeUnmount(() => {
   stroke-linecap: round;
   stroke-linejoin: round;
   transition: background 0.15s ease, color 0.15s ease;
+  pointer-events: none;
 }
 .dock-tab.on .dock-ic {
   background: #1677FF;
@@ -337,6 +344,8 @@ onBeforeUnmount(() => {
 }
 
 .dock-plus {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -351,6 +360,8 @@ onBeforeUnmount(() => {
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .dock-plus-btn {
   width: 54px;

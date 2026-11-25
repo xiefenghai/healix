@@ -1244,7 +1244,14 @@ onBeforeUnmount(() => {
 }
 .page.inbox {
   overflow-y: auto;
-  padding-bottom: var(--dock-space);
+  /* 底栏避让用伪元素且 pointer-events:none，避免微信里 padding 层盖住 Dock */
+  padding-bottom: 0;
+}
+.page.inbox::after {
+  content: '';
+  display: block;
+  height: var(--dock-space);
+  pointer-events: none;
 }
 .page-boot {
   flex: 1;
@@ -1678,7 +1685,18 @@ onBeforeUnmount(() => {
   flex: none;
   border-top: 1px solid #e8eef4;
   background: #fff;
-  padding: 8px 12px calc(8px + var(--dock-space));
+  padding: 8px 12px 8px;
+  /* 整块默认穿透，仅交互子节点接收触摸，避免底栏留白在微信里挡住 Dock */
+  pointer-events: none;
+}
+.composer-wrap > * {
+  pointer-events: auto;
+}
+.composer-wrap::after {
+  content: '';
+  display: block;
+  height: var(--dock-space);
+  pointer-events: none;
 }
 .quick {
   display: flex;
