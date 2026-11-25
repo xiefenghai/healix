@@ -159,17 +159,15 @@ body,
   -webkit-font-smoothing: antialiased;
 }
 
-/* 有底栏页：锁死外层滚动，避免微信 iOS 整页被拖走导致底栏点空 */
+/*
+ * 有底栏页只锁 html/body 滚动，不要 position:fixed body：
+ * 微信 iOS 上 fixed body 常导致触摸坐标错位，表现为「看得见点不着」。
+ */
 html.hx-tab-shell,
 html.hx-tab-shell body {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-}
-html.hx-tab-shell body {
-  position: fixed;
-  inset: 0;
-  width: 100%;
 }
 html.hx-tab-shell #app {
   height: 100%;

@@ -268,8 +268,8 @@ async function openCareCompanion() {
   if (careContacting.value) return
   careContacting.value = true
   try {
-    // 预热会话；统一进入已优化的沟通主页 ChatHub，不再跳旧版 /care-chat/:id
-    await api<{ data: { thread?: { id?: string } } }>('/api/c/v1/care-chat/contact', {
+    // 先跳沟通页，会话预热放后台，避免微信里接口慢/挂起时按钮像点不动
+    void api<{ data: { thread?: { id?: string } } }>('/api/c/v1/care-chat/contact', {
       method: 'POST',
     }).catch(() => null)
     await router.push('/chat')
