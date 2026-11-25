@@ -170,8 +170,8 @@ function logout() {
 
 <style scoped>
 .page {
-  min-height: calc(100dvh - 60px);
-  padding: 16px 16px calc(100px + env(safe-area-inset-bottom, 0px));
+  min-height: 0;
+  padding: 16px 16px 24px;
   background: #f5f7fb;
   box-sizing: border-box;
   display: flex;
@@ -180,7 +180,7 @@ function logout() {
 }
 .profile-icp {
   margin-top: 4px;
-  padding-bottom: 80px;
+  padding-bottom: 8px;
 }
 .profile-icp :deep(.icp) {
   padding: 16px 0 0;

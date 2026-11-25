@@ -1229,8 +1229,8 @@ onBeforeUnmount(() => {
   --hx-card-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
   --hx-card-radius: 14px;
   --kb-offset: 0px;
-  /* 与 App.vue .dock 实测高度对齐（含上下 padding + 标签行），避免输入区被底栏压住或露出色带 */
-  --dock-space: calc(76px + env(safe-area-inset-bottom, 0px));
+  /* Dock 已在 App 文档流底部，沟通页不再为 fixed 底栏预留空白 */
+  --dock-space: 0px;
   height: 100%;
   max-height: 100%;
   display: flex;
@@ -1244,14 +1244,7 @@ onBeforeUnmount(() => {
 }
 .page.inbox {
   overflow-y: auto;
-  /* 底栏避让用伪元素且 pointer-events:none，避免微信里 padding 层盖住 Dock */
-  padding-bottom: 0;
-}
-.page.inbox::after {
-  content: '';
-  display: block;
-  height: var(--dock-space);
-  pointer-events: none;
+  padding-bottom: 12px;
 }
 .page-boot {
   flex: 1;
@@ -1685,18 +1678,7 @@ onBeforeUnmount(() => {
   flex: none;
   border-top: 1px solid #e8eef4;
   background: #fff;
-  padding: 8px 12px 8px;
-  /* 整块默认穿透，仅交互子节点接收触摸，避免底栏留白在微信里挡住 Dock */
-  pointer-events: none;
-}
-.composer-wrap > * {
-  pointer-events: auto;
-}
-.composer-wrap::after {
-  content: '';
-  display: block;
-  height: var(--dock-space);
-  pointer-events: none;
+  padding: 8px 12px 10px;
 }
 .quick {
   display: flex;

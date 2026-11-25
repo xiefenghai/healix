@@ -64,9 +64,22 @@ const activeTab = computed(() => {
   return TABS.find((t) => t.match.some((m) => p === m || p.startsWith(m + '/')))?.key || ''
 })
 
+/** 微信 iOS 偶发 click 丢失，touchend 兜底；短时去重避免双触发 */
+let lastDockTapAt = 0
+function dockTapGuard() {
+  const now = Date.now()
+  if (now - lastDockTapAt < 320) return false
+  lastDockTapAt = now
+  return true
+}
 function goTab(to: string) {
+  if (!dockTapGuard()) return
   if (route.path === to) return
   void router.replace(to)
+}
+function togglePlus() {
+  if (!dockTapGuard()) return
+  plusOpen.value = !plusOpen.value
 }
 
 function syncCareChatRealtime() {
@@ -177,6 +190,7 @@ onBeforeUnmount(() => {
         class="dock-tab"
         :class="{ on: activeTab === t.key }"
         @click="goTab(t.to)"
+        @touchend.prevent="goTab(t.to)"
       >
         <svg class="dock-ic" viewBox="0 0 24 24" v-html="TAB_ICONS[t.key]" />
         <span>{{ t.label }}</span>
@@ -188,7 +202,8 @@ onBeforeUnmount(() => {
         :class="{ open: plusOpen }"
         aria-label="快速记录"
         :aria-expanded="plusOpen"
-        @click="plusOpen = !plusOpen"
+        @click="togglePlus"
+        @touchend.prevent="togglePlus"
       >
         <span class="dock-plus-btn" aria-hidden="true">
           <svg viewBox="0 0 24 24">
@@ -206,6 +221,7 @@ onBeforeUnmount(() => {
         class="dock-tab"
         :class="{ on: activeTab === t.key }"
         @click="goTab(t.to)"
+        @touchend.prevent="goTab(t.to)"
       >
         <svg class="dock-ic" viewBox="0 0 24 24" v-html="TAB_ICONS[t.key]" />
         <span>{{ t.label }}</span>
@@ -226,22 +242,41 @@ onBeforeUnmount(() => {
   background: var(--hx-bg);
   position: relative;
 }
+/*
+ * 有底栏时不用 position:fixed：微信 iOS WKWebView 里，页面内容常盖住 fixed 底栏触摸。
+ * 改为整页 flex：主区滚动、Dock 占流式底部，从根上避免叠层抢点。
+ */
+.app-shell.with-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
 .page-body {
   min-height: 100vh;
 }
 .with-tab .page-body {
-  /* 底栏高度（含上浮 + 按钮）+ 手势条；避免末卡被悬浮导航遮挡 */
-  padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* 仅给中间 + 上浮留一点空隙；底栏已在文档流中，不再预留 120px */
+  padding-bottom: 12px;
+  box-sizing: border-box;
 }
 /* 沟通页：外层不再滚动，高度交给内部 flex */
 .app-shell.lock-chat {
-  height: 100dvh;
   overflow: hidden;
 }
 .page-body.lock-viewport {
-  /* 沟通页自己在 composer 里为 Dock 留空，去掉外层 120px 以免出现底栏上方色带 */
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
+  height: auto;
   padding-bottom: 0;
   overflow: hidden;
   display: flex;
@@ -255,22 +290,18 @@ onBeforeUnmount(() => {
 }
 
 .dock {
-  position: fixed;
-  left: 50%;
+  position: relative;
+  left: auto;
   right: auto;
-  /* translate3d：微信 WebView 需独立合成层，否则底栏常被页面底部留白抢走触摸 */
-  transform: translate3d(-50%, 0, 0);
-  -webkit-transform: translate3d(-50%, 0, 0);
-  bottom: 0;
-  width: min(100%, 375px);
-  /* 高于页面内容，低于 Vant Popup 默认 2000，避免挡住「记一笔」遮罩 */
-  z-index: 1000;
+  bottom: auto;
+  flex: none;
+  width: 100%;
+  z-index: 20;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: end;
   gap: 0;
   padding: 8px 4px calc(12px + env(safe-area-inset-bottom, 0px));
-  /* 不用 backdrop-filter：微信 Android 上会导致 fixed 底栏点击穿透/失灵 */
   background: #ffffff;
   border-top: 0;
   box-shadow: 0 -8px 28px rgba(149, 157, 165, 0.1);

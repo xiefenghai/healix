@@ -2852,11 +2852,11 @@ async function offerScience() {
   --hx-muted: #999999;
   --hx-page-bg: #f8faff;
   background: linear-gradient(180deg, #f0f5ff 0%, #f8faff 100%);
-  /* 为悬浮底栏 + 全面屏安全区预留滚动空间，避免末卡被挡 */
-  padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+  /* Dock 在 App 文档流底部，页面只需少量尾部空隙 */
+  padding-bottom: 24px;
 }
 .home.has-assess {
-  padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 88px;
 }
 .home::before {
   content: "";
@@ -4421,7 +4421,8 @@ async function offerScience() {
 }
 .assess {
   position: sticky;
-  bottom: calc(100px + env(safe-area-inset-bottom, 0px) + 12px);
+  /* Dock 已在文档流中，不再按 fixed 底栏抬高 */
+  bottom: 12px;
   z-index: 40;
   margin: var(--hx-gap-y) 16px 0;
   display: flex; align-items: center; gap: 12px; padding: 16px;
