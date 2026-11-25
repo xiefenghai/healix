@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, getToken } from './api/http'
 import { startCareChatRealtime, stopCareChatRealtime, onCareChatEvent } from './shared/care-chat-realtime'
+import { startAppViewportWatch } from './shared/app-viewport'
 import { debounce } from './shared/debounce'
 
 const route = useRoute()
@@ -64,22 +65,9 @@ const activeTab = computed(() => {
   return TABS.find((t) => t.match.some((m) => p === m || p.startsWith(m + '/')))?.key || ''
 })
 
-/** 微信 iOS 偶发 click 丢失，touchend 兜底；短时去重避免双触发 */
-let lastDockTapAt = 0
-function dockTapGuard() {
-  const now = Date.now()
-  if (now - lastDockTapAt < 320) return false
-  lastDockTapAt = now
-  return true
-}
 function goTab(to: string) {
-  if (!dockTapGuard()) return
   if (route.path === to) return
   void router.replace(to)
-}
-function togglePlus() {
-  if (!dockTapGuard()) return
-  plusOpen.value = !plusOpen.value
 }
 
 function syncCareChatRealtime() {
@@ -124,7 +112,15 @@ function onOpenPlusEvent() {
   if (showTab.value) plusOpen.value = true
 }
 
+let stopViewportWatch: (() => void) | null = null
+
+function syncShellScrollLock() {
+  document.documentElement.classList.toggle('hx-tab-shell', showTab.value)
+}
+
 onMounted(() => {
+  stopViewportWatch = startAppViewportWatch()
+  syncShellScrollLock()
   syncCareChatRealtime()
   void loadChatBadge()
   unsubChat = onCareChatEvent(() => scheduleBadge())
@@ -135,12 +131,16 @@ watch(
   () => [route.path, !!route.meta.public] as const,
   () => {
     plusOpen.value = false
+    syncShellScrollLock()
     syncCareChatRealtime()
     if (showTab.value) void loadChatBadge()
   },
 )
 
 onBeforeUnmount(() => {
+  stopViewportWatch?.()
+  stopViewportWatch = null
+  document.documentElement.classList.remove('hx-tab-shell')
   scheduleBadge.cancel()
   unsubChat?.()
   unsubChat = null
@@ -190,7 +190,6 @@ onBeforeUnmount(() => {
         class="dock-tab"
         :class="{ on: activeTab === t.key }"
         @click="goTab(t.to)"
-        @touchend.prevent="goTab(t.to)"
       >
         <svg class="dock-ic" viewBox="0 0 24 24" v-html="TAB_ICONS[t.key]" />
         <span>{{ t.label }}</span>
@@ -202,8 +201,7 @@ onBeforeUnmount(() => {
         :class="{ open: plusOpen }"
         aria-label="快速记录"
         :aria-expanded="plusOpen"
-        @click="togglePlus"
-        @touchend.prevent="togglePlus"
+        @click="plusOpen = !plusOpen"
       >
         <span class="dock-plus-btn" aria-hidden="true">
           <svg viewBox="0 0 24 24">
@@ -221,7 +219,6 @@ onBeforeUnmount(() => {
         class="dock-tab"
         :class="{ on: activeTab === t.key }"
         @click="goTab(t.to)"
-        @touchend.prevent="goTab(t.to)"
       >
         <svg class="dock-ic" viewBox="0 0 24 24" v-html="TAB_ICONS[t.key]" />
         <span>{{ t.label }}</span>
@@ -249,10 +246,10 @@ onBeforeUnmount(() => {
 .app-shell.with-tab {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* --hx-app-height 由 app-viewport.ts 写入，专治微信 iOS 100vh 虚高 */
+  height: var(--hx-app-height, 100dvh);
+  min-height: var(--hx-app-height, 100dvh);
+  max-height: var(--hx-app-height, 100dvh);
   overflow: hidden;
 }
 .page-body {
