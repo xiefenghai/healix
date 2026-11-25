@@ -668,7 +668,7 @@ async function buildFreeReply(ask: string): Promise<string> {
         const v = Number(g.value)
         const flag = evaluateGlucose(v, g.mealContext)
         const tip = isAbnormal(flag)
-          ? `${abnormalLabel(flag)}，请结合医嘱关注饮食与复测。`
+          ? `${abnormalLabel(flag)}，请按医生建议关注饮食与复测。`
           : '在参考范围内。'
         return `最新血糖 ${fmtVal(v)} mmol/L，${tip}建议仅供参考，异常请咨询医生。`
       }
