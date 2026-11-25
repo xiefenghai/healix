@@ -538,14 +538,25 @@ onMounted(() => {
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding-bottom: 24px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+:deep(.van-nav-bar) {
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(10px);
+}
+:deep(.van-nav-bar__title) {
+  font-weight: 800;
+  color: var(--hx-text);
+}
+:deep(.van-nav-bar .van-icon) {
+  color: #1677ff;
 }
 .card {
   background: #fff;
-  border-radius: var(--hx-r-lg);
+  border-radius: 16px;
   padding: 14px;
   margin: 12px 16px;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 h2 {
   margin: 0 0 10px;

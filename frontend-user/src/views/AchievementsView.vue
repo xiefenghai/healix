@@ -234,7 +234,7 @@ async function togglePeer() {
 .ach-page {
   min-height: 100vh;
   padding-bottom: 28px;
-  background: linear-gradient(180deg, #fff6e9 0%, #fffaf3 240px, #f6f8f8 520px);
+  background: var(--hx-bg);
 }
 .nav {
   background: transparent;
@@ -245,10 +245,10 @@ async function togglePeer() {
 .flame-card {
   margin: 8px 16px 14px;
   padding: 18px 18px 14px;
-  border-radius: 20px;
+  border-radius: var(--hx-card-radius, 16px);
   color: #fff;
-  background: linear-gradient(135deg, #ff9a3c 0%, #ff6a3d 55%, #f0466b 100%);
-  box-shadow: 0 10px 24px rgba(240, 90, 60, 0.28);
+  background: linear-gradient(135deg, #1677ff 0%, #10b981 100%);
+  box-shadow: 0 8px 20px rgba(22, 119, 255, 0.22);
   position: relative;
 }
 .science-card {
@@ -257,12 +257,12 @@ async function togglePeer() {
 .science-card strong {
   display: block;
   font-size: 15px;
-  color: #14362e;
+  color: var(--hx-text, #0f172a);
 }
 .science-card p {
   margin: 4px 0 0;
   font-size: 13px;
-  color: #5f746c;
+  color: var(--hx-muted, #64748b);
   line-height: 1.4;
 }
 .flame-main {
@@ -333,9 +333,9 @@ async function togglePeer() {
 .card {
   margin: 0 16px 14px;
   padding: 16px;
-  border-radius: var(--hx-r-lg);
+  border-radius: var(--hx-card-radius, 16px);
   background: #fff;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 .ledger-fold {
   padding: 0;
@@ -441,7 +441,7 @@ async function togglePeer() {
   margin-top: 4px;
   font-size: 22px;
   font-weight: 800;
-  color: #e07a3a;
+  color: #10b981;
   font-variant-numeric: tabular-nums;
 }
 .ch-title {
@@ -458,7 +458,7 @@ async function togglePeer() {
   line-height: 1.5;
 }
 .peer-main strong {
-  color: #e0632a;
+  color: #1677ff;
   font-size: 22px;
   font-weight: 900;
 }
@@ -488,7 +488,7 @@ async function togglePeer() {
   color: var(--hx-text);
 }
 .sec-head h2 span {
-  background: linear-gradient(transparent 60%, #ffe58a 60%);
+  background: linear-gradient(transparent 60%, #a7f3d0 60%);
 }
 .sec-head em {
   font-style: normal;
@@ -516,12 +516,12 @@ async function togglePeer() {
   display: grid;
   place-items: center;
   font-size: 26px;
-  background: radial-gradient(circle at 35% 30%, #fff7e0, #ffd88a);
-  box-shadow: 0 4px 10px rgba(224, 160, 60, 0.3);
+  background: radial-gradient(circle at 35% 30%, #e8f3ff, #93c5fd);
+  box-shadow: 0 4px 10px rgba(22, 119, 255, 0.22);
 }
 .badge.outcome .badge-icon {
-  background: radial-gradient(circle at 35% 30%, #e9fbf5, #9fdcc6);
-  box-shadow: 0 4px 10px rgba(11, 122, 102, 0.25);
+  background: radial-gradient(circle at 35% 30%, #ecfdf5, #6ee7b7);
+  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.25);
 }
 .badge.off .badge-icon {
   background: #f1f4f6;
@@ -552,7 +552,7 @@ async function togglePeer() {
   margin-bottom: 4px;
 }
 .ledger-date strong {
-  color: #e07a3a;
+  color: #10b981;
 }
 .ledger-day ul {
   list-style: none;
@@ -580,7 +580,7 @@ async function togglePeer() {
 }
 .pts {
   font-weight: 700;
-  color: #e07a3a;
+  color: #10b981;
   font-variant-numeric: tabular-nums;
 }
 .neg {
@@ -622,8 +622,8 @@ async function togglePeer() {
   margin-top: 10px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: #fff6e9;
-  color: #9a6b1f;
+  background: var(--hx-blue-soft, #e8f3ff);
+  color: var(--hx-blue-text, #1d4ed8);
   font-size: 13px;
 }
 </style>

@@ -479,10 +479,10 @@ onMounted(async () => {
 }
 .card {
   background: #fff;
-  border-radius: var(--hx-r-lg);
+  border-radius: var(--hx-card-radius, 16px);
   margin: 12px 16px;
   padding: 14px;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 h2 {
   margin: 0 0 10px;

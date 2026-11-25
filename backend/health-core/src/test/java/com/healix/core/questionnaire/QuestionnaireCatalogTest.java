@@ -19,7 +19,7 @@ class QuestionnaireCatalogTest {
     @Test
     void loadsWlIntake() {
         QuestionnaireDef q = catalog.latest("WL_INTAKE");
-        assertEquals(4, q.version());
+        assertEquals(5, q.version());
         assertNull(q.program());
         assertFalse(catalog.itemsOf(q).isEmpty());
         assertTrue(catalog.itemsOf(q).stream().anyMatch(i -> "REQUIRED".equals(i.level())));
@@ -27,7 +27,11 @@ class QuestionnaireCatalogTest {
         assertTrue(catalog.module("DM_CLINICAL", 3).isPresent());
         assertTrue(catalog.module("HTN_CLINICAL", 3).isPresent());
         assertTrue(q.modules().stream().anyMatch(m -> "GOALS_PREFERENCE".equals(m.code()) && m.version() == 4));
-        // v4 瘦身：不再收微信号/早绝经/测量来源/外卖频次
+        // v5：基础信息 → 体测 → 诉求与目标
+        assertEquals("BASIC_PROFILE", q.modules().get(0).code());
+        assertEquals("BODY_MEASURE", q.modules().get(1).code());
+        assertEquals("GOALS_PREFERENCE", q.modules().get(2).code());
+        // v4 瘦身保留：不再收微信号/早绝经/测量来源/外卖频次
         assertTrue(catalog.itemsOf(q).stream().noneMatch(i -> "profile.wechatId".equals(i.field())));
         assertTrue(catalog.itemsOf(q).stream().noneMatch(i -> "basic.women.earlyMenopause".equals(i.field())));
         assertTrue(catalog.itemsOf(q).stream().noneMatch(i -> "measure.method".equals(i.field())));

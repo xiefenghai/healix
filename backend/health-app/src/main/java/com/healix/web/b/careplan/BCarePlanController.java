@@ -182,7 +182,8 @@ public class BCarePlanController {
                 request.title(),
                 request.goalSummary(),
                 request.summary(),
-                request.rationaleOverview()));
+                request.rationaleOverview(),
+                request.phaseGoals()));
     }
 
     @DeleteMapping("/patients/{peopleId}/care-plan/draft")
@@ -418,7 +419,9 @@ public class BCarePlanController {
             /** 方案总结（写入 context_snapshot.summary） */
             String summary,
             /** 整份生成依据（写入 context_snapshot.rationale.overview） */
-            String rationaleOverview) {}
+            String rationaleOverview,
+            /** 阶段控制目标 */
+            JsonNode phaseGoals) {}
 
     /** @param syncDietGoal 把方案热量同步为医护设定的饮食目标；不传时仅手改过的热量同步 */
     public record PublishRequest(List<String> ackWarnCodes, String title, Boolean syncDietGoal) {}

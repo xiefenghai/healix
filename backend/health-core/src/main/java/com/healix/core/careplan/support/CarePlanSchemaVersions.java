@@ -18,8 +18,9 @@ public final class CarePlanSchemaVersions {
      * <p>V5：五类方案类型；块/任务 rationale；体重监测自动打卡。
      * <p>V6：块/任务 refs 指南条目引用；context_snapshot.guideline 记录条目库版本与匹配结果。
      * <p>V7：goals 块（mode/items/phase/pace）；首诊高亮进安全校验与生成上下文。
+     * <p>V8：phase_goals_json 阶段控制目标（主指标 + 数值/区间，供 C 端圆环）。
      */
-    public static final int CURRENT = 7;
+    public static final int CURRENT = 8;
 
     private CarePlanSchemaVersions() {}
 

@@ -8,6 +8,7 @@ import java.util.Set;
  * <p>只留「基础代谢 + 安全红线 + 粗粒度生活方式」约 15–20 题，让患者 1–2 分钟填完；
  * 腰围/血压、详细病史与习惯留给 B 端面诊或 C 端「完整补充」。
  * <p>v4 起外卖频次并入「谁做饭 / 执行阻力」，测量来源不再单问。
+ * <p>v5 起模块顺序为：基础信息 → 体测 → 诉求与目标（与问卷 modules 一致）。
  */
 public final class PatientCFastFields {
 
@@ -22,7 +23,7 @@ public final class PatientCFastFields {
             // 体测基础（腰围/血压不进极简）
             "metric.HEIGHT",
             "metric.WEIGHT",
-            // 核心诉求与阻力
+            // 核心诉求与阻力（排在体测之后）
             "goal.primaryAppeal",
             "goal.constraints",
             // 高危禁忌排查

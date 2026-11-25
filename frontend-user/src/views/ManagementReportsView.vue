@@ -78,9 +78,9 @@ onMounted(() => void load())
   padding: 14px 16px;
   text-align: left;
   border: 0;
-  background: var(--hx-card);
-  border-radius: var(--hx-r-lg);
-  box-shadow: var(--hx-elev-2);
+  background: var(--hx-card, #fff);
+  border-radius: var(--hx-card-radius, 16px);
+  box-shadow: var(--hx-card-shadow);
   cursor: pointer;
 }
 .card-top {

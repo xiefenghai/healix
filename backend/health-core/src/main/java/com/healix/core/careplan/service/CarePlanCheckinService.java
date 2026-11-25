@@ -1,7 +1,9 @@
 package com.healix.core.careplan.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.healix.common.domain.EntityMeta;
 import com.healix.common.exception.BusinessException;
+import com.healix.common.util.JsonUtils;
 import com.healix.core.archive.service.ArchiveAccessService;
 import com.healix.core.careplan.domain.CarePlan;
 import com.healix.core.careplan.domain.CarePlanTask;
@@ -18,6 +20,7 @@ import com.healix.core.careplan.mapper.CarePlanTaskCheckinMapper;
 import com.healix.core.careplan.mapper.CarePlanTaskMapper;
 import com.healix.core.careplan.mapper.CarePlanVersionMapper;
 import com.healix.core.careplan.support.CarePlanDueSupport;
+import com.healix.core.careplan.support.CarePlanPhaseGoalsSupport;
 import com.healix.core.careplan.support.CarePlanPromptContextSupport;
 import com.healix.core.careplan.support.CarePlanSchemaVersions;
 import com.healix.core.careplan.support.MetricTaskRules;
@@ -81,6 +84,20 @@ public class CarePlanCheckinService {
         out.setPlanId(plan.getId());
         out.setPlanTitle(plan.getTitle());
         out.setGoalSummary(plan.getGoalSummary());
+        JsonNode phaseGoals = JsonUtils.readTree(
+                version.getPhaseGoalsJson() == null || version.getPhaseGoalsJson().isBlank()
+                        ? "{}"
+                        : version.getPhaseGoalsJson());
+        if (CarePlanPhaseGoalsSupport.isEmpty(phaseGoals)) {
+            JsonNode snap = JsonUtils.readTree(
+                    version.getContextSnapshotJson() == null || version.getContextSnapshotJson().isBlank()
+                            ? "{}"
+                            : version.getContextSnapshotJson());
+            if (snap != null && !CarePlanPhaseGoalsSupport.isEmpty(snap.get("phaseGoals"))) {
+                phaseGoals = snap.get("phaseGoals");
+            }
+        }
+        out.setPhaseGoals(phaseGoals);
         out.setVersionNo(version.getVersionNo());
         out.setSchemaVersion(
                 version.getSchemaVersion() != null ? version.getSchemaVersion() : CarePlanSchemaVersions.CURRENT);

@@ -232,8 +232,10 @@ display_name: 管理方案生成
 
 | 字段 | 说明 |
 |------|------|
-| `horizonDays` | 执行周期天数，默认 14 |
+| `horizonDays` | 执行周期天数，默认 14（任务打卡窗口；与阶段目标周期无关） |
 | `tasks` | 任务数组，至少 1 条 `enabled: true` |
+
+另有独立块 **`phaseGoals`**（由服务端按方案类型解析，写入草稿/发布快照）：`primaryMetric` + `items[]`（体重目标值、血压上限、空腹血糖区间等）。`goalSummary` 应与 `phaseGoals` 数字一致；C 端圆环只读主指标。
 
 **tasks[] 字段**：
 

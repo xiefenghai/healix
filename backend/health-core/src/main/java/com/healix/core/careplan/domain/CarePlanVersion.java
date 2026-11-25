@@ -19,6 +19,8 @@ public class CarePlanVersion extends BaseEntity {
     private String exerciseJson;
     private String dietJson;
     private String executionJson;
+    /** 阶段控制目标快照 */
+    private String phaseGoalsJson;
     private String contextSnapshotJson;
     private String safetyFlagsJson;
     private LocalDateTime publishedAt;

@@ -438,7 +438,8 @@ function verifyBadge(item: AllergyItem) {
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding-bottom: 28px;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
 }
 .loading {
   padding: 48px 0;
@@ -446,21 +447,21 @@ function verifyBadge(item: AllergyItem) {
 .card {
   margin: 12px 16px 0;
   padding: 14px 16px;
-  border-radius: var(--hx-r-lg);
-  background: var(--hx-card);
-  box-shadow: var(--hx-elev-2);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
 }
 .intro p {
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--hx-muted);
+  color: #64748b;
 }
 .status-title {
   margin-bottom: 10px;
   font-size: 14px;
   font-weight: 600;
-  color: var(--hx-text);
+  color: #0f172a;
 }
 .toolbar {
   margin: 14px 16px 0;
@@ -470,7 +471,7 @@ function verifyBadge(item: AllergyItem) {
   font-weight: 700;
 }
 .item.risk {
-  background: var(--hx-danger-bg);
+  background: var(--hx-danger-bg, #fde7ea);
   border: 1px solid #fecaca;
 }
 .item.inactive {
@@ -484,42 +485,42 @@ function verifyBadge(item: AllergyItem) {
 }
 .item-head strong {
   font-size: 16px;
-  color: var(--hx-text);
+  color: #0f172a;
 }
 .badge {
   font-size: 11px;
   font-weight: 600;
-  color: var(--hx-teal);
-  background: var(--hx-teal-light);
+  color: #059669;
+  background: #ecfdf5;
   border-radius: 999px;
   padding: 2px 8px;
 }
 .badge.ok {
-  color: var(--hx-teal-700);
-  background: rgba(11, 122, 102, 0.12);
+  color: #047857;
+  background: rgba(16, 185, 129, 0.12);
 }
 .badge.warn {
-  color: var(--hx-warn-text);
-  background: var(--hx-warn-bg);
+  color: var(--hx-warn-text, #8a5c00);
+  background: var(--hx-warn-bg, #fff3da);
 }
 .badge.danger {
   color: #fff;
-  background: var(--hx-danger);
+  background: var(--hx-danger, #e0435a);
 }
 .badge.muted {
-  color: var(--hx-muted);
-  background: var(--hx-n-100);
+  color: #64748b;
+  background: #f0f4f6;
 }
 .line {
   margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--hx-text);
+  color: #0f172a;
 }
 .meta {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--hx-muted);
+  color: #86909c;
 }
 .sheet {
   display: flex;
@@ -532,10 +533,14 @@ function verifyBadge(item: AllergyItem) {
   justify-content: space-between;
   padding: 16px 16px 8px;
 }
+.sheet-head strong {
+  color: #0f172a;
+  font-size: 16px;
+}
 .sheet-close {
   border: 0;
   background: transparent;
-  color: var(--hx-muted);
+  color: #64748b;
   font-size: 13px;
 }
 .sheet-body {
@@ -546,12 +551,12 @@ function verifyBadge(item: AllergyItem) {
 .sheet-footer {
   display: flex;
   gap: 10px;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
   background: #fff;
 }
 .del-btn {
   flex: 0 0 88px;
-  color: var(--hx-danger);
+  color: var(--hx-danger, #e0435a);
   border-color: #fecaca;
 }
 .block {
@@ -561,11 +566,11 @@ function verifyBadge(item: AllergyItem) {
   margin: 0 0 8px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--hx-muted);
+  color: #86909c;
 }
 .label.required::after {
   content: ' *';
-  color: var(--hx-danger);
+  color: var(--hx-danger, #e0435a);
 }
 .chips {
   display: flex;
@@ -573,9 +578,9 @@ function verifyBadge(item: AllergyItem) {
   gap: 8px;
 }
 .chip {
-  border: 1px solid var(--hx-n-200);
-  background: var(--hx-n-50);
-  color: var(--hx-text);
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
   font-size: 13px;
   padding: 8px 12px;
   border-radius: 999px;
@@ -583,21 +588,21 @@ function verifyBadge(item: AllergyItem) {
 }
 .chip.active {
   border-color: transparent;
-  background: var(--hx-teal-light);
-  color: var(--hx-teal);
+  background: #ecfdf5;
+  color: #059669;
   font-weight: 600;
 }
 .chip.risk {
-  color: var(--hx-danger);
+  color: var(--hx-danger, #e0435a);
 }
 .chip.risk.active {
-  background: var(--hx-danger-bg);
-  color: var(--hx-danger-text);
+  background: var(--hx-danger-bg, #fde7ea);
+  color: var(--hx-danger-text, #a8243a);
 }
 .risk-hint {
   margin: 8px 0 0;
   font-size: 12px;
-  color: var(--hx-danger);
+  color: var(--hx-danger, #e0435a);
 }
 .block :deep(.van-field) {
   margin-top: 8px;

@@ -8,6 +8,10 @@ import { debounce } from './shared/debounce'
 const route = useRoute()
 const router = useRouter()
 const showTab = computed(() => !route.meta.hideTab && !route.meta.public)
+/** 沟通页锁死外层滚动，只允许消息列表内部滚，避免顶栏与气泡叠层 */
+const lockViewport = computed(
+  () => showTab.value && (route.path === '/chat' || route.path.startsWith('/care-chat')),
+)
 const plusOpen = ref(false)
 const chatBadge = ref(0)
 let unsubChat: (() => void) | null = null
@@ -33,11 +37,11 @@ const PLUS_ITEMS = [
 ] as const
 
 const TAB_ICONS: Record<string, string> = {
-  home: '<path d="M4 10.5L12 4l8 6.5V20a1 1 0 01-1 1h-5v-6H10v6H5a1 1 0 01-1-1z"/>',
+  home: '<path d="M4 10.5L12 4l8 6.5V20a1 1 0 01-1 1h-5v-6H10v6H5a1 1 0 01-1-1z" fill="none" stroke="currentColor"/>',
   health:
-    '<path d="M4 14c2-6 5-9 8-9s6 3 8 9"/><path d="M8 14h.01M12 14h.01M16 14h.01"/><path d="M6 18h12"/>',
-  chat: '<path d="M5 6h14a2 2 0 012 2v7a2 2 0 01-2 2h-6l-4 3v-3H5a2 2 0 01-2-2V8a2 2 0 012-2z"/>',
-  me: '<circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/>',
+    '<path d="M4 14c2-6 5-9 8-9s6 3 8 9" fill="none" stroke="currentColor"/><path d="M8 14h.01M12 14h.01M16 14h.01" fill="none" stroke="currentColor"/><path d="M6 18h12" fill="none" stroke="currentColor"/>',
+  chat: '<path d="M5 6h14a2 2 0 012 2v7a2 2 0 01-2 2h-6l-4 3v-3H5a2 2 0 01-2-2V8a2 2 0 012-2z" fill="none" stroke="currentColor"/>',
+  me: '<circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5" fill="none" stroke="currentColor"/>',
 }
 
 /** 与首页日记卡同源的线性图标 */
@@ -132,8 +136,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'with-tab': showTab }">
-    <main class="page-body">
+  <div class="app-shell" :class="{ 'with-tab': showTab, 'lock-chat': lockViewport }">
+    <main class="page-body" :class="{ 'lock-viewport': lockViewport }">
       <RouterView />
     </main>
 
@@ -229,6 +233,26 @@ onBeforeUnmount(() => {
   /* 底栏高度（含上浮 + 按钮）+ 手势条；避免末卡被悬浮导航遮挡 */
   padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
 }
+/* 沟通页：外层不再滚动，高度交给内部 flex */
+.app-shell.lock-chat {
+  height: 100dvh;
+  overflow: hidden;
+}
+.page-body.lock-viewport {
+  /* 沟通页自己在 composer 里为 Dock 留空，去掉外层 120px 以免出现底栏上方色带 */
+  height: 100%;
+  min-height: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: #f3f6f9;
+}
+.page-body.lock-viewport > * {
+  flex: 1;
+  min-height: 0;
+}
 
 .dock {
   position: fixed;
@@ -272,26 +296,26 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .dock-ic {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
+  padding: 6px;
+  box-sizing: content-box;
+  border-radius: 50%;
+  background: transparent;
+  color: #999999;
   stroke: currentColor;
   fill: none;
-  stroke-width: 1.8;
+  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
-  transition: stroke-width 0.15s ease, fill 0.15s ease, stroke 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .dock-tab.on .dock-ic {
-  stroke: #1677FF;
-  fill: rgba(22, 119, 255, 0.15);
-  stroke-width: 2.2;
-}
-.dock-tab.on::after {
-  content: "";
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
   background: #1677FF;
+  color: #fff;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
 }
 .dock-badge {
   position: absolute;

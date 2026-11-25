@@ -185,7 +185,7 @@ public class CPortalController {
     @PostMapping("/patient-cards")
     public ApiResult<CardSubmitResponse> createPatientCard(@RequestBody @Validated CreatePatientCardRequest request) {
         var ctx = SecurityUtils.requireContext();
-        // 新建 people 时过渡写入存储租户；对齐本身靠手机号+姓名，不依赖租户
+        // 新建 people 时过渡写入存储租户；自动绑档靠手机号+姓名+生日，不依赖租户
         String tenantId = ctx.getTenantId();
         if (!StringUtils.hasText(tenantId)) {
             AccountPatient first = patientCardService.findFirstCard(ctx.getAccountId());
@@ -429,7 +429,7 @@ public class CPortalController {
             LocalDate birthday,
             String relation) {}
 
-    /** 对齐键：手机号 + 姓名；otpCode 必填。证件/性别/生日选填，不参与对齐。 */
+    /** 自动绑档：手机号 + 姓名 + 出生日期；otpCode 必填。证件/性别选填。 */
     public record CreatePatientCardRequest(
             @NotBlank String displayName,
             String gender,

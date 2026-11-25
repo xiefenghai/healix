@@ -209,7 +209,18 @@ onMounted(load)
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding-bottom: 32px;
+  padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+}
+:deep(.van-nav-bar) {
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(10px);
+}
+:deep(.van-nav-bar__title) {
+  font-weight: 800;
+  color: var(--hx-text);
+}
+:deep(.van-nav-bar .van-icon) {
+  color: #1677ff;
 }
 .loading {
   padding: 48px 0;
@@ -230,18 +241,18 @@ onMounted(load)
   color: var(--hx-muted);
   font-size: 12px;
   font-weight: 700;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 .day-switch button.active {
-  background: var(--hx-teal);
+  background: #10b981;
   color: #fff;
 }
 .card {
   margin: 12px 16px 0;
   padding: 18px 16px;
-  border-radius: var(--hx-r-lg);
-  background: var(--hx-card);
-  box-shadow: var(--hx-elev-2);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
 }
 .hero-head {
   display: flex;

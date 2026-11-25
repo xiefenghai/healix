@@ -151,7 +151,7 @@ async function submit() {
     <form class="card" @submit.prevent="submit">
       <div class="hint">
         <span class="hint-badge" aria-hidden="true">i</span>
-        <p>使用手机号验证码登录。开发环境验证码为 123456。</p>
+        <p>使用手机号验证码登录。当前试用阶段验证码为 123456。</p>
       </div>
 
       <div class="fields">

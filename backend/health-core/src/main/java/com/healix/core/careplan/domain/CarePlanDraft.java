@@ -18,6 +18,8 @@ public class CarePlanDraft extends BaseEntity {
     private String exerciseJson;
     private String dietJson;
     private String executionJson;
+    /** 阶段控制目标（主指标 + 数值/区间） */
+    private String phaseGoalsJson;
     private String safetyFlagsJson;
     private String contextSnapshotJson;
     private String baseVersionId;

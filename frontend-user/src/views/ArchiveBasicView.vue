@@ -110,24 +110,60 @@ const lifestyleRows = computed(() => formatLifestyleRows(content.value, lifestyl
 </template>
 
 <style scoped>
-.page { min-height: 100vh; background: var(--hx-bg); padding-bottom: 24px; }
+.page {
+  min-height: 100vh;
+  background: var(--hx-bg);
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
 .hint {
-  margin: 12px 16px 0; color: var(--hx-muted); font-size: 13px; line-height: 1.5;
+  margin: 12px 16px 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .card {
-  margin: 12px 16px; padding: 16px; border-radius: var(--hx-r-lg); background: #fff;
-  box-shadow: var(--hx-elev-2);
+  margin: 12px 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
 }
 .card-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 12px;
 }
-h3 { margin: 0; font-size: 15px; }
-.link {
-  border: 0; background: transparent; color: var(--hx-primary, var(--hx-teal-700));
-  font-size: 13px; padding: 0;
+h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
 }
-.row + .row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hx-n-100); }
-.label { color: var(--hx-muted); font-size: 12px; margin-bottom: 4px; }
-.value { font-size: 14px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; }
+.link {
+  border: 0;
+  background: transparent;
+  color: #1677ff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0;
+}
+.row + .row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f0f4f6;
+}
+.label {
+  color: #86909c;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.value {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #0f172a;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
 </style>

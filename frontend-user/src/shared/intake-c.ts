@@ -255,6 +255,7 @@ export function cOptionLabel(
  * Magic Link 默认只渲染这些题。
  * v4：外卖频次并入「谁做饭 / 执行阻力」，不再单独问 takeoutFrequency。
  */
+/** 白名单无序；实际步骤顺序跟问卷 modules（v5：基础→体测→诉求） */
 export const C_FAST_FIELDS = new Set<string>([
   'profile.displayName',
   'profile.gender',
@@ -280,13 +281,8 @@ export const C_FAST_FIELDS = new Set<string>([
  * C 端旧「标准」档白名单（与后端 PatientCQuickFields 对齐；兼容续填）。
  * FULL 档不受此限制。
  */
+/** 白名单无序；实际步骤顺序跟问卷 modules（v5：基础→体测→诉求） */
 export const C_QUICK_FIELDS = new Set<string>([
-  'goal.primaryAppeal',
-  'goal.appealText',
-  'goal.mode',
-  'goal.targetWeightKg',
-  'goal.targetDate',
-  'goal.constraints',
   'profile.displayName',
   'profile.gender',
   'profile.birthday',
@@ -297,6 +293,12 @@ export const C_QUICK_FIELDS = new Set<string>([
   'metric.WAIST',
   'metric.BLOOD_PRESSURE_SYS',
   'metric.BLOOD_PRESSURE_DIA',
+  'goal.primaryAppeal',
+  'goal.appealText',
+  'goal.mode',
+  'goal.targetWeightKg',
+  'goal.targetDate',
+  'goal.constraints',
   'basic.presentIllness',
   'basic.medicationFlags',
   'medication.mealRelation',

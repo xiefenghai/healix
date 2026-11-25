@@ -86,7 +86,7 @@ public class PatientCardService {
     }
 
     /**
-     * C 端自助添加就诊人：对齐键为本人手机号 + 姓名（调用方已查重）；证件选填且不参与对齐。
+     * C 端自助添加就诊人：新建 people（调用方已按手机号+姓名+生日完成认档决策）；证件选填。
      */
     @Transactional
     public AccountPatient createSelfServe(

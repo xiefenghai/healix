@@ -180,6 +180,34 @@ export function targetWeightBmiHint(
   }
 }
 
+/**
+ * 减重方向下：目标体重须低于当前体重。
+ * @returns danger 时前端应阻断下一步 / 提交
+ */
+export function targetWeightVsCurrentHint(
+  currentKg?: number | null,
+  targetKg?: number | null,
+  goalMode?: string | null,
+): { text: string; tone: 'ok' | 'warn' | 'danger' } | null {
+  const cur = Number(currentKg)
+  const tgt = Number(targetKg)
+  if (!Number.isFinite(cur) || cur <= 0 || !Number.isFinite(tgt) || tgt <= 0) return null
+  const mode = String(goalMode || '').trim().toUpperCase()
+  const isLoss = mode === 'LOSS' || mode === 'WEIGHT_LOSS' || mode === 'FAT_LOSS'
+  if (!isLoss) return null
+  if (tgt >= cur - 0.05) {
+    return {
+      text: `当前 ${cur} kg，目标 ${tgt} kg：减重目标须低于当前体重，请核对后重填`,
+      tone: 'danger',
+    }
+  }
+  const delta = Math.round((cur - tgt) * 10) / 10
+  return {
+    text: `相对当前将减约 ${delta} kg`,
+    tone: 'ok',
+  }
+}
+
 export function evaluateBloodPressure(
   sys: number | null | undefined,
   dia: number | null | undefined,

@@ -227,9 +227,9 @@ onMounted(load)
 .card {
   margin: 12px 16px;
   padding: 14px 16px;
-  border-radius: var(--hx-r-lg);
+  border-radius: var(--hx-card-radius, 16px);
   background: #fff;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 .intro p {
   margin: 0;

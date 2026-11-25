@@ -409,10 +409,10 @@ onMounted(load)
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding-bottom: 32px;
+  padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
 }
 :deep(.van-nav-bar) {
-  background: rgba(255, 250, 242, 0.86);
+  background: rgba(255, 255, 255, 0.86);
   backdrop-filter: blur(10px);
 }
 :deep(.van-nav-bar__title) {
@@ -420,10 +420,10 @@ onMounted(load)
   color: var(--hx-text);
 }
 :deep(.van-nav-bar .van-icon) {
-  color: var(--hx-teal);
+  color: #1677ff;
 }
 .nav-link {
-  color: var(--hx-teal);
+  color: #1677ff;
   font-size: 14px;
   font-weight: 600;
 }
@@ -458,7 +458,7 @@ onMounted(load)
   border-radius: 50%;
   background: #fff;
   color: var(--hx-teal);
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 .date-btn:disabled {
   color: var(--hx-n-400);
@@ -512,9 +512,9 @@ onMounted(load)
 .card {
   margin: 12px 16px 0;
   padding: 16px;
-  border-radius: var(--hx-r-lg);
-  background: var(--hx-card);
-  box-shadow: var(--hx-elev-2);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
 }
 
 .summary {

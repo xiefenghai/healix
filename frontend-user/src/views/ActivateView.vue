@@ -68,7 +68,7 @@ async function offerMergeSelfCard(cardId?: string) {
       title: '发现同一人的记录',
       message:
         `您之前自己添加过「${candidate.displayName}」${summary ? `，已有${summary}` : ''}。` +
-        '是否把这些记录并入机构档案？合并后只保留一个就诊人。',
+        '是否把这些记录并入机构档案？合并后只保留一个健康档案。',
       confirmButtonText: '合并',
       cancelButtonText: '暂不',
     })
@@ -168,7 +168,7 @@ async function submit() {
     <van-nav-bar title="激活账号" left-arrow @click-left="router.back()" />
     <div class="card">
       <p class="hint">
-        健管师已建档且尚未登记本人手机号时，可用激活码绑定。若档案已有本人手机号，请直接在「就诊人」里用同一手机号+姓名添加（需短信验证），会自动对上同一份档案。
+        健管师已建立健康档案且尚未登记本人手机号时，可用激活码绑定。若档案已有本人手机号，请直接在「健康档案」里用同一手机号+姓名添加（需短信验证），会自动对上同一份档案。
       </p>
       <van-field v-model="activationCode" label="激活码" placeholder="如 A3K9-7X2M" />
       <van-field v-model="displayName" label="档案姓名" placeholder="与建档姓名一致" />
@@ -215,9 +215,9 @@ async function submit() {
 .card {
   margin: 16px;
   padding: 20px;
-  border-radius: var(--hx-r-lg);
+  border-radius: var(--hx-card-radius, 16px);
   background: #fff;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 .hint { margin: 0 0 12px; color: var(--hx-muted); font-size: 13px; line-height: 1.5; }
 .link {
@@ -226,7 +226,7 @@ async function submit() {
   margin-top: 14px;
   border: 0;
   background: transparent;
-  color: var(--hx-teal-600);
+  color: #1677ff;
   font-size: 14px;
 }
 </style>

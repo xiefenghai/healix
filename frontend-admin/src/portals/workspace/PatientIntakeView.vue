@@ -213,6 +213,19 @@ function asMetric(v: unknown): number | null {
 }
 
 /** 体测里目录下限放得太宽，这里只做当场提示，不改已填的值。 */
+/** 减重方向下目标 ≥ 当前体重：填题时即时提示，避免拖到 AI 总结/提交才发现 */
+function lossTargetConflictMessage(): string {
+  const mode = String(answers['goal.mode'] ?? '').trim().toUpperCase()
+  if (mode !== 'LOSS' && mode !== 'WEIGHT_LOSS' && mode !== 'FAT_LOSS') return ''
+  const cur = asMetric(answers['metric.WEIGHT'])
+  const tgt = asMetric(answers['goal.targetWeightKg'])
+  if (cur == null || tgt == null) return ''
+  if (tgt >= cur - 0.05) {
+    return `减重目标须低于当前体重（当前 ${cur} kg → 目标 ${tgt} kg），请当场改目标或核对当前体重`
+  }
+  return ''
+}
+
 function metricAnomaly(field: string): string {
   const value = asMetric(answers[field])
   if (value == null) return ''
@@ -255,6 +268,13 @@ function metricAnomaly(field: string): string {
   if (field === 'goal.targetFpg') {
     if (value < 3 || value > 10) return '目标值不合理，疑似录入错误'
   }
+  if (field === 'goal.targetWeightKg') {
+    const conflict = lossTargetConflictMessage()
+    if (conflict) return conflict
+    if (targetBmi.value != null && targetBmi.value < 18.5) {
+      return '目标 BMI < 18.5，请上调目标体重或核对身高'
+    }
+  }
   return ''
 }
 
@@ -276,6 +296,11 @@ const ADULT_JOBS = new Set([
 function fieldHint(field: string): string {
   const metric = metricAnomaly(field)
   if (metric) return metric
+  // 改当前体重 / 选减重模式时也即时提示，不必回到目标题才看见
+  if (field === 'metric.WEIGHT' || field === 'goal.mode') {
+    const conflict = lossTargetConflictMessage()
+    if (conflict) return conflict
+  }
   if (field !== 'profile.occupation') return ''
   const age = ageYearsFromBirthday(answers['profile.birthday'])
   const job = String(answers['profile.occupation'] ?? '').trim().toUpperCase()
@@ -498,6 +523,13 @@ async function runAiSummary(force = false) {
   // 必收未齐：不调 AI（自动/手动都拦），避免空卷生成无意义总结
   if (requiredStillMissing() && !allowIncompleteSubmit.value) {
     ElMessage.warning('请先完成必收项后再生成 AI 总结')
+    return
+  }
+  // 减重目标与当前体重矛盾：先改题再生成，避免 AI 按错误数字写总结
+  const lossConflict = lossTargetConflictMessage()
+  if (lossConflict) {
+    ElMessage.warning(lossConflict)
+    void jumpToField('goal.targetWeightKg')
     return
   }
   aiSummaryGenerating.value = true
@@ -741,6 +773,16 @@ const targetBmiBand = computed(() => {
   return { label: '目标仍肥胖', tone: 'warn' as const }
 })
 
+/** 减重方向下目标体重 ≥ 当前体重（答卷矛盾） */
+const lossTargetNotLower = computed(() => {
+  const mode = String(answers['goal.mode'] ?? '').trim().toUpperCase()
+  if (mode !== 'LOSS' && mode !== 'WEIGHT_LOSS' && mode !== 'FAT_LOSS') return false
+  const cur = Number(answers['metric.WEIGHT'])
+  const tgt = Number(answers['goal.targetWeightKg'])
+  if (!Number.isFinite(cur) || cur <= 0 || !Number.isFinite(tgt) || tgt <= 0) return false
+  return tgt >= cur - 0.05
+})
+
 const SUSPECT_METRIC_FIELDS = [
   'metric.WAIST',
   'metric.BLOOD_PRESSURE_SYS',
@@ -749,6 +791,7 @@ const SUSPECT_METRIC_FIELDS = [
   'goal.targetBpSys',
   'goal.targetHba1c',
   'goal.targetFpg',
+  'goal.targetWeightKg',
 ] as const
 
 const highlightHits = computed(() => {
@@ -759,10 +802,12 @@ const highlightHits = computed(() => {
     const reason = metricAnomaly(field)
     if (!reason) continue
     if (base.some((h) => h.field === field)) continue
+    const severity =
+      field === 'goal.targetWeightKg' && lossTargetConflictMessage() ? 'BLOCK' : 'CAUTION'
     extra.push({
       field,
       label: shortFieldTitle(field),
-      severity: 'CAUTION',
+      severity,
       planEffect: reason,
     })
   }
@@ -857,6 +902,17 @@ function toCheckAction(h: IntakeHighlightHit): CheckAction {
       field,
       title: '空腹血糖目标不合理',
       detail: num != null ? `当前目标 ${num}mmol/L 异常，请修正` : raw || '目标值不合理，请修正',
+      cta: '去修改',
+      tone: 'danger',
+    }
+  }
+  if (field === 'goal.targetWeightKg') {
+    const conflict = lossTargetConflictMessage()
+    return {
+      key: field,
+      field,
+      title: conflict ? '减重目标与当前体重矛盾' : '目标体重不合理',
+      detail: conflict || raw || '请修正目标体重',
       cta: '去修改',
       tone: 'danger',
     }
@@ -2896,6 +2952,11 @@ onBeforeUnmount(() => {
           </dl>
           <p v-if="targetBmi != null && targetBmi < 18.5" class="bmi-caution">
             目标 BMI &lt; 18.5，请上调目标体重或核对身高
+          </p>
+          <p v-if="lossTargetNotLower" class="bmi-caution">
+            减重目标须低于当前体重（当前
+            {{ formatAnswerBrief(answers['metric.WEIGHT']) }} kg → 目标
+            {{ formatAnswerBrief(answers['goal.targetWeightKg']) }} kg），请核对答卷
           </p>
         </section>
 

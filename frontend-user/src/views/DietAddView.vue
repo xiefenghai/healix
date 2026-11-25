@@ -959,10 +959,10 @@ onMounted(load)
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding-bottom: 96px;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
 }
 :deep(.van-nav-bar) {
-  background: rgba(255, 250, 242, 0.86);
+  background: rgba(255, 255, 255, 0.86);
   backdrop-filter: blur(10px);
 }
 :deep(.van-nav-bar__title) {
@@ -970,7 +970,7 @@ onMounted(load)
   color: var(--hx-text);
 }
 :deep(.van-nav-bar .van-icon) {
-  color: var(--hx-teal);
+  color: #1677ff;
 }
 .nav-del {
   color: var(--hx-danger);
@@ -986,9 +986,9 @@ onMounted(load)
 .card {
   margin: 10px 16px 0;
   padding: 12px 14px;
-  border-radius: var(--hx-r-lg);
-  background: var(--hx-card);
-  box-shadow: var(--hx-elev-2);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
 }
 .meal-types {
   display: flex;
@@ -1039,7 +1039,7 @@ onMounted(load)
   color: var(--hx-teal);
   font-size: 14px;
   font-weight: 600;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 .ai-btn:disabled {
   opacity: 0.6;
@@ -1177,7 +1177,7 @@ onMounted(load)
   color: var(--hx-warn-text);
 }
 .line.pending {
-  box-shadow: 0 0 0 1.5px var(--hx-warn) inset, var(--hx-elev-2);
+  box-shadow: 0 0 0 1.5px var(--hx-warn) inset, var(--hx-card-shadow);
 }
 .line-head {
   display: flex;
@@ -1354,7 +1354,7 @@ onMounted(load)
   gap: 12px;
   padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
   background: #fff;
-  box-shadow: 0 -6px 16px rgba(14, 159, 131, 0.08);
+  box-shadow: 0 -6px 16px rgba(22, 119, 255, 0.06);
 }
 .total {
   flex: 1;

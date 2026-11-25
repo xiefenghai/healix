@@ -176,6 +176,7 @@ async function addCard() {
     }
   }
   if (!f.relation) return showToast('请选择和账号的关系')
+  if (!f.birthday) return showToast('请选择出生日期')
   const mobile = f.mobile.trim()
   if (!mobileReady.value) return showToast('请填写本人手机号')
   if (!f.otpCode.trim()) return showToast('请填写验证码')
@@ -202,7 +203,7 @@ async function addCard() {
       return
     }
     if (res.data.accessToken) setToken(res.data.accessToken)
-    showToast(res.data.outcome === 'LINKED' ? '已关联已有档案' : '已添加就诊人')
+    showToast(res.data.outcome === 'LINKED' ? '已关联已有档案' : '已添加健康档案')
     showAdd.value = false
     await router.replace('/home')
   } catch (e) {
@@ -221,7 +222,7 @@ async function withdraw(id: string) {
 
 async function removeCard(card: PatientCard) {
   try {
-    await showConfirmDialog({ title: '移除就诊人', message: `确定移除「${card.displayName}」？不会删除档案本身。` })
+    await showConfirmDialog({ title: '移除健康档案', message: `确定移除「${card.displayName}」？不会删除档案本身。` })
     const res = await api<{ data: { accessToken: string } }>(`/api/c/v1/patient-cards/${card.id}`, {
       method: 'DELETE',
     })
@@ -242,17 +243,72 @@ onMounted(load)
 
 <template>
   <div class="page">
-    <van-nav-bar title="就诊人" left-arrow @click-left="router.back()" />
+    <header class="topbar">
+      <button type="button" class="back" aria-label="返回" @click="router.back()">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15 6l-6 6 6 6" />
+        </svg>
+      </button>
+      <h1>健康档案</h1>
+      <span class="topbar-spacer" aria-hidden="true" />
+    </header>
+
     <div class="body">
-      <van-empty v-if="!loading && !cards.length && !requests.length" description="还没有就诊人">
-        <template #default>
-          <div class="empty-actions">
-            <van-button type="primary" size="small" round @click="openAdd">添加就诊人</van-button>
-            <van-button plain size="small" round @click="router.push('/activate')">用激活码添加</van-button>
-          </div>
-        </template>
-      </van-empty>
-      <van-cell-group v-if="requests.length" inset style="margin-bottom: 12px">
+      <section
+        v-if="!loading && !cards.length && !requests.length"
+        class="empty"
+        aria-label="暂无健康档案"
+      >
+        <div class="empty-art" aria-hidden="true">
+          <svg viewBox="0 0 160 140" class="empty-svg">
+            <defs>
+              <linearGradient id="pcFolder" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#FFFFFF" />
+                <stop offset="100%" stop-color="#E0F2FE" />
+              </linearGradient>
+              <linearGradient id="pcCross" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#34D399" />
+                <stop offset="100%" stop-color="#059669" />
+              </linearGradient>
+              <filter id="pcSoft" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#14B8A6" flood-opacity="0.18" />
+              </filter>
+            </defs>
+            <ellipse cx="80" cy="122" rx="48" ry="8" fill="#14B8A6" opacity="0.08" />
+            <path
+              d="M38 48h28l8-10h40c5 0 9 4 9 9v52c0 5-4 9-9 9H38c-5 0-9-4-9-9V57c0-5 4-9 9-9z"
+              fill="url(#pcFolder)"
+              filter="url(#pcSoft)"
+              stroke="#BAE6FD"
+              stroke-width="1.5"
+            />
+            <path
+              d="M29 64h102v36c0 5-4 9-9 9H38c-5 0-9-4-9-9V64z"
+              fill="#F0FDFA"
+              opacity="0.9"
+            />
+            <rect x="72" y="72" width="16" height="36" rx="4" fill="url(#pcCross)" />
+            <rect x="62" y="82" width="36" height="16" rx="4" fill="url(#pcCross)" />
+            <path
+              d="M48 108h18l6-10 8 20 6-10h18"
+              fill="none"
+              stroke="#5EEAD4"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              opacity="0.7"
+            />
+          </svg>
+        </div>
+        <h2>还没有健康档案</h2>
+        <p class="empty-sub">添加健康档案，开启健康管理</p>
+        <div class="empty-actions">
+          <button type="button" class="btn-primary" @click="openAdd">添加健康档案</button>
+          <button type="button" class="btn-ghost" @click="router.push('/activate')">用激活码添加</button>
+        </div>
+      </section>
+
+      <van-cell-group v-if="requests.length" inset class="list-block">
         <van-cell
           v-for="r in requests"
           :key="r.id"
@@ -264,7 +320,7 @@ onMounted(load)
           </template>
         </van-cell>
       </van-cell-group>
-      <van-cell-group v-if="cards.length" inset>
+      <van-cell-group v-if="cards.length" inset class="list-block">
         <van-cell
           v-for="c in cards"
           :key="c.id"
@@ -279,71 +335,147 @@ onMounted(load)
         </van-cell>
       </van-cell-group>
       <div v-if="cards.length || requests.length" class="actions">
-        <van-button block round type="primary" @click="openAdd">添加就诊人</van-button>
-        <van-button block round plain style="margin-top: 10px" @click="router.push('/activate')">激活码添加机构档案</van-button>
+        <button type="button" class="btn-primary wide" @click="openAdd">添加健康档案</button>
+        <button type="button" class="btn-ghost wide" @click="router.push('/activate')">激活码添加机构档案</button>
       </div>
-      <div class="logout">
-        <van-button size="small" plain hairline @click="logout">退出登录</van-button>
-      </div>
+
+      <button
+        type="button"
+        class="logout-link"
+        :class="{ 'logout-link--dock': !loading && !cards.length && !requests.length }"
+        @click="logout"
+      >
+        退出登录
+      </button>
     </div>
 
-    <van-popup v-model:show="showAdd" position="bottom" round :style="{ padding: '16px' }">
-      <h3>添加就诊人</h3>
-      <p class="tip">
-        用「本人手机号 + 姓名」认人；须短信验证该手机号。同号同名会自动关联已有档案（含健管端建档），同号异名可作家庭成员分别添加。
-      </p>
-      <van-field v-model="form.displayName" label="姓名" placeholder="请输入姓名" maxlength="32" />
-      <van-field
-        is-link
-        readonly
-        label="关系"
-        :model-value="relationLabelMap[form.relation] || form.relation"
-        @click="showRelationSheet = true"
-      />
-      <van-field v-model="form.mobile" type="tel" label="本人手机号" placeholder="11 位手机号" maxlength="11" />
-      <van-field
-        v-model="form.otpCode"
-        type="digit"
-        label="验证码"
-        placeholder="6 位验证码"
-        maxlength="6"
-      >
-        <template #button>
-          <van-button size="small" type="primary" plain :loading="sending" :disabled="!mobileReady" @click="sendOtp">
-            获取验证码
-          </van-button>
-        </template>
-      </van-field>
-      <van-field label="性别（选填）">
-        <template #input>
-          <van-radio-group v-model="form.gender" direction="horizontal" :disabled="!!parsedIdCard">
-            <van-radio name="MALE">男</van-radio>
-            <van-radio name="FEMALE">女</van-radio>
-          </van-radio-group>
-        </template>
-      </van-field>
-      <van-field
-        :is-link="!parsedIdCard"
-        readonly
-        label="出生日期"
-        placeholder="选填"
-        :model-value="form.birthday"
-        @click="openBirthdayPicker"
-      />
-      <van-cell
-        v-if="!showIdentity"
-        title="补充身份证（选填，不参与认人）"
-        is-link
-        @click="showIdentity = true"
-      />
-      <van-field
-        v-else
-        v-model="form.identityValue"
-        label="身份证号"
-        placeholder="选填，填写后可自动识别性别和生日"
-        maxlength="18"
-      />
-      <van-button block type="primary" round style="margin-top: 12px" @click="addCard">保存</van-button>
+    <van-popup
+      v-model:show="showAdd"
+      position="bottom"
+      class="add-popup"
+      :style="{ background: 'transparent' }"
+    >
+      <div class="add-sheet">
+        <header class="add-hd">
+          <h3>添加健康档案</h3>
+          <p class="tip">
+            用「本人手机号 + 姓名 + 出生日期」添加健康档案，须短信验证该手机号。信息一致会自动关联已有档案；同号同名但生日对不上时会交给健管核对。同号异名可作家庭成员分别添加。
+          </p>
+        </header>
+
+        <div class="add-form">
+          <label class="row">
+            <span class="row-label">姓名</span>
+            <input
+              v-model="form.displayName"
+              class="row-input"
+              type="text"
+              maxlength="32"
+              placeholder="请输入姓名"
+            />
+          </label>
+
+          <button type="button" class="row row-link" @click="showRelationSheet = true">
+            <span class="row-label">关系</span>
+            <span class="row-value">{{ relationLabelMap[form.relation] || form.relation || '请选择' }}</span>
+            <span class="row-chev" aria-hidden="true">›</span>
+          </button>
+
+          <label class="row">
+            <span class="row-label">本人手机号</span>
+            <input
+              v-model="form.mobile"
+              class="row-input"
+              type="tel"
+              inputmode="numeric"
+              maxlength="11"
+              placeholder="11 位手机号"
+            />
+          </label>
+
+          <div class="row">
+            <span class="row-label">验证码</span>
+            <input
+              v-model="form.otpCode"
+              class="row-input"
+              type="text"
+              inputmode="numeric"
+              maxlength="6"
+              placeholder="6 位验证码"
+            />
+            <button
+              type="button"
+              class="otp-btn"
+              :disabled="sending || !mobileReady"
+              @click="sendOtp"
+            >
+              {{ sending ? '发送中…' : '获取验证码' }}
+            </button>
+          </div>
+
+          <div class="row">
+            <span class="row-label">性别</span>
+            <div class="gender-tags">
+              <button
+                type="button"
+                class="gender-tag"
+                :class="{ on: form.gender === 'MALE' }"
+                :disabled="!!parsedIdCard"
+                @click="form.gender = 'MALE'"
+              >
+                男
+              </button>
+              <button
+                type="button"
+                class="gender-tag"
+                :class="{ on: form.gender === 'FEMALE' }"
+                :disabled="!!parsedIdCard"
+                @click="form.gender = 'FEMALE'"
+              >
+                女
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="row row-link"
+            :disabled="!!parsedIdCard"
+            @click="openBirthdayPicker"
+          >
+            <span class="row-label">出生日期</span>
+            <span class="row-value" :class="{ muted: !form.birthday }">
+              {{ form.birthday || '请选择' }}
+            </span>
+            <span v-if="!parsedIdCard" class="row-chev" aria-hidden="true">›</span>
+          </button>
+
+          <button
+            v-if="!showIdentity"
+            type="button"
+            class="row row-link"
+            @click="showIdentity = true"
+          >
+            <span class="row-label wide">补充身份证（选填）</span>
+            <span class="row-value muted">不参与认人</span>
+            <span class="row-chev" aria-hidden="true">›</span>
+          </button>
+          <label v-else class="row">
+            <span class="row-label">身份证号</span>
+            <input
+              v-model="form.identityValue"
+              class="row-input"
+              type="text"
+              maxlength="18"
+              placeholder="选填，可识别性别和生日"
+            />
+          </label>
+        </div>
+
+        <footer class="add-ft">
+          <button type="button" class="save-btn" @click="addCard">保存</button>
+        </footer>
+      </div>
     </van-popup>
 
     <van-popup v-model:show="showBirthdayPicker" position="bottom" round>
@@ -367,11 +499,355 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page { min-height: 100vh; background: var(--hx-bg); }
-.body { padding: 12px 0 24px; }
-.empty-actions { display: flex; gap: 10px; justify-content: center; margin-top: 12px; }
-.actions { padding: 16px; }
-.logout { display: flex; justify-content: center; margin-top: 24px; }
-h3 { margin: 0 0 8px; }
-.tip { margin: 0 0 12px; font-size: 12px; color: var(--hx-muted); }
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #E8FBF5 0%, #FFFFFF 55%, #F7FFFC 100%);
+  box-sizing: border-box;
+}
+.topbar {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
+}
+.back {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #374151;
+  cursor: pointer;
+}
+.back svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.back:active { transform: scale(0.96); }
+.topbar h1 {
+  margin: 0;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1A1A1A;
+  letter-spacing: -0.01em;
+}
+.topbar-spacer { width: 36px; height: 36px; }
+
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 8px 0 calc(40px + env(safe-area-inset-bottom, 0px));
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.empty {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px 72px;
+  margin: 0 auto;
+  text-align: center;
+  box-sizing: border-box;
+}
+.empty-art {
+  width: 160px;
+  height: 140px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.empty-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  margin: 0 auto;
+  animation: emptyFloat 4.2s ease-in-out infinite;
+}
+@keyframes emptyFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .empty-svg { animation: none; }
+}
+.empty h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #333333;
+  line-height: 1.4;
+}
+.empty-sub {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #9CA3AF;
+  line-height: 1.45;
+}
+.empty-actions {
+  width: 100%;
+  max-width: 280px;
+  margin: 28px auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.btn-primary {
+  width: 60%;
+  min-width: 200px;
+  height: 48px;
+  border: 0;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #34D399 0%, #10B981 100%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.28);
+  transition: all 0.2s ease;
+}
+.btn-primary.wide { width: 100%; min-width: 0; }
+.btn-primary:active { transform: scale(0.98); }
+.btn-ghost {
+  width: 60%;
+  min-width: 200px;
+  height: 44px;
+  border: 1px solid #10B981;
+  border-radius: 99px;
+  background: #fff;
+  color: #059669;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-ghost.wide { width: 100%; min-width: 0; }
+.btn-ghost:active { transform: scale(0.98); background: #F0FDFA; }
+
+.list-block { margin-bottom: 12px; }
+.actions {
+  padding: 16px 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.logout-link {
+  margin-top: auto;
+  align-self: center;
+  border: 0;
+  background: transparent;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: #9CA3AF;
+  cursor: pointer;
+}
+/* 空状态时沉底，不参与中间内容垂直居中计算 */
+.logout-link--dock {
+  position: absolute;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  margin: 0;
+}
+
+/* —— 添加就诊人抽屉 —— */
+.add-popup {
+  width: 100% !important;
+  max-width: 100% !important;
+  background: transparent !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+.add-sheet {
+  width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 24px 24px 0 0;
+  box-sizing: border-box;
+  padding: 0 0 calc(24px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  max-height: min(88vh, 760px);
+}
+.add-hd {
+  flex: none;
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid #F3F4F6;
+  text-align: left;
+}
+.add-hd h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1A1A1A;
+  letter-spacing: -0.01em;
+}
+.tip {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: #9CA3AF;
+  text-align: left;
+}
+.add-form {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 20px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid #F0F0F0;
+  background: transparent;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  text-align: left;
+}
+.row:last-child { border-bottom: 0; }
+.row-link { cursor: pointer; }
+.row-link:disabled { cursor: default; opacity: 0.7; }
+.row-label {
+  flex: none;
+  width: 88px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+.row-label.wide {
+  width: auto;
+  max-width: 58%;
+  white-space: normal;
+  line-height: 1.35;
+}
+.row-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1A1A1A;
+  font-family: inherit;
+  caret-color: #10B981;
+}
+.row-input::placeholder { color: #999999; font-weight: 500; }
+.row-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #666666;
+  text-align: right;
+}
+.row-value.muted { color: #999999; }
+.row-chev {
+  flex: none;
+  color: #D1D5DB;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 500;
+}
+.otp-btn {
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #10B981;
+  border-radius: 99px;
+  background: #fff;
+  color: #059669;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.otp-btn:disabled { opacity: 0.5; cursor: default; }
+.otp-btn:not(:disabled):active { transform: scale(0.97); }
+
+.gender-tags {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.gender-tag {
+  min-width: 56px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #E5E7EB;
+  border-radius: 99px;
+  background: #fff;
+  color: #9CA3AF;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.gender-tag.on {
+  border-color: #10B981;
+  background: #E8FBF5;
+  color: #059669;
+}
+.gender-tag:disabled { opacity: 0.65; cursor: default; }
+
+.add-ft {
+  flex: none;
+  padding: 16px 20px 0;
+}
+.save-btn {
+  width: 100%;
+  height: 48px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(90deg, #34D399 0%, #10B981 100%);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.28);
+  transition: all 0.2s ease;
+}
+.save-btn:active { transform: scale(0.98); }
 </style>

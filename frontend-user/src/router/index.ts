@@ -3,7 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 /**
  * C 端路由。
  * 底栏舵式：首页 · 健康 · ＋ · 沟通 · 我的；「＋」打开快速记录。
- * AI管家在「我的」入口（/ai，hideTab）。
+ * AI / 发现入口统一进沟通主页（Free 对话流已在 ChatHub）。
  * `/health`：底栏 Tab；`/health-data`：同组件 hideTab 堆叠页。
  */
 const router = createRouter({
@@ -25,7 +25,7 @@ const router = createRouter({
     },
     { path: '/patient-cards', component: () => import('../views/PatientCardsView.vue'), meta: { hideTab: true } },
     { path: '/home', component: () => import('../views/HomeView.vue'), meta: { title: '首页' } },
-    { path: '/ai', component: () => import('../views/AiButlerView.vue'), meta: { title: 'AI管家', hideTab: true } },
+    { path: '/ai', redirect: '/chat' },
     { path: '/chat', component: () => import('../views/ChatHubView.vue'), meta: { title: '沟通' } },
     { path: '/archive', component: () => import('../views/ArchiveHubView.vue'), meta: { hideTab: true } },
     { path: '/archive/lifestyle', component: () => import('../views/ArchiveLifestyleView.vue'), meta: { hideTab: true } },
@@ -128,17 +128,21 @@ const router = createRouter({
     },
     {
       path: '/care-chat/:threadId',
-      component: () => import('../views/CareChatThreadView.vue'),
-      meta: { hideTab: true },
+      // 旧会话深链统一进沟通主页，避免回到 CareChatThreadView 老 UI
+      redirect: (to) => ({
+        path: '/chat',
+        query: { ...to.query, threadId: String(to.params.threadId || '') },
+        replace: true,
+      }),
     },
     { path: '/health', component: () => import('../views/HealthDataHubView.vue'), meta: { title: '健康' } },
     { path: '/health/record', component: () => import('../views/VitalsView.vue'), meta: { hideTab: true } },
-    { path: '/discover', redirect: '/ai' },
+    { path: '/discover', redirect: '/chat' },
     { path: '/me', component: () => import('../views/ProfileView.vue'), meta: { title: '我的' } },
     { path: '/join', component: () => import('../views/JoinView.vue'), meta: { hideTab: true } },
     { path: '/profile', redirect: '/me' },
     { path: '/vitals', redirect: '/health/record' },
-    { path: '/agent', redirect: '/ai' },
+    { path: '/agent', redirect: '/chat' },
   ],
 })
 

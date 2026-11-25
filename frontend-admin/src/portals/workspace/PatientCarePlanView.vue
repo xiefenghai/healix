@@ -185,6 +185,36 @@ interface CarePlanCommHistoryItem {
   draftId?: string | null
 }
 
+interface PhaseGoalItem {
+  metric?: string
+  display?: string
+  unit?: string
+  baseline?: number | null
+  target?: number | null
+  min?: number | null
+  max?: number | null
+  sysMax?: number | null
+  diaMax?: number | null
+  source?: string
+  deadline?: string
+  horizon?: string
+}
+
+interface PhaseGoals {
+  horizonDays?: number
+  horizonLabel?: string
+  primaryMetric?: string
+  items?: PhaseGoalItem[]
+}
+
+const PHASE_METRIC_OPTIONS = [
+  { value: 'WEIGHT', label: '体重' },
+  { value: 'BP', label: '血压' },
+  { value: 'FPG', label: '空腹血糖' },
+  { value: 'HBA1C', label: '糖化血红蛋白' },
+  { value: 'HABIT_ADHERENCE', label: '打卡完成率' },
+] as const
+
 interface CarePlanBundle {
   plan?: {
     id: string
@@ -207,6 +237,7 @@ interface CarePlanBundle {
     exercise?: any
     diet?: any
     execution?: any
+    phaseGoals?: PhaseGoals | null
     safetyFlags?: SafetyFlag[]
     contextSnapshot?: any
   } | null
@@ -220,6 +251,7 @@ interface CarePlanBundle {
     exercise?: any
     diet?: any
     execution?: any
+    phaseGoals?: PhaseGoals | null
     contextSnapshot?: any
     publishedAt?: string
     signStatus?: string
@@ -1387,6 +1419,7 @@ const editForm = reactive({
   horizonDays: 14,
   executionRationale: '',
   tasks: [] as ExecTask[],
+  phaseGoals: null as PhaseGoals | null,
 })
 
 const canDoctorSign = computed(
@@ -2653,6 +2686,7 @@ function blankEditFormContent() {
   editForm.horizonDays = 14
   editForm.executionRationale = ''
   editForm.tasks = []
+  editForm.phaseGoals = null
 }
 
 function syncFormFromBundle() {
@@ -2732,6 +2766,11 @@ function syncFormFromBundle() {
   editForm.tasks = Array.isArray(src?.execution?.tasks)
     ? (JSON.parse(JSON.stringify(src!.execution!.tasks)) as ExecTask[])
     : []
+  const pg =
+    (src as { phaseGoals?: PhaseGoals | null } | null)?.phaseGoals ||
+    (src?.contextSnapshot as { phaseGoals?: PhaseGoals } | undefined)?.phaseGoals ||
+    null
+  editForm.phaseGoals = pg ? (JSON.parse(JSON.stringify(pg)) as PhaseGoals) : null
   scrubDiabetesPorridgeInForm()
   scrubRedundantSampleDaySwapHints()
 }
@@ -4787,7 +4826,69 @@ function buildPayload() {
     exercise,
     diet,
     execution,
+    phaseGoals: buildPhaseGoalsPayload(),
   }
+}
+
+function ensurePhaseGoals(): PhaseGoals {
+  if (!editForm.phaseGoals) {
+    editForm.phaseGoals = {
+      primaryMetric: 'WEIGHT',
+      horizonDays: 90,
+      horizonLabel: '约3个月',
+      items: [{ metric: 'WEIGHT', display: 'TARGET', unit: 'kg' }],
+    }
+  }
+  if (!Array.isArray(editForm.phaseGoals.items)) {
+    editForm.phaseGoals.items = []
+  }
+  return editForm.phaseGoals
+}
+
+function phasePrimaryItem(): PhaseGoalItem {
+  const pg = ensurePhaseGoals()
+  const metric = String(pg.primaryMetric || 'WEIGHT')
+  let item = (pg.items || []).find((i) => String(i.metric || '').toUpperCase() === metric)
+  if (!item) {
+    item = { metric, display: metric === 'WEIGHT' ? 'TARGET' : 'RANGE' }
+    pg.items = [...(pg.items || []), item]
+  }
+  return item
+}
+
+function onPhasePrimaryMetricChange(metric: string | number | null | undefined) {
+  const pg = ensurePhaseGoals()
+  pg.primaryMetric = String(metric || 'WEIGHT')
+  const item = phasePrimaryItem()
+  const m = pg.primaryMetric
+  if (m === 'WEIGHT') {
+    item.display = 'TARGET'
+    item.unit = 'kg'
+  } else if (m === 'BP') {
+    item.display = 'RANGE'
+    item.unit = 'mmHg'
+    if (item.sysMax == null) item.sysMax = 130
+    if (item.diaMax == null) item.diaMax = 80
+  } else if (m === 'FPG') {
+    item.display = 'RANGE'
+    item.unit = 'mmol/L'
+    if (item.min == null) item.min = 4.4
+    if (item.max == null) item.max = 7.0
+  } else if (m === 'HBA1C') {
+    item.display = 'RANGE'
+    item.unit = '%'
+    if (item.max == null) item.max = 7.0
+  } else if (m === 'HABIT_ADHERENCE') {
+    item.display = 'RANGE'
+    item.unit = '%'
+    if (item.min == null) item.min = 80
+  }
+}
+
+function buildPhaseGoalsPayload(): PhaseGoals | null {
+  const pg = editForm.phaseGoals
+  if (!pg || !pg.primaryMetric) return pg
+  return JSON.parse(JSON.stringify(pg)) as PhaseGoals
 }
 
 async function saveDraft(opts?: { quiet?: boolean }) {
@@ -6695,6 +6796,143 @@ watch(
               >
                 {{ tag.label }}
               </button>
+            </div>
+          </el-form-item>
+          <el-form-item label="控制目标">
+            <div class="phase-goals-box">
+              <div class="phase-goals-row">
+                <el-select
+                  :model-value="editForm.phaseGoals?.primaryMetric || ''"
+                  placeholder="主指标"
+                  style="width: 140px"
+                  :disabled="!composeCanFineTune"
+                  @update:model-value="onPhasePrimaryMetricChange"
+                >
+                  <el-option
+                    v-for="opt in PHASE_METRIC_OPTIONS"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
+                  />
+                </el-select>
+                <el-input-number
+                  v-model="ensurePhaseGoals().horizonDays"
+                  :min="14"
+                  :max="365"
+                  :step="7"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span class="phase-goals-unit">天周期</span>
+              </div>
+              <div
+                v-if="(editForm.phaseGoals?.primaryMetric || 'WEIGHT') === 'WEIGHT'"
+                class="phase-goals-row"
+              >
+                <span class="phase-goals-label">基线</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().baseline"
+                  :min="30"
+                  :max="300"
+                  :step="0.1"
+                  :precision="1"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span class="phase-goals-label">目标</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().target"
+                  :min="30"
+                  :max="300"
+                  :step="0.1"
+                  :precision="1"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span class="phase-goals-unit">kg</span>
+              </div>
+              <div
+                v-else-if="editForm.phaseGoals?.primaryMetric === 'BP'"
+                class="phase-goals-row"
+              >
+                <span class="phase-goals-label">上限</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().sysMax"
+                  :min="90"
+                  :max="200"
+                  :step="1"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span>/</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().diaMax"
+                  :min="50"
+                  :max="130"
+                  :step="1"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span class="phase-goals-unit">mmHg</span>
+              </div>
+              <div
+                v-else-if="editForm.phaseGoals?.primaryMetric === 'FPG'"
+                class="phase-goals-row"
+              >
+                <span class="phase-goals-label">区间</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().min"
+                  :min="3"
+                  :max="15"
+                  :step="0.1"
+                  :precision="1"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span>–</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().max"
+                  :min="3"
+                  :max="15"
+                  :step="0.1"
+                  :precision="1"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span class="phase-goals-unit">mmol/L</span>
+              </div>
+              <div
+                v-else-if="editForm.phaseGoals?.primaryMetric === 'HBA1C'"
+                class="phase-goals-row"
+              >
+                <span class="phase-goals-label">上限</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().max"
+                  :min="4"
+                  :max="12"
+                  :step="0.1"
+                  :precision="1"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span class="phase-goals-unit">%</span>
+              </div>
+              <div
+                v-else-if="editForm.phaseGoals?.primaryMetric === 'HABIT_ADHERENCE'"
+                class="phase-goals-row"
+              >
+                <span class="phase-goals-label">完成率 ≥</span>
+                <el-input-number
+                  v-model="phasePrimaryItem().min"
+                  :min="50"
+                  :max="100"
+                  :step="5"
+                  controls-position="right"
+                  :disabled="!composeCanFineTune"
+                />
+                <span class="phase-goals-unit">%</span>
+              </div>
+              <p class="phase-goals-hint">主指标用于 C 端首页圆环；辅项仍随病种保留在方案中。</p>
             </div>
           </el-form-item>
           <el-form-item v-if="bundle.activeVersion?.publishedAt" label="发布时间">
@@ -11979,6 +12217,37 @@ watch(
 
 .title-polish {
   flex-shrink: 0;
+}
+
+.phase-goals-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.phase-goals-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.phase-goals-label {
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.phase-goals-unit {
+  font-size: 12px;
+  color: var(--ink-500);
+}
+
+.phase-goals-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-400);
+  line-height: 1.4;
 }
 
 .goal-quick-tags {

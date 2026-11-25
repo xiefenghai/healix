@@ -251,6 +251,10 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "schema_version",
                 "ALTER TABLE care_plan_draft ADD COLUMN schema_version INT NOT NULL DEFAULT 1 COMMENT '产品规则版本' AFTER version");
         ensureColumn(
+                "care_plan_draft",
+                "phase_goals_json",
+                "ALTER TABLE care_plan_draft ADD COLUMN phase_goals_json JSON NULL COMMENT '阶段控制目标' AFTER execution_json");
+        ensureColumn(
                 "care_plan_version",
                 "schema_version",
                 "ALTER TABLE care_plan_version ADD COLUMN schema_version INT NOT NULL DEFAULT 1 COMMENT '产品规则版本' AFTER version_no");
@@ -258,6 +262,10 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                 "care_plan_version",
                 "title",
                 "ALTER TABLE care_plan_version ADD COLUMN title VARCHAR(128) NULL COMMENT '发布时标题快照' AFTER source");
+        ensureColumn(
+                "care_plan_version",
+                "phase_goals_json",
+                "ALTER TABLE care_plan_version ADD COLUMN phase_goals_json JSON NULL COMMENT '阶段控制目标快照' AFTER execution_json");
         ensureColumn(
                 "care_plan",
                 "reviewed_at",
@@ -324,6 +332,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     exercise_json           JSON         NULL,
                     diet_json               JSON         NULL,
                     execution_json          JSON         NULL,
+                    phase_goals_json        JSON         NULL,
                     safety_flags_json       JSON         NULL,
                     context_snapshot_json   JSON         NULL,
                     base_version_id         VARCHAR(32)  NULL,
@@ -353,6 +362,7 @@ public class SchemaEnsureRunner implements ApplicationRunner {
                     exercise_json           JSON         NULL,
                     diet_json               JSON         NULL,
                     execution_json          JSON         NULL,
+                    phase_goals_json        JSON         NULL,
                     context_snapshot_json   JSON         NULL,
                     safety_flags_json       JSON         NULL,
                     published_at            DATETIME     NOT NULL,

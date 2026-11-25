@@ -138,6 +138,17 @@ public final class HealthGoalRules {
             return out;
         }
         double delta = baseline - target;
+        // 减重模式：目标必须明显低于当前体重，避免「当前 60、目标 70」这类答卷矛盾
+        if (MODE_LOSS.equals(mode) && target >= baseline - 0.05) {
+            out.add(new Issue(
+                    LEVEL_ERROR,
+                    "GOAL_LOSS_TARGET_NOT_LOWER",
+                    String.format(
+                            Locale.ROOT,
+                            "减重目标须低于当前体重（当前 %.1f kg，目标 %.1f kg）",
+                            baseline,
+                            target)));
+        }
         if (delta > 0 && !MODE_LOSS.equals(mode) && !MODE_BODY_COMPOSITION.equals(mode)) {
             out.add(new Issue(LEVEL_WARN, "GOAL_WEIGHT_DROP", "目标体重低于基线，但模式不是减重/体成分"));
         }

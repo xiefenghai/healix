@@ -149,7 +149,7 @@ function dateLabel(d?: string | null) {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: var(--hx-bg, #f3f7f5);
+  background: var(--hx-bg);
   padding-bottom: 32px;
 }
 .loading {
@@ -158,8 +158,8 @@ function dateLabel(d?: string | null) {
 .hero,
 .tile {
   background: #fff;
-  border-radius: 20px;
-  box-shadow: 0 4px 16px rgba(14, 60, 48, 0.06);
+  border-radius: var(--hx-card-radius, 16px);
+  box-shadow: var(--hx-card-shadow);
 }
 .hero {
   margin: 12px 16px;
@@ -169,7 +169,7 @@ function dateLabel(d?: string | null) {
   margin: 0;
   font-size: 13px;
   font-weight: 700;
-  color: #0e9f83;
+  color: #10b981;
 }
 .title,
 .headline + .hold {
@@ -178,7 +178,7 @@ function dateLabel(d?: string | null) {
 .title {
   font-size: 20px;
   font-weight: 800;
-  color: #14362e;
+  color: var(--hx-text, #0f172a);
 }
 .hold,
 .progress,
@@ -186,19 +186,19 @@ function dateLabel(d?: string | null) {
   margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.5;
-  color: #5f746c;
+  color: var(--hx-muted, #64748b);
 }
 .bar {
   margin-top: 12px;
   height: 8px;
   border-radius: 999px;
-  background: #e6efeb;
+  background: var(--hx-n-100, #f0f4f6);
   overflow: hidden;
 }
 .bar i {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #0e9f83, #3ecf9a);
+  background: linear-gradient(90deg, #1677ff, #10b981);
 }
 .play {
   margin-top: 14px;
@@ -206,15 +206,15 @@ function dateLabel(d?: string | null) {
   height: 44px;
   border: 0;
   border-radius: 14px;
-  background: #0e9f83;
+  background: #10b981;
   color: #fff;
   font-size: 15px;
   font-weight: 700;
 }
 .play.ghost {
   background: #fff;
-  color: #0e9f83;
-  border: 1px solid #0e9f83;
+  color: #1677ff;
+  border: 1px solid #1677ff;
 }
 .play:disabled {
   opacity: 0.6;
@@ -241,24 +241,24 @@ function dateLabel(d?: string | null) {
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: 12px;
-  background: #e6efeb;
+  background: var(--hx-n-100, #f0f4f6);
   display: block;
   pointer-events: none;
 }
 .later-face {
   display: grid;
   place-items: center;
-  color: #6b7c76;
+  color: var(--hx-muted, #64748b);
   font-size: 13px;
 }
 .tile strong {
   margin-top: 4px;
   font-size: 14px;
-  color: #14362e;
+  color: var(--hx-text, #0f172a);
 }
 .tile span {
   font-size: 12px;
-  color: #6b7c76;
+  color: var(--hx-muted, #64748b);
 }
 .player-mask {
   position: fixed;

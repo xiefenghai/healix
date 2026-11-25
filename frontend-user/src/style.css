@@ -1,49 +1,51 @@
 :root {
-  --hx-teal: #0e9f83;
-  --hx-teal-soft: #3fbfa3;
-  --hx-teal-light: #e3f6ef;
-  --hx-teal-deep: #0b7a66;
+  /* 与首页 / 沟通 / 健康对齐：蓝绿品牌 + 冷灰底 */
+  --hx-brand: #10b981;
+  --hx-sky: #1677ff;
+  --hx-teal: #10b981;
+  --hx-teal-soft: #34d399;
+  --hx-teal-light: #ecfdf5;
+  --hx-teal-deep: #059669;
   --hx-orange: #e5a100;
   --hx-orange-soft: #fff3da;
   --hx-red: #e0435a;
   --hx-red-soft: #fde7ea;
   --hx-red-text: #a8243a;
   --hx-amber-text: #8a5c00;
-  --hx-blue: #5b8def;
-  --hx-blue-soft: #e9f0fd;
-  --hx-blue-text: #2c4f8f;
+  --hx-blue: #1677ff;
+  --hx-blue-soft: #e8f3ff;
+  --hx-blue-text: #1d4ed8;
   --hx-water: #1769a5;
   --hx-water-soft: #dff3ff;
-  --hx-sleep: #5b3cc4;
-  --hx-sleep-soft: #ece7ff;
+  --hx-sleep: #6366f1;
+  --hx-sleep-soft: #eef2ff;
   --hx-mood: #b03060;
   --hx-mood-soft: #ffe8f0;
-  --hx-ink: #13222e;
+  --hx-ink: #0f172a;
   --hx-mark: #ffd84d;
   --hx-mark-red: #ffc2cb;
-  --hx-bg:
-    radial-gradient(circle at 108% -6%, rgba(255, 231, 179, 0.7), transparent 42%),
-    radial-gradient(circle at -14% 46%, rgba(200, 239, 227, 0.75), transparent 44%),
-    linear-gradient(170deg, #fff8ec 0%, #f4fbf8 50%, #e4f6ef 100%);
-  --hx-bg-flat: linear-gradient(180deg, #f2faf7 0%, #f6fbf9 40%, #f4fbf8 100%);
+  --hx-bg: linear-gradient(180deg, #e6f2ff 0%, #e9f9f3 22%, #f6f8fa 38%, #f6f8fa 100%);
+  --hx-bg-flat: linear-gradient(180deg, #eef6ff 0%, #f6f8fa 42%, #f6f8fa 100%);
   --hx-card: #ffffff;
-  --hx-text: #13222e;
-  --hx-muted: #6b7a87;
-  --hx-radius: 20px;
-  --hx-shadow: 0 10px 26px rgba(19, 34, 46, 0.06);
-  --hx-grad: linear-gradient(90deg, #14b394, #0e9f83);
+  --hx-text: #0f172a;
+  --hx-muted: #64748b;
+  --hx-radius: 16px;
+  --hx-shadow: 0 4px 16px rgba(22, 119, 255, 0.05);
+  --hx-grad: linear-gradient(135deg, #1677ff 0%, #10b981 100%);
+  --hx-card-radius: 16px;
+  --hx-card-shadow: 0 4px 16px rgba(22, 119, 255, 0.05);
 
   /* v8 令牌 */
-  --hx-teal-50: #effaf6;
-  --hx-teal-100: #e3f6ef;
-  --hx-teal-200: #bfe9db;
-  --hx-teal-300: #86d7c1;
-  --hx-teal-400: #3fbfa3;
-  --hx-teal-500: #14b394;
-  --hx-teal-600: #0e9f83;
-  --hx-teal-700: #0b7a66;
-  --hx-teal-800: #0a6152;
-  --hx-teal-900: #084a3e;
+  --hx-teal-50: #ecfdf5;
+  --hx-teal-100: #d1fae5;
+  --hx-teal-200: #a7f3d0;
+  --hx-teal-300: #6ee7b7;
+  --hx-teal-400: #34d399;
+  --hx-teal-500: #10b981;
+  --hx-teal-600: #059669;
+  --hx-teal-700: #047857;
+  --hx-teal-800: #065f46;
+  --hx-teal-900: #064e3b;
 
   --hx-n-50: #f7fafb;
   --hx-n-100: #f0f4f6;
@@ -72,15 +74,15 @@
   --hx-r-xs: 8px;
   --hx-r-sm: 12px;
   --hx-r-md: 14px;
-  --hx-r-lg: 20px;
-  --hx-r-xl: 28px;
+  --hx-r-lg: 16px;
+  --hx-r-xl: 20px;
   --hx-r-pill: 999px;
 
   --hx-elev-0: none;
-  --hx-elev-1: 0 1px 2px rgba(19, 34, 46, 0.04), 0 1px 1px rgba(19, 34, 46, 0.03);
-  --hx-elev-2: 0 6px 16px rgba(19, 34, 46, 0.06), 0 1px 3px rgba(19, 34, 46, 0.04);
-  --hx-elev-3: 0 16px 32px rgba(14, 159, 131, 0.14), 0 2px 8px rgba(19, 34, 46, 0.06);
-  --hx-elev-brand: 0 6px 14px rgba(14, 159, 131, 0.24);
+  --hx-elev-1: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --hx-elev-2: 0 4px 16px rgba(22, 119, 255, 0.05);
+  --hx-elev-3: 0 10px 28px rgba(22, 119, 255, 0.1);
+  --hx-elev-brand: 0 6px 14px rgba(16, 185, 129, 0.22);
 
   /* v11 品类色（快记 / 速记瓷片） */
   --hx-c-weight: #0b7a66;
@@ -106,31 +108,31 @@
   --hx-ease-std: cubic-bezier(0.2, 0, 0, 1);
   --hx-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 
-  --van-primary-color: #0e9f83;
-  --van-success-color: #0e9f83;
+  --van-primary-color: #10b981;
+  --van-success-color: #10b981;
   --van-warning-color: #e5a100;
   --van-danger-color: #e0435a;
-  --van-text-color: #13222e;
-  --van-text-color-2: #6b7a87;
-  --van-text-color-3: #8593a0;
-  --van-border-color: #eef2f4;
-  --van-active-color: #eef2f4;
-  --van-background: #f5f8fa;
-  --van-nav-bar-background: rgba(255, 250, 242, 0.86);
-  --van-nav-bar-title-text-color: #13222e;
-  --van-nav-bar-icon-color: #13222e;
-  --van-nav-bar-text-color: #0e9f83;
+  --van-text-color: #0f172a;
+  --van-text-color-2: #64748b;
+  --van-text-color-3: #94a3b8;
+  --van-border-color: #e8eef4;
+  --van-active-color: #f1f5f9;
+  --van-background: #f6f8fa;
+  --van-nav-bar-background: transparent;
+  --van-nav-bar-title-text-color: #0f172a;
+  --van-nav-bar-icon-color: #0f172a;
+  --van-nav-bar-text-color: #1677ff;
   --van-tabbar-background: rgba(255, 255, 255, 0.94);
-  --van-tabbar-item-active-color: #0e9f83;
-  --van-tabbar-item-text-color: #8593a0;
+  --van-tabbar-item-active-color: #1677ff;
+  --van-tabbar-item-text-color: #94a3b8;
   --van-button-radius: 14px;
-  --van-button-default-border-color: #e3eaee;
-  --van-cell-group-inset-radius: 20px;
+  --van-button-default-border-color: #e2e8f0;
+  --van-cell-group-inset-radius: 16px;
   --van-tag-radius: 8px;
   --van-tag-padding: 1px 8px;
-  --van-tabs-bottom-bar-color: #0e9f83;
-  --van-dialog-radius: 24px;
-  --van-popup-round-radius: 24px;
+  --van-tabs-bottom-bar-color: #1677ff;
+  --van-dialog-radius: 20px;
+  --van-popup-round-radius: 20px;
 }
 
 /* 开场「完整评估」二次确认：取消侧深灰字，主按钮保持青绿焦点 */
@@ -151,7 +153,7 @@ body,
 #app {
   margin: 0;
   min-height: 100%;
-  background: #f4fbf8;
+  background: #f6f8fa;
   color: var(--hx-text);
   font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -231,14 +233,15 @@ a {
 }
 
 .van-nav-bar {
-  backdrop-filter: blur(10px);
+  background: transparent !important;
 }
 .van-nav-bar__title {
   font-weight: 800;
+  letter-spacing: -0.01em;
 }
 .van-tabbar {
   backdrop-filter: blur(10px);
-  box-shadow: 0 -6px 20px rgba(19, 34, 46, 0.05);
+  box-shadow: 0 -8px 28px rgba(149, 157, 165, 0.1);
 }
 .van-tabbar-item--active {
   font-weight: 700;
@@ -252,8 +255,23 @@ a {
 }
 .van-button--primary.van-button--plain {
   background: #fff;
-  color: var(--hx-teal-700);
-  border: 1px solid var(--hx-teal-200);
+  color: var(--hx-sky);
+  border: 1px solid #dbeafe;
+}
+
+/* 堆叠业务页通用壳：与健康 Tab 同系 */
+.hx-page {
+  min-height: 100vh;
+  background: var(--hx-bg);
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
+.hx-card {
+  margin: 12px 16px;
+  padding: 16px;
+  border-radius: var(--hx-card-radius, 16px);
+  background: #fff;
+  box-shadow: var(--hx-card-shadow, var(--hx-elev-2));
 }
 .van-tag {
   font-weight: 700;

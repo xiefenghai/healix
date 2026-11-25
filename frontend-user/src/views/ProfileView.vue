@@ -34,7 +34,7 @@ onMounted(async () => {
     void loadRewardSummary().then((s) => (rewardsOn.value = !!s))
   } catch (e) {
     const msg = e instanceof Error ? e.message : ''
-    if (msg.includes('就诊人')) {
+    if (msg.includes('健康档案') || msg.includes('就诊人')) {
       await router.replace('/patient-cards')
       return
     }
@@ -69,19 +69,25 @@ function logout() {
 
 <template>
   <div class="page">
-    <header class="profile-head">
-      <div class="avatar">{{ (displayName || '我').slice(0, 1) }}</div>
+    <header class="hero-card">
+      <div class="avatar" aria-hidden="true">{{ (displayName || '我').slice(0, 1) }}</div>
       <div class="meta">
-        <h1>{{ displayName || '我的档案' }}</h1>
-        <p>{{ inCare ? '已入组 · 核心能力已开启' : '空态 · 可完善资料与入组' }}</p>
-        <button type="button" class="edit" @click="editOpen = !editOpen">
-          {{ editOpen ? '收起资料' : '编辑资料' }}
+        <button type="button" class="name-edit" :aria-label="editOpen ? '收起资料' : '编辑资料'" @click="editOpen = !editOpen">
+          <h1>{{ displayName || '我的档案' }}</h1>
+          <svg class="edit-ico" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M14.2 5.4l4.4 4.4" />
+            <path d="M5 15.6L14.5 6.1a1.7 1.7 0 012.4 0l1 1a1.7 1.7 0 010 2.4L8.4 19H5v-3.4z" />
+          </svg>
         </button>
+        <p>
+          <span class="dot" :class="{ care: inCare }" />
+          {{ inCare ? '已入组 · 专属服务已开启' : '自用态 · 可完善资料与入组' }}
+        </p>
       </div>
       <button type="button" class="switch" @click="router.push('/patient-cards')">切换 ›</button>
     </header>
 
-    <section v-if="editOpen" class="card">
+    <section v-if="editOpen" class="card edit-card">
       <van-field v-model="displayName" label="显示姓名" placeholder="怎么称呼你" />
       <div class="gender">
         <div class="gender-label">性别</div>
@@ -95,102 +101,215 @@ function logout() {
     </section>
 
     <section v-if="rewardsOn" class="card menu">
-      <div class="group-title">激励</div>
+      <div class="group-title">
+        <svg class="gico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 10V7a4 4 0 018 0v3" />
+          <rect x="5" y="10" width="14" height="10" rx="2.5" />
+          <path d="M12 14v3" />
+        </svg>
+        激励
+      </div>
       <van-cell title="我的成就" is-link to="/achievements" />
     </section>
 
     <section class="card menu">
-      <div class="group-title">管理服务</div>
+      <div class="group-title">
+        <svg class="gico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4v16M4 12h16" />
+          <circle cx="12" cy="12" r="8.5" />
+        </svg>
+        管理服务
+      </div>
       <van-cell title="管理方案" is-link to="/care-plan" />
       <van-cell title="用药管理" is-link to="/medications" />
       <van-cell title="随访记录" is-link to="/followups" />
       <van-cell title="管理报告" is-link to="/management-reports" />
-      <van-cell title="初步评估" is-link to="/intake" />
-      <van-cell title="评估" is-link to="/assessment-questionnaire" />
+      <van-cell title="健康评估" is-link to="/assessment-questionnaire" />
     </section>
 
     <section class="card menu">
-      <div class="group-title">智能助手</div>
-      <van-cell title="AI管家" label="近期开放" is-link to="/ai" />
+      <div class="group-title">
+        <svg class="gico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 7h14a2 2 0 012 2v7a2 2 0 01-2 2h-6l-4 3v-3H5a2 2 0 01-2-2V9a2 2 0 012-2z" />
+        </svg>
+        智能助手
+      </div>
+      <van-cell title="AI 健康助手" label="问答与健康沟通" is-link to="/chat" />
     </section>
 
     <section class="card menu">
-      <div class="group-title">档案与数据</div>
-      <van-cell title="就诊人管理" is-link to="/patient-cards" />
+      <div class="group-title">
+        <svg class="gico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7a2 2 0 012-2h5l2 2h5a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2V7z" />
+        </svg>
+        档案与数据
+      </div>
       <van-cell title="健康档案" is-link to="/archive" />
-      <van-cell title="健康数据" is-link to="/health-data?tab=vitals" />
+      <van-cell title="健康数据" is-link to="/health-data?tab=labs" />
     </section>
 
     <section class="card menu">
-      <div class="group-title">账户</div>
+      <div class="group-title">
+        <svg class="gico" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="8" r="3.2" />
+          <path d="M5 19c1.4-3.2 3.8-4.8 7-4.8s5.6 1.6 7 4.8" />
+        </svg>
+        账户
+      </div>
       <van-cell title="激活码添加档案" is-link to="/activate" />
       <van-cell title="邀请码入组" is-link to="/join" />
       <van-cell title="用户协议" is-link to="/legal/terms" />
       <van-cell title="隐私政策" is-link to="/legal/privacy" />
       <van-cell title="退出登录" is-link @click="logout" />
     </section>
-    <IcpFooter class="profile-icp" />
+    <div class="profile-icp">
+      <IcpFooter />
+    </div>
   </div>
 </template>
 
 <style scoped>
-.page { padding: 18px 16px 24px; }
-.profile-icp { justify-content: center; margin-top: 16px; color: var(--hx-muted); }
-.profile-head {
+.page {
+  min-height: calc(100dvh - 60px);
+  padding: 16px 16px calc(100px + env(safe-area-inset-bottom, 0px));
+  background: #f5f7fb;
+  box-sizing: border-box;
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  gap: 16px;
+}
+.profile-icp {
+  margin-top: 4px;
+  padding-bottom: 80px;
+}
+.profile-icp :deep(.icp) {
+  padding: 16px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.hero-card {
+  display: flex;
+  gap: 14px;
   align-items: center;
-  margin-bottom: 16px;
+  padding: 18px 16px;
+  border-radius: 24px;
+  border: 0;
+  background: linear-gradient(135deg, #e8faf3 0%, #eaf3ff 55%, #f5f9ff 100%);
+  box-shadow: 0 8px 24px rgba(22, 119, 255, 0.06);
 }
 .avatar {
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: linear-gradient(145deg, #ffd080, var(--hx-warn));
+  background: linear-gradient(145deg, #40a9ff 0%, #1677ff 48%, #10b981 100%);
   color: #fff;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
   flex: none;
+  border: 3px solid #fff;
+  box-shadow: 0 6px 16px rgba(22, 119, 255, 0.22);
 }
-.meta { flex: 1; min-width: 0; }
-h1 { margin: 0; font-size: 20px; }
-.profile-head p { margin: 4px 0 0; color: var(--hx-muted); font-size: 13px; }
-.edit {
-  margin-top: 6px;
+.meta {
+  flex: 1;
+  min-width: 0;
+}
+.name-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
   border: 0;
   background: transparent;
-  color: var(--hx-teal-700);
-  font-size: 13px;
-  font-weight: 800;
-  padding: 0;
   font-family: inherit;
+  text-align: left;
   cursor: pointer;
 }
-.switch {
-  border: 0;
-  background: var(--hx-n-100);
-  color: var(--hx-n-700);
-  border-radius: 999px;
-  padding: 8px 12px;
-  font-size: 12px;
+h1 {
+  margin: 0;
+  font-size: 20px;
   font-weight: 800;
-  font-family: inherit;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edit-ico {
+  width: 15px;
+  height: 15px;
   flex: none;
+  stroke: #94a3b8;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.meta p {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex: none;
+}
+.dot.care {
+  background: #10b981;
+  box-shadow: 0 0 4px rgba(16, 185, 129, 0.5);
+}
+.switch {
+  flex: none;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #fff;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 650;
+  font-family: inherit;
+  border: 1px solid #e8eef4;
+  cursor: pointer;
 }
 .card {
   background: #fff;
-  border-radius: var(--hx-r-lg);
-  margin-bottom: 14px;
+  border-radius: 20px;
   overflow: hidden;
-  box-shadow: var(--hx-elev-2);
+  border: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02);
+}
+.edit-card {
+  margin: 0;
 }
 .group-title {
-  padding: 12px 16px 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 16px 2px;
   font-size: 11px;
-  font-weight: 800;
-  color: var(--hx-muted);
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.04em;
+}
+.gico {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
 }
 .gender {
   display: flex;
@@ -201,9 +320,53 @@ h1 { margin: 0; font-size: 20px; }
 .gender-label {
   width: 6.2em;
   flex-shrink: 0;
-  color: var(--van-field-label-color, var(--hx-n-700));
+  color: #475569;
   font-size: 14px;
 }
-.pad { padding: 8px 12px 14px; }
-.menu :deep(.van-cell) { padding-top: 13px; padding-bottom: 13px; }
+.pad {
+  padding: 8px 12px 14px;
+}
+.menu :deep(.van-cell) {
+  padding: 16px;
+  align-items: center;
+  background: transparent;
+}
+.menu :deep(.van-cell::after) {
+  border-bottom-color: #f1f5f9;
+  left: 16px;
+  right: 16px;
+}
+.menu :deep(.van-cell__title) {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.menu :deep(.van-cell__label) {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+.menu :deep(.van-cell__right-icon) {
+  color: #cbd5e1;
+  font-size: 16px;
+  line-height: 16px;
+  width: 16px;
+  height: 16px;
+  margin-top: 0 !important;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.menu :deep(.van-cell__right-icon .van-icon),
+.menu :deep(.van-cell__right-icon svg) {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+  color: #cbd5e1;
+}
+.menu :deep(.van-cell:active) {
+  background: #f8fafc;
+}
 </style>

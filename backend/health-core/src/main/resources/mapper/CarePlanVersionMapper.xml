@@ -5,7 +5,7 @@
 
     <sql id="cols">
         pk_id, id, plan_id, version_no, schema_version, source, title,
-        exercise_json, diet_json, execution_json, context_snapshot_json, safety_flags_json,
+        exercise_json, diet_json, execution_json, phase_goals_json, context_snapshot_json, safety_flags_json,
         published_at, published_by_staff_id, signed_by_staff_id, signed_at, sign_status,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
@@ -13,12 +13,12 @@
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO care_plan_version(
             id, plan_id, version_no, schema_version, source, title,
-            exercise_json, diet_json, execution_json, context_snapshot_json, safety_flags_json,
+            exercise_json, diet_json, execution_json, phase_goals_json, context_snapshot_json, safety_flags_json,
             published_at, published_by_staff_id, signed_by_staff_id, signed_at, sign_status,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{planId}, #{versionNo}, #{schemaVersion}, #{source}, #{title},
-            #{exerciseJson}, #{dietJson}, #{executionJson}, #{contextSnapshotJson}, #{safetyFlagsJson},
+            #{exerciseJson}, #{dietJson}, #{executionJson}, #{phaseGoalsJson}, #{contextSnapshotJson}, #{safetyFlagsJson},
             #{publishedAt}, #{publishedByStaffId}, #{signedByStaffId}, #{signedAt}, #{signStatus},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )

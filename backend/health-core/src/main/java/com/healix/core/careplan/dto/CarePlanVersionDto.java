@@ -22,6 +22,8 @@ public class CarePlanVersionDto {
     private JsonNode exercise;
     private JsonNode diet;
     private JsonNode execution;
+    /** 阶段控制目标 */
+    private JsonNode phaseGoals;
     private JsonNode safetyFlags;
     private JsonNode contextSnapshot;
     private LocalDateTime publishedAt;

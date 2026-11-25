@@ -5,7 +5,7 @@
 
     <sql id="cols">
         pk_id, id, plan_id, tenant_id, people_id, version, schema_version, source,
-        exercise_json, diet_json, execution_json, safety_flags_json, context_snapshot_json,
+        exercise_json, diet_json, execution_json, phase_goals_json, safety_flags_json, context_snapshot_json,
         base_version_id, generation_log_id, updated_by_staff_id,
         is_deleted, gmt_created, gmt_modified, gmt_deleted
     </sql>
@@ -13,12 +13,12 @@
     <insert id="insert" useGeneratedKeys="true" keyProperty="pkId">
         INSERT INTO care_plan_draft(
             id, plan_id, tenant_id, people_id, version, schema_version, source,
-            exercise_json, diet_json, execution_json, safety_flags_json, context_snapshot_json,
+            exercise_json, diet_json, execution_json, phase_goals_json, safety_flags_json, context_snapshot_json,
             base_version_id, generation_log_id, updated_by_staff_id,
             is_deleted, gmt_created, gmt_modified, gmt_deleted
         ) VALUES (
             #{id}, #{planId}, #{tenantId}, #{peopleId}, #{version}, #{schemaVersion}, #{source},
-            #{exerciseJson}, #{dietJson}, #{executionJson}, #{safetyFlagsJson}, #{contextSnapshotJson},
+            #{exerciseJson}, #{dietJson}, #{executionJson}, #{phaseGoalsJson}, #{safetyFlagsJson}, #{contextSnapshotJson},
             #{baseVersionId}, #{generationLogId}, #{updatedByStaffId},
             #{isDeleted}, #{gmtCreated}, #{gmtModified}, #{gmtDeleted}
         )
@@ -32,6 +32,7 @@
             exercise_json = #{exerciseJson},
             diet_json = #{dietJson},
             execution_json = #{executionJson},
+            phase_goals_json = #{phaseGoalsJson},
             safety_flags_json = #{safetyFlagsJson},
             context_snapshot_json = #{contextSnapshotJson},
             base_version_id = #{baseVersionId},

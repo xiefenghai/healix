@@ -40,6 +40,7 @@ import {
   healthyWeightRangeKg,
   parseMetricInput,
   targetWeightBmiHint,
+  targetWeightVsCurrentHint,
 } from '../shared/metric-ranges'
 
 type Phase = 'intro' | 'review' | 'fill' | 'confirm' | 'done'
@@ -107,6 +108,14 @@ const liveBmiBand = computed(() => bmiBand(liveBmi.value))
 const healthyWeight = computed(() => healthyWeightRangeKg(numOf('metric.HEIGHT')))
 const targetBmiTip = computed(() =>
   targetWeightBmiHint(numOf('metric.HEIGHT'), numOf('goal.targetWeightKg')),
+)
+/** 减重方向：目标须低于当前体重 */
+const targetVsCurrentTip = computed(() =>
+  targetWeightVsCurrentHint(
+    numOf('metric.WEIGHT'),
+    numOf('goal.targetWeightKg'),
+    String(answers['goal.mode'] ?? ''),
+  ),
 )
 
 /** 滑块易拖区间（精确值优先输入框 / 滚轮；空值时仅展示建议位，不写入答案） */
@@ -1034,6 +1043,15 @@ function validateCurrent(): boolean {
       return false
     }
   }
+  // 减重目标不能高于/等于当前体重
+  if (items.some((it) => it.field === 'goal.targetWeightKg') && targetVsCurrentTip.value?.tone === 'danger') {
+    fieldError.value = targetVsCurrentTip.value.text
+    return false
+  }
+  if (items.some((it) => it.field === 'goal.targetWeightKg') && targetBmiTip.value?.tone === 'danger') {
+    fieldError.value = targetBmiTip.value.text
+    return false
+  }
   fieldError.value = ''
   return true
 }
@@ -1719,6 +1737,13 @@ onBeforeUnmount(() => {
             {{ collapseCollapseLabel }} ˄
           </button>
           <p v-if="!currentOptions.length" class="hint">选项加载中…</p>
+          <div
+            v-if="currentSingle.field === 'goal.mode' && targetVsCurrentTip?.tone === 'danger'"
+            class="bmi-chip"
+            :class="targetVsCurrentTip.tone"
+          >
+            {{ targetVsCurrentTip.text }}
+          </div>
         </div>
 
         <transition name="allergy-fold">
@@ -1836,6 +1861,16 @@ onBeforeUnmount(() => {
           >
             按当前身高，健康体重约 {{ healthyWeight.min }}–{{ healthyWeight.max }} kg（随身高实时变化）
           </p>
+          <div
+            v-if="
+              (currentSingle.field === 'goal.targetWeightKg' || currentSingle.field === 'metric.WEIGHT') &&
+              targetVsCurrentTip
+            "
+            class="bmi-chip"
+            :class="targetVsCurrentTip.tone"
+          >
+            {{ targetVsCurrentTip.text }}
+          </div>
           <div
             v-if="currentSingle.field === 'goal.targetWeightKg' && targetBmiTip"
             class="bmi-chip"
@@ -2065,9 +2100,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: calc(10px + env(safe-area-inset-top)) 16px 8px;
-  background: rgba(255, 248, 236, 0.92);
+  background: rgba(246, 248, 250, 0.92);
   backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(214, 226, 220, 0.5);
+  border-bottom: 1px solid var(--hx-n-200, #e6ecf0);
 }
 .top--solo {
   grid-template-columns: 1fr auto;
@@ -2097,17 +2132,17 @@ onBeforeUnmount(() => {
 .top-pct {
   font-size: 15px;
   font-weight: 800;
-  color: var(--hx-teal-700);
+  color: #10b981;
   font-variant-numeric: tabular-nums;
 }
 .prog-track {
   height: 3px;
-  background: rgba(191, 233, 219, 0.5);
+  background: rgba(22, 119, 255, 0.12);
 }
 .prog-track i {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--hx-teal-400), var(--hx-teal-700));
+  background: linear-gradient(90deg, #1677ff, #10b981);
   transition: width 0.28s ease;
 }
 
@@ -2663,13 +2698,13 @@ onBeforeUnmount(() => {
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   background: rgba(255, 255, 255, 0.97);
   backdrop-filter: blur(12px);
-  box-shadow: 0 -8px 24px rgba(19, 34, 46, 0.1);
+  box-shadow: 0 -8px 24px rgba(22, 119, 255, 0.08);
 }
 
 /* 桌面：手机壳居中 */
 @media (min-width: 560px) {
   .page {
-    background: linear-gradient(165deg, #d9e4ea 0%, #eef3f5 48%, #e7f2ef 100%);
+    background: var(--hx-bg);
     padding: 28px 20px 40px;
   }
   .shell {
@@ -2718,9 +2753,9 @@ onBeforeUnmount(() => {
 }
 .btn-primary {
   width: 100%;
-  background: linear-gradient(135deg, var(--hx-teal-500), var(--hx-teal-700));
+  background: linear-gradient(135deg, #1677ff 0%, #10b981 100%);
   color: #fff;
-  box-shadow: 0 10px 20px rgba(14, 159, 131, 0.22);
+  box-shadow: 0 10px 20px rgba(22, 119, 255, 0.2);
 }
 .btn-primary:disabled {
   opacity: 1;
@@ -2802,9 +2837,9 @@ onBeforeUnmount(() => {
   animation: cta-pop 0.42s ease;
 }
 @keyframes cta-pop {
-  0% { transform: scale(1); box-shadow: 0 10px 20px rgba(14, 159, 131, 0.22); }
-  40% { transform: scale(1.03); box-shadow: 0 14px 28px rgba(14, 159, 131, 0.42); }
-  100% { transform: scale(1); box-shadow: 0 10px 20px rgba(14, 159, 131, 0.22); }
+  0% { transform: scale(1); box-shadow: 0 10px 20px rgba(22, 119, 255, 0.2); }
+  40% { transform: scale(1.03); box-shadow: 0 14px 28px rgba(16, 185, 129, 0.35); }
+  100% { transform: scale(1); box-shadow: 0 10px 20px rgba(22, 119, 255, 0.2); }
 }
 .btn-ghost {
   background: var(--hx-n-100);

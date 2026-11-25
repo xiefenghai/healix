@@ -48,10 +48,10 @@ watch(tab, (t) => {
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding-bottom: 28px;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
 }
 :deep(.van-nav-bar) {
-  background: rgba(255, 250, 242, 0.86);
+  background: rgba(255, 255, 255, 0.86);
   backdrop-filter: blur(10px);
 }
 :deep(.van-nav-bar__title) {
@@ -59,13 +59,13 @@ watch(tab, (t) => {
   color: var(--hx-text);
 }
 :deep(.van-nav-bar .van-icon) {
-  color: var(--hx-teal);
+  color: #1677ff;
 }
 .nav-link {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  color: var(--hx-teal);
+  color: #1677ff;
   font-size: 14px;
   font-weight: 600;
 }
@@ -78,8 +78,9 @@ watch(tab, (t) => {
   margin: 8px 16px 0;
   padding: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(14, 159, 131, 0.12);
+  background: #fff;
+  border: 1px solid rgba(22, 119, 255, 0.08);
+  box-shadow: var(--hx-card-shadow);
   backdrop-filter: blur(8px);
 }
 .tabs button {
@@ -95,6 +96,6 @@ watch(tab, (t) => {
 .tabs button.active {
   color: #fff;
   background: var(--hx-grad);
-  box-shadow: 0 6px 14px rgba(14, 159, 131, 0.24);
+  box-shadow: 0 6px 14px rgba(22, 119, 255, 0.18);
 }
 </style>

@@ -236,9 +236,9 @@ onMounted(async () => {
 .push {
   margin: 12px 16px 0;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: var(--hx-card-radius, 16px);
   background: #fff;
-  box-shadow: var(--hx-elev-2);
+  box-shadow: var(--hx-card-shadow);
 }
 .push-main {
   display: flex;
@@ -275,9 +275,9 @@ onMounted(async () => {
   margin: 12px 16px 0;
   padding: 14px 16px;
   border: 0;
-  border-radius: var(--hx-r-lg);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: var(--hx-elev-2);
+  border-radius: var(--hx-card-radius, 16px);
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
   text-align: left;
 }
 .card.unread {

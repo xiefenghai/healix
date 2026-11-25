@@ -190,7 +190,8 @@ onMounted(() => {
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding: 12px 0 28px;
+  padding: 12px 0 calc(28px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
 }
 .loading {
   padding: 48px 0;
@@ -198,16 +199,22 @@ onMounted(() => {
 .request-form {
   padding: 8px 0 4px;
 }
+.group {
+  overflow: hidden;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
+}
 .group :deep(.van-cell__title) {
   font-size: 15px;
   font-weight: 600;
-  color: var(--hx-text);
+  color: #0f172a;
 }
 .group :deep(.van-cell__label) {
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--hx-muted);
+  color: #64748b;
   white-space: pre-line;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -219,9 +226,9 @@ onMounted(() => {
   font-weight: 600;
 }
 .group :deep(.tone-ok) {
-  color: var(--hx-teal-700) !important;
+  color: #047857 !important;
 }
 .group :deep(.tone-warn) {
-  color: var(--hx-warn) !important;
+  color: var(--hx-warn, #e5a100) !important;
 }
 </style>

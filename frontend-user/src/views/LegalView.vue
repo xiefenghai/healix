@@ -22,5 +22,16 @@ function back() {
 </template>
 
 <style scoped>
-.legal { min-height: 100vh; background: #fff; }
+.legal {
+  min-height: 100vh;
+  background: var(--hx-bg);
+  padding-bottom: 24px;
+}
+.legal :deep(.legal-doc) {
+  margin: 12px 16px 24px;
+  padding: 18px 18px 32px;
+  border-radius: var(--hx-card-radius, 16px);
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
+}
 </style>

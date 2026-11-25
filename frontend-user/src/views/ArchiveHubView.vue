@@ -94,13 +94,38 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.page { min-height: 100vh; background: var(--hx-bg); padding-bottom: 24px; }
-.card {
-  margin: 12px 16px; padding: 16px; border-radius: var(--hx-r-lg); background: #fff;
-  box-shadow: var(--hx-elev-2);
+.page {
+  min-height: 100vh;
+  background: var(--hx-bg);
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
 }
-h2 { margin: 0 0 6px; font-size: 20px; }
-h3 { margin: 0 0 8px; font-size: 15px; }
-.meta, .hint { margin: 0; color: var(--hx-muted); font-size: 13px; line-height: 1.5; }
+.card {
+  margin: 12px 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
+  overflow: hidden;
+}
+h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+}
+h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.meta,
+.hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
 .hint { margin-bottom: 8px; }
 </style>

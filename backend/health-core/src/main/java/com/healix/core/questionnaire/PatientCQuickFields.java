@@ -6,20 +6,13 @@ import java.util.Set;
  * C 端「标准」档（{@link IntakeDepth#QUICK}）可见字段白名单。
  *
  * <p>对齐 {@code WL_INTAKE} v4 瘦身：去掉随访运营题、冗余生活方式与极低频体征；
- * 保留方向/体测/红线/阻力/作息饮食关键枚举。
+ * 保留方向/体测/红线/阻力/作息饮食关键枚举。v5 起答题顺序为：基础 → 体测 → 诉求。
  */
 public final class PatientCQuickFields {
 
     private PatientCQuickFields() {}
 
     public static final Set<String> FIELDS = Set.of(
-            // 诉求与目标
-            "goal.primaryAppeal",
-            "goal.appealText",
-            "goal.mode",
-            "goal.targetWeightKg",
-            "goal.targetDate",
-            "goal.constraints",
             // 基础（未预填时）
             "profile.displayName",
             "profile.gender",
@@ -32,6 +25,13 @@ public final class PatientCQuickFields {
             "metric.WAIST",
             "metric.BLOOD_PRESSURE_SYS",
             "metric.BLOOD_PRESSURE_DIA",
+            // 诉求与目标（排在体测之后）
+            "goal.primaryAppeal",
+            "goal.appealText",
+            "goal.mode",
+            "goal.targetWeightKg",
+            "goal.targetDate",
+            "goal.constraints",
             // 病史（不含用药明细 LIST）
             "basic.presentIllness",
             "basic.medicationFlags",

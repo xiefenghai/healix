@@ -57,6 +57,8 @@ import com.healix.core.identity.domain.StaffProfile;
 import com.healix.core.program.service.ProgramEnrollmentService;
 import com.healix.core.careplan.support.CarePlanDiseaseTags;
 import com.healix.core.careplan.support.CarePlanEnergyTargetService;
+import com.healix.core.careplan.support.CarePlanPhaseGoalsResolver;
+import com.healix.core.careplan.support.CarePlanPhaseGoalsSupport;
 import com.healix.core.careplan.support.CarePlanRationaleSupport;
 import com.healix.core.careplan.support.CarePlanSafetyService;
 import com.healix.core.careplan.support.CarePlanSchemaVersions;
@@ -118,6 +120,7 @@ public class CarePlanService {
     private final FeatureFlagService featureFlagService;
     private final AllergyQueryService allergyQueryService;
     private final CarePlanEnergyTargetService energyTargetService;
+    private final CarePlanPhaseGoalsResolver phaseGoalsResolver;
     private final ProgramEnrollmentService programEnrollmentService;
     private final ObjectProvider<FollowupService> followupService;
     private final FollowupRecordMapper followupRecordMapper;
@@ -238,6 +241,7 @@ public class CarePlanService {
                 JsonUtils.toJson(emptyExercise),
                 JsonUtils.toJson(emptyDiet),
                 JsonUtils.toJson(emptyExec),
+                null,
                 safetyService.toFlagsJson(flags),
                 "{}",
                 null,
@@ -323,9 +327,16 @@ public class CarePlanService {
         CarePlanOsaHintSupport.apply(
                 generated.diet(), asObjectNode(generated.exercise()), generated.contextSnapshot());
         ObjectNode genSnap = asObjectNode(generated.contextSnapshot());
+        ObjectNode phaseGoals = phaseGoalsResolver.resolve(generated.templateKey(), contextService.load(tenantId, peopleId));
+        if (genSnap != null && phaseGoals != null) {
+            genSnap.set("phaseGoals", phaseGoals);
+        }
+        String derivedGoal = CarePlanPhaseGoalsSupport.deriveGoalSummary(phaseGoals);
         String goal = StringUtils.hasText(goalSummaryOverride)
                 ? goalSummaryOverride
-                : generated.exercise().path("goal").asText(null);
+                : (StringUtils.hasText(derivedGoal)
+                        ? derivedGoal
+                        : generated.exercise().path("goal").asText(null));
         if (genSnap != null && StringUtils.hasText(goal)) {
             genSnap.put("goalSummary", goal);
         }
@@ -368,6 +379,7 @@ public class CarePlanService {
                 JsonUtils.toJson(generated.exercise()),
                 JsonUtils.toJson(generated.diet()),
                 JsonUtils.toJson(generated.execution()),
+                JsonUtils.toJson(phaseGoals),
                 safetyService.toFlagsJson(flags),
                 JsonUtils.toJson(genSnap == null ? generated.contextSnapshot() : genSnap),
                 plan.getCurrentVersionId(),
@@ -416,6 +428,7 @@ public class CarePlanService {
                 title,
                 goalSummary,
                 null,
+                null,
                 null);
     }
 
@@ -443,6 +456,36 @@ public class CarePlanService {
                 title,
                 goalSummary,
                 planSummary,
+                null,
+                null);
+    }
+
+    public CarePlanBundleDto updateDraft(
+            String tenantId,
+            String orgId,
+            String peopleId,
+            String staffId,
+            int expectedVersion,
+            JsonNode exercise,
+            JsonNode diet,
+            JsonNode execution,
+            String title,
+            String goalSummary,
+            String planSummary,
+            String rationaleOverview) {
+        return updateDraft(
+                tenantId,
+                orgId,
+                peopleId,
+                staffId,
+                expectedVersion,
+                exercise,
+                diet,
+                execution,
+                title,
+                goalSummary,
+                planSummary,
+                rationaleOverview,
                 null);
     }
 
@@ -459,7 +502,8 @@ public class CarePlanService {
             String title,
             String goalSummary,
             String planSummary,
-            String rationaleOverview) {
+            String rationaleOverview,
+            JsonNode phaseGoals) {
         archiveAccessService.assertStaffCanAccessPeople(tenantId, orgId, peopleId);
         CarePlan plan = requirePlan(tenantId, peopleId);
         CarePlanDraft draft = draftMapper.findByPlanId(plan.getId());
@@ -524,6 +568,34 @@ public class CarePlanService {
         draft.setExerciseJson(JsonUtils.toJson(exerciseNorm));
         draft.setDietJson(JsonUtils.toJson(dietNorm == null ? JsonUtils.emptyObject() : dietNorm));
         draft.setExecutionJson(JsonUtils.toJson(executionNorm));
+        ObjectNode phaseGoalsNorm;
+        if (phaseGoals != null && !phaseGoals.isNull()) {
+            phaseGoalsNorm = CarePlanPhaseGoalsSupport.normalize(phaseGoals);
+            // 健管师手改：标 STAFF（仅无 source 的项）
+            JsonNode items = phaseGoalsNorm.get("items");
+            if (items != null && items.isArray()) {
+                for (JsonNode n : items) {
+                    if (n instanceof ObjectNode item && !item.hasNonNull("source")) {
+                        item.put("source", CarePlanPhaseGoalsSupport.SOURCE_STAFF);
+                    }
+                }
+            }
+        } else if (StringUtils.hasText(draft.getPhaseGoalsJson())) {
+            phaseGoalsNorm = CarePlanPhaseGoalsSupport.normalize(JsonUtils.readTree(draft.getPhaseGoalsJson()));
+        } else {
+            phaseGoalsNorm = phaseGoalsResolver.resolve(templateKey, ctx);
+        }
+        draft.setPhaseGoalsJson(JsonUtils.toJson(phaseGoalsNorm));
+        if (snapshotNode != null) {
+            snapshotNode.set("phaseGoals", phaseGoalsNorm);
+        }
+        String derivedFromPhase = CarePlanPhaseGoalsSupport.deriveGoalSummary(phaseGoalsNorm);
+        if (alignedGoalSummary == null && StringUtils.hasText(derivedFromPhase)) {
+            alignedGoalSummary = derivedFromPhase;
+        }
+        if (StringUtils.hasText(alignedGoalSummary) && snapshotNode != null) {
+            snapshotNode.put("goalSummary", alignedGoalSummary);
+        }
         draft.setContextSnapshotJson(JsonUtils.toJson(snapshotNode));
         draft.setSafetyFlagsJson(safetyService.toFlagsJson(flags));
         if (CarePlanSourceEnum.TEMPLATE.name().equals(draft.getSource())
@@ -655,6 +727,7 @@ public class CarePlanService {
                 active.getExerciseJson(),
                 active.getDietJson(),
                 active.getExecutionJson(),
+                active.getPhaseGoalsJson(),
                 active.getSafetyFlagsJson(),
                 active.getContextSnapshotJson(),
                 active.getId(),
@@ -959,6 +1032,19 @@ public class CarePlanService {
         version.setExerciseJson(draft.getExerciseJson());
         version.setDietJson(draft.getDietJson());
         version.setExecutionJson(draft.getExecutionJson());
+        // 发布时若草稿尚无 phaseGoals，按模板补齐
+        ObjectNode publishPhaseGoals;
+        if (StringUtils.hasText(draft.getPhaseGoalsJson())) {
+            publishPhaseGoals = CarePlanPhaseGoalsSupport.normalize(JsonUtils.readTree(draft.getPhaseGoalsJson()));
+        } else {
+            publishPhaseGoals = phaseGoalsResolver.resolve(publishKey, ctx);
+        }
+        if (publishSnapshot != null) {
+            publishSnapshot.set("phaseGoals", publishPhaseGoals);
+            draft.setContextSnapshotJson(JsonUtils.toJson(publishSnapshot));
+        }
+        draft.setPhaseGoalsJson(JsonUtils.toJson(publishPhaseGoals));
+        version.setPhaseGoalsJson(draft.getPhaseGoalsJson());
         version.setContextSnapshotJson(draft.getContextSnapshotJson());
         version.setSafetyFlagsJson(draft.getSafetyFlagsJson());
         version.setPublishedAt(LocalDateTime.now());
@@ -971,7 +1057,14 @@ public class CarePlanService {
         plan.setTitle(publishTitle);
         plan.setStatus(CarePlanStatusEnum.ACTIVE.name());
         plan.setCurrentVersionId(version.getId());
-        plan.setGoalSummary(exercise.path("goal").asText(plan.getGoalSummary()));
+        String publishGoal = plan.getGoalSummary();
+        if (!StringUtils.hasText(publishGoal)) {
+            publishGoal = CarePlanPhaseGoalsSupport.deriveGoalSummary(publishPhaseGoals);
+        }
+        if (!StringUtils.hasText(publishGoal)) {
+            publishGoal = exercise.path("goal").asText(null);
+        }
+        plan.setGoalSummary(publishGoal);
         plan.setUpdatedByStaffId(staffId);
         plan.setVersion((plan.getVersion() == null ? 1 : plan.getVersion()) + 1);
         EntityMeta.onUpdate(plan);
@@ -1321,6 +1414,7 @@ public class CarePlanService {
             String exerciseJson,
             String dietJson,
             String executionJson,
+            String phaseGoalsJson,
             String flagsJson,
             String contextJson,
             String baseVersionId,
@@ -1335,6 +1429,7 @@ public class CarePlanService {
         draft.setExerciseJson(exerciseJson);
         draft.setDietJson(dietJson);
         draft.setExecutionJson(executionJson);
+        draft.setPhaseGoalsJson(phaseGoalsJson);
         draft.setSafetyFlagsJson(flagsJson);
         draft.setContextSnapshotJson(contextJson);
         draft.setBaseVersionId(baseVersionId);
@@ -1374,6 +1469,10 @@ public class CarePlanService {
         m.put("exercise", JsonUtils.readTree(draft.getExerciseJson()));
         m.put("diet", JsonUtils.readTree(draft.getDietJson()));
         m.put("execution", JsonUtils.readTree(draft.getExecutionJson()));
+        m.put("phaseGoals", JsonUtils.readTree(
+                draft.getPhaseGoalsJson() == null || draft.getPhaseGoalsJson().isBlank()
+                        ? "{}"
+                        : draft.getPhaseGoalsJson()));
         return JsonUtils.toJson(m);
     }
 
@@ -1565,6 +1664,10 @@ public class CarePlanService {
         dto.setExercise(JsonUtils.readTree(draft.getExerciseJson()));
         dto.setDiet(JsonUtils.readTree(draft.getDietJson()));
         dto.setExecution(JsonUtils.readTree(draft.getExecutionJson()));
+        dto.setPhaseGoals(JsonUtils.readTree(
+                draft.getPhaseGoalsJson() == null || draft.getPhaseGoalsJson().isBlank()
+                        ? "{}"
+                        : draft.getPhaseGoalsJson()));
         dto.setSafetyFlags(JsonUtils.readTree(draft.getSafetyFlagsJson() == null ? "[]" : draft.getSafetyFlagsJson()));
         dto.setContextSnapshot(JsonUtils.readTree(
                 draft.getContextSnapshotJson() == null ? "{}" : draft.getContextSnapshotJson()));
@@ -1604,6 +1707,21 @@ public class CarePlanService {
         dto.setExercise(exercise);
         dto.setDiet(diet);
         dto.setExecution(execution);
+        JsonNode phaseGoals = JsonUtils.readTree(
+                ver.getPhaseGoalsJson() == null || ver.getPhaseGoalsJson().isBlank()
+                        ? "{}"
+                        : ver.getPhaseGoalsJson());
+        if (stripRationale) {
+            phaseGoals = CarePlanRationaleSupport.strip(phaseGoals);
+        }
+        // 旧版本无 phaseGoals 时，尝试从 snapshot 回填
+        if (CarePlanPhaseGoalsSupport.isEmpty(phaseGoals) && snapshot != null) {
+            JsonNode fromSnap = snapshot.get("phaseGoals");
+            if (!CarePlanPhaseGoalsSupport.isEmpty(fromSnap)) {
+                phaseGoals = fromSnap;
+            }
+        }
+        dto.setPhaseGoals(phaseGoals);
         dto.setSafetyFlags(JsonUtils.readTree(ver.getSafetyFlagsJson() == null ? "[]" : ver.getSafetyFlagsJson()));
         dto.setContextSnapshot(snapshot);
         dto.setPublishedAt(ver.getPublishedAt());

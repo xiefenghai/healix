@@ -1914,8 +1914,14 @@ const showEmptyStarters = computed(
     !hasConversationTurns.value,
 )
 
-/** 无选中患者且非首诊抽屉：收起右栏，加宽中间对话 */
-const focusPanelCollapsed = computed(() => !focusPeopleId.value && !intakeDocked.value)
+/** 无选中患者且非首诊抽屉：收起右栏，加宽中间对话；今日待办 / 待确认收件箱打开时仍展开 */
+const focusPanelCollapsed = computed(
+  () =>
+    !focusPeopleId.value &&
+    !intakeDocked.value &&
+    !todayBoardOpen.value &&
+    draftInbox.value.length === 0,
+)
 
 /**
  * 空会话引导卡已有「新建患者档案」时，简报区隐藏重复建档 chip。
@@ -3374,13 +3380,21 @@ function openTodayBoard() {
     void scrollToBottom()
     return
   }
-  const hasItems = todayBoardItems.value.length > 0
+  const items = todayBoardItems.value
+  const hasItems = items.length > 0
+  // 气泡也挂跳转按钮：右栏收起/窄屏时仍可点；与右侧列表同一套 run
+  const actions: AgentAction[] = items.map((item) => ({
+    type: 'TODAY_BOARD',
+    path: item.key,
+    label: item.cta || item.title,
+  }))
   messages.value.push({
     role: 'assistant',
     content: hasItems
-      ? '好的，正在为您调出今日待办。右侧已列出可以直接跳转的事项。'
+      ? '好的，正在为您调出今日待办。右侧与下方均可直接跳转。'
       : '好的，正在为您调出今日待办。今天没有必须马上处理的事项，可以从左侧名单点一位患者开始。',
     intent: 'ORG_CHAT_TODAY_BOARD',
+    actions: actions.length ? actions : undefined,
     at: nowClock(),
   })
   cacheOrgSession()
@@ -5530,73 +5544,6 @@ function actionChipLabel(label?: string | null) {
   return withCount.length > maxLen ? `${withCount.slice(0, maxLen - 1)}…` : withCount
 }
 
-type StepCta = {
-  action: AgentAction
-  primary: boolean
-  title: string
-  hint?: string
-}
-
-function isAssessEscalationAction(a: AgentAction) {
-  const label = String(a.label || '')
-  if ((a.path === 'ACK_TASK' || a.path === 'COMPLETE_TASK') && /评估升级|高危/.test(label)) return true
-  if (a.type === 'OPEN_SHEET' && a.path === 'assessments' && /评估/.test(label)) return true
-  return false
-}
-
-function isPlanCreateAction(a: AgentAction) {
-  if (a.type === 'OPEN_SHEET' && a.path === 'care-plan') return true
-  return /处理方案/.test(String(a.label || ''))
-}
-
-/** 仅「评估升级 + 制定方案」双步用大按钮；单独制定方案走胶囊芯片，风格与其它气泡动作一致 */
-function heroActions(actions: AgentAction[]): StepCta[] | null {
-  const list = displayActions(actions)
-  const assessAck = list.find(
-    (a) =>
-      (a.path === 'ACK_TASK' || a.path === 'COMPLETE_TASK') &&
-      /评估升级|高危|确认办结「评估/.test(String(a.label || '')),
-  )
-  const assessView = list.find((a) => a.type === 'OPEN_SHEET' && a.path === 'assessments')
-  const plan = list.find((a) => isPlanCreateAction(a))
-  const step1 = assessAck || assessView
-  if (step1 && plan) {
-    return [
-      {
-        action: step1,
-        primary: true,
-        title: '第一步：去完成高危评估',
-      },
-      {
-        action: plan,
-        primary: false,
-        title: '第二步：去制定方案',
-        hint: '需先完成评估',
-      },
-    ]
-  }
-  return null
-}
-
-function isHeroActions(actions: AgentAction[]) {
-  return !!heroActions(actions)
-}
-
-function restAfterHero(actions: AgentAction[]) {
-  const steps = heroActions(actions)
-  if (!steps) return displayActions(actions)
-  const used = new Set(steps.map((s) => s.action))
-  return displayActions(actions).filter((a) => {
-    if (used.has(a)) return false
-    if (isAssessEscalationAction(a) || isPlanCreateAction(a)) return false
-    return true
-  })
-}
-
-function visibleHeroActions(actions: AgentAction[]) {
-  return heroActions(actions) || []
-}
-
 function isCreateCareTeamAction(a: AgentAction) {
   if (a.type === 'NAVIGATE' && (a.path || '') === 'create-care-team') return true
   return (
@@ -5653,7 +5600,7 @@ function bubbleActions(msg: ChatMessage, msgIdx?: number) {
   return acts
 }
 
-/** 气泡主按钮：未建组时强制「去创建我的健管组」为主色；分配后「去服务」为主、发卷/继续为次 */
+/** 气泡主按钮：未建组时强制「去创建我的健管组」为主色；分配后「去服务 / 确认发布」等为主 */
 function isBubbleActionPrimary(a: AgentAction, ai: number, msg: ChatMessage) {
   if (
     msg.carePlanPreview &&
@@ -5666,8 +5613,8 @@ function isBubbleActionPrimary(a: AgentAction, ai: number, msg: ChatMessage) {
     return isCreateCareTeamAction(a)
   }
   const label = a.label || ''
+  if (/确认发布|发布给患者|去服务这/.test(label)) return true
   if (
-    /去服务这/.test(label) ||
     a.payload?.batchServe === true ||
     ((a.path || '') === 'batch-serve-workbench' && !/存量/.test(label))
   ) {
@@ -5677,7 +5624,40 @@ function isBubbleActionPrimary(a: AgentAction, ai: number, msg: ChatMessage) {
   if ((a.path || '') === 'BATCH_COPY_INTAKE_LINKS') return false
   if ((a.path || '') === 'batch-serve-workbench' && /存量/.test(label)) return false
   if (a.type === 'SET_COCKPIT_TAB' && /未分组|我的患者/.test(label)) return false
-  return ai === 0 || a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'
+  // 仅首枚实心主色；其余走 secondary / outline，避免整排实心蓝
+  return ai === 0
+}
+
+/** 继续对话类：浅蓝描边胶囊 */
+function isBubbleActionOutline(a: AgentAction, msg: ChatMessage) {
+  const label = a.label || ''
+  if (/继续对话|关闭预览|想聊别的/.test(label)) return true
+  if (
+    msg.carePlanPreview &&
+    a.type === 'TRIGGER_CAPABILITY' &&
+    (a.path || '') === 'GENERAL_CHAT'
+  ) {
+    return true
+  }
+  return false
+}
+
+/** 对话操作栏三态：primary / outline / secondary */
+function bubbleActionTone(
+  a: AgentAction,
+  ai: number,
+  msg: ChatMessage,
+): 'primary' | 'outline' | 'secondary' {
+  if (isBubbleActionLocked(a) || a.runState === 'done') return 'secondary'
+  if (isBubbleActionOutline(a, msg)) return 'outline'
+  if (isBubbleActionPrimary(a, ai, msg)) return 'primary'
+  return 'secondary'
+}
+
+/** 去掉「第一步：」等前缀，胶囊只展示动作本身 */
+function bubbleActionDisplayLabel(a: AgentAction) {
+  const raw = bubbleActionChipLabel(a)
+  return String(raw || '').replace(/^第[一二三四五六七八九十\d]+步[：:\s]*/, '')
 }
 
 function isUnassignedWorkbenchAction(a: AgentAction) {
@@ -5723,10 +5703,7 @@ function onBubbleActionClick(a: AgentAction) {
 }
 
 function bubbleHasVisibleActions(msg: ChatMessage, msgIdx?: number) {
-  const acts = bubbleActions(msg, msgIdx)
-  if (!acts.length) return false
-  if (!isHeroActions(acts)) return true
-  return visibleHeroActions(acts).length + restAfterHero(acts).length > 0
+  return bubbleActions(msg, msgIdx).length > 0
 }
 
 async function sendMessage(
@@ -6448,6 +6425,13 @@ function runAction(action: AgentAction) {
       return
     }
     router.push(action.path)
+    return
+  }
+  if (action.type === 'TODAY_BOARD' && action.path) {
+    todayBoardOpen.value = true
+    const item = todayBoardItems.value.find((x) => x.key === action.path)
+    if (item) item.run()
+    else ElMessage.info('该项已处理完或不存在')
     return
   }
   if (action.type === 'SET_COCKPIT_TAB' && action.path) {
@@ -9250,121 +9234,58 @@ onUnmounted(() => {
                 @open-review="msg.chatExtract && onOpenExtractReview(msg.chatExtract)"
                 @discarded="onExtractDiscarded"
               />
-              <div
-                v-if="bubbleHasVisibleActions(msg, idx)"
-                class="bubble-actions"
-                :class="{ stepped: visibleHeroActions(bubbleActions(msg, idx)).length > 0 }"
-              >
-                <template v-if="isHeroActions(bubbleActions(msg, idx))">
-                  <button
-                    v-for="(step, si) in visibleHeroActions(bubbleActions(msg, idx))"
-                    :key="`step-${si}`"
-                    type="button"
-                    class="action-step"
-                    :class="{
-                      primary: step.primary,
-                      secondary: !step.primary,
-                      done: step.action.runState === 'done',
-                    }"
-                    :title="step.action.label"
-                    :disabled="step.action.runState === 'busy' || step.action.runState === 'done'"
-                    @click="runAction(step.action)"
-                  >
-                    <span class="action-step-title">
-                      <template v-if="step.action.runState === 'done'"> </template>
-                      {{
-                        step.action.runState === 'busy' ? '处理中…' : step.title
-                      }}
-                    </span>
-                    <span v-if="step.hint && step.action.runState !== 'done'" class="action-step-hint">{{
-                      step.hint
-                    }}</span>
-                  </button>
-                  <button
-                    v-for="(a, ai) in restAfterHero(bubbleActions(msg, idx))"
-                    :key="`rest-${ai}`"
-                    type="button"
-                    class="action-chip"
-                    :class="{
-                      do: a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY',
-                      done: a.runState === 'done',
-                    }"
-                    :title="a.label"
-                    :disabled="a.runState === 'busy' || a.runState === 'done'"
-                    @click="runAction(a)"
-                  >
-                    <span class="action-chip-text">
-                      <template v-if="a.runState === 'done'"> </template>{{
-                        a.runState === 'busy' ? '处理中…' : actionChipLabel(a.label)
-                      }}
-                    </span>
-                  </button>
-                </template>
-                <template v-else>
-                  <el-tooltip
-                    v-for="(a, ai) in shownActions(bubbleActions(msg, idx), 'thread', idx)"
-                    :key="ai"
-                    :disabled="!isBubbleActionLocked(a)"
-                    :content="bubbleActionLockHint(a)"
-                    placement="top"
-                  >
-                    <span class="action-chip-tip-wrap">
-                      <button
-                        type="button"
-                        class="action-chip"
-                        :class="{
-                          quiet:
-                            !isBubbleActionLocked(a) &&
-                            !!msg.carePlanPreview &&
-                            a.type === 'TRIGGER_CAPABILITY' &&
-                            a.path === 'GENERAL_CHAT',
-                          primary: !isBubbleActionLocked(a) && isBubbleActionPrimary(a, ai, msg),
-                          do:
-                            !isBubbleActionLocked(a) &&
-                            !(
-                              msg.carePlanPreview &&
-                              a.type === 'TRIGGER_CAPABILITY' &&
-                              a.path === 'GENERAL_CHAT'
-                            ) &&
-                            (a.type === 'CALL_API' || a.type === 'TRIGGER_CAPABILITY'),
+              <div v-if="bubbleHasVisibleActions(msg, idx)" class="bubble-actions">
+                <el-tooltip
+                  v-for="(a, ai) in shownActions(bubbleActions(msg, idx), 'thread', idx)"
+                  :key="ai"
+                  :disabled="!isBubbleActionLocked(a)"
+                  :content="bubbleActionLockHint(a)"
+                  placement="top"
+                >
+                  <span class="action-chip-tip-wrap">
+                    <button
+                      type="button"
+                      class="action-chip"
+                      :class="[
+                        bubbleActionTone(a, ai, msg),
+                        {
                           done: a.runState === 'done',
                           locked: isBubbleActionLocked(a),
-                        }"
-                        :title="isBubbleActionLocked(a) ? bubbleActionLockHint(a) : a.label"
-                        :aria-disabled="isBubbleActionLocked(a) ? 'true' : undefined"
-                        :disabled="
-                          isBubbleActionLocked(a) || a.runState === 'busy' || a.runState === 'done'
-                        "
-                        @click="onBubbleActionClick(a)"
-                      >
-                        <span class="action-chip-text">
-                          <template v-if="a.runState === 'done'"> </template>{{
-                            a.runState === 'busy' ? '处理中…' : bubbleActionChipLabel(a)
-                          }}
-                        </span>
-                      </button>
-                    </span>
-                  </el-tooltip>
-                  <button
-                    v-if="hiddenActionCount(bubbleActions(msg, idx), 'thread', idx)"
-                    type="button"
-                    class="action-chip more"
-                    @click="toggleActionList('thread', idx)"
-                  >
-                    展开其余 {{ hiddenActionCount(bubbleActions(msg, idx), 'thread', idx) }} 项
-                  </button>
-                  <button
-                    v-else-if="
-                      isActionListExpanded('thread', idx) &&
-                      displayActions(bubbleActions(msg, idx)).length > ACTION_CHIP_PREVIEW
-                    "
-                    type="button"
-                    class="action-chip more"
-                    @click="toggleActionList('thread', idx)"
-                  >
-                    收起
-                  </button>
-                </template>
+                        },
+                      ]"
+                      :title="isBubbleActionLocked(a) ? bubbleActionLockHint(a) : a.label"
+                      :aria-disabled="isBubbleActionLocked(a) ? 'true' : undefined"
+                      :disabled="
+                        isBubbleActionLocked(a) || a.runState === 'busy' || a.runState === 'done'
+                      "
+                      @click="onBubbleActionClick(a)"
+                    >
+                      <span class="action-chip-text">
+                        <template v-if="a.runState === 'done'"> </template
+                        >{{ a.runState === 'busy' ? '处理中…' : bubbleActionDisplayLabel(a) }}
+                      </span>
+                    </button>
+                  </span>
+                </el-tooltip>
+                <button
+                  v-if="hiddenActionCount(bubbleActions(msg, idx), 'thread', idx)"
+                  type="button"
+                  class="action-chip more secondary"
+                  @click="toggleActionList('thread', idx)"
+                >
+                  展开其余 {{ hiddenActionCount(bubbleActions(msg, idx), 'thread', idx) }} 项
+                </button>
+                <button
+                  v-else-if="
+                    isActionListExpanded('thread', idx) &&
+                    displayActions(bubbleActions(msg, idx)).length > ACTION_CHIP_PREVIEW
+                  "
+                  type="button"
+                  class="action-chip more secondary"
+                  @click="toggleActionList('thread', idx)"
+                >
+                  收起
+                </button>
               </div>
             </div>
           </div>
@@ -9905,8 +9826,21 @@ onUnmounted(() => {
         <div v-else-if="showTodayBoard" class="focus-body inbox-body">
           <div class="section compact">
             <div class="section-title">
-              今日待办
-              <span class="count">{{ todayBoardItems.length }} 项</span>
+              <span class="section-title-main">
+                今日待办
+                <span class="count">{{ todayBoardItems.length }} 项</span>
+              </span>
+              <button
+                type="button"
+                class="icon-btn today-board-close"
+                title="收起"
+                @click="todayBoardOpen = false"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
             </div>
             <div v-if="todayBoardItems.length" class="draft-list">
               <button
@@ -12580,8 +12514,27 @@ onUnmounted(() => {
 .bubble.assistant .md-body :deep(.reply-sec),
 .briefing-text.md-body :deep(.reply-sec) {
   margin: 0;
-  padding: 0 0 0 10px;
+  padding: 0 0 0 16px;
   border-left: 2px solid color-mix(in srgb, var(--brand-500, var(--teal-700)) 42%, var(--ink-200));
+}
+
+.bubble.assistant .md-body :deep(ol),
+.bubble.assistant .md-body :deep(ul),
+.briefing-text.md-body :deep(ol),
+.briefing-text.md-body :deep(ul) {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+
+.bubble.assistant .md-body :deep(li),
+.briefing-text.md-body :deep(li) {
+  margin-bottom: 6px;
+  line-height: 1.55;
+}
+
+.bubble.assistant .md-body :deep(li:last-child),
+.briefing-text.md-body :deep(li:last-child) {
+  margin-bottom: 0;
 }
 
 .bubble.assistant .md-body :deep(.reply-sec + .reply-sec),
@@ -12630,14 +12583,20 @@ onUnmounted(() => {
 .briefing-text.md-body :deep(.reply-line.is-item) {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  padding: 2px 0;
+  gap: 8px;
+  padding: 3px 0 3px 4px;
+  margin-bottom: 6px;
+}
+
+.bubble.assistant .md-body :deep(.reply-line.is-item:last-child),
+.briefing-text.md-body :deep(.reply-line.is-item:last-child) {
+  margin-bottom: 0;
 }
 
 .bubble.assistant .md-body :deep(.item-idx),
 .briefing-text.md-body :deep(.item-idx) {
   flex-shrink: 0;
-  min-width: 1.15em;
+  min-width: 1.35em;
   margin-top: 0.05em;
   font-size: 12px;
   font-weight: 600;
@@ -12659,9 +12618,9 @@ onUnmounted(() => {
 }
 
 .bubble.assistant .bubble-actions {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 0 solid color-mix(in srgb, var(--ink-200) 90%, transparent);
+  margin-top: 20px;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .report-status {
@@ -12777,119 +12736,30 @@ onUnmounted(() => {
 }
 
 .bubble-actions {
-  margin-top: 10px;
+  margin-top: 20px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-}
-
-.bubble-actions.stepped {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.action-step {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  border-radius: 12px;
-  padding: 12px 14px;
-  text-align: left;
-  cursor: pointer;
-  transition: var(--admin-transition);
-  border: 1px solid transparent;
-  line-height: 1.35;
-}
-
-.action-step-title {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.action-step-hint {
-  font-size: 12px;
-  font-weight: 500;
-  opacity: 0.85;
-}
-
-.action-step.primary {
-  background: linear-gradient(135deg, var(--blue-500) 0%, var(--blue-600) 100%);
-  border-color: var(--blue-600);
-  color: var(--white);
-  box-shadow:
-    0 0 0 1px var(--blue-a18),
-    0 8px 22px -6px var(--auto-rgba-3799235065);
-  animation: cta-glow 2.4s ease-in-out infinite;
-}
-
-.action-step.primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--blue-600) 0%, var(--brand-800) 100%);
-  border-color: var(--brand-800);
-  box-shadow:
-    0 0 0 1px var(--auto-rgba-3799235025),
-    0 10px 26px -6px var(--auto-rgba-297821607);
-}
-
-@keyframes cta-glow {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 1px var(--blue-a18),
-      0 8px 22px -6px var(--auto-rgba-3799235055);
-  }
-  50% {
-    box-shadow:
-      0 0 0 2px var(--auto-rgba-59130246028),
-      0 10px 28px -4px var(--auto-rgba-3799235075);
-  }
-}
-
-.action-step.secondary {
-  background: var(--white);
-  border-color: var(--brand-200);
-  color: var(--brand-700, var(--brand-800));
-}
-
-.action-step.secondary:hover:not(:disabled) {
-  background: var(--brand-50, var(--blue-50));
-  border-color: var(--brand-400);
-}
-
-.action-step.done,
-.action-step.done:hover {
-  background: var(--success-50);
-  color: var(--success-600);
-  border-color: var(--green-200);
-  box-shadow: none;
-  cursor: default;
-}
-
-.action-step:disabled:not(.done) {
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
-.bubble-actions.stepped .action-chip {
-  align-self: flex-start;
+  gap: 10px;
 }
 
 .action-chip {
-  border: 1px solid var(--ink-200);
-  background: var(--white);
-  color: var(--ink-700);
-  border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  font-size: 13px;
   font-weight: 500;
+  line-height: 1;
   cursor: pointer;
   transition: var(--admin-transition);
-  max-width: min(100%, 11.5em);
+  max-width: 100%;
   text-align: center;
-  line-height: 1.3;
+  box-sizing: border-box;
+  white-space: nowrap;
 }
 
 .action-chip-text {
@@ -12898,60 +12768,64 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  max-width: 18em;
 }
 
-.action-chip:hover {
-  border-color: var(--brand-500);
-  color: var(--brand-600);
-  background: var(--brand-50);
-}
-
+/* Primary：实心品牌蓝 */
 .action-chip.primary {
-  background: var(--brand-500);
-  color: var(--white);
-  border-color: var(--brand-500);
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
 }
 
-.action-chip.primary:hover {
-  background: var(--brand-600);
-  color: var(--white);
+.action-chip.primary:hover:not(:disabled) {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
 }
 
+/* Secondary：白底浅灰边 */
+.action-chip.secondary,
+.action-chip.ghost {
+  background: #fff;
+  border-color: #e5e7eb;
+  color: #374151;
+}
+
+.action-chip.secondary:hover:not(:disabled),
+.action-chip.ghost:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  color: #1f2937;
+}
+
+/* Outline：浅蓝底 + 蓝字蓝边 */
+.action-chip.outline,
 .action-chip.do:not(.primary) {
-  border-color: var(--brand-300, var(--blue-300));
-  color: var(--brand-600);
-  background: var(--brand-50);
+  background: #eaf2ff;
+  border-color: #3b82f6;
+  color: #2563eb;
 }
 
-.action-chip.quiet,
-.action-chip.quiet:hover {
-  border: none;
-  background: transparent;
-  color: var(--ink-400);
-  max-width: none;
-  padding: 2px 0;
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: none;
-}
-
-.action-chip.quiet:hover {
-  color: var(--ink-600);
-  text-decoration: underline;
+.action-chip.outline:hover:not(:disabled),
+.action-chip.do:not(.primary):hover:not(:disabled) {
+  background: #dbeafe;
+  border-color: #2563eb;
+  color: #1d4ed8;
 }
 
 .action-chip.more {
   border-style: dashed;
-  color: var(--ink-500);
-  background: transparent;
+  background: #fff;
+  border-color: #e5e7eb;
+  color: #6b7280;
   max-width: none;
-  padding-inline: 10px;
 }
 
-.action-chip.more:hover {
-  color: var(--brand-700, var(--teal-600));
-  border-color: var(--brand-400);
-  background: color-mix(in srgb, var(--brand-500, var(--teal-700)) 6%, var(--white));
+.action-chip.more:hover:not(:disabled) {
+  color: #2563eb;
+  border-color: #93c5fd;
+  background: #eff6ff;
 }
 
 .action-chip:disabled {
@@ -12961,7 +12835,7 @@ onUnmounted(() => {
 
 .action-chip-tip-wrap {
   display: inline-flex;
-  max-width: min(100%, 11.5em);
+  max-width: 100%;
 }
 .action-chip.locked,
 .action-chip.locked:hover,
@@ -13754,12 +13628,24 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.section-title-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .section-title .count {
   font-size: 11px;
   color: var(--ink-500);
   font-weight: 500;
+}
+
+.today-board-close {
+  flex-shrink: 0;
 }
 
 .inbox-body {

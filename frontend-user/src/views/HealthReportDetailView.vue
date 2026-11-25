@@ -167,8 +167,8 @@ async function removeReport() {
 <style scoped>
 .page { min-height: 100vh; background: var(--hx-bg); padding-bottom: 24px; }
 .card {
-  margin: 12px 16px; padding: 16px; border-radius: var(--hx-r-lg); background: #fff;
-  box-shadow: var(--hx-elev-2);
+  margin: 12px 16px; padding: 16px; border-radius: var(--hx-card-radius, 16px); background: #fff;
+  box-shadow: var(--hx-card-shadow);
 }
 h3 { margin: 0 0 12px; font-size: 15px; }
 .meta-row {

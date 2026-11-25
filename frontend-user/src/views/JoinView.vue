@@ -42,30 +42,30 @@ async function join() {
 </template>
 
 <style scoped>
-.page { min-height: 100vh; }
+.page { min-height: 100vh; background: var(--hx-bg); }
 .card {
   margin: 16px;
   padding: 24px 16px;
   background: #fff;
-  border-radius: var(--hx-r-lg);
-  box-shadow: var(--hx-elev-2);
+  border-radius: var(--hx-card-radius, 16px);
+  box-shadow: var(--hx-card-shadow);
   text-align: center;
 }
 .illus {
   width: 72px;
   height: 72px;
   margin: 0 auto 12px;
-  border-radius: 24px;
+  border-radius: 16px;
   display: grid;
   place-items: center;
-  background: var(--hx-teal-light);
+  background: var(--hx-teal-light, #ecfdf5);
   font-size: 32px;
 }
 h2 { margin: 0 0 8px; font-size: 18px; }
 p { margin: 0 0 16px; font-size: 14px; color: var(--hx-muted); line-height: 1.5; }
 :deep(.van-nav-bar) { background: transparent; }
 :deep(.van-button--primary) {
-  background: var(--hx-teal);
+  background: #10b981;
   border: 0;
 }
 </style>

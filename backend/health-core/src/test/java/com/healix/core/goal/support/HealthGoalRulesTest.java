@@ -41,6 +41,19 @@ class HealthGoalRulesTest {
     }
 
     @Test
+    void lossTargetNotLowerThanCurrentIsError() {
+        ObjectNode goals = JsonUtils.emptyObject();
+        ObjectNode w = goals.putObject("WEIGHT");
+        w.put("metric", "WEIGHT");
+        w.put("baseline", 60);
+        w.put("target", 70);
+        var d = HealthGoalRules.validate("LOSS", 19.1, false, goals, 177.0);
+        assertThat(d.issues()).anyMatch(i -> "GOAL_LOSS_TARGET_NOT_LOWER".equals(i.code()));
+        assertThatThrownBy(() -> HealthGoalRules.requireValid("LOSS", 19.1, false, goals, 177.0))
+                .hasMessageContaining("减重目标须低于当前体重");
+    }
+
+    @Test
     void fastPaceIsWarn() {
         ObjectNode goals = JsonUtils.emptyObject();
         ObjectNode w = goals.putObject("WEIGHT");

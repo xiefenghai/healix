@@ -49,9 +49,29 @@ interface TodayTask {
   metricRef?: string | null
 }
 
+interface PhaseGoalItem {
+  metric?: string
+  display?: string
+  unit?: string
+  baseline?: number | null
+  target?: number | null
+  min?: number | null
+  max?: number | null
+  sysMax?: number | null
+  diaMax?: number | null
+}
+
+interface PhaseGoals {
+  horizonDays?: number
+  horizonLabel?: string
+  primaryMetric?: string
+  items?: PhaseGoalItem[]
+}
+
 interface TodayCarePlan {
   planTitle?: string
   goalSummary?: string
+  phaseGoals?: PhaseGoals | null
   /** 首诊「这次最想解决什么问题」中文拼接 */
   primaryAppealText?: string
   totalTasks: number
@@ -118,6 +138,7 @@ const carePlanOverview = ref<{
     publishedAt?: string
     diet?: Record<string, unknown>
     exercise?: Record<string, unknown>
+    phaseGoals?: PhaseGoals | null
   }
 } | null>(null)
 const latestLab = ref<{
@@ -247,14 +268,10 @@ async function openCareCompanion() {
   if (careContacting.value) return
   careContacting.value = true
   try {
-    const res = await api<{ data: { thread?: { id?: string } } }>('/api/c/v1/care-chat/contact', {
+    // 预热会话；统一进入已优化的沟通主页 ChatHub，不再跳旧版 /care-chat/:id
+    await api<{ data: { thread?: { id?: string } } }>('/api/c/v1/care-chat/contact', {
       method: 'POST',
-    })
-    const id = res.data?.thread?.id
-    if (id) {
-      await router.push(`/care-chat/${id}`)
-      return
-    }
+    }).catch(() => null)
     await router.push('/chat')
   } catch {
     await router.push('/chat')
@@ -890,7 +907,26 @@ function sparklinePaths(seed: string, empty = false) {
   return { line, area }
 }
 
-type GaugeMode = 'lose' | 'gain' | 'maintain' | 'glucose'
+type GaugeMode = 'lose' | 'gain' | 'maintain' | 'glucose' | 'bp'
+
+function resolvePhaseGoals(): PhaseGoals | null {
+  const fromToday = todayPlan.value?.phaseGoals
+  if (fromToday?.primaryMetric && Array.isArray(fromToday.items) && fromToday.items.length) {
+    return fromToday
+  }
+  const fromPlan = carePlanOverview.value?.activeVersion?.phaseGoals
+  if (fromPlan?.primaryMetric && Array.isArray(fromPlan.items) && fromPlan.items.length) {
+    return fromPlan
+  }
+  return null
+}
+
+function phasePrimaryItem(pg: PhaseGoals | null): PhaseGoalItem | null {
+  if (!pg) return null
+  const metric = String(pg.primaryMetric || '').toUpperCase()
+  const hit = (pg.items || []).find((i) => String(i.metric || '').toUpperCase() === metric)
+  return hit || pg.items?.[0] || null
+}
 
 /** 从饮食目标 + 方案文案推断仪表盘业务类型（减重 / 增重 / 维持 / 控糖） */
 function resolveGaugeMode(goalTypeRaw: string, careBlob: string, weightKg: number | null): GaugeMode {
@@ -901,6 +937,8 @@ function resolveGaugeMode(goalTypeRaw: string, careBlob: string, weightKg: numbe
 
   const sugarHint = /控糖|血糖|糖尿|糖耐|糖化|GLUCOSE|DIABETES/i.test(careBlob)
   if (sugarHint) return 'glucose'
+  const bpHint = /控压|血压|高血压|HYPERTENSION|BLOOD.?PRESSURE/i.test(careBlob)
+  if (bpHint) return 'bp'
 
   if (weightKg != null && Number.isFinite(weightKg)) {
     const height = dietBasis.value.heightCm ?? latestNum('HEIGHT') ?? null
@@ -914,11 +952,7 @@ function resolveGaugeMode(goalTypeRaw: string, careBlob: string, weightKg: numbe
 }
 
 /**
- * 首页健康仪表盘：按业务类型动态渲染
- * - lose：减重进度（初始 ≥ 当前）
- * - gain：增重进度
- * - maintain：维持体重稳定度（不做「减重进度」）
- * - glucose：控糖达标度
+ * 首页健康仪表盘：优先读方案 phaseGoals；否则回退饮食目标/文案推断
  */
 const healthGauge = computed(() => {
   const goalType = String(dietBasis.value.goalType || '')
@@ -937,8 +971,190 @@ const healthGauge = computed(() => {
     w?.value == null || w.value === '' ? null : Number(w.value)
   const weightOk = weightNum != null && Number.isFinite(weightNum)
 
-  const resolved = resolveGaugeMode(goalType, careBlob, weightOk ? weightNum : null)
   const arcLen = GAUGE_ARC
+  const phase = resolvePhaseGoals()
+  const primary = phasePrimaryItem(phase)
+  const primaryMetric = String(primary?.metric || phase?.primaryMetric || '').toUpperCase()
+
+  // —— 结构化阶段目标优先 ——
+  if (primaryMetric === 'BP' && primary) {
+    const sys = latestMetrics.value.find((s) => s.metricType === 'BLOOD_PRESSURE_SYS')
+    const dia = latestMetrics.value.find((s) => s.metricType === 'BLOOD_PRESSURE_DIA')
+    const sysNum = sys?.value == null || sys.value === '' ? null : Number(sys.value)
+    const diaNum = dia?.value == null || dia.value === '' ? null : Number(dia.value)
+    if (sysNum != null && Number.isFinite(sysNum) && diaNum != null && Number.isFinite(diaNum)) {
+      const sysMax = Number(primary.sysMax ?? 130)
+      const diaMax = Number(primary.diaMax ?? 80)
+      const overSys = Math.max(0, sysNum - sysMax)
+      const overDia = Math.max(0, diaNum - diaMax)
+      const inRange = overSys <= 0 && overDia <= 0
+      const penalty = Math.min(100, Math.round((overSys + overDia) * 2))
+      const pct = inRange ? 100 : Math.max(0, 100 - penalty)
+      return {
+        mode: 'bp' as const,
+        title: '控压进度',
+        recordKey: 'bp' as const,
+        startLabel: '当前',
+        targetLabel: '目标上限',
+        start: `${formatNum(sysNum)}/${formatNum(diaNum)}`,
+        startUnit: 'mmHg',
+        current: `${formatNum(sysNum)}/${formatNum(diaNum)}`,
+        target: `<${formatNum(sysMax)}/${formatNum(diaMax)}`,
+        targetUnit: 'mmHg',
+        unit: 'mmHg',
+        pct,
+        dash: (pct / 100) * arcLen,
+        arcLen,
+        midText: inRange ? '已达标' : `进度 ${pct}%`,
+        pctLabel: inRange ? '达标' : `${pct}%`,
+        status: inRange
+          ? '血压达标 · 继续保持！'
+          : `偏高 ${overSys > 0 ? `收缩压+${formatNum(overSys)}` : ''}${
+              overSys > 0 && overDia > 0 ? ' · ' : ''
+            }${overDia > 0 ? `舒张压+${formatNum(overDia)}` : ''}`.trim(),
+      }
+    }
+  }
+
+  if ((primaryMetric === 'FPG' || primaryMetric === 'HBA1C') && primary) {
+    const glu = latestMetrics.value.find((s) => s.metricType === 'BLOOD_GLUCOSE')
+    const gluNum = glu?.value == null || glu.value === '' ? null : Number(glu.value)
+    if (primaryMetric === 'FPG' && gluNum != null && Number.isFinite(gluNum)) {
+      const upper = Number(primary.max ?? primary.target ?? 7.0)
+      const lower = Number(primary.min ?? 4.4)
+      const inRange = gluNum >= lower && gluNum <= upper
+      const over = Math.max(0, gluNum - upper)
+      const under = Math.max(0, lower - gluNum)
+      const penalty = Math.min(100, Math.round((over + under) * 25))
+      const pct = inRange ? 100 : Math.max(0, 100 - penalty)
+      const mealLabel = glucoseMealLabel(glu?.mealContext)
+      return {
+        mode: 'glucose' as const,
+        title: '控糖进度',
+        recordKey: 'glucose' as const,
+        startLabel: '参考下限',
+        targetLabel: '目标上限',
+        start: formatNum(lower),
+        startUnit: 'mmol/L',
+        current: formatNum(gluNum),
+        target: formatNum(upper),
+        targetUnit: 'mmol/L',
+        unit: 'mmol/L',
+        pct,
+        dash: (pct / 100) * arcLen,
+        arcLen,
+        midText: inRange ? '已达标' : `进度 ${pct}%`,
+        pctLabel: inRange ? '达标' : `${pct}%`,
+        status: inRange
+          ? `${mealLabel}达标 · 继续保持！`
+          : over > 0
+            ? `${mealLabel}偏高 ${formatNum(over)} · 注意饮食节奏`
+            : `${mealLabel}偏低 · 留意监测`,
+      }
+    }
+  }
+
+  if (primaryMetric === 'WEIGHT' && primary && weightOk) {
+    const current = weightNum as number
+    const display = String(primary.display || 'TARGET').toUpperCase()
+    const baseline = primary.baseline != null ? Number(primary.baseline) : null
+    const target = primary.target != null ? Number(primary.target) : null
+    const min = primary.min != null ? Number(primary.min) : null
+    const max = primary.max != null ? Number(primary.max) : null
+
+    if (display === 'RANGE' || (target == null && (min != null || max != null))) {
+      const lo = min ?? (baseline != null ? baseline * 0.97 : current * 0.97)
+      const hi = max ?? (baseline != null ? baseline * 1.03 : current * 1.03)
+      const mid = (lo + hi) / 2
+      const half = Math.max(0.5, (hi - lo) / 2)
+      const drift = Math.abs(current - mid)
+      const pct = Math.min(100, Math.max(0, Math.round((1 - drift / (half * 2)) * 100)))
+      const inBand = current >= lo && current <= hi
+      return {
+        mode: 'maintain' as const,
+        title: '体重稳定',
+        recordKey: 'bmi' as const,
+        startLabel: '当前',
+        targetLabel: '目标区间',
+        start: formatNum(current),
+        startUnit: 'kg',
+        current: formatNum(current),
+        target: `${formatNum(lo)}–${formatNum(hi)}`,
+        targetUnit: '',
+        unit: 'kg',
+        pct,
+        dash: (pct / 100) * arcLen,
+        arcLen,
+        midText: inBand ? `当前 ${formatNum(current)}kg` : `偏离 ${formatNum(drift)}kg`,
+        pctLabel: `${pct}%`,
+        status: inBand ? '体重平稳 · 继续保持！' : '已偏离目标区间 · 留意饮食运动',
+      }
+    }
+
+    if (target != null && Number.isFinite(target)) {
+      const start =
+        baseline != null && Number.isFinite(baseline)
+          ? baseline
+          : Math.max(current, target + 0.1)
+      if (target < start - 0.05) {
+        const span = Math.max(0.1, start - target)
+        const lost = Math.max(0, start - current)
+        const pct = Math.min(100, Math.max(0, Math.round((lost / span) * 100)))
+        return {
+          mode: 'lose' as const,
+          title: '减重进度',
+          recordKey: 'bmi' as const,
+          startLabel: '初始',
+          targetLabel: '目标',
+          start: formatNum(start),
+          startUnit: 'kg',
+          current: formatNum(current),
+          target: formatNum(target),
+          targetUnit: 'kg',
+          unit: 'kg',
+          pct,
+          dash: (pct / 100) * arcLen,
+          arcLen,
+          midText: `已减 ${formatNum(lost)}kg`,
+          pctLabel: `${pct}%`,
+          status:
+            lost > 0
+              ? `已减重 ${formatNum(lost)}kg · 坚持就是胜利！`
+              : `目标 ${formatNum(target)}kg · 开始行动吧`,
+        }
+      }
+      if (target > start + 0.05) {
+        const span = Math.max(0.1, target - start)
+        const gained = Math.max(0, current - start)
+        const pct = Math.min(100, Math.max(0, Math.round((gained / span) * 100)))
+        return {
+          mode: 'gain' as const,
+          title: '增重进度',
+          recordKey: 'bmi' as const,
+          startLabel: '初始',
+          targetLabel: '目标',
+          start: formatNum(start),
+          startUnit: 'kg',
+          current: formatNum(current),
+          target: formatNum(target),
+          targetUnit: 'kg',
+          unit: 'kg',
+          pct,
+          dash: (pct / 100) * arcLen,
+          arcLen,
+          midText: `已增 ${formatNum(gained)}kg`,
+          pctLabel: `${pct}%`,
+          status:
+            gained > 0
+              ? `已增重 ${formatNum(gained)}kg · 稳步推进`
+              : `目标 ${formatNum(target)}kg · 开始行动吧`,
+        }
+      }
+    }
+  }
+
+  // HABIT 或无结构化目标 → 走旧推断 / 下方体重逻辑
+  const resolved = resolveGaugeMode(goalType, careBlob, weightOk ? weightNum : null)
 
   if (resolved === 'glucose') {
     const glu = latestMetrics.value.find((s) => s.metricType === 'BLOOD_GLUCOSE')
@@ -981,6 +1197,41 @@ const healthGauge = computed(() => {
       }
     }
     // 控糖意图但暂无血糖数据 → 有体重则展示维持，否则不渲染
+  }
+
+  if (resolved === 'bp') {
+    const sys = latestMetrics.value.find((s) => s.metricType === 'BLOOD_PRESSURE_SYS')
+    const dia = latestMetrics.value.find((s) => s.metricType === 'BLOOD_PRESSURE_DIA')
+    const sysNum = sys?.value == null || sys.value === '' ? null : Number(sys.value)
+    const diaNum = dia?.value == null || dia.value === '' ? null : Number(dia.value)
+    if (sysNum != null && Number.isFinite(sysNum) && diaNum != null && Number.isFinite(diaNum)) {
+      const sysMax = 130
+      const diaMax = 80
+      const overSys = Math.max(0, sysNum - sysMax)
+      const overDia = Math.max(0, diaNum - diaMax)
+      const inRange = overSys <= 0 && overDia <= 0
+      const penalty = Math.min(100, Math.round((overSys + overDia) * 2))
+      const pct = inRange ? 100 : Math.max(0, 100 - penalty)
+      return {
+        mode: 'bp' as const,
+        title: '控压进度',
+        recordKey: 'bp' as const,
+        startLabel: '当前',
+        targetLabel: '目标上限',
+        start: `${formatNum(sysNum)}/${formatNum(diaNum)}`,
+        startUnit: 'mmHg',
+        current: `${formatNum(sysNum)}/${formatNum(diaNum)}`,
+        target: `<${sysMax}/${diaMax}`,
+        targetUnit: 'mmHg',
+        unit: 'mmHg',
+        pct,
+        dash: (pct / 100) * arcLen,
+        arcLen,
+        midText: inRange ? '已达标' : `进度 ${pct}%`,
+        pctLabel: inRange ? '达标' : `${pct}%`,
+        status: inRange ? '血压达标 · 继续保持！' : '血压偏高 · 留意监测与用药',
+      }
+    }
   }
 
   if (!weightOk) return null
@@ -1281,6 +1532,12 @@ const careGoalCard = computed(() => {
     remainValue = g.current
     remainUnit = g.unit
     detail = `上限: ${g.target}${g.targetUnit || g.unit}`
+  } else if (g.mode === 'bp') {
+    title = '控压目标'
+    remainLabel = g.midText
+    remainValue = g.current
+    remainUnit = g.unit
+    detail = `目标: ${g.target} ${g.targetUnit || g.unit}`
   } else {
     title = '体重稳定'
     remainLabel = '当前'
@@ -1945,7 +2202,7 @@ async function offerScience() {
           v-if="homeMode === 'free'"
           type="button"
           class="iconbtn"
-          :aria-label="`切换就诊人，${avatarChar}`"
+          :aria-label="`切换健康档案，${avatarChar}`"
           @click="router.push('/patient-cards')"
         >
           <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.user" />
@@ -1988,17 +2245,17 @@ async function offerScience() {
     </section>
 
     <!-- ========== 空态：无就诊人 ========== -->
-    <section v-else-if="homeMode === 'empty'" class="empty-gate" aria-label="添加就诊人">
+    <section v-else-if="homeMode === 'empty'" class="empty-gate" aria-label="添加健康档案">
       <div class="empty-illus" aria-hidden="true">
         <div class="empty-card-art">
           <svg class="empty-user" viewBox="0 0 24 24" v-html="ICONS.user" />
           <span class="empty-plus">+</span>
         </div>
       </div>
-      <h1>添加就诊人，开启健康之旅</h1>
-      <p>添加后即可自管记录；若已在机构建档，同号同名可自动关联。</p>
+      <h1>添加健康档案，开启健康之旅</h1>
+      <p>添加后即可自管记录；若机构已有健康档案，手机号+姓名+生日一致时可自动关联。</p>
       <button type="button" class="btn-solid empty-primary" @click="router.push('/patient-cards')">
-        添加就诊人
+        添加健康档案
       </button>
       <button type="button" class="btn-ghost" @click="router.push('/activate')">使用激活码</button>
     </section>
@@ -2115,7 +2372,7 @@ async function offerScience() {
             <button
               type="button"
               class="l1-iconbtn"
-              :aria-label="`切换就诊人，${avatarChar}`"
+              :aria-label="`切换健康档案，${avatarChar}`"
               @click="router.push('/patient-cards')"
             >
               <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.user" />

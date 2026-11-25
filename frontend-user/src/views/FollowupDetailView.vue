@@ -421,7 +421,8 @@ onMounted(() => void load())
 .page {
   min-height: 100vh;
   background: var(--hx-bg);
-  padding-bottom: 28px;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
 }
 .loading {
   padding: 48px 0;
@@ -432,46 +433,50 @@ onMounted(() => void load())
 .intro h1 {
   margin: 0;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 800;
   line-height: 1.35;
-  color: var(--hx-text);
+  color: #0f172a;
 }
 .intro-sub {
   margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--hx-muted);
+  color: #64748b;
 }
 .group {
   margin-top: 10px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--hx-card-shadow);
 }
 .group :deep(.van-cell-group__title) {
   padding: 12px 16px 8px;
   font-size: 13px;
-  color: var(--hx-muted);
+  color: #86909c;
   font-weight: 500;
 }
 .group :deep(.van-cell__title) {
-  color: var(--hx-muted);
+  color: #86909c;
   font-size: 14px;
 }
 .group :deep(.van-cell__label) {
   margin-top: 4px;
-  color: var(--hx-text);
+  color: #0f172a;
   font-size: 14px;
   line-height: 1.55;
   white-space: pre-wrap;
 }
 .group :deep(.van-cell__value) {
-  color: var(--hx-text);
+  color: #0f172a;
   font-size: 14px;
 }
 .group :deep(.tone-ok) {
-  color: var(--hx-teal-700) !important;
+  color: #047857 !important;
   font-weight: 600;
 }
 .group :deep(.tone-warn) {
-  color: var(--hx-warn) !important;
+  color: var(--hx-warn, #e5a100) !important;
   font-weight: 600;
 }
 .group :deep(.tone-bad) {
