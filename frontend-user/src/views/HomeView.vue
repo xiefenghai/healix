@@ -2373,17 +2373,21 @@ async function offerScience() {
           <div class="l1-brand-actions">
             <button
               type="button"
-              class="l1-iconbtn"
-              :aria-label="`切换健康档案，${avatarChar}`"
+              class="patient-capsule"
+              :aria-label="`切换就诊人，当前 ${displayName}`"
               @click="router.push('/patient-cards')"
             >
-              <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.user" />
+              <span class="pc-nm">{{ displayName }}</span>
+              <span class="pc-badge">在管</span>
+              <svg class="pc-chev" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
             </button>
             <button
               type="button"
               class="l1-iconbtn l1-bell"
               aria-label="通知"
-              @click="router.push('/chat')"
+              @click="router.push({ path: '/chat', query: { tab: 'notices' } })"
             >
               <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.bell" />
               <span v-if="careUnread > 0" class="dot" />
@@ -2403,17 +2407,15 @@ async function offerScience() {
           <div class="mid">
             <div class="nm">
               <b>{{ careCompanion.name }}</b>
-              <span class="role-line">{{ careCompanion.role }}</span>
+              <span class="role-tag">{{ careCompanion.role }}</span>
             </div>
             <div class="l1sub">
               <template v-if="careCompanion.state === 'unread'">
                 <span class="st unread">未读</span>
                 <span class="sep" aria-hidden="true">·</span>
+                <span class="say">{{ careCompanion.say }}</span>
               </template>
-              <span
-                class="say"
-                :class="{ 'say-online': careCompanion.state === 'online' }"
-              >{{ careCompanion.say }}</span>
+              <span v-else class="say">在线 · 随时咨询</span>
             </div>
           </div>
           <button type="button" class="act" :disabled="careContacting" @click="openCareCompanion">
@@ -2498,16 +2500,15 @@ async function offerScience() {
               <em class="care-goal-detail">{{ careGoalCard.detail }}</em>
             </div>
             <svg class="care-spark-mini" viewBox="0 0 48 28" aria-hidden="true">
-              <defs>
-                <linearGradient id="careSparkStroke" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stop-color="#93C5FD" />
-                  <stop offset="100%" stop-color="#6EE7B7" />
-                </linearGradient>
-              </defs>
               <path
                 class="care-spark-line"
                 :d="careGoalCard.sparkLine"
-                stroke="url(#careSparkStroke)"
+              />
+              <circle
+                class="care-spark-tip"
+                :cx="careGoalCard.sparkTipX"
+                :cy="careGoalCard.sparkTipY"
+                r="2.4"
               />
             </svg>
           </div>
@@ -2860,7 +2861,8 @@ async function offerScience() {
   padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
 }
 .home.has-assess {
-  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  /* 悬浮「初步评估」条 + 底栏呼吸距，保证档案三卡滑到底完整可见 */
+  padding-bottom: calc(145px + env(safe-area-inset-bottom, 0px));
 }
 .home::before {
   content: "";
@@ -3252,14 +3254,19 @@ async function offerScience() {
   margin-right: 2px;
   margin-left: 6px;
   align-self: flex-start;
-  /* 底纹装饰，不抢中间大数字焦点 */
-  opacity: 0.48;
+  opacity: 1;
 }
 .care-spark-line {
   fill: none;
-  stroke-width: 1.5;
+  stroke: #10B981;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+.care-spark-tip {
+  fill: #10B981;
+  stroke: #fff;
+  stroke-width: 1.2;
 }
 
 .l2hd .todo-count {
@@ -3579,16 +3586,60 @@ async function offerScience() {
 }
 .l1-brand .name em { color: #1677FF; }
 .l1-brand-actions {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.patient-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 148px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+  font-family: inherit;
+  cursor: pointer;
+  color: #334155;
+  box-sizing: border-box;
+}
+.patient-capsule .pc-nm {
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.patient-capsule .pc-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: #ecfdf5;
+  color: #047857;
+}
+.patient-capsule .pc-chev {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: #94a3b8;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .l1-iconbtn {
   position: relative;
   width: 32px; height: 32px;
   border: 0; border-radius: 50%;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.88);
   color: #1A1A1A;
   display: grid; place-items: center;
   padding: 0; cursor: pointer;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
 }
 .l1-iconbtn .ic { width: 18px; height: 18px; }
 .l1-bell .dot {
@@ -3602,7 +3653,8 @@ async function offerScience() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 0;
+  text-align: left;
 }
 .l1-soft .avatar {
   position: relative;
@@ -3632,12 +3684,20 @@ async function offerScience() {
   box-sizing: border-box;
   z-index: 1;
 }
+.l1-soft .mid {
+  flex: 1;
+  min-width: 0;
+  margin-left: 12px;
+  padding-right: 10px;
+  text-align: left;
+}
 .l1-soft .nm {
-  margin-bottom: 2px;
+  margin-bottom: 0;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
   min-width: 0;
 }
 .l1-soft .nm b {
@@ -3647,48 +3707,47 @@ async function offerScience() {
   letter-spacing: -0.02em;
   white-space: nowrap;
   line-height: 1.2;
+  flex: none;
 }
-.l1-soft .role-line {
-  font-size: 12px;
-  font-weight: 500;
-  color: #8C8C8C;
-  line-height: 1.2;
+.l1-soft .role-tag {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #E8FFEA;
+  color: #00B42A;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
   white-space: nowrap;
 }
+.l1-soft .role-line,
 .l1-soft .dot-sep,
 .l1-soft .role-inline { display: none; }
-.role-tag { display: none; }
-.l1-soft .mid {
-  flex: 1;
-  min-width: 0;
-  padding-right: 4px;
-}
 .l1-soft .l1sub {
   gap: 4px;
-  margin-top: 4px;
+  margin-top: 6px;
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
   min-width: 0;
 }
-/* 在线态：头像角标已表意，文字侧不再放绿点 */
 .l1-soft .st {
   font-size: 12px;
   font-weight: 600;
-  color: #8C8C8C;
+  color: #86909C;
 }
 .l1-soft .st i { display: none; }
 .l1-soft .st.unread { color: #ff4d4f; }
-.l1-soft .sep { color: #BFBFBF; font-size: 12px; }
+.l1-soft .sep { color: #C9CDD4; font-size: 12px; }
 .l1-soft .say {
   font-size: 12px;
   font-weight: 500;
-  color: #8C8C8C;
+  color: #86909C;
   min-width: 0;
-}
-.l1-soft .say-online {
-  color: #00B578;
-  font-weight: 600;
+  line-height: 1.3;
 }
 .l1-soft .act {
   background: #fff;
