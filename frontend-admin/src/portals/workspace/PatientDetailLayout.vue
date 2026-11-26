@@ -16,7 +16,7 @@ import ChangeCareTeamDialog from './ChangeCareTeamDialog.vue'
 import AssessmentRulesDrawer from '../../shared/AssessmentRulesDrawer.vue'
 import { assessmentTick, type AssessmentSnapshot } from '../../shared/assessment'
 import { allergyTick } from '../../shared/allergy'
-import { getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
+import { calcBmi, getIntakeStatus, type IntakeStatusView } from '../../shared/intake'
 import { subscribePatientCrossTab } from '../../shared/patient-cross-tab'
 import {
   clearPatientDetailCrumb,
@@ -207,6 +207,57 @@ const NAV_ITEMS = [
 ] as const
 
 type NavName = (typeof NAV_ITEMS)[number]['name'] | 'chat'
+
+/** Tab 未读/待办角标（有值才渲染） */
+const navBadges = ref<Partial<Record<NavName, number>>>({})
+
+function formatNavBadge(n: number) {
+  if (n <= 0) return ''
+  return n > 99 ? '99+' : String(n)
+}
+
+async function loadNavBadges() {
+  if (!peopleId.value) {
+    navBadges.value = {}
+    return
+  }
+  const next: Partial<Record<NavName, number>> = {}
+  const intakePending = intakeStatus.value?.pendingCount || 0
+  if (intakePending > 0) next.archive = intakePending
+
+  try {
+    const [fuRes, labRes] = await Promise.allSettled([
+      api<{ data: Array<{ status?: string }> }>(
+        `/api/b/v1/patients/${peopleId.value}/followups?limit=100`,
+      ),
+      api<{ data: Array<{ source?: string; reportedAt?: string; sampledAt?: string }> }>(
+        `/api/b/v1/patients/${peopleId.value}/lab-reports`,
+      ),
+    ])
+    if (fuRes.status === 'fulfilled') {
+      const open = (fuRes.value.data || []).filter((r) => {
+        const s = String(r.status || '').toUpperCase()
+        return s === 'OPEN' || s === 'PLANNED' || s === 'OVERDUE'
+      }).length
+      if (open > 0) next.followups = open
+    }
+    if (labRes.status === 'fulfilled') {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+      const recentUserLabs = (labRes.value.data || []).filter((r) => {
+        const src = String(r.source || '').toUpperCase()
+        if (!/USER|CLIENT|PATIENT|C_END|PORTAL/.test(src)) return false
+        const at = r.reportedAt || r.sampledAt
+        if (!at) return true
+        const t = new Date(at).getTime()
+        return !Number.isNaN(t) && t >= cutoff
+      }).length
+      if (recentUserLabs > 0) next.observations = recentUserLabs
+    }
+  } catch {
+    /* 角标为增强信息，失败不影响主流程 */
+  }
+  navBadges.value = next
+}
 const embeddedTab = ref<NavName>('persona')
 
 const activeTab = computed<NavName>(() => {
@@ -261,6 +312,8 @@ interface MetricSparkCard {
   hint: string
   latestAt?: string
   tone: 'good' | 'fair' | 'poor' | 'empty'
+  /** 异常态小徽标文案（如 异常 / 偏高 / 超重 / 肥胖） */
+  statusLabel?: string
   points: Array<number | null>
   categories?: string[]
   series?: MetricSparklineSeries[]
@@ -360,6 +413,44 @@ const completenessTone = computed(() => {
 const completenessHint = computed(() => {
   if (!completeness.value) return '档案字段'
   return `已填 ${completeness.value.filledCount}/${completeness.value.totalCount}`
+})
+
+/** 迷你进度卡：61% · 11/18项 */
+const completenessMiniValue = computed(() => {
+  const c = completeness.value
+  if (!c) return '—'
+  return `${c.percent}% · ${c.filledCount}/${c.totalCount}项`
+})
+
+/** 方案迷你卡：未激活 / 执行百分比 + 右侧快捷文案（依赖下方 planExecution） */
+const planMiniCard = computed(() => {
+  const a = adherence.value
+  if (!a || a.hasActivePlan !== true) {
+    return {
+      active: false,
+      title: '方案未激活',
+      action: '去制定',
+      percent: 0,
+      tone: 'inactive' as const,
+    }
+  }
+  const pe = planExecution.value
+  if (pe.percent != null) {
+    return {
+      active: true,
+      title: `方案执行 ${pe.percent}%`,
+      action: pe.value && pe.value !== '执行正常' ? pe.value : pe.hint || '查看依从',
+      percent: Math.max(0, Math.min(100, pe.percent)),
+      tone: pe.tone,
+    }
+  }
+  return {
+    active: true,
+    title: pe.value || '方案执行',
+    action: pe.hint || '查看依从',
+    percent: 0,
+    tone: pe.tone,
+  }
 })
 
 type EvalTone = 'danger' | 'warning' | 'success' | 'info' | 'muted'
@@ -652,30 +743,84 @@ const heroTrendCards = computed<MetricSparkCard[]>(() => {
   const dia = findSlot('BLOOD_PRESSURE_DIA', 'BP_DIA')
   const glucose = findSlot('BLOOD_GLUCOSE', 'GLUCOSE')
   const weight = findSlot('WEIGHT')
+  const height = findSlot('HEIGHT')
 
   const bpSysV = sys?.value ?? (sys?.extra?.sys != null ? Number(sys.extra.sys) : null)
   const bpDiaV = dia?.value ?? (sys?.extra?.dia != null ? Number(sys.extra.dia) : null)
   let bpDisplay = '暂无'
   let bpTone: MetricSparkCard['tone'] = 'empty'
+  let bpStatusLabel = ''
   if (bpSysV != null && bpDiaV != null) {
     bpDisplay = `${bpSysV}/${bpDiaV}`
-    if (bpSysV >= 140 || bpDiaV >= 90) bpTone = 'poor'
-    else if (bpSysV >= 130 || bpDiaV >= 85) bpTone = 'fair'
-    else bpTone = 'good'
+    if (bpSysV >= 140 || bpDiaV >= 90) {
+      bpTone = 'poor'
+      bpStatusLabel = '异常'
+    } else if (bpSysV >= 130 || bpDiaV >= 85) {
+      bpTone = 'fair'
+      bpStatusLabel = '偏高'
+    } else bpTone = 'good'
   } else if (bpSysV != null) {
     bpDisplay = String(bpSysV)
-    bpTone = bpSysV >= 140 ? 'poor' : bpSysV >= 130 ? 'fair' : 'good'
+    if (bpSysV >= 140) {
+      bpTone = 'poor'
+      bpStatusLabel = '异常'
+    } else if (bpSysV >= 130) {
+      bpTone = 'fair'
+      bpStatusLabel = '偏高'
+    } else bpTone = 'good'
   }
 
   const gluV = glucose?.value == null ? null : Number(glucose.value)
   let gluTone: MetricSparkCard['tone'] = 'empty'
+  let gluStatusLabel = ''
   if (gluV != null) {
-    if (gluV >= 11.1 || gluV < 3.9) gluTone = 'poor'
-    else if (gluV >= 7.0) gluTone = 'fair'
-    else gluTone = 'good'
+    if (gluV >= 11.1 || gluV < 3.9) {
+      gluTone = 'poor'
+      gluStatusLabel = '异常'
+    } else if (gluV >= 7.0) {
+      gluTone = 'fair'
+      gluStatusLabel = '偏高'
+    } else gluTone = 'good'
   }
 
   const wtV = weight?.value == null ? null : Number(weight.value)
+  const htV = height?.value == null ? null : Number(height.value)
+  const bmi = calcBmi(htV, wtV)
+  let wtTone: MetricSparkCard['tone'] = wtV == null ? 'empty' : 'good'
+  let wtStatusLabel = ''
+  /** 中国成人 BMI 正常对应体重带（有身高时）；无身高时用常见健康参考带保视觉对称 */
+  let wtNormalRange: { min: number; max: number } | null = null
+  if (htV != null && htV > 0) {
+    const m = htV / 100
+    const lo = Math.round(18.5 * m * m * 10) / 10
+    const hi = Math.round(23.9 * m * m * 10) / 10
+    wtNormalRange = { min: lo, max: hi }
+  } else if (wtV != null) {
+    wtNormalRange = { min: 50, max: 75 }
+  }
+  if (bmi != null) {
+    if (bmi >= 28) {
+      wtTone = 'poor'
+      wtStatusLabel = '肥胖'
+    } else if (bmi >= 24) {
+      wtTone = 'fair'
+      wtStatusLabel = '超重'
+    } else if (bmi < 18.5) {
+      wtTone = 'fair'
+      wtStatusLabel = '偏瘦'
+    } else {
+      wtTone = 'good'
+    }
+  } else if (wtV != null) {
+    // 无身高时用粗阈值兜底，避免 100kg 等明显超标仍显示「正常」绿态
+    if (wtV >= 100) {
+      wtTone = 'poor'
+      wtStatusLabel = '肥胖'
+    } else if (wtV >= 85) {
+      wtTone = 'fair'
+      wtStatusLabel = '超重'
+    }
+  }
   const bpAt = sys?.recordedAt || dia?.recordedAt
 
   const sysRaw = injectLatestPoint(
@@ -736,6 +881,7 @@ const heroTrendCards = computed<MetricSparkCard[]>(() => {
       hint: formatSlotTime(bpAt) || '近7日 mmHg',
       latestAt: formatFreshAt(bpAt),
       tone: bpTone,
+      statusLabel: bpStatusLabel,
       points: sysRaw.values,
       categories: cats,
       unit: 'mmHg',
@@ -765,6 +911,7 @@ const heroTrendCards = computed<MetricSparkCard[]>(() => {
       hint: formatSlotTime(glucose?.recordedAt) || '近7日 mmol/L',
       latestAt: formatFreshAt(glucose?.recordedAt),
       tone: gluTone,
+      statusLabel: gluStatusLabel,
       points: gluRaw.values,
       categories: cats,
       unit: 'mmol/L',
@@ -786,18 +933,24 @@ const heroTrendCards = computed<MetricSparkCard[]>(() => {
       display: wtV == null ? '暂无' : String(wtV),
       hint: formatSlotTime(weight?.recordedAt) || '近7日 kg',
       latestAt: formatFreshAt(weight?.recordedAt),
-      tone: wtV == null ? 'empty' : 'good',
+      tone: wtTone,
+      statusLabel: wtStatusLabel,
       points: wtRaw.values,
       categories: cats,
       unit: 'kg',
       precision: 1,
-      normalRange: null,
+      normalRange: wtNormalRange,
       series: [
         {
           name: '体重',
           data: wtRaw.values,
           times: wtRaw.times,
-          color: palette.success600,
+          color:
+            wtTone === 'poor'
+              ? palette.rose700
+              : wtTone === 'fair'
+                ? palette.amber700
+                : palette.success600,
           area: false,
         },
       ],
@@ -1071,6 +1224,7 @@ watch(
       loadIntakeStatus(),
       loadChatUnread(),
     ])
+    await loadNavBadges()
   },
   { immediate: false },
 )
@@ -1094,6 +1248,14 @@ async function loadIntakeStatus() {
     intakeStatus.value = null
   }
 }
+
+watch(intakeStatus, () => {
+  const pending = intakeStatus.value?.pendingCount || 0
+  const cur = { ...navBadges.value }
+  if (pending > 0) cur.archive = pending
+  else delete cur.archive
+  navBadges.value = cur
+})
 
 /** 其他标签页完成首诊后刷新头图状态 */
 async function refreshAfterExternalIntake() {
@@ -1385,58 +1547,37 @@ onBeforeUnmount(() => {
           </template>
           <p v-else class="eval-empty">暂无评估数据</p>
 
-          <div class="hero-ops">
-            <div class="eval-row">
-              <div class="eval-label archive" title="档案字段完整度">档案完整度</div>
-              <div class="eval-tags">
-                <button
-                  type="button"
-                  class="eval-stat"
-                  :class="completenessTone"
-                  @click="onNavClick('archive')"
-                >
-                  <strong class="eval-stat-val">
-                    {{ completeness ? completenessPercent : '—' }}<small v-if="completeness">%</small>
-                  </strong>
-                  <span class="eval-stat-hint">{{ completenessHint }}</span>
-                  <span class="eval-stat-bar" aria-hidden="true">
-                    <i :style="{ width: `${completenessPercent}%` }" />
-                  </span>
-                </button>
+          <div class="hero-ops-mini" aria-label="建档与方案进度">
+            <button
+              type="button"
+              class="ops-mini-card ops-mini-card--archive"
+              :class="`is-${completenessTone}`"
+              title="档案字段完整度"
+              @click="onNavClick('archive')"
+            >
+              <div class="ops-mini-row">
+                <span class="ops-mini-label">建档完整度</span>
+                <strong class="ops-mini-value ops-mini-value--archive">{{ completenessMiniValue }}</strong>
               </div>
-            </div>
-            <div class="eval-row">
-              <div class="eval-label plan" title="方案执行与近7日依从">方案执行</div>
-              <div class="eval-tags">
-                <button
-                  type="button"
-                  class="eval-stat eval-stat--stack"
-                  :class="planExecution.tone"
-                  :title="planExecution.title"
-                  @click="onNavClick('adherence')"
-                >
-                  <span class="eval-stat-main">
-                    <strong class="eval-stat-val">{{ planExecution.value }}</strong>
-                    <span v-if="planExecution.hint" class="eval-stat-hint">{{ planExecution.hint }}</span>
-                    <span
-                      v-if="planExecution.percent != null"
-                      class="eval-stat-rate"
-                    >
-                      <template v-if="planExecution.hint">·</template>
-                      {{ planExecution.rateLabel }}
-                      <em class="eval-stat-pct">{{ planExecution.percent }}%</em>
-                    </span>
-                  </span>
-                  <span
-                    v-if="planExecution.percent != null"
-                    class="eval-stat-bar"
-                    aria-hidden="true"
-                  >
-                    <i :style="{ width: `${Math.max(0, Math.min(100, planExecution.percent))}%` }" />
-                  </span>
-                </button>
+              <span class="ops-mini-bar" aria-hidden="true">
+                <i :style="{ width: `${completenessPercent}%` }" />
+              </span>
+            </button>
+            <button
+              type="button"
+              class="ops-mini-card ops-mini-card--plan"
+              :class="planMiniCard.active ? `is-${planMiniCard.tone}` : 'is-inactive'"
+              :title="planExecution.title || '方案执行'"
+              @click="onNavClick(planMiniCard.active ? 'adherence' : 'care-plan')"
+            >
+              <div class="ops-mini-row">
+                <span class="ops-mini-label">{{ planMiniCard.title }}</span>
+                <span class="ops-mini-action">{{ planMiniCard.action }}</span>
               </div>
-            </div>
+              <span class="ops-mini-bar" aria-hidden="true">
+                <i :style="{ width: `${planMiniCard.percent}%` }" />
+              </span>
+            </button>
           </div>
         </div>
 
@@ -1463,6 +1604,13 @@ onBeforeUnmount(() => {
                   <span class="trend-card-value-left">
                     <strong class="trend-card-val">{{ card.display }}</strong>
                     <span v-if="card.unit && card.display !== '暂无'" class="trend-card-unit">{{ card.unit }}</span>
+                    <span
+                      v-if="card.statusLabel"
+                      class="trend-status-badge"
+                      :class="`is-${card.tone}`"
+                    >
+                      {{ card.statusLabel }}
+                    </span>
                   </span>
                   <span v-if="card.latestAt" class="trend-card-fresh">{{ card.latestAt }}</span>
                   <span v-else class="trend-card-fresh">近7日暂无</span>
@@ -1502,7 +1650,14 @@ onBeforeUnmount(() => {
         :class="{ active: activeTab === item.name }"
         @click="onNavClick(item.name)"
       >
-        {{ item.label }}
+        <span class="pill-label">{{ item.label }}</span>
+        <span
+          v-if="navBadges[item.name]"
+          class="pill-badge"
+          :title="`${formatNavBadge(navBadges[item.name]!)} 项待办`"
+        >
+          {{ formatNavBadge(navBadges[item.name]!) }}
+        </span>
       </button>
     </nav>
     </div>
@@ -1596,8 +1751,8 @@ onBeforeUnmount(() => {
   min-height: auto;
   max-width: 100%;
   overflow: visible;
-  /* 与 patient-hero / pill-nav 左右边距对齐 */
-  padding: 8px 16px 24px;
+  /* 与 patient-hero / pill-nav 左右边距对齐；底部安全留白防图表截断 */
+  padding: 8px 16px 40px;
   background: transparent;
 }
 
@@ -1775,7 +1930,9 @@ onBeforeUnmount(() => {
 }
 
 .hero-band.has-trends {
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+  grid-template-columns: minmax(0, 44fr) minmax(0, 54fr);
+  column-gap: 2%;
+  align-items: stretch;
 }
 
 .hero-col {
@@ -1790,14 +1947,13 @@ onBeforeUnmount(() => {
 .hero-col--tags {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
+  align-self: stretch;
 }
 
-.hero-col--tags .hero-ops {
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 0 solid var(--ink-100, var(--ink-125));
+.hero-col--tags .hero-ops-mini {
+  margin-top: 8px;
 }
 
 .hero-col--metrics {
@@ -1820,9 +1976,13 @@ onBeforeUnmount(() => {
 }
 
 .hero-col--tags .eval-label {
+  display: inline-flex;
+  width: 120px;
+  min-width: 120px;
   flex-shrink: 0;
   padding-top: 4px;
   white-space: nowrap;
+  box-sizing: border-box;
 }
 
 .hero-col--tags .eval-tags {
@@ -1831,20 +1991,158 @@ onBeforeUnmount(() => {
   flex-wrap: nowrap;
 }
 
-.hero-col--tags .eval-stat,
-.hero-col--tags .eval-stat--stack {
+.hero-ops-mini {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
   width: 100%;
-  max-width: 100%;
+  min-width: 0;
 }
 
-.hero-col--tags .eval-stat-main {
-  flex-wrap: nowrap;
-}
-
-.hero-ops {
+.ops-mini-card {
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--white);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ops-mini-card:hover {
+  box-shadow: 0 2px 8px -4px var(--ink-a18);
+}
+
+.ops-mini-card--archive {
+  background: #fffbf0;
+  border-color: #ffe8b3;
+}
+
+.ops-mini-card--plan.is-inactive {
+  background: #fff7f6;
+  border-color: #ffccc7;
+}
+
+.ops-mini-card--plan.is-good,
+.ops-mini-card--plan.is-empty {
+  background: #f3fbf8;
+  border-color: #b7e4d5;
+}
+
+.ops-mini-card--plan.is-fair {
+  background: #f5f9ff;
+  border-color: #c7dbff;
+}
+
+.ops-mini-card--plan.is-poor {
+  background: #fff7f6;
+  border-color: #ffccc7;
+}
+
+.ops-mini-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 6px;
+  min-width: 0;
+}
+
+.ops-mini-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4e5969;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.ops-mini-value {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ops-mini-value--archive {
+  color: #ff8f1f;
+}
+
+.ops-mini-action {
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #86909c;
+  line-height: 1.3;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ops-mini-card--plan.is-inactive .ops-mini-action {
+  color: #f53f3f;
+}
+
+.ops-mini-card--plan.is-good .ops-mini-action,
+.ops-mini-card--plan.is-empty .ops-mini-action {
+  color: #0f766e;
+}
+
+.ops-mini-card--plan.is-fair .ops-mini-action {
+  color: #3b82f6;
+}
+
+.ops-mini-card--plan.is-poor .ops-mini-action {
+  color: #f53f3f;
+}
+
+.ops-mini-bar {
+  display: block;
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: #f2f3f5;
+  overflow: hidden;
+}
+
+.ops-mini-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #ff8f1f;
+  transition: width 0.2s ease;
+}
+
+.ops-mini-card--plan.is-inactive .ops-mini-bar i {
+  background: #f98981;
+}
+
+.ops-mini-card--plan.is-good .ops-mini-bar i,
+.ops-mini-card--plan.is-empty .ops-mini-bar i {
+  background: #14b8a6;
+}
+
+.ops-mini-card--plan.is-fair .ops-mini-bar i {
+  background: #3b82f6;
+}
+
+.ops-mini-card--plan.is-poor .ops-mini-bar i {
+  background: #f53f3f;
 }
 
 .hero-phone {
@@ -2011,12 +2309,12 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
   max-width: 100%;
   width: 100%;
-  height: 132px;
-  padding: 10px 10px 8px 12px;
+  height: 124px;
+  padding: 8px 8px 6px 10px;
   border-radius: 8px;
   border: 1px solid var(--ink-200);
   background-color: var(--white);
@@ -2105,7 +2403,7 @@ onBeforeUnmount(() => {
 }
 
 .trend-card-val {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 750;
   color: var(--ink-900);
   font-variant-numeric: tabular-nums;
@@ -2117,6 +2415,29 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 500;
   color: var(--ink-400);
+}
+
+.trend-status-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.trend-status-badge.is-poor {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.trend-status-badge.is-fair {
+  color: #c2410c;
+  background: #fff7ed;
 }
 
 .trend-card.is-good .trend-card-val { color: var(--success-600); }
@@ -2157,10 +2478,14 @@ onBeforeUnmount(() => {
 }
 
 .hero-col .eval-label {
-  min-width: 64px;
+  display: inline-flex;
+  width: 120px;
+  min-width: 120px;
+  flex-shrink: 0;
   padding-top: 4px;
   color: var(--ink-600);
   font-size: 12px;
+  box-sizing: border-box;
 }
 
 .hero-col .eval-label::before {
@@ -2430,13 +2755,15 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  width: 120px;
+  min-width: 120px;
   flex-shrink: 0;
-  min-width: 64px;
   padding-top: 4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-500);
   line-height: 1.4;
+  box-sizing: border-box;
 }
 
 .eval-label.alert {
@@ -2712,6 +3039,10 @@ onBeforeUnmount(() => {
 }
 
 .pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 40px;
   padding: 0 12px;
   border-radius: 0;
@@ -2723,6 +3054,26 @@ onBeforeUnmount(() => {
   font-weight: 600;
   cursor: pointer;
   transition: color 140ms ease, border-color 140ms ease;
+}
+
+.pill-label {
+  line-height: 1;
+}
+
+.pill-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ff7d00;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .pill:hover {

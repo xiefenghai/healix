@@ -158,6 +158,10 @@ const DRINKING_FREQ: Record<string, string> = {
   NONE: '基本不喝',
   OCCASIONAL: '偶尔',
   WEEKLY: '每周',
+  WEEKLY_1: '每周1~2次',
+  WEEKLY_1_2: '每周1~2次',
+  WEEKLY_3: '每周3次以上',
+  WEEKLY_3_PLUS: '每周3次以上',
   DAILY: '每天',
 }
 
@@ -341,16 +345,36 @@ function smokingText(smoking: ReturnType<typeof normalizeLifestyle>['smoking']) 
   return bits.join(' · ')
 }
 
+const LIFESTYLE_ENUM_LABEL: Record<string, string> = {
+  ...SMOKING_STATUS,
+  ...DRINKING_STATUS,
+  ...DRINKING_FREQ,
+}
+
+function localizeLifestyleToken(raw: string): string {
+  const t = String(raw || '').trim()
+  if (!t) return ''
+  return LIFESTYLE_ENUM_LABEL[t] || LIFESTYLE_ENUM_LABEL[t.toUpperCase()] || t
+}
+
+/** 把文案里残留的英文枚举（如 WEEKLY_1_2）整词替换为中文 */
+function scrubLifestyleEnums(text: string): string {
+  return String(text || '').replace(
+    /\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b/g,
+    (code) => LIFESTYLE_ENUM_LABEL[code] || code,
+  )
+}
+
 function drinkingText(drinking: ReturnType<typeof normalizeLifestyle>['drinking']) {
-  const status = DRINKING_STATUS[drinking.status] || drinking.status
+  const status = localizeLifestyleToken(drinking.status)
   if (!status) return ''
   const bits: string[] = [status]
-  const freq = DRINKING_FREQ[drinking.frequency] || drinking.frequency
+  const freq = localizeLifestyleToken(drinking.frequency)
   if (freq) bits.push(freq)
-  if (drinking.type?.trim()) bits.push(drinking.type.trim())
-  if (drinking.amountPerDay?.trim()) bits.push(drinking.amountPerDay.trim())
-  if (drinking.note?.trim()) bits.push(drinking.note.trim())
-  return bits.join(' · ')
+  if (drinking.type?.trim()) bits.push(scrubLifestyleEnums(drinking.type.trim()))
+  if (drinking.amountPerDay?.trim()) bits.push(scrubLifestyleEnums(drinking.amountPerDay.trim()))
+  if (drinking.note?.trim()) bits.push(scrubLifestyleEnums(drinking.note.trim()))
+  return scrubLifestyleEnums(bits.join(' · '))
 }
 
 function splitLines(text: string, max = 4): string[] {
@@ -368,6 +392,8 @@ export function usePersonaHealthSnapshot(peopleId: Ref<string> | ComputedRef<str
   const bpCategories = ref<string[]>([])
   const bpSeries = ref<MetricSparklineSeries[]>([])
   const bpHasData = ref(false)
+  /** 最新体重 kg，供画像「基本资料」展示 */
+  const latestWeightKg = ref<number | null>(null)
 
   const activeMeds = ref<MedPreview[]>([])
   const stoppedMedCount = ref(0)
@@ -503,6 +529,11 @@ export function usePersonaHealthSnapshot(peopleId: Ref<string> | ComputedRef<str
       ]
       bpHasData.value =
         sysRaw.values.some((v) => v != null) || diaRaw.values.some((v) => v != null)
+
+      const weightSlot = findSlot(latestSlots, 'WEIGHT')
+      const wtNum = weightSlot?.value == null ? null : Number(weightSlot.value)
+      latestWeightKg.value =
+        wtNum != null && Number.isFinite(wtNum) && wtNum > 0 ? wtNum : null
 
       // —— 用药 ——
       activeMeds.value = activeRows.map(mapMed)
@@ -699,6 +730,7 @@ export function usePersonaHealthSnapshot(peopleId: Ref<string> | ComputedRef<str
     bpCategories.value = []
     bpSeries.value = []
     bpHasData.value = false
+    latestWeightKg.value = null
     activeMeds.value = []
     stoppedMedCount.value = 0
     historyFields.value = []
@@ -721,6 +753,7 @@ export function usePersonaHealthSnapshot(peopleId: Ref<string> | ComputedRef<str
     bpCategories,
     bpSeries,
     bpHasData,
+    latestWeightKg,
     activeMeds,
     stoppedMedCount,
     medSub,

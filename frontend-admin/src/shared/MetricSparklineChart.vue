@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import {
@@ -191,7 +191,8 @@ function render() {
           ? {
               left: 12,
               right: 16,
-              top: multi ? 28 : 16,
+              // panel 图例外置（卡片头图例），顶部不必再为 legend 留白
+              top: 12,
               bottom: 28,
               containLabel: true,
             }
@@ -202,17 +203,18 @@ function render() {
               bottom: compact ? 18 : 22,
               containLabel: false,
             },
-      legend: multi && !spark
+      // panel 模式由外层 HTML 图例承接，避免与均值文案叠在右上角
+      legend: multi && !spark && !panel
         ? {
             top: 0,
             right: 0,
-            itemWidth: compact || panel ? 8 : 10,
-            itemHeight: compact || panel ? 4 : 6,
-            itemGap: compact || panel ? 8 : 10,
+            itemWidth: compact ? 8 : 10,
+            itemHeight: compact ? 4 : 6,
+            itemGap: compact ? 8 : 10,
             icon: 'circle',
             textStyle: {
               color: '#64748b',
-              fontSize: compact || panel ? 10 : 11,
+              fontSize: compact ? 10 : 11,
             },
           }
         : { show: false },
@@ -483,11 +485,17 @@ function render() {
     },
     true,
   )
+  void nextTick(() => {
+    chart?.resize()
+  })
 }
 
 onMounted(() => {
   render()
   observe(elRef.value)
+  void nextTick(() => {
+    chart?.resize()
+  })
 })
 
 watch(
@@ -548,7 +556,7 @@ onBeforeUnmount(() => {
 
 .metric-sparkline-chart.is-panel {
   height: 220px;
-  min-height: 200px;
+  min-height: 220px;
 }
 </style>
 

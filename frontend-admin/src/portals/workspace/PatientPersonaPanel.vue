@@ -28,6 +28,7 @@ const {
   bpCategories,
   bpSeries,
   bpHasData,
+  latestWeightKg,
   activeMeds,
   medSub,
   historyFields,
@@ -93,7 +94,7 @@ const isOlderThan3Days = computed(() => {
 /** 超 3 天且有新增临床数据 → 建议更新（标签 + 按钮呼吸） */
 const suggestAgeUpdate = computed(() => isOlderThan3Days.value && dimensionsStale.value)
 
-/** 叙事全文：仅高亮短医学指标（血压/带单位数值/短小数），禁止整句黄底 */
+/** 叙事全文：高亮短医学指标与关键风险词，禁止整句黄底 */
 function escapeHtml(s: string) {
   return s
     .replace(/&/g, '&amp;')
@@ -102,18 +103,112 @@ function escapeHtml(s: string) {
     .replace(/"/g, '&quot;')
 }
 
-/** 仅短指标：血压、带单位数值、一位小数（如 BMI 28.7）；不碰「近7日…」长句 / 裸 % / 关键词 */
+const NARRATIVE_RISK_WORDS = [
+  '2型糖尿病',
+  '糖尿病前期',
+  '糖尿病',
+  '高血压',
+  '高血脂',
+  '肥胖',
+  '超重',
+  '吸烟',
+  '抽烟',
+  '饮酒',
+  '喝酒',
+  '外卖',
+  '应酬',
+  '偏咸',
+  '久坐',
+  '失眠',
+  '高危',
+  '极高危',
+  '中危',
+]
+
+/** 短指标 + 疾病/生活风险词浅底加粗（跳过已包裹片段，避免长短词嵌套） */
 function highlightNarrative(raw: string | null | undefined): string {
   if (!raw) return ''
   const wrap = (m: string) =>
     m.length > 16 ? m : `<strong class="narrative-em">${m}</strong>`
-  return escapeHtml(raw)
+  let html = escapeHtml(raw)
     .replace(/\d{2,3}\s*\/\s*\d{2,3}(?:\s*mmHg)?/g, wrap)
     .replace(/\d+(?:\.\d+)?\s*(?:mmol\/L|mg\/dL|mmHg|kg\/m²|kg\/m2|bpm)/gi, wrap)
     .replace(/(^|[^\d.])(\d{1,2}\.\d)(?!\d)/g, (_m, pre: string, n: string) => `${pre}${wrap(n)}`)
+
+  let out = ''
+  let i = 0
+  while (i < html.length) {
+    if (html.startsWith('<strong', i)) {
+      const end = html.indexOf('</strong>', i)
+      if (end < 0) {
+        out += html.slice(i)
+        break
+      }
+      out += html.slice(i, end + 9)
+      i = end + 9
+      continue
+    }
+    let hit = ''
+    for (const word of NARRATIVE_RISK_WORDS) {
+      if (html.startsWith(word, i) && word.length > hit.length) hit = word
+    }
+    if (hit) {
+      out += wrap(hit)
+      i += hit.length
+      continue
+    }
+    out += html[i]
+    i += 1
+  }
+  return out
 }
 
-const narrativeHtml = computed(() => highlightNarrative(view.value?.narrative?.narrative))
+/** 按语义拆成两段：诊断与体征 / 生活习惯与管理重点 */
+function splitNarrativeParagraphs(raw: string | null | undefined): string[] {
+  const text = String(raw || '').trim()
+  if (!text) return []
+  const parts = text
+    .split(/(?<=[。！？；])\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (parts.length <= 1) return [text]
+  const clinicalRe = /诊|血压|血糖|BMI|体重|分层|患病|过敏|指标|收缩|舒张|超标|偏高|偏低/
+  const lifestyleRe = /生活|饮食|运动|烟|酒|睡眠|管理|方案|依从|习惯|外卖|应酬|心理|情绪|准备/
+  const clinical: string[] = []
+  const lifestyle: string[] = []
+  for (const p of parts) {
+    const c = clinicalRe.test(p)
+    const l = lifestyleRe.test(p)
+    if (c && !l) clinical.push(p)
+    else if (l && !c) lifestyle.push(p)
+    else if (clinical.length <= lifestyle.length) clinical.push(p)
+    else lifestyle.push(p)
+  }
+  if (!clinical.length || !lifestyle.length) {
+    const mid = Math.ceil(parts.length / 2)
+    return [parts.slice(0, mid).join(''), parts.slice(mid).join('')].filter(Boolean)
+  }
+  return [clinical.join(''), lifestyle.join('')].filter(Boolean)
+}
+
+const narrativeParagraphs = computed(() =>
+  splitNarrativeParagraphs(view.value?.narrative?.narrative).map(highlightNarrative),
+)
+
+/** 近 14 日血压均值，供卡片头与图例分列展示 */
+const bpAverages = computed(() => {
+  const avg = (data: Array<number | null | undefined>) => {
+    const nums = data.filter((v): v is number => v != null && !Number.isNaN(Number(v))).map(Number)
+    if (!nums.length) return null
+    return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length)
+  }
+  const sys = avg(bpSeries.value[0]?.data || [])
+  const dia = avg(bpSeries.value[1]?.data || [])
+  if (sys == null && dia == null) return ''
+  if (sys != null && dia != null) return `均值 ${sys}/${dia}`
+  if (sys != null) return `收缩压均值 ${sys}`
+  return `舒张压均值 ${dia}`
+})
 
 /** 分层文案统一成「…分层」，供健康风险列表展示 */
 function formatRiskLayer(row: Record<string, unknown>): string {
@@ -204,6 +299,13 @@ type DimRow = {
   tone?: 'danger' | 'warn' | 'accent' | 'muted'
   /** 病种等胶囊标签；有值时优先渲染 chips */
   chips?: string[]
+  /** 生活习惯等：以浅暖橙胶囊展示，替代纯红文字 */
+  capsule?: boolean
+}
+
+type ChipGroup = {
+  prefix: string
+  chips: DimRow[]
 }
 type DimBlock = {
   key: string
@@ -250,12 +352,6 @@ const GOAL_MODE_LABELS: Record<string, string> = {
   MAINTAIN: '维持',
   WEIGHT_LOSS: '减重',
   WEIGHT_GAIN: '增重',
-}
-
-const RISK_CATEGORY_LABELS: Record<string, string> = {
-  RISK: '患病风险',
-  SEVERITY: '严重分层',
-  SUSPECTED: '疑似患病',
 }
 
 /** 与 AssessmentTier 对齐：HIGH / MID / LOW / VERY_HIGH */
@@ -401,12 +497,12 @@ function dedupeRiskTagRows(raw: unknown): Array<Record<string, unknown>> {
 
 type PersonaLayout = {
   primary: DimBlock[]
-  coreChips: DimRow[]
+  chipGroups: ChipGroup[]
 }
 
 const emptyLayout = (): PersonaLayout => ({
   primary: [],
-  coreChips: [],
+  chipGroups: [],
 })
 
 const dimBlocks = computed((): PersonaLayout => {
@@ -420,31 +516,24 @@ const dimBlocks = computed((): PersonaLayout => {
   const behavior = d.behavior || {}
 
   const tags = dedupeRiskTagRows(risk.tags)
-  const riskRows: DimRow[] = tags.length
-    ? tags.map((t) => {
-        const row = t as Record<string, unknown>
-        const disease = codeLabel(DISEASE_TAG_LABELS, row.diseaseCode, String(row.diseaseCode || '病种'))
-        const cat = codeLabel(RISK_CATEGORY_LABELS, row.category, '')
-        // level 可能是 MID/HIGH 等枚举，优先中文 levelLabel
-        const levelRaw = String(row.levelLabel || row.level || '').trim()
-        const level = codeLabel(TIER_LABELS, levelRaw, levelRaw)
-        const tierRaw = String(row.tier || '').toUpperCase()
-        const tierZh = row.tier ? codeLabel(TIER_LABELS, row.tier, '') : ''
-        // 分层文案已含「中/高」时不再叠「中档」
-        const tier = tierZh && !level.includes(tierZh) ? ` · ${tierZh}档` : ''
-        const tone: DimRow['tone'] =
-          tierRaw === 'HIGH' || tierRaw === 'VERY_HIGH' || /高|严重|极高/.test(level)
-            ? 'danger'
-            : tierRaw === 'MEDIUM' || tierRaw === 'MID' || /中/.test(level)
-              ? 'warn'
-              : undefined
-        return {
-          label: disease,
-          value: ([cat, level].filter(Boolean).join(' · ') + tier) || '—',
-          tone,
-        }
-      })
-    : []
+  const riskChips: DimRow[] = tags.slice(0, 4).map((t) => {
+    const row = t as Record<string, unknown>
+    const disease = codeLabel(DISEASE_TAG_LABELS, row.diseaseCode, String(row.diseaseCode || '病种'))
+    const levelRaw = String(row.levelLabel || row.level || '').trim()
+    const level = codeLabel(TIER_LABELS, levelRaw, levelRaw)
+    const tierRaw = String(row.tier || '').toUpperCase()
+    const tone: DimRow['tone'] =
+      tierRaw === 'HIGH' || tierRaw === 'VERY_HIGH' || /高|严重|极高/.test(level)
+        ? 'danger'
+        : tierRaw === 'MEDIUM' || tierRaw === 'MID' || /中/.test(level)
+          ? 'warn'
+          : undefined
+    return {
+      label: disease,
+      value: level || '需关注',
+      tone,
+    }
+  })
 
   // 过敏：未选=未采集；显式 NKA=没有过敏；勿用空 allergens 推断
   const allergyFromDims = formatAllergyBrief(
@@ -453,37 +542,154 @@ const dimBlocks = computed((): PersonaLayout => {
   )
   const allergyView = healthLoaded.value ? allergyBrief.value : allergyFromDims
   const allergenText = allergyView.text
+  const allergenChips =
+    allergyView.hasAllergy && Array.isArray(constraints.allergens)
+      ? constraints.allergens.map((a) => String(a || '').trim()).filter(Boolean)
+      : []
+  const dietList = Array.isArray(behavior.diet)
+    ? behavior.diet.map((x) => String(x || '').trim()).filter(Boolean)
+    : []
+  const exerciseList = Array.isArray(behavior.exercise)
+    ? behavior.exercise.map((x) => String(x || '').trim()).filter(Boolean)
+    : []
+  const psychList = Array.isArray(behavior.psych)
+    ? behavior.psych.map((x) => String(x || '').trim()).filter(Boolean)
+    : []
   const dietText = listText(behavior.diet)
   const exerciseText = listText(behavior.exercise)
+  const psychText = listText(behavior.psych)
   const careTracksText = formatCodedList(goals.careTracks, GOAL_SUMMARY_LABELS, '')
-  const goalRows: DimRow[] = [
+
+  const smokeField = historyFields.value.find((f) => f.key === 'smoking')
+  const drinkField = historyFields.value.find((f) => f.key === 'drinking')
+  /** 兜底：把 WEEKLY_1_2 等残留枚举换成中文，避免胶囊直接露出常量 */
+  const scrubEnum = (s: string) =>
+    s.replace(/\bWEEKLY_1_2\b/g, '每周1~2次')
+      .replace(/\bWEEKLY_3_PLUS\b/g, '每周3次以上')
+      .replace(/\bWEEKLY_1\b/g, '每周1~2次')
+      .replace(/\bWEEKLY_3\b/g, '每周3次以上')
+  const smokeValue =
+    smokeField && !smokeField.empty ? scrubEnum(smokeField.value) : ''
+  const drinkValue =
+    drinkField && !drinkField.empty ? scrubEnum(drinkField.value) : ''
+  const smokeRisk = /吸烟|抽烟|当前|偶尔|仍吸烟/.test(smokeValue)
+  const drinkRisk = /饮酒|喝酒|经常|每周|仍饮酒/.test(drinkValue)
+
+  const lifestyleRows: DimRow[] = [
+    {
+      label: '饮食',
+      value: dietText,
+      chips: dietList.length ? dietList : undefined,
+      capsule: dietList.length > 0,
+      tone: dietText !== '—' ? 'accent' : 'muted',
+    },
+    {
+      label: '运动',
+      value: exerciseText,
+      chips: exerciseList.length ? exerciseList : undefined,
+      capsule: exerciseList.length > 0,
+      tone: exerciseText !== '—' ? 'accent' : 'muted',
+    },
+  ]
+  if (smokeValue) {
+    lifestyleRows.push({
+      label: '吸烟',
+      value: smokeValue,
+      capsule: true,
+      tone: smokeRisk ? 'warn' : 'muted',
+    })
+  }
+  if (drinkValue) {
+    lifestyleRows.push({
+      label: '饮酒',
+      value: drinkValue,
+      capsule: true,
+      tone: drinkRisk ? 'warn' : 'muted',
+    })
+  }
+  if (psychText !== '—') {
+    lifestyleRows.push({
+      label: '心理',
+      value: psychText,
+      chips: psychList.length ? psychList : undefined,
+      capsule: psychList.length > 0,
+    })
+  }
+
+  const diseaseChips = dedupeDiseaseTagChips(identity.diseaseTags, DISEASE_TAG_LABELS)
+  const safetyRows: DimRow[] = [
+    {
+      label: '已确诊',
+      value: diseaseChips.length ? diseaseChips.join('、') : '暂无',
+      chips: diseaseChips.length ? diseaseChips : undefined,
+      tone: diseaseChips.length ? undefined : 'muted',
+    },
+    {
+      label: '过敏史',
+      value: allergenText,
+      chips: allergenChips.length ? allergenChips : undefined,
+      tone: allergyView.hasAllergy ? 'danger' : allergyView.collected ? undefined : 'muted',
+    },
+    {
+      label: '主管健管师',
+      value: String(identity.primaryCareManagerName || '未分配'),
+    },
+    {
+      label: '健管组',
+      value: String(identity.careTeamName || '未分配'),
+    },
     {
       label: '主诉求',
       value: formatCodedList(goals.summary, GOAL_SUMMARY_LABELS, '暂无'),
       tone: asCodeList(goals.summary).length ? 'accent' : 'muted',
     },
-    {
-      label: '目标模式',
-      value: goals.mode ? codeLabel(GOAL_MODE_LABELS, goals.mode, '暂无') : '暂无',
-    },
   ]
   if (careTracksText) {
-    goalRows.push({ label: '管理轨道', value: careTracksText })
+    safetyRows.push({ label: '管理轨道', value: careTracksText })
   }
-  goalRows.push({ label: '来自首诊', value: goals.fromIntake ? '是' : '否' })
+
+  const chipGroups: ChipGroup[] = []
+  if (riskChips.length) {
+    chipGroups.push({ prefix: '高危风险：', chips: riskChips })
+  } else if (allergyView.hasAllergy) {
+    chipGroups.push({
+      prefix: '高危风险：',
+      chips: [{ label: '过敏', value: allergenText, tone: 'danger' }],
+    })
+  }
+  const lifestyleChips: DimRow[] = []
+  if (dietText !== '—') lifestyleChips.push({ label: '饮食', value: dietText, tone: 'accent' })
+  if (exerciseText !== '—') lifestyleChips.push({ label: '运动', value: exerciseText, tone: 'accent' })
+  if (smokeValue) lifestyleChips.push({ label: '吸烟', value: smokeValue, tone: smokeRisk ? 'warn' : 'muted' })
+  if (drinkValue) lifestyleChips.push({ label: '饮酒', value: drinkValue, tone: drinkRisk ? 'warn' : 'muted' })
+  if (lifestyleChips.length) {
+    chipGroups.push({ prefix: '生活习惯：', chips: lifestyleChips })
+  }
+  if (psychList.length) {
+    chipGroups.push({
+      prefix: '心理状态：',
+      chips: psychList.map((p) => ({ label: '心理', value: p, tone: 'accent' as const })),
+    })
+  }
 
   return {
     primary: [
       {
         key: 'identity',
-        title: '管理身份',
+        title: '基本资料',
         rows: [
           { label: '性别', value: formatGender(identity.sex as string) },
           { label: '年龄', value: identity.age != null ? `${identity.age} 岁` : '—' },
-          { label: '主管健管师', value: String(identity.primaryCareManagerName || '未分配') },
-          { label: '健管组', value: String(identity.careTeamName || '未分配') },
           {
-            label: '入组',
+            label: '体重',
+            value:
+              latestWeightKg.value != null
+                ? `${Number.isInteger(latestWeightKg.value) ? latestWeightKg.value : latestWeightKg.value.toFixed(1)} kg`
+                : '—',
+            tone: latestWeightKg.value != null ? undefined : ('muted' as const),
+          },
+          {
+            label: '在管时长',
             value: identity.enrolledDays != null ? `${identity.enrolledDays} 天` : '—',
           },
           {
@@ -492,46 +698,31 @@ const dimBlocks = computed((): PersonaLayout => {
               ? formatCarePlanTemplateKey(String(identity.activePlanTemplateKey))
               : '暂无',
           },
-          (() => {
-            const chips = dedupeDiseaseTagChips(identity.diseaseTags, DISEASE_TAG_LABELS)
-            return {
-              label: '病种标签',
-              value: chips.length ? chips.join('、') : '—',
-              chips: chips.length ? chips : undefined,
-              tone: chips.length ? undefined : ('muted' as const),
-            }
-          })(),
+          {
+            label: '目标模式',
+            value: goals.mode ? codeLabel(GOAL_MODE_LABELS, goals.mode, '暂无') : '暂无',
+          },
         ],
       },
       {
-        key: 'goals',
-        title: '目标与诉求',
-        rows: goalRows,
+        key: 'safety',
+        title: '安全与联系人',
+        rows: safetyRows,
       },
       {
-        key: 'risk',
-        title: '风险与病情',
-        priority: true,
-        hint: '评估与分层',
-        rows: riskRows,
-        empty: riskRows.length ? undefined : '暂无评估标签',
+        key: 'lifestyle',
+        title: '生活习惯',
+        rows: lifestyleRows,
+        empty: lifestyleRows.some((r) => r.value && r.value !== '—') ? undefined : '暂无生活习惯采集',
       },
     ] as DimBlock[],
-    coreChips: [
-      {
-        label: '过敏',
-        value: allergenText,
-        tone: allergyView.hasAllergy ? 'danger' : 'muted',
-      },
-      { label: '饮食', value: dietText, tone: dietText !== '—' ? 'accent' : 'muted' },
-      { label: '运动', value: exerciseText, tone: exerciseText !== '—' ? 'accent' : 'muted' },
-    ] as DimRow[],
+    chipGroups,
   }
 })
 
 const primaryBlocks = computed(() => dimBlocks.value.primary)
-const coreChips = computed(() => dimBlocks.value.coreChips)
-const hasSoftPanel = computed(() => coreChips.value.length > 0)
+const chipGroups = computed(() => dimBlocks.value.chipGroups)
+const hasSoftPanel = computed(() => chipGroups.value.length > 0)
 
 function patientBasePath() {
   return `/workspace/patients/${peopleId.value}`
@@ -757,31 +948,41 @@ watch(
            数据已更新，建议重新生成
         </span>
       </div>
-      <p
-        v-if="view?.narrative?.narrative"
-        class="narrative-body"
-        v-html="narrativeHtml"
-      />
+      <div v-if="narrativeParagraphs.length" class="narrative-body-stack">
+        <p
+          v-for="(para, idx) in narrativeParagraphs"
+          :key="`nar-${idx}`"
+          class="narrative-body"
+          v-html="para"
+        />
+      </div>
       <p v-else class="narrative-body muted">
         {{ loading ? '加载中…' : '暂无案头叙事，可点击右上角生成' }}
       </p>
       <div v-if="hasSoftPanel" class="narrative-extract" aria-label="核心提取标签">
-        <div class="core-chips">
-          <span
-            v-for="c in coreChips"
-            :key="c.label"
-            class="core-chip"
-            :class="c.tone ? `tone-${c.tone}` : undefined"
-          >
-            <em>{{ c.label }}</em>
-            {{
-              c.label === '过敏'
-                ? c.value
-                : isBlankDimValue(c.value)
+        <div
+          v-for="(group, gi) in chipGroups"
+          :key="`cg-${gi}`"
+          class="core-chip-group"
+        >
+          <span class="core-chip-prefix">{{ group.prefix }}</span>
+          <div class="core-chips">
+            <span
+              v-for="(c, ci) in group.chips"
+              :key="`${group.prefix}-${c.label}-${ci}`"
+              class="core-chip"
+              :class="c.tone ? `tone-${c.tone}` : undefined"
+            >
+              <em v-if="group.prefix.startsWith('高危')">{{ c.label }}</em>
+              {{
+                isBlankDimValue(c.value)
                   ? '未采集'
-                  : c.value
-            }}
-          </span>
+                  : group.prefix.startsWith('高危')
+                    ? c.value
+                    : `${c.label} ${c.value}`
+              }}
+            </span>
+          </div>
         </div>
       </div>
     </article>
@@ -827,18 +1028,28 @@ watch(
           class="archive-col"
           :data-dim="b.key"
         >
-          <h4>{{ b.title }}</h4>
+          <h4 class="archive-col-title">{{ b.title }}</h4>
           <p v-if="b.empty" class="dim-empty">{{ b.empty }}</p>
           <dl v-else class="dim-rows dim-rows--tight">
             <div
               v-for="(r, i) in b.rows"
               :key="`${b.key}-${i}`"
               class="dim-row"
-              :class="[r.tone ? `tone-${r.tone}` : undefined, r.chips?.length ? 'has-chips' : undefined]"
+              :class="[
+                r.tone ? `tone-${r.tone}` : undefined,
+                r.chips?.length || r.capsule ? 'has-chips' : undefined,
+              ]"
             >
               <dt>{{ r.label }}</dt>
               <dd v-if="r.chips?.length" class="dim-chips">
-                <span v-for="c in r.chips" :key="c" class="disease-chip">{{ c }}</span>
+                <span
+                  v-for="c in r.chips"
+                  :key="c"
+                  :class="b.key === 'lifestyle' || r.capsule ? 'lifestyle-chip' : 'disease-chip'"
+                >{{ c }}</span>
+              </dd>
+              <dd v-else-if="r.capsule" class="dim-chips">
+                <span class="lifestyle-chip">{{ r.value }}</span>
               </dd>
               <dd v-else>{{ r.value }}</dd>
             </div>
@@ -850,18 +1061,21 @@ watch(
     <!-- 健康数据快照：血压 / 用药 / 病史 / 化验 / 方案 -->
     <div class="health-snap" :aria-busy="healthLoading" aria-label="健康数据快照">
       <section class="health-row health-row--2">
-        <article class="health-card">
+        <article class="health-card health-card--bp">
           <div class="health-card-head">
             <div>
               <h3>血压趋势 · 近 14 天</h3>
               <p class="health-sub">收缩压 / 舒张压</p>
             </div>
-            <div class="health-legend" aria-hidden="true">
-              <span><i class="dot rose" />收缩压</span>
-              <span><i class="dot brand" />舒张压</span>
+            <div class="health-head-meta">
+              <span v-if="bpAverages" class="health-avg">{{ bpAverages }}</span>
+              <div class="health-legend" aria-hidden="true">
+                <span><i class="dot rose" />收缩压</span>
+                <span><i class="dot brand" />舒张压</span>
+              </div>
             </div>
           </div>
-          <div class="health-card-body">
+          <div class="health-card-body health-card-body--chart">
             <MetricSparklineChart
               v-if="bpHasData"
               class="bp-chart"
@@ -1013,7 +1227,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 2px 0 12px;
+  padding: 2px 0 40px;
   min-height: 240px;
 }
 
@@ -1089,10 +1303,14 @@ watch(
 }
 
 .watch-split {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   align-items: stretch;
   gap: 8px;
+}
+
+.watch-split:has(.watch-panel:only-child) {
+  grid-template-columns: 1fr;
 }
 
 .watch-split--compact .watch-panel {
@@ -1100,8 +1318,8 @@ watch(
 }
 
 .watch-panel {
-  flex: 1 1 0;
   min-width: 0;
+  height: 100%;
   min-height: 88px;
   padding: 8px 10px;
   border-radius: 10px;
@@ -1109,6 +1327,7 @@ watch(
   background: linear-gradient(180deg, var(--auto-fff9eb) 0%, var(--auto-fffdf7) 100%);
   box-shadow: inset 0 1px 0 var(--auto-rgba-25525525507);
   overflow: visible;
+  box-sizing: border-box;
 }
 
 .watch-panel--risk {
@@ -1207,11 +1426,11 @@ watch(
   border: 1px solid var(--auto-e6eef2);
   border-radius: 12px;
   background: var(--white);
-  padding: 8px 12px 10px;
+  padding: 18px 24px;
 }
 
 .archive-card-head {
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .archive-card-head h3 {
@@ -1231,34 +1450,44 @@ watch(
 .archive-col {
   flex: 1 1 0;
   min-width: 0;
-  padding: 0 12px;
+  padding: 0 24px 0 0;
   display: flex;
   flex-direction: column;
+  border-right: 1px solid #eceef2;
 }
 
-/* 目标与诉求行数较少时垂直居中，避免缺「管理轨道」时底部留白 */
-.archive-col[data-dim='goals'] .dim-rows--tight {
-  flex: 1;
-  justify-content: center;
-}
-
-.archive-col:first-child {
-  padding-left: 0;
+.archive-col + .archive-col {
+  padding-left: 24px;
 }
 
 .archive-col:last-child {
   padding-right: 0;
+  border-right: none;
 }
 
-.archive-col + .archive-col {
-  border-left: 0 solid var(--auto-eef2f5);
-}
-
+.archive-col-title,
 .archive-col h4 {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   font-size: 12px;
   font-weight: 650;
   color: var(--ink-500);
+  letter-spacing: 0.02em;
+}
+
+.lifestyle-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #fff7e8;
+  color: #ff7d00;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .dim-rows--tight {
@@ -1273,14 +1502,35 @@ watch(
 }
 
 .archive-col .dim-row.has-chips {
-  align-items: center;
+  align-items: flex-start;
 }
 
 .dim-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px 6px;
+  row-gap: 6px;
+  column-gap: 6px;
   align-items: center;
+  align-content: flex-start;
+}
+
+.archive-col[data-dim='safety'] .dim-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 6px;
+  row-gap: 8px;
+  column-gap: 6px;
+  align-content: flex-start;
+}
+
+.archive-col[data-dim='safety'] .dim-row.has-chips {
+  align-items: flex-start;
+  padding-bottom: 2px;
+}
+
+.archive-col[data-dim='safety'] .disease-chip {
+  margin: 0;
 }
 
 .disease-chip {
@@ -1350,6 +1600,11 @@ watch(
   border: 1px solid var(--ink-200);
   border-radius: 12px;
   background: var(--ink-35);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .narrative-card--hero {
@@ -1415,12 +1670,27 @@ watch(
   line-height: 1.4;
 }
 
+.narrative-body-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .narrative-body {
   margin: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   font-size: 14px;
   line-height: 1.75;
   color: var(--ink-800);
-  white-space: pre-wrap;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .narrative-body.muted {
@@ -1429,12 +1699,15 @@ watch(
 }
 
 .narrative-body :deep(.narrative-em) {
-  font-weight: 650;
+  font-weight: 700;
   color: var(--ink-900);
-  background: var(--ink-a06);
-  border-radius: 2px;
-  padding: 0;
+  background: #fff7e8;
+  border-radius: 3px;
+  padding: 0 2px;
   box-decoration-break: clone;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .narrative-extract {
@@ -1444,6 +1717,20 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.core-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.core-chip-prefix {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink-500);
 }
 
 .dim-card {
@@ -1563,6 +1850,8 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
 .core-chip {
@@ -1704,6 +1993,11 @@ watch(
   border: 1px solid var(--ink-200, #e2e8f0);
   border-radius: 12px;
   min-width: 0;
+  overflow: visible;
+}
+
+.health-card--bp {
+  overflow: visible;
 }
 
 .health-card-head {
@@ -1712,6 +2006,23 @@ watch(
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px 0;
+}
+
+.health-head-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 52%;
+}
+
+.health-avg {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-600, #475569);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .health-card-head h3 {
@@ -1794,10 +2105,17 @@ watch(
 
 .health-card-body {
   padding: 12px 16px 16px;
+  overflow: visible;
+}
+
+.health-card-body--chart {
+  min-height: 220px;
+  overflow: visible;
 }
 
 .bp-chart {
-  height: 240px;
+  height: 220px;
+  min-height: 220px;
   width: 100%;
   display: block;
 }
@@ -2000,8 +2318,8 @@ watch(
     justify-content: flex-start;
   }
 
-  .watch-panel {
-    flex: 1 1 100%;
+  .watch-split {
+    grid-template-columns: 1fr;
   }
 
   .archive-cols {
@@ -2010,15 +2328,15 @@ watch(
   }
 
   .archive-col,
-  .archive-col:first-child,
   .archive-col:last-child {
     padding: 0;
+    border-right: none;
   }
 
   .archive-col + .archive-col {
-    border-left: none;
-    border-top: 0 solid var(--auto-eef2f5);
-    padding-top: 8px;
+    border-top: 1px solid #eceef2;
+    padding-top: 12px;
+    padding-left: 0;
   }
 
   .dim-row,
