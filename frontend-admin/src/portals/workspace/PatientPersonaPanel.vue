@@ -619,7 +619,7 @@ const dimBlocks = computed((): PersonaLayout => {
   const diseaseChips = dedupeDiseaseTagChips(identity.diseaseTags, DISEASE_TAG_LABELS)
   const safetyRows: DimRow[] = [
     {
-      label: '已确诊',
+      label: '已患',
       value: diseaseChips.length ? diseaseChips.join('、') : '暂无',
       chips: diseaseChips.length ? diseaseChips : undefined,
       tone: diseaseChips.length ? undefined : 'muted',
