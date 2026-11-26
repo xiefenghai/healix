@@ -2736,7 +2736,9 @@ async function offerScience() {
       v-model:show="recordOpen"
       position="bottom"
       round
-      :style="{ padding: '8px 0 20px' }"
+      teleport="body"
+      :z-index="3000"
+      :style="{ padding: '8px 0 calc(20px + env(safe-area-inset-bottom, 0px))' }"
       @closed="recordKey = null"
     >
       <div class="record-sheet">

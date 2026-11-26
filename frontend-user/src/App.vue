@@ -158,7 +158,9 @@ onBeforeUnmount(() => {
       v-model:show="plusOpen"
       position="bottom"
       round
-      :style="{ padding: '12px 16px 28px' }"
+      teleport="body"
+      :z-index="3000"
+      :style="{ padding: '12px 16px calc(28px + env(safe-area-inset-bottom, 0px))' }"
     >
       <div class="plus-sheet">
         <div class="plus-handle" />
