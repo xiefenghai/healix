@@ -510,8 +510,9 @@ const CARE_RING_R = 32
 
 /** Care 迷你折线：无面积填充，蓝→绿渐变，终点实心点（右上角轻点缀） */
 function buildCareWeightSpark(raw: number[], preferDescend: boolean) {
-  const w = 42
-  const h = 22
+  /* viewBox 48×28，内边距留给终点圆点，避免被裁成「悬空断线」 */
+  const w = 48
+  const h = 28
   let ys = raw.filter((n) => Number.isFinite(n))
   if (ys.length < 2) {
     ys = preferDescend
@@ -525,10 +526,11 @@ function buildCareWeightSpark(raw: number[], preferDescend: boolean) {
     const span = Math.max(0.4, max - min)
     ys = ys.map((v) => (v - min) / span)
   }
-  const pad = 3
+  const padX = 5
+  const padY = 6
   const pts = ys.map((y, i) => ({
-    x: pad + (i / (ys.length - 1)) * (w - pad * 2),
-    y: pad + (1 - y) * (h - pad * 2),
+    x: padX + (i / (ys.length - 1)) * (w - padX * 2),
+    y: padY + (1 - y) * (h - padY * 2),
   }))
   let line = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`
   for (let i = 0; i < pts.length - 1; i++) {
@@ -2494,11 +2496,11 @@ async function offerScience() {
               </div>
               <em class="care-goal-detail">{{ careGoalCard.detail }}</em>
             </div>
-            <svg class="care-spark-mini" viewBox="0 0 42 22" aria-hidden="true">
+            <svg class="care-spark-mini" viewBox="0 0 48 28" aria-hidden="true">
               <defs>
                 <linearGradient id="careSparkStroke" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stop-color="#3B82F6" />
-                  <stop offset="100%" stop-color="#10B981" />
+                  <stop offset="0%" stop-color="#93C5FD" />
+                  <stop offset="100%" stop-color="#6EE7B7" />
                 </linearGradient>
               </defs>
               <path
@@ -2510,7 +2512,7 @@ async function offerScience() {
                 class="care-spark-tip"
                 :cx="careGoalCard.sparkTipX"
                 :cy="careGoalCard.sparkTipY"
-                r="2.2"
+                r="2"
               />
             </svg>
           </div>
@@ -2595,8 +2597,10 @@ async function offerScience() {
           </button>
         </template>
         <div v-else class="todo-empty">
-          <p>暂无今日方案任务</p>
-          <button type="button" class="link" @click="router.push('/care-plan')">查看方案 ›</button>
+          <p>今天暂无打卡任务，好好休息一下吧</p>
+          <button type="button" class="todo-empty-cta" @click="router.push('/care-plan')">
+            查看方案
+          </button>
         </div>
       </section>
 
@@ -2854,11 +2858,14 @@ async function offerScience() {
   --hx-muted: #999999;
   --hx-page-bg: #f8faff;
   background: linear-gradient(180deg, #f0f5ff 0%, #f8faff 100%);
-  /* Dock 在 App 文档流底部，页面只需少量尾部空隙 */
-  padding-bottom: 24px;
+  /*
+   * 底栏在 App 文档流中（非叠层 fixed），末卡不会被挡住；
+   * 仍留足尾部空隙，滑到底时「记录工具」与底栏之间有呼吸距。
+   */
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
 }
 .home.has-assess {
-  padding-bottom: 88px;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
 }
 .home::before {
   content: "";
@@ -3115,7 +3122,8 @@ async function offerScience() {
   align-items: center;
   justify-content: flex-end; /* 数据区靠右，落到红圈附近 */
   padding-left: 8px;
-  padding-right: 0;
+  padding-right: 2px;
+  overflow: visible;
 }
 .care-progress-head {
   width: auto;
@@ -3123,9 +3131,10 @@ async function offerScience() {
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   position: relative;
   margin-left: auto;
+  overflow: visible;
 }
 .care-ring {
   position: relative;
@@ -3240,25 +3249,26 @@ async function offerScience() {
 }
 .care-spark-mini {
   flex: none;
-  width: 42px;
-  height: 22px;
+  width: 48px;
+  height: 28px;
   display: block;
   overflow: visible;
-  margin-top: 2px;
-  margin-right: 0;
-  margin-left: 4px;
+  margin-top: 0;
+  margin-right: 2px;
+  margin-left: 6px;
   align-self: flex-start;
-  opacity: 0.92;
+  /* 底纹装饰，不抢中间大数字焦点 */
+  opacity: 0.48;
 }
 .care-spark-line {
   fill: none;
-  stroke-width: 1.6;
+  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 .care-spark-tip {
-  fill: #10B981;
-  stroke: #fff;
+  fill: #34D399;
+  stroke: rgba(255, 255, 255, 0.9);
   stroke-width: 1;
 }
 
@@ -4196,8 +4206,39 @@ async function offerScience() {
 .fold:hover { background: var(--hx-teal-50); color: var(--hx-teal-800); }
 .fold:active { background: var(--hx-teal-100); }
 .fold-arrow { font-size: 12px; line-height: 1; opacity: 0.85; }
-.todo-empty { padding: 12px 0 4px; text-align: center; }
-.todo-empty p { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--hx-n-700); }
+.todo-empty {
+  padding: 22px 16px 18px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.todo-empty p {
+  margin: 0;
+  max-width: 16em;
+  font-size: 13px;
+  font-weight: 500;
+  color: #8C8C8C;
+  line-height: 1.55;
+}
+.todo-empty-cta {
+  border: 0;
+  background: #F0FDF4;
+  color: #6BBF8A;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1;
+  padding: 6px 14px;
+  min-height: 28px;
+  border-radius: 999px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.todo-empty-cta:active {
+  background: #E8FAF0;
+}
 .link {
   border: 0; background: none; padding: 0; font-size: 13px; font-weight: 700;
   color: var(--hx-teal-700); cursor: pointer; font-family: inherit;
