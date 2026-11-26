@@ -2406,12 +2406,14 @@ async function offerScience() {
               <span class="role-line">{{ careCompanion.role }}</span>
             </div>
             <div class="l1sub">
-              <span class="st" :class="careCompanion.state">
-                <i />
-                {{ careCompanion.statusLabel }}
-              </span>
-              <span class="sep" aria-hidden="true">·</span>
-              <span class="say">{{ careCompanion.say }}</span>
+              <template v-if="careCompanion.state === 'unread'">
+                <span class="st unread">未读</span>
+                <span class="sep" aria-hidden="true">·</span>
+              </template>
+              <span
+                class="say"
+                :class="{ 'say-online': careCompanion.state === 'online' }"
+              >{{ careCompanion.say }}</span>
             </div>
           </div>
           <button type="button" class="act" :disabled="careContacting" @click="openCareCompanion">
@@ -3581,23 +3583,31 @@ async function offerScience() {
 }
 .l1-iconbtn {
   position: relative;
-  width: 36px; height: 36px;
+  width: 32px; height: 32px;
   border: 0; border-radius: 50%;
   background: transparent;
   color: #1A1A1A;
   display: grid; place-items: center;
   padding: 0; cursor: pointer;
 }
-.l1-iconbtn .ic { width: 20px; height: 20px; }
+.l1-iconbtn .ic { width: 18px; height: 18px; }
 .l1-bell .dot {
-  position: absolute; top: 7px; right: 8px;
-  width: 7px; height: 7px; border-radius: 50%;
+  position: absolute; top: 5px; right: 6px;
+  width: 6px; height: 6px; border-radius: 50%;
   background: #ff4d4f; border: 1.5px solid #e8fbf5;
   box-sizing: border-box;
 }
 
+.l1-soft .in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .l1-soft .avatar {
   position: relative;
+  flex: none;
+  align-self: center;
   width: 56px; height: 56px;
   background: #e6f4ff;
   border: 2px solid #fff;
@@ -3648,16 +3658,37 @@ async function offerScience() {
 .l1-soft .dot-sep,
 .l1-soft .role-inline { display: none; }
 .role-tag { display: none; }
-.l1-soft .l1sub { gap: 4px; margin-top: 4px; }
-.l1-soft .st {
-  font-size: 12px; font-weight: 600; color: #00B578;
+.l1-soft .mid {
+  flex: 1;
+  min-width: 0;
+  padding-right: 4px;
 }
-.l1-soft .st.online i { background: #00B578; }
+.l1-soft .l1sub {
+  gap: 4px;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+/* 在线态：头像角标已表意，文字侧不再放绿点 */
+.l1-soft .st {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8C8C8C;
+}
+.l1-soft .st i { display: none; }
 .l1-soft .st.unread { color: #ff4d4f; }
-.l1-soft .st.unread i { background: #ff4d4f; }
 .l1-soft .sep { color: #BFBFBF; font-size: 12px; }
 .l1-soft .say {
-  font-size: 12px; font-weight: 500; color: #8C8C8C;
+  font-size: 12px;
+  font-weight: 500;
+  color: #8C8C8C;
+  min-width: 0;
+}
+.l1-soft .say-online {
+  color: #00B578;
+  font-weight: 600;
 }
 .l1-soft .act {
   background: #fff;
@@ -3672,6 +3703,8 @@ async function offerScience() {
   font-weight: 600;
   white-space: nowrap;
   flex: none;
+  align-self: center;
+  margin-left: 4px;
   transition: all 0.2s ease;
 }
 .l1-soft .act:disabled { opacity: 0.7; }
