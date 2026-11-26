@@ -410,11 +410,6 @@ const completenessTone = computed(() => {
   return 'poor'
 })
 
-const completenessHint = computed(() => {
-  if (!completeness.value) return '档案字段'
-  return `已填 ${completeness.value.filledCount}/${completeness.value.totalCount}`
-})
-
 /** 迷你进度卡：61% · 11/18项 */
 const completenessMiniValue = computed(() => {
   const c = completeness.value
