@@ -194,12 +194,12 @@ const careCompanion = computed(() => {
   const say =
     unread > 0
       ? `${unread > 99 ? '99+' : unread} 条新消息`
-      : '随时为您服务'
+      : '随时咨询'
   return {
     state,
     name,
     title,
-    role: '您的专属健管师',
+    role: '专属健管师',
     statusLabel,
     say,
     cta: unread > 0 ? '查看消息' : '去沟通',
@@ -2403,8 +2403,7 @@ async function offerScience() {
           <div class="mid">
             <div class="nm">
               <b>{{ careCompanion.name }}</b>
-              <span class="dot-sep" aria-hidden="true">·</span>
-              <span class="role-inline">{{ careCompanion.role }}</span>
+              <span class="role-line">{{ careCompanion.role }}</span>
             </div>
             <div class="l1sub">
               <span class="st" :class="careCompanion.state">
@@ -2416,7 +2415,7 @@ async function offerScience() {
             </div>
           </div>
           <button type="button" class="act" :disabled="careContacting" @click="openCareCompanion">
-            {{ careContacting ? '打开中…' : `${careCompanion.cta} ›` }}
+            {{ careContacting ? '打开中…' : careCompanion.cta }}
           </button>
         </div>
       </section>
@@ -2507,12 +2506,6 @@ async function offerScience() {
                 class="care-spark-line"
                 :d="careGoalCard.sparkLine"
                 stroke="url(#careSparkStroke)"
-              />
-              <circle
-                class="care-spark-tip"
-                :cx="careGoalCard.sparkTipX"
-                :cy="careGoalCard.sparkTipY"
-                r="2"
               />
             </svg>
           </div>
@@ -3266,11 +3259,6 @@ async function offerScience() {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.care-spark-tip {
-  fill: #34D399;
-  stroke: rgba(255, 255, 255, 0.9);
-  stroke-width: 1;
-}
 
 .l2hd .todo-count {
   margin-left: 8px;
@@ -3635,21 +3623,32 @@ async function offerScience() {
   z-index: 1;
 }
 .l1-soft .nm {
-  margin-bottom: 4px; flex-wrap: nowrap; gap: 4px;
+  margin-bottom: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
 }
 .l1-soft .nm b {
-  color: #1A1A1A; font-size: 15px; font-weight: 700;
+  color: #1A1A1A;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.l1-soft .role-line {
+  font-size: 12px;
+  font-weight: 500;
+  color: #8C8C8C;
+  line-height: 1.2;
   white-space: nowrap;
 }
-.l1-soft .dot-sep {
-  color: #BFBFBF; font-size: 13px; font-weight: 700; line-height: 1;
-}
-.l1-soft .role-inline {
-  font-size: 13px; font-weight: 500; color: #8C8C8C;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
+.l1-soft .dot-sep,
+.l1-soft .role-inline { display: none; }
 .role-tag { display: none; }
-.l1-soft .l1sub { gap: 4px; }
+.l1-soft .l1sub { gap: 4px; margin-top: 4px; }
 .l1-soft .st {
   font-size: 12px; font-weight: 600; color: #00B578;
 }
@@ -3667,11 +3666,12 @@ async function offerScience() {
   border-radius: 99px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
   height: auto;
-  min-height: 32px;
-  padding: 6px 16px;
-  font-size: 13px;
+  min-height: 30px;
+  padding: 5px 12px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  flex: none;
   transition: all 0.2s ease;
 }
 .l1-soft .act:disabled { opacity: 0.7; }
@@ -4224,20 +4224,26 @@ async function offerScience() {
 }
 .todo-empty-cta {
   border: 0;
-  background: #F0FDF4;
-  color: #6BBF8A;
+  background: transparent;
+  color: #16A34A;
   font-size: 12px;
   font-weight: 600;
   font-family: inherit;
-  line-height: 1;
-  padding: 6px 14px;
+  line-height: 1.2;
+  padding: 4px 2px;
   min-height: 28px;
-  border-radius: 999px;
   cursor: pointer;
+  text-decoration: none;
   -webkit-tap-highlight-color: transparent;
 }
 .todo-empty-cta:active {
-  background: #E8FAF0;
+  text-decoration: underline;
+  opacity: 0.85;
+}
+@media (hover: hover) {
+  .todo-empty-cta:hover {
+    text-decoration: underline;
+  }
 }
 .link {
   border: 0; background: none; padding: 0; font-size: 13px; font-weight: 700;
