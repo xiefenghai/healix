@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api, getToken, setToken } from '../api/http'
@@ -22,6 +22,42 @@ const today = new Date()
 const minBirthday = new Date(1900, 0, 1)
 const birthdayPickerValue = ref<string[]>(['1990', '01', '01'])
 
+const relation = ref('SELF')
+const relationOptions = [
+  { text: '本人', value: 'SELF' },
+  { text: '配偶', value: 'SPOUSE' },
+  { text: '父母', value: 'PARENT' },
+  { text: '子女', value: 'CHILD' },
+]
+
+function normalizeCode(raw: string) {
+  return (raw || '').toUpperCase().trim()
+}
+
+watch(activationCode, (v) => {
+  const next = normalizeCode(v)
+  if (next !== v) activationCode.value = next
+})
+
+async function pasteCode() {
+  try {
+    if (!navigator.clipboard?.readText) {
+      showToast('当前环境不支持粘贴，请手动输入')
+      return
+    }
+    const text = await navigator.clipboard.readText()
+    const next = normalizeCode(text)
+    if (!next) {
+      showToast('剪贴板为空')
+      return
+    }
+    activationCode.value = next
+    showToast('已粘贴')
+  } catch {
+    showToast('无法读取剪贴板，请手动粘贴')
+  }
+}
+
 function openBirthdayPicker() {
   if (birthday.value) birthdayPickerValue.value = birthday.value.split('-')
   showBirthdayPicker.value = true
@@ -34,7 +70,7 @@ function onBirthdayConfirm({ selectedValues }: { selectedValues: string[] }) {
 
 onMounted(() => {
   const q = new URLSearchParams(location.search)
-  if (q.get('code')) activationCode.value = q.get('code') || ''
+  if (q.get('code')) activationCode.value = normalizeCode(q.get('code') || '')
 })
 
 interface TokenData {
@@ -141,6 +177,7 @@ async function submit() {
       activationCode: activationCode.value.trim(),
       displayName: displayName.value.trim(),
       birthday: birthday.value,
+      relation: relation.value || 'SELF',
     }
     if (!loggedIn.value) {
       body.mobile = mobile.value.trim()
@@ -167,11 +204,24 @@ async function submit() {
   <div class="auth">
     <van-nav-bar title="激活账号" left-arrow @click-left="router.back()" />
     <div class="card">
-      <p class="hint">
-        健管师已建立健康档案且尚未登记本人手机号时，可用激活码绑定。若档案已有本人手机号，请直接在「健康档案」里用同一手机号+姓名添加（需短信验证），会自动对上同一份档案。
+      <p class="tip-bar">
+        请输入健管师发放的专属激活码，绑定机构为您建立的健康管理档案。
       </p>
-      <van-field v-model="activationCode" label="激活码" placeholder="如 A3K9-7X2M" />
+
+      <van-field
+        v-model="activationCode"
+        label="激活码"
+        placeholder="如 A3K9-7X2M"
+        autocomplete="off"
+        :spellcheck="false"
+      >
+        <template #button>
+          <button type="button" class="paste-btn" @click="pasteCode">粘贴</button>
+        </template>
+      </van-field>
+
       <van-field v-model="displayName" label="档案姓名" placeholder="与建档姓名一致" />
+
       <van-field
         is-link
         readonly
@@ -180,6 +230,25 @@ async function submit() {
         :model-value="birthday"
         @click="openBirthdayPicker"
       />
+
+      <div class="relation-row">
+        <span class="relation-label">成员关系</span>
+        <div class="capsule-group" role="radiogroup" aria-label="成员关系">
+          <button
+            v-for="opt in relationOptions"
+            :key="opt.value"
+            type="button"
+            class="capsule"
+            :class="{ on: relation === opt.value }"
+            role="radio"
+            :aria-checked="relation === opt.value"
+            @click="relation = opt.value"
+          >
+            {{ opt.text }}
+          </button>
+        </div>
+      </div>
+
       <template v-if="!loggedIn">
         <van-field v-model="mobile" type="tel" label="手机号" placeholder="用于登录" maxlength="11" />
         <van-field v-model="otpCode" type="digit" label="验证码" placeholder="6 位验证码" maxlength="6">
@@ -189,9 +258,18 @@ async function submit() {
         </van-field>
         <LegalConsent v-model:terms="agreeTerms" v-model:sensitive="agreeSensitive" />
       </template>
+
       <van-button round block type="primary" :loading="loading" @click="submit">
         {{ loggedIn ? '激活并绑定' : '激活并登录' }}
       </van-button>
+
+      <p class="guide">
+        档案已登记手机号？
+        <button type="button" class="guide-link" @click="router.push('/patient-cards')">
+          去家庭成员验证关联 &gt;
+        </button>
+      </p>
+
       <button v-if="!loggedIn" class="link" type="button" @click="router.push('/register')">
         没有激活码？先注册账号
       </button>
@@ -219,7 +297,86 @@ async function submit() {
   background: #fff;
   box-shadow: var(--hx-card-shadow);
 }
-.hint { margin: 0 0 12px; color: var(--hx-muted); font-size: 13px; line-height: 1.5; }
+.tip-bar {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #ebf4ff;
+  color: #1677ff;
+  font-size: 12px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.paste-btn {
+  border: 0;
+  font-size: 12px;
+  color: #1677ff;
+  background: #e8f3ff;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.5;
+}
+.relation-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  box-sizing: border-box;
+}
+.relation-label {
+  flex: none;
+  width: 72px;
+  font-size: 14px;
+  color: #646566;
+  line-height: 1.4;
+}
+.capsule-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.capsule {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e6eb;
+  background: #fff;
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+}
+.capsule.on {
+  border-color: #1677ff;
+  background: #1677ff;
+  color: #fff;
+}
+.guide {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: #86909c;
+  text-align: center;
+  line-height: 1.5;
+}
+.guide-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #1677ff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
 .link {
   display: block;
   width: 100%;

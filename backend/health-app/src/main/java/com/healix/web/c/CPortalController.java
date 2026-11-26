@@ -276,6 +276,22 @@ public class CPortalController {
         return ApiResult.ok(new TokenResponse(token, ctx.getAccountId(), peopleId, nextCardId, homeTenant));
     }
 
+    /** 编辑家庭成员资料（姓名/关系；自用态可改性别生日；证件仅可补填）。 */
+    @PutMapping("/patient-cards/{cardId}")
+    public ApiResult<AccountPatient> updatePatientCard(
+            @PathVariable String cardId, @RequestBody @Validated UpdatePatientCardRequest request) {
+        var ctx = SecurityUtils.requireContext();
+        return ApiResult.ok(patientCardService.updateOwnedCard(
+                ctx.getAccountId(),
+                cardId,
+                request.displayName(),
+                request.relation(),
+                request.gender(),
+                request.birthday(),
+                request.identityType(),
+                request.identityValue()));
+    }
+
     @GetMapping("/membership/status")
     public ApiResult<MembershipStatusResponse> membershipStatus() {
         String peopleId = SecurityUtils.requirePatientId();
@@ -429,7 +445,10 @@ public class CPortalController {
             LocalDate birthday,
             String relation) {}
 
-    /** 自动绑档：手机号 + 姓名 + 出生日期；otpCode 必填。证件/性别选填。 */
+    /**
+     * 自动绑档：手机号 + 姓名 + 出生日期；证件/性别选填。
+     * <p>关系为本人且手机号等于登录账号时 otpCode 可空（登录态已验证该号）；其余情况 otpCode 必填。
+     */
     public record CreatePatientCardRequest(
             @NotBlank String displayName,
             String gender,
@@ -438,7 +457,7 @@ public class CPortalController {
             String identityValue,
             String relation,
             @NotBlank String mobile,
-            @NotBlank String otpCode) {}
+            String otpCode) {}
 
     public record PatientOtpRequest(@NotBlank String mobile) {}
 
@@ -447,6 +466,14 @@ public class CPortalController {
 
     public record UpdateProfileRequest(
             String displayName, String gender, LocalDate birthday, String allergensJson) {}
+
+    public record UpdatePatientCardRequest(
+            @NotBlank String displayName,
+            @NotBlank String relation,
+            String gender,
+            LocalDate birthday,
+            String identityType,
+            String identityValue) {}
 
     public record JoinRequest(@NotBlank String inviteCode) {}
 

@@ -20,7 +20,7 @@ const props = withDefaults(
 )
 
 const router = useRouter()
-const name = ref('就诊人')
+const name = ref('家庭成员')
 const unread = ref(0)
 
 async function loadProfile() {
@@ -30,9 +30,9 @@ async function loadProfile() {
   }
   try {
     const res = await api<{ data: { displayName?: string } }>('/api/c/v1/profile')
-    name.value = res.data?.displayName?.trim() || '就诊人'
+    name.value = res.data?.displayName?.trim() || '家庭成员'
   } catch {
-    name.value = '就诊人'
+    name.value = '家庭成员'
   }
 }
 
@@ -82,7 +82,7 @@ onMounted(() => {
       <button
         type="button"
         class="capsule"
-        :aria-label="`切换就诊人，当前 ${name}`"
+        :aria-label="`切换家庭成员，当前 ${name}`"
         @click="router.push('/patient-cards')"
       >
         <span class="nm">{{ name }}</span>

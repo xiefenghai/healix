@@ -236,7 +236,7 @@ public class CarePlanSafetyService {
             if (hasDailyWeighTask(execution)) {
                 errors.add("进食障碍风险：执行计划仍含每日称重，须改为每周 1 次");
             }
-            if (containsAny(dietBlob, "快速减重", "激进缺口", "极端节食", "每日热量缺口很大")) {
+            if (hasAggressiveDietLanguage(dietBlob)) {
                 errors.add("进食障碍风险：饮食仍含激进减重/极端节食表述");
             }
             // 只扫周计划条目，勿把禁忌文案里的「禁止跑步」误判为执行动作
@@ -331,6 +331,53 @@ public class CarePlanSafetyService {
             }
         }
         return false;
+    }
+
+    /** 进食障碍红线：正向激进减重话术才拦截；「避免/不做极端节食」等否定表述放行。 */
+    private static final String[] ED_AGGRESSIVE_DIET_PHRASES = {
+        "快速减重", "激进缺口", "极端节食", "每日热量缺口很大"
+    };
+
+    private static final String[] DIET_NEGATION_PREFIXES = {
+        "避免", "不做", "禁止", "切勿", "不要", "勿", "不设", "杜绝", "拒绝", "非", "无", "别", "反对"
+    };
+
+    private static boolean hasAggressiveDietLanguage(String dietBlob) {
+        if (!StringUtils.hasText(dietBlob)) {
+            return false;
+        }
+        for (String phrase : ED_AGGRESSIVE_DIET_PHRASES) {
+            if (containsUnnegated(dietBlob, phrase, DIET_NEGATION_PREFIXES)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 子串命中且紧前不是否定前缀才算违规。
+     * 例：「避免极端节食」「不做极端节食话术」→ 放行；单独「极端节食」→ 拦截。
+     */
+    private static boolean containsUnnegated(String haystack, String needle, String[] negationPrefixes) {
+        int from = 0;
+        while (true) {
+            int i = haystack.indexOf(needle, from);
+            if (i < 0) {
+                return false;
+            }
+            boolean negated = false;
+            for (String prefix : negationPrefixes) {
+                int start = i - prefix.length();
+                if (start >= 0 && haystack.regionMatches(start, prefix, 0, prefix.length())) {
+                    negated = true;
+                    break;
+                }
+            }
+            if (!negated) {
+                return true;
+            }
+            from = i + needle.length();
+        }
     }
 
     /**

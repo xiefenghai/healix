@@ -14,7 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class LifestyleArchiveService {
 
-    private static final String[] LIFESTYLE_KEYS = {"diet", "exercise", "sleep", "lifestyle"};
+    /** psych：C 端生活方式页整合「心理与情绪」轻量字段（如 stressLevel / mood） */
+    private static final String[] LIFESTYLE_KEYS = {"diet", "exercise", "sleep", "lifestyle", "psych"};
 
     private final BasicArchiveService basicArchiveService;
 
@@ -41,7 +42,18 @@ public class LifestyleArchiveService {
             Iterator<Map.Entry<String, JsonNode>> fields = patch.fields();
             while (fields.hasNext()) {
                 Map.Entry<String, JsonNode> e = fields.next();
-                if (isLifestyleKey(e.getKey())) {
+                if (!isLifestyleKey(e.getKey())) {
+                    continue;
+                }
+                // psych 等嵌套对象做浅合并，避免 C 端轻量字段覆盖健管端已有明细
+                if ("psych".equals(e.getKey())
+                        && e.getValue() != null
+                        && e.getValue().isObject()
+                        && merged.has("psych")
+                        && merged.get("psych").isObject()) {
+                    ObjectNode psychNode = (ObjectNode) merged.get("psych");
+                    psychNode.setAll((ObjectNode) e.getValue());
+                } else {
                     merged.set(e.getKey(), e.getValue());
                 }
             }

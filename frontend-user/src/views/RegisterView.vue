@@ -47,7 +47,7 @@ async function submit() {
       }),
     })
     setToken(res.data.accessToken)
-    showToast('注册成功，请添加健康档案')
+    showToast('注册成功，请添加家庭成员')
     await router.replace('/patient-cards')
   } catch (e) {
     showToast(e instanceof Error ? e.message : '注册失败')
@@ -192,7 +192,7 @@ async function submit() {
     <form class="card" @submit.prevent="submit">
       <div class="hint">
         <span class="hint-badge" aria-hidden="true">i</span>
-        <p>用于手机号注册。当前试用阶段验证码为 123456。注册后还需单独添加健康档案。</p>
+        <p>用于手机号注册。当前试用阶段验证码为 123456。注册后还需单独添加家庭成员。</p>
       </div>
 
       <div class="fields">

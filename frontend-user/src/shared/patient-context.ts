@@ -34,7 +34,7 @@ export async function ensureActivePeople(peopleId?: string | null): Promise<bool
   const res = await api<{ data: PatientCard[] }>('/api/c/v1/patient-cards')
   const card = (res.data || []).find((c) => c.peopleId === target)
   if (!card) {
-    throw new Error('该消息对应的就诊人已不在您的账号下，请先添加后再查看')
+    throw new Error('该消息对应的家庭成员已不在您的账号下，请先添加后再查看')
   }
   const selected = await api<{ data: { accessToken: string } }>(
     `/api/c/v1/patient-cards/${card.id}/select`,

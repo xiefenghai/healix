@@ -14,6 +14,8 @@ import com.healix.core.people.support.MobileNumbers;
 import com.healix.core.people.enums.PeopleIdentityTypeEnum;
 import com.healix.core.people.mapper.PeopleIdentityMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
+import com.healix.core.patient.domain.PatientOrgMembership;
+import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.patientcard.domain.AccountPatient;
 import com.healix.core.patientcard.mapper.AccountPatientMapper;
 import java.time.LocalDate;
@@ -34,6 +36,7 @@ public class PatientCardService {
     private final AccountPatientMapper accountPatientMapper;
     private final PeopleProfileMapper peopleProfileMapper;
     private final PeopleIdentityMapper peopleIdentityMapper;
+    private final PatientOrgMembershipMapper membershipMapper;
     private final IdCardCrypto idCardCrypto;
     private final QuotaService quotaService;
 
@@ -51,7 +54,19 @@ public class PatientCardService {
             if (profile != null) {
                 card.setGender(profile.getGender());
                 card.setBirthday(profile.getBirthday());
+                if (!StringUtils.hasText(card.getMobile()) && StringUtils.hasText(profile.getMobile())) {
+                    card.setMobile(profile.getMobile());
+                }
             }
+            if (!StringUtils.hasText(card.getIdentityValueMask())) {
+                PeopleIdentity primary = peopleIdentityMapper.findPrimaryMask(card.getPeopleId());
+                if (primary != null) {
+                    card.setIdentityType(primary.getIdentityType());
+                    card.setIdentityValueMask(primary.getIdentityValueMask());
+                }
+            }
+            List<PatientOrgMembership> memberships = membershipMapper.listActiveByPeople(card.getPeopleId());
+            card.setInCare(memberships != null && !memberships.isEmpty());
         }
         return cards;
     }
@@ -252,6 +267,120 @@ public class PatientCardService {
         AccountPatient card = requireOwnedCard(accountId, cardId);
         LocalDateTime now = LocalDateTime.now();
         accountPatientMapper.softDelete(card.getId(), now);
+    }
+
+    /**
+     * C 端编辑家庭成员：姓名/关系可改；自用态可改性别生日；在管态性别生日只读；
+     * 证件仅允许补填（已有证件不可改）；手机号不可改。
+     */
+    @Transactional
+    public AccountPatient updateOwnedCard(
+            String accountId,
+            String cardId,
+            String displayName,
+            String relation,
+            String gender,
+            LocalDate birthday,
+            String identityType,
+            String identityValue) {
+        AccountPatient card = requireOwnedCard(accountId, cardId);
+        PeopleProfile profile = peopleProfileMapper.findById(card.getPeopleId());
+        if (profile == null) {
+            throw new BusinessException(404, "就诊人档案不存在");
+        }
+        if (!StringUtils.hasText(displayName)) {
+            throw new BusinessException(400, "请填写姓名");
+        }
+        String name = displayName.trim();
+        if (name.length() > 64) {
+            throw new BusinessException(400, "姓名过长");
+        }
+        String relationNorm = normalizeRelation(relation);
+        if (!StringUtils.hasText(relationNorm)) {
+            throw new BusinessException(400, "请选择关系");
+        }
+        // 账号下仅允许一个「本人」
+        if ("SELF".equals(relationNorm)) {
+            for (AccountPatient other : accountPatientMapper.listByAccount(accountId)) {
+                if (!card.getId().equals(other.getId()) && "SELF".equalsIgnoreCase(other.getRelation())) {
+                    throw new BusinessException(409, "已添加过本人档案");
+                }
+            }
+        }
+
+        boolean inCare = !membershipMapper.listActiveByPeople(card.getPeopleId()).isEmpty();
+        PeopleIdentity primary = peopleIdentityMapper.findPrimaryMask(card.getPeopleId());
+        boolean hasIdentity = primary != null || StringUtils.hasText(card.getIdentityValueMask());
+
+        IdentityBits bits = null;
+        if (!hasIdentity && StringUtils.hasText(identityValue)) {
+            String tenantId = StringUtils.hasText(card.getTenantId()) ? card.getTenantId() : profile.getTenantId();
+            bits = resolveIdentity(
+                    StringUtils.hasText(tenantId) ? tenantId : "platform",
+                    StringUtils.hasText(identityType) ? identityType : "ID_CARD",
+                    identityValue);
+            if (peopleIdentityMapper.findByTenantTypeHash(
+                            StringUtils.hasText(tenantId) ? tenantId : "platform",
+                            bits.type().name(),
+                            bits.hash())
+                    != null) {
+                throw new BusinessException(409, "该证件号已关联其他档案");
+            }
+        }
+
+        profile.setDisplayName(name);
+        if (!inCare) {
+            String genderNorm = bits != null && bits.gender() != null
+                    ? bits.gender()
+                    : normalizeGender(gender);
+            LocalDate birthdayNorm = bits != null && bits.birthday() != null ? bits.birthday() : birthday;
+            if (birthdayNorm != null && birthdayNorm.isAfter(LocalDate.now())) {
+                throw new BusinessException(400, "出生日期不能晚于今天");
+            }
+            if (genderNorm != null) {
+                profile.setGender(genderNorm);
+            }
+            if (birthdayNorm != null) {
+                profile.setBirthday(birthdayNorm);
+            }
+        }
+        EntityMeta.onUpdate(profile);
+        peopleProfileMapper.updateProfile(profile);
+
+        if (bits != null) {
+            String tenantId = StringUtils.hasText(card.getTenantId()) ? card.getTenantId() : profile.getTenantId();
+            PeopleIdentity identity = new PeopleIdentity();
+            identity.setTenantId(StringUtils.hasText(tenantId) ? tenantId : "platform");
+            identity.setPeopleId(profile.getId());
+            identity.setIdentityType(bits.type().name());
+            identity.setIdentityValueHash(bits.hash());
+            identity.setIdentityValueCipher(bits.cipher());
+            identity.setIdentityValueMask(bits.mask());
+            EntityMeta.onCreate(identity);
+            peopleIdentityMapper.insert(identity);
+            card.setIdentityType(bits.type().name());
+            card.setIdentityValueHash(bits.hash());
+            card.setIdentityValueMask(bits.mask());
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        accountPatientMapper.updateCardMeta(
+                card.getId(),
+                name,
+                relationNorm,
+                card.getIdentityType(),
+                card.getIdentityValueHash(),
+                card.getIdentityValueMask(),
+                now);
+        card.setDisplayName(name);
+        card.setRelation(relationNorm);
+        card.setGender(profile.getGender());
+        card.setBirthday(profile.getBirthday());
+        card.setInCare(inCare);
+        if (!StringUtils.hasText(card.getMobile()) && StringUtils.hasText(profile.getMobile())) {
+            card.setMobile(profile.getMobile());
+        }
+        return card;
     }
 
     private AccountPatient insertCard(

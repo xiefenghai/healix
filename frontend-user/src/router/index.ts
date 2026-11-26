@@ -102,16 +102,13 @@ const router = createRouter({
       meta: { hideTab: true },
     },
     {
-      path: '/assessment-questionnaire',
-      component: () => import('../views/AssessmentQuestionnaireView.vue'),
-      meta: { hideTab: true },
-    },
-    { path: '/assessments', redirect: '/assessment-questionnaire' },
-    {
       path: '/intake',
       component: () => import('../views/IntakeQuestionnaireView.vue'),
       meta: { hideTab: true },
     },
+    /* 旧评估补充页已下线，入口统一回档案 */
+    { path: '/assessment-questionnaire', redirect: '/archive' },
+    { path: '/assessments', redirect: '/archive' },
     {
       path: '/followups/:id',
       component: () => import('../views/FollowupDetailView.vue'),

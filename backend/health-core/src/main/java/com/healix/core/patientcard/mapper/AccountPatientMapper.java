@@ -36,5 +36,14 @@ public interface AccountPatientMapper {
             @Param("displayName") String displayName,
             @Param("gmtModified") java.time.LocalDateTime gmtModified);
 
+    int updateCardMeta(
+            @Param("id") String id,
+            @Param("displayName") String displayName,
+            @Param("relation") String relation,
+            @Param("identityType") String identityType,
+            @Param("identityValueHash") String identityValueHash,
+            @Param("identityValueMask") String identityValueMask,
+            @Param("gmtModified") java.time.LocalDateTime gmtModified);
+
     int softDelete(@Param("id") String id, @Param("gmtDeleted") java.time.LocalDateTime gmtDeleted);
 }

@@ -612,13 +612,11 @@ async function loadCareHero() {
 
 async function loadFreeHeroAndTools() {
   try {
-    const [archive, labsRes, examsRes, followups] = await Promise.all([
-      api<{ data: { birthday?: string; displayName?: string; diseases?: unknown[] } }>(
-        '/api/c/v1/me/archive/summary',
-      ).catch(() => null),
+    const [labsRes, examsRes, followups, completeness] = await Promise.all([
       api<{ data: any[] }>('/api/c/v1/me/labs').catch(() => null),
       api<{ data: any[] }>('/api/c/v1/me/exams').catch(() => null),
       api<{ data: Array<{ status?: string }> }>('/api/c/v1/followups?limit=50').catch(() => null),
+      api<{ data: { percent?: number } }>('/api/c/v1/me/archive/completeness').catch(() => null),
     ])
     labs.value = labsRes?.data || []
     exams.value = examsRes?.data || []
@@ -629,14 +627,8 @@ async function loadFreeHeroAndTools() {
       const s = (f.status || '').toUpperCase()
       return s && s !== 'DONE' && s !== 'CANCELLED' && s !== 'CANCELED'
     }).length
-
-    let score = 0
-    const s = archive?.data
-    if (s?.displayName && s?.birthday) score += 1
-    if ((s?.diseases || []).length) score += 1
-    if (labsCount.value + examsCount.value > 0) score += 1
-    if (fu.length > 0) score += 1
-    archivePct.value = Math.round((score / 4) * 100)
+    // 与健管端同一套档案完整度口径
+    archivePct.value = Math.max(0, Math.min(100, completeness?.data?.percent ?? 0))
   } catch {
     archivePct.value = 0
   }
@@ -713,9 +705,17 @@ function goSetGoal(e: Event) {
   void router.push('/diet/goal')
 }
 
+function applyMetricFromQuery() {
+  const q = String(route.query.metric || '').toLowerCase()
+  if (q === 'bp' || q === 'blood_pressure') metricKey.value = 'bp'
+  else if (q === 'sugar' || q === 'glucose' || q === 'blood_glucose') metricKey.value = 'sugar'
+  else if (q === 'weight') metricKey.value = 'weight'
+}
+
 async function bootstrapTab() {
   bootReady.value = false
   disposeChart()
+  applyMetricFromQuery()
   await Promise.all([loadMembership(), loadProfileLite()])
   await Promise.all([loadCareHero(), loadFreeHeroAndTools(), loadTrends()])
   bootReady.value = true
@@ -758,6 +758,16 @@ watch(
   () => String(route.query.tab || ''),
   () => {
     if (!isTabPage.value) applyStackTabFromQuery()
+  },
+)
+
+watch(
+  () => String(route.query.metric || ''),
+  () => {
+    if (isTabPage.value) {
+      applyMetricFromQuery()
+      void loadTrends().then(() => paintChart())
+    }
   },
 )
 

@@ -853,11 +853,9 @@ const archiveDock = computed(() => {
     : labAbn > 0
       ? `检验报告(${labAbn}异常)`
       : '检验报告'
-  const assess = assessRequest.value
-    ? { label: '评估待完善', to: '/assessment-questionnaire', warn: true }
-    : intakeNeeded.value
-      ? { label: '初步评估', to: '/intake', warn: false }
-      : { label: '评估报告', to: '/archive', warn: false }
+  const assess = intakeNeeded.value
+    ? { label: '初步评估', to: '/intake', warn: false }
+    : { label: '评估报告', to: '/archive', warn: false }
   return [
     { key: 'archive', label: '我的档案', to: '/archive', warn: false },
     { key: 'lab', label: labLabel, to: labReportPath.value, warn: labAbn > 0 },
@@ -1972,7 +1970,6 @@ function consumeRecordQuery() {
   }
 }
 
-const assessRequest = ref<{ id: string; expiresAt?: string } | null>(null)
 const intakeNeeded = ref(false)
 
 async function loadMembership() {
@@ -1982,7 +1979,7 @@ async function loadMembership() {
 
 function isNoPatientError(e: unknown) {
   const msg = e instanceof Error ? e.message : String(e || '')
-  return /就诊人|patient/i.test(msg)
+  return /家庭成员|就诊人|patient/i.test(msg)
 }
 
 async function loadModeData() {
@@ -1999,7 +1996,6 @@ async function loadModeData() {
       loadTodayPlan(),
       loadLatestReport(),
       loadCareCompanion(),
-      loadAssessRequest(),
       loadIntakeStatus(),
       loadCarePlanOverview(),
       loadLatestLab(),
@@ -2048,17 +2044,6 @@ watch(
     if (bootReady.value && hasPatient.value) consumeRecordQuery()
   },
 )
-
-async function loadAssessRequest() {
-  try {
-    const res = await api<{ data: { id: string; expiresAt?: string } | null }>(
-      '/api/c/v1/me/assessments/questionnaire-request',
-    )
-    assessRequest.value = res.data || null
-  } catch {
-    assessRequest.value = null
-  }
-}
 
 async function loadIntakeStatus() {
   try {
@@ -2187,7 +2172,7 @@ async function offerScience() {
   <div
     class="home"
     :class="{
-      'has-assess': homeMode === 'care' && (intakeNeeded || !!assessRequest),
+      'has-assess': homeMode === 'care' && intakeNeeded,
       [`mode-${homeMode}`]: true,
     }"
   >
@@ -2204,7 +2189,7 @@ async function offerScience() {
           v-if="homeMode === 'free'"
           type="button"
           class="iconbtn"
-          :aria-label="`切换健康档案，${avatarChar}`"
+          :aria-label="`切换家庭成员，${avatarChar}`"
           @click="router.push('/patient-cards')"
         >
           <svg class="ic" viewBox="0 0 24 24" v-html="ICONS.user" />
@@ -2247,17 +2232,17 @@ async function offerScience() {
     </section>
 
     <!-- ========== 空态：无就诊人 ========== -->
-    <section v-else-if="homeMode === 'empty'" class="empty-gate" aria-label="添加健康档案">
+    <section v-else-if="homeMode === 'empty'" class="empty-gate" aria-label="添加家庭成员">
       <div class="empty-illus" aria-hidden="true">
         <div class="empty-card-art">
           <svg class="empty-user" viewBox="0 0 24 24" v-html="ICONS.user" />
           <span class="empty-plus">+</span>
         </div>
       </div>
-      <h1>添加健康档案，开启健康之旅</h1>
-      <p>添加后即可自管记录；若机构已有健康档案，手机号+姓名+生日一致时可自动关联。</p>
+      <h1>添加家庭成员，开启健康之旅</h1>
+      <p>添加本人或家人后即可自管记录；若机构已有健康档案，手机号+姓名+生日一致时可自动关联。</p>
       <button type="button" class="btn-solid empty-primary" @click="router.push('/patient-cards')">
-        添加健康档案
+        添加家庭成员
       </button>
       <button type="button" class="btn-ghost" @click="router.push('/activate')">使用激活码</button>
     </section>
@@ -2374,7 +2359,7 @@ async function offerScience() {
             <button
               type="button"
               class="patient-capsule"
-              :aria-label="`切换就诊人，当前 ${displayName}`"
+              :aria-label="`切换家庭成员，当前 ${displayName}`"
               @click="router.push('/patient-cards')"
             >
               <span class="pc-nm">{{ displayName }}</span>
@@ -2722,14 +2707,6 @@ async function offerScience() {
         <button type="button" class="act-btn" @click="router.push('/intake')">去评估</button>
       </div>
 
-      <div v-if="assessRequest" class="assess">
-        <div class="ai"><svg class="ic" viewBox="0 0 24 24" v-html="ICONS.clipboard" /></div>
-        <div class="at">
-          <b>健管师邀请你完善健康信息</b>
-          <span>约 3 分钟，帮助定制更贴合的管理方案</span>
-        </div>
-        <button type="button" class="act-btn" @click="router.push('/assessment-questionnaire')">去评估</button>
-      </div>
     </template>
 
     <van-popup

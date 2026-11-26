@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import { api } from '../api/http'
 import { debounce } from './debounce'
@@ -28,7 +29,12 @@ interface CatalogItem {
 const props = defineProps<{ show: boolean; med?: MedicationView | null }>()
 const emit = defineEmits<{ 'update:show': [boolean]; saved: [MedicationView] }>()
 
-const TIMING_PRESETS = ['晨起', '早餐后', '午餐后', '晚餐后', '睡前', '痛时服']
+const router = useRouter()
+
+/** 服药时间快捷胶囊（对齐餐前/餐后规范） */
+const TIMING_PRESETS = ['餐前', '餐后', '随餐', '空腹', '睡前']
+/** 单次用量单位展示顺序 */
+const DOSE_UNIT_ORDER = ['TABLET', 'CAPSULE', 'BAG', 'ML', 'MG', 'G', 'BOTTLE', 'SPRAY', 'OTHER']
 
 const saving = ref(false)
 const syncingPeriod = ref(false)
@@ -66,7 +72,14 @@ const title = computed(() => (isEdit.value ? '编辑用药' : '添加用药'))
 
 const usageChoices = computed(() => choices(usageOpts.value, MED_USAGE_LABELS))
 const frequencyChoices = computed(() => choices(frequencyOpts.value, MED_FREQUENCY_LABELS))
-const doseUnitChoices = computed(() => choices(doseUnitOpts.value, MED_DOSE_UNIT_LABELS))
+const doseUnitChoices = computed(() => {
+  const list = choices(doseUnitOpts.value, MED_DOSE_UNIT_LABELS)
+  return [...list].sort((a, b) => {
+    const ia = DOSE_UNIT_ORDER.indexOf(a.dictCode)
+    const ib = DOSE_UNIT_ORDER.indexOf(b.dictCode)
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib)
+  })
+})
 
 function choices(opts: DictItem[], fallback: Record<string, string>) {
   return opts.length
@@ -162,6 +175,15 @@ function pickCatalog(c: CatalogItem) {
 function toggleSlot(s: string) {
   form.slotsMode = 'custom'
   form.slots = form.slots.includes(s) ? form.slots.filter((x) => x !== s) : [...form.slots, s]
+}
+
+function pickTiming(tag: string) {
+  form.timingNote = form.timingNote === tag ? '' : tag
+}
+
+function goScan() {
+  emit('update:show', false)
+  void router.push('/medications/scan')
 }
 
 const inferredSlotsText = computed(() => {
@@ -335,40 +357,71 @@ async function save() {
     saving.value = false
   }
 }
+
+function close() {
+  emit('update:show', false)
+}
+
+/** 时段展示：午 → 中（与设计稿对齐） */
+function slotLabel(code: string) {
+  if (code === 'NOON') return '中'
+  return MED_TIME_SLOT_LABELS[code] || code
+}
 </script>
 
 <template>
   <van-popup
     :show="show"
     position="bottom"
-    round
-    :style="{ maxHeight: '90%' }"
+    class="med-form-popup"
     teleport="body"
+    :close-on-click-overlay="true"
+    :overlay-style="{ background: 'rgba(15, 23, 42, 0.45)' }"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
-    <div class="sheet">
-      <div class="sheet-head">
-        <strong>{{ title }}</strong>
-        <button type="button" class="sheet-close" @click="emit('update:show', false)">关闭</button>
-      </div>
+    <div class="sheet" @click.stop>
+      <header class="sheet-hd">
+        <span class="drag" aria-hidden="true" />
+        <h3>{{ title }}</h3>
+        <button type="button" class="sheet-close" aria-label="关闭" @click="close">
+          <van-icon name="cross" />
+        </button>
+      </header>
 
       <div class="sheet-body">
         <p v-if="medicalLocked" class="locked-tip">
-          这是医护开立的药，药名、剂量、频次等由健管师调整；你可以改服药时段、服药时机和备注。
+          这是医护开立的药，药名、剂量、频次等由健管师调整；你可以改服药时段、服药时间和备注。
         </p>
 
         <div class="block">
           <div class="label required">药品名称</div>
-          <van-field
-            v-model="form.drugName"
-            maxlength="64"
-            placeholder="输入药名搜索，如：二甲双胍"
-            :readonly="medicalLocked"
-            clearable
-            @update:model-value="onNameInput"
-          />
+          <div class="name-row">
+            <input
+              v-model="form.drugName"
+              class="name-input"
+              maxlength="64"
+              placeholder="输入药名搜索，如：二甲双胍"
+              :readonly="medicalLocked"
+              @input="onNameInput"
+            />
+            <button
+              v-if="!isEdit && !medicalLocked"
+              type="button"
+              class="scan-btn"
+              aria-label="扫码识药"
+              @click="goScan"
+            >
+              <van-icon name="scan" />
+            </button>
+          </div>
           <div v-if="catalogOpen && catalog.length && !medicalLocked" class="catalog">
-            <button v-for="c in catalog" :key="c.code" type="button" class="catalog-item" @click="pickCatalog(c)">
+            <button
+              v-for="c in catalog"
+              :key="c.code"
+              type="button"
+              class="catalog-item"
+              @click="pickCatalog(c)"
+            >
               <strong>{{ c.displayName }}</strong>
               <span v-if="c.spec">{{ c.spec }}</span>
             </button>
@@ -378,13 +431,13 @@ async function save() {
         <template v-if="!medicalLocked">
           <div class="block">
             <div class="label required">用法</div>
-            <div class="chips">
+            <div class="caps">
               <button
                 v-for="o in usageChoices"
                 :key="o.dictCode"
                 type="button"
-                class="chip"
-                :class="{ active: form.usageMethod === o.dictCode }"
+                class="cap"
+                :class="{ on: form.usageMethod === o.dictCode }"
                 @click="form.usageMethod = o.dictCode"
               >
                 {{ o.dictCodeDesc }}
@@ -393,14 +446,14 @@ async function save() {
           </div>
 
           <div class="block">
-            <div class="label">频率</div>
-            <div class="chips">
+            <div class="label">频次</div>
+            <div class="caps">
               <button
                 v-for="o in frequencyChoices"
                 :key="o.dictCode"
                 type="button"
-                class="chip"
-                :class="{ active: form.frequency === o.dictCode }"
+                class="cap"
+                :class="{ on: form.frequency === o.dictCode }"
                 @click="form.frequency = o.dictCode"
               >
                 {{ o.dictCodeDesc }}
@@ -409,122 +462,151 @@ async function save() {
           </div>
 
           <div class="block">
-            <div class="label">单次剂量</div>
-            <van-field v-model="form.doseAmount" placeholder="如 0.5 / 1" clearable />
-            <div class="chips">
-              <button
-                v-for="o in doseUnitChoices"
-                :key="o.dictCode"
-                type="button"
-                class="chip"
-                :class="{ active: form.doseUnit === o.dictCode }"
-                @click="form.doseUnit = o.dictCode"
-              >
-                {{ o.dictCodeDesc }}
-              </button>
+            <div class="label">单次用量</div>
+            <div class="dose-row">
+              <input
+                v-model="form.doseAmount"
+                class="dose-input"
+                placeholder="如: 1"
+                inputmode="decimal"
+              />
+              <div class="caps dose-caps">
+                <button
+                  v-for="o in doseUnitChoices"
+                  :key="o.dictCode"
+                  type="button"
+                  class="cap compact"
+                  :class="{ on: form.doseUnit === o.dictCode }"
+                  @click="form.doseUnit = o.dictCode"
+                >
+                  {{ o.dictCodeDesc }}
+                </button>
+              </div>
             </div>
           </div>
         </template>
 
         <div v-if="!isPrn" class="block">
-          <div class="label">服药时段</div>
-          <div class="chips">
+          <div class="label">服药时段（可多选）</div>
+          <div class="caps slots-auto">
             <button
               type="button"
-              class="chip"
-              :class="{ active: form.slotsMode === 'auto' }"
+              class="cap"
+              :class="{ on: form.slotsMode === 'auto' }"
               @click="form.slotsMode = 'auto'; form.slots = []"
             >
               按频次自动
             </button>
+          </div>
+          <div class="slots-grid">
             <button
               v-for="s in MED_TIMED_SLOTS"
               :key="s"
               type="button"
-              class="chip"
-              :class="{ active: form.slotsMode === 'custom' && form.slots.includes(s) }"
+              class="cap"
+              :class="{ on: form.slotsMode === 'custom' && form.slots.includes(s) }"
               @click="toggleSlot(s)"
             >
-              {{ MED_TIME_SLOT_LABELS[s] }}
+              {{ slotLabel(s) }}
             </button>
           </div>
           <p v-if="form.slotsMode === 'auto'" class="hint">
-            {{ inferredSlotsText ? `当前按频次排在：${inferredSlotsText}` : '按频次和服药时机自动排，如「睡前」排到睡前' }}
+            {{
+              inferredSlotsText
+                ? `当前按频次排在：${inferredSlotsText}`
+                : '按频次和服药时间自动排，如「睡前」排到睡前'
+            }}
           </p>
         </div>
 
         <div class="block">
-          <div class="label">服药时机</div>
-          <van-field v-model="form.timingNote" maxlength="64" placeholder="如：饭后、晨起" clearable />
-          <div class="chips presets">
-            <button v-for="tag in TIMING_PRESETS" :key="tag" type="button" class="chip soft" @click="form.timingNote = tag">
+          <div class="label">服药时间</div>
+          <div class="caps">
+            <button
+              v-for="tag in TIMING_PRESETS"
+              :key="tag"
+              type="button"
+              class="cap"
+              :class="{ on: form.timingNote === tag }"
+              @click="pickTiming(tag)"
+            >
               {{ tag }}
             </button>
           </div>
+          <input
+            v-model="form.timingNote"
+            class="text-input"
+            maxlength="64"
+            placeholder="也可自定义，如：晨起、痛时服"
+          />
         </div>
 
         <template v-if="!medicalLocked">
           <div class="block">
             <div class="label">疗程</div>
-            <div class="chips">
+            <div class="caps">
               <button
                 type="button"
-                class="chip"
-                :class="{ active: form.courseMode === 'long' }"
+                class="cap"
+                :class="{ on: form.courseMode === 'long' }"
                 @click="form.courseMode = 'long'"
               >
                 长期服用
               </button>
               <button
                 type="button"
-                class="chip"
-                :class="{ active: form.courseMode === 'days' }"
+                class="cap"
+                :class="{ on: form.courseMode === 'days' }"
                 @click="form.courseMode = 'days'"
               >
                 固定天数
               </button>
             </div>
-            <van-field
-              v-if="form.courseMode === 'days'"
-              v-model="form.courseDays"
-              type="digit"
-              label="天数"
-              placeholder="如 14"
-              input-align="right"
-            />
+            <div v-if="form.courseMode === 'days'" class="course-days">
+              <span class="course-days-label">天数</span>
+              <input
+                v-model="form.courseDays"
+                class="dose-input"
+                type="text"
+                inputmode="numeric"
+                placeholder="如 14"
+              />
+            </div>
           </div>
 
           <div class="block">
             <div class="label">开始服药</div>
-            <van-field
-              :model-value="form.startDate"
-              readonly
-              is-link
-              placeholder="选择开始日期"
-              @click="openDatePicker('start')"
-            />
+            <button type="button" class="date-btn" @click="openDatePicker('start')">
+              <span :class="{ muted: !form.startDate }">{{ form.startDate || '选择开始日期' }}</span>
+              <van-icon name="arrow" />
+            </button>
           </div>
 
           <div v-if="form.courseMode === 'days'" class="block">
             <div class="label required">停药时间</div>
-            <van-field
-              :model-value="form.stopDate"
-              readonly
-              is-link
-              placeholder="改疗程或开始日会重算"
-              @click="openDatePicker('stop')"
-            />
+            <button type="button" class="date-btn" @click="openDatePicker('stop')">
+              <span :class="{ muted: !form.stopDate }">{{ form.stopDate || '改疗程或开始日会重算' }}</span>
+              <van-icon name="arrow" />
+            </button>
           </div>
         </template>
 
         <div class="block">
           <div class="label">备注</div>
-          <van-field v-model="form.remark" rows="2" autosize type="textarea" maxlength="150" placeholder="选填" />
+          <textarea
+            v-model="form.remark"
+            class="note"
+            rows="2"
+            maxlength="150"
+            placeholder="选填"
+          />
         </div>
       </div>
 
       <div class="sheet-footer">
-        <van-button round block type="primary" :loading="saving" @click="save">保存</van-button>
+        <button type="button" class="save-btn" :disabled="saving" @click="save">
+          {{ saving ? '保存中…' : '保存用药计划' }}
+        </button>
       </div>
     </div>
   </van-popup>
@@ -543,94 +625,307 @@ async function save() {
 .sheet {
   display: flex;
   flex-direction: column;
-  max-height: 90vh;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+  background: #fff;
 }
-.sheet-head {
+.sheet-hd {
+  position: relative;
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 16px 8px;
+  justify-content: center;
+  padding: 10px 44px 12px;
+  box-sizing: border-box;
 }
-.sheet-head strong {
+.drag {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 999px;
+  background: #c9cdd4;
+}
+.sheet-hd h3 {
+  margin: 12px 0 0;
   font-size: 16px;
-  color: var(--hx-text);
+  font-weight: 700;
+  color: #1d2129;
+  line-height: 1.3;
 }
 .sheet-close {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-20%);
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
   border: 0;
+  border-radius: 50%;
   background: transparent;
-  color: var(--hx-muted);
-  font-size: 13px;
+  color: #86909c;
+  font-size: 18px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
 }
 .sheet-body {
   flex: 1;
-  overflow: auto;
-  padding: 4px 8px 12px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 16px 24px;
+  box-sizing: border-box;
 }
 .sheet-footer {
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-  background: #fff;
-  box-shadow: 0 -6px 16px rgba(14, 159, 131, 0.06);
+  flex: none;
+  padding: 12px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #f2f3f5;
+  background: #ffffff;
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.04);
+  box-sizing: border-box;
 }
+.save-btn {
+  width: 100%;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #1677ff, #14b8a6);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(22, 119, 255, 0.22);
+}
+.save-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.save-btn:not(:disabled):active {
+  transform: scale(0.98);
+}
+
 .locked-tip {
-  margin: 4px 8px 6px;
+  margin: 0 0 14px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: var(--hx-teal-light);
-  color: var(--hx-teal-700);
+  background: #e8f3ff;
+  color: #1677ff;
   font-size: 12px;
   line-height: 1.6;
 }
-.block {
-  padding: 10px 8px;
+.block + .block {
+  margin-top: 14px;
 }
 .label {
   margin: 0 0 8px;
   font-size: 13px;
-  color: var(--hx-muted);
-  font-weight: 600;
+  font-weight: 700;
+  color: #1d2129;
 }
 .label.required::after {
   content: ' *';
-  color: var(--hx-danger);
+  color: #f53f3f;
 }
 .hint {
   margin: 8px 0 0;
   font-size: 12px;
-  color: var(--hx-muted);
+  color: #86909c;
+  line-height: 1.45;
 }
-.chips {
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.name-input,
+.text-input {
+  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 10px;
+  background: #f7f8fa;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2129;
+  font-family: inherit;
+  outline: none;
+  min-height: 40px;
+}
+.name-input::placeholder,
+.text-input::placeholder {
+  color: #c9cdd4;
+  font-weight: 500;
+}
+.text-input {
+  margin-top: 8px;
+  display: block;
+}
+.scan-btn {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: #f7f8fa;
+  color: #1677ff;
+  font-size: 20px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.caps {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
-.chip {
-  border: 1px solid var(--hx-n-200);
-  background: var(--hx-n-50);
-  color: var(--hx-text);
+.cap {
+  margin: 0;
+  border: 1px solid transparent;
+  background: #f7f8fa;
+  color: #4e5969;
   font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
   padding: 8px 12px;
   border-radius: 999px;
   line-height: 1.2;
+  cursor: pointer;
+  box-sizing: border-box;
 }
-.chip.active {
-  border-color: transparent;
-  background: var(--hx-teal-light);
-  color: var(--hx-teal);
+.cap.on {
+  background: #e8f3ff;
+  color: #1677ff;
+  border: 1px solid #1677ff;
   font-weight: 600;
 }
-.chip.soft {
-  background: #fff;
-  color: var(--hx-teal);
-  border-color: var(--hx-teal-100);
+.cap.compact {
+  padding: 4px 10px;
+  font-size: 12px;
 }
-.presets {
+
+.dose-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.dose-input {
+  flex: none;
+  width: 110px;
+  height: 36px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 10px;
+  background: #f7f8fa;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d2129;
+  font-family: inherit;
+  outline: none;
+}
+.dose-input::placeholder {
+  color: #c9cdd4;
+  font-weight: 500;
+}
+.dose-caps {
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+}
+
+.slots-auto {
+  margin-bottom: 6px;
+}
+.slots-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.slots-grid .cap {
+  width: 100%;
+  padding: 8px 4px;
+  text-align: center;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.course-days {
   margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
+.course-days-label {
+  font-size: 13px;
+  color: #4e5969;
+  font-weight: 600;
+}
+
+.date-btn {
+  width: 100%;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: #f7f8fa;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2129;
+  font-family: inherit;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.date-btn .muted {
+  color: #c9cdd4;
+  font-weight: 500;
+}
+.date-btn .van-icon {
+  color: #86909c;
+  font-size: 14px;
+}
+
+.note {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 10px;
+  background: #f7f8fa;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1d2129;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 64px;
+  outline: none;
+}
+.note::placeholder {
+  color: #c9cdd4;
+}
+
 .catalog {
-  margin-top: 4px;
-  border: 1px solid var(--hx-n-200);
+  margin-top: 6px;
+  border: 1px solid #e5e6eb;
   border-radius: 12px;
   overflow: hidden;
+  background: #fff;
 }
 .catalog-item {
   display: flex;
@@ -639,24 +934,36 @@ async function save() {
   gap: 8px;
   padding: 10px 12px;
   border: 0;
-  border-bottom: 1px solid var(--hx-n-100);
+  border-bottom: 1px solid #f2f3f5;
   background: #fff;
   text-align: left;
   font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  color: #1d2129;
 }
 .catalog-item:last-child {
   border-bottom: 0;
 }
 .catalog-item span {
-  color: var(--hx-muted);
+  color: #86909c;
   font-size: 12px;
 }
-.block :deep(.van-field) {
-  padding: 8px 0;
-  background: transparent;
-}
-:deep(.van-button--primary) {
-  background: var(--hx-grad);
-  border: 0;
+</style>
+
+<!-- teleport 到 body：用左右 auto 居中，避免覆盖 Vant transform 动画 -->
+<style>
+.van-popup.med-form-popup {
+  width: 100% !important;
+  max-width: 430px !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  border-radius: 20px 20px 0 0 !important;
+  max-height: 85vh !important;
+  overflow: hidden !important;
+  background: #fff !important;
+  /* 勿加 display:flex !important，会盖住 Vant 关闭时的 display:none */
 }
 </style>

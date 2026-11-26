@@ -23,4 +23,6 @@ public class AccountPatient extends BaseEntity {
     /** 列表展示用，取自档案，不落卡片表 */
     private String gender;
     private LocalDate birthday;
+    /** 列表展示用：是否在管（有有效机构入组），不落卡片表 */
+    private Boolean inCare;
 }

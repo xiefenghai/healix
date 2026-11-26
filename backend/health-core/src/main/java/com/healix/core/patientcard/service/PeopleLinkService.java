@@ -9,8 +9,10 @@ import com.healix.core.patient.mapper.PatientOrgMembershipMapper;
 import com.healix.core.patientcard.domain.AccountPatient;
 import com.healix.core.patientcard.domain.PeopleLinkRequest;
 import com.healix.core.patientcard.mapper.PeopleLinkRequestMapper;
+import com.healix.core.people.domain.PeopleAccount;
 import com.healix.core.people.domain.PeopleProfile;
 import com.healix.core.people.enums.MobileOwnerEnum;
+import com.healix.core.people.mapper.PeopleAccountMapper;
 import com.healix.core.people.mapper.PeopleProfileMapper;
 import com.healix.core.people.service.PeopleMobileStateService;
 import com.healix.core.people.support.MobileNumbers;
@@ -49,6 +51,7 @@ public class PeopleLinkService {
     private final MobileOtpService mobileOtpService;
     private final PatientCardService patientCardService;
     private final PeopleProfileMapper peopleProfileMapper;
+    private final PeopleAccountMapper peopleAccountMapper;
     private final PeopleLinkRequestMapper requestMapper;
     private final PatientOrgMembershipMapper membershipMapper;
     private final OrganizationMapper organizationMapper;
@@ -76,9 +79,14 @@ public class PeopleLinkService {
             genderNorm = "UNKNOWN";
         }
 
-        // OTP 只证明「号在手上」，不能单凭姓名偷绑他人档案
+        // OTP 证明「号在手上」；本人 + 登录号与账号一致时，登录态已验证该号，可免短信
         String otpScope = StringUtils.hasText(tenantId) ? tenantId : "platform";
-        mobileOtpService.verify(otpScope, accountId, self, otpCode);
+        if (!canSkipOtpForSelf(accountId, relation, self)) {
+            if (!StringUtils.hasText(otpCode)) {
+                throw new BusinessException(400, "请填写验证码");
+            }
+            mobileOtpService.verify(otpScope, accountId, self, otpCode);
+        }
 
         if (patientCardService.findSamePersonCardByMobileName(accountId, self, name) != null) {
             throw new BusinessException(409, "「" + name + "」已在您的就诊人列表中");
@@ -233,6 +241,19 @@ public class PeopleLinkService {
         row.setGmtModified(LocalDateTime.now());
         requestMapper.update(row);
         return row;
+    }
+
+    /** 本人关系且提交手机号等于账号登录号时，可免短信（登录态已证明号在手上）。 */
+    private boolean canSkipOtpForSelf(String accountId, String relation, String selfMobile) {
+        if (!"SELF".equalsIgnoreCase(relation == null ? "" : relation.trim())) {
+            return false;
+        }
+        PeopleAccount account = peopleAccountMapper.findById(accountId);
+        if (account == null || !StringUtils.hasText(account.getUsername())) {
+            return false;
+        }
+        String accountMobile = MobileNumbers.trySelf(account.getUsername());
+        return accountMobile != null && accountMobile.equals(selfMobile);
     }
 
     private void rememberOptionalDemographics(PeopleProfile profile, String gender, LocalDate birthday) {
